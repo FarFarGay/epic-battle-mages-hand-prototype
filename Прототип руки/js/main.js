@@ -106,7 +106,7 @@ function dismissFlag() {
     hand.selectedMinions = [];
 
     for (const m of minions) {
-        if (m.state === 'listening' || m.state === 'moving') {
+        if (m.state === 'listening' || m.state === 'moving' || m.state === 'waiting') {
             m.pickNewTarget();
             m.state = 'free';
             m.stateTime = 0;

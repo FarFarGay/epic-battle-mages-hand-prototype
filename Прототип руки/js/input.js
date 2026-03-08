@@ -168,7 +168,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                     Math.max(selection.startY, selection.endY),
                     canvas
                 );
-                const SELECTABLE = ['free', 'listening', 'moving', 'busy', 'returning', 'war', 'fighting'];
+                const SELECTABLE = ['free', 'listening', 'moving', 'waiting', 'busy', 'returning', 'war', 'fighting'];
                 hand.selectedMinions = [];
                 for (let i = 0; i < minions.length; i++) {
                     const m = minions[i];

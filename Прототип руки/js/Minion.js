@@ -112,10 +112,8 @@ export class Minion extends GameObject {
                 const dy = this.targetY - this.iy;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 if (dist < 0.25) {
-                    // Дошёл до цели → переходит в свободное блуждание
-                    // (в будущем: → 'busy' если есть задача)
-                    this.pickNewTarget();
-                    this.state = 'free';
+                    // Дошёл до флага → ждёт задачу рядом
+                    this.state = 'waiting';
                     this.stateTime = 0;
                 } else {
                     const spd = MINION_SPEED * dt;
@@ -128,7 +126,12 @@ export class Minion extends GameObject {
                 break;
             }
 
-            // ── 4–7. Заглушки ───────────────────────────────────────
+            // ── 4. Ожидает задачу ───────────────────────────────────
+            case 'waiting':
+                // Стоит у флага, ждёт задачу от игрока
+                break;
+
+            // ── 5–8. Заглушки ───────────────────────────────────────
             case 'busy':       // выполняет задачу (будущее)
             case 'returning':  // возвращается к замку (будущее)
             case 'war':        // видит врага (будущее)
