@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Изометрическая рука — Прототип</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #1a1a2e; overflow: hidden; cursor: none; }
+        canvas { display: block; }
+        #ui {
+            position: fixed; top: 16px; left: 16px;
+            color: #aab; font-family: monospace; font-size: 14px;
+            pointer-events: none; user-select: none;
+            text-shadow: 1px 1px 2px #000;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div>Зажми ЛКМ — схватить, отпусти — бросить</div>
+        <div id="status">Рука открыта</div>
+    </div>
+    <canvas id="game"></canvas>
+    <script>
+    // ============================================================
+    //  ИЗОМЕТРИЧЕСКИЙ ПРОТОТИП РУКИ — Pixel Art + Физика
+    // ============================================================
+
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+
+    // — Размеры —
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    // Пиксельный рендер (без сглаживания)
+    ctx.imageSmoothingEnabled = false;
+
+    // ============================================================
+    //  ИЗОМЕТРИЧЕСКАЯ ПРОЕКЦИЯ
+    // ============================================================
+    const ISO_ANGLE = Math.PI / 4; // 45 градусов
+    const TILE_W = 64;
+    const TILE_H = Math.round(TILE_W * Math.sin(ISO_ANGLE)); // ~45px при 45°
+    const PIXEL_SCALE = 3; // масштаб пикселей для pixel-art
+
+    // ============================================================
+    //  ФИЗИЧЕСКИЕ КОНСТАНТЫ
+    // ============================================================
+    const GRAVITY        = 8.0;   // ед/с² вниз
+    const CARRY_HEIGHT   = 1.5;   // высота переноса (мировые единицы)
+    const LIFT_SPEED     = 4.0;   // скорость подъёма
+    const THROW_VZ_BASE  = 3.0;   // базовый вертикальный импульс при броске
+    const THROW_SCALE    = 1.5;   // множитель скорости руки → скорость броска
+    const BOUNCE_MIN_VZ  = 0.3;   // минимальный vz для отскока
+    const MAX_BOUNCES    = 5;     // максимум отскоков
+    const SLIDE_STOP     = 0.05;  // порог остановки скольжения
+    const HEIGHT_TO_SCREEN = 40;  // пикселей на единицу высоты
+    const VELOCITY_HISTORY = 10;  // кадров для усреднения скорости
+    const MAX_THROW_SPEED = 8.0;  // максимальная скорость броска (iso ед/с)
+    const GRID_SIZE       = 10;   // граница сетки (iso координаты)
+    const WALL_BOUNCE     = 0.6;  // коэффициент отскока от стен
+    const CAMERA_OFFSET_Y = 40;   // вертикальное смещение центра мира (px)
+    const AIR_RESISTANCE  = 0.99; // коэффициент сопротивления воздуха (за 1/60 сек)
+
+    function isoToScreen(ix, iy) {
+        return {
+            x: (ix - iy) * (TILE_W / 2),
+            y: (ix + iy) * (TILE_H / 2)
+        };
+    }
+
+    function screenToIso(sx, sy) {
+        // Учитываем зум камеры: экранные координаты → мировые
+        const cx = (sx - canvas.width / 2) / camera.zoom;
+        const cy = (sy - canvas.height / 2) / camera.zoom + CAMERA_OFFSET_Y;
+        return {
+            x: (cx / (TILE_W / 2) + cy / (TILE_H / 2)) / 2,
+            y: (cy / (TILE_H / 2) - cx / (TILE_W / 2)) / 2
+        };
+    }
+
+    function worldToScreen(wx, wy) {
+        const iso = isoToScreen(wx, wy);
+        return {
+            x: iso.x + canvas.width / 2,
+            y: iso.y + canvas.height / 2 - CAMERA_OFFSET_Y
+        };
+    }
+
+    // ============================================================
+    //  РИСОВАНИЕ ПИКСЕЛЕЙ
+    // ============================================================
+    function drawPixel(x, y, color, scale = PIXEL_SCALE) {
+        ctx.fillStyle = color;
+        ctx.fillRect(Math.floor(x), Math.floor(y), scale, scale);
+    }
+
+    function drawPixelArt(screenX, screenY, pixels, scale = PIXEL_SCALE) {
+        for (const p of pixels) {
+            drawPixel(
+                screenX + p[0] * scale,
+                screenY + p[1] * scale,
+                p[2],
+                scale
+            );
+        }
+    }
+
+    // ============================================================
+    //  ИЗОМЕТРИЧЕСКАЯ СЕТКА (ПОЛ)
+    // ============================================================
+    function drawFloor() {
+        for (let iy = -GRID_SIZE; iy <= GRID_SIZE; iy++) {
+            for (let ix = -GRID_SIZE; ix <= GRID_SIZE; ix++) {
+                const s = worldToScreen(ix, iy);
+                const isEven = (ix + iy) % 2 === 0;
+                drawIsoDiamond(s.x, s.y, isEven ? '#2a2a4a' : '#252545', isEven ? '#222240' : '#1e1e3a');
+            }
+        }
+    }
+
+    function drawIsoDiamond(cx, cy, fillColor, strokeColor) {
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - TILE_H / 2);
+        ctx.lineTo(cx + TILE_W / 2, cy);
+        ctx.lineTo(cx, cy + TILE_H / 2);
+        ctx.lineTo(cx - TILE_W / 2, cy);
+        ctx.closePath();
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+
+    // ============================================================
+    //  ПРЕДМЕТЫ (Pixel Art)
+    // ============================================================
+
+    // Зелье (бутылка)
+    const POTION_PIXELS = [
+        // Пробка
+        [3,0,'#8B6914'], [4,0,'#8B6914'],
+        [3,1,'#A07818'], [4,1,'#A07818'],
+        // Горлышко
+        [3,2,'#4488aa'], [4,2,'#3377aa'],
+        // Тело бутылки
+        [2,3,'#44aadd'], [3,3,'#33ccff'], [4,3,'#33ccff'], [5,3,'#44aadd'],
+        [1,4,'#44aadd'], [2,4,'#55ddff'], [3,4,'#66eeff'], [4,4,'#55ddff'], [5,4,'#44aadd'], [6,4,'#3399cc'],
+        [1,5,'#3399cc'], [2,5,'#44ccee'], [3,5,'#55ddff'], [4,5,'#44ccee'], [5,5,'#3399cc'], [6,5,'#2288bb'],
+        [1,6,'#2288bb'], [2,6,'#33aadd'], [3,6,'#44bbee'], [4,6,'#33aadd'], [5,6,'#2288bb'], [6,6,'#1177aa'],
+        [2,7,'#2277aa'], [3,7,'#2288bb'], [4,7,'#2277aa'], [5,7,'#1166aa'],
+        // Блик
+        [2,4,'#aaeeff'], [2,5,'#88ddff'],
+    ];
+
+    // Куб (камень/блок)
+    const CUBE_PIXELS = [
+        // Верхняя грань
+        [2,0,'#888899'], [3,0,'#888899'], [4,0,'#888899'], [5,0,'#888899'],
+        [1,1,'#9999aa'], [2,1,'#aaaacc'], [3,1,'#bbbbdd'], [4,1,'#aaaacc'], [5,1,'#9999aa'], [6,1,'#888899'],
+        [1,2,'#9999aa'], [2,2,'#bbbbdd'], [3,2,'#ccccee'], [4,2,'#bbbbdd'], [5,2,'#9999aa'], [6,2,'#888899'],
+        // Левая грань
+        [1,3,'#666688'], [2,3,'#7777aa'], [3,3,'#7777aa'],
+        [1,4,'#555577'], [2,4,'#666699'], [3,4,'#666699'],
+        [1,5,'#444466'], [2,5,'#555588'], [3,5,'#555588'],
+        // Правая грань
+        [4,3,'#555577'], [5,3,'#555577'], [6,3,'#444466'],
+        [4,4,'#444466'], [5,4,'#444466'], [6,4,'#333355'],
+        [4,5,'#333355'], [5,5,'#333355'], [6,5,'#222244'],
+    ];
+
+    // Свиток
+    const SCROLL_PIXELS = [
+        // Верхний валик
+        [1,0,'#aa8844'], [2,0,'#cc9955'], [3,0,'#cc9955'], [4,0,'#cc9955'], [5,0,'#cc9955'], [6,0,'#aa8844'],
+        [0,1,'#997733'], [1,1,'#bb8844'], [6,1,'#bb8844'], [7,1,'#997733'],
+        // Тело свитка
+        [1,2,'#eeddbb'], [2,2,'#ffeecc'], [3,2,'#ffeecc'], [4,2,'#ffeecc'], [5,2,'#ffeecc'], [6,2,'#eeddbb'],
+        [1,3,'#ddccaa'], [2,3,'#eeddbb'], [3,3,'#776655'], [4,3,'#776655'], [5,3,'#eeddbb'], [6,3,'#ddccaa'],
+        [1,4,'#eeddbb'], [2,4,'#ffeecc'], [3,4,'#ffeecc'], [4,4,'#ffeecc'], [5,4,'#ffeecc'], [6,4,'#eeddbb'],
+        [1,5,'#ddccaa'], [2,5,'#eeddbb'], [3,5,'#776655'], [4,5,'#eeddbb'], [5,5,'#776655'], [6,5,'#ddccaa'],
+        // Нижний валик
+        [0,6,'#997733'], [1,6,'#bb8844'], [6,6,'#bb8844'], [7,6,'#997733'],
+        [1,7,'#aa8844'], [2,7,'#cc9955'], [3,7,'#cc9955'], [4,7,'#cc9955'], [5,7,'#cc9955'], [6,7,'#aa8844'],
+    ];
+
+    // Кристалл
+    const CRYSTAL_PIXELS = [
+        [3,0,'#ff55ff'], [4,0,'#ff55ff'],
+        [2,1,'#dd44dd'], [3,1,'#ff88ff'], [4,1,'#ff77ff'], [5,1,'#dd44dd'],
+        [2,2,'#cc33cc'], [3,2,'#ee66ee'], [4,2,'#dd55dd'], [5,2,'#cc33cc'],
+        [1,3,'#bb22bb'], [2,3,'#dd44dd'], [3,3,'#ff77ff'], [4,3,'#ee55ee'], [5,3,'#cc33cc'], [6,3,'#aa22aa'],
+        [1,4,'#aa11aa'], [2,4,'#cc33cc'], [3,4,'#ee55ee'], [4,4,'#dd44dd'], [5,4,'#bb22bb'], [6,4,'#991199'],
+        [2,5,'#aa22aa'], [3,5,'#cc44cc'], [4,5,'#bb33bb'], [5,5,'#aa22aa'],
+        [2,6,'#991199'], [3,6,'#bb33bb'], [4,6,'#aa22aa'], [5,6,'#880088'],
+        [3,7,'#880088'], [4,7,'#770077'],
+        // Блик
+        [3,1,'#ffbbff'], [3,2,'#ffaaff'],
+    ];
+
+    const ITEM_TYPES = [
+        { name: 'Зелье',    pixels: POTION_PIXELS,  w: 7, h: 8, mass: 1.0, bounciness: 0.3, friction: 0.85, radius: 0.35 },
+        { name: 'Камень',   pixels: CUBE_PIXELS,    w: 7, h: 6, mass: 2.5, bounciness: 0.5, friction: 0.7,  radius: 0.40 },
+        { name: 'Свиток',   pixels: SCROLL_PIXELS,  w: 8, h: 8, mass: 0.3, bounciness: 0.1, friction: 0.95, radius: 0.35 },
+        { name: 'Кристалл', pixels: CRYSTAL_PIXELS, w: 7, h: 8, mass: 0.8, bounciness: 0.6, friction: 0.8,  radius: 0.35 },
+    ];
+
+    function createItem(type, ix, iy) {
+        return {
+            type, ix, iy,
+            grabbed: false,
+            iz: 0,
+            vx: 0, vy: 0, vz: 0,
+            state: 'idle',
+            stateTime: 0,
+            liftProgress: 0,
+            bounceCount: 0,
+        };
+    }
+
+    const INITIAL_POSITIONS = [
+        { type: 0, ix: -2, iy: -1 },
+        { type: 1, ix:  2, iy:  1 },
+        { type: 2, ix: -1, iy:  2 },
+        { type: 3, ix:  1, iy: -2 },
+    ];
+
+    const items = INITIAL_POSITIONS.map(p => createItem(p.type, p.ix, p.iy));
+
+    // ============================================================
+    //  РУКА (Pixel Art — изометрический вид)
+    // ============================================================
+
+    // Открытая ладонь (вид сверху-сбоку, изометрия)
+    const HAND_OPEN_PIXELS = [
+        // Мизинец
+        [0,4,'#e8b88a'], [1,4,'#e8b88a'],
+        [0,3,'#d4a67a'], [1,3,'#e8b88a'],
+        [0,2,'#d4a67a'], [1,2,'#d4a67a'],
+        // Безымянный
+        [2,3,'#e8b88a'], [3,3,'#e8b88a'],
+        [2,2,'#d4a67a'], [3,2,'#e8b88a'],
+        [2,1,'#d4a67a'], [3,1,'#d4a67a'],
+        [2,0,'#c89870'],
+        // Средний
+        [4,2,'#e8b88a'], [5,2,'#e8b88a'],
+        [4,1,'#d4a67a'], [5,1,'#e8b88a'],
+        [4,0,'#d4a67a'], [5,0,'#d4a67a'],
+        // Указательный
+        [6,3,'#e8b88a'], [7,3,'#e8b88a'],
+        [6,2,'#d4a67a'], [7,2,'#e8b88a'],
+        [6,1,'#d4a67a'], [7,1,'#d4a67a'],
+        // Ладонь
+        [1,5,'#e8b88a'], [2,5,'#ecc09a'], [3,5,'#ecc09a'], [4,5,'#ecc09a'], [5,5,'#e8b88a'], [6,5,'#e8b88a'],
+        [1,6,'#d4a67a'], [2,6,'#e8b88a'], [3,6,'#ecc09a'], [4,6,'#ecc09a'], [5,6,'#e8b88a'], [6,6,'#d4a67a'],
+        [1,7,'#d4a67a'], [2,7,'#e8b88a'], [3,7,'#ecc09a'], [4,7,'#e8b88a'], [5,7,'#d4a67a'], [6,7,'#d4a67a'],
+        [2,8,'#d4a67a'], [3,8,'#e8b88a'], [4,8,'#e8b88a'], [5,8,'#d4a67a'],
+        // Большой палец
+        [7,5,'#e8b88a'], [8,5,'#e8b88a'],
+        [7,6,'#d4a67a'], [8,6,'#d4a67a'], [9,6,'#c89870'],
+        [8,7,'#c89870'], [9,7,'#c89870'],
+        // Запястье
+        [2,9,'#c89870'], [3,9,'#d4a67a'], [4,9,'#d4a67a'], [5,9,'#c89870'],
+        [2,10,'#c89870'], [3,10,'#c89870'], [4,10,'#c89870'], [5,10,'#c89870'],
+    ];
+
+    // Закрытая ладонь (захват)
+    const HAND_CLOSED_PIXELS = [
+        // Пальцы загнуты
+        // Мизинец согнут
+        [0,5,'#d4a67a'], [1,5,'#e8b88a'],
+        [0,4,'#c89870'], [1,4,'#d4a67a'],
+        // Безымянный согнут
+        [2,4,'#d4a67a'], [3,4,'#e8b88a'],
+        [2,3,'#c89870'], [3,3,'#d4a67a'],
+        // Средний согнут
+        [4,3,'#d4a67a'], [5,3,'#e8b88a'],
+        [4,2,'#c89870'], [5,2,'#d4a67a'],
+        // Указательный согнут
+        [6,4,'#d4a67a'], [7,4,'#e8b88a'],
+        [6,3,'#c89870'], [7,3,'#d4a67a'],
+        // Кончики пальцев загнуты внутрь
+        [1,6,'#c89870'], [2,5,'#c89870'],
+        [3,5,'#c89870'], [4,4,'#c89870'],
+        [5,4,'#c89870'], [6,5,'#c89870'],
+        // Ладонь
+        [1,7,'#e8b88a'], [2,7,'#ecc09a'], [3,7,'#ecc09a'], [4,7,'#ecc09a'], [5,7,'#e8b88a'], [6,7,'#e8b88a'],
+        [1,8,'#d4a67a'], [2,8,'#e8b88a'], [3,8,'#ecc09a'], [4,8,'#ecc09a'], [5,8,'#e8b88a'], [6,8,'#d4a67a'],
+        [2,9,'#d4a67a'], [3,9,'#e8b88a'], [4,9,'#e8b88a'], [5,9,'#d4a67a'],
+        // Большой палец
+        [7,6,'#e8b88a'], [8,6,'#e8b88a'],
+        [7,7,'#d4a67a'], [8,7,'#d4a67a'],
+        // Запястье
+        [2,10,'#c89870'], [3,10,'#d4a67a'], [4,10,'#d4a67a'], [5,10,'#c89870'],
+        [2,11,'#c89870'], [3,11,'#c89870'], [4,11,'#c89870'], [5,11,'#c89870'],
+    ];
+
+    // ============================================================
+    //  СОСТОЯНИЕ ИГРЫ
+    // ============================================================
+    const hand = {
+        screenX: 0,
+        screenY: 0,
+        targetX: 0,
+        targetY: 0,
+        isoX: 0,
+        isoY: 0,
+        state: 'open', // 'open', 'closing', 'closed', 'opening'
+        animProgress: 0,
+        grabbedItem: null,
+        prevIsoX: 0,
+        prevIsoY: 0,
+        velocityHistory: [],
+    };
+
+    const screenShake = {
+        intensity: 0,
+        offsetX: 0,
+        offsetY: 0,
+    };
+
+    const camera = {
+        zoom: 1.0,
+        targetZoom: 1.0,
+    };
+
+    let mouseX = canvas.width / 2;
+    let mouseY = canvas.height / 2;
+    let mouseDown = false;
+    let hoveredItem = null;
+
+    // ============================================================
+    //  ФИЗИКА БРОСАНИЯ
+    // ============================================================
+    function calculateThrowVelocity(itemType) {
+        const history = hand.velocityHistory;
+        if (history.length === 0) return { vx: 0, vy: 0, vz: THROW_VZ_BASE };
+
+        let totalWeight = 0;
+        let avgVx = 0;
+        let avgVy = 0;
+
+        for (let i = 0; i < history.length; i++) {
+            const weight = (i + 1);
+            avgVx += history[i].vx * weight;
+            avgVy += history[i].vy * weight;
+            totalWeight += weight;
+        }
+
+        avgVx /= totalWeight;
+        avgVy /= totalWeight;
+
+        const massScale = 1.0 / Math.sqrt(itemType.mass);
+        const speed = Math.sqrt(avgVx * avgVx + avgVy * avgVy);
+
+        let tvx = avgVx * THROW_SCALE * massScale;
+        let tvy = avgVy * THROW_SCALE * massScale;
+        let tvz = THROW_VZ_BASE * massScale + speed * 0.3;
+
+        // Ограничиваем максимальную скорость
+        const tSpeed = Math.sqrt(tvx * tvx + tvy * tvy);
+        if (tSpeed > MAX_THROW_SPEED) {
+            const scale = MAX_THROW_SPEED / tSpeed;
+            tvx *= scale;
+            tvy *= scale;
+        }
+
+        return { vx: tvx, vy: tvy, vz: Math.min(tvz, MAX_THROW_SPEED) };
+    }
+
+    function triggerScreenShake(intensity) {
+        screenShake.intensity = Math.min(intensity, 15);
+    }
+
+    function updateScreenShake(dt) {
+        if (screenShake.intensity > 0.1) {
+            screenShake.offsetX = (Math.random() - 0.5) * screenShake.intensity * 2;
+            screenShake.offsetY = (Math.random() - 0.5) * screenShake.intensity * 2;
+            screenShake.intensity *= Math.pow(0.01, dt);
+        } else {
+            screenShake.intensity = 0;
+            screenShake.offsetX = 0;
+            screenShake.offsetY = 0;
+        }
+    }
+
+    // ============================================================
+    //  ГРАНИЦЫ КАРТЫ
+    // ============================================================
+    function clampToGrid(item) {
+        const limit = GRID_SIZE + 0.5; // чуть за краем тайлов
+        if (item.ix < -limit) {
+            item.ix = -limit;
+            item.vx = Math.abs(item.vx) * WALL_BOUNCE;
+        } else if (item.ix > limit) {
+            item.ix = limit;
+            item.vx = -Math.abs(item.vx) * WALL_BOUNCE;
+        }
+        if (item.iy < -limit) {
+            item.iy = -limit;
+            item.vy = Math.abs(item.vy) * WALL_BOUNCE;
+        } else if (item.iy > limit) {
+            item.iy = limit;
+            item.vy = -Math.abs(item.vy) * WALL_BOUNCE;
+        }
+    }
+
+    // ============================================================
+    //  СТЕЙТ-МАШИНА ПРЕДМЕТОВ
+    // ============================================================
+    function updateItemPhysics(item, dt) {
+        const type = ITEM_TYPES[item.type];
+        item.stateTime += dt;
+
+        switch (item.state) {
+            case 'idle':
+                item.iz = 0;
+                item.vx = 0;
+                item.vy = 0;
+                item.vz = 0;
+                break;
+
+            case 'lifting': {
+                item.liftProgress += LIFT_SPEED * dt;
+                if (item.liftProgress >= 1.0) {
+                    item.liftProgress = 1.0;
+                    item.state = 'carried';
+                    item.stateTime = 0;
+                }
+                const t = 1 - Math.pow(1 - item.liftProgress, 2);
+                item.iz = t * CARRY_HEIGHT;
+                item.ix += (hand.isoX - item.ix) * Math.min(1, dt * 10);
+                item.iy += (hand.isoY - item.iy) * Math.min(1, dt * 10);
+                break;
+            }
+
+            case 'carried':
+                item.ix = hand.isoX;
+                item.iy = hand.isoY;
+                item.iz = CARRY_HEIGHT;
+                break;
+
+            case 'thrown':
+            case 'bouncing':
+                item.vz -= GRAVITY * dt;
+                item.ix += item.vx * dt;
+                item.iy += item.vy * dt;
+                item.iz += item.vz * dt;
+
+                // Лёгкое сопротивление воздуха (frame-rate независимо)
+                const airFactor = Math.pow(AIR_RESISTANCE, dt * 60);
+                item.vx *= airFactor;
+                item.vy *= airFactor;
+
+                // Отскок от стен
+                clampToGrid(item);
+
+                if (item.iz <= 0) {
+                    item.iz = 0;
+
+                    if (Math.abs(item.vz) > BOUNCE_MIN_VZ && item.bounceCount < MAX_BOUNCES) {
+                        // Отскок
+                        if (item.bounceCount === 0) {
+                            triggerScreenShake(type.mass * Math.abs(item.vz) * 0.5);
+                        }
+                        item.vz = -item.vz * type.bounciness;
+                        item.vx *= type.friction;
+                        item.vy *= type.friction;
+                        item.bounceCount++;
+                        item.state = 'bouncing';
+                        item.stateTime = 0;
+                    } else {
+                        item.vz = 0;
+                        item.iz = 0;
+                        const hSpeed = Math.sqrt(item.vx * item.vx + item.vy * item.vy);
+                        if (hSpeed > SLIDE_STOP) {
+                            item.state = 'sliding';
+                        } else {
+                            item.vx = 0;
+                            item.vy = 0;
+                            item.state = 'settling';
+                        }
+                        item.stateTime = 0;
+                    }
+                }
+                break;
+
+            case 'sliding':
+                item.iz = 0;
+                item.vz = 0;
+
+                const frictionFactor = Math.pow(type.friction, dt * 5);
+                item.vx *= frictionFactor;
+                item.vy *= frictionFactor;
+
+                item.ix += item.vx * dt;
+                item.iy += item.vy * dt;
+
+                // Отскок от стен
+                clampToGrid(item);
+
+                const hSpeed = Math.sqrt(item.vx * item.vx + item.vy * item.vy);
+                if (hSpeed < SLIDE_STOP) {
+                    item.vx = 0;
+                    item.vy = 0;
+                    item.state = 'settling';
+                    item.stateTime = 0;
+                }
+                break;
+
+            case 'settling':
+                if (item.stateTime > 0.15) {
+                    item.state = 'idle';
+                    item.stateTime = 0;
+                    item.bounceCount = 0;
+                    item.grabbed = false;
+                }
+                break;
+        }
+    }
+
+    // ============================================================
+    //  ВВОД
+    // ============================================================
+    canvas.addEventListener('mousemove', (e) => {
+        mouseX = e.clientX;
+        mouseY = e.clientY;
+    });
+
+    canvas.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        mouseDown = true;
+        if (hoveredItem !== null && hand.grabbedItem === null) {
+            const item = items[hoveredItem];
+            if (item.state !== 'carried' && item.state !== 'lifting') {
+                hand.grabbedItem = hoveredItem;
+                item.grabbed = true;
+                item.state = 'lifting';
+                item.stateTime = 0;
+                item.liftProgress = 0;
+                item.vx = 0;
+                item.vy = 0;
+                item.vz = 0;
+                item.bounceCount = 0;
+                hand.state = 'closing';
+                hand.animProgress = 0;
+                hand.velocityHistory = [];
+                statusEl.textContent = `Захвачено: ${ITEM_TYPES[item.type].name}`;
+            }
+        }
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+        if (e.button !== 0) return;
+        mouseDown = false;
+        if (hand.grabbedItem !== null) {
+            const item = items[hand.grabbedItem];
+            const type = ITEM_TYPES[item.type];
+
+            item.grabbed = false;
+            item.iz = 0; // предмет вылетает из руки (визуально на уровне хватки)
+
+            const throwVel = calculateThrowVelocity(type);
+            item.vx = throwVel.vx;
+            item.vy = throwVel.vy;
+            item.vz = throwVel.vz;
+            item.state = 'thrown';
+            item.stateTime = 0;
+            item.bounceCount = 0;
+
+            hand.grabbedItem = null;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+
+            const speed = Math.sqrt(throwVel.vx ** 2 + throwVel.vy ** 2);
+            if (speed > 2) {
+                statusEl.textContent = `Брошено: ${type.name}!`;
+            } else {
+                statusEl.textContent = `Отпущено: ${type.name}`;
+            }
+        }
+    });
+
+    // Зум камеры: Z — отдалить, X — приблизить, C — сброс
+    // Рестарт карты: R
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'z' || e.key === 'я') {
+            camera.targetZoom = Math.max(camera.targetZoom * 0.9, 0.2);
+        } else if (e.key === 'x' || e.key === 'ч') {
+            camera.targetZoom = Math.min(camera.targetZoom * 1.1, 3.0);
+        } else if (e.key === 'c' || e.key === 'с') {
+            camera.targetZoom = 1.0;
+        } else if (e.key === 'r' || e.key === 'к') {
+            restartMap();
+        }
+    });
+
+    // ============================================================
+    //  РЕСТАРТ КАРТЫ
+    // ============================================================
+    function restartMap() {
+        // Сброс предметов на начальные позиции
+        items.length = 0;
+        for (const pos of INITIAL_POSITIONS) {
+            items.push(createItem(pos.type, pos.ix, pos.iy));
+        }
+
+        // Сброс руки
+        hand.grabbedItem = null;
+        hand.state = 'open';
+        hand.animProgress = 0;
+        hand.velocityHistory = [];
+
+        // Сброс камеры
+        camera.zoom = 1.0;
+        camera.targetZoom = 1.0;
+
+        // Сброс тряски
+        screenShake.intensity = 0;
+        screenShake.offsetX = 0;
+        screenShake.offsetY = 0;
+
+        // Сброс наведения
+        hoveredItem = null;
+
+        statusEl.textContent = 'Карта перезапущена!';
+    }
+
+    // ============================================================
+    //  КОЛЛИЗИИ МЕЖДУ ПРЕДМЕТАМИ
+    // ============================================================
+    function resolveItemCollisions() {
+        for (let i = 0; i < items.length; i++) {
+            for (let j = i + 1; j < items.length; j++) {
+                const a = items[i];
+                const b = items[j];
+
+                // Предметы в руке не участвуют в коллизиях
+                if (a.state === 'carried' || a.state === 'lifting') continue;
+                if (b.state === 'carried' || b.state === 'lifting') continue;
+
+                const typeA = ITEM_TYPES[a.type];
+                const typeB = ITEM_TYPES[b.type];
+                const minDist = typeA.radius + typeB.radius;
+
+                // Проверяем высоту — сталкиваются только если на одном уровне
+                if (Math.abs(a.iz - b.iz) > minDist * 0.5) continue;
+
+                const dx = b.ix - a.ix;
+                const dy = b.iy - a.iy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist >= minDist || dist < 0.0001) continue;
+
+                // Нормаль столкновения
+                const nx = dx / dist;
+                const ny = dy / dist;
+
+                // Раздвигаем предметы пропорционально массам
+                const overlap = minDist - dist;
+                const totalMass = typeA.mass + typeB.mass;
+                a.ix -= nx * overlap * (typeB.mass / totalMass);
+                a.iy -= ny * overlap * (typeB.mass / totalMass);
+                b.ix += nx * overlap * (typeA.mass / totalMass);
+                b.iy += ny * overlap * (typeA.mass / totalMass);
+
+                // Импульс только если предметы сближаются
+                const dvx = b.vx - a.vx;
+                const dvy = b.vy - a.vy;
+                const dot = dvx * nx + dvy * ny;
+                if (dot >= 0) continue;
+
+                const restitution = Math.min(typeA.bounciness, typeB.bounciness);
+                const impulse = -(1 + restitution) * dot / totalMass;
+
+                a.vx -= impulse * typeB.mass * nx;
+                a.vy -= impulse * typeB.mass * ny;
+                b.vx += impulse * typeA.mass * nx;
+                b.vy += impulse * typeA.mass * ny;
+
+                // Будим неподвижные предметы
+                if (a.state === 'idle' || a.state === 'settling') {
+                    a.state = 'sliding';
+                    a.stateTime = 0;
+                }
+                if (b.state === 'idle' || b.state === 'settling') {
+                    b.state = 'sliding';
+                    b.stateTime = 0;
+                }
+
+                // Тряска экрана при сильном ударе тяжёлых предметов
+                const impactSpeed = Math.abs(dot);
+                if (impactSpeed > 2.0) {
+                    triggerScreenShake(Math.min(typeA.mass, typeB.mass) * impactSpeed * 0.2);
+                }
+            }
+        }
+    }
+
+    // ============================================================
+    //  ОБНОВЛЕНИЕ
+    // ============================================================
+    function update(dt) {
+        // Плавное движение руки к курсору
+        const lerp = 1 - Math.pow(0.001, dt);
+        hand.screenX += (mouseX - hand.screenX) * lerp;
+        hand.screenY += (mouseY - hand.screenY) * lerp;
+
+        // Конвертируем позицию руки в изометрические координаты
+        const iso = screenToIso(hand.screenX, hand.screenY);
+        hand.isoX = iso.x;
+        hand.isoY = iso.y;
+
+        // Трекинг скорости руки для расчёта броска
+        if (dt > 0) {
+            const hvx = (hand.isoX - hand.prevIsoX) / dt;
+            const hvy = (hand.isoY - hand.prevIsoY) / dt;
+            hand.velocityHistory.push({ vx: hvx, vy: hvy, dt: dt });
+            if (hand.velocityHistory.length > VELOCITY_HISTORY) {
+                hand.velocityHistory.shift();
+            }
+        }
+        hand.prevIsoX = hand.isoX;
+        hand.prevIsoY = hand.isoY;
+
+        // Анимация захвата/отпускания
+        if (hand.state === 'closing' || hand.state === 'opening') {
+            hand.animProgress += dt * 5;
+            if (hand.animProgress >= 1) {
+                hand.animProgress = 1;
+                hand.state = hand.state === 'closing' ? 'closed' : 'open';
+            }
+        }
+
+        // Обновляем физику всех предметов
+        for (let i = 0; i < items.length; i++) {
+            updateItemPhysics(items[i], dt);
+        }
+
+        // Коллизии между предметами
+        resolveItemCollisions();
+
+        // Проверяем наведение на предметы (все кроме carried/lifting)
+        hoveredItem = null;
+        if (hand.grabbedItem === null) {
+            let minDist = 1.5; // радиус захвата
+            for (let i = 0; i < items.length; i++) {
+                const it = items[i];
+                if (it.state === 'carried' || it.state === 'lifting') continue;
+                // Для летящих предметов — увеличиваем радиус захвата, но только если невысоко
+                if (it.iz > 2.0) continue; // слишком высоко — не достать
+                const dx = hand.isoX - it.ix;
+                const dy = hand.isoY - it.iy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < minDist) {
+                    minDist = dist;
+                    hoveredItem = i;
+                }
+            }
+        }
+
+        // Тряска экрана
+        updateScreenShake(dt);
+
+        // Плавный зум
+        camera.zoom += (camera.targetZoom - camera.zoom) * Math.min(1, dt * 8);
+
+        // Обновляем статус
+        if (hand.grabbedItem === null && hoveredItem !== null) {
+            statusEl.textContent = `Навести: ${ITEM_TYPES[items[hoveredItem].type].name} [зажми ЛКМ]`;
+        } else if (hand.grabbedItem === null && hoveredItem === null) {
+            statusEl.textContent = 'Рука открыта';
+        }
+    }
+
+    // ============================================================
+    //  ТЕНЬ (с учётом высоты)
+    // ============================================================
+    function drawShadow(sx, sy, w, h) {
+        ctx.save();
+        ctx.globalAlpha = 0.25;
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        ctx.ellipse(sx, sy + 8, w * PIXEL_SCALE * 0.5, h * PIXEL_SCALE * 0.2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function drawItemShadow(sx, sy, w, h, height) {
+        ctx.save();
+        const heightFactor = 1 / (1 + height * 0.8);
+        const alpha = 0.25 * heightFactor;
+        const scaleW = w * PIXEL_SCALE * 0.5 * heightFactor;
+        const scaleH = h * PIXEL_SCALE * 0.2 * heightFactor;
+
+        ctx.globalAlpha = Math.max(alpha, 0.05);
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        ctx.ellipse(sx, sy + 8, Math.max(scaleW, 3), Math.max(scaleH, 1.5), 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    // ============================================================
+    //  ПОДСВЕТКА
+    // ============================================================
+    function drawHighlight(sx, sy, w, h) {
+        ctx.save();
+        const time = performance.now() / 500;
+        ctx.globalAlpha = 0.3 + 0.15 * Math.sin(time);
+        ctx.strokeStyle = '#ffff44';
+        ctx.lineWidth = 2;
+        const pw = w * PIXEL_SCALE;
+        const ph = h * PIXEL_SCALE;
+        ctx.strokeRect(sx - 4, sy - 4, pw + 8, ph + 8);
+        ctx.restore();
+    }
+
+    // ============================================================
+    //  ОТРИСОВКА
+    // ============================================================
+    function drawItem(item, index) {
+        const type = ITEM_TYPES[item.type];
+        const s = worldToScreen(item.ix, item.iy);
+
+        // Тень на земле (с учётом высоты)
+        drawItemShadow(s.x, s.y, type.w, type.h, item.iz);
+
+        // Для переносимых/поднимаемых предметов — рисуем прямо в хватке руки
+        if (item.state === 'carried' || item.state === 'lifting') {
+            const time = performance.now() / 300;
+            const wobbleX = hand.grabbedItem !== null ? Math.sin(time) * 1.5 : 0;
+            const wobbleY = hand.grabbedItem !== null ? Math.cos(time * 1.3) * 1 : 0;
+
+            // Центр хватки закрытой руки: примерно ряд 5-6 спрайта руки
+            const gripOffsetY = -8; // предмет чуть выше центра ладони
+            const lerpT = item.state === 'lifting' ? (1 - Math.pow(1 - item.liftProgress, 2)) : 1;
+
+            // Стартовая позиция (на земле) и целевая (в руке)
+            const canvasPos = screenToCanvas(hand.screenX, hand.screenY);
+            const groundOx = s.x - (type.w * PIXEL_SCALE) / 2;
+            const groundOy = s.y - (type.h * PIXEL_SCALE) - 4;
+            const handOx = canvasPos.x - (type.w * PIXEL_SCALE) / 2 + wobbleX;
+            const handOy = canvasPos.y - (type.h * PIXEL_SCALE) / 2 + gripOffsetY + wobbleY;
+
+            const ox = groundOx + (handOx - groundOx) * lerpT;
+            const oy = groundOy + (handOy - groundOy) * lerpT;
+
+            drawPixelArt(ox, oy, type.pixels, PIXEL_SCALE);
+            return;
+        }
+
+        // Смещение по высоте (для летящих/отскакивающих)
+        const heightOffset = item.iz * HEIGHT_TO_SCREEN;
+
+        const ox = s.x - (type.w * PIXEL_SCALE) / 2;
+        const oy = s.y - (type.h * PIXEL_SCALE) - 4 - heightOffset;
+
+        // Подсветка если наведено
+        if (index === hoveredItem) {
+            drawHighlight(ox, oy, type.w, type.h);
+        }
+
+        // Предмет
+        drawPixelArt(ox, oy, type.pixels, PIXEL_SCALE);
+    }
+
+    // Пересчёт screen-координат в координаты зумированного canvas
+    function screenToCanvas(sx, sy) {
+        return {
+            x: (sx - canvas.width / 2) / camera.zoom + canvas.width / 2,
+            y: (sy - canvas.height / 2) / camera.zoom + canvas.height / 2,
+        };
+    }
+
+    function drawHand() {
+        const canvasPos = screenToCanvas(hand.screenX, hand.screenY);
+        const sx = canvasPos.x;
+        const sy = canvasPos.y;
+
+        // Тень руки
+        drawShadow(sx, sy + 15, 10, 11);
+
+        // Определяем какие пиксели рисовать в зависимости от состояния
+        let pixels;
+        const handW = 10;
+        const handH = 12;
+
+        if (hand.state === 'open') {
+            pixels = HAND_OPEN_PIXELS;
+        } else if (hand.state === 'closed') {
+            pixels = HAND_CLOSED_PIXELS;
+        } else {
+            // Анимация — интерполяция между открытой и закрытой
+            const t = hand.state === 'closing' ? hand.animProgress : 1 - hand.animProgress;
+            // Используем ближайший кадр
+            pixels = t < 0.5 ? HAND_OPEN_PIXELS : HAND_CLOSED_PIXELS;
+        }
+
+        // Рисуем руку центрируя на курсоре
+        const ox = sx - (handW * PIXEL_SCALE) / 2;
+        const oy = sy - (handH * PIXEL_SCALE) / 2 - 20; // поднимаем руку над поверхностью
+
+        // Если что-то захвачено, немного покачиваем
+        let wobbleX = 0, wobbleY = 0;
+        if (hand.grabbedItem !== null) {
+            const time = performance.now() / 300;
+            wobbleX = Math.sin(time) * 1.5;
+            wobbleY = Math.cos(time * 1.3) * 1;
+        }
+
+        drawPixelArt(ox + wobbleX, oy + wobbleY, pixels, PIXEL_SCALE);
+    }
+
+    // ============================================================
+    //  СОРТИРОВКА ПО ГЛУБИНЕ
+    // ============================================================
+    function getDepth(isoX, isoY) {
+        return isoX + isoY;
+    }
+
+    function render() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.imageSmoothingEnabled = false;
+
+        // Зум камеры + тряска экрана
+        ctx.save();
+        ctx.translate(canvas.width / 2 + screenShake.offsetX, canvas.height / 2 + screenShake.offsetY);
+        ctx.scale(camera.zoom, camera.zoom);
+        ctx.translate(-canvas.width / 2, -canvas.height / 2);
+
+        // Пол
+        drawFloor();
+
+        // Собираем все объекты для сортировки по глубине
+        const renderList = [];
+
+        // Предметы (не в состоянии carried/lifting — те рисуются с рукой)
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].state === 'carried' || items[i].state === 'lifting') continue;
+            renderList.push({
+                type: 'item',
+                index: i,
+                depth: getDepth(items[i].ix, items[i].iy)
+            });
+        }
+
+        // Рука (и захваченный предмет рисуются вместе)
+        renderList.push({
+            type: 'hand',
+            depth: getDepth(hand.isoX, hand.isoY)
+        });
+
+        // Сортируем по глубине
+        renderList.sort((a, b) => a.depth - b.depth);
+
+        // Рисуем
+        for (const obj of renderList) {
+            if (obj.type === 'item') {
+                drawItem(items[obj.index], obj.index);
+            } else if (obj.type === 'hand') {
+                // Захваченный предмет рисуем перед рукой
+                if (hand.grabbedItem !== null) {
+                    drawItem(items[hand.grabbedItem], hand.grabbedItem);
+                }
+                drawHand();
+            }
+        }
+
+        ctx.restore();
+
+        // Курсор-точка (вне зума и тряски — стабильный)
+        ctx.fillStyle = '#ff4444';
+        ctx.fillRect(mouseX - 1, mouseY - 1, 3, 3);
+
+        // Индикатор зума
+        if (Math.abs(camera.zoom - 1.0) > 0.01) {
+            ctx.fillStyle = '#aab';
+            ctx.font = '12px monospace';
+            ctx.fillText(`Зум: ${Math.round(camera.zoom * 100)}%`, 16, canvas.height - 16);
+        }
+    }
+
+    // ============================================================
+    //  GAME LOOP
+    // ============================================================
+    let lastTime = performance.now();
+
+    function gameLoop(now) {
+        const dt = Math.min((now - lastTime) / 1000, 0.05);
+        lastTime = now;
+
+        update(dt);
+        render();
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
