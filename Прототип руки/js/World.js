@@ -22,6 +22,9 @@ export const screenShake = {
     offsetY: 0,
 };
 
+export const bloodParticles = [];  // { x, y, vx, vy, life, maxLife, size }
+export const bloodPuddles   = [];  // { ix, iy, size, t, duration }
+
 // ============================================================
 //  ТРЯСКА ЭКРАНА
 // ============================================================
@@ -147,6 +150,10 @@ export function restartMap(hand, statusEl) {
     screenShake.offsetX = 0;
     screenShake.offsetY = 0;
 
+    // Сброс крови
+    bloodParticles.length = 0;
+    bloodPuddles.length = 0;
+
     // Сброс shake-детектора, выделения
     hand.shakeHistory = [];
     hand.prevScreenXForShake = 0;
@@ -173,4 +180,7 @@ export function initWorld() {
     flag.ix = 0;
     flag.iy = 0;
     flag.iz = 0;
+
+    bloodParticles.length = 0;
+    bloodPuddles.length = 0;
 }

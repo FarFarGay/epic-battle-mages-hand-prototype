@@ -31,8 +31,8 @@ export const MINION_SPEED    = 1.5;  // скорость блуждания ми
 export const MINION_MAX_HP   = 100;  // начальное здоровье гоблина
 export const FALL_DMG_MED_VZ = 2.5;  // |vz| при ударе → средний урон
 export const FALL_DMG_HI_VZ  = 5.0;  // |vz| при ударе → большой урон
-export const FALL_DMG_MED    = 10;
-export const FALL_DMG_HI     = 25;
+export const FALL_DMG_MED    = 25;  // 25% от MINION_MAX_HP
+export const FALL_DMG_HI     = 50;  // 50% от MINION_MAX_HP
 
 // — Типы предметов —
 export const ITEM_TYPES = [

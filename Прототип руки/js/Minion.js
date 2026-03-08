@@ -35,6 +35,8 @@ export class Minion extends GameObject {
         this.pauseDuration = 1.0;
         this.hp = MINION_MAX_HP;
         this.dead = false;
+        this.damageWobble = 0;        // таймер тряски при получении урона
+        this.pendingBloodEffect = null; // { type: 'hit'|'death', ix, iy }
         this.pickNewTarget();
     }
 
@@ -46,13 +48,23 @@ export class Minion extends GameObject {
 
     onLand(impactVz) {
         if (!this.dead) {
+            const prevHp = this.hp;
             if (impactVz >= FALL_DMG_HI_VZ) {
                 this.hp = Math.max(0, this.hp - FALL_DMG_HI);
             } else if (impactVz >= FALL_DMG_MED_VZ) {
                 this.hp = Math.max(0, this.hp - FALL_DMG_MED);
             }
-            if (this.hp <= 0) this.dead = true;
+            if (this.hp < prevHp) {
+                this.damageWobble = 0.4;
+                if (this.hp <= 0) {
+                    this.dead = true;
+                    this.pendingBloodEffect = { type: 'death', ix: this.ix, iy: this.iy };
+                } else {
+                    this.pendingBloodEffect = { type: 'hit', ix: this.ix, iy: this.iy };
+                }
+            }
         }
+        // Мёртвый гоблин — крови не оставляет
     }
 
     onSettle() {
@@ -68,6 +80,7 @@ export class Minion extends GameObject {
 
     update(dt, hand, flag, triggerShake) {
         this.stateTime += dt;
+        if (this.damageWobble > 0) this.damageWobble = Math.max(0, this.damageWobble - dt);
 
         switch (this.state) {
             case 'wandering': {
@@ -149,8 +162,18 @@ export class Minion extends GameObject {
         }
 
         const heightOffset = this.iz * HEIGHT_TO_SCREEN;
-        const ox = s.x - (MINION_W * PIXEL_SCALE) / 2;
-        const oy = s.y - (MINION_H * PIXEL_SCALE) - 4 - heightOffset;
+
+        // Тряска при получении урона
+        let hitOffsetX = 0, hitOffsetY = 0;
+        if (this.damageWobble > 0) {
+            const t = performance.now();
+            const shake = this.damageWobble * 7;
+            hitOffsetX = Math.sin(t * 0.05) * shake;
+            hitOffsetY = Math.cos(t * 0.07) * shake * 0.4;
+        }
+
+        const ox = s.x - (MINION_W * PIXEL_SCALE) / 2 + hitOffsetX;
+        const oy = s.y - (MINION_H * PIXEL_SCALE) - 4 - heightOffset + hitOffsetY;
 
         if (hand.grabbedFlag && hand.selectedMinions.includes(index)) {
             ctx.save();

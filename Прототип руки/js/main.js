@@ -6,7 +6,7 @@ import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H } from './sprit
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow, drawFloor } from './renderer.js';
 import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, flag, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, initWorld } from './World.js';
+import { items, minions, flag, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, initWorld, bloodParticles, bloodPuddles } from './World.js';
 import { initInput } from './input.js';
 
 // ============================================================
@@ -219,6 +219,76 @@ function update(dt) {
         }
     }
 
+    // Эффекты крови от миньонов
+    for (const minion of minions) {
+        if (minion.pendingBloodEffect) {
+            const effect = minion.pendingBloodEffect;
+            minion.pendingBloodEffect = null;
+            const s = worldToScreen(effect.ix, effect.iy);
+            const isDeath = effect.type === 'death';
+            const count    = isDeath ? 20 : 8;
+            const maxLife  = isDeath ? 0.65 : 0.4;
+            const spawnY   = s.y - PIXEL_SCALE * 4;
+            for (let i = 0; i < count; i++) {
+                bloodParticles.push({
+                    x: s.x + (Math.random() - 0.5) * 6,
+                    y: spawnY,
+                    vx: (Math.random() - 0.5) * 90,
+                    vy: -20 - Math.random() * 70,
+                    life: maxLife * (0.6 + Math.random() * 0.4),
+                    maxLife,
+                    size: isDeath ? PIXEL_SCALE * 1.5 : PIXEL_SCALE,
+                });
+            }
+            // Генерируем рваный пиксельный паттерн лужицы один раз при создании
+            const rx = isDeath ? 30 : 15;  // полуширина px
+            const ry = isDeath ? 11 : 5;   // полувысота px (плоский эллипс)
+            const puddlePixels = [];
+            const puddleColors = ['#880000', '#770000', '#990000', '#660000'];
+            for (let py = -ry - PIXEL_SCALE; py <= ry + PIXEL_SCALE; py += PIXEL_SCALE) {
+                for (let px = -rx - PIXEL_SCALE; px <= rx + PIXEL_SCALE; px += PIXEL_SCALE) {
+                    const nx = px / rx;
+                    const ny = py / ry;
+                    const d  = nx * nx + ny * ny;
+                    const color = puddleColors[Math.floor(Math.random() * puddleColors.length)];
+                    if (d <= 0.65) {
+                        // Ядро — всегда заполнено
+                        puddlePixels.push({ dx: px, dy: py, color });
+                    } else if (d <= 1.1) {
+                        // Внутренний край — 65% шанс (рваность)
+                        if (Math.random() < 0.65) puddlePixels.push({ dx: px, dy: py, color });
+                    } else if (d <= 1.6) {
+                        // Внешние брызги — 20% шанс
+                        if (Math.random() < 0.20) puddlePixels.push({ dx: px, dy: py, color: '#550000' });
+                    }
+                }
+            }
+            bloodPuddles.push({
+                ix: effect.ix,
+                iy: effect.iy,
+                pixels: puddlePixels,
+                duration: isDeath ? 4.0 : 2.0,
+                t: 0,
+            });
+        }
+    }
+
+    // Обновляем частицы крови
+    for (let i = bloodParticles.length - 1; i >= 0; i--) {
+        const p = bloodParticles[i];
+        p.x  += p.vx * dt;
+        p.y  += p.vy * dt;
+        p.vy += 150 * dt; // гравитация частиц
+        p.life -= dt;
+        if (p.life <= 0) bloodParticles.splice(i, 1);
+    }
+
+    // Обновляем лужицы крови
+    for (let i = bloodPuddles.length - 1; i >= 0; i--) {
+        bloodPuddles[i].t += dt;
+        if (bloodPuddles[i].t >= bloodPuddles[i].duration) bloodPuddles.splice(i, 1);
+    }
+
     // Тряска экрана
     updateScreenShake(dt);
 
@@ -277,6 +347,15 @@ function render() {
         });
     }
 
+    // Лужицы крови (рисуются ниже всех объектов)
+    for (let i = 0; i < bloodPuddles.length; i++) {
+        renderList.push({
+            type: 'bloodPuddle',
+            index: i,
+            depth: getDepth(bloodPuddles[i].ix, bloodPuddles[i].iy) - 0.01,
+        });
+    }
+
     // Флаг на поле
     if (flag.state === 'placed') {
         renderList.push({
@@ -300,6 +379,21 @@ function render() {
             items[obj.index].draw(obj.index, hand, hoveredItem);
         } else if (obj.type === 'minion') {
             minions[obj.index].draw(obj.index, hand, hoveredMinion);
+        } else if (obj.type === 'bloodPuddle') {
+            const p = bloodPuddles[obj.index];
+            const s = worldToScreen(p.ix, p.iy);
+            const alpha = Math.pow(1 - p.t / p.duration, 0.5) * 0.82;
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            for (const px of p.pixels) {
+                ctx.fillStyle = px.color;
+                ctx.fillRect(
+                    Math.round(s.x + px.dx),
+                    Math.round(s.y - 2 + px.dy),
+                    PIXEL_SCALE, PIXEL_SCALE
+                );
+            }
+            ctx.restore();
         } else if (obj.type === 'flag') {
             drawFlagInWorld(false);
         } else if (obj.type === 'hand') {
@@ -310,6 +404,16 @@ function render() {
             }
             hand.draw();
         }
+    }
+
+    // Частицы крови
+    for (const p of bloodParticles) {
+        const alpha = Math.pow(p.life / p.maxLife, 0.5) * 0.9;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = '#cc1111';
+        ctx.fillRect(Math.round(p.x - p.size / 2), Math.round(p.y - p.size / 2), p.size, p.size);
+        ctx.restore();
     }
 
     // Эффект растворения флага
