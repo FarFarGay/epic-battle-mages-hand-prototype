@@ -18,7 +18,7 @@
 </head>
 <body>
     <div id="ui">
-        <div>Зажми ЛКМ — схватить, отпусти — бросить</div>
+        <div>ЛКМ — схватить/бросить | Тяни на пустом месте — выделить миньонов</div>
         <div id="status">Рука открыта</div>
     </div>
     <canvas id="game"></canvas>
@@ -240,10 +240,6 @@
     ];
     const FLAG_W = 5, FLAG_H = 8;
 
-    // Позиция дока флага на экране (левый край, вне поля)
-    const FLAG_DOCK_X = 44;
-    const FLAG_DOCK_Y = 110;
-
     const ITEM_TYPES = [
         { name: 'Зелье',    pixels: POTION_PIXELS,  w: 7, h: 8, mass: 1.0, bounciness: 0.3, friction: 0.85, radius: 0.35 },
         { name: 'Камень',   pixels: CUBE_PIXELS,    w: 7, h: 6, mass: 2.5, bounciness: 0.5, friction: 0.7,  radius: 0.40 },
@@ -399,6 +395,9 @@
         prevIsoX: 0,
         prevIsoY: 0,
         velocityHistory: [],
+        prevScreenXForShake: 0,
+        shakeHistory: [],       // { dx, t } для определения встряхивания
+        selectedMinions: [],    // индексы выделенных миньонов (пока флаг в руке)
     };
 
     const screenShake = {
@@ -412,12 +411,25 @@
         targetZoom: 1.0,
     };
 
+    const selection = {
+        active: false,
+        startX: 0, startY: 0,
+        endX: 0, endY: 0,
+    };
+
+    const flagEffect = {
+        active: false,
+        originX: 0, originY: 0,  // canvas (pre-zoom) coords
+        t: 0,
+        duration: 0.5,
+        particles: [],
+    };
+
     let mouseX = canvas.width / 2;
     let mouseY = canvas.height / 2;
     let mouseDown = false;
     let hoveredItem = null;
     let hoveredMinion = null;
-    let hoveredFlag = false;
 
     // ============================================================
     //  ФИЗИКА БРОСАНИЯ
@@ -764,6 +776,16 @@
         const ox = s.x - (MINION_W * PIXEL_SCALE) / 2;
         const oy = s.y - (MINION_H * PIXEL_SCALE) - 4 - heightOffset;
 
+        if (hand.grabbedFlag && hand.selectedMinions.includes(index)) {
+            ctx.save();
+            const time = performance.now() / 400;
+            ctx.globalAlpha = 0.35 + 0.2 * Math.sin(time);
+            ctx.strokeStyle = '#44ff88';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(ox - 5, oy - 5, MINION_W * PIXEL_SCALE + 10, MINION_H * PIXEL_SCALE + 10);
+            ctx.restore();
+        }
+
         if (index === hoveredMinion) {
             drawHighlight(ox, oy, MINION_W, MINION_H);
         }
@@ -786,28 +808,6 @@
         drawPixelArt(sx, sy, FLAG_PIXELS, PIXEL_SCALE);
     }
 
-    function drawFlagDocked() {
-        const sx = FLAG_DOCK_X - (FLAG_W * PIXEL_SCALE) / 2;
-        const sy = FLAG_DOCK_Y - (FLAG_H * PIXEL_SCALE) / 2;
-
-        // Фон-слот
-        ctx.save();
-        ctx.globalAlpha = 0.25;
-        ctx.fillStyle = '#334455';
-        ctx.fillRect(sx - 5, sy - 5, FLAG_W * PIXEL_SCALE + 10, FLAG_H * PIXEL_SCALE + 10);
-        ctx.restore();
-
-        drawFlagAt(sx, sy, hoveredFlag);
-
-        // Подпись
-        ctx.save();
-        ctx.globalAlpha = 0.6;
-        ctx.fillStyle = '#aab';
-        ctx.font = '10px monospace';
-        ctx.fillText('флаг', FLAG_DOCK_X - 10, FLAG_DOCK_Y + FLAG_H * PIXEL_SCALE / 2 + 14);
-        ctx.restore();
-    }
-
     function drawFlagInWorld(isHovered) {
         const s = worldToScreen(flag.ix, flag.iy);
         // Тень на земле
@@ -819,36 +819,67 @@
     }
 
     // ============================================================
+    //  ВСТРЯХИВАНИЕ ФЛАГА
+    // ============================================================
+    function dismissFlag() {
+        const cp = screenToCanvas(hand.screenX, hand.screenY);
+        flagEffect.active = true;
+        flagEffect.originX = cp.x - (FLAG_W * PIXEL_SCALE) / 2;
+        flagEffect.originY = cp.y - (FLAG_H * PIXEL_SCALE) / 2 - 8;
+        flagEffect.t = 0;
+        flagEffect.particles = FLAG_PIXELS.map(p => ({
+            x: p[0] * PIXEL_SCALE,
+            y: p[1] * PIXEL_SCALE,
+            vx: (Math.random() - 0.5) * 80,
+            vy: (Math.random() - 0.5) * 80 - 30,
+            color: p[2],
+        }));
+
+        flag.state = 'docked';
+        hand.grabbedFlag = false;
+        hand.state = 'opening';
+        hand.animProgress = 0;
+        hand.shakeHistory = [];
+        hand.selectedMinions = [];
+
+        for (const m of minions) {
+            if (m.state === 'wandering' || m.state === 'paused') {
+                pickNewMinionTarget(m);
+            }
+        }
+
+        statusEl.textContent = 'Флаг рассеян!';
+    }
+
+    // ============================================================
     //  ВВОД
     // ============================================================
     canvas.addEventListener('mousemove', (e) => {
         mouseX = e.clientX;
         mouseY = e.clientY;
+        if (selection.active) {
+            selection.endX = mouseX;
+            selection.endY = mouseY;
+        }
     });
 
     canvas.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
         mouseDown = true;
         const handFree = hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag;
-        if (hoveredFlag && handFree) {
-            // Поднимаем флаг (из дока или с поля)
-            if (flag.state === 'placed') {
-                // Возвращаем миньонов к блужданию
-                for (const m of minions) {
-                    if (m.state === 'wandering' || m.state === 'paused') {
-                        pickNewMinionTarget(m);
-                        m.state = 'wandering';
-                    }
-                }
-            }
-            flag.state = 'carried';
+
+        if (hand.grabbedFlag && hoveredItem === null && hoveredMinion === null) {
+            // Устанавливаем флаг кликом на свободное место
             flag.ix = hand.isoX;
             flag.iy = hand.isoY;
-            hand.grabbedFlag = true;
-            hand.state = 'closing';
+            flag.iz = 0;
+            flag.state = 'placed';
+            hand.grabbedFlag = false;
+            hand.state = 'opening';
             hand.animProgress = 0;
             hand.velocityHistory = [];
-            statusEl.textContent = 'Захвачено: Флаг';
+            hand.selectedMinions = [];
+            statusEl.textContent = 'Флаг установлен';
         } else if (hoveredItem !== null && handFree) {
             const item = items[hoveredItem];
             if (item.state !== 'carried' && item.state !== 'lifting') {
@@ -882,6 +913,13 @@
                 hand.velocityHistory = [];
                 statusEl.textContent = 'Захвачено: Миньон';
             }
+        } else if (handFree) {
+            // Начинаем выделение рамкой — от позиции руки
+            selection.active = true;
+            selection.startX = hand.screenX;
+            selection.startY = hand.screenY;
+            selection.endX = mouseX;
+            selection.endY = mouseY;
         }
     });
 
@@ -916,6 +954,7 @@
             }
         } else if (hand.grabbedMinion !== null) {
             const minion = minions[hand.grabbedMinion];
+            minion.iz = 0;
             const throwVel = calculateThrowVelocity({ mass: minion.mass });
             minion.vx = throwVel.vx;
             minion.vy = throwVel.vy;
@@ -931,17 +970,45 @@
 
             const speed = Math.sqrt(throwVel.vx ** 2 + throwVel.vy ** 2);
             statusEl.textContent = speed > 2 ? 'Брошен: Миньон!' : 'Отпущен: Миньон';
-        } else if (hand.grabbedFlag) {
-            // Флаг просто кладётся на поле — без броска
-            flag.ix = hand.isoX;
-            flag.iy = hand.isoY;
-            flag.iz = 0;
-            flag.state = 'placed';
-            hand.grabbedFlag = false;
-            hand.state = 'opening';
-            hand.animProgress = 0;
-            hand.velocityHistory = [];
-            statusEl.textContent = 'Флаг установлен';
+        } else if (selection.active) {
+            selection.active = false;
+            const selW = Math.abs(selection.endX - selection.startX);
+            const selH = Math.abs(selection.endY - selection.startY);
+            if (selW > 5 || selH > 5) {
+                const tl = screenToCanvas(
+                    Math.min(selection.startX, selection.endX),
+                    Math.min(selection.startY, selection.endY)
+                );
+                const br = screenToCanvas(
+                    Math.max(selection.startX, selection.endX),
+                    Math.max(selection.startY, selection.endY)
+                );
+                hand.selectedMinions = [];
+                for (let i = 0; i < minions.length; i++) {
+                    const m = minions[i];
+                    if (m.state !== 'wandering' && m.state !== 'paused') continue;
+                    const s = worldToScreen(m.ix, m.iy);
+                    const mx = s.x;
+                    const my = s.y - (MINION_H * PIXEL_SCALE) / 2;
+                    if (mx >= tl.x && mx <= br.x && my >= tl.y && my <= br.y) {
+                        hand.selectedMinions.push(i);
+                    }
+                }
+                if (hand.selectedMinions.length > 0) {
+                    hand.grabbedFlag = true;
+                    hand.state = 'closing';
+                    hand.animProgress = 0;
+                    if (flag.state === 'placed') {
+                        flag.state = 'docked';
+                        for (const m of minions) {
+                            if (m.state === 'wandering' || m.state === 'paused') {
+                                pickNewMinionTarget(m);
+                            }
+                        }
+                    }
+                    statusEl.textContent = `Выделено ${hand.selectedMinions.length} миньон(а) — кликни чтобы поставить флаг`;
+                }
+            }
         }
     });
 
@@ -1001,7 +1068,13 @@
         // Сброс наведения
         hoveredItem = null;
         hoveredMinion = null;
-        hoveredFlag = false;
+        selection.active = false;
+
+        // Сброс shake-детектора, выделения и эффекта флага
+        hand.shakeHistory = [];
+        hand.prevScreenXForShake = 0;
+        hand.selectedMinions = [];
+        flagEffect.active = false;
 
         statusEl.textContent = 'Карта перезапущена!';
     }
@@ -1103,6 +1176,46 @@
         hand.prevIsoX = hand.isoX;
         hand.prevIsoY = hand.isoY;
 
+        // Детектор встряхивания флага
+        if (hand.grabbedFlag) {
+            const dsx = hand.screenX - hand.prevScreenXForShake;
+            const now = performance.now();
+            if (Math.abs(dsx) > 2) {
+                hand.shakeHistory.push({ dx: dsx, t: now });
+            }
+            // Держим только последние 0.6с
+            const cutoff = now - 600;
+            while (hand.shakeHistory.length > 0 && hand.shakeHistory[0].t < cutoff) {
+                hand.shakeHistory.shift();
+            }
+            // Считаем смены направления
+            let signChanges = 0;
+            let prevSign = 0;
+            for (const h of hand.shakeHistory) {
+                const s = Math.sign(h.dx);
+                if (prevSign !== 0 && s !== prevSign) signChanges++;
+                prevSign = s;
+            }
+            if (signChanges >= 5) {
+                dismissFlag();
+            }
+        }
+        hand.prevScreenXForShake = hand.screenX;
+
+        // Обновление эффекта растворения флага
+        if (flagEffect.active) {
+            flagEffect.t += dt;
+            if (flagEffect.t >= flagEffect.duration) {
+                flagEffect.active = false;
+            } else {
+                for (const p of flagEffect.particles) {
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += 120 * dt; // гравитация частиц
+                }
+            }
+        }
+
         // Анимация захвата/отпускания
         if (hand.state === 'closing' || hand.state === 'opening') {
             hand.animProgress += dt * 5;
@@ -1123,20 +1236,6 @@
         // Обновляем миньонов
         for (let i = 0; i < minions.length; i++) {
             updateMinion(minions[i], dt);
-        }
-
-        // Флаг: hover в зависимости от состояния
-        hoveredFlag = false;
-        if (!hand.grabbedFlag && hand.grabbedItem === null && hand.grabbedMinion === null) {
-            if (flag.state === 'docked') {
-                const dx = mouseX - FLAG_DOCK_X;
-                const dy = mouseY - FLAG_DOCK_Y;
-                hoveredFlag = Math.sqrt(dx * dx + dy * dy) < 22;
-            } else if (flag.state === 'placed') {
-                const dx = hand.isoX - flag.ix;
-                const dy = hand.isoY - flag.iy;
-                hoveredFlag = Math.sqrt(dx * dx + dy * dy) < 1.2;
-            }
         }
 
         // Проверяем наведение на предметы и миньонов
@@ -1180,8 +1279,8 @@
 
         // Обновляем статус
         const nothingHeld = hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag;
-        if (nothingHeld && hoveredFlag) {
-            statusEl.textContent = flag.state === 'docked' ? 'Флаг [зажми ЛКМ — поставь на поле]' : 'Флаг [зажми ЛКМ — убрать]';
+        if (hand.grabbedFlag) {
+            statusEl.textContent = 'Флаг в руке — кликни чтобы установить';
         } else if (nothingHeld && hoveredItem !== null) {
             statusEl.textContent = `Навести: ${ITEM_TYPES[items[hoveredItem].type].name} [зажми ЛКМ]`;
         } else if (nothingHeld && hoveredMinion !== null) {
@@ -1397,7 +1496,7 @@
             } else if (obj.type === 'minion') {
                 drawMinion(minions[obj.index], obj.index);
             } else if (obj.type === 'flag') {
-                drawFlagInWorld(hoveredFlag);
+                drawFlagInWorld(false);
             } else if (obj.type === 'hand') {
                 if (hand.grabbedItem !== null) {
                     drawItem(items[hand.grabbedItem], hand.grabbedItem);
@@ -1418,11 +1517,40 @@
             }
         }
 
+        // Эффект растворения флага
+        if (flagEffect.active) {
+            const alpha = Math.pow(1 - flagEffect.t / flagEffect.duration, 1.5);
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            for (const p of flagEffect.particles) {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(
+                    Math.floor(flagEffect.originX + p.x),
+                    Math.floor(flagEffect.originY + p.y),
+                    PIXEL_SCALE, PIXEL_SCALE
+                );
+            }
+            ctx.restore();
+        }
+
         ctx.restore();
 
-        // Флаг в доке (в экранном пространстве, вне зума)
-        if (flag.state === 'docked') {
-            drawFlagDocked();
+        // Рамка выделения (screen space, поверх всего)
+        if (selection.active) {
+            const sx = Math.min(selection.startX, selection.endX);
+            const sy = Math.min(selection.startY, selection.endY);
+            const sw = Math.abs(selection.endX - selection.startX);
+            const sh = Math.abs(selection.endY - selection.startY);
+            ctx.save();
+            ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = '#ffff44';
+            ctx.lineWidth = 1;
+            ctx.globalAlpha = 0.8;
+            ctx.strokeRect(sx, sy, sw, sh);
+            ctx.fillStyle = '#ffff44';
+            ctx.globalAlpha = 0.06;
+            ctx.fillRect(sx, sy, sw, sh);
+            ctx.restore();
         }
 
         // Курсор-точка (вне зума и тряски — стабильный)
