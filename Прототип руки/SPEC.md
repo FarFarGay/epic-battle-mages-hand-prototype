@@ -3,15 +3,47 @@
 ## 1. Обзор
 
 **Проект:** Прототип механики руки для игры "Epic Battle Mages"
-**Технологии:** Vanilla HTML5 Canvas 2D, JavaScript (без зависимостей)
-**Файл:** `index.html` (~1590 строк)
-**Запуск:** Открыть в браузере через локальный HTTP-сервер (напр. `python3 -m http.server 8080`)
+**Технологии:** Vanilla HTML5 Canvas 2D, JavaScript ES Modules (без зависимостей, без сборщика)
+**Файл:** `index.html` + модули в `js/` (~1800 строк суммарно)
+**Запуск:** Только через локальный HTTP-сервер (ES modules требуют HTTP): `python3 -m http.server 8080`
 
 Прототип реализует основную механику игры — руку волшебника, которая служит курсором. Рука может подбирать, переносить и бросать предметы с реалистичной физикой (гравитация, отскоки, трение, скольжение). Также реализовано управление миньонами через флаг.
 
 ---
 
 ## 2. Архитектура
+
+### Файловая структура (ES Modules)
+
+```
+index.html              — HTML-оболочка (27 строк), загружает js/main.js
+js/
+├── constants.js        — все игровые константы, ITEM_TYPES, начальные позиции
+├── sprites.js          — пиксельные спрайты (*_PIXELS массивы), без логики
+├── isometry.js         — изометрическая проекция, camera, screenToIso/isoToScreen
+├── renderer.js         — canvas/ctx, drawPixel, drawPixelArt, drawFloor, тени
+├── GameObject.js       — базовый класс: общая физика (lifting→carried→thrown→…)
+├── Item.js             — class Item extends GameObject: логика и отрисовка предмета
+├── Minion.js           — class Minion extends GameObject: AI, HP, смерть, отрисовка
+├── Hand.js             — class Hand: движение руки, захват, бросок, shake-детектор
+├── World.js            — items[], minions[], flag, screenShake, resolveCollisions, restartMap
+├── input.js            — все обработчики событий мыши и клавиатуры
+└── main.js             — игровой цикл: update(), render(), gameLoop()
+```
+
+### Иерархия классов
+
+```
+GameObject (базовая физика)
+├── Item     (предметы: зелье, камень, свиток, кристалл)
+└── Minion   (гоблины: AI блуждания, HP, мёртвое состояние)
+
+Hand         (рука-курсор, не наследует GameObject)
+```
+
+**`GameObject`** содержит метод `updatePhysics(dt, hand, triggerShake)` — общую стейт-машину физики для состояний `lifting`, `carried`, `thrown`, `bouncing`, `sliding`. Хуки для переопределения в подклассах:
+- `onLand(impactVz)` — при приземлении (используется в `Minion` для урона от падения)
+- `onSettle()` — после таймаута settling (переход в idle/wandering/dead)
 
 ### Рендеринг
 - **Изометрическая проекция** — угол 45° (`ISO_ANGLE = π/4`)
@@ -27,6 +59,7 @@
 ### Стейт-машины
 - **Рука:** `open` → `closing` → `closed` → `opening` → `open`
 - **Предметы:** `idle` → `lifting` → `carried` → `thrown` → `bouncing` → `sliding` → `settling` → `idle`
+- **Миньоны:** `wandering` ↔ `paused`, прерывается броском → `lifting` → `carried` → `thrown` → ... → `settling` → `wandering` (или `dead`)
 
 ---
 
