@@ -30,10 +30,9 @@ export class Minion extends GameObject {
     constructor(ix, iy) {
         super(ix, iy, 0.7, 0.25, 0.82);
         this.radius = 0.4; // для коллизий с замком
-        this.state = 'wandering';
+        this.state = 'free';
         this.targetX = ix;
         this.targetY = iy;
-        this.pauseDuration = 1.0;
         this.hp = MINION_MAX_HP;
         this.dead = false;
         this.damageWobble = 0;        // таймер тряски при получении урона
@@ -75,30 +74,22 @@ export class Minion extends GameObject {
             this.state = 'dead';
         } else {
             this.pickNewTarget();
-            this.state = 'wandering';
+            this.state = 'free';
         }
     }
 
-    update(dt, hand, flag, triggerShake) {
+    update(dt, hand, triggerShake) {
         this.stateTime += dt;
         if (this.damageWobble > 0) this.damageWobble = Math.max(0, this.damageWobble - dt);
 
         switch (this.state) {
-            case 'wandering': {
-                const flagActive = flag.state === 'placed';
-                const tx = flagActive ? flag.ix : this.targetX;
-                const ty = flagActive ? flag.iy : this.targetY;
-                const dx = tx - this.ix;
-                const dy = ty - this.iy;
+            // ── 1. Свободен ─────────────────────────────────────────
+            case 'free': {
+                const dx = this.targetX - this.ix;
+                const dy = this.targetY - this.iy;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 if (dist < 0.25) {
-                    if (!flagActive) {
-                        // Обычное блуждание: пауза и новая точка
-                        this.state = 'paused';
-                        this.pauseDuration = 0.5 + Math.random() * 1.5;
-                        this.stateTime = 0;
-                    }
-                    // Если флаг стоит — стоим на месте
+                    this.pickNewTarget();
                 } else {
                     const spd = MINION_SPEED * dt;
                     this.ix += (dx / dist) * spd;
@@ -110,12 +101,38 @@ export class Minion extends GameObject {
                 break;
             }
 
-            case 'paused':
-                if (this.stateTime > this.pauseDuration) {
+            // ── 2. Слушает ──────────────────────────────────────────
+            case 'listening':
+                // Стоит на месте, ждёт команду игрока
+                break;
+
+            // ── 3. Передвигается ────────────────────────────────────
+            case 'moving': {
+                const dx = this.targetX - this.ix;
+                const dy = this.targetY - this.iy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < 0.25) {
+                    // Дошёл до цели → переходит в свободное блуждание
+                    // (в будущем: → 'busy' если есть задача)
                     this.pickNewTarget();
-                    this.state = 'wandering';
+                    this.state = 'free';
                     this.stateTime = 0;
+                } else {
+                    const spd = MINION_SPEED * dt;
+                    this.ix += (dx / dist) * spd;
+                    this.iy += (dy / dist) * spd;
+                    const lim = GRID_SIZE - 0.5;
+                    this.ix = Math.max(-lim, Math.min(lim, this.ix));
+                    this.iy = Math.max(-lim, Math.min(lim, this.iy));
                 }
+                break;
+            }
+
+            // ── 4–7. Заглушки ───────────────────────────────────────
+            case 'busy':       // выполняет задачу (будущее)
+            case 'returning':  // возвращается к замку (будущее)
+            case 'war':        // видит врага (будущее)
+            case 'fighting':   // сражается (будущее)
                 break;
 
             case 'settling':

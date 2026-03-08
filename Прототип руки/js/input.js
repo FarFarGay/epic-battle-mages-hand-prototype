@@ -47,6 +47,16 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             flag.iy = hand.isoY;
             flag.iz = 0;
             flag.state = 'placed';
+            // Выбранные гоблины переходят в состояние «передвигается» к флагу
+            for (const idx of hand.selectedMinions) {
+                const m = minions[idx];
+                if (m.state === 'listening') {
+                    m.targetX = flag.ix;
+                    m.targetY = flag.iy;
+                    m.state = 'moving';
+                    m.stateTime = 0;
+                }
+            }
             hand.grabbedFlag = false;
             hand.state = 'opening';
             hand.animProgress = 0;
@@ -158,10 +168,11 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                     Math.max(selection.startY, selection.endY),
                     canvas
                 );
+                const SELECTABLE = ['free', 'listening', 'moving', 'busy', 'returning', 'war', 'fighting'];
                 hand.selectedMinions = [];
                 for (let i = 0; i < minions.length; i++) {
                     const m = minions[i];
-                    if (m.state !== 'wandering' && m.state !== 'paused') continue;
+                    if (!SELECTABLE.includes(m.state)) continue;
                     const s = worldToScreen(m.ix, m.iy, canvas);
                     const mx = s.x;
                     const my = s.y - (MINION_H * PIXEL_SCALE) / 2;
@@ -170,14 +181,23 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                     }
                 }
                 if (hand.selectedMinions.length > 0) {
+                    // Выбранные гоблины переходят в состояние «слушает»
+                    for (const idx of hand.selectedMinions) {
+                        const m = minions[idx];
+                        m.state = 'listening';
+                        m.stateTime = 0;
+                    }
                     hand.grabbedFlag = true;
                     hand.state = 'closing';
                     hand.animProgress = 0;
                     if (flag.state === 'placed') {
                         flag.state = 'docked';
+                        // Остальные двигавшиеся к старому флагу → свободны
                         for (const m of minions) {
-                            if (m.state === 'wandering' || m.state === 'paused') {
+                            if (m.state === 'moving') {
                                 m.pickNewTarget();
+                                m.state = 'free';
+                                m.stateTime = 0;
                             }
                         }
                     }

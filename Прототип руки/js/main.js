@@ -106,8 +106,10 @@ function dismissFlag() {
     hand.selectedMinions = [];
 
     for (const m of minions) {
-        if (m.state === 'wandering' || m.state === 'paused') {
+        if (m.state === 'listening' || m.state === 'moving') {
             m.pickNewTarget();
+            m.state = 'free';
+            m.stateTime = 0;
         }
     }
 
@@ -187,7 +189,7 @@ function update(dt) {
 
     // Обновляем миньонов
     for (let i = 0; i < minions.length; i++) {
-        minions[i].update(dt, hand, flag, triggerScreenShake);
+        minions[i].update(dt, hand, triggerScreenShake);
     }
 
     // Проверяем наведение на предметы и миньонов
