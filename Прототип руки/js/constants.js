@@ -45,9 +45,12 @@ export const ITEM_TYPES = [
 // — Начальные позиции —
 export const INITIAL_POSITIONS = [
     { type: 0, ix: -2, iy: -1 },
-    { type: 1, ix:  2, iy:  1 },
     { type: 2, ix: -1, iy:  2 },
     { type: 3, ix:  1, iy: -2 },
+    { type: 1, ix:  5, iy:  3 },
+    { type: 1, ix: -6, iy:  2 },
+    { type: 1, ix:  3, iy: -5 },
+    { type: 1, ix: -4, iy: -4 },
 ];
 
 // — Замок —
