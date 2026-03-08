@@ -50,6 +50,10 @@ export const INITIAL_POSITIONS = [
     { type: 3, ix:  1, iy: -2 },
 ];
 
+// — Замок —
+export const CASTLE_BASE_RADIUS  = 1.3;  // радиус коллизии в iso-единицах (спрайт 80px при scale 8, ~1.25 iso-ед на сторону)
+export const CASTLE_TOWER_HEIGHT = 4.0;  // максимальная высота коллизии (world units)
+
 export const INITIAL_MINION_POSITIONS = [
     { ix: -4, iy:  0 },
     { ix:  4, iy:  0 },

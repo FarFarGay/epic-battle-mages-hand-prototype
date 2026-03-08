@@ -28,6 +28,7 @@ export class Item extends GameObject {
         const typeDef = ITEM_TYPES[typeIndex];
         super(ix, iy, typeDef.mass, typeDef.bounciness, typeDef.friction);
         this.typeIndex = typeIndex;
+        this.radius = typeDef.radius; // для коллизий с замком
         this.grabbed = false;
         this.state = 'idle';
     }

@@ -6,7 +6,7 @@ import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H } from './sprit
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow, drawFloor } from './renderer.js';
 import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, flag, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, initWorld, bloodParticles, bloodPuddles } from './World.js';
+import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles } from './World.js';
 import { initInput } from './input.js';
 
 // ============================================================
@@ -180,6 +180,10 @@ function update(dt) {
 
     // Коллизии между предметами
     resolveItemCollisions();
+
+    // Коллизии с замком
+    resolveCastleCollisions();
+    castle.update(dt);
 
     // Обновляем миньонов
     for (let i = 0; i < minions.length; i++) {
@@ -364,10 +368,15 @@ function render() {
         });
     }
 
-    // Рука (и захваченный объект рисуются вместе)
+    // Замок (два слоя: основание и башня)
+    for (const entry of castle.getRenderEntries()) {
+        renderList.push(entry);
+    }
+
+    // Рука всегда поверх всего
     renderList.push({
         type: 'hand',
-        depth: getDepth(hand.isoX, hand.isoY)
+        depth: Infinity,
     });
 
     // Сортируем по глубине
@@ -394,6 +403,8 @@ function render() {
                 );
             }
             ctx.restore();
+        } else if (obj.type === 'castle') {
+            castle.draw();
         } else if (obj.type === 'flag') {
             drawFlagInWorld(false);
         } else if (obj.type === 'hand') {

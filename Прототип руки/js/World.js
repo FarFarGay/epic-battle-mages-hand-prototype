@@ -4,6 +4,7 @@
 import { INITIAL_POSITIONS, INITIAL_MINION_POSITIONS } from './constants.js';
 import { Item } from './Item.js';
 import { Minion } from './Minion.js';
+import { Castle } from './Castle.js';
 
 // ============================================================
 //  СОСТОЯНИЕ МИРА
@@ -24,6 +25,8 @@ export const screenShake = {
 
 export const bloodParticles = [];  // { x, y, vx, vy, life, maxLife, size }
 export const bloodPuddles   = [];  // { ix, iy, size, t, duration }
+
+export let castle = null;
 
 // ============================================================
 //  ТРЯСКА ЭКРАНА
@@ -116,6 +119,15 @@ export function resolveItemCollisions() {
 }
 
 // ============================================================
+//  КОЛЛИЗИИ С ЗАМКОМ
+// ============================================================
+export function resolveCastleCollisions() {
+    if (!castle) return;
+    castle.pushObjects(items);
+    castle.pushObjects(minions);
+}
+
+// ============================================================
 //  РЕСТАРТ КАРТЫ
 // ============================================================
 export function restartMap(hand, statusEl) {
@@ -159,6 +171,8 @@ export function restartMap(hand, statusEl) {
     hand.prevScreenXForShake = 0;
     hand.selectedMinions = [];
 
+    castle = new Castle(0, -6);
+
     statusEl.textContent = 'Карта перезапущена!';
 }
 
@@ -183,4 +197,6 @@ export function initWorld() {
 
     bloodParticles.length = 0;
     bloodPuddles.length = 0;
+
+    castle = new Castle(0, -6);
 }

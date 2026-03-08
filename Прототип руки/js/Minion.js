@@ -29,6 +29,7 @@ function screenToCanvas(sx, sy) {
 export class Minion extends GameObject {
     constructor(ix, iy) {
         super(ix, iy, 0.7, 0.25, 0.82);
+        this.radius = 0.4; // для коллизий с замком
         this.state = 'wandering';
         this.targetX = ix;
         this.targetY = iy;
