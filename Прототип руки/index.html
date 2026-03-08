@@ -225,6 +225,25 @@
     ];
     const MINION_W = 6, MINION_H = 8;
 
+    // Флаг (древко + полотно)
+    const FLAG_PIXELS = [
+        // Древко
+        [0,0,'#996633'], [0,1,'#886622'], [0,2,'#886622'],
+        [0,3,'#886622'], [0,4,'#775511'], [0,5,'#775511'],
+        [0,6,'#775511'], [0,7,'#664410'],
+        // Основание
+        [1,7,'#553300'],
+        // Полотно
+        [1,0,'#ffee55'], [2,0,'#ffdd00'], [3,0,'#ffcc00'], [4,0,'#ddaa00'],
+        [1,1,'#ffdd00'], [2,1,'#ffcc00'], [3,1,'#ccaa00'],
+        [1,2,'#ffbb00'], [2,2,'#eeaa00'],
+    ];
+    const FLAG_W = 5, FLAG_H = 8;
+
+    // Позиция дока флага на экране (левый край, вне поля)
+    const FLAG_DOCK_X = 44;
+    const FLAG_DOCK_Y = 110;
+
     const ITEM_TYPES = [
         { name: 'Зелье',    pixels: POTION_PIXELS,  w: 7, h: 8, mass: 1.0, bounciness: 0.3, friction: 0.85, radius: 0.35 },
         { name: 'Камень',   pixels: CUBE_PIXELS,    w: 7, h: 6, mass: 2.5, bounciness: 0.5, friction: 0.7,  radius: 0.40 },
@@ -287,6 +306,12 @@
     ];
 
     const minions = INITIAL_MINION_POSITIONS.map(p => createMinion(p.ix, p.iy));
+
+    // Флаг — точка назначения для миньонов
+    const flag = {
+        state: 'docked', // 'docked' | 'carried' | 'placed'
+        ix: 0, iy: 0, iz: 0,
+    };
 
     // ============================================================
     //  РУКА (Pixel Art — изометрический вид)
@@ -370,6 +395,7 @@
         animProgress: 0,
         grabbedItem: null,
         grabbedMinion: null,
+        grabbedFlag: false,
         prevIsoX: 0,
         prevIsoY: 0,
         velocityHistory: [],
@@ -391,6 +417,7 @@
     let mouseDown = false;
     let hoveredItem = null;
     let hoveredMinion = null;
+    let hoveredFlag = false;
 
     // ============================================================
     //  ФИЗИКА БРОСАНИЯ
@@ -590,13 +617,20 @@
 
         switch (minion.state) {
             case 'wandering': {
-                const dx = minion.targetX - minion.ix;
-                const dy = minion.targetY - minion.iy;
+                const flagActive = flag.state === 'placed';
+                const tx = flagActive ? flag.ix : minion.targetX;
+                const ty = flagActive ? flag.iy : minion.targetY;
+                const dx = tx - minion.ix;
+                const dy = ty - minion.iy;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 if (dist < 0.25) {
-                    minion.state = 'paused';
-                    minion.pauseDuration = 0.5 + Math.random() * 1.5;
-                    minion.stateTime = 0;
+                    if (!flagActive) {
+                        // Обычное блуждание: пауза и новая точка
+                        minion.state = 'paused';
+                        minion.pauseDuration = 0.5 + Math.random() * 1.5;
+                        minion.stateTime = 0;
+                    }
+                    // Если флаг стоит — стоим на месте
                 } else {
                     const spd = MINION_SPEED * dt;
                     minion.ix += (dx / dist) * spd;
@@ -738,6 +772,53 @@
     }
 
     // ============================================================
+    //  ФЛАГ
+    // ============================================================
+    function drawFlagAt(sx, sy, isHovered) {
+        if (isHovered) {
+            ctx.save();
+            ctx.globalAlpha = 0.3 + 0.15 * Math.sin(performance.now() / 300);
+            ctx.strokeStyle = '#ffff44';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(sx - 4, sy - 4, FLAG_W * PIXEL_SCALE + 8, FLAG_H * PIXEL_SCALE + 8);
+            ctx.restore();
+        }
+        drawPixelArt(sx, sy, FLAG_PIXELS, PIXEL_SCALE);
+    }
+
+    function drawFlagDocked() {
+        const sx = FLAG_DOCK_X - (FLAG_W * PIXEL_SCALE) / 2;
+        const sy = FLAG_DOCK_Y - (FLAG_H * PIXEL_SCALE) / 2;
+
+        // Фон-слот
+        ctx.save();
+        ctx.globalAlpha = 0.25;
+        ctx.fillStyle = '#334455';
+        ctx.fillRect(sx - 5, sy - 5, FLAG_W * PIXEL_SCALE + 10, FLAG_H * PIXEL_SCALE + 10);
+        ctx.restore();
+
+        drawFlagAt(sx, sy, hoveredFlag);
+
+        // Подпись
+        ctx.save();
+        ctx.globalAlpha = 0.6;
+        ctx.fillStyle = '#aab';
+        ctx.font = '10px monospace';
+        ctx.fillText('флаг', FLAG_DOCK_X - 10, FLAG_DOCK_Y + FLAG_H * PIXEL_SCALE / 2 + 14);
+        ctx.restore();
+    }
+
+    function drawFlagInWorld(isHovered) {
+        const s = worldToScreen(flag.ix, flag.iy);
+        // Тень на земле
+        drawItemShadow(s.x, s.y, FLAG_W, FLAG_H, flag.iz);
+        const heightOffset = flag.iz * HEIGHT_TO_SCREEN;
+        const ox = s.x - (FLAG_W * PIXEL_SCALE) / 2;
+        const oy = s.y - (FLAG_H * PIXEL_SCALE) - 4 - heightOffset;
+        drawFlagAt(ox, oy, isHovered);
+    }
+
+    // ============================================================
     //  ВВОД
     // ============================================================
     canvas.addEventListener('mousemove', (e) => {
@@ -748,7 +829,27 @@
     canvas.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
         mouseDown = true;
-        if (hoveredItem !== null && hand.grabbedItem === null && hand.grabbedMinion === null) {
+        const handFree = hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag;
+        if (hoveredFlag && handFree) {
+            // Поднимаем флаг (из дока или с поля)
+            if (flag.state === 'placed') {
+                // Возвращаем миньонов к блужданию
+                for (const m of minions) {
+                    if (m.state === 'wandering' || m.state === 'paused') {
+                        pickNewMinionTarget(m);
+                        m.state = 'wandering';
+                    }
+                }
+            }
+            flag.state = 'carried';
+            flag.ix = hand.isoX;
+            flag.iy = hand.isoY;
+            hand.grabbedFlag = true;
+            hand.state = 'closing';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+            statusEl.textContent = 'Захвачено: Флаг';
+        } else if (hoveredItem !== null && handFree) {
             const item = items[hoveredItem];
             if (item.state !== 'carried' && item.state !== 'lifting') {
                 hand.grabbedItem = hoveredItem;
@@ -765,7 +866,7 @@
                 hand.velocityHistory = [];
                 statusEl.textContent = `Захвачено: ${ITEM_TYPES[item.type].name}`;
             }
-        } else if (hoveredMinion !== null && hand.grabbedItem === null && hand.grabbedMinion === null) {
+        } else if (hoveredMinion !== null && handFree) {
             const minion = minions[hoveredMinion];
             if (minion.state !== 'carried' && minion.state !== 'lifting') {
                 hand.grabbedMinion = hoveredMinion;
@@ -830,6 +931,17 @@
 
             const speed = Math.sqrt(throwVel.vx ** 2 + throwVel.vy ** 2);
             statusEl.textContent = speed > 2 ? 'Брошен: Миньон!' : 'Отпущен: Миньон';
+        } else if (hand.grabbedFlag) {
+            // Флаг просто кладётся на поле — без броска
+            flag.ix = hand.isoX;
+            flag.iy = hand.isoY;
+            flag.iz = 0;
+            flag.state = 'placed';
+            hand.grabbedFlag = false;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+            statusEl.textContent = 'Флаг установлен';
         }
     });
 
@@ -863,9 +975,16 @@
             minions.push(createMinion(pos.ix, pos.iy));
         }
 
+        // Сброс флага
+        flag.state = 'docked';
+        flag.ix = 0;
+        flag.iy = 0;
+        flag.iz = 0;
+
         // Сброс руки
         hand.grabbedItem = null;
         hand.grabbedMinion = null;
+        hand.grabbedFlag = false;
         hand.state = 'open';
         hand.animProgress = 0;
         hand.velocityHistory = [];
@@ -882,6 +1001,7 @@
         // Сброс наведения
         hoveredItem = null;
         hoveredMinion = null;
+        hoveredFlag = false;
 
         statusEl.textContent = 'Карта перезапущена!';
     }
@@ -1005,10 +1125,24 @@
             updateMinion(minions[i], dt);
         }
 
+        // Флаг: hover в зависимости от состояния
+        hoveredFlag = false;
+        if (!hand.grabbedFlag && hand.grabbedItem === null && hand.grabbedMinion === null) {
+            if (flag.state === 'docked') {
+                const dx = mouseX - FLAG_DOCK_X;
+                const dy = mouseY - FLAG_DOCK_Y;
+                hoveredFlag = Math.sqrt(dx * dx + dy * dy) < 22;
+            } else if (flag.state === 'placed') {
+                const dx = hand.isoX - flag.ix;
+                const dy = hand.isoY - flag.iy;
+                hoveredFlag = Math.sqrt(dx * dx + dy * dy) < 1.2;
+            }
+        }
+
         // Проверяем наведение на предметы и миньонов
         hoveredItem = null;
         hoveredMinion = null;
-        if (hand.grabbedItem === null && hand.grabbedMinion === null) {
+        if (hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag) {
             let minDist = 1.5;
             for (let i = 0; i < items.length; i++) {
                 const it = items[i];
@@ -1045,8 +1179,10 @@
         camera.zoom += (camera.targetZoom - camera.zoom) * Math.min(1, dt * 8);
 
         // Обновляем статус
-        const nothingHeld = hand.grabbedItem === null && hand.grabbedMinion === null;
-        if (nothingHeld && hoveredItem !== null) {
+        const nothingHeld = hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag;
+        if (nothingHeld && hoveredFlag) {
+            statusEl.textContent = flag.state === 'docked' ? 'Флаг [зажми ЛКМ — поставь на поле]' : 'Флаг [зажми ЛКМ — убрать]';
+        } else if (nothingHeld && hoveredItem !== null) {
             statusEl.textContent = `Навести: ${ITEM_TYPES[items[hoveredItem].type].name} [зажми ЛКМ]`;
         } else if (nothingHeld && hoveredMinion !== null) {
             statusEl.textContent = 'Навести: Миньон [зажми ЛКМ]';
@@ -1237,6 +1373,14 @@
             });
         }
 
+        // Флаг на поле
+        if (flag.state === 'placed') {
+            renderList.push({
+                type: 'flag',
+                depth: getDepth(flag.ix, flag.iy)
+            });
+        }
+
         // Рука (и захваченный объект рисуются вместе)
         renderList.push({
             type: 'hand',
@@ -1252,17 +1396,34 @@
                 drawItem(items[obj.index], obj.index);
             } else if (obj.type === 'minion') {
                 drawMinion(minions[obj.index], obj.index);
+            } else if (obj.type === 'flag') {
+                drawFlagInWorld(hoveredFlag);
             } else if (obj.type === 'hand') {
                 if (hand.grabbedItem !== null) {
                     drawItem(items[hand.grabbedItem], hand.grabbedItem);
                 } else if (hand.grabbedMinion !== null) {
                     drawMinion(minions[hand.grabbedMinion], hand.grabbedMinion);
+                } else if (hand.grabbedFlag) {
+                    // Флаг в руке — рисуем у курсора
+                    const cp = screenToCanvas(hand.screenX, hand.screenY);
+                    const wobbleX = Math.sin(performance.now() / 300) * 1.5;
+                    const wobbleY = Math.cos(performance.now() / 230) * 1;
+                    drawFlagAt(
+                        cp.x - (FLAG_W * PIXEL_SCALE) / 2 + wobbleX,
+                        cp.y - (FLAG_H * PIXEL_SCALE) / 2 - 8 + wobbleY,
+                        false
+                    );
                 }
                 drawHand();
             }
         }
 
         ctx.restore();
+
+        // Флаг в доке (в экранном пространстве, вне зума)
+        if (flag.state === 'docked') {
+            drawFlagDocked();
+        }
 
         // Курсор-точка (вне зума и тряски — стабильный)
         ctx.fillStyle = '#ff4444';
