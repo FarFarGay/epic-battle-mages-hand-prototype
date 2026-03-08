@@ -69,6 +69,11 @@
     const CAMERA_OFFSET_Y = 40;   // вертикальное смещение центра мира (px)
     const AIR_RESISTANCE  = 0.99; // коэффициент сопротивления воздуха (за 1/60 сек)
     const MINION_SPEED    = 1.5;  // скорость блуждания миньона (iso ед/с)
+    const MINION_MAX_HP   = 100;  // начальное здоровье гоблина
+    const FALL_DMG_MED_VZ = 2.5;  // |vz| при ударе → средний урон (10)
+    const FALL_DMG_HI_VZ  = 5.0;  // |vz| при ударе → большой урон (25)
+    const FALL_DMG_MED    = 10;
+    const FALL_DMG_HI     = 25;
 
     function isoToScreen(ix, iy) {
         return {
@@ -225,6 +230,23 @@
     ];
     const MINION_W = 6, MINION_H = 8;
 
+    // Мёртвый гоблин (X-глаза, потемнее)
+    const MINION_DEAD_PIXELS = [
+        // Голова
+        [1,0,'#338833'], [2,0,'#448844'], [3,0,'#448844'], [4,0,'#338833'],
+        [0,1,'#227722'], [1,1,'#448844'], [2,1,'#558855'], [3,1,'#558855'], [4,1,'#448844'], [5,1,'#227722'],
+        // X-глаза
+        [1,2,'#558855'], [2,2,'#dd2222'], [3,2,'#558855'], [4,2,'#dd2222'], [5,2,'#338833'],
+        // Рот (прямой)
+        [1,3,'#338833'], [2,3,'#664444'], [3,3,'#664444'], [4,3,'#338833'],
+        // Тело (темнее)
+        [0,4,'#1a6622'], [1,4,'#256633'], [2,4,'#337733'], [3,4,'#337733'], [4,4,'#256633'], [5,4,'#1a6622'],
+        [0,5,'#0d5511'], [1,5,'#1a6622'], [2,5,'#256633'], [3,5,'#256633'], [4,5,'#1a6622'], [5,5,'#0d5511'],
+        // Ноги
+        [1,6,'#1a5522'], [2,6,'#1a5522'], [3,6,'#1a5522'], [4,6,'#1a5522'],
+        [1,7,'#0d4411'], [2,7,'#1a5522'], [3,7,'#1a5522'], [4,7,'#0d4411'],
+    ];
+
     // Флаг (древко + полотно)
     const FLAG_PIXELS = [
         // Древко
@@ -291,6 +313,8 @@
             mass: 0.7,
             bounciness: 0.25,
             friction: 0.82,
+            hp: MINION_MAX_HP,
+            dead: false,
         };
         pickNewMinionTarget(m);
         return m;
@@ -694,6 +718,16 @@
                 clampToGrid(minion);
                 if (minion.iz <= 0) {
                     minion.iz = 0;
+                    // Урон от падения (только живому)
+                    if (!minion.dead) {
+                        const impactVz = Math.abs(minion.vz);
+                        if (impactVz >= FALL_DMG_HI_VZ) {
+                            minion.hp = Math.max(0, minion.hp - FALL_DMG_HI);
+                        } else if (impactVz >= FALL_DMG_MED_VZ) {
+                            minion.hp = Math.max(0, minion.hp - FALL_DMG_MED);
+                        }
+                        if (minion.hp <= 0) minion.dead = true;
+                    }
                     if (Math.abs(minion.vz) > BOUNCE_MIN_VZ && minion.bounceCount < MAX_BOUNCES) {
                         if (minion.bounceCount === 0) {
                             triggerScreenShake(minion.mass * Math.abs(minion.vz) * 0.5);
@@ -741,11 +775,22 @@
 
             case 'settling':
                 if (minion.stateTime > 0.3) {
-                    pickNewMinionTarget(minion);
-                    minion.state = 'wandering';
-                    minion.stateTime = 0;
                     minion.bounceCount = 0;
+                    minion.stateTime = 0;
+                    if (minion.dead) {
+                        minion.state = 'dead';
+                    } else {
+                        pickNewMinionTarget(minion);
+                        minion.state = 'wandering';
+                    }
                 }
+                break;
+
+            case 'dead':
+                minion.iz = 0;
+                minion.vx = 0;
+                minion.vy = 0;
+                minion.vz = 0;
                 break;
         }
     }
@@ -754,6 +799,8 @@
         const s = worldToScreen(minion.ix, minion.iy);
 
         drawItemShadow(s.x, s.y, MINION_W, MINION_H, minion.iz);
+
+        const minionSprite = minion.dead ? MINION_DEAD_PIXELS : MINION_PIXELS;
 
         if (minion.state === 'carried' || minion.state === 'lifting') {
             const time = performance.now() / 300;
@@ -768,7 +815,7 @@
             const handOy = canvasPos.y - (MINION_H * PIXEL_SCALE) / 2 + gripOffsetY + wobbleY;
             const ox = groundOx + (handOx - groundOx) * lerpT;
             const oy = groundOy + (handOy - groundOy) * lerpT;
-            drawPixelArt(ox, oy, MINION_PIXELS, PIXEL_SCALE);
+            drawPixelArt(ox, oy, minionSprite, PIXEL_SCALE);
             return;
         }
 
@@ -790,7 +837,7 @@
             drawHighlight(ox, oy, MINION_W, MINION_H);
         }
 
-        drawPixelArt(ox, oy, MINION_PIXELS, PIXEL_SCALE);
+        drawPixelArt(ox, oy, minionSprite, PIXEL_SCALE);
     }
 
     // ============================================================
