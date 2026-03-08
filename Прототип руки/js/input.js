@@ -83,6 +83,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
         } else if (world.hoveredMinion !== null && handFree) {
             const minion = minions[world.hoveredMinion];
             if (minion.state !== 'carried' && minion.state !== 'lifting') {
+                minion.dropCarriedItem(); // бросить камень если нёс
                 hand.grabbedMinion = world.hoveredMinion;
                 minion.state = 'lifting';
                 minion.stateTime = 0;
@@ -184,6 +185,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                     // Выбранные гоблины переходят в состояние «слушает»
                     for (const idx of hand.selectedMinions) {
                         const m = minions[idx];
+                        m.dropCarriedItem(); // бросить камень если нёс
                         m.state = 'listening';
                         m.stateTime = 0;
                     }
@@ -216,6 +218,19 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             cam.targetZoom = Math.min(cam.targetZoom * 1.1, 3.0);
         } else if (e.key === 'c' || e.key === 'с') {
             cam.targetZoom = 1.0;
+        } else if (e.key === '1') {
+            // Назначить задачу «добывать» всем ожидающим гоблинам
+            let count = 0;
+            for (const m of minions) {
+                if (m.state === 'waiting') {
+                    if (m.assignGatherTask(items)) count++;
+                }
+            }
+            if (count > 0) {
+                statusEl.textContent = `${count} гоблин(а) начинают добычу камней`;
+            } else {
+                statusEl.textContent = 'Нет гоблинов ожидающих задачу';
+            }
         } else if (e.key === 'r' || e.key === 'к') {
             restartMap(hand, statusEl);
             // Сбрасываем наведение и выделение

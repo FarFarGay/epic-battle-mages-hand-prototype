@@ -57,6 +57,8 @@ export class Item extends GameObject {
             return;
         }
 
+        if (this.state === 'goblin_carried') return; // позиция управляется гоблином
+
         this.updatePhysics(dt, hand, triggerShake);
     }
 

@@ -56,9 +56,9 @@ export function resolveItemCollisions() {
             const a = items[i];
             const b = items[j];
 
-            // Предметы в руке не участвуют в коллизиях
-            if (a.state === 'carried' || a.state === 'lifting') continue;
-            if (b.state === 'carried' || b.state === 'lifting') continue;
+            // Предметы в руке или у гоблина не участвуют в коллизиях
+            if (a.state === 'carried' || a.state === 'lifting' || a.state === 'goblin_carried') continue;
+            if (b.state === 'carried' || b.state === 'lifting' || b.state === 'goblin_carried') continue;
 
             const typeA = a.typeDef;
             const typeB = b.typeDef;

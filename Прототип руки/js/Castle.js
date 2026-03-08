@@ -64,7 +64,7 @@ export class Castle {
     // Разрешает столкновения замка со всеми переданными объектами
     pushObjects(objects) {
         for (const obj of objects) {
-            if (obj.state === 'carried' || obj.state === 'lifting') continue;
+            if (obj.state === 'carried' || obj.state === 'lifting' || obj.state === 'goblin_carried') continue;
             if (obj.iz > this.towerHeight) continue;
 
             const dx = obj.ix - this.ix;

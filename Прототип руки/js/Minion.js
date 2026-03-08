@@ -37,6 +37,12 @@ export class Minion extends GameObject {
         this.dead = false;
         this.damageWobble = 0;        // таймер тряски при получении урона
         this.pendingBloodEffect = null; // { type: 'hit'|'death', ix, iy }
+
+        // Система задач
+        this.task = null;        // null | 'gather'
+        this.targetItem = null;  // ссылка на предмет-цель
+        this.carriedItem = null; // ссылка на переносимый предмет
+
         this.pickNewTarget();
     }
 
@@ -44,6 +50,57 @@ export class Minion extends GameObject {
         const limit = GRID_SIZE - 1.0;
         this.targetX = (Math.random() * 2 - 1) * limit;
         this.targetY = (Math.random() * 2 - 1) * limit;
+    }
+
+    // ── Задачи ──────────────────────────────────────────────────
+
+    // Найти ближайший камень (typeIndex=1) не занятый рукой или другим гоблином
+    findNearestStone(items) {
+        let nearest = null;
+        let nearestDist = Infinity;
+        for (const item of items) {
+            if (item.typeIndex !== 1) continue; // только камни
+            if (item.state === 'carried' || item.state === 'lifting' || item.state === 'goblin_carried') continue;
+            const dx = item.ix - this.ix;
+            const dy = item.iy - this.iy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < nearestDist) {
+                nearestDist = dist;
+                nearest = item;
+            }
+        }
+        return nearest;
+    }
+
+    // Назначить задачу «добывать». Возвращает true если задача принята.
+    assignGatherTask(items) {
+        this.task = 'gather';
+        const stone = this.findNearestStone(items);
+        if (!stone) {
+            this.task = null;
+            this.state = 'free';
+            this.stateTime = 0;
+            return false;
+        }
+        this.targetItem = stone;
+        this.carriedItem = null;
+        this.state = 'busy';
+        this.stateTime = 0;
+        return true;
+    }
+
+    // Бросить переносимый предмет (если есть) — вызывается при захвате рукой или переназначении
+    dropCarriedItem() {
+        if (this.carriedItem) {
+            this.carriedItem.state = 'thrown';
+            this.carriedItem.vx = 0;
+            this.carriedItem.vy = 0;
+            this.carriedItem.vz = 0;
+            this.carriedItem.stateTime = 0;
+            this.carriedItem = null;
+        }
+        this.targetItem = null;
+        this.task = null;
     }
 
     onLand(impactVz) {
@@ -70,6 +127,7 @@ export class Minion extends GameObject {
     onSettle() {
         this.bounceCount = 0;
         this.stateTime = 0;
+        this.dropCarriedItem(); // бросаем камень если несли
         if (this.dead) {
             this.state = 'dead';
         } else {
@@ -78,7 +136,7 @@ export class Minion extends GameObject {
         }
     }
 
-    update(dt, hand, triggerShake) {
+    update(dt, hand, triggerShake, items, castle) {
         this.stateTime += dt;
         if (this.damageWobble > 0) this.damageWobble = Math.max(0, this.damageWobble - dt);
 
@@ -131,9 +189,96 @@ export class Minion extends GameObject {
                 // Стоит у флага, ждёт задачу от игрока
                 break;
 
-            // ── 5–8. Заглушки ───────────────────────────────────────
-            case 'busy':       // выполняет задачу (будущее)
-            case 'returning':  // возвращается к замку (будущее)
+            // ── 5. Занят: идёт к камню ──────────────────────────────
+            case 'busy': {
+                if (this.task === 'gather') {
+                    // Проверяем что цель ещё доступна
+                    if (!this.targetItem ||
+                        this.targetItem.state === 'carried' ||
+                        this.targetItem.state === 'lifting' ||
+                        this.targetItem.state === 'goblin_carried') {
+                        const stone = this.findNearestStone(items);
+                        if (!stone) {
+                            this.task = null;
+                            this.state = 'free';
+                            this.stateTime = 0;
+                        } else {
+                            this.targetItem = stone;
+                        }
+                        break;
+                    }
+                    const dx = this.targetItem.ix - this.ix;
+                    const dy = this.targetItem.iy - this.iy;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const canPickUp = this.targetItem.state === 'idle' ||
+                                      this.targetItem.state === 'settling' ||
+                                      this.targetItem.state === 'sliding';
+                    if (dist < 0.6 && canPickUp) {
+                        // Поднять камень
+                        this.targetItem.state = 'goblin_carried';
+                        this.targetItem.vx = 0;
+                        this.targetItem.vy = 0;
+                        this.targetItem.vz = 0;
+                        this.carriedItem = this.targetItem;
+                        this.targetItem = null;
+                        this.state = 'returning';
+                        this.stateTime = 0;
+                    } else {
+                        const spd = MINION_SPEED * dt;
+                        this.ix += (dx / dist) * spd;
+                        this.iy += (dy / dist) * spd;
+                        const lim = GRID_SIZE - 0.5;
+                        this.ix = Math.max(-lim, Math.min(lim, this.ix));
+                        this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                    }
+                }
+                break;
+            }
+
+            // ── 6. Возвращается: несёт камень в замок ───────────────
+            case 'returning': {
+                if (this.task === 'gather' && this.carriedItem) {
+                    // Камень следует за гоблином
+                    this.carriedItem.ix = this.ix;
+                    this.carriedItem.iy = this.iy;
+                    this.carriedItem.iz = 0.5;
+
+                    if (!castle) break;
+
+                    const dx = castle.ix - this.ix;
+                    const dy = castle.iy - this.iy;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist < castle.baseRadius + this.radius) {
+                        // Сдать камень
+                        const idx = items.indexOf(this.carriedItem);
+                        if (idx !== -1) items.splice(idx, 1);
+                        this.carriedItem = null;
+
+                        // Искать следующий камень
+                        const stone = this.findNearestStone(items);
+                        if (!stone) {
+                            this.task = null;
+                            this.state = 'free';
+                            this.stateTime = 0;
+                        } else {
+                            this.targetItem = stone;
+                            this.state = 'busy';
+                            this.stateTime = 0;
+                        }
+                    } else {
+                        const spd = MINION_SPEED * dt;
+                        this.ix += (dx / dist) * spd;
+                        this.iy += (dy / dist) * spd;
+                        const lim = GRID_SIZE - 0.5;
+                        this.ix = Math.max(-lim, Math.min(lim, this.ix));
+                        this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                    }
+                }
+                break;
+            }
+
+            // ── 7–8. Заглушки ───────────────────────────────────────
             case 'war':        // видит врага (будущее)
             case 'fighting':   // сражается (будущее)
                 break;

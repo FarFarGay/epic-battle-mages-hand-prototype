@@ -189,7 +189,7 @@ function update(dt) {
 
     // Обновляем миньонов
     for (let i = 0; i < minions.length; i++) {
-        minions[i].update(dt, hand, triggerScreenShake);
+        minions[i].update(dt, hand, triggerScreenShake, items, castle);
     }
 
     // Проверяем наведение на предметы и миньонов
@@ -199,7 +199,7 @@ function update(dt) {
         let minDist = 1.5;
         for (let i = 0; i < items.length; i++) {
             const it = items[i];
-            if (it.state === 'carried' || it.state === 'lifting') continue;
+            if (it.state === 'carried' || it.state === 'lifting' || it.state === 'goblin_carried') continue;
             if (it.iz > 2.0) continue;
             const dx = hand.isoX - it.ix;
             const dy = hand.isoY - it.iy;
@@ -310,7 +310,12 @@ function update(dt) {
     } else if (nothingHeld && hoveredMinion !== null) {
         statusEl.textContent = 'Навести: Миньон [зажми ЛКМ]';
     } else if (nothingHeld) {
-        statusEl.textContent = 'Рука открыта';
+        const waitingCount = minions.filter(m => m.state === 'waiting').length;
+        if (waitingCount > 0) {
+            statusEl.textContent = `${waitingCount} гоблин(а) ждут задачу [1 — добывать]`;
+        } else {
+            statusEl.textContent = 'Рука открыта';
+        }
     }
 }
 
