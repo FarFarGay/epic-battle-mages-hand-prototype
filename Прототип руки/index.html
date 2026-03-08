@@ -68,6 +68,7 @@
     const WALL_BOUNCE     = 0.6;  // коэффициент отскока от стен
     const CAMERA_OFFSET_Y = 40;   // вертикальное смещение центра мира (px)
     const AIR_RESISTANCE  = 0.99; // коэффициент сопротивления воздуха (за 1/60 сек)
+    const MINION_SPEED    = 1.5;  // скорость блуждания миньона (iso ед/с)
 
     function isoToScreen(ix, iy) {
         return {
@@ -206,6 +207,24 @@
         [3,1,'#ffbbff'], [3,2,'#ffaaff'],
     ];
 
+    // Миньон (зелёный гоблин)
+    const MINION_PIXELS = [
+        // Голова
+        [1,0,'#44bb44'], [2,0,'#55cc55'], [3,0,'#55cc55'], [4,0,'#44bb44'],
+        [0,1,'#33aa33'], [1,1,'#55cc55'], [2,1,'#66dd66'], [3,1,'#66dd66'], [4,1,'#55cc55'], [5,1,'#33aa33'],
+        // Глаза
+        [1,2,'#55cc55'], [2,2,'#110011'], [3,2,'#55cc55'], [4,2,'#110011'], [5,2,'#44bb44'],
+        // Рот
+        [1,3,'#44bb44'], [2,3,'#995555'], [3,3,'#995555'], [4,3,'#44bb44'],
+        // Тело
+        [0,4,'#228833'], [1,4,'#338844'], [2,4,'#44aa44'], [3,4,'#44aa44'], [4,4,'#338844'], [5,4,'#228833'],
+        [0,5,'#117722'], [1,5,'#228833'], [2,5,'#338844'], [3,5,'#338844'], [4,5,'#228833'], [5,5,'#117722'],
+        // Ноги
+        [1,6,'#226633'], [2,6,'#226633'], [3,6,'#226633'], [4,6,'#226633'],
+        [1,7,'#115522'], [2,7,'#226633'], [3,7,'#226633'], [4,7,'#115522'],
+    ];
+    const MINION_W = 6, MINION_H = 8;
+
     const ITEM_TYPES = [
         { name: 'Зелье',    pixels: POTION_PIXELS,  w: 7, h: 8, mass: 1.0, bounciness: 0.3, friction: 0.85, radius: 0.35 },
         { name: 'Камень',   pixels: CUBE_PIXELS,    w: 7, h: 6, mass: 2.5, bounciness: 0.5, friction: 0.7,  radius: 0.40 },
@@ -234,6 +253,40 @@
     ];
 
     const items = INITIAL_POSITIONS.map(p => createItem(p.type, p.ix, p.iy));
+
+    // ============================================================
+    //  МИНЬОНЫ
+    // ============================================================
+    function pickNewMinionTarget(minion) {
+        const limit = GRID_SIZE - 1.0;
+        minion.targetX = (Math.random() * 2 - 1) * limit;
+        minion.targetY = (Math.random() * 2 - 1) * limit;
+    }
+
+    function createMinion(ix, iy) {
+        const m = {
+            ix, iy, iz: 0,
+            vx: 0, vy: 0, vz: 0,
+            state: 'wandering',
+            stateTime: 0,
+            liftProgress: 0,
+            bounceCount: 0,
+            targetX: ix, targetY: iy,
+            pauseDuration: 1.0,
+            mass: 0.7,
+            bounciness: 0.25,
+            friction: 0.82,
+        };
+        pickNewMinionTarget(m);
+        return m;
+    }
+
+    const INITIAL_MINION_POSITIONS = [
+        { ix: -4, iy:  0 },
+        { ix:  4, iy:  0 },
+    ];
+
+    const minions = INITIAL_MINION_POSITIONS.map(p => createMinion(p.ix, p.iy));
 
     // ============================================================
     //  РУКА (Pixel Art — изометрический вид)
@@ -316,6 +369,7 @@
         state: 'open', // 'open', 'closing', 'closed', 'opening'
         animProgress: 0,
         grabbedItem: null,
+        grabbedMinion: null,
         prevIsoX: 0,
         prevIsoY: 0,
         velocityHistory: [],
@@ -336,6 +390,7 @@
     let mouseY = canvas.height / 2;
     let mouseDown = false;
     let hoveredItem = null;
+    let hoveredMinion = null;
 
     // ============================================================
     //  ФИЗИКА БРОСАНИЯ
@@ -528,6 +583,161 @@
     }
 
     // ============================================================
+    //  ФИЗИКА И AI МИНЬОНОВ
+    // ============================================================
+    function updateMinion(minion, dt) {
+        minion.stateTime += dt;
+
+        switch (minion.state) {
+            case 'wandering': {
+                const dx = minion.targetX - minion.ix;
+                const dy = minion.targetY - minion.iy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < 0.25) {
+                    minion.state = 'paused';
+                    minion.pauseDuration = 0.5 + Math.random() * 1.5;
+                    minion.stateTime = 0;
+                } else {
+                    const spd = MINION_SPEED * dt;
+                    minion.ix += (dx / dist) * spd;
+                    minion.iy += (dy / dist) * spd;
+                    const lim = GRID_SIZE - 0.5;
+                    minion.ix = Math.max(-lim, Math.min(lim, minion.ix));
+                    minion.iy = Math.max(-lim, Math.min(lim, minion.iy));
+                }
+                break;
+            }
+
+            case 'paused':
+                if (minion.stateTime > minion.pauseDuration) {
+                    pickNewMinionTarget(minion);
+                    minion.state = 'wandering';
+                    minion.stateTime = 0;
+                }
+                break;
+
+            case 'lifting': {
+                minion.liftProgress += LIFT_SPEED * dt;
+                if (minion.liftProgress >= 1.0) {
+                    minion.liftProgress = 1.0;
+                    minion.state = 'carried';
+                    minion.stateTime = 0;
+                }
+                const t = 1 - Math.pow(1 - minion.liftProgress, 2);
+                minion.iz = t * CARRY_HEIGHT;
+                minion.ix += (hand.isoX - minion.ix) * Math.min(1, dt * 10);
+                minion.iy += (hand.isoY - minion.iy) * Math.min(1, dt * 10);
+                break;
+            }
+
+            case 'carried':
+                minion.ix = hand.isoX;
+                minion.iy = hand.isoY;
+                minion.iz = CARRY_HEIGHT;
+                break;
+
+            case 'thrown':
+            case 'bouncing': {
+                minion.vz -= GRAVITY * dt;
+                minion.ix += minion.vx * dt;
+                minion.iy += minion.vy * dt;
+                minion.iz += minion.vz * dt;
+                const airFactor = Math.pow(AIR_RESISTANCE, dt * 60);
+                minion.vx *= airFactor;
+                minion.vy *= airFactor;
+                clampToGrid(minion);
+                if (minion.iz <= 0) {
+                    minion.iz = 0;
+                    if (Math.abs(minion.vz) > BOUNCE_MIN_VZ && minion.bounceCount < MAX_BOUNCES) {
+                        if (minion.bounceCount === 0) {
+                            triggerScreenShake(minion.mass * Math.abs(minion.vz) * 0.5);
+                        }
+                        minion.vz = -minion.vz * minion.bounciness;
+                        minion.vx *= minion.friction;
+                        minion.vy *= minion.friction;
+                        minion.bounceCount++;
+                        minion.state = 'bouncing';
+                        minion.stateTime = 0;
+                    } else {
+                        minion.vz = 0;
+                        const hSpeed = Math.sqrt(minion.vx * minion.vx + minion.vy * minion.vy);
+                        if (hSpeed > SLIDE_STOP) {
+                            minion.state = 'sliding';
+                        } else {
+                            minion.vx = 0;
+                            minion.vy = 0;
+                            minion.state = 'settling';
+                        }
+                        minion.stateTime = 0;
+                    }
+                }
+                break;
+            }
+
+            case 'sliding': {
+                minion.iz = 0;
+                minion.vz = 0;
+                const frictionFactor = Math.pow(minion.friction, dt * 5);
+                minion.vx *= frictionFactor;
+                minion.vy *= frictionFactor;
+                minion.ix += minion.vx * dt;
+                minion.iy += minion.vy * dt;
+                clampToGrid(minion);
+                const hSpeed = Math.sqrt(minion.vx * minion.vx + minion.vy * minion.vy);
+                if (hSpeed < SLIDE_STOP) {
+                    minion.vx = 0;
+                    minion.vy = 0;
+                    minion.state = 'settling';
+                    minion.stateTime = 0;
+                }
+                break;
+            }
+
+            case 'settling':
+                if (minion.stateTime > 0.3) {
+                    pickNewMinionTarget(minion);
+                    minion.state = 'wandering';
+                    minion.stateTime = 0;
+                    minion.bounceCount = 0;
+                }
+                break;
+        }
+    }
+
+    function drawMinion(minion, index) {
+        const s = worldToScreen(minion.ix, minion.iy);
+
+        drawItemShadow(s.x, s.y, MINION_W, MINION_H, minion.iz);
+
+        if (minion.state === 'carried' || minion.state === 'lifting') {
+            const time = performance.now() / 300;
+            const wobbleX = Math.sin(time) * 1.5;
+            const wobbleY = Math.cos(time * 1.3) * 1;
+            const gripOffsetY = -8;
+            const lerpT = minion.state === 'lifting' ? (1 - Math.pow(1 - minion.liftProgress, 2)) : 1;
+            const canvasPos = screenToCanvas(hand.screenX, hand.screenY);
+            const groundOx = s.x - (MINION_W * PIXEL_SCALE) / 2;
+            const groundOy = s.y - (MINION_H * PIXEL_SCALE) - 4;
+            const handOx = canvasPos.x - (MINION_W * PIXEL_SCALE) / 2 + wobbleX;
+            const handOy = canvasPos.y - (MINION_H * PIXEL_SCALE) / 2 + gripOffsetY + wobbleY;
+            const ox = groundOx + (handOx - groundOx) * lerpT;
+            const oy = groundOy + (handOy - groundOy) * lerpT;
+            drawPixelArt(ox, oy, MINION_PIXELS, PIXEL_SCALE);
+            return;
+        }
+
+        const heightOffset = minion.iz * HEIGHT_TO_SCREEN;
+        const ox = s.x - (MINION_W * PIXEL_SCALE) / 2;
+        const oy = s.y - (MINION_H * PIXEL_SCALE) - 4 - heightOffset;
+
+        if (index === hoveredMinion) {
+            drawHighlight(ox, oy, MINION_W, MINION_H);
+        }
+
+        drawPixelArt(ox, oy, MINION_PIXELS, PIXEL_SCALE);
+    }
+
+    // ============================================================
     //  ВВОД
     // ============================================================
     canvas.addEventListener('mousemove', (e) => {
@@ -538,7 +748,7 @@
     canvas.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
         mouseDown = true;
-        if (hoveredItem !== null && hand.grabbedItem === null) {
+        if (hoveredItem !== null && hand.grabbedItem === null && hand.grabbedMinion === null) {
             const item = items[hoveredItem];
             if (item.state !== 'carried' && item.state !== 'lifting') {
                 hand.grabbedItem = hoveredItem;
@@ -555,6 +765,22 @@
                 hand.velocityHistory = [];
                 statusEl.textContent = `Захвачено: ${ITEM_TYPES[item.type].name}`;
             }
+        } else if (hoveredMinion !== null && hand.grabbedItem === null && hand.grabbedMinion === null) {
+            const minion = minions[hoveredMinion];
+            if (minion.state !== 'carried' && minion.state !== 'lifting') {
+                hand.grabbedMinion = hoveredMinion;
+                minion.state = 'lifting';
+                minion.stateTime = 0;
+                minion.liftProgress = 0;
+                minion.vx = 0;
+                minion.vy = 0;
+                minion.vz = 0;
+                minion.bounceCount = 0;
+                hand.state = 'closing';
+                hand.animProgress = 0;
+                hand.velocityHistory = [];
+                statusEl.textContent = 'Захвачено: Миньон';
+            }
         }
     });
 
@@ -566,7 +792,7 @@
             const type = ITEM_TYPES[item.type];
 
             item.grabbed = false;
-            item.iz = 0; // предмет вылетает из руки (визуально на уровне хватки)
+            item.iz = 0;
 
             const throwVel = calculateThrowVelocity(type);
             item.vx = throwVel.vx;
@@ -587,6 +813,23 @@
             } else {
                 statusEl.textContent = `Отпущено: ${type.name}`;
             }
+        } else if (hand.grabbedMinion !== null) {
+            const minion = minions[hand.grabbedMinion];
+            const throwVel = calculateThrowVelocity({ mass: minion.mass });
+            minion.vx = throwVel.vx;
+            minion.vy = throwVel.vy;
+            minion.vz = throwVel.vz;
+            minion.state = 'thrown';
+            minion.stateTime = 0;
+            minion.bounceCount = 0;
+
+            hand.grabbedMinion = null;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+
+            const speed = Math.sqrt(throwVel.vx ** 2 + throwVel.vy ** 2);
+            statusEl.textContent = speed > 2 ? 'Брошен: Миньон!' : 'Отпущен: Миньон';
         }
     });
 
@@ -614,8 +857,15 @@
             items.push(createItem(pos.type, pos.ix, pos.iy));
         }
 
+        // Сброс миньонов
+        minions.length = 0;
+        for (const pos of INITIAL_MINION_POSITIONS) {
+            minions.push(createMinion(pos.ix, pos.iy));
+        }
+
         // Сброс руки
         hand.grabbedItem = null;
+        hand.grabbedMinion = null;
         hand.state = 'open';
         hand.animProgress = 0;
         hand.velocityHistory = [];
@@ -631,6 +881,7 @@
 
         // Сброс наведения
         hoveredItem = null;
+        hoveredMinion = null;
 
         statusEl.textContent = 'Карта перезапущена!';
     }
@@ -749,21 +1000,40 @@
         // Коллизии между предметами
         resolveItemCollisions();
 
-        // Проверяем наведение на предметы (все кроме carried/lifting)
+        // Обновляем миньонов
+        for (let i = 0; i < minions.length; i++) {
+            updateMinion(minions[i], dt);
+        }
+
+        // Проверяем наведение на предметы и миньонов
         hoveredItem = null;
-        if (hand.grabbedItem === null) {
-            let minDist = 1.5; // радиус захвата
+        hoveredMinion = null;
+        if (hand.grabbedItem === null && hand.grabbedMinion === null) {
+            let minDist = 1.5;
             for (let i = 0; i < items.length; i++) {
                 const it = items[i];
                 if (it.state === 'carried' || it.state === 'lifting') continue;
-                // Для летящих предметов — увеличиваем радиус захвата, но только если невысоко
-                if (it.iz > 2.0) continue; // слишком высоко — не достать
+                if (it.iz > 2.0) continue;
                 const dx = hand.isoX - it.ix;
                 const dy = hand.isoY - it.iy;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 if (dist < minDist) {
                     minDist = dist;
                     hoveredItem = i;
+                    hoveredMinion = null;
+                }
+            }
+            for (let i = 0; i < minions.length; i++) {
+                const m = minions[i];
+                if (m.state === 'carried' || m.state === 'lifting') continue;
+                if (m.iz > 2.0) continue;
+                const dx = hand.isoX - m.ix;
+                const dy = hand.isoY - m.iy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < minDist) {
+                    minDist = dist;
+                    hoveredItem = null;
+                    hoveredMinion = i;
                 }
             }
         }
@@ -775,9 +1045,12 @@
         camera.zoom += (camera.targetZoom - camera.zoom) * Math.min(1, dt * 8);
 
         // Обновляем статус
-        if (hand.grabbedItem === null && hoveredItem !== null) {
+        const nothingHeld = hand.grabbedItem === null && hand.grabbedMinion === null;
+        if (nothingHeld && hoveredItem !== null) {
             statusEl.textContent = `Навести: ${ITEM_TYPES[items[hoveredItem].type].name} [зажми ЛКМ]`;
-        } else if (hand.grabbedItem === null && hoveredItem === null) {
+        } else if (nothingHeld && hoveredMinion !== null) {
+            statusEl.textContent = 'Навести: Миньон [зажми ЛКМ]';
+        } else if (nothingHeld) {
             statusEl.textContent = 'Рука открыта';
         }
     }
@@ -954,7 +1227,17 @@
             });
         }
 
-        // Рука (и захваченный предмет рисуются вместе)
+        // Миньоны
+        for (let i = 0; i < minions.length; i++) {
+            if (minions[i].state === 'carried' || minions[i].state === 'lifting') continue;
+            renderList.push({
+                type: 'minion',
+                index: i,
+                depth: getDepth(minions[i].ix, minions[i].iy)
+            });
+        }
+
+        // Рука (и захваченный объект рисуются вместе)
         renderList.push({
             type: 'hand',
             depth: getDepth(hand.isoX, hand.isoY)
@@ -967,10 +1250,13 @@
         for (const obj of renderList) {
             if (obj.type === 'item') {
                 drawItem(items[obj.index], obj.index);
+            } else if (obj.type === 'minion') {
+                drawMinion(minions[obj.index], obj.index);
             } else if (obj.type === 'hand') {
-                // Захваченный предмет рисуем перед рукой
                 if (hand.grabbedItem !== null) {
                     drawItem(items[hand.grabbedItem], hand.grabbedItem);
+                } else if (hand.grabbedMinion !== null) {
+                    drawMinion(minions[hand.grabbedMinion], hand.grabbedMinion);
                 }
                 drawHand();
             }
