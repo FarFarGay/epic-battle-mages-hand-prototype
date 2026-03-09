@@ -228,6 +228,10 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             }
             if (count > 0) {
                 statusEl.textContent = `${count} гоблин(а) начинают добычу камней`;
+                // Флаг больше не нужен — убираем с поля
+                if (flag.state === 'placed') {
+                    flag.state = 'docked';
+                }
             } else {
                 statusEl.textContent = 'Нет гоблинов ожидающих задачу';
             }
