@@ -345,6 +345,16 @@ function update(dt) {
         if (bloodPuddles[i].t >= bloodPuddles[i].duration) bloodPuddles.splice(i, 1);
     }
 
+    // Туман войны — открываем вокруг руки, миньонов и замка
+    const fogSources = [
+        { ix: hand.isoX, iy: hand.isoY, radius: 4 },
+        { ix: gameMap.castlePos.ix, iy: gameMap.castlePos.iy, radius: 3 },
+        ...minions
+            .filter(m => m.state !== 'dead')
+            .map(m => ({ ix: m.ix, iy: m.iy, radius: 2 })),
+    ];
+    gameMap.tickFog(fogSources);
+
     // Тряска экрана
     updateScreenShake(dt);
 
