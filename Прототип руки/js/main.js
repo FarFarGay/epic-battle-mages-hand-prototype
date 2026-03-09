@@ -2,12 +2,12 @@
 //  MAIN — точка входа, игровой цикл
 // ============================================================
 import { ITEM_TYPES, PIXEL_SCALE, HEIGHT_TO_SCREEN, CAMERA_OFFSET_Y } from './constants.js';
-import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H } from './sprites.js';
+import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources } from './World.js';
+import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion } from './World.js';
 import { initInput } from './input.js';
 
 // ============================================================
@@ -172,6 +172,21 @@ const world = {
     set mouseDown(v) { mouseDown = v; },
 };
 
+// Область кнопки производства гоблинов (обновляется при рендере)
+const goblinHudRect = { x: 0, y: 0, w: 0, h: 0 };
+
+// Клик по кнопке гоблина — перехватываем ДО input.js (capture phase)
+canvas.addEventListener('mousedown', (e) => {
+    const mx = e.clientX, my = e.clientY;
+    if (
+        mx >= goblinHudRect.x && mx <= goblinHudRect.x + goblinHudRect.w &&
+        my >= goblinHudRect.y && my <= goblinHudRect.y + goblinHudRect.h
+    ) {
+        castle.production.active = !castle.production.active;
+        e.stopImmediatePropagation();
+    }
+}, true);
+
 initInput(canvas, hand, world, camera, statusEl);
 
 // ============================================================
@@ -240,7 +255,13 @@ function update(dt) {
 
     // Коллизии с замком
     resolveCastleCollisions();
-    castle.update(dt);
+    castle.update(dt, minions, castleResources);
+
+    // Спавн гоблинов из замка
+    if (castle.pendingSpawn) {
+        const sp = castle.spawnPoint;
+        spawnMinion(sp.ix, sp.iy);
+    }
 
     // Обновляем миньонов
     for (let i = 0; i < minions.length; i++) {
@@ -640,6 +661,61 @@ function render() {
         }
     }
 
+    // HUD производства гоблинов — под HUD ресурсов
+    {
+        const HUD_SCALE = 2;
+        const HUD_MARGIN = 12;
+        const HUD_ROW_H = 22;
+        const maxW = Math.max(...ITEM_TYPES.map(t => t.w)) * HUD_SCALE;
+        const resBlockH = ITEM_TYPES.length * HUD_ROW_H + 4;
+        const hudX = canvas.width - HUD_MARGIN - maxW - 50;
+
+        const gobY = HUD_MARGIN + resBlockH + 10;
+        const blockW = maxW + 50;
+        const barH = 8;
+        const blockH = MINION_H * HUD_SCALE + barH + 20;
+
+        // Фон
+        ctx.save();
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = '#0a0a18';
+        ctx.fillRect(hudX - 8, gobY - 4, blockW + 16, blockH + 8);
+        ctx.restore();
+
+        // Иконка гоблина
+        drawPixelArt(hudX, gobY, MINION_PIXELS, HUD_SCALE);
+
+        // Счётчик живых гоблинов
+        const aliveCount = minions.filter(m => m.state !== 'dead').length;
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${aliveCount} / ${castle.maxMinions}`, hudX + MINION_W * HUD_SCALE + 6, gobY + 12);
+
+        // Прогресс-бар
+        const prod = castle.production;
+        const barY = gobY + MINION_H * HUD_SCALE + 4;
+        const barW = blockW;
+        ctx.fillStyle = '#222244';
+        ctx.fillRect(hudX, barY, barW, barH);
+        if (prod.progress > 0) {
+            ctx.fillStyle = prod.active ? '#44aa44' : '#aa8833';
+            ctx.fillRect(hudX, barY, barW * (prod.progress / prod.duration), barH);
+        }
+
+        // Статус
+        ctx.fillStyle = prod.active ? '#88ff88' : '#ffaa44';
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(prod.active ? '▶ Производство' : '⏸ Пауза', hudX, barY + barH + 12);
+
+        // Сохраняем rect для обработки кликов
+        goblinHudRect.x = hudX - 8;
+        goblinHudRect.y = gobY - 4;
+        goblinHudRect.w = blockW + 16;
+        goblinHudRect.h = blockH + 8;
+    }
+
     // Курсор-точка (вне зума и тряски — стабильный)
     ctx.fillStyle = '#ff4444';
     ctx.fillRect(mouseX - 1, mouseY - 1, 3, 3);
@@ -661,8 +737,13 @@ function gameLoop(now) {
     const dt = Math.min((now - lastTime) / 1000, 0.05);
     lastTime = now;
 
-    update(dt);
-    render();
+    try {
+        update(dt);
+        render();
+    } catch (err) {
+        statusEl.textContent = 'ОШИБКА: ' + err.message;
+        console.error('[gameLoop]', err);
+    }
 
     requestAnimationFrame(gameLoop);
 }

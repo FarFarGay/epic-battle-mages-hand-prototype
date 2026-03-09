@@ -5,6 +5,7 @@ import {
     PIXEL_SCALE, CAMERA_OFFSET_Y,
     CASTLE_BASE_RADIUS, CASTLE_TOWER_HEIGHT,
     WALL_BOUNCE,
+    GOBLIN_MAX, GOBLIN_SPAWN_DURATION, GOBLIN_FOOD_COST, GOBLIN_FOOD_TYPE,
 } from './constants.js';
 import {
     CASTLE_PIXELS, CASTLE_W, CASTLE_H,
@@ -39,6 +40,17 @@ export class Castle {
         // Коллизия
         this.baseRadius    = CASTLE_BASE_RADIUS;
         this.towerHeight   = CASTLE_TOWER_HEIGHT;
+
+        // Производство гоблинов
+        this.maxMinions  = GOBLIN_MAX;
+        this.production  = {
+            active:        false,           // игрок запустил производство
+            progress:      0,              // секунд прогресса текущего гоблина (0 = не начат)
+            duration:      GOBLIN_SPAWN_DURATION,
+            cost:          GOBLIN_FOOD_COST,
+            foodTypeIndex: GOBLIN_FOOD_TYPE,
+        };
+        this.pendingSpawn = false;         // true → main.js должен заспавнить гоблина
     }
 
     // Точка появления миньонов из замка (позиция перед воротами)
@@ -46,10 +58,32 @@ export class Castle {
         return { ix: this.ix, iy: this.iy + this.baseRadius + 0.5 };
     }
 
-    // Обновление состояния (будущее: движение, поворот пушки, тайминг выстрелов)
-    update(dt) {
+    // Обновление состояния
+    update(dt, minions, castleResources) {
         if (this.cannon.recoilTimer > 0) {
             this.cannon.recoilTimer = Math.max(0, this.cannon.recoilTimer - dt);
+        }
+
+        // Производство гоблинов
+        this.pendingSpawn = false;
+        if (!minions || !castleResources) return;
+
+        const prod = this.production;
+        const aliveCount = minions.filter(m => m.state !== 'dead').length;
+
+        if (aliveCount >= this.maxMinions) return; // замок полон — ждём освобождения места
+
+        if (prod.progress > 0) {
+            // Завершаем текущего (даже если производство на паузе)
+            prod.progress += dt;
+            if (prod.progress >= prod.duration) {
+                prod.progress = 0;
+                this.pendingSpawn = true;
+            }
+        } else if (prod.active && castleResources[prod.foodTypeIndex] >= prod.cost) {
+            // Начинаем нового гоблина
+            castleResources[prod.foodTypeIndex] -= prod.cost;
+            prod.progress += dt;
         }
     }
 

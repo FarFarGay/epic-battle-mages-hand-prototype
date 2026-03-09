@@ -54,3 +54,9 @@ export const ITEM_TYPES = [
 // — Замок —
 export const CASTLE_BASE_RADIUS  = 1.3;  // радиус коллизии в iso-единицах (спрайт 80px при scale 8, ~1.25 iso-ед на сторону)
 export const CASTLE_TOWER_HEIGHT = 4.0;  // максимальная высота коллизии (world units)
+
+// — Производство гоблинов —
+export const GOBLIN_MAX            = 25;   // максимум живых гоблинов
+export const GOBLIN_SPAWN_DURATION = 3.0;  // секунд на производство одного гоблина
+export const GOBLIN_FOOD_COST      = 1;    // единиц пшеницы за гоблина
+export const GOBLIN_FOOD_TYPE      = 0;    // индекс пшеницы в ITEM_TYPES
