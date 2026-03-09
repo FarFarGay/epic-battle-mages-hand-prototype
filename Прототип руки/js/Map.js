@@ -28,7 +28,7 @@ export const FOG = {
 };
 
 export class GameMap {
-    constructor(size = 10) {
+    constructor(size = 80) {
         this.size = size;
 
         // Включить/выключить туман войны
@@ -51,8 +51,8 @@ export class GameMap {
             { ix:  4, iy:  0 },
         ];
 
-        // Позиция замка
-        this.castlePos = { ix: 0, iy: -6 };
+        // Позиция замка (центр карты)
+        this.castlePos = { ix: 0, iy: 0 };
 
         // Типы тайлов: key `${ix},${iy}` → имя типа из TILE_TYPES
         this._tiles = {};
@@ -114,8 +114,24 @@ export class GameMap {
         }
     }
 
+    // Открыть квадратное поле тайлов вокруг точки (halfSize — полуразмер стороны)
+    _revealSquare(ix, iy, halfSize) {
+        const cx = Math.round(ix);
+        const cy = Math.round(iy);
+        for (let dy = -halfSize; dy <= halfSize; dy++) {
+            for (let dx = -halfSize; dx <= halfSize; dx++) {
+                const fx = cx + dx;
+                const fy = cy + dy;
+                if (this.isInBounds(fx, fy)) {
+                    this._fog[this._key(fx, fy)] = FOG.VISIBLE;
+                }
+            }
+        }
+    }
+
     // Обновить туман за один кадр по списку источников видимости.
-    // sources: [{ ix, iy, radius }, ...]
+    // sources: [{ ix, iy, radius, shape? }, ...]
+    // shape: 'circle' (по умолчанию) или 'square'
     // Сначала все VISIBLE → EXPLORED, затем снова открываем вокруг каждого источника.
     tickFog(sources) {
         if (!this.fogEnabled) return;
@@ -127,7 +143,11 @@ export class GameMap {
         }
 
         for (const src of sources) {
-            this.revealAround(src.ix, src.iy, src.radius);
+            if (src.shape === 'square') {
+                this._revealSquare(src.ix, src.iy, src.radius);
+            } else {
+                this.revealAround(src.ix, src.iy, src.radius);
+            }
         }
     }
 

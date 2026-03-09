@@ -4,7 +4,7 @@
 import { ITEM_TYPES, PIXEL_SCALE, HEIGHT_TO_SCREEN, CAMERA_OFFSET_Y } from './constants.js';
 import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
-import { gameMap } from './Map.js';
+import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
 import { Hand } from './Hand.js';
 import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles } from './World.js';
@@ -229,6 +229,7 @@ function update(dt) {
             const it = items[i];
             if (it.state === 'carried' || it.state === 'lifting' || it.state === 'goblin_carried') continue;
             if (it.iz > 2.0) continue;
+            if (gameMap.getFog(Math.round(it.ix), Math.round(it.iy)) !== FOG.VISIBLE) continue;
             const dx = hand.isoX - it.ix;
             const dy = hand.isoY - it.iy;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -242,6 +243,7 @@ function update(dt) {
             const m = minions[i];
             if (m.state === 'carried' || m.state === 'lifting') continue;
             if (m.iz > 2.0) continue;
+            if (gameMap.getFog(Math.round(m.ix), Math.round(m.iy)) !== FOG.VISIBLE) continue;
             const dx = hand.isoX - m.ix;
             const dy = hand.isoY - m.iy;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -258,13 +260,14 @@ function update(dt) {
             if (Math.sqrt(dx * dx + dy * dy) < 1.2) hoveredFlag = true;
         }
     } else if (hand.grabbedFlag) {
-        // С флагом в руке — подсвечиваем ближайший добываемый ресурс
+        // С флагом в руке — подсвечиваем ближайший видимый добываемый ресурс
         let minDist = 1.5;
         for (let i = 0; i < items.length; i++) {
             const it = items[i];
             if (!it.typeDef.gatherable) continue;
             if (it.state === 'carried' || it.state === 'lifting' || it.state === 'goblin_carried') continue;
             if (it.iz > 2.0) continue;
+            if (gameMap.getFog(Math.round(it.ix), Math.round(it.iy)) !== FOG.VISIBLE) continue;
             const dx = hand.isoX - it.ix;
             const dy = hand.isoY - it.iy;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -345,10 +348,10 @@ function update(dt) {
         if (bloodPuddles[i].t >= bloodPuddles[i].duration) bloodPuddles.splice(i, 1);
     }
 
-    // Туман войны — открываем вокруг руки, миньонов и замка
+    // Туман войны — замок видит 21×21 тайл (квадрат), живые миньоны — круг радиусом 2
+    // Рука собственной видимостью не обладает
     const fogSources = [
-        { ix: hand.isoX, iy: hand.isoY, radius: 4 },
-        { ix: gameMap.castlePos.ix, iy: gameMap.castlePos.iy, radius: 3 },
+        { ix: gameMap.castlePos.ix, iy: gameMap.castlePos.iy, radius: 10, shape: 'square' },
         ...minions
             .filter(m => m.state !== 'dead')
             .map(m => ({ ix: m.ix, iy: m.iy, radius: 2 })),
@@ -409,6 +412,7 @@ function render() {
     // Предметы (не в состоянии carried/lifting — те рисуются с рукой)
     for (let i = 0; i < items.length; i++) {
         if (items[i].state === 'carried' || items[i].state === 'lifting') continue;
+        if (gameMap.getFog(Math.round(items[i].ix), Math.round(items[i].iy)) !== FOG.VISIBLE) continue;
         renderList.push({
             type: 'item',
             index: i,
@@ -419,6 +423,7 @@ function render() {
     // Миньоны
     for (let i = 0; i < minions.length; i++) {
         if (minions[i].state === 'carried' || minions[i].state === 'lifting') continue;
+        if (gameMap.getFog(Math.round(minions[i].ix), Math.round(minions[i].iy)) !== FOG.VISIBLE) continue;
         renderList.push({
             type: 'minion',
             index: i,
@@ -435,8 +440,8 @@ function render() {
         });
     }
 
-    // Флаг на поле
-    if (flag.state === 'placed') {
+    // Флаг на поле (виден только если тайл в зоне прямой видимости)
+    if (flag.state === 'placed' && gameMap.getFog(Math.round(flag.ix), Math.round(flag.iy)) === FOG.VISIBLE) {
         renderList.push({
             type: 'flag',
             depth: getDepth(flag.ix, flag.iy)
