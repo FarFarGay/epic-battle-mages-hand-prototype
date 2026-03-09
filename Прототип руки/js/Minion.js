@@ -137,7 +137,6 @@ export class Minion extends GameObject {
     onSettle(items) {
         this.bounceCount = 0;
         this.stateTime = 0;
-        this.gathererMode = false; // брошен/положен вручную → после сдачи станет свободным
         this.dropCarriedItem(); // бросаем камень если несли
         if (this.dead) {
             this.state = 'dead';
@@ -157,6 +156,8 @@ export class Minion extends GameObject {
             }
         }
         if (nearest) {
+            // Если ресурс в зоне 42×42 — после доставки продолжит сбор; снаружи — станет свободным
+            this.gathererMode = Math.abs(nearest.ix) <= GATHER_ZONE_RADIUS && Math.abs(nearest.iy) <= GATHER_ZONE_RADIUS;
             this.task = 'gather';
             this.targetItem = nearest;
             this.carriedItem = null;
@@ -246,7 +247,10 @@ export class Minion extends GameObject {
                                       this.targetItem.state === 'settling' ||
                                       this.targetItem.state === 'sliding';
                     if (dist < 0.6 && canPickUp) {
-                        // Поднять камень
+                        // Поднять ресурс; если он снаружи зоны 42×42 — после доставки станем свободным
+                        this.gathererMode = this.gathererMode &&
+                            Math.abs(this.targetItem.ix) <= GATHER_ZONE_RADIUS &&
+                            Math.abs(this.targetItem.iy) <= GATHER_ZONE_RADIUS;
                         this.targetItem.state = 'goblin_carried';
                         this.targetItem.vx = 0;
                         this.targetItem.vy = 0;
