@@ -6,6 +6,8 @@ import { TILE_W, TILE_H, CAMERA_OFFSET_Y } from './constants.js';
 export const camera = {
     zoom: 1.0,
     targetZoom: 1.0,
+    x: 0, y: 0,           // текущее смещение камеры (пиксели, screen space)
+    targetX: 0, targetY: 0,
 };
 
 export function isoToScreen(ix, iy) {
@@ -16,9 +18,9 @@ export function isoToScreen(ix, iy) {
 }
 
 export function screenToIso(sx, sy, canvas) {
-    // Учитываем зум камеры: экранные координаты → мировые
-    const cx = (sx - canvas.width / 2) / camera.zoom;
-    const cy = (sy - canvas.height / 2) / camera.zoom + CAMERA_OFFSET_Y;
+    // Учитываем зум и панорамирование камеры: экранные координаты → мировые
+    const cx = (sx - canvas.width / 2 + camera.x) / camera.zoom;
+    const cy = (sy - canvas.height / 2 + camera.y) / camera.zoom + CAMERA_OFFSET_Y;
     return {
         x: (cx / (TILE_W / 2) + cy / (TILE_H / 2)) / 2,
         y: (cy / (TILE_H / 2) - cx / (TILE_W / 2)) / 2

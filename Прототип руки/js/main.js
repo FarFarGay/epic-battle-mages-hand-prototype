@@ -23,8 +23,8 @@ function worldToScreen(wx, wy) {
 
 function screenToCanvas(sx, sy) {
     return {
-        x: (sx - canvas.width / 2) / camera.zoom + canvas.width / 2,
-        y: (sy - canvas.height / 2) / camera.zoom + canvas.height / 2,
+        x: (sx - canvas.width / 2 + camera.x) / camera.zoom + canvas.width / 2,
+        y: (sy - canvas.height / 2 + camera.y) / camera.zoom + canvas.height / 2,
     };
 }
 
@@ -364,6 +364,25 @@ function update(dt) {
     // Плавный зум
     camera.zoom += (camera.targetZoom - camera.zoom) * Math.min(1, dt * 8);
 
+    // Edge scroll — камера движется если рука у края экрана
+    const EDGE_ZONE = 0.12; // 12% экрана с каждого края
+    const PAN_SPEED = 600;  // px/сек в screen space
+    const edgeW = canvas.width  * EDGE_ZONE;
+    const edgeH = canvas.height * EDGE_ZONE;
+    let panX = 0, panY = 0;
+    if (hand.screenX < edgeW) {
+        panX = -(1 - hand.screenX / edgeW) * PAN_SPEED;
+    } else if (hand.screenX > canvas.width - edgeW) {
+        panX =  (1 - (canvas.width  - hand.screenX) / edgeW) * PAN_SPEED;
+    }
+    if (hand.screenY < edgeH) {
+        panY = -(1 - hand.screenY / edgeH) * PAN_SPEED;
+    } else if (hand.screenY > canvas.height - edgeH) {
+        panY =  (1 - (canvas.height - hand.screenY) / edgeH) * PAN_SPEED;
+    }
+    camera.x += panX * dt;
+    camera.y += panY * dt;
+
     // Обновляем статус
     const nothingHeld = hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag;
     if (hand.grabbedFlag) {
@@ -399,7 +418,7 @@ function render() {
 
     // Зум камеры + тряска экрана
     ctx.save();
-    ctx.translate(canvas.width / 2 + screenShake.offsetX, canvas.height / 2 + screenShake.offsetY);
+    ctx.translate(canvas.width / 2 + screenShake.offsetX - camera.x, canvas.height / 2 + screenShake.offsetY - camera.y);
     ctx.scale(camera.zoom, camera.zoom);
     ctx.translate(-canvas.width / 2, -canvas.height / 2);
 

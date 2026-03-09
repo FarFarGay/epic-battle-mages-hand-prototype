@@ -22,8 +22,8 @@ function worldToScreen(wx, wy) {
 
 function screenToCanvas(sx, sy) {
     return {
-        x: (sx - canvas.width / 2) / camera.zoom + canvas.width / 2,
-        y: (sy - canvas.height / 2) / camera.zoom + canvas.height / 2,
+        x: (sx - canvas.width / 2 + camera.x) / camera.zoom + canvas.width / 2,
+        y: (sy - canvas.height / 2 + camera.y) / camera.zoom + canvas.height / 2,
     };
 }
 
