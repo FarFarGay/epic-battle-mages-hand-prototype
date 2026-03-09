@@ -2,6 +2,7 @@
 //  МИР — предметы, миньоны, флаг, тряска экрана
 // ============================================================
 import { gameMap } from './Map.js';
+import { ITEM_TYPES } from './constants.js';
 import { Item } from './Item.js';
 import { Minion } from './Minion.js';
 import { Castle } from './Castle.js';
@@ -25,6 +26,9 @@ export const screenShake = {
 
 export const bloodParticles = [];  // { x, y, vx, vy, life, maxLife, size }
 export const bloodPuddles   = [];  // { ix, iy, size, t, duration }
+
+// Счётчики ресурсов: castleResources[typeIndex] = количество доставленных в замок
+export const castleResources = [];
 
 export let castle = null;
 
@@ -166,6 +170,10 @@ export function restartMap(hand, statusEl) {
     bloodParticles.length = 0;
     bloodPuddles.length = 0;
 
+    // Сброс счётчиков ресурсов
+    castleResources.length = 0;
+    for (let i = 0; i < ITEM_TYPES.length; i++) castleResources.push(0);
+
     // Сброс shake-детектора, выделения
     hand.shakeHistory = [];
     hand.prevScreenXForShake = 0;
@@ -197,6 +205,9 @@ export function initWorld() {
 
     bloodParticles.length = 0;
     bloodPuddles.length = 0;
+
+    castleResources.length = 0;
+    for (let i = 0; i < ITEM_TYPES.length; i++) castleResources.push(0);
 
     castle = new Castle(gameMap.castlePos.ix, gameMap.castlePos.iy);
 }

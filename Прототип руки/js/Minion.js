@@ -49,6 +49,7 @@ export class Minion extends GameObject {
         this.targetItem = null;    // ссылка на предмет-цель
         this.carriedItem = null;   // ссылка на переносимый предмет
         this.gathererMode = false; // true = назначен флагом (цикличный сбор в 42×42)
+        this.pendingDelivery = null; // typeIndex ресурса, сданного в замок в этом кадре
 
         this.pickNewTarget();
     }
@@ -288,6 +289,7 @@ export class Minion extends GameObject {
 
                     if (dist < castle.baseRadius + this.radius) {
                         // Сдать камень
+                        const deliveredTypeIndex = this.carriedItem.typeIndex;
                         const idx = items.indexOf(this.carriedItem);
                         if (idx !== -1) {
                             items.splice(idx, 1);
@@ -296,6 +298,7 @@ export class Minion extends GameObject {
                                 hand.grabbedItem--;
                             }
                         }
+                        this.pendingDelivery = deliveredTypeIndex;
                         this.carriedItem = null;
 
                         // Искать следующий ресурс (только в зоне 42×42 если gathererMode)

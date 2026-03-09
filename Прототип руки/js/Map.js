@@ -1,8 +1,8 @@
 // ============================================================
 //  КАРТА — размер, тайлы, туман войны, ресурсы
 // ============================================================
-import { CAMERA_OFFSET_Y } from './constants.js';
-import { isoToScreen } from './isometry.js';
+import { CAMERA_OFFSET_Y, TILE_W, TILE_H } from './constants.js';
+import { isoToScreen, camera } from './isometry.js';
 import { canvas, drawIsoDiamond } from './renderer.js';
 
 // ============================================================
@@ -180,11 +180,24 @@ export class GameMap {
     //  РЕНДЕР
     // ============================================================
     draw() {
+        // Viewport culling: вычисляем видимую область в координатах world-canvas
+        // screenX = zoom*(sx - w/2) + w/2 - camera.x → sx = (screenX - w/2 + camera.x)/zoom + w/2
+        const w = canvas.width, h = canvas.height, z = camera.zoom;
+        const marginX = TILE_W;
+        const marginY = TILE_H;
+        const sxMin = w / 2 * (1 - 1 / z) + camera.x / z - marginX;
+        const sxMax = w / 2 * (1 + 1 / z) + camera.x / z + marginX;
+        const syMin = h / 2 * (1 - 1 / z) + camera.y / z - marginY;
+        const syMax = h / 2 * (1 + 1 / z) + camera.y / z + marginY;
+
         for (let iy = -this.size; iy <= this.size; iy++) {
             for (let ix = -this.size; ix <= this.size; ix++) {
                 const iso = isoToScreen(ix, iy);
                 const sx = iso.x + canvas.width / 2;
                 const sy = iso.y + canvas.height / 2 - CAMERA_OFFSET_Y;
+
+                // Пропускаем тайлы за пределами экрана
+                if (sx < sxMin || sx > sxMax || sy < syMin || sy > syMax) continue;
 
                 const fog = this.fogEnabled ? this.getFog(ix, iy) : FOG.VISIBLE;
 

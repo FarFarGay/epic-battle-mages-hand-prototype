@@ -7,7 +7,7 @@ import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles } from './World.js';
+import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources } from './World.js';
 import { initInput } from './input.js';
 
 // ============================================================
@@ -245,6 +245,14 @@ function update(dt) {
     // Обновляем миньонов
     for (let i = 0; i < minions.length; i++) {
         minions[i].update(dt, hand, triggerScreenShake, items, castle);
+    }
+
+    // Учитываем доставленные в замок ресурсы
+    for (const minion of minions) {
+        if (minion.pendingDelivery !== null) {
+            castleResources[minion.pendingDelivery]++;
+            minion.pendingDelivery = null;
+        }
     }
 
     // Проверяем наведение на предметы, миньонов и флаг
@@ -600,6 +608,36 @@ function render() {
         ctx.globalAlpha = 0.06;
         ctx.fillRect(sx, sy, sw, sh);
         ctx.restore();
+    }
+
+    // HUD ресурсов — правый верхний угол (screen space)
+    {
+        const HUD_SCALE = 2;
+        const HUD_MARGIN = 12;
+        const HUD_ROW_H = 22;
+        const maxW = Math.max(...ITEM_TYPES.map(t => t.w)) * HUD_SCALE;
+        const totalH = ITEM_TYPES.length * HUD_ROW_H + 4;
+        const hudX = canvas.width - HUD_MARGIN - maxW - 50;
+        const hudY = HUD_MARGIN;
+
+        // Фон
+        ctx.save();
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = '#0a0a18';
+        ctx.fillRect(hudX - 8, hudY - 4, maxW + 60, totalH);
+        ctx.restore();
+
+        ctx.font = '13px monospace';
+        ctx.textAlign = 'left';
+        for (let i = 0; i < ITEM_TYPES.length; i++) {
+            const type = ITEM_TYPES[i];
+            const rowY = hudY + i * HUD_ROW_H;
+            const iconH = type.h * HUD_SCALE;
+            const iconY = rowY + Math.max(0, (HUD_ROW_H - iconH) / 2);
+            drawPixelArt(hudX, iconY, type.pixels, HUD_SCALE);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(`× ${castleResources[i] ?? 0}`, hudX + type.w * HUD_SCALE + 6, iconY + iconH / 2 + 4);
+        }
     }
 
     // Курсор-точка (вне зума и тряски — стабильный)
