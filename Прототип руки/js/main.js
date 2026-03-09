@@ -37,6 +37,7 @@ let mouseY = canvas.height / 2;
 let mouseDown = false;
 let hoveredItem = null;
 let hoveredMinion = null;
+let hoveredFlag = false;
 
 const selection = {
     active: false,
@@ -160,6 +161,8 @@ const world = {
     set hoveredItem(v) { hoveredItem = v; },
     get hoveredMinion() { return hoveredMinion; },
     set hoveredMinion(v) { hoveredMinion = v; },
+    get hoveredFlag() { return hoveredFlag; },
+    set hoveredFlag(v) { hoveredFlag = v; },
     get mouseX() { return mouseX; },
     set mouseX(v) { mouseX = v; },
     get mouseY() { return mouseY; },
@@ -215,9 +218,10 @@ function update(dt) {
         minions[i].update(dt, hand, triggerScreenShake, items, castle);
     }
 
-    // Проверяем наведение на предметы и миньонов
+    // Проверяем наведение на предметы, миньонов и флаг
     hoveredItem = null;
     hoveredMinion = null;
+    hoveredFlag = false;
     if (hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag) {
         let minDist = 1.5;
         for (let i = 0; i < items.length; i++) {
@@ -245,6 +249,12 @@ function update(dt) {
                 hoveredItem = null;
                 hoveredMinion = i;
             }
+        }
+        // Флаг на земле — наведение для подбора
+        if (hoveredItem === null && hoveredMinion === null && flag.state === 'placed') {
+            const dx = hand.isoX - flag.ix;
+            const dy = hand.isoY - flag.iy;
+            if (Math.sqrt(dx * dx + dy * dy) < 1.2) hoveredFlag = true;
         }
     } else if (hand.grabbedFlag) {
         // С флагом в руке — подсвечиваем ближайший добываемый ресурс
@@ -350,6 +360,8 @@ function update(dt) {
         } else {
             statusEl.textContent = 'Флаг в руке — кликни чтобы установить';
         }
+    } else if (nothingHeld && hoveredFlag) {
+        statusEl.textContent = 'Флаг [зажми ЛКМ чтобы подобрать]';
     } else if (nothingHeld && hoveredItem !== null) {
         statusEl.textContent = `Навести: ${ITEM_TYPES[items[hoveredItem].typeIndex].name} [зажми ЛКМ]`;
     } else if (nothingHeld && hoveredMinion !== null) {
@@ -458,7 +470,7 @@ function render() {
         } else if (obj.type === 'castle') {
             castle.draw();
         } else if (obj.type === 'flag') {
-            drawFlagInWorld(false);
+            drawFlagInWorld(hoveredFlag);
         } else if (obj.type === 'hand') {
             if (hand.grabbedItem !== null) {
                 items[hand.grabbedItem].draw(hand.grabbedItem, hand, hoveredItem);

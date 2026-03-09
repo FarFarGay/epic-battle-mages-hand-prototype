@@ -116,6 +116,25 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                 hand.velocityHistory = [];
                 statusEl.textContent = 'Захвачено: Миньон';
             }
+        } else if (world.hoveredFlag && handFree) {
+            // Подбираем флаг с земли — возвращаем гоблинов в ожидание
+            flag.state = 'docked';
+            hand.grabbedFlag = true;
+            hand.state = 'closing';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+            hand.selectedMinions = [];
+            for (let i = 0; i < minions.length; i++) {
+                const m = minions[i];
+                if (m.state === 'moving' || m.state === 'waiting') {
+                    m.state = 'listening';
+                    m.stateTime = 0;
+                    hand.selectedMinions.push(i);
+                }
+            }
+            statusEl.textContent = hand.selectedMinions.length > 0
+                ? `Флаг подобран — ${hand.selectedMinions.length} гоблин(а) ждут приказа`
+                : 'Флаг подобран';
         } else if (handFree) {
             // Начинаем выделение рамкой — от позиции руки
             selection.active = true;
