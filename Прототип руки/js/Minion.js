@@ -252,7 +252,13 @@ export class Minion extends GameObject {
                     if (dist < castle.baseRadius + this.radius) {
                         // Сдать камень
                         const idx = items.indexOf(this.carriedItem);
-                        if (idx !== -1) items.splice(idx, 1);
+                        if (idx !== -1) {
+                            items.splice(idx, 1);
+                            // Корректируем индекс в руке: splice сдвигает все элементы после idx
+                            if (hand.grabbedItem !== null && hand.grabbedItem > idx) {
+                                hand.grabbedItem--;
+                            }
+                        }
                         this.carriedItem = null;
 
                         // Искать следующий камень
