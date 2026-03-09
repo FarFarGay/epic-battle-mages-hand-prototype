@@ -3,8 +3,9 @@
 // ============================================================
 import {
     GRAVITY, CARRY_HEIGHT, LIFT_SPEED, BOUNCE_MIN_VZ, MAX_BOUNCES,
-    SLIDE_STOP, AIR_RESISTANCE, GRID_SIZE, WALL_BOUNCE
+    SLIDE_STOP, AIR_RESISTANCE, WALL_BOUNCE
 } from './constants.js';
+import { gameMap } from './Map.js';
 
 export class GameObject {
     constructor(ix, iy, mass, bounciness, friction) {
@@ -24,7 +25,7 @@ export class GameObject {
     }
 
     clampToGrid() {
-        const limit = GRID_SIZE + 0.5; // чуть за краем тайлов
+        const limit = gameMap.size + 0.5; // чуть за краем тайлов
         if (this.ix < -limit) {
             this.ix = -limit;
             this.vx = Math.abs(this.vx) * WALL_BOUNCE;

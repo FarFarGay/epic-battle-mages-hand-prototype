@@ -3,7 +3,8 @@
 // ============================================================
 import { ITEM_TYPES, PIXEL_SCALE, HEIGHT_TO_SCREEN, CAMERA_OFFSET_Y } from './constants.js';
 import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H } from './sprites.js';
-import { canvas, ctx, resize, drawPixelArt, drawItemShadow, drawFloor } from './renderer.js';
+import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
+import { gameMap } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
 import { Hand } from './Hand.js';
 import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles } from './World.js';
@@ -390,7 +391,7 @@ function render() {
     ctx.translate(-canvas.width / 2, -canvas.height / 2);
 
     // Пол
-    drawFloor();
+    gameMap.draw();
 
     // Собираем все объекты для сортировки по глубине
     const renderList = [];

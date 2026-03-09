@@ -2,10 +2,11 @@
 //  МИНЬОН
 // ============================================================
 import {
-    PIXEL_SCALE, HEIGHT_TO_SCREEN, GRID_SIZE, MINION_SPEED, MINION_MAX_HP,
+    PIXEL_SCALE, HEIGHT_TO_SCREEN, MINION_SPEED, MINION_MAX_HP,
     FALL_DMG_MED_VZ, FALL_DMG_HI_VZ, FALL_DMG_MED, FALL_DMG_HI,
     CAMERA_OFFSET_Y
 } from './constants.js';
+import { gameMap } from './Map.js';
 import { MINION_PIXELS, MINION_DEAD_PIXELS, MINION_W, MINION_H } from './sprites.js';
 import { GameObject } from './GameObject.js';
 import { canvas, ctx, drawPixelArt, drawItemShadow, drawHighlight } from './renderer.js';
@@ -47,7 +48,7 @@ export class Minion extends GameObject {
     }
 
     pickNewTarget() {
-        const limit = GRID_SIZE - 1.0;
+        const limit = gameMap.size - 1.0;
         this.targetX = (Math.random() * 2 - 1) * limit;
         this.targetY = (Math.random() * 2 - 1) * limit;
     }
@@ -152,7 +153,7 @@ export class Minion extends GameObject {
                     const spd = MINION_SPEED * dt;
                     this.ix += (dx / dist) * spd;
                     this.iy += (dy / dist) * spd;
-                    const lim = GRID_SIZE - 0.5;
+                    const lim = gameMap.size - 0.5;
                     this.ix = Math.max(-lim, Math.min(lim, this.ix));
                     this.iy = Math.max(-lim, Math.min(lim, this.iy));
                 }
@@ -177,7 +178,7 @@ export class Minion extends GameObject {
                     const spd = MINION_SPEED * dt;
                     this.ix += (dx / dist) * spd;
                     this.iy += (dy / dist) * spd;
-                    const lim = GRID_SIZE - 0.5;
+                    const lim = gameMap.size - 0.5;
                     this.ix = Math.max(-lim, Math.min(lim, this.ix));
                     this.iy = Math.max(-lim, Math.min(lim, this.iy));
                 }
@@ -227,7 +228,7 @@ export class Minion extends GameObject {
                         const spd = MINION_SPEED * dt;
                         this.ix += (dx / dist) * spd;
                         this.iy += (dy / dist) * spd;
-                        const lim = GRID_SIZE - 0.5;
+                        const lim = gameMap.size - 0.5;
                         this.ix = Math.max(-lim, Math.min(lim, this.ix));
                         this.iy = Math.max(-lim, Math.min(lim, this.iy));
                     }
@@ -276,7 +277,7 @@ export class Minion extends GameObject {
                         const spd = MINION_SPEED * dt;
                         this.ix += (dx / dist) * spd;
                         this.iy += (dy / dist) * spd;
-                        const lim = GRID_SIZE - 0.5;
+                        const lim = gameMap.size - 0.5;
                         this.ix = Math.max(-lim, Math.min(lim, this.ix));
                         this.iy = Math.max(-lim, Math.min(lim, this.iy));
                     }

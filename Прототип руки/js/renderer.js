@@ -1,8 +1,7 @@
 // ============================================================
 //  РЕНДЕРЕР — canvas, ctx и все функции отрисовки примитивов
 // ============================================================
-import { TILE_W, TILE_H, PIXEL_SCALE, GRID_SIZE, CAMERA_OFFSET_Y } from './constants.js';
-import { isoToScreen } from './isometry.js';
+import { TILE_W, TILE_H, PIXEL_SCALE } from './constants.js';
 
 export const canvas = document.getElementById('game');
 export const ctx = canvas.getContext('2d');
@@ -31,21 +30,6 @@ export function drawPixelArt(screenX, screenY, pixels, scale = PIXEL_SCALE) {
             p[2],
             scale
         );
-    }
-}
-
-// ============================================================
-//  ИЗОМЕТРИЧЕСКАЯ СЕТКА (ПОЛ)
-// ============================================================
-export function drawFloor() {
-    for (let iy = -GRID_SIZE; iy <= GRID_SIZE; iy++) {
-        for (let ix = -GRID_SIZE; ix <= GRID_SIZE; ix++) {
-            const iso = isoToScreen(ix, iy);
-            const sx = iso.x + canvas.width / 2;
-            const sy = iso.y + canvas.height / 2 - CAMERA_OFFSET_Y;
-            const isEven = (ix + iy) % 2 === 0;
-            drawIsoDiamond(sx, sy, isEven ? '#2a2a4a' : '#252545', isEven ? '#222240' : '#1e1e3a');
-        }
     }
 }
 

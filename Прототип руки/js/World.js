@@ -1,7 +1,7 @@
 // ============================================================
 //  МИР — предметы, миньоны, флаг, тряска экрана
 // ============================================================
-import { INITIAL_POSITIONS, INITIAL_MINION_POSITIONS } from './constants.js';
+import { gameMap } from './Map.js';
 import { Item } from './Item.js';
 import { Minion } from './Minion.js';
 import { Castle } from './Castle.js';
@@ -133,13 +133,13 @@ export function resolveCastleCollisions() {
 export function restartMap(hand, statusEl) {
     // Сброс предметов на начальные позиции
     items.length = 0;
-    for (const pos of INITIAL_POSITIONS) {
+    for (const pos of gameMap.initialItems) {
         items.push(new Item(pos.type, pos.ix, pos.iy));
     }
 
     // Сброс миньонов
     minions.length = 0;
-    for (const pos of INITIAL_MINION_POSITIONS) {
+    for (const pos of gameMap.initialMinions) {
         minions.push(new Minion(pos.ix, pos.iy));
     }
 
@@ -171,7 +171,7 @@ export function restartMap(hand, statusEl) {
     hand.prevScreenXForShake = 0;
     hand.selectedMinions = [];
 
-    castle = new Castle(0, -6);
+    castle = new Castle(gameMap.castlePos.ix, gameMap.castlePos.iy);
 
     statusEl.textContent = 'Карта перезапущена!';
 }
@@ -181,12 +181,12 @@ export function restartMap(hand, statusEl) {
 // ============================================================
 export function initWorld() {
     items.length = 0;
-    for (const pos of INITIAL_POSITIONS) {
+    for (const pos of gameMap.initialItems) {
         items.push(new Item(pos.type, pos.ix, pos.iy));
     }
 
     minions.length = 0;
-    for (const pos of INITIAL_MINION_POSITIONS) {
+    for (const pos of gameMap.initialMinions) {
         minions.push(new Minion(pos.ix, pos.iy));
     }
 
@@ -198,5 +198,5 @@ export function initWorld() {
     bloodParticles.length = 0;
     bloodPuddles.length = 0;
 
-    castle = new Castle(0, -6);
+    castle = new Castle(gameMap.castlePos.ix, gameMap.castlePos.iy);
 }
