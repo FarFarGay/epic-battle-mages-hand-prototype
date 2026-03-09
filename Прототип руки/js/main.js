@@ -84,11 +84,10 @@ function drawFlagInWorld(isHovered) {
 // ============================================================
 //  ВСТРЯХИВАНИЕ ФЛАГА
 // ============================================================
-function dismissFlag() {
-    const cp = screenToCanvas(hand.screenX, hand.screenY);
+function spawnFlagParticles(originX, originY) {
     flagEffect.active = true;
-    flagEffect.originX = cp.x - (SPR_FLAG_W * PIXEL_SCALE) / 2;
-    flagEffect.originY = cp.y - (SPR_FLAG_H * PIXEL_SCALE) / 2 - 8;
+    flagEffect.originX = originX;
+    flagEffect.originY = originY;
     flagEffect.t = 0;
     flagEffect.particles = FLAG_PIXELS.map(p => ({
         x: p[0] * PIXEL_SCALE,
@@ -97,6 +96,28 @@ function dismissFlag() {
         vy: (Math.random() - 0.5) * 80 - 30,
         color: p[2],
     }));
+}
+
+// Эффект рассеивания флага в руке (при встряхивании или выдаче задачи с рукой)
+function triggerFlagEffectAtHand() {
+    const cp = screenToCanvas(hand.screenX, hand.screenY);
+    spawnFlagParticles(
+        cp.x - (SPR_FLAG_W * PIXEL_SCALE) / 2,
+        cp.y - (SPR_FLAG_H * PIXEL_SCALE) / 2 - 8
+    );
+}
+
+// Эффект рассеивания флага на поле (когда флаг стоит на земле)
+function triggerFlagEffectAtWorld(ix, iy) {
+    const s = worldToScreen(ix, iy);
+    spawnFlagParticles(
+        s.x - (SPR_FLAG_W * PIXEL_SCALE) / 2,
+        s.y - (SPR_FLAG_H * PIXEL_SCALE) - 4
+    );
+}
+
+function dismissFlag() {
+    triggerFlagEffectAtHand();
 
     flag.state = 'docked';
     hand.grabbedFlag = false;
@@ -133,6 +154,8 @@ const world = {
     screenShake,
     selection,
     flagEffect,
+    triggerFlagEffectAtWorld,
+    triggerFlagEffectAtHand,
     get hoveredItem() { return hoveredItem; },
     set hoveredItem(v) { hoveredItem = v; },
     get hoveredMinion() { return hoveredMinion; },
@@ -223,6 +246,22 @@ function update(dt) {
                 hoveredMinion = i;
             }
         }
+    } else if (hand.grabbedFlag) {
+        // С флагом в руке — подсвечиваем ближайший добываемый ресурс
+        let minDist = 1.5;
+        for (let i = 0; i < items.length; i++) {
+            const it = items[i];
+            if (!it.typeDef.gatherable) continue;
+            if (it.state === 'carried' || it.state === 'lifting' || it.state === 'goblin_carried') continue;
+            if (it.iz > 2.0) continue;
+            const dx = hand.isoX - it.ix;
+            const dy = hand.isoY - it.iy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < minDist) {
+                minDist = dist;
+                hoveredItem = i;
+            }
+        }
     }
 
     // Эффекты крови от миньонов
@@ -304,7 +343,13 @@ function update(dt) {
     // Обновляем статус
     const nothingHeld = hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag;
     if (hand.grabbedFlag) {
-        statusEl.textContent = 'Флаг в руке — кликни чтобы установить';
+        if (hoveredItem !== null && hand.selectedMinions.length > 0) {
+            statusEl.textContent = `Кликни — ${hand.selectedMinions.length} гоблин(а) начнут добычу!`;
+        } else if (hoveredItem !== null) {
+            statusEl.textContent = 'Ресурс — выдели гоблинов лассо для отправки на добычу';
+        } else {
+            statusEl.textContent = 'Флаг в руке — кликни чтобы установить';
+        }
     } else if (nothingHeld && hoveredItem !== null) {
         statusEl.textContent = `Навести: ${ITEM_TYPES[items[hoveredItem].typeIndex].name} [зажми ЛКМ]`;
     } else if (nothingHeld && hoveredMinion !== null) {

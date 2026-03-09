@@ -41,8 +41,27 @@ export function initInput(canvas, hand, world, cam, statusEl) {
         world.mouseDown = true;
         const handFree = hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag;
 
-        if (hand.grabbedFlag && world.hoveredItem === null && world.hoveredMinion === null) {
-            // Устанавливаем флаг кликом на свободное место
+        if (hand.grabbedFlag && world.hoveredItem !== null && hand.selectedMinions.length > 0) {
+            // Флаг + ресурс + выбранные гоблины → мгновенная задача «добывать»
+            let count = 0;
+            for (const idx of hand.selectedMinions) {
+                const m = minions[idx];
+                if (m.state === 'listening') {
+                    if (m.assignGatherTask(items)) count++;
+                }
+            }
+            world.triggerFlagEffectAtHand();
+            flag.state = 'docked';
+            hand.grabbedFlag = false;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+            hand.selectedMinions = [];
+            statusEl.textContent = count > 0
+                ? `${count} гоблин(а) начинают добычу!`
+                : 'Нет доступных ресурсов';
+        } else if (hand.grabbedFlag && world.hoveredMinion === null) {
+            // Устанавливаем флаг кликом на свободное место (или ресурс без гоблинов)
             flag.ix = hand.isoX;
             flag.iy = hand.isoY;
             flag.iz = 0;
@@ -228,8 +247,9 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             }
             if (count > 0) {
                 statusEl.textContent = `${count} гоблин(а) начинают добычу камней`;
-                // Флаг больше не нужен — убираем с поля
+                // Флаг больше не нужен — убираем с поля с эффектом рассеивания
                 if (flag.state === 'placed') {
+                    world.triggerFlagEffectAtWorld(flag.ix, flag.iy);
                     flag.state = 'docked';
                 }
             } else {

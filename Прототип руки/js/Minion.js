@@ -54,12 +54,12 @@ export class Minion extends GameObject {
 
     // ── Задачи ──────────────────────────────────────────────────
 
-    // Найти ближайший камень (typeIndex=1) не занятый рукой или другим гоблином
-    findNearestStone(items) {
+    // Найти ближайший добываемый ресурс не занятый рукой или другим гоблином
+    findNearestResource(items) {
         let nearest = null;
         let nearestDist = Infinity;
         for (const item of items) {
-            if (item.typeIndex !== 1) continue; // только камни
+            if (!item.typeDef.gatherable) continue; // только добываемые ресурсы
             if (item.state === 'carried' || item.state === 'lifting' || item.state === 'goblin_carried') continue;
             const dx = item.ix - this.ix;
             const dy = item.iy - this.iy;
@@ -75,7 +75,7 @@ export class Minion extends GameObject {
     // Назначить задачу «добывать». Возвращает true если задача принята.
     assignGatherTask(items) {
         this.task = 'gather';
-        const stone = this.findNearestStone(items);
+        const stone = this.findNearestResource(items);
         if (!stone) {
             this.task = null;
             this.state = 'free';
@@ -197,7 +197,7 @@ export class Minion extends GameObject {
                         this.targetItem.state === 'carried' ||
                         this.targetItem.state === 'lifting' ||
                         this.targetItem.state === 'goblin_carried') {
-                        const stone = this.findNearestStone(items);
+                        const stone = this.findNearestResource(items);
                         if (!stone) {
                             this.task = null;
                             this.state = 'free';
@@ -262,7 +262,7 @@ export class Minion extends GameObject {
                         this.carriedItem = null;
 
                         // Искать следующий камень
-                        const stone = this.findNearestStone(items);
+                        const stone = this.findNearestResource(items);
                         if (!stone) {
                             this.task = null;
                             this.state = 'free';

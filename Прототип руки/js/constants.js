@@ -37,7 +37,7 @@ export const FALL_DMG_HI     = 50;  // 50% от MINION_MAX_HP
 // — Типы предметов —
 export const ITEM_TYPES = [
     { name: 'Зелье',    pixels: POTION_PIXELS,  w: 7, h: 8, mass: 1.0, bounciness: 0.3, friction: 0.85, radius: 0.35 },
-    { name: 'Камень',   pixels: CUBE_PIXELS,    w: 7, h: 6, mass: 2.5, bounciness: 0.5, friction: 0.7,  radius: 0.40 },
+    { name: 'Камень',   pixels: CUBE_PIXELS,    w: 7, h: 6, mass: 2.5, bounciness: 0.5, friction: 0.7,  radius: 0.40, gatherable: true },
     { name: 'Свиток',   pixels: SCROLL_PIXELS,  w: 8, h: 8, mass: 0.3, bounciness: 0.1, friction: 0.95, radius: 0.35 },
     { name: 'Кристалл', pixels: CRYSTAL_PIXELS, w: 7, h: 8, mass: 0.8, bounciness: 0.6, friction: 0.8,  radius: 0.35 },
 ];
