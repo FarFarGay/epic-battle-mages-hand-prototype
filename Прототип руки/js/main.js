@@ -507,8 +507,8 @@ function render() {
         });
     }
 
-    // Флаг на поле (виден только если тайл в зоне прямой видимости)
-    if (flag.state === 'placed' && gameMap.getFog(Math.round(flag.ix), Math.round(flag.iy)) === FOG.VISIBLE) {
+    // Флаг всегда виден над туманом войны (игрок должен знать куда поставил флаг)
+    if (flag.state === 'placed') {
         renderList.push({
             type: 'flag',
             depth: getDepth(flag.ix, flag.iy)
