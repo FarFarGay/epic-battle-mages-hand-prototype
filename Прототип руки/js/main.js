@@ -181,6 +181,33 @@ function update(dt) {
     // Обновляем руку (движение, iso-координаты, анимация)
     hand.update(dt, mouseX, mouseY, canvas, screenToIso);
 
+    // Рука вне зоны видимости — принудительно роняем предмет или миньона
+    if (gameMap.getFog(Math.round(hand.isoX), Math.round(hand.isoY)) !== FOG.VISIBLE) {
+        if (hand.grabbedItem !== null) {
+            const item = items[hand.grabbedItem];
+            item.grabbed = false;
+            item.vx = 0; item.vy = 0; item.vz = 0;
+            item.state = 'thrown';
+            item.stateTime = 0;
+            item.bounceCount = 0;
+            hand.grabbedItem = null;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+        }
+        if (hand.grabbedMinion !== null) {
+            const minion = minions[hand.grabbedMinion];
+            minion.vx = 0; minion.vy = 0; minion.vz = 0;
+            minion.state = 'thrown';
+            minion.stateTime = 0;
+            minion.bounceCount = 0;
+            hand.grabbedMinion = null;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+        }
+    }
+
     // Детектор встряхивания флага
     if (hand.grabbedFlag) {
         hand.checkFlagShake(dismissFlag);
