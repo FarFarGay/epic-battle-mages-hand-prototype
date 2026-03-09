@@ -27,6 +27,10 @@ function screenToCanvas(sx, sy) {
     };
 }
 
+// Зоны патруля (iso-тайлы от замка в центре 0,0)
+const FREE_PATROL_RADIUS = 10;  // свободный гоблин: 21×21 тайл вокруг замка
+const GATHER_ZONE_RADIUS = 21;  // сборщик: 42×42 тайл вокруг замка
+
 export class Minion extends GameObject {
     constructor(ix, iy) {
         super(ix, iy, 0.7, 0.25, 0.82);
@@ -40,28 +44,31 @@ export class Minion extends GameObject {
         this.pendingBloodEffect = null; // { type: 'hit'|'death', ix, iy }
 
         // Система задач
-        this.task = null;        // null | 'gather'
-        this.targetItem = null;  // ссылка на предмет-цель
-        this.carriedItem = null; // ссылка на переносимый предмет
+        this.task = null;          // null | 'gather'
+        this.targetItem = null;    // ссылка на предмет-цель
+        this.carriedItem = null;   // ссылка на переносимый предмет
+        this.gathererMode = false; // true = назначен флагом (цикличный сбор в 42×42)
 
         this.pickNewTarget();
     }
 
     pickNewTarget() {
-        const limit = gameMap.size - 1.0;
-        this.targetX = (Math.random() * 2 - 1) * limit;
-        this.targetY = (Math.random() * 2 - 1) * limit;
+        // Свободные гоблины патрулируют 21×21 область вокруг замка (0,0)
+        this.targetX = (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
+        this.targetY = (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
     }
 
     // ── Задачи ──────────────────────────────────────────────────
 
-    // Найти ближайший добываемый ресурс не занятый рукой или другим гоблином
-    findNearestResource(items) {
+    // Найти ближайший добываемый ресурс не занятый рукой или другим гоблином.
+    // zoneOnly=true — искать только в зоне 42×42 (±GATHER_ZONE_RADIUS) вокруг замка.
+    findNearestResource(items, zoneOnly = false) {
         let nearest = null;
         let nearestDist = Infinity;
         for (const item of items) {
-            if (!item.typeDef.gatherable) continue; // только добываемые ресурсы
+            if (!item.typeDef.gatherable) continue;
             if (item.state === 'carried' || item.state === 'lifting' || item.state === 'goblin_carried') continue;
+            if (zoneOnly && (Math.abs(item.ix) > GATHER_ZONE_RADIUS || Math.abs(item.iy) > GATHER_ZONE_RADIUS)) continue;
             const dx = item.ix - this.ix;
             const dy = item.iy - this.iy;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -73,12 +80,14 @@ export class Minion extends GameObject {
         return nearest;
     }
 
-    // Назначить задачу «добывать». Возвращает true если задача принята.
+    // Назначить задачу «добывать» (через флаг). Возвращает true если задача принята.
     assignGatherTask(items) {
+        this.gathererMode = true; // назначен флагом → цикличный сбор в зоне 42×42
         this.task = 'gather';
-        const stone = this.findNearestResource(items);
+        const stone = this.findNearestResource(items, true);
         if (!stone) {
             this.task = null;
+            this.gathererMode = false;
             this.state = 'free';
             this.stateTime = 0;
             return false;
@@ -128,6 +137,7 @@ export class Minion extends GameObject {
     onSettle(items) {
         this.bounceCount = 0;
         this.stateTime = 0;
+        this.gathererMode = false; // брошен/положен вручную → после сдачи станет свободным
         this.dropCarriedItem(); // бросаем камень если несли
         if (this.dead) {
             this.state = 'dead';
@@ -218,9 +228,10 @@ export class Minion extends GameObject {
                         this.targetItem.state === 'carried' ||
                         this.targetItem.state === 'lifting' ||
                         this.targetItem.state === 'goblin_carried') {
-                        const stone = this.findNearestResource(items);
+                        const stone = this.findNearestResource(items, this.gathererMode);
                         if (!stone) {
                             this.task = null;
+                            this.gathererMode = false;
                             this.state = 'free';
                             this.stateTime = 0;
                         } else {
@@ -282,15 +293,17 @@ export class Minion extends GameObject {
                         }
                         this.carriedItem = null;
 
-                        // Искать следующий камень
-                        const stone = this.findNearestResource(items);
-                        if (!stone) {
-                            this.task = null;
-                            this.state = 'free';
-                            this.stateTime = 0;
-                        } else {
+                        // Искать следующий ресурс (только в зоне 42×42 если gathererMode)
+                        const stone = this.findNearestResource(items, this.gathererMode);
+                        if (stone && this.gathererMode) {
                             this.targetItem = stone;
                             this.state = 'busy';
+                            this.stateTime = 0;
+                        } else {
+                            // Ресурсов в зоне нет или ручной гоблин → стать свободным
+                            this.task = null;
+                            this.gathererMode = false;
+                            this.state = 'free';
                             this.stateTime = 0;
                         }
                     } else {
