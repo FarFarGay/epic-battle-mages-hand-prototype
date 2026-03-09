@@ -40,6 +40,7 @@ export class Minion extends GameObject {
         this.targetY = iy;
         this.hp = MINION_MAX_HP;
         this.dead = false;
+        this.deadTime = 0;            // секунды с момента смерти (для угасания тумана)
         this.damageWobble = 0;        // таймер тряски при получении урона
         this.pendingBloodEffect = null; // { type: 'hit'|'death', ix, iy }
 
@@ -338,6 +339,7 @@ export class Minion extends GameObject {
                 this.vx = 0;
                 this.vy = 0;
                 this.vz = 0;
+                this.deadTime += dt;
                 break;
 
             default:

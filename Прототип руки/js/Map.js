@@ -109,8 +109,9 @@ export class GameMap {
         const cx = Math.round(ix);
         const cy = Math.round(iy);
         const r2 = radius * radius;
-        for (let dy = -radius; dy <= radius; dy++) {
-            for (let dx = -radius; dx <= radius; dx++) {
+        const ri = Math.ceil(radius);
+        for (let dy = -ri; dy <= ri; dy++) {
+            for (let dx = -ri; dx <= ri; dx++) {
                 if (dx * dx + dy * dy <= r2) {
                     const fx = cx + dx;
                     const fy = cy + dy;
