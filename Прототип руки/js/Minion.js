@@ -125,12 +125,32 @@ export class Minion extends GameObject {
         // Мёртвый гоблин — крови не оставляет
     }
 
-    onSettle() {
+    onSettle(items) {
         this.bounceCount = 0;
         this.stateTime = 0;
         this.dropCarriedItem(); // бросаем камень если несли
         if (this.dead) {
             this.state = 'dead';
+            return;
+        }
+        // При приземлении ищем ближайший ресурс в радиусе 1.5 тайла
+        const AUTO_GATHER_RADIUS = 1.5;
+        let nearest = null, nearestDist = AUTO_GATHER_RADIUS;
+        if (items) {
+            for (const item of items) {
+                if (!item.typeDef.gatherable) continue;
+                if (item.state === 'carried' || item.state === 'lifting' || item.state === 'goblin_carried') continue;
+                const dx = item.ix - this.ix;
+                const dy = item.iy - this.iy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < nearestDist) { nearestDist = dist; nearest = item; }
+            }
+        }
+        if (nearest) {
+            this.task = 'gather';
+            this.targetItem = nearest;
+            this.carriedItem = null;
+            this.state = 'busy';
         } else {
             this.pickNewTarget();
             this.state = 'free';
@@ -292,7 +312,7 @@ export class Minion extends GameObject {
 
             case 'settling':
                 if (this.stateTime > 0.3) {
-                    this.onSettle();
+                    this.onSettle(items);
                 }
                 break;
 
