@@ -202,6 +202,7 @@ function update(dt) {
             minion.stateTime = 0;
             minion.bounceCount = 0;
             hand.grabbedMinion = null;
+            hand.minionGrabIso = null;
             hand.state = 'opening';
             hand.animProgress = 0;
             hand.velocityHistory = [];
@@ -390,6 +391,11 @@ function update(dt) {
             return [{ ix: m.ix, iy: m.iy, radius: 2 }];
         }),
     ];
+    // Точка подбора гоблина остаётся освещённой пока он в руке —
+    // иначе гоблин гасит собственный туман и рука мгновенно его роняет
+    if (hand.grabbedMinion !== null && hand.minionGrabIso !== null) {
+        fogSources.push({ ix: hand.minionGrabIso.ix, iy: hand.minionGrabIso.iy, radius: 2 });
+    }
     gameMap.tickFog(fogSources);
 
     // Тряска экрана

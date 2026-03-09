@@ -104,6 +104,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             if (minion.state !== 'carried' && minion.state !== 'lifting') {
                 minion.dropCarriedItem(); // бросить камень если нёс
                 hand.grabbedMinion = world.hoveredMinion;
+                hand.minionGrabIso = { ix: minion.ix, iy: minion.iy };
                 minion.state = 'lifting';
                 minion.stateTime = 0;
                 minion.liftProgress = 0;
@@ -186,6 +187,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             minion.bounceCount = 0;
 
             hand.grabbedMinion = null;
+            hand.minionGrabIso = null;
             hand.state = 'opening';
             hand.animProgress = 0;
             hand.velocityHistory = [];

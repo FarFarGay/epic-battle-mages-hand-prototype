@@ -38,6 +38,7 @@ export class Hand {
         this.prevScreenXForShake = 0;
         this.shakeHistory = [];       // { dx, t } для определения встряхивания
         this.selectedMinions = [];    // индексы выделенных миньонов (пока флаг в руке)
+        this.minionGrabIso = null;    // {ix, iy} — позиция подбора гоблина (для поддержки тумана)
     }
 
     update(dt, mouseX, mouseY, canvas, screenToIso) {
