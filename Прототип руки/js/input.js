@@ -101,7 +101,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             }
         } else if (world.hoveredMinion !== null && handFree) {
             const minion = minions[world.hoveredMinion];
-            if (minion.state !== 'carried' && minion.state !== 'lifting') {
+            if (minion.state !== 'carried' && minion.state !== 'lifting' && minion.state !== 'dead') {
                 minion.dropCarriedItem(); // бросить камень если нёс
                 hand.grabbedMinion = world.hoveredMinion;
                 hand.minionGrabIso = { ix: minion.ix, iy: minion.iy };
@@ -214,6 +214,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                 for (let i = 0; i < minions.length; i++) {
                     const m = minions[i];
                     if (!SELECTABLE.includes(m.state)) continue;
+                    if (m.isUndead) continue; // скелеты не выделяются лассо
                     const s = worldToScreen(m.ix, m.iy, canvas);
                     const mx = s.x;
                     const my = s.y - (MINION_H * PIXEL_SCALE) / 2;

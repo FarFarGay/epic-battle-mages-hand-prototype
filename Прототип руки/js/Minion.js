@@ -7,7 +7,11 @@ import {
     CAMERA_OFFSET_Y
 } from './constants.js';
 import { gameMap } from './Map.js';
-import { MINION_PIXELS, MINION_DEAD_PIXELS, MINION_W, MINION_H } from './sprites.js';
+import {
+    MINION_PIXELS, MINION_DEAD_PIXELS, MINION_W, MINION_H,
+    TOMBSTONE_PIXELS, TOMBSTONE_W, TOMBSTONE_H,
+    SKELETON_PIXELS, SKELETON_W, SKELETON_H,
+} from './sprites.js';
 import { GameObject } from './GameObject.js';
 import { canvas, ctx, drawPixelArt, drawItemShadow, drawHighlight } from './renderer.js';
 import { camera, isoToScreen } from './isometry.js';
@@ -43,6 +47,11 @@ export class Minion extends GameObject {
         this.deadTime = 0;            // секунды с момента смерти (для угасания тумана)
         this.damageWobble = 0;        // таймер тряски при получении урона
         this.pendingBloodEffect = null; // { type: 'hit'|'death', ix, iy }
+
+        // Скелет
+        this.isUndead = false;          // true = скелет (после воскрешения)
+        this.pendingBoneEffect = null;  // { ix, iy } — разлёт костей при разрушении
+        this.pendingRemove = false;     // пометка на удаление из массива
 
         // Система задач
         this.task = null;          // null | 'gather'
@@ -116,6 +125,13 @@ export class Minion extends GameObject {
     }
 
     onLand(impactVz) {
+        if (this.isUndead) {
+            // Скелет разлетается костями при любом приземлении после броска
+            this.pendingBoneEffect = { ix: this.ix, iy: this.iy };
+            this.pendingRemove = true;
+            this.state = 'crumbled';
+            return;
+        }
         if (!this.dead) {
             const prevHp = this.hp;
             if (impactVz >= FALL_DMG_HI_VZ) {
@@ -343,6 +359,40 @@ export class Minion extends GameObject {
                 this.vy = 0;
                 this.vz = 0;
                 this.deadTime += dt;
+                // Через 3 секунды — восстать скелетом
+                if (this.deadTime >= 3.0) {
+                    this.isUndead = true;
+                    this.dead = false;
+                    this.state = 'skeleton';
+                    this.stateTime = 0;
+                    this.pickNewTarget();
+                }
+                break;
+
+            // ── Скелет (автономный) ────────────────────────────────
+            case 'skeleton': {
+                const dx = this.targetX - this.ix;
+                const dy = this.targetY - this.iy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < 0.25) {
+                    this.pickNewTarget();
+                } else {
+                    const spd = MINION_SPEED * 0.6 * dt; // скелеты медленнее
+                    this.ix += (dx / dist) * spd;
+                    this.iy += (dy / dist) * spd;
+                    const lim = gameMap.size - 0.5;
+                    this.ix = Math.max(-lim, Math.min(lim, this.ix));
+                    this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                }
+                break;
+            }
+
+            case 'crumbled':
+                // Конечное состояние скелета — ожидает удаления из массива
+                this.iz = 0;
+                this.vx = 0;
+                this.vy = 0;
+                this.vz = 0;
                 break;
 
             default:
@@ -353,11 +403,57 @@ export class Minion extends GameObject {
     }
 
     draw(index, hand, hoveredMinion) {
+        if (this.state === 'crumbled') return;
+
         const s = worldToScreen(this.ix, this.iy);
 
-        drawItemShadow(s.x, s.y, MINION_W, MINION_H, this.iz);
+        // ── Анимация смерти: труп → надгробие → скелет ─────────────
+        if (this.state === 'dead') {
+            const t = this.deadTime;
+            const corpseOx = Math.round(s.x - (MINION_W * PIXEL_SCALE) / 2);
+            const corpseOy = s.y - MINION_H * PIXEL_SCALE - 4;
+            const tombOx   = Math.round(s.x - (TOMBSTONE_W * PIXEL_SCALE) / 2);
+            const tombOy   = s.y - TOMBSTONE_H * PIXEL_SCALE - 4;
+            const skelOx   = Math.round(s.x - (SKELETON_W * PIXEL_SCALE) / 2);
+            const skelOy   = s.y - SKELETON_H * PIXEL_SCALE - 4;
 
-        const minionSprite = this.dead ? MINION_DEAD_PIXELS : MINION_PIXELS;
+            if (t < 1.0) {
+                // Труп
+                drawPixelArt(corpseOx, corpseOy, MINION_DEAD_PIXELS, PIXEL_SCALE);
+            } else if (t < 1.4) {
+                // Переход: труп → надгробие
+                const fadeIn = (t - 1.0) / 0.4;
+                ctx.save(); ctx.globalAlpha = 1 - fadeIn;
+                drawPixelArt(corpseOx, corpseOy, MINION_DEAD_PIXELS, PIXEL_SCALE);
+                ctx.restore();
+                ctx.save(); ctx.globalAlpha = fadeIn;
+                drawPixelArt(tombOx, tombOy, TOMBSTONE_PIXELS, PIXEL_SCALE);
+                ctx.restore();
+            } else if (t < 2.0) {
+                // Надгробие
+                drawPixelArt(tombOx, tombOy, TOMBSTONE_PIXELS, PIXEL_SCALE);
+            } else if (t < 2.4) {
+                // Переход: надгробие → скелет
+                const fadeIn = (t - 2.0) / 0.4;
+                ctx.save(); ctx.globalAlpha = 1 - fadeIn;
+                drawPixelArt(tombOx, tombOy, TOMBSTONE_PIXELS, PIXEL_SCALE);
+                ctx.restore();
+                ctx.save(); ctx.globalAlpha = fadeIn;
+                drawPixelArt(skelOx, skelOy, SKELETON_PIXELS, PIXEL_SCALE);
+                ctx.restore();
+            } else {
+                // Скелет проявился — ждём окончательного перехода
+                drawPixelArt(skelOx, skelOy, SKELETON_PIXELS, PIXEL_SCALE);
+            }
+            return;
+        }
+
+        // ── Выбор спрайта (гоблин или скелет) ───────────────────────
+        const sprW = this.isUndead ? SKELETON_W : MINION_W;
+        const sprH = this.isUndead ? SKELETON_H : MINION_H;
+        const spr  = this.isUndead ? SKELETON_PIXELS : MINION_PIXELS;
+
+        drawItemShadow(s.x, s.y, sprW, sprH, this.iz);
 
         if (this.state === 'carried' || this.state === 'lifting') {
             const time = performance.now() / 300;
@@ -366,44 +462,44 @@ export class Minion extends GameObject {
             const gripOffsetY = -8;
             const lerpT = this.state === 'lifting' ? (1 - Math.pow(1 - this.liftProgress, 2)) : 1;
             const canvasPos = screenToCanvas(hand.screenX, hand.screenY);
-            const groundOx = s.x - (MINION_W * PIXEL_SCALE) / 2;
-            const groundOy = s.y - (MINION_H * PIXEL_SCALE) - 4;
-            const handOx = canvasPos.x - (MINION_W * PIXEL_SCALE) / 2 + wobbleX;
-            const handOy = canvasPos.y - (MINION_H * PIXEL_SCALE) / 2 + gripOffsetY + wobbleY;
+            const groundOx = s.x - (sprW * PIXEL_SCALE) / 2;
+            const groundOy = s.y - (sprH * PIXEL_SCALE) - 4;
+            const handOx = canvasPos.x - (sprW * PIXEL_SCALE) / 2 + wobbleX;
+            const handOy = canvasPos.y - (sprH * PIXEL_SCALE) / 2 + gripOffsetY + wobbleY;
             const ox = groundOx + (handOx - groundOx) * lerpT;
             const oy = groundOy + (handOy - groundOy) * lerpT;
-            drawPixelArt(ox, oy, minionSprite, PIXEL_SCALE);
+            drawPixelArt(ox, oy, spr, PIXEL_SCALE);
             return;
         }
 
         const heightOffset = this.iz * HEIGHT_TO_SCREEN;
 
-        // Тряска при получении урона
         let hitOffsetX = 0, hitOffsetY = 0;
         if (this.damageWobble > 0) {
-            const t = performance.now();
+            const now = performance.now();
             const shake = this.damageWobble * 7;
-            hitOffsetX = Math.sin(t * 0.05) * shake;
-            hitOffsetY = Math.cos(t * 0.07) * shake * 0.4;
+            hitOffsetX = Math.sin(now * 0.05) * shake;
+            hitOffsetY = Math.cos(now * 0.07) * shake * 0.4;
         }
 
-        const ox = s.x - (MINION_W * PIXEL_SCALE) / 2 + hitOffsetX;
-        const oy = s.y - (MINION_H * PIXEL_SCALE) - 4 - heightOffset + hitOffsetY;
+        const ox = s.x - (sprW * PIXEL_SCALE) / 2 + hitOffsetX;
+        const oy = s.y - (sprH * PIXEL_SCALE) - 4 - heightOffset + hitOffsetY;
 
-        if (hand.grabbedFlag && hand.selectedMinions.includes(index)) {
+        // Рамка выделения — только для живых гоблинов
+        if (!this.isUndead && hand.grabbedFlag && hand.selectedMinions.includes(index)) {
             ctx.save();
             const time = performance.now() / 400;
             ctx.globalAlpha = 0.35 + 0.2 * Math.sin(time);
             ctx.strokeStyle = '#44ff88';
             ctx.lineWidth = 2;
-            ctx.strokeRect(ox - 5, oy - 5, MINION_W * PIXEL_SCALE + 10, MINION_H * PIXEL_SCALE + 10);
+            ctx.strokeRect(ox - 5, oy - 5, sprW * PIXEL_SCALE + 10, sprH * PIXEL_SCALE + 10);
             ctx.restore();
         }
 
         if (index === hoveredMinion) {
-            drawHighlight(ox, oy, MINION_W, MINION_H);
+            drawHighlight(ox, oy, sprW, sprH);
         }
 
-        drawPixelArt(ox, oy, minionSprite, PIXEL_SCALE);
+        drawPixelArt(ox, oy, spr, PIXEL_SCALE);
     }
 }

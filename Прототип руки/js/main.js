@@ -300,6 +300,7 @@ function update(dt) {
         for (let i = 0; i < minions.length; i++) {
             const m = minions[i];
             if (m.state === 'carried' || m.state === 'lifting') continue;
+            if (m.state === 'dead' || m.state === 'crumbled') continue; // труп/надгробие нельзя взять
             if (m.iz > 2.0) continue;
             if (gameMap.getFog(Math.round(m.ix), Math.round(m.iy)) !== FOG.VISIBLE) continue;
             const dx = hand.isoX - m.ix;
@@ -390,6 +391,42 @@ function update(dt) {
         }
     }
 
+    // Эффект разрушения скелета — разлёт костей
+    for (const minion of minions) {
+        if (minion.pendingBoneEffect) {
+            const effect = minion.pendingBoneEffect;
+            minion.pendingBoneEffect = null;
+            const s = worldToScreen(effect.ix, effect.iy);
+            for (let i = 0; i < 18; i++) {
+                bloodParticles.push({
+                    x: s.x + (Math.random() - 0.5) * 10,
+                    y: s.y - PIXEL_SCALE * 4,
+                    vx: (Math.random() - 0.5) * 110,
+                    vy: -35 - Math.random() * 65,
+                    life: 0.7 * (0.6 + Math.random() * 0.4),
+                    maxLife: 0.7,
+                    size: PIXEL_SCALE,
+                    color: ['#d8d0bc', '#c8c0ac', '#e0d8c4', '#b8b0a0'][Math.floor(Math.random() * 4)],
+                });
+            }
+        }
+    }
+
+    // Удаляем скелетов помеченных на удаление (после разрушения)
+    for (let i = minions.length - 1; i >= 0; i--) {
+        if (!minions[i].pendingRemove) continue;
+        if (hand.grabbedMinion === i) {
+            hand.grabbedMinion = null;
+            hand.minionGrabIso = null;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+        } else if (hand.grabbedMinion !== null && hand.grabbedMinion > i) {
+            hand.grabbedMinion--;
+        }
+        minions.splice(i, 1);
+    }
+
     // Обновляем частицы крови
     for (let i = bloodParticles.length - 1; i >= 0; i--) {
         const p = bloodParticles[i];
@@ -413,6 +450,7 @@ function update(dt) {
         { ix: gameMap.castlePos.ix, iy: gameMap.castlePos.iy, radius: 10, shape: 'square' },
         ...minions.flatMap(m => {
             if (m.state === 'carried' || m.state === 'lifting') return [];
+            if (m.isUndead) return []; // скелеты не раскрывают туман
             if (m.state === 'dead') {
                 const r = 2 * Math.max(0, 1 - m.deadTime / FOG_DEATH_FADE);
                 if (r <= 0) return [];
@@ -591,12 +629,12 @@ function render() {
         }
     }
 
-    // Частицы крови
+    // Частицы крови (и костей)
     for (const p of bloodParticles) {
         const alpha = Math.pow(p.life / p.maxLife, 0.5) * 0.9;
         ctx.save();
         ctx.globalAlpha = alpha;
-        ctx.fillStyle = '#cc1111';
+        ctx.fillStyle = p.color ?? '#cc1111';
         ctx.fillRect(Math.round(p.x - p.size / 2), Math.round(p.y - p.size / 2), p.size, p.size);
         ctx.restore();
     }
@@ -708,7 +746,7 @@ function render() {
         drawPixelArt(hudX, gobY, MINION_PIXELS, HUD_SCALE);
 
         // Счётчик живых гоблинов
-        const aliveCount = minions.filter(m => m.state !== 'dead').length;
+        const aliveCount = minions.filter(m => m.state !== 'dead' && !m.isUndead).length;
         ctx.fillStyle = '#ffffff';
         ctx.font = '12px monospace';
         ctx.textAlign = 'left';
