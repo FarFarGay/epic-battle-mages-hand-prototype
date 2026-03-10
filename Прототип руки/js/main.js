@@ -1,13 +1,17 @@
 // ============================================================
 //  MAIN — точка входа, игровой цикл
 // ============================================================
-import { ITEM_TYPES, PIXEL_SCALE, HEIGHT_TO_SCREEN, CAMERA_OFFSET_Y } from './constants.js';
-import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H } from './sprites.js';
+import {
+    ITEM_TYPES, PIXEL_SCALE, HEIGHT_TO_SCREEN, CAMERA_OFFSET_Y, GRAVITY, TILE_W, TILE_H,
+    ARTILLERY_BLAST_RADIUS, ARTILLERY_DAMAGE, ARTILLERY_RETURN_DELAY,
+    ARTILLERY_ZOOM_FACTOR, ARTILLERY_MIN_ZOOM, ARTILLERY_GRAB_RADIUS,
+} from './constants.js';
+import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion } from './World.js';
+import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode } from './World.js';
 import { initInput } from './input.js';
 
 // ============================================================
@@ -191,11 +195,202 @@ canvas.addEventListener('mousedown', (e) => {
 initInput(canvas, hand, world, camera, statusEl);
 
 // ============================================================
+//  АРТИЛЛЕРИЯ — обновление
+// ============================================================
+function updateArtillery(dt) {
+    const art = artilleryMode;
+
+    if (art.state === 'aiming') {
+        // Обновляем позицию прицела из мыши
+        const iso = screenToIso(mouseX, mouseY, canvas);
+        art.crosshairX = iso.x;
+        art.crosshairY = iso.y;
+
+        // Зум зависит от расстояния прицела до замка
+        const dx = art.crosshairX - castle.ix;
+        const dy = art.crosshairY - castle.iy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        camera.targetZoom = Math.max(ARTILLERY_MIN_ZOOM, 1.0 / (1 + dist * ARTILLERY_ZOOM_FACTOR));
+
+        // Камера всегда центрирована на замке в режиме прицеливания
+        const castleIso = isoToScreen(castle.ix, castle.iy);
+        camera.x += (castleIso.x * camera.zoom - camera.x) * Math.min(1, dt * 6);
+        camera.y += (castleIso.y * camera.zoom - camera.y) * Math.min(1, dt * 6);
+    }
+
+    if (art.state === 'flying') {
+        art.timer += dt;
+        const proj = art.projectile;
+
+        // Физика снаряда
+        proj.vz -= GRAVITY * dt;
+        proj.ix += proj.vx * dt;
+        proj.iy += proj.vy * dt;
+        proj.iz += proj.vz * dt;
+
+        // Камера следует за снарядом (iso-координаты × zoom)
+        const projIso = isoToScreen(proj.ix, proj.iy);
+        const targetCamX = projIso.x * camera.zoom;
+        const targetCamY = projIso.y * camera.zoom;
+        camera.x += (targetCamX - camera.x) * Math.min(1, dt * 4);
+        camera.y += (targetCamY - camera.y) * Math.min(1, dt * 4);
+
+        // Приземление
+        if (proj.iz <= 0 && art.timer > 0.05) {
+            proj.iz = 0;
+            art.state = 'aftermath';
+            art.timer = 0;
+
+            // Взрыв
+            const expl = art.explosion;
+            expl.active = true;
+            expl.ix = proj.ix;
+            expl.iy = proj.iy;
+            expl.t = 0;
+            expl.duration = 1.0;
+
+            // Частицы взрыва
+            expl.particles = [];
+            const colors = ['#ff4400', '#ff6600', '#ffaa00', '#ffcc00', '#ff2200', '#aa3300', '#883300'];
+            for (let i = 0; i < 60; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 40 + Math.random() * 120;
+                expl.particles.push({
+                    x: 0, y: 0,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed * 0.5 - Math.random() * 60,
+                    life: 0.5 + Math.random() * 0.6,
+                    maxLife: 0.5 + Math.random() * 0.6,
+                    size: PIXEL_SCALE * (1 + Math.random() * 2),
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                });
+            }
+            // Частицы земли/обломков
+            for (let i = 0; i < 30; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 20 + Math.random() * 80;
+                expl.particles.push({
+                    x: 0, y: 0,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed * 0.5 - 40 - Math.random() * 80,
+                    life: 0.6 + Math.random() * 0.5,
+                    maxLife: 0.6 + Math.random() * 0.5,
+                    size: PIXEL_SCALE,
+                    color: ['#554433', '#443322', '#665544', '#332211'][Math.floor(Math.random() * 4)],
+                });
+            }
+
+            // Тряска экрана
+            triggerScreenShake(15);
+
+            // Урон миньонам в радиусе взрыва
+            for (const m of minions) {
+                if (m.state === 'dead' || m.state === 'crumbled') continue;
+                const mdx = m.ix - proj.ix;
+                const mdy = m.iy - proj.iy;
+                const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
+                if (mdist <= ARTILLERY_BLAST_RADIUS) {
+                    const prevHp = m.hp;
+                    m.hp = Math.max(0, m.hp - ARTILLERY_DAMAGE);
+                    if (m.hp < prevHp) {
+                        m.damageWobble = 0.4;
+                        if (m.hp <= 0 && !m.dead) {
+                            m.dead = true;
+                            m.pendingBloodEffect = { type: 'death', ix: m.ix, iy: m.iy };
+                            m.dropCarriedItem();
+                            m.state = 'dead';
+                            m.stateTime = 0;
+                            m.deadTime = 0;
+                        } else {
+                            m.pendingBloodEffect = { type: 'hit', ix: m.ix, iy: m.iy };
+                        }
+                    }
+                    // Отбросить
+                    if (mdist > 0.01) {
+                        const pushForce = (1 - mdist / ARTILLERY_BLAST_RADIUS) * 6;
+                        m.vx = (mdx / mdist) * pushForce;
+                        m.vy = (mdy / mdist) * pushForce;
+                        m.vz = pushForce * 0.5;
+                        if (m.state !== 'dead') {
+                            m.state = 'thrown';
+                            m.stateTime = 0;
+                            m.bounceCount = 0;
+                        }
+                    }
+                }
+            }
+
+            statusEl.textContent = 'Попадание!';
+        }
+    }
+
+    if (art.state === 'aftermath') {
+        art.timer += dt;
+
+        // Обновляем частицы взрыва
+        const expl = art.explosion;
+        if (expl.active) {
+            expl.t += dt;
+            for (const p of expl.particles) {
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.vy += 120 * dt; // гравитация
+                p.life -= dt;
+            }
+            if (expl.t >= expl.duration) {
+                expl.active = false;
+            }
+        }
+
+        // После задержки возвращаем камеру к замку
+        if (art.timer >= ARTILLERY_RETURN_DELAY) {
+            const castleIso = isoToScreen(castle.ix, castle.iy);
+            const targetCamX = castleIso.x * camera.zoom;
+            const targetCamY = castleIso.y * camera.zoom;
+            camera.x += (targetCamX - camera.x) * Math.min(1, dt * 3);
+            camera.y += (targetCamY - camera.y) * Math.min(1, dt * 3);
+
+            const camDx = Math.abs(camera.x - targetCamX);
+            const camDy = Math.abs(camera.y - targetCamY);
+            if (camDx < 5 && camDy < 5) {
+                art.state = 'aiming';
+                statusEl.textContent = 'Готов к выстрелу (Q — выход)';
+            }
+        }
+    }
+}
+
+// ============================================================
 //  ОБНОВЛЕНИЕ
 // ============================================================
 function update(dt) {
+    // ── АРТИЛЛЕРИЯ — обновление ──────────────────────────────────
+    if (artilleryMode.active) {
+        updateArtillery(dt);
+    }
+
     // Обновляем руку (движение, iso-координаты, анимация)
-    hand.update(dt, mouseX, mouseY, canvas, screenToIso);
+    if (!artilleryMode.active) {
+        hand.update(dt, mouseX, mouseY, canvas, screenToIso);
+    } else {
+        // Рука зафиксирована на замке
+        // isoToScreen → canvas position = isoX*zoom + canvasW/2 - camera.x
+        const cs = isoToScreen(castle.ix, castle.iy);
+        const handTargetX = cs.x * camera.zoom + canvas.width / 2 - camera.x;
+        const handTargetY = cs.y * camera.zoom + canvas.height / 2 - camera.y;
+        hand.screenX += (handTargetX - hand.screenX) * Math.min(1, dt * 12);
+        hand.screenY += (handTargetY - hand.screenY) * Math.min(1, dt * 12);
+        hand.isoX = castle.ix;
+        hand.isoY = castle.iy;
+        // Анимация закрытия
+        if (hand.state === 'closing') {
+            hand.animProgress += dt * 5;
+            if (hand.animProgress >= 1) {
+                hand.animProgress = 1;
+                hand.state = 'closed';
+            }
+        }
+    }
 
     // Рука вне зоны видимости — принудительно роняем предмет или миньона
     if (gameMap.getFog(Math.round(hand.isoX), Math.round(hand.isoY)) !== FOG.VISIBLE) {
@@ -281,7 +476,9 @@ function update(dt) {
     hoveredItem = null;
     hoveredMinion = null;
     hoveredFlag = false;
-    if (hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag) {
+    if (artilleryMode.active) {
+        // В режиме артиллерии наведение отключено
+    } else if (hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag) {
         let minDist = 1.5;
         for (let i = 0; i < items.length; i++) {
             const it = items[i];
@@ -472,7 +669,10 @@ function update(dt) {
     // Плавный зум
     camera.zoom += (camera.targetZoom - camera.zoom) * Math.min(1, dt * 8);
 
-    // Edge scroll — камера движется если рука у края экрана
+    // Edge scroll — камера движется если рука у края экрана (отключён в режиме артиллерии)
+    if (artilleryMode.active) {
+        // Зум управляется артиллерией
+    } else {
     const EDGE_ZONE = 0.12; // 12% экрана с каждого края
     const PAN_SPEED = 600;  // px/сек в screen space
     const edgeW = canvas.width  * EDGE_ZONE;
@@ -495,29 +695,43 @@ function update(dt) {
     }
     camera.x += panX * dt;
     camera.y += panY * dt;
+    } // конец else (не артиллерия)
 
     // Обновляем статус
-    const nothingHeld = hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag;
-    if (hand.grabbedFlag) {
-        if (hoveredItem !== null && hand.selectedMinions.length > 0) {
-            statusEl.textContent = `Кликни — ${hand.selectedMinions.length} гоблин(а) начнут добычу!`;
-        } else if (hoveredItem !== null) {
-            statusEl.textContent = 'Ресурс — выдели гоблинов лассо для отправки на добычу';
-        } else {
-            statusEl.textContent = 'Флаг в руке — кликни чтобы установить';
+    if (artilleryMode.active) {
+        // Статус управляется артиллерией (updateArtillery / input.js)
+    } else {
+        const nothingHeld = hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag;
+        // Проверяем наведение на замок
+        let hoveredCastle = false;
+        if (nothingHeld && castle) {
+            const cdx = hand.isoX - castle.ix;
+            const cdy = hand.isoY - castle.iy;
+            hoveredCastle = Math.sqrt(cdx * cdx + cdy * cdy) < ARTILLERY_GRAB_RADIUS;
         }
-    } else if (nothingHeld && hoveredFlag) {
-        statusEl.textContent = 'Флаг [зажми ЛКМ чтобы подобрать]';
-    } else if (nothingHeld && hoveredItem !== null) {
-        statusEl.textContent = `Навести: ${ITEM_TYPES[items[hoveredItem].typeIndex].name} [зажми ЛКМ]`;
-    } else if (nothingHeld && hoveredMinion !== null) {
-        statusEl.textContent = 'Навести: Миньон [зажми ЛКМ]';
-    } else if (nothingHeld) {
-        const waitingCount = minions.filter(m => m.state === 'waiting').length;
-        if (waitingCount > 0) {
-            statusEl.textContent = `${waitingCount} гоблин(а) ждут задачу [1 — добывать]`;
-        } else {
-            statusEl.textContent = 'Рука открыта';
+        if (hand.grabbedFlag) {
+            if (hoveredItem !== null && hand.selectedMinions.length > 0) {
+                statusEl.textContent = `Кликни — ${hand.selectedMinions.length} гоблин(а) начнут добычу!`;
+            } else if (hoveredItem !== null) {
+                statusEl.textContent = 'Ресурс — выдели гоблинов лассо для отправки на добычу';
+            } else {
+                statusEl.textContent = 'Флаг в руке — кликни чтобы установить';
+            }
+        } else if (nothingHeld && hoveredCastle) {
+            statusEl.textContent = 'Замок [ЛКМ — режим стрельбы]';
+        } else if (nothingHeld && hoveredFlag) {
+            statusEl.textContent = 'Флаг [зажми ЛКМ чтобы подобрать]';
+        } else if (nothingHeld && hoveredItem !== null) {
+            statusEl.textContent = `Навести: ${ITEM_TYPES[items[hoveredItem].typeIndex].name} [зажми ЛКМ]`;
+        } else if (nothingHeld && hoveredMinion !== null) {
+            statusEl.textContent = 'Навести: Миньон [зажми ЛКМ]';
+        } else if (nothingHeld) {
+            const waitingCount = minions.filter(m => m.state === 'waiting').length;
+            if (waitingCount > 0) {
+                statusEl.textContent = `${waitingCount} гоблин(а) ждут задачу [1 — добывать]`;
+            } else {
+                statusEl.textContent = 'Рука открыта';
+            }
         }
     }
 }
@@ -653,6 +867,138 @@ function render() {
             );
         }
         ctx.restore();
+    }
+
+    // ── АРТИЛЛЕРИЯ — рендер ────────────────────────────────────
+    if (artilleryMode.active) {
+        const art = artilleryMode;
+
+        // Прицел (изометрический ромб)
+        if (art.state === 'aiming') {
+            const cs = worldToScreen(art.crosshairX, art.crosshairY);
+            const now = performance.now();
+            const pulse = 0.6 + 0.4 * Math.sin(now / 200);
+
+            // Круг зоны поражения (7×7 тайлов)
+            ctx.save();
+            ctx.globalAlpha = 0.12 * pulse;
+            ctx.fillStyle = '#ff2200';
+            ctx.beginPath();
+            // Радиус в пикселях (ARTILLERY_BLAST_RADIUS iso-тайлов)
+            const blastPxW = ARTILLERY_BLAST_RADIUS * (TILE_W / 2);
+            const blastPxH = ARTILLERY_BLAST_RADIUS * (TILE_H / 2);
+            ctx.ellipse(cs.x, cs.y, blastPxW, blastPxH, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Контур зоны
+            ctx.save();
+            ctx.globalAlpha = 0.4 * pulse;
+            ctx.strokeStyle = '#ff4400';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 4]);
+            ctx.beginPath();
+            ctx.ellipse(cs.x, cs.y, blastPxW, blastPxH, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+
+            // Перекрестие
+            ctx.save();
+            ctx.globalAlpha = 0.8;
+            ctx.strokeStyle = '#ff4400';
+            ctx.lineWidth = 2;
+            const crossSize = 12;
+            ctx.beginPath();
+            ctx.moveTo(cs.x - crossSize, cs.y);
+            ctx.lineTo(cs.x + crossSize, cs.y);
+            ctx.moveTo(cs.x, cs.y - crossSize);
+            ctx.lineTo(cs.x, cs.y + crossSize);
+            ctx.stroke();
+            // Центральная точка
+            ctx.fillStyle = '#ff2200';
+            ctx.fillRect(cs.x - 2, cs.y - 2, 4, 4);
+            ctx.restore();
+        }
+
+        // Снаряд в полёте
+        if (art.state === 'flying') {
+            const proj = art.projectile;
+            const ps = worldToScreen(proj.ix, proj.iy);
+            const heightOffset = proj.iz * HEIGHT_TO_SCREEN;
+
+            // Тень на земле
+            drawItemShadow(ps.x, ps.y, CANNONBALL_W, CANNONBALL_H, proj.iz);
+
+            // Ядро
+            const ballOx = ps.x - (CANNONBALL_W * PIXEL_SCALE) / 2;
+            const ballOy = ps.y - CANNONBALL_H * PIXEL_SCALE - 4 - heightOffset;
+            drawPixelArt(ballOx, ballOy, CANNONBALL_PIXELS, PIXEL_SCALE);
+
+            // Дымовой след
+            ctx.save();
+            ctx.globalAlpha = 0.3;
+            ctx.fillStyle = '#888888';
+            for (let i = 0; i < 5; i++) {
+                const t = i * 0.03;
+                const trailX = proj.ix - proj.vx * t;
+                const trailY = proj.iy - proj.vy * t;
+                const trailZ = proj.iz - proj.vz * t + GRAVITY * t * t * 0.5;
+                if (trailZ < 0) continue;
+                const ts = worldToScreen(trailX, trailY);
+                const tho = trailZ * HEIGHT_TO_SCREEN;
+                const size = PIXEL_SCALE * (1 + i * 0.3);
+                ctx.globalAlpha = 0.25 - i * 0.04;
+                ctx.fillRect(ts.x - size / 2, ts.y - 4 - tho - size / 2, size, size);
+            }
+            ctx.restore();
+        }
+
+        // Взрыв
+        if (art.explosion.active) {
+            const expl = art.explosion;
+            const es = worldToScreen(expl.ix, expl.iy);
+
+            // Вспышка
+            if (expl.t < 0.15) {
+                const flashAlpha = (1 - expl.t / 0.15) * 0.6;
+                ctx.save();
+                ctx.globalAlpha = flashAlpha;
+                ctx.fillStyle = '#ffdd44';
+                ctx.beginPath();
+                const flashR = 40 + expl.t * 300;
+                ctx.ellipse(es.x, es.y, flashR, flashR * 0.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // Частицы
+            for (const p of expl.particles) {
+                if (p.life <= 0) continue;
+                const alpha = Math.pow(p.life / p.maxLife, 0.5) * 0.9;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = p.color;
+                ctx.fillRect(
+                    Math.round(es.x + p.x - p.size / 2),
+                    Math.round(es.y + p.y - p.size / 2),
+                    p.size, p.size
+                );
+                ctx.restore();
+            }
+
+            // Гарь на земле
+            if (expl.t > 0.2) {
+                ctx.save();
+                ctx.globalAlpha = Math.min(0.3, (expl.t - 0.2) * 0.6) * (1 - expl.t / expl.duration);
+                ctx.fillStyle = '#111100';
+                const blastPxW = ARTILLERY_BLAST_RADIUS * (TILE_W / 2) * 0.8;
+                const blastPxH = ARTILLERY_BLAST_RADIUS * (TILE_H / 2) * 0.8;
+                ctx.beginPath();
+                ctx.ellipse(es.x, es.y, blastPxW, blastPxH, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
     }
 
     ctx.restore();

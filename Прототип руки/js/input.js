@@ -1,11 +1,15 @@
 // ============================================================
 //  ВВОД — все обработчики событий
 // ============================================================
-import { ITEM_TYPES, PIXEL_SCALE, CAMERA_OFFSET_Y } from './constants.js';
+import {
+    ITEM_TYPES, PIXEL_SCALE, CAMERA_OFFSET_Y, GRAVITY,
+    ARTILLERY_GRAB_RADIUS, ARTILLERY_FLIGHT_TIME_K,
+    ARTILLERY_MIN_FLIGHT, ARTILLERY_MAX_FLIGHT,
+} from './constants.js';
 import { MINION_H } from './sprites.js';
-import { isoToScreen } from './isometry.js';
+import { isoToScreen, screenToIso } from './isometry.js';
 import { camera } from './isometry.js';
-import { restartMap, flag, items, minions } from './World.js';
+import { restartMap, flag, items, minions, castle, artilleryMode, triggerScreenShake } from './World.js';
 
 function worldToScreen(wx, wy, canvas) {
     const iso = isoToScreen(wx, wy);
@@ -39,7 +43,62 @@ export function initInput(canvas, hand, world, cam, statusEl) {
     canvas.addEventListener('mousedown', (e) => {
         if (e.button !== 0) return;
         world.mouseDown = true;
+
+        // ── Артиллерия: выстрел ──────────────────────────────────
+        if (artilleryMode.active && artilleryMode.state === 'aiming') {
+            const iso = screenToIso(world.mouseX, world.mouseY, canvas);
+            artilleryMode.targetX = iso.x;
+            artilleryMode.targetY = iso.y;
+
+            // Рассчитываем траекторию
+            const dx = iso.x - castle.ix;
+            const dy = iso.y - castle.iy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const T = Math.max(ARTILLERY_MIN_FLIGHT, Math.min(ARTILLERY_MAX_FLIGHT, dist * ARTILLERY_FLIGHT_TIME_K));
+
+            const proj = artilleryMode.projectile;
+            proj.ix = castle.ix;
+            proj.iy = castle.iy;
+            proj.iz = 0;
+            proj.vx = dx / T;
+            proj.vy = dy / T;
+            proj.vz = 0.5 * GRAVITY * T; // чтобы приземлиться точно через T секунд
+
+            artilleryMode.flightDuration = T;
+            artilleryMode.timer = 0;
+            artilleryMode.state = 'flying';
+
+            // Мгновенно сбрасываем камеру к замку (зум=1, позиция=замок)
+            const castleIso = isoToScreen(castle.ix, castle.iy);
+            cam.zoom = 1.0;
+            cam.targetZoom = 1.0;
+            cam.x = castleIso.x;
+            cam.y = castleIso.y;
+
+            castle.fireCannon();
+            triggerScreenShake(5);
+            statusEl.textContent = 'Огонь!';
+            return;
+        }
+
+        // В режиме полёта/взрыва — игнорируем клики
+        if (artilleryMode.active) return;
+
         const handFree = hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag;
+
+        // ── Артиллерия: захват замка ─────────────────────────────
+        if (handFree && castle) {
+            const dx = hand.isoX - castle.ix;
+            const dy = hand.isoY - castle.iy;
+            if (Math.sqrt(dx * dx + dy * dy) < ARTILLERY_GRAB_RADIUS) {
+                artilleryMode.active = true;
+                artilleryMode.state = 'aiming';
+                hand.state = 'closed';
+                hand.animProgress = 1;
+                statusEl.textContent = 'Режим стрельбы — наведи прицел и нажми ЛКМ (Q — выход)';
+                return;
+            }
+        }
 
         if (hand.grabbedFlag && world.hoveredItem !== null && hand.selectedMinions.length > 0) {
             // Флаг + ресурс + выбранные гоблины → мгновенная задача «добывать»
@@ -149,6 +208,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
     canvas.addEventListener('mouseup', (e) => {
         if (e.button !== 0) return;
         world.mouseDown = false;
+        if (artilleryMode.active) return;
         if (hand.grabbedItem !== null) {
             const item = items[hand.grabbedItem];
             const type = item.typeDef;
@@ -254,6 +314,18 @@ export function initInput(canvas, hand, world, cam, statusEl) {
     // Зум камеры: Z — отдалить, X — приблизить, C — сброс
     // Рестарт карты: R
     window.addEventListener('keydown', (e) => {
+        // Выход из режима артиллерии
+        if ((e.key === 'q' || e.key === 'й') && artilleryMode.active) {
+            artilleryMode.active = false;
+            artilleryMode.state = 'aiming';
+            artilleryMode.explosion.active = false;
+            hand.state = 'open';
+            hand.animProgress = 0;
+            cam.targetZoom = 1.0;
+            statusEl.textContent = 'Режим стрельбы отменён';
+            return;
+        }
+
         if (e.key === 'z' || e.key === 'я') {
             cam.targetZoom = Math.max(cam.targetZoom * 0.9, 0.2);
         } else if (e.key === 'x' || e.key === 'ч') {

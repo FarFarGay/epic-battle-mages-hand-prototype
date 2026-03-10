@@ -27,6 +27,35 @@ export const screenShake = {
 export const bloodParticles = [];  // { x, y, vx, vy, life, maxLife, size }
 export const bloodPuddles   = [];  // { ix, iy, size, t, duration }
 
+// Режим артиллерии замка
+export const artilleryMode = {
+    active: false,
+    state: 'aiming',     // 'aiming' | 'flying' | 'aftermath'
+    // Прицел (iso координаты)
+    crosshairX: 0,
+    crosshairY: 0,
+    // Снаряд
+    projectile: { ix: 0, iy: 0, iz: 0, vx: 0, vy: 0, vz: 0 },
+    // Цель
+    targetX: 0,
+    targetY: 0,
+    // Таймеры
+    timer: 0,
+    flightDuration: 0,
+    // Взрыв
+    explosion: {
+        active: false,
+        ix: 0, iy: 0,
+        t: 0,
+        duration: 1.0,
+        particles: [],
+    },
+    // Сохранённая камера
+    savedCameraX: 0,
+    savedCameraY: 0,
+    savedZoom: 1.0,
+};
+
 // Счётчики ресурсов: castleResources[typeIndex] = количество доставленных в замок
 export const castleResources = [];
 
@@ -180,6 +209,11 @@ export function restartMap(hand, statusEl) {
     hand.selectedMinions = [];
 
     castle = new Castle(gameMap.castlePos.ix, gameMap.castlePos.iy);
+
+    // Сброс артиллерии
+    artilleryMode.active = false;
+    artilleryMode.state = 'aiming';
+    artilleryMode.explosion.active = false;
 
     statusEl.textContent = 'Карта перезапущена!';
 }
