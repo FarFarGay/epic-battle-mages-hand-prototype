@@ -23,8 +23,6 @@ export class Hand {
     constructor() {
         this.screenX = 0;
         this.screenY = 0;
-        this.targetX = 0;
-        this.targetY = 0;
         this.isoX = 0;
         this.isoY = 0;
         this.state = 'open'; // 'open', 'closing', 'closed', 'opening'

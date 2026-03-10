@@ -448,17 +448,17 @@ function update(dt) {
     const FOG_DEATH_FADE = 10; // секунды
     const fogSources = [
         { ix: gameMap.castlePos.ix, iy: gameMap.castlePos.iy, radius: 10, shape: 'square' },
-        ...minions.flatMap(m => {
-            if (m.state === 'carried' || m.state === 'lifting') return [];
-            if (m.isUndead) return []; // скелеты не раскрывают туман
-            if (m.state === 'dead') {
-                const r = 2 * Math.max(0, 1 - m.deadTime / FOG_DEATH_FADE);
-                if (r <= 0) return [];
-                return [{ ix: m.ix, iy: m.iy, radius: r }];
-            }
-            return [{ ix: m.ix, iy: m.iy, radius: 2 }];
-        }),
     ];
+    for (const m of minions) {
+        if (m.state === 'carried' || m.state === 'lifting') continue;
+        if (m.isUndead) continue; // скелеты не раскрывают туман
+        if (m.state === 'dead') {
+            const r = 2 * Math.max(0, 1 - m.deadTime / FOG_DEATH_FADE);
+            if (r > 0) fogSources.push({ ix: m.ix, iy: m.iy, radius: r });
+        } else {
+            fogSources.push({ ix: m.ix, iy: m.iy, radius: 2 });
+        }
+    }
     // Точка подбора гоблина остаётся освещённой пока он в руке —
     // иначе гоблин гасит собственный туман и рука мгновенно его роняет
     if (hand.grabbedMinion !== null && hand.minionGrabIso !== null) {

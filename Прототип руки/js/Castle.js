@@ -66,10 +66,10 @@ export class Castle {
 
         // Производство гоблинов
         this.pendingSpawn = false;
-        if (!minions || !castleResources) return;
 
         const prod = this.production;
-        const aliveCount = minions.filter(m => m.state !== 'dead').length;
+        // Скелеты (isUndead) не занимают слоты живых гоблинов
+        const aliveCount = minions.filter(m => m.state !== 'dead' && !m.isUndead).length;
 
         if (aliveCount >= this.maxMinions) return; // замок полон — ждём освобождения места
 

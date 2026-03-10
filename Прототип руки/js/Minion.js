@@ -4,7 +4,7 @@
 import {
     PIXEL_SCALE, HEIGHT_TO_SCREEN, MINION_SPEED, MINION_MAX_HP,
     FALL_DMG_MED_VZ, FALL_DMG_HI_VZ, FALL_DMG_MED, FALL_DMG_HI,
-    CAMERA_OFFSET_Y
+    CAMERA_OFFSET_Y, SKELETON_RISE_DELAY, SKELETON_SPEED_FACTOR,
 } from './constants.js';
 import { gameMap } from './Map.js';
 import {
@@ -310,8 +310,12 @@ export class Minion extends GameObject {
                         if (idx !== -1) {
                             items.splice(idx, 1);
                             // Корректируем индекс в руке: splice сдвигает все элементы после idx
-                            if (hand.grabbedItem !== null && hand.grabbedItem > idx) {
-                                hand.grabbedItem--;
+                            if (hand.grabbedItem !== null) {
+                                if (hand.grabbedItem === idx) {
+                                    hand.grabbedItem = null;
+                                } else if (hand.grabbedItem > idx) {
+                                    hand.grabbedItem--;
+                                }
                             }
                         }
                         this.pendingDelivery = deliveredTypeIndex;
@@ -359,8 +363,8 @@ export class Minion extends GameObject {
                 this.vy = 0;
                 this.vz = 0;
                 this.deadTime += dt;
-                // Через 3 секунды — восстать скелетом
-                if (this.deadTime >= 3.0) {
+                // Через SKELETON_RISE_DELAY — восстать скелетом
+                if (this.deadTime >= SKELETON_RISE_DELAY) {
                     this.isUndead = true;
                     this.dead = false;
                     this.state = 'skeleton';
@@ -377,7 +381,7 @@ export class Minion extends GameObject {
                 if (dist < 0.25) {
                     this.pickNewTarget();
                 } else {
-                    const spd = MINION_SPEED * 0.6 * dt; // скелеты медленнее
+                    const spd = MINION_SPEED * SKELETON_SPEED_FACTOR * dt;
                     this.ix += (dx / dist) * spd;
                     this.iy += (dy / dist) * spd;
                     const lim = gameMap.size - 0.5;

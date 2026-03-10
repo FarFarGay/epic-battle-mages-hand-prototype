@@ -233,6 +233,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                     hand.grabbedFlag = true;
                     hand.state = 'closing';
                     hand.animProgress = 0;
+                    hand.velocityHistory = [];
                     if (flag.state === 'placed') {
                         flag.state = 'docked';
                         // Остальные двигавшиеся к старому флагу → свободны

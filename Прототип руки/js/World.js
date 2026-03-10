@@ -14,7 +14,7 @@ export const items = [];
 export const minions = [];
 
 export const flag = {
-    state: 'docked', // 'docked' | 'carried' | 'placed'
+    state: 'docked', // 'docked' | 'placed'
     ix: 0, iy: 0, iz: 0,
 };
 
