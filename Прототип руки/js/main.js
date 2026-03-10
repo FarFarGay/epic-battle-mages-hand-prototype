@@ -4,7 +4,7 @@
 import {
     ITEM_TYPES, PIXEL_SCALE, HEIGHT_TO_SCREEN, CAMERA_OFFSET_Y, GRAVITY, TILE_W, TILE_H,
     ARTILLERY_BLAST_RADIUS, ARTILLERY_DAMAGE, ARTILLERY_RETURN_DELAY,
-    ARTILLERY_ZOOM_FACTOR, ARTILLERY_MIN_ZOOM, ARTILLERY_GRAB_RADIUS,
+    ARTILLERY_GRAB_RADIUS,
 } from './constants.js';
 import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
@@ -206,16 +206,7 @@ function updateArtillery(dt) {
         art.crosshairX = iso.x;
         art.crosshairY = iso.y;
 
-        // Зум зависит от расстояния прицела до замка
-        const dx = art.crosshairX - castle.ix;
-        const dy = art.crosshairY - castle.iy;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        camera.targetZoom = Math.max(ARTILLERY_MIN_ZOOM, 1.0 / (1 + dist * ARTILLERY_ZOOM_FACTOR));
-
-        // Камера всегда центрирована на замке в режиме прицеливания
-        const castleIso = isoToScreen(castle.ix, castle.iy);
-        camera.x += (castleIso.x * camera.zoom - camera.x) * Math.min(1, dt * 6);
-        camera.y += (castleIso.y * camera.zoom - camera.y) * Math.min(1, dt * 6);
+        // Камера управляется edge scroll (как в обычном режиме)
     }
 
     if (art.state === 'flying') {
@@ -669,33 +660,35 @@ function update(dt) {
     // Плавный зум
     camera.zoom += (camera.targetZoom - camera.zoom) * Math.min(1, dt * 8);
 
-    // Edge scroll — камера движется если рука у края экрана (отключён в режиме артиллерии)
-    if (artilleryMode.active) {
-        // Зум управляется артиллерией
-    } else {
+    // Edge scroll — камера движется если мышь у края экрана
+    {
     const EDGE_ZONE = 0.12; // 12% экрана с каждого края
     const PAN_SPEED = 600;  // px/сек в screen space
     const edgeW = canvas.width  * EDGE_ZONE;
     const edgeH = canvas.height * EDGE_ZONE;
     let panX = 0, panY = 0;
-    const overHud = mouseX >= hudPanelRect.x && mouseY >= hudPanelRect.y
+    // В режиме артиллерии используем мышь вместо руки (рука зафиксирована на замке)
+    const edgeSrcX = artilleryMode.active ? mouseX : hand.screenX;
+    const edgeSrcY = artilleryMode.active ? mouseY : hand.screenY;
+    const overHud = !artilleryMode.active
+        && mouseX >= hudPanelRect.x && mouseY >= hudPanelRect.y
         && mouseX <= hudPanelRect.x + hudPanelRect.w
         && mouseY <= hudPanelRect.y + hudPanelRect.h;
     if (!overHud) {
-        if (hand.screenX < edgeW) {
-            panX = -(1 - hand.screenX / edgeW) * PAN_SPEED;
-        } else if (hand.screenX > canvas.width - edgeW) {
-            panX =  (1 - (canvas.width  - hand.screenX) / edgeW) * PAN_SPEED;
+        if (edgeSrcX < edgeW) {
+            panX = -(1 - edgeSrcX / edgeW) * PAN_SPEED;
+        } else if (edgeSrcX > canvas.width - edgeW) {
+            panX =  (1 - (canvas.width  - edgeSrcX) / edgeW) * PAN_SPEED;
         }
-        if (hand.screenY < edgeH) {
-            panY = -(1 - hand.screenY / edgeH) * PAN_SPEED;
-        } else if (hand.screenY > canvas.height - edgeH) {
-            panY =  (1 - (canvas.height - hand.screenY) / edgeH) * PAN_SPEED;
+        if (edgeSrcY < edgeH) {
+            panY = -(1 - edgeSrcY / edgeH) * PAN_SPEED;
+        } else if (edgeSrcY > canvas.height - edgeH) {
+            panY =  (1 - (canvas.height - edgeSrcY) / edgeH) * PAN_SPEED;
         }
     }
     camera.x += panX * dt;
     camera.y += panY * dt;
-    } // конец else (не артиллерия)
+    }
 
     // Обновляем статус
     if (artilleryMode.active) {

@@ -68,13 +68,6 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             artilleryMode.timer = 0;
             artilleryMode.state = 'flying';
 
-            // Мгновенно сбрасываем камеру к замку (зум=1, позиция=замок)
-            const castleIso = isoToScreen(castle.ix, castle.iy);
-            cam.zoom = 1.0;
-            cam.targetZoom = 1.0;
-            cam.x = castleIso.x;
-            cam.y = castleIso.y;
-
             castle.fireCannon();
             triggerScreenShake(5);
             statusEl.textContent = 'Огонь!';
@@ -321,7 +314,6 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             artilleryMode.explosion.active = false;
             hand.state = 'open';
             hand.animProgress = 0;
-            cam.targetZoom = 1.0;
             statusEl.textContent = 'Режим стрельбы отменён';
             return;
         }

@@ -77,5 +77,3 @@ export const ARTILLERY_MAX_FLIGHT    = 2.5;   // макс. время полёт
 export const ARTILLERY_BLAST_RADIUS  = 3;     // радиус взрыва в iso-тайлах (7×7 = ±3)
 export const ARTILLERY_DAMAGE        = 80;    // урон от взрыва
 export const ARTILLERY_RETURN_DELAY  = 1.5;   // пауза после взрыва до возврата камеры (секунды)
-export const ARTILLERY_ZOOM_FACTOR   = 0.03;  // скорость зумаута: zoom = 1 / (1 + dist * factor)
-export const ARTILLERY_MIN_ZOOM      = 0.25;  // минимальный зум в режиме артиллерии
