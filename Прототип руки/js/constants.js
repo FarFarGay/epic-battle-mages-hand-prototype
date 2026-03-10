@@ -4,8 +4,9 @@
 import {
     CUBE_PIXELS,
     WHEAT_PIXELS, WHEAT_W, WHEAT_H,
-    PLACEHOLDER3_PIXELS, PLACEHOLDER3_W, PLACEHOLDER3_H,
-    PLACEHOLDER4_PIXELS, PLACEHOLDER4_W, PLACEHOLDER4_H,
+    WOOD_PIXELS, WOOD_W, WOOD_H,
+    IRON_PIXELS, IRON_W, IRON_H,
+    SCROLL_PIXELS, SCROLL_W, SCROLL_H,
 } from './sprites.js';
 
 // — Изометрическая проекция —
@@ -39,16 +40,19 @@ export const FALL_DMG_MED    = 25;  // 25% от MINION_MAX_HP
 export const FALL_DMG_HI     = 50;  // 50% от MINION_MAX_HP
 
 // — Типы ресурсов (все gatherable — гоблины могут собирать) —
-// Чтобы добавить новый ресурс: добавить спрайт в sprites.js, добавить запись сюда, добавить спавн в Map.js initialItems.
+// Чтобы добавить новый ресурс: добавить спрайт в sprites.js, добавить запись сюда.
+// Расположение на карте генерируется в Map._generateInitialItems() (100 штук каждого типа).
 export const ITEM_TYPES = [
-    // 0: Пшеница (еда)
-    { name: 'Пшеница',             pixels: WHEAT_PIXELS,        w: WHEAT_W,        h: WHEAT_H,        mass: 0.5, bounciness: 0.2, friction: 0.90, radius: 0.30, gatherable: true },
+    // 0: Пшеница (еда — используется для производства гоблинов)
+    { name: 'Пшеница', pixels: WHEAT_PIXELS,  w: WHEAT_W,  h: WHEAT_H,  mass: 0.5, bounciness: 0.2, friction: 0.90, radius: 0.30, gatherable: true },
     // 1: Камень (строительный материал)
-    { name: 'Камень',              pixels: CUBE_PIXELS,         w: 7,              h: 6,              mass: 2.5, bounciness: 0.5, friction: 0.70, radius: 0.40, gatherable: true },
-    // 2: Ресурс C — заглушка (дерево / оранжевый куб)
-    { name: 'Ресурс C (заглушка)', pixels: PLACEHOLDER3_PIXELS, w: PLACEHOLDER3_W, h: PLACEHOLDER3_H, mass: 1.0, bounciness: 0.3, friction: 0.80, radius: 0.35, gatherable: true },
-    // 3: Ресурс D — заглушка (руда / фиолетовый куб)
-    { name: 'Ресурс D (заглушка)', pixels: PLACEHOLDER4_PIXELS, w: PLACEHOLDER4_W, h: PLACEHOLDER4_H, mass: 1.5, bounciness: 0.4, friction: 0.75, radius: 0.35, gatherable: true },
+    { name: 'Камень',  pixels: CUBE_PIXELS,   w: 7,        h: 6,        mass: 2.5, bounciness: 0.5, friction: 0.70, radius: 0.40, gatherable: true },
+    // 2: Дерево (строительный материал)
+    { name: 'Дерево',  pixels: WOOD_PIXELS,   w: WOOD_W,   h: WOOD_H,   mass: 1.0, bounciness: 0.3, friction: 0.75, radius: 0.35, gatherable: true },
+    // 3: Железо (руда)
+    { name: 'Железо',  pixels: IRON_PIXELS,   w: IRON_W,   h: IRON_H,   mass: 3.0, bounciness: 0.2, friction: 0.80, radius: 0.40, gatherable: true },
+    // 4: Свиток (магия)
+    { name: 'Свиток',  pixels: SCROLL_PIXELS, w: SCROLL_W, h: SCROLL_H, mass: 0.3, bounciness: 0.1, friction: 0.85, radius: 0.25, gatherable: true },
 ];
 
 // — Замок —
