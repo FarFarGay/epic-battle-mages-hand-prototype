@@ -172,8 +172,9 @@ const world = {
     set mouseDown(v) { mouseDown = v; },
 };
 
-// Область кнопки производства гоблинов (обновляется при рендере)
+// Области HUD (обновляются при рендере)
 const goblinHudRect = { x: 0, y: 0, w: 0, h: 0 };
+const hudPanelRect  = { x: 0, y: 0, w: 0, h: 0 }; // весь правый HUD-панель (блокирует edge scroll)
 
 // Клик по кнопке гоблина — перехватываем ДО input.js (capture phase)
 canvas.addEventListener('mousedown', (e) => {
@@ -439,15 +440,20 @@ function update(dt) {
     const edgeW = canvas.width  * EDGE_ZONE;
     const edgeH = canvas.height * EDGE_ZONE;
     let panX = 0, panY = 0;
-    if (hand.screenX < edgeW) {
-        panX = -(1 - hand.screenX / edgeW) * PAN_SPEED;
-    } else if (hand.screenX > canvas.width - edgeW) {
-        panX =  (1 - (canvas.width  - hand.screenX) / edgeW) * PAN_SPEED;
-    }
-    if (hand.screenY < edgeH) {
-        panY = -(1 - hand.screenY / edgeH) * PAN_SPEED;
-    } else if (hand.screenY > canvas.height - edgeH) {
-        panY =  (1 - (canvas.height - hand.screenY) / edgeH) * PAN_SPEED;
+    const overHud = mouseX >= hudPanelRect.x && mouseY >= hudPanelRect.y
+        && mouseX <= hudPanelRect.x + hudPanelRect.w
+        && mouseY <= hudPanelRect.y + hudPanelRect.h;
+    if (!overHud) {
+        if (hand.screenX < edgeW) {
+            panX = -(1 - hand.screenX / edgeW) * PAN_SPEED;
+        } else if (hand.screenX > canvas.width - edgeW) {
+            panX =  (1 - (canvas.width  - hand.screenX) / edgeW) * PAN_SPEED;
+        }
+        if (hand.screenY < edgeH) {
+            panY = -(1 - hand.screenY / edgeH) * PAN_SPEED;
+        } else if (hand.screenY > canvas.height - edgeH) {
+            panY =  (1 - (canvas.height - hand.screenY) / edgeH) * PAN_SPEED;
+        }
     }
     camera.x += panX * dt;
     camera.y += panY * dt;
@@ -634,7 +640,7 @@ function render() {
     // HUD ресурсов — правый верхний угол (screen space)
     {
         const HUD_SCALE = 2;
-        const HUD_MARGIN = 12;
+        const HUD_MARGIN = 40;
         const HUD_ROW_H = 22;
         const maxW = Math.max(...ITEM_TYPES.map(t => t.w)) * HUD_SCALE;
         const totalH = ITEM_TYPES.length * HUD_ROW_H + 4;
@@ -664,7 +670,7 @@ function render() {
     // HUD производства гоблинов — под HUD ресурсов
     {
         const HUD_SCALE = 2;
-        const HUD_MARGIN = 12;
+        const HUD_MARGIN = 40;
         const HUD_ROW_H = 22;
         const maxW = Math.max(...ITEM_TYPES.map(t => t.w)) * HUD_SCALE;
         const resBlockH = ITEM_TYPES.length * HUD_ROW_H + 4;
@@ -675,11 +681,27 @@ function render() {
         const barH = 8;
         const blockH = MINION_H * HUD_SCALE + barH + 20;
 
-        // Фон
+        // Обновляем rect (используется для кликов и hover)
+        goblinHudRect.x = hudX - 8;
+        goblinHudRect.y = gobY - 4;
+        goblinHudRect.w = blockW + 16;
+        goblinHudRect.h = blockH + 8;
+
+        const isHovered = mouseX >= goblinHudRect.x && mouseX <= goblinHudRect.x + goblinHudRect.w
+            && mouseY >= goblinHudRect.y && mouseY <= goblinHudRect.y + goblinHudRect.h;
+
+        // Фон (ярче при наведении)
         ctx.save();
-        ctx.globalAlpha = 0.55;
-        ctx.fillStyle = '#0a0a18';
-        ctx.fillRect(hudX - 8, gobY - 4, blockW + 16, blockH + 8);
+        ctx.globalAlpha = isHovered ? 0.80 : 0.55;
+        ctx.fillStyle = isHovered ? '#151530' : '#0a0a18';
+        ctx.fillRect(goblinHudRect.x, goblinHudRect.y, goblinHudRect.w, goblinHudRect.h);
+        ctx.restore();
+
+        // Рамка — подсвечивается при наведении
+        ctx.save();
+        ctx.strokeStyle = isHovered ? '#aaaaff' : '#333355';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(goblinHudRect.x + 0.5, goblinHudRect.y + 0.5, goblinHudRect.w - 1, goblinHudRect.h - 1);
         ctx.restore();
 
         // Иконка гоблина
@@ -703,17 +725,20 @@ function render() {
             ctx.fillRect(hudX, barY, barW * (prod.progress / prod.duration), barH);
         }
 
-        // Статус
+        // Статус / подсказка действия
         ctx.fillStyle = prod.active ? '#88ff88' : '#ffaa44';
         ctx.font = '11px monospace';
         ctx.textAlign = 'left';
-        ctx.fillText(prod.active ? '▶ Производство' : '⏸ Пауза', hudX, barY + barH + 12);
+        ctx.fillText(prod.active ? '⏸ Остановить' : '▶ Запустить', hudX, barY + barH + 12);
 
-        // Сохраняем rect для обработки кликов
-        goblinHudRect.x = hudX - 8;
-        goblinHudRect.y = gobY - 4;
-        goblinHudRect.w = blockW + 16;
-        goblinHudRect.h = blockH + 8;
+        // Курсор: pointer над кнопкой, none в игровой зоне
+        canvas.style.cursor = isHovered ? 'pointer' : 'none';
+
+        // Обновляем общий HUD-панель (resource + goblin) — блокирует edge scroll
+        hudPanelRect.x = hudX - 8;
+        hudPanelRect.y = HUD_MARGIN - 4;
+        hudPanelRect.w = goblinHudRect.w;
+        hudPanelRect.h = goblinHudRect.y + goblinHudRect.h - (HUD_MARGIN - 4);
     }
 
     // Курсор-точка (вне зума и тряски — стабильный)
