@@ -98,6 +98,12 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             let count = 0;
             for (const idx of hand.selectedMinions) {
                 const m = minions[idx];
+                if (m.goblinClass === 'warrior') {
+                    // Воины не добывают — возвращаются на пост
+                    m.state = 'warrior_returning';
+                    m.stateTime = 0;
+                    continue;
+                }
                 if (m.state === 'listening') {
                     if (m.assignGatherTask(items)) count++;
                 }
@@ -118,9 +124,26 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             flag.iy = hand.isoY;
             flag.iz = 0;
             flag.state = 'placed';
-            // Выбранные гоблины переходят в состояние «передвигается» к флагу
+
+            // Воины — кольцевой строй вокруг точки (шаг ~10 тайлов)
+            const warriorIdxs = hand.selectedMinions.filter(
+                idx => minions[idx].goblinClass === 'warrior' && minions[idx].state === 'listening'
+            );
+            const Nw = warriorIdxs.length;
+            const warRadius = Nw <= 1 ? 0 : Math.max(5, Nw * 10 / (2 * Math.PI));
+            warriorIdxs.forEach((idx, i) => {
+                const m = minions[idx];
+                const angle = (2 * Math.PI * i / Nw);
+                m.guardX = flag.ix + (Nw > 1 ? warRadius * Math.cos(angle) : 0);
+                m.guardY = flag.iy + (Nw > 1 ? warRadius * Math.sin(angle) : 0);
+                m.state = 'warrior_returning';
+                m.stateTime = 0;
+            });
+
+            // Обычные гоблины — идут прямо к флагу
             for (const idx of hand.selectedMinions) {
                 const m = minions[idx];
+                if (m.goblinClass === 'warrior') continue;
                 if (m.state === 'listening') {
                     m.targetX = flag.ix;
                     m.targetY = flag.iy;
@@ -133,7 +156,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             hand.animProgress = 0;
             hand.velocityHistory = [];
             hand.selectedMinions = [];
-            statusEl.textContent = 'Флаг установлен';
+            statusEl.textContent = Nw > 0 ? `Воины идут в строй` : 'Флаг установлен';
         } else if (world.hoveredItem !== null && handFree) {
             const item = items[world.hoveredItem];
             if (item.state !== 'carried' && item.state !== 'lifting') {
@@ -262,13 +285,12 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                     Math.max(selection.startY, selection.endY),
                     canvas
                 );
-                const SELECTABLE = ['free', 'listening', 'moving', 'waiting', 'busy', 'returning', 'war', 'fighting'];
+                const SELECTABLE = ['free', 'listening', 'moving', 'waiting', 'busy', 'returning', 'war', 'fighting', 'guarding', 'warrior_returning'];
                 hand.selectedMinions = [];
                 for (let i = 0; i < minions.length; i++) {
                     const m = minions[i];
                     if (!SELECTABLE.includes(m.state)) continue;
                     if (m.isUndead) continue;             // скелеты не выделяются лассо
-                    if (m.goblinClass === 'warrior') continue; // воины автономны
                     const s = worldToScreen(m.ix, m.iy, canvas);
                     const mx = s.x;
                     const my = s.y - (MINION_H * PIXEL_SCALE) / 2;
@@ -308,6 +330,9 @@ export function initInput(canvas, hand, world, cam, statusEl) {
     // Зум камеры: Z — отдалить, X — приблизить, C — сброс
     // Рестарт карты: R
     window.addEventListener('keydown', (e) => {
+        // Не перехватываем клавиши пока сфокусирован HTML input (например поле цели воинов)
+        if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+
         // Выход из режима артиллерии
         if ((e.key === 'q' || e.key === 'й') && artilleryMode.active) {
             // Сброс снаряда на позицию замка (чтобы не осталось stale-данных)

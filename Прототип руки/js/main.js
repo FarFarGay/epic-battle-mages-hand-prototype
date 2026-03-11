@@ -7,7 +7,7 @@ import {
     ARTILLERY_GRAB_RADIUS,
     WARRIOR_UPGRADE_INTERVAL, WARRIOR_IRON_COST,
 } from './constants.js';
-import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H } from './sprites.js';
+import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
@@ -51,6 +51,7 @@ let warriorUpgradeTimer = WARRIOR_UPGRADE_INTERVAL * Math.random(); // стаг�
 // Попытаться превратить случайного свободного гоблина в воина.
 // Стоимость: 1 железо (typeIndex 3). Гоблин марширует на пост у границы WARRIOR_GUARD_RADIUS.
 function tryUpgradeWarrior() {
+    if (!warriorProduction.active) return;
     if (castleResources[3] < WARRIOR_IRON_COST) return;
     const eligible = [];
     for (const m of minions) {
@@ -202,10 +203,14 @@ const world = {
 };
 
 // Области HUD (обновляются при рендере)
-const goblinHudRect = { x: 0, y: 0, w: 0, h: 0 };
-const hudPanelRect  = { x: 0, y: 0, w: 0, h: 0 }; // весь правый HUD-панель (блокирует edge scroll)
+const goblinHudRect  = { x: 0, y: 0, w: 0, h: 0 };
+const warriorHudRect = { x: 0, y: 0, w: 0, h: 0 };
+const hudPanelRect   = { x: 0, y: 0, w: 0, h: 0 }; // весь правый HUD-панель (блокирует edge scroll)
 
-// Клик по кнопке гоблина — перехватываем ДО input.js (capture phase)
+// Производство воинов: active = автоматически апгрейдить гоблинов при наличии железа
+const warriorProduction = { active: false };
+
+// Клик по кнопкам HUD — перехватываем ДО input.js (capture phase)
 canvas.addEventListener('mousedown', (e) => {
     const mx = e.clientX, my = e.clientY;
     if (
@@ -213,6 +218,14 @@ canvas.addEventListener('mousedown', (e) => {
         my >= goblinHudRect.y && my <= goblinHudRect.y + goblinHudRect.h
     ) {
         castle.production.active = !castle.production.active;
+        e.stopImmediatePropagation();
+        return;
+    }
+    if (
+        mx >= warriorHudRect.x && mx <= warriorHudRect.x + warriorHudRect.w &&
+        my >= warriorHudRect.y && my <= warriorHudRect.y + warriorHudRect.h
+    ) {
+        warriorProduction.active = !warriorProduction.active;
         e.stopImmediatePropagation();
     }
 }, true);
@@ -1188,11 +1201,81 @@ function render() {
         // Курсор: pointer над кнопкой, none в игровой зоне
         canvas.style.cursor = isHovered ? 'pointer' : 'none';
 
-        // Обновляем общий HUD-панель (resource + goblin) — блокирует edge scroll
+        // Обновляем общий HUD-панель (resource + goblin) — будет расширен warrior-блоком ниже
         hudPanelRect.x = hudX - 8;
         hudPanelRect.y = HUD_MARGIN - 4;
         hudPanelRect.w = goblinHudRect.w;
         hudPanelRect.h = goblinHudRect.y + goblinHudRect.h - (HUD_MARGIN - 4);
+    }
+
+    // HUD производства воинов — под HUD гоблинов
+    {
+        const HUD_SCALE = 2;
+        const HUD_MARGIN = 40;
+        const maxW = Math.max(...ITEM_TYPES.map(t => t.w)) * HUD_SCALE;
+        const hudX = canvas.width - HUD_MARGIN - maxW - 50;
+        const blockW = maxW + 50;
+        const barH = 8;
+        const blockH = MINION_H * HUD_SCALE + barH + 20;
+
+        const warY = goblinHudRect.y + goblinHudRect.h + 10;
+
+        warriorHudRect.x = hudX - 8;
+        warriorHudRect.y = warY - 4;
+        warriorHudRect.w = blockW + 16;
+        warriorHudRect.h = blockH + 8;
+
+        const isHovered = mouseX >= warriorHudRect.x && mouseX <= warriorHudRect.x + warriorHudRect.w
+            && mouseY >= warriorHudRect.y && mouseY <= warriorHudRect.y + warriorHudRect.h;
+
+        // Фон
+        ctx.save();
+        ctx.globalAlpha = isHovered ? 0.80 : 0.55;
+        ctx.fillStyle = isHovered ? '#1a1520' : '#0a0a18';
+        ctx.fillRect(warriorHudRect.x, warriorHudRect.y, warriorHudRect.w, warriorHudRect.h);
+        ctx.restore();
+
+        // Рамка
+        ctx.save();
+        ctx.strokeStyle = isHovered ? '#ccaa44' : '#443322';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(warriorHudRect.x + 0.5, warriorHudRect.y + 0.5, warriorHudRect.w - 1, warriorHudRect.h - 1);
+        ctx.restore();
+
+        // Иконка воина (гоблин + шлем)
+        drawPixelArt(hudX, warY, MINION_PIXELS, HUD_SCALE);
+        const helmetOx = Math.round(hudX + (MINION_W - WARRIOR_HELMET_W) / 2 * HUD_SCALE);
+        drawPixelArt(helmetOx, warY, WARRIOR_HELMET_PIXELS, HUD_SCALE);
+
+        // Счётчик: воины в строю / всего гоблинов
+        const warriorCount = minions.filter(m => m.goblinClass === 'warrior' && !m.dead).length;
+        const totalGoblins = minions.filter(m => !m.isUndead && !m.dead).length;
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${warriorCount} / ${totalGoblins}`, hudX + MINION_W * HUD_SCALE + 6, warY + 12);
+
+        // Прогресс-бар следующего апгрейда
+        const barY = warY + MINION_H * HUD_SCALE + 4;
+        ctx.fillStyle = '#221c0a';
+        ctx.fillRect(hudX, barY, blockW, barH);
+        if (warriorProduction.active && castleResources[3] >= WARRIOR_IRON_COST) {
+            const progress = 1 - (warriorUpgradeTimer / WARRIOR_UPGRADE_INTERVAL);
+            ctx.fillStyle = '#cc9922';
+            ctx.fillRect(hudX, barY, blockW * Math.max(0, Math.min(1, progress)), barH);
+        }
+
+        // Кнопка запуска/остановки
+        ctx.fillStyle = warriorProduction.active ? '#88ff88' : '#ffaa44';
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(warriorProduction.active ? '⏸ Остановить' : '▶ Запустить', hudX, barY + barH + 12);
+
+        // Курсор: если warrior-панель под мышью — pointer (goblin-блок мог поставить none)
+        if (isHovered) canvas.style.cursor = 'pointer';
+
+        // Обновляем общий HUD-панель, включая warrior-блок
+        hudPanelRect.h = warriorHudRect.y + warriorHudRect.h - (HUD_MARGIN - 4);
     }
 
     // Курсор-точка (вне зума и тряски — стабильный)
