@@ -5,13 +5,14 @@ import {
     ITEM_TYPES, PIXEL_SCALE, HEIGHT_TO_SCREEN, CAMERA_OFFSET_Y, GRAVITY, TILE_W, TILE_H,
     ARTILLERY_BLAST_RADIUS, ARTILLERY_DAMAGE, ARTILLERY_RETURN_DELAY,
     ARTILLERY_GRAB_RADIUS,
+    WARRIOR_UPGRADE_INTERVAL, WARRIOR_IRON_COST,
 } from './constants.js';
 import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode } from './World.js';
+import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, resetWarriorWall } from './World.js';
 import { initInput } from './input.js';
 
 // ============================================================
@@ -43,6 +44,30 @@ let mouseDown = false;
 let hoveredItem = null;
 let hoveredMinion = null;
 let hoveredFlag = false;
+
+// Таймер апгрейда обычных гоблинов в воинов
+let warriorUpgradeTimer = WARRIOR_UPGRADE_INTERVAL * Math.random(); // стагрированный старт
+
+// Попытаться превратить случайного свободного гоблина в воина.
+// Стоимость: 1 железо (typeIndex 3). Гоблин марширует на пост у границы WARRIOR_GUARD_RADIUS.
+function tryUpgradeWarrior() {
+    if (castleResources[3] < WARRIOR_IRON_COST) return;
+    const eligible = [];
+    for (const m of minions) {
+        if (m.goblinClass === 'basic' && !m.isUndead && !m.dead && m.state === 'free') {
+            eligible.push(m);
+        }
+    }
+    if (eligible.length === 0) return;
+    const goblin = eligible[Math.floor(Math.random() * eligible.length)];
+    castleResources[3] -= WARRIOR_IRON_COST;
+    goblin.goblinClass = 'warrior';
+    const pos = getNextWarriorGuardPos();
+    goblin.guardX = pos.ix;
+    goblin.guardY = pos.iy;
+    goblin.state = 'warrior_returning';
+    goblin.stateTime = 0;
+}
 
 const selection = {
     active: false,
@@ -460,6 +485,13 @@ function update(dt) {
     if (castle.pendingSpawn) {
         const sp = castle.spawnPoint;
         spawnMinion(sp.ix, sp.iy);
+    }
+
+    // Апгрейд гоблинов в воинов (случайный, стоит 1 железо)
+    warriorUpgradeTimer -= dt;
+    if (warriorUpgradeTimer <= 0) {
+        warriorUpgradeTimer = WARRIOR_UPGRADE_INTERVAL;
+        tryUpgradeWarrior();
     }
 
     // Обновляем миньонов

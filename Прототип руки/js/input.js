@@ -267,7 +267,8 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                 for (let i = 0; i < minions.length; i++) {
                     const m = minions[i];
                     if (!SELECTABLE.includes(m.state)) continue;
-                    if (m.isUndead) continue; // скелеты не выделяются лассо
+                    if (m.isUndead) continue;             // скелеты не выделяются лассо
+                    if (m.goblinClass === 'warrior') continue; // воины автономны
                     const s = worldToScreen(m.ix, m.iy, canvas);
                     const mx = s.x;
                     const my = s.y - (MINION_H * PIXEL_SCALE) / 2;

@@ -2,7 +2,7 @@
 //  МИР — предметы, миньоны, флаг, тряска экрана
 // ============================================================
 import { gameMap } from './Map.js';
-import { ITEM_TYPES } from './constants.js';
+import { ITEM_TYPES, WARRIOR_GUARD_RADIUS, WARRIOR_WALL_STEP } from './constants.js';
 import { Item } from './Item.js';
 import { Minion } from './Minion.js';
 import { Castle } from './Castle.js';
@@ -60,6 +60,30 @@ export const artilleryMode = {
 export const castleResources = [];
 
 export let castle = null;
+
+// ============================================================
+//  СТЕНА ВОИНОВ — позиции охраны на границе WARRIOR_GUARD_RADIUS
+// ============================================================
+const warriorWall = {
+    baseAngle: Math.random() * Math.PI * 2, // случайное начальное направление стены
+    count: 0,                                // сколько воинов уже поставлено
+};
+
+// Возвращает следующую позицию охраны для нового воина.
+// Воины выстраиваются в линию вдоль периметра окружности радиуса WARRIOR_GUARD_RADIUS.
+export function getNextWarriorGuardPos() {
+    const angle = warriorWall.baseAngle + warriorWall.count * WARRIOR_WALL_STEP;
+    warriorWall.count++;
+    return {
+        ix: Math.cos(angle) * WARRIOR_GUARD_RADIUS,
+        iy: Math.sin(angle) * WARRIOR_GUARD_RADIUS,
+    };
+}
+
+export function resetWarriorWall() {
+    warriorWall.baseAngle = Math.random() * Math.PI * 2;
+    warriorWall.count = 0;
+}
 
 // ============================================================
 //  ТРЯСКА ЭКРАНА
@@ -210,6 +234,9 @@ export function restartMap(hand, statusEl) {
 
     castle = new Castle(gameMap.castlePos.ix, gameMap.castlePos.iy);
 
+    // Сброс стены воинов
+    resetWarriorWall();
+
     // Сброс артиллерии
     artilleryMode.active = false;
     artilleryMode.state = 'aiming';
@@ -251,4 +278,5 @@ export function initWorld() {
     for (let i = 0; i < ITEM_TYPES.length; i++) castleResources.push(0);
 
     castle = new Castle(gameMap.castlePos.ix, gameMap.castlePos.iy);
+    resetWarriorWall();
 }

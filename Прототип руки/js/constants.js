@@ -55,9 +55,19 @@ export const GOBLIN_ATTACK_RANGE   = 0.6;  // дистанция удара (iso
 export const GOBLIN_AGGRO_RANGE    = 10;   // дистанция обнаружения врагов (свободные гоблины)
 export const GOBLIN_RALLY_RANGE    = 15;   // дистанция призыва на помощь при нападении
 
+// — Гоблин воин —
+export const WARRIOR_GUARD_RADIUS    = 50;   // дистанция от замка до позиции охраны (iso-тайлы)
+export const WARRIOR_AGGRO_RANGE     = 25;   // дистанция обнаружения врагов воином
+export const WARRIOR_ATTACK_DAMAGE   = 20;   // урон за удар (сильнее базового)
+export const WARRIOR_ATTACK_CD       = 1.2;  // кулдаун между ударами (с)
+export const WARRIOR_ATTACK_RANGE    = 0.8;  // дистанция удара (iso-тайлы)
+export const WARRIOR_WALL_STEP       = 0.04; // угловой шаг между воинами в стене (рад, ≈2 тайла при R=50)
+export const WARRIOR_UPGRADE_INTERVAL = 8.0; // секунд между проверками апгрейда
+export const WARRIOR_IRON_COST       = 1;    // единиц железа на апгрейд (железо = typeIndex 3)
+
 // — Классы гоблинов —
 // 'basic'   — стандартный гоблин (реализован)
-// 'warrior' — гоблин воитель (TODO)
+// 'warrior' — гоблин воитель (реализован)
 // 'scout'   — гоблин разведчик (TODO)
 // 'monk'    — гоблин монах (TODO)
 

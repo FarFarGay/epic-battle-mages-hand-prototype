@@ -83,6 +83,19 @@ export const MINION_PIXELS = [
 ];
 export const MINION_W = 6, MINION_H = 8;
 
+// Шлем воина (накладывается поверх головы гоблина)
+export const WARRIOR_HELMET_PIXELS = [
+    // Верхушка шлема
+    [1,0,'#7788aa'], [2,0,'#aabbcc'], [3,0,'#aabbcc'], [4,0,'#7788aa'],
+    // Забрало (полная полоса)
+    [0,1,'#556677'], [1,1,'#8899aa'], [2,1,'#bbccdd'], [3,1,'#bbccdd'], [4,1,'#8899aa'], [5,1,'#556677'],
+    // Нащёчники (боковые пластины)
+    [0,2,'#445566'], [5,2,'#445566'],
+    // Блик
+    [2,0,'#ccddee'], [2,1,'#ccddee'],
+];
+export const WARRIOR_HELMET_W = 6, WARRIOR_HELMET_H = 3;
+
 // Мёртвый гоблин (X-глаза, потемнее)
 export const MINION_DEAD_PIXELS = [
     // Голова

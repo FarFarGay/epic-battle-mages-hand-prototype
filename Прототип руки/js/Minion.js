@@ -8,12 +8,15 @@ import {
     SKELETON_AGGRO_RANGE, SKELETON_ATTACK_RANGE, SKELETON_ATTACK_DAMAGE, SKELETON_ATTACK_CD,
     GOBLIN_ATTACK_DAMAGE, GOBLIN_ATTACK_CD, GOBLIN_ATTACK_RANGE,
     GOBLIN_AGGRO_RANGE, GOBLIN_RALLY_RANGE,
+    WARRIOR_AGGRO_RANGE, WARRIOR_ATTACK_DAMAGE, WARRIOR_ATTACK_CD, WARRIOR_ATTACK_RANGE,
+    WARRIOR_GUARD_RADIUS,
 } from './constants.js';
 import { gameMap } from './Map.js';
 import {
     MINION_PIXELS, MINION_DEAD_PIXELS, MINION_W, MINION_H,
     TOMBSTONE_PIXELS, TOMBSTONE_W, TOMBSTONE_H,
     SKELETON_PIXELS, SKELETON_W, SKELETON_H,
+    WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W,
 } from './sprites.js';
 import { GameObject } from './GameObject.js';
 import { canvas, ctx, drawPixelArt, drawItemShadow, drawHighlight } from './renderer.js';
@@ -53,6 +56,8 @@ export class Minion extends GameObject {
 
         // Класс гоблина
         this.goblinClass = 'basic';     // 'basic' | 'warrior' | 'scout' | 'monk'
+        this.guardX = null;             // позиция охраны воина (iso X)
+        this.guardY = null;             // позиция охраны воина (iso Y)
 
         // Скелет
         this.isUndead = false;          // true = скелет (после воскрешения)
@@ -124,6 +129,16 @@ export class Minion extends GameObject {
     exitCombat() {
         this.combatTarget = null;
         this.attackCooldown = 0;
+        // Воины всегда возвращаются на пост охраны
+        if (this.goblinClass === 'warrior') {
+            this.state = 'warrior_returning';
+            this.stateTime = 0;
+            this.savedState = null;
+            this.savedTask = null;
+            this.savedTargetItem = null;
+            this.savedGathererMode = false;
+            return;
+        }
         if (this.savedState) {
             if (this.savedTask === 'gather') {
                 // Возврат к сбору — ищем новый ресурс в 'busy'
@@ -159,7 +174,8 @@ export class Minion extends GameObject {
     // Возвращает true если гоблин вступил в бой.
     _tryAggro(allMinions) {
         if (!allMinions || this.isUndead || this.dead) return false;
-        let nearestEnemy = null, nearestEnemyDist = GOBLIN_AGGRO_RANGE;
+        const aggroRange = this.goblinClass === 'warrior' ? WARRIOR_AGGRO_RANGE : GOBLIN_AGGRO_RANGE;
+        let nearestEnemy = null, nearestEnemyDist = aggroRange;
         for (const m of allMinions) {
             if (m === this || !m.isUndead) continue;
             if (m.state !== 'skeleton') continue;
@@ -303,6 +319,12 @@ export class Minion extends GameObject {
         }
         if (this.dead) {
             this.state = 'dead';
+            return;
+        }
+        // Воин возвращается на пост (не подбирает ресурсы)
+        if (this.goblinClass === 'warrior') {
+            this.state = 'warrior_returning';
+            this.stateTime = 0;
             return;
         }
         // При приземлении ищем ближайший ресурс в радиусе 1.5 тайла
@@ -509,10 +531,11 @@ export class Minion extends GameObject {
                     this.exitCombat();
                     break;
                 }
+                const atkRange = this.goblinClass === 'warrior' ? WARRIOR_ATTACK_RANGE : GOBLIN_ATTACK_RANGE;
                 const ddx = this.combatTarget.ix - this.ix;
                 const ddy = this.combatTarget.iy - this.iy;
                 const dist = Math.sqrt(ddx * ddx + ddy * ddy);
-                if (dist <= GOBLIN_ATTACK_RANGE) {
+                if (dist <= atkRange) {
                     this.state = 'fighting';
                     this.stateTime = 0;
                 } else {
@@ -534,11 +557,14 @@ export class Minion extends GameObject {
                     this.exitCombat();
                     break;
                 }
+                const atkRange = this.goblinClass === 'warrior' ? WARRIOR_ATTACK_RANGE : GOBLIN_ATTACK_RANGE;
+                const atkDmg   = this.goblinClass === 'warrior' ? WARRIOR_ATTACK_DAMAGE : GOBLIN_ATTACK_DAMAGE;
+                const atkCd    = this.goblinClass === 'warrior' ? WARRIOR_ATTACK_CD : GOBLIN_ATTACK_CD;
                 const ddx = this.combatTarget.ix - this.ix;
                 const ddy = this.combatTarget.iy - this.iy;
                 const dist = Math.sqrt(ddx * ddx + ddy * ddy);
 
-                if (dist > GOBLIN_ATTACK_RANGE * 2) {
+                if (dist > atkRange * 2) {
                     // Враг отошёл — догоняем
                     this.state = 'war';
                     this.stateTime = 0;
@@ -546,9 +572,9 @@ export class Minion extends GameObject {
                 }
 
                 if (this.attackCooldown <= 0) {
-                    this.attackCooldown = GOBLIN_ATTACK_CD;
+                    this.attackCooldown = atkCd;
                     const target = this.combatTarget;
-                    target.hp = Math.max(0, target.hp - GOBLIN_ATTACK_DAMAGE);
+                    target.hp = Math.max(0, target.hp - atkDmg);
                     target.damageWobble = 0.4;
 
                     if (target.hp <= 0) {
@@ -565,6 +591,48 @@ export class Minion extends GameObject {
                             target.pendingBloodEffect = { type: 'hit', ix: target.ix, iy: target.iy };
                         }
                     }
+                }
+                break;
+            }
+
+            // ── 9. Воин: стоит на посту ──────────────────────────────
+            case 'guarding': {
+                if (this._tryAggro(allMinions)) break;
+                // Держимся у позиции охраны (небольшие поправки если сдвинулись)
+                if (this.guardX !== null) {
+                    const dx = this.guardX - this.ix;
+                    const dy = this.guardY - this.iy;
+                    const d = Math.sqrt(dx * dx + dy * dy);
+                    if (d > 0.3) {
+                        const spd = MINION_SPEED * dt;
+                        this.ix += (dx / d) * Math.min(spd, d);
+                        this.iy += (dy / d) * Math.min(spd, d);
+                    }
+                }
+                break;
+            }
+
+            // ── 10. Воин: возвращается на пост после боя ─────────────
+            case 'warrior_returning': {
+                if (this._tryAggro(allMinions)) break;
+                if (this.guardX === null) {
+                    // Нет позиции — просто стоим у замка
+                    this.state = 'free';
+                    break;
+                }
+                const dx = this.guardX - this.ix;
+                const dy = this.guardY - this.iy;
+                const d = Math.sqrt(dx * dx + dy * dy);
+                if (d < 0.3) {
+                    this.state = 'guarding';
+                    this.stateTime = 0;
+                } else {
+                    const spd = MINION_SPEED * dt;
+                    this.ix += (dx / d) * Math.min(spd, d);
+                    this.iy += (dy / d) * Math.min(spd, d);
+                    const lim = gameMap.size - 0.5;
+                    this.ix = Math.max(-lim, Math.min(lim, this.ix));
+                    this.iy = Math.max(-lim, Math.min(lim, this.iy));
                 }
                 break;
             }
@@ -643,13 +711,16 @@ export class Minion extends GameObject {
                             prey.enterCombat(this);
                         }
 
-                        // Призыв на помощь — все гоблины в радиусе GOBLIN_RALLY_RANGE вступают в бой
+                        // Призыв на помощь:
+                        // — обычные гоблины в GOBLIN_RALLY_RANGE вступают в бой
+                        // — воины откликаются со всей зоны охраны (WARRIOR_GUARD_RADIUS)
                         for (const m of allMinions) {
                             if (m === prey || m === this) continue;
                             if (m.isUndead || m.dead) continue;
                             const rdx = m.ix - prey.ix;
                             const rdy = m.iy - prey.iy;
-                            if (Math.sqrt(rdx * rdx + rdy * rdy) <= GOBLIN_RALLY_RANGE) {
+                            const rallyRange = m.goblinClass === 'warrior' ? WARRIOR_GUARD_RADIUS : GOBLIN_RALLY_RANGE;
+                            if (Math.sqrt(rdx * rdx + rdy * rdy) <= rallyRange) {
                                 m.enterCombat(this);
                             }
                         }
@@ -795,5 +866,11 @@ export class Minion extends GameObject {
         }
 
         drawPixelArt(ox, oy, spr, PIXEL_SCALE);
+
+        // Шлем воина — накладывается поверх головы живого (не скелет) гоблина-воина
+        if (this.goblinClass === 'warrior' && !this.isUndead) {
+            const helmetOx = Math.round(ox + (sprW - WARRIOR_HELMET_W) / 2 * PIXEL_SCALE);
+            drawPixelArt(helmetOx, oy, WARRIOR_HELMET_PIXELS, PIXEL_SCALE);
+        }
     }
 }
