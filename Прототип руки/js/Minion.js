@@ -4,7 +4,8 @@
 import {
     PIXEL_SCALE, HEIGHT_TO_SCREEN, MINION_SPEED, MINION_MAX_HP,
     FALL_DMG_MED_VZ, FALL_DMG_HI_VZ, FALL_DMG_MED, FALL_DMG_HI,
-    CAMERA_OFFSET_Y, SKELETON_RISE_DELAY, SKELETON_SPEED_FACTOR,
+    CAMERA_OFFSET_Y, SKELETON_RISE_DELAY, SKELETON_SPEED_FACTOR, SKELETON_MAX_HP,
+    SKELETON_AGGRO_RANGE, SKELETON_ATTACK_RANGE, SKELETON_ATTACK_DAMAGE, SKELETON_ATTACK_CD,
 } from './constants.js';
 import { gameMap } from './Map.js';
 import {
@@ -52,6 +53,7 @@ export class Minion extends GameObject {
         this.isUndead = false;          // true = скелет (после воскрешения)
         this.pendingBoneEffect = null;  // { ix, iy } — разлёт костей при разрушении
         this.pendingRemove = false;     // пометка на удаление из массива
+        this.attackCooldown = 0;        // таймер между ударами скелета
 
         // Система задач
         this.task = null;          // null | 'gather'
@@ -64,9 +66,16 @@ export class Minion extends GameObject {
     }
 
     pickNewTarget() {
-        // Свободные гоблины патрулируют 21×21 область вокруг замка (0,0)
-        this.targetX = (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
-        this.targetY = (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
+        if (this.isUndead) {
+            // Скелеты бродят по всей карте
+            const lim = gameMap.size - 1;
+            this.targetX = (Math.random() * 2 - 1) * lim;
+            this.targetY = (Math.random() * 2 - 1) * lim;
+        } else {
+            // Свободные гоблины патрулируют 21×21 область вокруг замка (0,0)
+            this.targetX = (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
+            this.targetY = (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
+        }
     }
 
     // ── Задачи ──────────────────────────────────────────────────
@@ -126,10 +135,23 @@ export class Minion extends GameObject {
 
     onLand(impactVz) {
         if (this.isUndead) {
-            // Скелет разлетается костями при любом приземлении после броска
-            this.pendingBoneEffect = { ix: this.ix, iy: this.iy };
-            this.pendingRemove = true;
-            this.state = 'crumbled';
+            // Скелет получает урон от падения как гоблин
+            const prevHp = this.hp;
+            if (impactVz >= FALL_DMG_HI_VZ) {
+                this.hp = Math.max(0, this.hp - FALL_DMG_HI);
+            } else if (impactVz >= FALL_DMG_MED_VZ) {
+                this.hp = Math.max(0, this.hp - FALL_DMG_MED);
+            }
+            if (this.hp < prevHp) {
+                this.damageWobble = 0.4;
+                if (this.hp <= 0) {
+                    this.pendingBoneEffect = { ix: this.ix, iy: this.iy };
+                    this.pendingRemove = true;
+                    this.state = 'crumbled';
+                } else {
+                    this.pendingBoneEffect = { ix: this.ix, iy: this.iy };
+                }
+            }
             return;
         }
         if (!this.dead) {
@@ -149,13 +171,19 @@ export class Minion extends GameObject {
                 }
             }
         }
-        // Мёртвый гоблин — крови не оставляет
     }
 
     onSettle(items) {
         this.bounceCount = 0;
         this.stateTime = 0;
         this.dropCarriedItem(); // бросаем камень если несли
+        if (this.state === 'crumbled') return; // скелет уже разрушен в onLand
+        if (this.isUndead) {
+            // Скелет после приземления — продолжает бродить
+            this.pickNewTarget();
+            this.state = 'skeleton';
+            return;
+        }
         if (this.dead) {
             this.state = 'dead';
             return;
@@ -186,7 +214,7 @@ export class Minion extends GameObject {
         }
     }
 
-    update(dt, hand, triggerShake, items, castle) {
+    update(dt, hand, triggerShake, items, castle, allMinions) {
         this.stateTime += dt;
         if (this.damageWobble > 0) this.damageWobble = Math.max(0, this.damageWobble - dt);
 
@@ -367,27 +395,75 @@ export class Minion extends GameObject {
                 if (this.deadTime >= SKELETON_RISE_DELAY) {
                     this.isUndead = true;
                     this.dead = false;
+                    this.hp = SKELETON_MAX_HP;
                     this.state = 'skeleton';
                     this.stateTime = 0;
                     this.pickNewTarget();
                 }
                 break;
 
-            // ── Скелет (автономный) ────────────────────────────────
+            // ── Скелет (автономный — бродит и атакует гоблинов) ─────
             case 'skeleton': {
-                const dx = this.targetX - this.ix;
-                const dy = this.targetY - this.iy;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist < 0.25) {
-                    this.pickNewTarget();
-                } else {
-                    const spd = MINION_SPEED * SKELETON_SPEED_FACTOR * dt;
-                    this.ix += (dx / dist) * spd;
-                    this.iy += (dy / dist) * spd;
-                    const lim = gameMap.size - 0.5;
-                    this.ix = Math.max(-lim, Math.min(lim, this.ix));
-                    this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                if (this.attackCooldown > 0) this.attackCooldown -= dt;
+
+                // Ищем ближайшего живого гоблина (не скелета, не мёртвого, не в руке)
+                let prey = null, preyDist = SKELETON_AGGRO_RANGE;
+                if (allMinions) {
+                    for (const m of allMinions) {
+                        if (m === this) continue;
+                        if (m.isUndead || m.dead) continue;
+                        if (m.state === 'carried' || m.state === 'lifting') continue;
+                        const ddx = m.ix - this.ix;
+                        const ddy = m.iy - this.iy;
+                        const d = Math.sqrt(ddx * ddx + ddy * ddy);
+                        if (d < preyDist) {
+                            preyDist = d;
+                            prey = m;
+                        }
+                    }
                 }
+
+                if (prey && preyDist <= SKELETON_ATTACK_RANGE) {
+                    // В радиусе удара — атаковать
+                    if (this.attackCooldown <= 0) {
+                        this.attackCooldown = SKELETON_ATTACK_CD;
+                        prey.hp = Math.max(0, prey.hp - SKELETON_ATTACK_DAMAGE);
+                        prey.damageWobble = 0.4;
+                        if (prey.hp <= 0) {
+                            prey.dead = true;
+                            prey.pendingBloodEffect = { type: 'death', ix: prey.ix, iy: prey.iy };
+                            prey.dropCarriedItem();
+                            prey.state = 'dead';
+                            prey.stateTime = 0;
+                            prey.deadTime = 0;
+                        } else {
+                            prey.pendingBloodEffect = { type: 'hit', ix: prey.ix, iy: prey.iy };
+                        }
+                    }
+                } else if (prey) {
+                    // Есть цель — идём к ней
+                    const ddx = prey.ix - this.ix;
+                    const ddy = prey.iy - this.iy;
+                    const spd = MINION_SPEED * SKELETON_SPEED_FACTOR * dt;
+                    this.ix += (ddx / preyDist) * spd;
+                    this.iy += (ddy / preyDist) * spd;
+                } else {
+                    // Нет цели — свободное блуждание по карте
+                    const dx = this.targetX - this.ix;
+                    const dy = this.targetY - this.iy;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 0.25) {
+                        this.pickNewTarget();
+                    } else {
+                        const spd = MINION_SPEED * SKELETON_SPEED_FACTOR * dt;
+                        this.ix += (dx / dist) * spd;
+                        this.iy += (dy / dist) * spd;
+                    }
+                }
+
+                const lim = gameMap.size - 0.5;
+                this.ix = Math.max(-lim, Math.min(lim, this.ix));
+                this.iy = Math.max(-lim, Math.min(lim, this.iy));
                 break;
             }
 

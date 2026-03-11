@@ -274,7 +274,7 @@ function updateArtillery(dt) {
             // Тряска экрана
             triggerScreenShake(15);
 
-            // Урон миньонам в радиусе взрыва
+            // Урон миньонам и скелетам в радиусе взрыва
             for (const m of minions) {
                 if (m.state === 'dead' || m.state === 'crumbled') continue;
                 const mdx = m.ix - proj.ix;
@@ -285,19 +285,31 @@ function updateArtillery(dt) {
                     m.hp = Math.max(0, m.hp - ARTILLERY_DAMAGE);
                     if (m.hp < prevHp) {
                         m.damageWobble = 0.4;
-                        if (m.hp <= 0 && !m.dead) {
-                            m.dead = true;
-                            m.pendingBloodEffect = { type: 'death', ix: m.ix, iy: m.iy };
-                            m.dropCarriedItem();
-                            m.state = 'dead';
-                            m.stateTime = 0;
-                            m.deadTime = 0;
+                        if (m.hp <= 0) {
+                            if (m.isUndead) {
+                                // Скелет разрушается
+                                m.pendingBoneEffect = { ix: m.ix, iy: m.iy };
+                                m.pendingRemove = true;
+                                m.state = 'crumbled';
+                            } else if (!m.dead) {
+                                // Гоблин умирает
+                                m.dead = true;
+                                m.pendingBloodEffect = { type: 'death', ix: m.ix, iy: m.iy };
+                                m.dropCarriedItem();
+                                m.state = 'dead';
+                                m.stateTime = 0;
+                                m.deadTime = 0;
+                            }
                         } else {
-                            m.pendingBloodEffect = { type: 'hit', ix: m.ix, iy: m.iy };
+                            if (m.isUndead) {
+                                m.pendingBoneEffect = { ix: m.ix, iy: m.iy };
+                            } else {
+                                m.pendingBloodEffect = { type: 'hit', ix: m.ix, iy: m.iy };
+                            }
                         }
                     }
                     // Отбросить
-                    if (mdist > 0.01) {
+                    if (mdist > 0.01 && m.state !== 'crumbled') {
                         const pushForce = (1 - mdist / ARTILLERY_BLAST_RADIUS) * 6;
                         m.vx = (mdx / mdist) * pushForce;
                         m.vy = (mdy / mdist) * pushForce;
@@ -452,7 +464,7 @@ function update(dt) {
 
     // Обновляем миньонов
     for (let i = 0; i < minions.length; i++) {
-        minions[i].update(dt, hand, triggerScreenShake, items, castle);
+        minions[i].update(dt, hand, triggerScreenShake, items, castle, minions);
     }
 
     // Учитываем доставленные в замок ресурсы

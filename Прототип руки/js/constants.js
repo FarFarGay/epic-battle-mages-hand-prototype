@@ -40,8 +40,13 @@ export const FALL_DMG_MED    = 25;  // 25% от MINION_MAX_HP
 export const FALL_DMG_HI     = 50;  // 50% от MINION_MAX_HP
 
 // — Скелеты —
-export const SKELETON_RISE_DELAY   = 3.0;  // секунд после смерти до воскрешения скелетом
-export const SKELETON_SPEED_FACTOR = 0.6;  // множитель скорости скелета относительно гоблина
+export const SKELETON_RISE_DELAY    = 3.0;  // секунд после смерти до воскрешения скелетом
+export const SKELETON_SPEED_FACTOR  = 0.6;  // множитель скорости скелета относительно гоблина
+export const SKELETON_MAX_HP        = 20;   // здоровье скелета (разрушается при 0)
+export const SKELETON_AGGRO_RANGE   = 15.0; // дистанция обнаружения гоблина (iso-тайлы)
+export const SKELETON_ATTACK_RANGE  = 0.6;  // дистанция удара (iso-тайлы)
+export const SKELETON_ATTACK_DAMAGE = 15;   // урон за удар
+export const SKELETON_ATTACK_CD     = 1.5;  // кулдаун между ударами (секунды)
 
 // — Типы ресурсов (все gatherable — гоблины могут собирать) —
 // Чтобы добавить новый ресурс: добавить спрайт в sprites.js, добавить запись сюда.
