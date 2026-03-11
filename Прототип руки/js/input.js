@@ -242,6 +242,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
         // Бросок огненного шара
         if (hand.grabbedSpell === 'fireball') {
             const throwVel = hand.calculateThrowVelocity({ mass: fireball.mass });
+            fireball.iz = 0;
             fireball.vx = throwVel.vx;
             fireball.vy = throwVel.vy;
             fireball.vz = throwVel.vz;
