@@ -113,3 +113,14 @@ export const ARTILLERY_MAX_FLIGHT    = 2.5;   // макс. время полёт
 export const ARTILLERY_BLAST_RADIUS  = 3;     // радиус взрыва в iso-тайлах (7×7 = ±3)
 export const ARTILLERY_DAMAGE        = 80;    // урон от взрыва
 export const ARTILLERY_RETURN_DELAY  = 1.5;   // пауза после взрыва до возврата камеры (секунды)
+
+// — Огненный шар —
+export const FIREBALL_MASS          = 2.5;   // масса как у камня
+export const FIREBALL_BOUNCINESS    = 0.15;  // небольшой отскок перед взрывом
+export const FIREBALL_FRICTION      = 0.70;
+export const FIREBALL_BLAST_RADIUS  = 2.5;   // радиус взрыва (iso-тайлы)
+export const FIREBALL_BLAST_DAMAGE  = 30;    // макс. урон от взрыва
+export const FIREBALL_BURN_RADIUS   = 2.0;   // радиус огня на земле
+export const FIREBALL_BURN_DURATION = 1.0;   // секунд горит земля
+export const FIREBALL_BURN_DPS      = 2;     // урон горения (HP/сек)
+export const FIREBALL_COOLDOWN      = 8.0;   // секунд перезарядки

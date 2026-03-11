@@ -9,7 +9,7 @@ import {
 import { MINION_H } from './sprites.js';
 import { isoToScreen, screenToIso } from './isometry.js';
 import { camera } from './isometry.js';
-import { restartMap, flag, items, minions, castle, artilleryMode, triggerScreenShake } from './World.js';
+import { restartMap, flag, items, minions, castle, artilleryMode, triggerScreenShake, fireball } from './World.js';
 
 function worldToScreen(wx, wy, canvas) {
     const iso = isoToScreen(wx, wy);
@@ -238,6 +238,26 @@ export function initInput(canvas, hand, world, cam, statusEl) {
         if (e.button !== 0) return;
         world.mouseDown = false;
         if (artilleryMode.active) return;
+
+        // Бросок огненного шара
+        if (hand.grabbedSpell === 'fireball') {
+            const throwVel = hand.calculateThrowVelocity({ mass: fireball.mass });
+            fireball.vx = throwVel.vx;
+            fireball.vy = throwVel.vy;
+            fireball.vz = throwVel.vz;
+            fireball.state = 'thrown';
+            fireball.stateTime = 0;
+            fireball.bounceCount = 0;
+            fireball.pendingExplosion = false;
+            fireball._exploded = false;
+            hand.grabbedSpell = null;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+            statusEl.textContent = 'Огненный шар!';
+            return;
+        }
+
         if (hand.grabbedItem !== null) {
             const item = items[hand.grabbedItem];
             const type = item.typeDef;

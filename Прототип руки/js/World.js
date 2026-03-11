@@ -6,6 +6,7 @@ import { ITEM_TYPES, WARRIOR_GUARD_RADIUS, WARRIOR_WALL_STEP } from './constants
 import { Item } from './Item.js';
 import { Minion } from './Minion.js';
 import { Castle } from './Castle.js';
+import { Fireball } from './Fireball.js';
 
 // ============================================================
 //  СОСТОЯНИЕ МИРА
@@ -26,6 +27,12 @@ export const screenShake = {
 
 export const bloodParticles = [];  // { x, y, vx, vy, life, maxLife, size }
 export const bloodPuddles   = [];  // { ix, iy, size, t, duration }
+
+// Огненный шар
+export const fireball = new Fireball();
+
+// Огненные пятна после взрыва: { ix, iy, timer, duration, radius }
+export const firePatches = [];
 
 // Режим артиллерии замка
 export const artilleryMode = {
@@ -231,6 +238,7 @@ export function restartMap(hand, statusEl) {
     hand.shakeHistory = [];
     hand.prevScreenXForShake = 0;
     hand.selectedMinions = [];
+    hand.grabbedSpell = null;
 
     castle = new Castle(gameMap.castlePos.ix, gameMap.castlePos.iy);
 
@@ -241,6 +249,9 @@ export function restartMap(hand, statusEl) {
     artilleryMode.active = false;
     artilleryMode.state = 'aiming';
     artilleryMode.explosion.active = false;
+
+    fireball.reset();
+    firePatches.length = 0;
 
     statusEl.textContent = 'Карта перезапущена!';
 }
@@ -279,4 +290,6 @@ export function initWorld() {
 
     castle = new Castle(gameMap.castlePos.ix, gameMap.castlePos.iy);
     resetWarriorWall();
+    fireball.reset();
+    firePatches.length = 0;
 }

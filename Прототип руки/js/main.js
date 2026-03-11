@@ -7,13 +7,15 @@ import {
     ARTILLERY_GRAB_RADIUS,
     WARRIOR_UPGRADE_INTERVAL, WARRIOR_IRON_COST,
     SCOUT_MAX_COUNT, SCOUT_UPGRADE_INTERVAL, SCOUT_WOOD_COST, SCOUT_FOOD_COST, SCOUT_FOG_RADIUS,
+    FIREBALL_BLAST_RADIUS, FIREBALL_BLAST_DAMAGE, FIREBALL_BURN_RADIUS,
+    FIREBALL_BURN_DURATION, FIREBALL_BURN_DPS, FIREBALL_COOLDOWN,
 } from './constants.js';
-import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W } from './sprites.js';
+import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos } from './World.js';
+import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, firePatches } from './World.js';
 import { initInput } from './input.js';
 
 // ============================================================
@@ -239,6 +241,7 @@ const goblinHudRect  = { x: 0, y: 0, w: 0, h: 0 };
 const warriorHudRect = { x: 0, y: 0, w: 0, h: 0 };
 const scoutHudRect   = { x: 0, y: 0, w: 0, h: 0 };
 const hudPanelRect   = { x: 0, y: 0, w: 0, h: 0 }; // весь правый HUD-панель (блокирует edge scroll)
+const spellPanelRect = { x: 0, y: 0, w: 0, h: 0 }; // левая панель заклинаний
 const selectionBarRects = []; // иконки выделенных юнитов внизу экрана; очищается каждый кадр
 const selectionBarPanel = { x: 0, y: 0, w: 0, h: 0 }; // вся панель бара; блокирует edge scroll
 
@@ -300,6 +303,33 @@ canvas.addEventListener('mousedown', (e) => {
     ) {
         scoutProduction.active = !scoutProduction.active;
         e.stopImmediatePropagation();
+        return;
+    }
+
+    // Захват огненного шара из панели заклинаний
+    if (
+        mx >= spellPanelRect.x && mx <= spellPanelRect.x + spellPanelRect.w &&
+        my >= spellPanelRect.y && my <= spellPanelRect.y + spellPanelRect.h &&
+        fireball.state === 'ready' &&
+        hand.grabbedItem === null && hand.grabbedMinion === null &&
+        !hand.grabbedFlag && !artilleryMode.active
+    ) {
+        fireball.ix = hand.isoX;
+        fireball.iy = hand.isoY;
+        fireball.iz = 0;
+        fireball.state = 'lifting';
+        fireball.stateTime = 0;
+        fireball.liftProgress = 0;
+        fireball.vx = 0; fireball.vy = 0; fireball.vz = 0;
+        fireball.bounceCount = 0;
+        fireball.pendingExplosion = false;
+        fireball._exploded = false;
+        hand.grabbedSpell = 'fireball';
+        hand.state = 'closing';
+        hand.animProgress = 0;
+        hand.velocityHistory = [];
+        e.stopImmediatePropagation();
+        return;
     }
 }, true);
 
@@ -591,6 +621,69 @@ function update(dt) {
         tryUpgradeScout();
     }
 
+    // ── ОГНЕННЫЙ ШАР — обновление ──────────────────────────────
+    fireball.update(dt, hand, triggerScreenShake);
+
+    // Обрабатываем взрыв
+    if (fireball.pendingExplosion) {
+        fireball.pendingExplosion = false;
+        const ex = fireball.ix, ey = fireball.iy;
+
+        triggerScreenShake(10);
+
+        // Урон от взрыва
+        for (const m of minions) {
+            if (m.dead || m.isUndead || m.pendingRemove) continue;
+            if (m.state === 'carried' || m.state === 'lifting') continue;
+            const dx = m.ix - ex, dy = m.iy - ey;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < FIREBALL_BLAST_RADIUS) {
+                const dmg = Math.round((1 - dist / FIREBALL_BLAST_RADIUS) * FIREBALL_BLAST_DAMAGE);
+                if (dmg > 0) {
+                    m.hp -= dmg;
+                    if (m.hp <= 0) {
+                        m.hp = 0;
+                        m.dead = true;
+                        m.pendingBloodEffect = { type: 'death', ix: m.ix, iy: m.iy };
+                    } else {
+                        m.pendingBloodEffect = { type: 'hit', ix: m.ix, iy: m.iy };
+                    }
+                }
+            }
+        }
+
+        // Огненное пятно
+        firePatches.push({
+            ix: ex, iy: ey,
+            timer: 0,
+            duration: FIREBALL_BURN_DURATION,
+            radius: FIREBALL_BURN_RADIUS,
+        });
+    }
+
+    // Обновляем огненные пятна
+    for (let i = firePatches.length - 1; i >= 0; i--) {
+        const fp = firePatches[i];
+        fp.timer += dt;
+        // Урон от горения
+        for (const m of minions) {
+            if (m.dead || m.isUndead || m.pendingRemove) continue;
+            if (m.state === 'carried' || m.state === 'lifting') continue;
+            const dx = m.ix - fp.ix, dy = m.iy - fp.iy;
+            if (Math.sqrt(dx * dx + dy * dy) < fp.radius) {
+                m.hp -= FIREBALL_BURN_DPS * dt;
+                if (m.hp <= 0) {
+                    m.hp = 0;
+                    m.dead = true;
+                    m.pendingBloodEffect = { type: 'death', ix: m.ix, iy: m.iy };
+                }
+            }
+        }
+        if (fp.timer >= fp.duration) {
+            firePatches.splice(i, 1);
+        }
+    }
+
     // Обновляем миньонов
     for (let i = 0; i < minions.length; i++) {
         minions[i].update(dt, hand, triggerScreenShake, items, castle, minions);
@@ -849,6 +942,10 @@ function update(dt) {
             && mouseX >= selectionBarPanel.x && mouseY >= selectionBarPanel.y
             && mouseX <= selectionBarPanel.x + selectionBarPanel.w
             && mouseY <= selectionBarPanel.y + selectionBarPanel.h)
+        ||
+        (mouseX >= spellPanelRect.x && mouseY >= spellPanelRect.y
+            && mouseX <= spellPanelRect.x + spellPanelRect.w
+            && mouseY <= spellPanelRect.y + spellPanelRect.h)
     );
     if (!overHud) {
         if (edgeSrcX < edgeW) {
@@ -955,6 +1052,24 @@ function render() {
         });
     }
 
+    // Огненные пятна на земле
+    for (let i = 0; i < firePatches.length; i++) {
+        renderList.push({
+            type: 'firePatch',
+            index: i,
+            depth: getDepth(firePatches[i].ix, firePatches[i].iy) - 0.005,
+        });
+    }
+
+    // Огненный шар в полёте
+    if (fireball.state !== 'ready' && fireball.state !== 'done' &&
+        fireball.state !== 'lifting' && fireball.state !== 'carried') {
+        renderList.push({
+            type: 'fireball',
+            depth: getDepth(fireball.ix, fireball.iy) + fireball.iz * 0.1,
+        });
+    }
+
     // Флаг всегда виден над туманом войны (игрок должен знать куда поставил флаг)
     if (flag.state === 'placed') {
         renderList.push({
@@ -1002,11 +1117,44 @@ function render() {
             castle.draw();
         } else if (obj.type === 'flag') {
             drawFlagInWorld(hoveredFlag);
+        } else if (obj.type === 'firePatch') {
+            const fp = firePatches[obj.index];
+            const progress = fp.timer / fp.duration;
+            const alpha = (1 - progress) * 0.65;
+            const s = worldToScreen(fp.ix, fp.iy);
+            const rW = fp.radius * (TILE_W / 2);
+            const rH = fp.radius * (TILE_H / 2);
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            const grad = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, rW);
+            grad.addColorStop(0, '#ffcc00');
+            grad.addColorStop(0.4, '#ff6600');
+            grad.addColorStop(1, 'rgba(180,30,0,0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.ellipse(s.x, s.y, rW, rH, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Искры
+            const now = performance.now() / 1000;
+            for (let k = 0; k < 6; k++) {
+                const angle = (k / 6) * Math.PI * 2 + now * 2.5;
+                const d = rW * 0.4;
+                const sx2 = s.x + Math.cos(angle) * d;
+                const sy2 = s.y + Math.sin(angle) * d * 0.5 - Math.abs(Math.sin(now * 5 + k)) * 6;
+                ctx.globalAlpha = alpha * 0.9;
+                ctx.fillStyle = k % 2 === 0 ? '#ffdd44' : '#ff8800';
+                ctx.fillRect(Math.round(sx2 - 1.5), Math.round(sy2 - 1.5), 3, 3);
+            }
+            ctx.restore();
+        } else if (obj.type === 'fireball') {
+            fireball.draw(hand);
         } else if (obj.type === 'hand') {
             if (hand.grabbedItem !== null) {
                 items[hand.grabbedItem].draw(hand.grabbedItem, hand, hoveredItem);
             } else if (hand.grabbedMinion !== null) {
                 minions[hand.grabbedMinion].draw(hand.grabbedMinion, hand, hoveredMinion);
+            } else if (hand.grabbedSpell === 'fireball') {
+                fireball.draw(hand);
             }
             hand.draw();
         }
@@ -1450,6 +1598,98 @@ function render() {
 
         // Обновляем общий HUD-панель, включая scout-блок
         hudPanelRect.h = scoutHudRect.y + scoutHudRect.h - (HUD_MARGIN - 4);
+    }
+
+    // ── ПАНЕЛЬ ЗАКЛИНАНИЙ — левая сторона ──────────────────────
+    {
+        const HUD_MARGIN = 40;
+        const SLOT_SIZE = 52;
+        const PANEL_W = SLOT_SIZE + 20;
+        const PANEL_H = SLOT_SIZE + 44;
+        const panelX = HUD_MARGIN;
+        const panelY = HUD_MARGIN;
+
+        spellPanelRect.x = panelX - 4;
+        spellPanelRect.y = panelY - 4;
+        spellPanelRect.w = PANEL_W + 8;
+        spellPanelRect.h = PANEL_H + 8;
+
+        const isHov = mouseX >= spellPanelRect.x && mouseX <= spellPanelRect.x + spellPanelRect.w
+            && mouseY >= spellPanelRect.y && mouseY <= spellPanelRect.y + spellPanelRect.h;
+
+        // Фон панели
+        ctx.save();
+        ctx.globalAlpha = isHov ? 0.82 : 0.58;
+        ctx.fillStyle = '#120808';
+        ctx.fillRect(spellPanelRect.x, spellPanelRect.y, spellPanelRect.w, spellPanelRect.h);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = isHov ? '#dd4400' : '#441100';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(spellPanelRect.x + 0.5, spellPanelRect.y + 0.5, spellPanelRect.w - 1, spellPanelRect.h - 1);
+        ctx.restore();
+
+        // Заголовок
+        ctx.fillStyle = '#cc8844';
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('Магия', panelX + PANEL_W / 2, panelY + 11);
+
+        // Слот огненного шара
+        const slotX = panelX + (PANEL_W - SLOT_SIZE) / 2;
+        const slotY = panelY + 16;
+        const fbReady = fireball.state === 'ready';
+        const fbActive = fireball.state !== 'ready' && fireball.state !== 'done';
+        const onCooldown = fireball.cooldown > 0 && !fbActive;
+
+        // Фон слота
+        ctx.save();
+        ctx.globalAlpha = 0.5;
+        ctx.fillStyle = fbReady ? '#2a1000' : '#0d0d0d';
+        ctx.fillRect(slotX, slotY, SLOT_SIZE, SLOT_SIZE);
+        ctx.strokeStyle = fbReady ? (isHov ? '#ff6600' : '#883300') : '#331100';
+        ctx.lineWidth = fbReady && isHov ? 2 : 1;
+        ctx.strokeRect(slotX + 0.5, slotY + 0.5, SLOT_SIZE - 1, SLOT_SIZE - 1);
+        ctx.restore();
+
+        // Спрайт огненного шара в слоте
+        const ICON_SCALE = 4;
+        const iconX = Math.round(slotX + (SLOT_SIZE - FIREBALL_W * ICON_SCALE) / 2);
+        const iconY = Math.round(slotY + (SLOT_SIZE - FIREBALL_H * ICON_SCALE) / 2);
+        if (fbReady) {
+            ctx.save();
+            ctx.shadowColor = '#ff6600';
+            ctx.shadowBlur = 10;
+            drawPixelArt(iconX, iconY, FIREBALL_PIXELS, ICON_SCALE);
+            ctx.restore();
+        } else {
+            ctx.save();
+            ctx.globalAlpha = 0.3;
+            drawPixelArt(iconX, iconY, FIREBALL_PIXELS, ICON_SCALE);
+            ctx.restore();
+        }
+
+        // Оверлей перезарядки
+        if (onCooldown) {
+            const cdFraction = fireball.cooldown / FIREBALL_COOLDOWN;
+            ctx.save();
+            ctx.globalAlpha = cdFraction * 0.55;
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(slotX, slotY, SLOT_SIZE, SLOT_SIZE);
+            ctx.restore();
+            // Таймер
+            ctx.fillStyle = '#ffaa44';
+            ctx.font = 'bold 12px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(Math.ceil(fireball.cooldown) + 'с', slotX + SLOT_SIZE / 2, slotY + SLOT_SIZE / 2 + 4);
+        }
+
+        // Подпись
+        ctx.fillStyle = fbReady ? '#ffaa44' : '#665533';
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('Огнешар', panelX + PANEL_W / 2, slotY + SLOT_SIZE + 13);
+
+        if (fbReady && isHov) canvas.style.cursor = 'pointer';
     }
 
     // Панель выделенных юнитов — нижний центр, при активном флаге
