@@ -915,6 +915,10 @@ function update(dt) {
     if (hand.grabbedMinion !== null && hand.minionGrabIso !== null) {
         fogSources.push({ ix: hand.minionGrabIso.ix, iy: hand.minionGrabIso.iy, radius: 2 });
     }
+    // Летящий огненный шар рассеивает туман войны
+    if (fireball.state === 'thrown' || fireball.state === 'bouncing') {
+        fogSources.push({ ix: fireball.ix, iy: fireball.iy, radius: 3 });
+    }
     gameMap.tickFog(fogSources);
 
     // Тряска экрана
