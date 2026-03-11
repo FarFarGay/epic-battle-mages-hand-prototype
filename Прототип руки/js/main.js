@@ -12,7 +12,7 @@ import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, resetWarriorWall } from './World.js';
+import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos } from './World.js';
 import { initInput } from './input.js';
 
 // ============================================================
@@ -159,7 +159,10 @@ function dismissFlag() {
     hand.selectedMinions = [];
 
     for (const m of minions) {
-        if (m.state === 'listening' || m.state === 'moving' || m.state === 'waiting') {
+        if (m.goblinClass === 'warrior' && m.state === 'listening') {
+            m.state = 'warrior_returning';
+            m.stateTime = 0;
+        } else if (m.state === 'listening' || m.state === 'moving' || m.state === 'waiting') {
             m.pickNewTarget();
             m.state = 'free';
             m.stateTime = 0;
@@ -206,6 +209,8 @@ const world = {
 const goblinHudRect  = { x: 0, y: 0, w: 0, h: 0 };
 const warriorHudRect = { x: 0, y: 0, w: 0, h: 0 };
 const hudPanelRect   = { x: 0, y: 0, w: 0, h: 0 }; // весь правый HUD-панель (блокирует edge scroll)
+const selectionBarRects = []; // иконки выделенных юнитов внизу экрана; очищается каждый кадр
+const selectionBarPanel = { x: 0, y: 0, w: 0, h: 0 }; // вся панель бара; блокирует edge scroll
 
 // Производство воинов: active = автоматически апгрейдить гоблинов при наличии железа
 const warriorProduction = { active: false };
@@ -213,6 +218,33 @@ const warriorProduction = { active: false };
 // Клик по кнопкам HUD — перехватываем ДО input.js (capture phase)
 canvas.addEventListener('mousedown', (e) => {
     const mx = e.clientX, my = e.clientY;
+
+    // Панель выделенных юнитов (нижний центр)
+    for (const r of selectionBarRects) {
+        if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
+            const m = minions[r.minionIdx];
+            if (m.goblinClass === 'warrior') {
+                m.state = 'warrior_returning';
+                m.stateTime = 0;
+            } else {
+                m.pickNewTarget();
+                m.state = 'free';
+                m.stateTime = 0;
+            }
+            hand.selectedMinions = hand.selectedMinions.filter(i => i !== r.minionIdx);
+            if (hand.selectedMinions.length === 0) {
+                flag.state = 'docked';
+                hand.grabbedFlag = false;
+                hand.state = 'opening';
+                hand.animProgress = 0;
+                hand.velocityHistory = [];
+                statusEl.textContent = 'Выделение снято';
+            }
+            e.stopImmediatePropagation();
+            return;
+        }
+    }
+
     if (
         mx >= goblinHudRect.x && mx <= goblinHudRect.x + goblinHudRect.w &&
         my >= goblinHudRect.y && my <= goblinHudRect.y + goblinHudRect.h
@@ -744,10 +776,16 @@ function update(dt) {
     // В режиме артиллерии используем мышь вместо руки (рука зафиксирована на замке)
     const edgeSrcX = artilleryMode.active ? mouseX : hand.screenX;
     const edgeSrcY = artilleryMode.active ? mouseY : hand.screenY;
-    const overHud = !artilleryMode.active
-        && mouseX >= hudPanelRect.x && mouseY >= hudPanelRect.y
-        && mouseX <= hudPanelRect.x + hudPanelRect.w
-        && mouseY <= hudPanelRect.y + hudPanelRect.h;
+    const overHud = !artilleryMode.active && (
+        (mouseX >= hudPanelRect.x && mouseY >= hudPanelRect.y
+            && mouseX <= hudPanelRect.x + hudPanelRect.w
+            && mouseY <= hudPanelRect.y + hudPanelRect.h)
+        ||
+        (selectionBarPanel.w > 0
+            && mouseX >= selectionBarPanel.x && mouseY >= selectionBarPanel.y
+            && mouseX <= selectionBarPanel.x + selectionBarPanel.w
+            && mouseY <= selectionBarPanel.y + selectionBarPanel.h)
+    );
     if (!overHud) {
         if (edgeSrcX < edgeW) {
             panX = -(1 - edgeSrcX / edgeW) * PAN_SPEED;
@@ -1086,6 +1124,9 @@ function render() {
 
     ctx.restore();
 
+    // Сбрасываем курсор в начале screen-space HUD (каждый блок ниже может включить pointer)
+    canvas.style.cursor = 'none';
+
     // Рамка выделения (screen space, поверх всего)
     if (selection.active) {
         const sx = Math.min(selection.startX, selection.endX);
@@ -1198,8 +1239,8 @@ function render() {
         ctx.textAlign = 'left';
         ctx.fillText(prod.active ? '⏸ Остановить' : '▶ Запустить', hudX, barY + barH + 12);
 
-        // Курсор: pointer над кнопкой, none в игровой зоне
-        canvas.style.cursor = isHovered ? 'pointer' : 'none';
+        // Курсор — goblin-блок только включает pointer, сброс делается в начале render()
+        if (isHovered) canvas.style.cursor = 'pointer';
 
         // Обновляем общий HUD-панель (resource + goblin) — будет расширен warrior-блоком ниже
         hudPanelRect.x = hudX - 8;
@@ -1276,6 +1317,97 @@ function render() {
 
         // Обновляем общий HUD-панель, включая warrior-блок
         hudPanelRect.h = warriorHudRect.y + warriorHudRect.h - (HUD_MARGIN - 4);
+    }
+
+    // Панель выделенных юнитов — нижний центр, при активном флаге
+    selectionBarRects.length = 0;
+    selectionBarPanel.w = 0; // сбрасываем — если бар не рисуется, edge scroll не блокируется
+    if (hand.grabbedFlag && hand.selectedMinions.length > 0) {
+        const ICON_SCALE = 2;
+        const SLOT_W = MINION_W * ICON_SCALE + 12;
+        const SLOT_H = MINION_H * ICON_SCALE + 12;
+        const GAP = 4;
+        const N = hand.selectedMinions.length;
+        const totalW = N * SLOT_W + (N - 1) * GAP;
+        const panelX = Math.round(canvas.width / 2 - totalW / 2) - 10;
+        const panelY = canvas.height - SLOT_H - 32;
+        const startX = panelX + 10;
+
+        // Обновляем rect панели для блокировки edge scroll
+        selectionBarPanel.x = panelX;
+        selectionBarPanel.y = panelY;
+        selectionBarPanel.w = totalW + 20;
+        selectionBarPanel.h = SLOT_H + 16;
+
+        // Фон панели
+        ctx.save();
+        ctx.globalAlpha = 0.72;
+        ctx.fillStyle = '#0a0a18';
+        ctx.fillRect(panelX, panelY, totalW + 20, SLOT_H + 16);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = '#334455';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(panelX + 0.5, panelY + 0.5, totalW + 19, SLOT_H + 15);
+        ctx.restore();
+
+        for (let i = 0; i < N; i++) {
+            const mIdx = hand.selectedMinions[i];
+            const m = minions[mIdx];
+            const slotX = startX + i * (SLOT_W + GAP);
+            const slotY = panelY + 8;
+
+            selectionBarRects.push({ minionIdx: mIdx, x: slotX, y: slotY, w: SLOT_W, h: SLOT_H });
+
+            const hov = mouseX >= slotX && mouseX <= slotX + SLOT_W
+                     && mouseY >= slotY && mouseY <= slotY + SLOT_H;
+
+            // Слот фон
+            ctx.save();
+            ctx.globalAlpha = hov ? 0.75 : 0.35;
+            ctx.fillStyle = hov ? '#552200' : '#111122';
+            ctx.fillRect(slotX, slotY, SLOT_W, SLOT_H);
+            ctx.restore();
+
+            // Рамка — толстая оранжевая на hover
+            ctx.save();
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = hov ? '#ff6600' : '#445566';
+            ctx.lineWidth = hov ? 2 : 1;
+            ctx.strokeRect(slotX + 1, slotY + 1, SLOT_W - 2, SLOT_H - 2);
+            ctx.restore();
+
+            // Спрайт гоблина
+            const iconX = slotX + Math.floor((SLOT_W - MINION_W * ICON_SCALE) / 2);
+            const iconY = slotY + Math.floor((SLOT_H - MINION_H * ICON_SCALE) / 2);
+
+            // На hover — приглушаем спрайт и рисуем крест
+            if (hov) {
+                ctx.save();
+                ctx.globalAlpha = 0.35;
+                drawPixelArt(iconX, iconY, MINION_PIXELS, ICON_SCALE);
+                if (m.goblinClass === 'warrior') {
+                    const helmetOx = Math.round(iconX + (MINION_W - WARRIOR_HELMET_W) / 2 * ICON_SCALE);
+                    drawPixelArt(helmetOx, iconY, WARRIOR_HELMET_PIXELS, ICON_SCALE);
+                }
+                ctx.restore();
+                ctx.save();
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = '#ff6600';
+                ctx.font = `bold ${SLOT_H - 4}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('✕', slotX + SLOT_W / 2, slotY + SLOT_H / 2);
+                ctx.restore();
+            } else {
+                drawPixelArt(iconX, iconY, MINION_PIXELS, ICON_SCALE);
+                if (m.goblinClass === 'warrior') {
+                    const helmetOx = Math.round(iconX + (MINION_W - WARRIOR_HELMET_W) / 2 * ICON_SCALE);
+                    drawPixelArt(helmetOx, iconY, WARRIOR_HELMET_PIXELS, ICON_SCALE);
+                }
+            }
+
+            if (hov) canvas.style.cursor = 'pointer';
+        }
     }
 
     // Курсор-точка (вне зума и тряски — стабильный)

@@ -770,6 +770,27 @@ ix = cos(angle) * 50,  iy = sin(angle) * 50
 - Флаг рассеивается эффектом частиц у руки (`triggerFlagEffectAtHand`)
 - `hand.grabbedFlag = false`, `selectedMinions = []`
 
+### Панель выделенных юнитов (Selection Bar)
+
+Пока `hand.grabbedFlag === true` и `hand.selectedMinions.length > 0` — в нижнем центре экрана отображается панель с иконками выбранных юнитов.
+
+**Отрисовка (screen-space, после ctx.restore()):**
+- Слоты шириной `MINION_W × 2 + 12` px, высотой `MINION_H × 2 + 12` px с зазором 4 px
+- Панель центрируется горизонтально, отступ 32 px от нижнего края
+- Каждый слот: спрайт гоблина/воина в масштабе ×2 (воин — с шлемом)
+- **На hover:** фон `#552200`, рамка 2 px `#ff6600`, спрайт притушен (alpha 0.35) + символ `✕`
+
+**Клик по иконке (capture phase, до input.js):**
+- Обычный гоблин: `pickNewTarget()`, `state = 'free'`
+- Воин: `state = 'warrior_returning'` (идёт на свой пост охраны)
+- Юнит убирается из `hand.selectedMinions`
+- Если `selectedMinions` опустел — флаг убирается (`flag.state = 'docked'`, `hand.grabbedFlag = false`)
+
+**Блокировка edge scroll:**
+- Rect панели (`selectionBarPanel`) обновляется каждый кадр при рендере
+- `selectionBarPanel.w = 0` когда панель скрыта — отключает блокировку
+- В `update()` в условии `overHud` панель учитывается наряду с правым HUD-панелью
+
 ### Детектор встряхивания
 - Каждый кадр записывается дельта экранного X руки в `hand.shakeHistory` (кольцевой буфер за 0.6с)
 - Подсчитываются смены знака — порог: **5 смен за 0.6с**
