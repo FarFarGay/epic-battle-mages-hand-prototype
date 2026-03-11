@@ -104,6 +104,13 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                     m.stateTime = 0;
                     continue;
                 }
+                if (m.goblinClass === 'scout') {
+                    // Разведчики не добывают — продолжают разведку
+                    m.pickNewTarget();
+                    m.state = 'free';
+                    m.stateTime = 0;
+                    continue;
+                }
                 if (m.state === 'listening') {
                     if (m.assignGatherTask(items)) count++;
                 }
@@ -140,10 +147,16 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                 m.stateTime = 0;
             });
 
-            // Обычные гоблины — идут прямо к флагу
+            // Обычные гоблины — идут прямо к флагу; разведчики продолжают блуждать
             for (const idx of hand.selectedMinions) {
                 const m = minions[idx];
                 if (m.goblinClass === 'warrior') continue;
+                if (m.goblinClass === 'scout') {
+                    m.pickNewTarget();
+                    m.state = 'free';
+                    m.stateTime = 0;
+                    continue;
+                }
                 if (m.state === 'listening') {
                     m.targetX = flag.ix;
                     m.targetY = flag.iy;

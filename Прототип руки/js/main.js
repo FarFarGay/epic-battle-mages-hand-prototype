@@ -6,8 +6,9 @@ import {
     ARTILLERY_BLAST_RADIUS, ARTILLERY_DAMAGE, ARTILLERY_RETURN_DELAY,
     ARTILLERY_GRAB_RADIUS,
     WARRIOR_UPGRADE_INTERVAL, WARRIOR_IRON_COST,
+    SCOUT_MAX_COUNT, SCOUT_UPGRADE_INTERVAL, SCOUT_WOOD_COST, SCOUT_FOOD_COST, SCOUT_FOG_RADIUS,
 } from './constants.js';
-import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W } from './sprites.js';
+import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
@@ -48,6 +49,9 @@ let hoveredFlag = false;
 // Таймер апгрейда обычных гоблинов в воинов
 let warriorUpgradeTimer = WARRIOR_UPGRADE_INTERVAL * Math.random(); // стагрированный старт
 
+// Таймер производства разведчиков
+let scoutUpgradeTimer = SCOUT_UPGRADE_INTERVAL * Math.random();
+
 // Попытаться превратить случайного свободного гоблина в воина.
 // Стоимость: 1 железо (typeIndex 3). Гоблин марширует на пост у границы WARRIOR_GUARD_RADIUS.
 function tryUpgradeWarrior() {
@@ -67,6 +71,31 @@ function tryUpgradeWarrior() {
     goblin.guardX = pos.ix;
     goblin.guardY = pos.iy;
     goblin.state = 'warrior_returning';
+    goblin.stateTime = 0;
+}
+
+// Попытаться превратить свободного гоблина в разведчика.
+// Стоимость: 4 дерева (typeIndex 2) + 1 пшеница (typeIndex 0). Макс. 5 разведчиков.
+function tryUpgradeScout() {
+    if (!scoutProduction.active) return;
+    const currentScouts = minions.filter(m => m.goblinClass === 'scout' && !m.dead && !m.isUndead).length;
+    if (currentScouts >= SCOUT_MAX_COUNT) return;
+    if (castleResources[2] < SCOUT_WOOD_COST) return; // дерево
+    if (castleResources[0] < SCOUT_FOOD_COST) return; // пшеница
+    const eligible = [];
+    for (const m of minions) {
+        if (m.goblinClass === 'basic' && !m.isUndead && !m.dead && m.state === 'free') {
+            eligible.push(m);
+        }
+    }
+    if (eligible.length === 0) return;
+    const goblin = eligible[Math.floor(Math.random() * eligible.length)];
+    castleResources[2] -= SCOUT_WOOD_COST;
+    castleResources[0] -= SCOUT_FOOD_COST;
+    goblin.goblinClass = 'scout';
+    goblin.scoutAge = 0;
+    goblin.pickNewTarget();
+    goblin.state = 'free';
     goblin.stateTime = 0;
 }
 
@@ -208,12 +237,16 @@ const world = {
 // Области HUD (обновляются при рендере)
 const goblinHudRect  = { x: 0, y: 0, w: 0, h: 0 };
 const warriorHudRect = { x: 0, y: 0, w: 0, h: 0 };
+const scoutHudRect   = { x: 0, y: 0, w: 0, h: 0 };
 const hudPanelRect   = { x: 0, y: 0, w: 0, h: 0 }; // весь правый HUD-панель (блокирует edge scroll)
 const selectionBarRects = []; // иконки выделенных юнитов внизу экрана; очищается каждый кадр
 const selectionBarPanel = { x: 0, y: 0, w: 0, h: 0 }; // вся панель бара; блокирует edge scroll
 
 // Производство воинов: active = автоматически апгрейдить гоблинов при наличии железа
 const warriorProduction = { active: false };
+
+// Производство разведчиков: active = автоматически превращать гоблинов в разведчиков
+const scoutProduction = { active: false };
 
 // Клик по кнопкам HUD — перехватываем ДО input.js (capture phase)
 canvas.addEventListener('mousedown', (e) => {
@@ -258,6 +291,14 @@ canvas.addEventListener('mousedown', (e) => {
         my >= warriorHudRect.y && my <= warriorHudRect.y + warriorHudRect.h
     ) {
         warriorProduction.active = !warriorProduction.active;
+        e.stopImmediatePropagation();
+        return;
+    }
+    if (
+        mx >= scoutHudRect.x && mx <= scoutHudRect.x + scoutHudRect.w &&
+        my >= scoutHudRect.y && my <= scoutHudRect.y + scoutHudRect.h
+    ) {
+        scoutProduction.active = !scoutProduction.active;
         e.stopImmediatePropagation();
     }
 }, true);
@@ -543,9 +584,31 @@ function update(dt) {
         tryUpgradeWarrior();
     }
 
+    // Производство разведчиков (стоит 4 дерева + 1 пшеница)
+    scoutUpgradeTimer -= dt;
+    if (scoutUpgradeTimer <= 0) {
+        scoutUpgradeTimer = SCOUT_UPGRADE_INTERVAL;
+        tryUpgradeScout();
+    }
+
     // Обновляем миньонов
     for (let i = 0; i < minions.length; i++) {
         minions[i].update(dt, hand, triggerScreenShake, items, castle, minions);
+    }
+
+    // Очищаем мёртвых/нежить из выделенных миньонов (могли умереть в этом кадре)
+    if (hand.grabbedFlag && hand.selectedMinions.length > 0) {
+        hand.selectedMinions = hand.selectedMinions.filter(idx => {
+            const m = minions[idx];
+            return m && !m.dead && !m.isUndead;
+        });
+        if (hand.selectedMinions.length === 0) {
+            flag.state = 'docked';
+            hand.grabbedFlag = false;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+        }
     }
 
     // Учитываем доставленные в замок ресурсы
@@ -750,7 +813,8 @@ function update(dt) {
             const r = 2 * Math.max(0, 1 - m.deadTime / FOG_DEATH_FADE);
             if (r > 0) fogSources.push({ ix: m.ix, iy: m.iy, radius: r });
         } else {
-            fogSources.push({ ix: m.ix, iy: m.iy, radius: 2 });
+            const fogR = m.goblinClass === 'scout' ? SCOUT_FOG_RADIUS : 2;
+            fogSources.push({ ix: m.ix, iy: m.iy, radius: fogR });
         }
     }
     // Точка подбора гоблина остаётся освещённой пока он в руке —
@@ -1315,8 +1379,77 @@ function render() {
         // Курсор: если warrior-панель под мышью — pointer (goblin-блок мог поставить none)
         if (isHovered) canvas.style.cursor = 'pointer';
 
-        // Обновляем общий HUD-панель, включая warrior-блок
+        // Обновляем общий HUD-панель (scout-блок ниже дополнит)
         hudPanelRect.h = warriorHudRect.y + warriorHudRect.h - (HUD_MARGIN - 4);
+    }
+
+    // HUD производства разведчиков — под HUD воинов
+    {
+        const HUD_SCALE = 2;
+        const HUD_MARGIN = 40;
+        const maxW = Math.max(...ITEM_TYPES.map(t => t.w)) * HUD_SCALE;
+        const hudX = canvas.width - HUD_MARGIN - maxW - 50;
+        const blockW = maxW + 50;
+        const barH = 8;
+        const blockH = MINION_H * HUD_SCALE + barH + 20;
+
+        const scoutY = warriorHudRect.y + warriorHudRect.h + 10;
+
+        scoutHudRect.x = hudX - 8;
+        scoutHudRect.y = scoutY - 4;
+        scoutHudRect.w = blockW + 16;
+        scoutHudRect.h = blockH + 8;
+
+        const isHovered = mouseX >= scoutHudRect.x && mouseX <= scoutHudRect.x + scoutHudRect.w
+            && mouseY >= scoutHudRect.y && mouseY <= scoutHudRect.y + scoutHudRect.h;
+
+        // Фон
+        ctx.save();
+        ctx.globalAlpha = isHovered ? 0.80 : 0.55;
+        ctx.fillStyle = isHovered ? '#0f1a12' : '#0a0a18';
+        ctx.fillRect(scoutHudRect.x, scoutHudRect.y, scoutHudRect.w, scoutHudRect.h);
+        ctx.restore();
+
+        // Рамка
+        ctx.save();
+        ctx.strokeStyle = isHovered ? '#44cc66' : '#224433';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(scoutHudRect.x + 0.5, scoutHudRect.y + 0.5, scoutHudRect.w - 1, scoutHudRect.h - 1);
+        ctx.restore();
+
+        // Иконка разведчика (гоблин + капюшон)
+        drawPixelArt(hudX, scoutY, MINION_PIXELS, HUD_SCALE);
+        const hoodOx = Math.round(hudX + (MINION_W - SCOUT_HOOD_W) / 2 * HUD_SCALE);
+        drawPixelArt(hoodOx, scoutY, SCOUT_HOOD_PIXELS, HUD_SCALE);
+
+        // Счётчик: живые разведчики / макс
+        const scoutCount = minions.filter(m => m.goblinClass === 'scout' && !m.dead && !m.isUndead).length;
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${scoutCount} / ${SCOUT_MAX_COUNT}`, hudX + MINION_W * HUD_SCALE + 6, scoutY + 12);
+
+        // Прогресс-бар следующего разведчика
+        const barY = scoutY + MINION_H * HUD_SCALE + 4;
+        ctx.fillStyle = '#0a1a0e';
+        ctx.fillRect(hudX, barY, blockW, barH);
+        const canProduce = castleResources[2] >= SCOUT_WOOD_COST && castleResources[0] >= SCOUT_FOOD_COST && scoutCount < SCOUT_MAX_COUNT;
+        if (scoutProduction.active && canProduce) {
+            const progress = 1 - (scoutUpgradeTimer / SCOUT_UPGRADE_INTERVAL);
+            ctx.fillStyle = '#33cc66';
+            ctx.fillRect(hudX, barY, blockW * Math.max(0, Math.min(1, progress)), barH);
+        }
+
+        // Кнопка запуска/остановки
+        ctx.fillStyle = scoutProduction.active ? '#88ff88' : '#ffaa44';
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(scoutProduction.active ? '⏸ Остановить' : '▶ Запустить', hudX, barY + barH + 12);
+
+        if (isHovered) canvas.style.cursor = 'pointer';
+
+        // Обновляем общий HUD-панель, включая scout-блок
+        hudPanelRect.h = scoutHudRect.y + scoutHudRect.h - (HUD_MARGIN - 4);
     }
 
     // Панель выделенных юнитов — нижний центр, при активном флаге
@@ -1388,6 +1521,9 @@ function render() {
                 if (m.goblinClass === 'warrior') {
                     const helmetOx = Math.round(iconX + (MINION_W - WARRIOR_HELMET_W) / 2 * ICON_SCALE);
                     drawPixelArt(helmetOx, iconY, WARRIOR_HELMET_PIXELS, ICON_SCALE);
+                } else if (m.goblinClass === 'scout') {
+                    const hoodOx = Math.round(iconX + (MINION_W - SCOUT_HOOD_W) / 2 * ICON_SCALE);
+                    drawPixelArt(hoodOx, iconY, SCOUT_HOOD_PIXELS, ICON_SCALE);
                 }
                 ctx.restore();
                 ctx.save();
@@ -1403,6 +1539,9 @@ function render() {
                 if (m.goblinClass === 'warrior') {
                     const helmetOx = Math.round(iconX + (MINION_W - WARRIOR_HELMET_W) / 2 * ICON_SCALE);
                     drawPixelArt(helmetOx, iconY, WARRIOR_HELMET_PIXELS, ICON_SCALE);
+                } else if (m.goblinClass === 'scout') {
+                    const hoodOx = Math.round(iconX + (MINION_W - SCOUT_HOOD_W) / 2 * ICON_SCALE);
+                    drawPixelArt(hoodOx, iconY, SCOUT_HOOD_PIXELS, ICON_SCALE);
                 }
             }
 

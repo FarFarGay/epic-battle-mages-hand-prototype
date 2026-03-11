@@ -96,6 +96,17 @@ export const WARRIOR_HELMET_PIXELS = [
 ];
 export const WARRIOR_HELMET_W = 6, WARRIOR_HELMET_H = 3;
 
+// Капюшон разведчика (накладывается поверх головы гоблина)
+export const SCOUT_HOOD_PIXELS = [
+    // Острие капюшена
+    [2,0,'#3a6030'], [3,0,'#2a4a22'],
+    // Тело капюшена
+    [1,1,'#233d1c'], [2,1,'#3a6030'], [3,1,'#2e5526'], [4,1,'#233d1c'],
+    // Нижний край (накрывает лоб)
+    [0,2,'#1e3318'], [1,2,'#283f20'], [2,2,'#2e5526'], [3,2,'#2e5526'], [4,2,'#283f20'], [5,2,'#1e3318'],
+];
+export const SCOUT_HOOD_W = 6, SCOUT_HOOD_H = 3;
+
 // Мёртвый гоблин (X-глаза, потемнее)
 export const MINION_DEAD_PIXELS = [
     // Голова

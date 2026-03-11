@@ -10,6 +10,7 @@ import {
     GOBLIN_AGGRO_RANGE, GOBLIN_RALLY_RANGE,
     WARRIOR_AGGRO_RANGE, WARRIOR_ATTACK_DAMAGE, WARRIOR_ATTACK_CD, WARRIOR_ATTACK_RANGE,
     WARRIOR_GUARD_RADIUS,
+    SCOUT_LIFESPAN,
 } from './constants.js';
 import { gameMap } from './Map.js';
 import {
@@ -17,6 +18,7 @@ import {
     TOMBSTONE_PIXELS, TOMBSTONE_W, TOMBSTONE_H,
     SKELETON_PIXELS, SKELETON_W, SKELETON_H,
     WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W,
+    SCOUT_HOOD_PIXELS, SCOUT_HOOD_W,
 } from './sprites.js';
 import { GameObject } from './GameObject.js';
 import { canvas, ctx, drawPixelArt, drawItemShadow, drawHighlight } from './renderer.js';
@@ -58,6 +60,7 @@ export class Minion extends GameObject {
         this.goblinClass = 'basic';     // 'basic' | 'warrior' | 'scout' | 'monk'
         this.guardX = null;             // позиция охраны воина (iso X)
         this.guardY = null;             // позиция охраны воина (iso Y)
+        this.scoutAge = 0;              // секунд прожито (только для разведчика)
 
         // Скелет
         this.isUndead = false;          // true = скелет (после воскрешения)
@@ -83,8 +86,8 @@ export class Minion extends GameObject {
     }
 
     pickNewTarget() {
-        if (this.isUndead) {
-            // Скелеты бродят по всей карте
+        if (this.isUndead || this.goblinClass === 'scout') {
+            // Скелеты и разведчики бродят по всей карте
             const lim = gameMap.size - 1;
             this.targetX = (Math.random() * 2 - 1) * lim;
             this.targetY = (Math.random() * 2 - 1) * lim;
@@ -327,6 +330,13 @@ export class Minion extends GameObject {
             this.stateTime = 0;
             return;
         }
+        // Разведчик не собирает ресурсы — продолжает блуждать
+        if (this.goblinClass === 'scout') {
+            this.pickNewTarget();
+            this.state = 'free';
+            this.stateTime = 0;
+            return;
+        }
         // При приземлении ищем ближайший ресурс в радиусе 1.5 тайла
         const AUTO_GATHER_RADIUS = 1.5;
         let nearest = null, nearestDist = AUTO_GATHER_RADIUS;
@@ -361,6 +371,20 @@ export class Minion extends GameObject {
             this.stateTime += dt;
         }
         if (this.damageWobble > 0) this.damageWobble = Math.max(0, this.damageWobble - dt);
+
+        // Разведчик стареет только в активных (не физических) состояниях.
+        // В 'carried'/'lifting' возраст не растёт — чтобы не умирать в руке.
+        if (this.goblinClass === 'scout' && !this.dead && !this.isUndead && !physicsStates.includes(this.state)) {
+            this.scoutAge += dt;
+            if (this.scoutAge >= SCOUT_LIFESPAN) {
+                this.dropCarriedItem(); // не оставлять ресурс висеть в воздухе
+                this.dead = true;
+                this.state = 'dead';
+                this.stateTime = 0;
+                this.deadTime = 0;
+                return;
+            }
+        }
 
         switch (this.state) {
             // ── 1. Свободен ─────────────────────────────────────────
@@ -871,6 +895,12 @@ export class Minion extends GameObject {
         if (this.goblinClass === 'warrior' && !this.isUndead) {
             const helmetOx = Math.round(ox + (sprW - WARRIOR_HELMET_W) / 2 * PIXEL_SCALE);
             drawPixelArt(helmetOx, oy, WARRIOR_HELMET_PIXELS, PIXEL_SCALE);
+        }
+
+        // Капюшон разведчика — накладывается поверх головы живого (не скелет) гоблина-разведчика
+        if (this.goblinClass === 'scout' && !this.isUndead) {
+            const hoodOx = Math.round(ox + (sprW - SCOUT_HOOD_W) / 2 * PIXEL_SCALE);
+            drawPixelArt(hoodOx, oy, SCOUT_HOOD_PIXELS, PIXEL_SCALE);
         }
     }
 }
