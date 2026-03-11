@@ -6,6 +6,8 @@ import {
     FALL_DMG_MED_VZ, FALL_DMG_HI_VZ, FALL_DMG_MED, FALL_DMG_HI,
     CAMERA_OFFSET_Y, SKELETON_RISE_DELAY, SKELETON_SPEED_FACTOR, SKELETON_MAX_HP,
     SKELETON_AGGRO_RANGE, SKELETON_ATTACK_RANGE, SKELETON_ATTACK_DAMAGE, SKELETON_ATTACK_CD,
+    GOBLIN_ATTACK_DAMAGE, GOBLIN_ATTACK_CD, GOBLIN_ATTACK_RANGE,
+    GOBLIN_AGGRO_RANGE, GOBLIN_RALLY_RANGE,
 } from './constants.js';
 import { gameMap } from './Map.js';
 import {
@@ -49,11 +51,21 @@ export class Minion extends GameObject {
         this.damageWobble = 0;        // таймер тряски при получении урона
         this.pendingBloodEffect = null; // { type: 'hit'|'death', ix, iy }
 
+        // Класс гоблина
+        this.goblinClass = 'basic';     // 'basic' | 'warrior' | 'scout' | 'monk'
+
         // Скелет
         this.isUndead = false;          // true = скелет (после воскрешения)
         this.pendingBoneEffect = null;  // { ix, iy } — разлёт костей при разрушении
         this.pendingRemove = false;     // пометка на удаление из массива
-        this.attackCooldown = 0;        // таймер между ударами скелета
+        this.attackCooldown = 0;        // таймер между ударами (скелет и гоблин)
+
+        // Боевая система гоблинов
+        this.combatTarget = null;       // ссылка на врага (Minion) в бою
+        this.savedState = null;         // состояние до входа в бой
+        this.savedTask = null;          // задача до входа в бой
+        this.savedTargetItem = null;    // цель-предмет до входа в бой
+        this.savedGathererMode = false; // режим сборщика до входа в бой
 
         // Система задач
         this.task = null;          // null | 'gather'
@@ -76,6 +88,67 @@ export class Minion extends GameObject {
             this.targetX = (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
             this.targetY = (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
         }
+    }
+
+    // ── Боевая система ─────────────────────────────────────────
+
+    // Войти в бой с врагом. Сохраняет текущее состояние для возврата после победы.
+    enterCombat(enemy) {
+        if (this.isUndead || this.dead) return;
+        if (this.state === 'war' || this.state === 'fighting') return;
+        const BLOCKED = ['carried', 'lifting', 'thrown', 'bouncing', 'sliding', 'settling', 'dead', 'crumbled', 'skeleton'];
+        if (BLOCKED.includes(this.state)) return;
+
+        // Сохраняем состояние
+        this.savedState = this.state;
+        this.savedTask = this.task;
+        this.savedTargetItem = this.targetItem;
+        this.savedGathererMode = this.gathererMode;
+
+        // Бросаем переносимый предмет (без очистки task — он уже сохранён)
+        if (this.carriedItem) {
+            this.carriedItem.state = 'thrown';
+            this.carriedItem.vx = 0;
+            this.carriedItem.vy = 0;
+            this.carriedItem.vz = 0;
+            this.carriedItem.stateTime = 0;
+            this.carriedItem = null;
+        }
+
+        this.combatTarget = enemy;
+        this.state = 'war';
+        this.stateTime = 0;
+    }
+
+    // Выйти из боя, вернуться к предыдущему занятию.
+    exitCombat() {
+        this.combatTarget = null;
+        if (this.savedState) {
+            if (this.savedTask === 'gather') {
+                // Возврат к сбору — ищем новый ресурс в 'busy'
+                this.task = 'gather';
+                this.gathererMode = this.savedGathererMode;
+                this.targetItem = null;
+                this.state = 'busy';
+            } else {
+                this.state = 'free';
+                this.pickNewTarget();
+            }
+            this.savedState = null;
+            this.savedTask = null;
+            this.savedTargetItem = null;
+            this.savedGathererMode = false;
+        } else {
+            this.state = 'free';
+            this.pickNewTarget();
+        }
+        this.stateTime = 0;
+    }
+
+    // Проверка: цель боя ещё жива и доступна?
+    isCombatTargetValid() {
+        const t = this.combatTarget;
+        return t && !t.dead && !t.pendingRemove && t.state !== 'crumbled';
     }
 
     // ── Задачи ──────────────────────────────────────────────────
@@ -177,6 +250,8 @@ export class Minion extends GameObject {
         this.bounceCount = 0;
         this.stateTime = 0;
         this.dropCarriedItem(); // бросаем камень если несли
+        this.combatTarget = null;
+        this.savedState = null;
         if (this.state === 'crumbled') return; // скелет уже разрушен в onLand
         if (this.isUndead) {
             // Скелет после приземления — продолжает бродить
@@ -221,6 +296,26 @@ export class Minion extends GameObject {
         switch (this.state) {
             // ── 1. Свободен ─────────────────────────────────────────
             case 'free': {
+                // Проактивный агро: свободные гоблины ищут врагов в зоне видимости
+                if (allMinions) {
+                    let nearestEnemy = null, nearestEnemyDist = GOBLIN_AGGRO_RANGE;
+                    for (const m of allMinions) {
+                        if (m === this || !m.isUndead) continue;
+                        if (m.state !== 'skeleton') continue;
+                        const ddx = m.ix - this.ix;
+                        const ddy = m.iy - this.iy;
+                        const d = Math.sqrt(ddx * ddx + ddy * ddy);
+                        if (d < nearestEnemyDist) {
+                            nearestEnemyDist = d;
+                            nearestEnemy = m;
+                        }
+                    }
+                    if (nearestEnemy) {
+                        this.enterCombat(nearestEnemy);
+                        break;
+                    }
+                }
+
                 const dx = this.targetX - this.ix;
                 const dy = this.targetY - this.iy;
                 const dist = Math.sqrt(dx * dx + dy * dy);
@@ -374,10 +469,71 @@ export class Minion extends GameObject {
                 break;
             }
 
-            // ── 7–8. Заглушки ───────────────────────────────────────
-            case 'war':        // видит врага (будущее)
-            case 'fighting':   // сражается (будущее)
+            // ── 7. Идёт к врагу ───────────────────────────────────────
+            case 'war': {
+                if (!this.isCombatTargetValid()) {
+                    this.exitCombat();
+                    break;
+                }
+                const ddx = this.combatTarget.ix - this.ix;
+                const ddy = this.combatTarget.iy - this.iy;
+                const dist = Math.sqrt(ddx * ddx + ddy * ddy);
+                if (dist <= GOBLIN_ATTACK_RANGE) {
+                    this.state = 'fighting';
+                    this.stateTime = 0;
+                } else {
+                    const spd = MINION_SPEED * dt;
+                    this.ix += (ddx / dist) * spd;
+                    this.iy += (ddy / dist) * spd;
+                    const lim = gameMap.size - 0.5;
+                    this.ix = Math.max(-lim, Math.min(lim, this.ix));
+                    this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                }
                 break;
+            }
+
+            // ── 8. Сражается ─────────────────────────────────────────
+            case 'fighting': {
+                if (this.attackCooldown > 0) this.attackCooldown -= dt;
+
+                if (!this.isCombatTargetValid()) {
+                    this.exitCombat();
+                    break;
+                }
+                const ddx = this.combatTarget.ix - this.ix;
+                const ddy = this.combatTarget.iy - this.iy;
+                const dist = Math.sqrt(ddx * ddx + ddy * ddy);
+
+                if (dist > GOBLIN_ATTACK_RANGE * 2) {
+                    // Враг отошёл — догоняем
+                    this.state = 'war';
+                    this.stateTime = 0;
+                    break;
+                }
+
+                if (this.attackCooldown <= 0) {
+                    this.attackCooldown = GOBLIN_ATTACK_CD;
+                    const target = this.combatTarget;
+                    target.hp = Math.max(0, target.hp - GOBLIN_ATTACK_DAMAGE);
+                    target.damageWobble = 0.4;
+
+                    if (target.hp <= 0) {
+                        if (target.isUndead) {
+                            target.pendingBoneEffect = { ix: target.ix, iy: target.iy };
+                            target.pendingRemove = true;
+                            target.state = 'crumbled';
+                        }
+                        this.exitCombat();
+                    } else {
+                        if (target.isUndead) {
+                            target.pendingBoneEffect = { ix: target.ix, iy: target.iy };
+                        } else {
+                            target.pendingBloodEffect = { type: 'hit', ix: target.ix, iy: target.iy };
+                        }
+                    }
+                }
+                break;
+            }
 
             case 'settling':
                 if (this.stateTime > 0.3) {
@@ -429,6 +585,7 @@ export class Minion extends GameObject {
                         this.attackCooldown = SKELETON_ATTACK_CD;
                         prey.hp = Math.max(0, prey.hp - SKELETON_ATTACK_DAMAGE);
                         prey.damageWobble = 0.4;
+
                         if (prey.hp <= 0) {
                             prey.dead = true;
                             prey.pendingBloodEffect = { type: 'death', ix: prey.ix, iy: prey.iy };
@@ -438,6 +595,19 @@ export class Minion extends GameObject {
                             prey.deadTime = 0;
                         } else {
                             prey.pendingBloodEffect = { type: 'hit', ix: prey.ix, iy: prey.iy };
+                            // Жертва даёт отпор
+                            prey.enterCombat(this);
+                        }
+
+                        // Призыв на помощь — все гоблины в радиусе GOBLIN_RALLY_RANGE вступают в бой
+                        for (const m of allMinions) {
+                            if (m === prey || m === this) continue;
+                            if (m.isUndead || m.dead) continue;
+                            const rdx = m.ix - prey.ix;
+                            const rdy = m.iy - prey.iy;
+                            if (Math.sqrt(rdx * rdx + rdy * rdy) <= GOBLIN_RALLY_RANGE) {
+                                m.enterCombat(this);
+                            }
                         }
                     }
                 } else if (prey) {

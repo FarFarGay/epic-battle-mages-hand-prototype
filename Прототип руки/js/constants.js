@@ -48,6 +48,19 @@ export const SKELETON_ATTACK_RANGE  = 0.6;  // дистанция удара (is
 export const SKELETON_ATTACK_DAMAGE = 15;   // урон за удар
 export const SKELETON_ATTACK_CD     = 1.5;  // кулдаун между ударами (секунды)
 
+// — Боевые характеристики гоблинов —
+export const GOBLIN_ATTACK_DAMAGE  = 10;   // урон за удар
+export const GOBLIN_ATTACK_CD      = 1.0;  // кулдаун между ударами (секунды)
+export const GOBLIN_ATTACK_RANGE   = 0.6;  // дистанция удара (iso-тайлы)
+export const GOBLIN_AGGRO_RANGE    = 10;   // дистанция обнаружения врагов (свободные гоблины)
+export const GOBLIN_RALLY_RANGE    = 15;   // дистанция призыва на помощь при нападении
+
+// — Классы гоблинов —
+// 'basic'   — стандартный гоблин (реализован)
+// 'warrior' — гоблин воитель (TODO)
+// 'scout'   — гоблин разведчик (TODO)
+// 'monk'    — гоблин монах (TODO)
+
 // — Типы ресурсов (все gatherable — гоблины могут собирать) —
 // Чтобы добавить новый ресурс: добавить спрайт в sprites.js, добавить запись сюда.
 // Расположение на карте генерируется в Map._generateInitialItems() (100 штук каждого типа).
