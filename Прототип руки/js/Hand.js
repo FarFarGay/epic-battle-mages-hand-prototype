@@ -128,6 +128,7 @@ export class Hand {
             prevSign = s;
         }
         if (signChanges >= 5) {
+            this.shakeHistory = [];
             dismissCallback();
         }
         this.prevScreenXForShake = this.screenX;

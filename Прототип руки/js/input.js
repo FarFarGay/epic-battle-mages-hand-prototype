@@ -189,10 +189,10 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                 ? `Флаг подобран — ${hand.selectedMinions.length} гоблин(а) ждут приказа`
                 : 'Флаг подобран';
         } else if (handFree) {
-            // Начинаем выделение рамкой — от позиции руки
+            // Начинаем выделение рамкой — от позиции мыши (не руки, чтобы координаты совпадали)
             selection.active = true;
-            selection.startX = hand.screenX;
-            selection.startY = hand.screenY;
+            selection.startX = world.mouseX;
+            selection.startY = world.mouseY;
             selection.endX = world.mouseX;
             selection.endY = world.mouseY;
         }
@@ -309,9 +309,15 @@ export function initInput(canvas, hand, world, cam, statusEl) {
     window.addEventListener('keydown', (e) => {
         // Выход из режима артиллерии
         if ((e.key === 'q' || e.key === 'й') && artilleryMode.active) {
+            // Сброс снаряда на позицию замка (чтобы не осталось stale-данных)
+            const proj = artilleryMode.projectile;
+            proj.ix = castle.ix; proj.iy = castle.iy; proj.iz = 0;
+            proj.vx = 0; proj.vy = 0; proj.vz = 0;
             artilleryMode.active = false;
             artilleryMode.state = 'aiming';
+            artilleryMode.timer = 0;
             artilleryMode.explosion.active = false;
+            artilleryMode.explosion.particles.length = 0;
             hand.state = 'open';
             hand.animProgress = 0;
             statusEl.textContent = 'Режим стрельбы отменён';

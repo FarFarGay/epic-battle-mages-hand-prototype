@@ -71,17 +71,18 @@ export class Castle {
         // Скелеты (isUndead) не занимают слоты живых гоблинов
         const aliveCount = minions.filter(m => m.state !== 'dead' && !m.isUndead).length;
 
-        if (aliveCount >= this.maxMinions) return; // замок полон — ждём освобождения места
-
         if (prod.progress > 0) {
-            // Завершаем текущего (даже если производство на паузе)
+            // Завершаем текущего (даже если производство на паузе или замок полон)
             prod.progress += dt;
             if (prod.progress >= prod.duration) {
                 prod.progress = 0;
-                this.pendingSpawn = true;
+                if (aliveCount < this.maxMinions) {
+                    this.pendingSpawn = true;
+                }
+                // Если замок полон — гоблин готов, но не спавнится. Еда уже потрачена.
             }
-        } else if (prod.active && castleResources[prod.foodTypeIndex] >= prod.cost) {
-            // Начинаем нового гоблина
+        } else if (prod.active && aliveCount < this.maxMinions && castleResources[prod.foodTypeIndex] >= prod.cost) {
+            // Начинаем нового гоблина (только если есть место)
             castleResources[prod.foodTypeIndex] -= prod.cost;
             prod.progress += dt;
         }

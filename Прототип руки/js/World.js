@@ -72,7 +72,7 @@ export function updateScreenShake(dt) {
     if (screenShake.intensity > 0.1) {
         screenShake.offsetX = (Math.random() - 0.5) * screenShake.intensity * 2;
         screenShake.offsetY = (Math.random() - 0.5) * screenShake.intensity * 2;
-        screenShake.intensity *= Math.pow(0.01, dt);
+        screenShake.intensity *= Math.pow(0.05, dt);
     } else {
         screenShake.intensity = 0;
         screenShake.offsetX = 0;

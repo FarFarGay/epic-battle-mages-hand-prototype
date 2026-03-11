@@ -123,6 +123,7 @@ export class Minion extends GameObject {
     // Выйти из боя, вернуться к предыдущему занятию.
     exitCombat() {
         this.combatTarget = null;
+        this.attackCooldown = 0;
         if (this.savedState) {
             if (this.savedTask === 'gather') {
                 // Возврат к сбору — ищем новый ресурс в 'busy'
@@ -130,6 +131,9 @@ export class Minion extends GameObject {
                 this.gathererMode = this.savedGathererMode;
                 this.targetItem = null;
                 this.state = 'busy';
+            } else if (this.savedState === 'listening' || this.savedState === 'waiting' || this.savedState === 'moving') {
+                // Восстановить назначенное игроком состояние
+                this.state = this.savedState;
             } else {
                 this.state = 'free';
                 this.pickNewTarget();
@@ -151,17 +155,52 @@ export class Minion extends GameObject {
         return t && !t.dead && !t.pendingRemove && t.state !== 'crumbled';
     }
 
+    // Проактивный агро: ищем ближайшего скелета в зоне видимости.
+    // Возвращает true если гоблин вступил в бой.
+    _tryAggro(allMinions) {
+        if (!allMinions || this.isUndead || this.dead) return false;
+        let nearestEnemy = null, nearestEnemyDist = GOBLIN_AGGRO_RANGE;
+        for (const m of allMinions) {
+            if (m === this || !m.isUndead) continue;
+            if (m.state !== 'skeleton') continue;
+            const ddx = m.ix - this.ix;
+            const ddy = m.iy - this.iy;
+            const d = Math.sqrt(ddx * ddx + ddy * ddy);
+            if (d < nearestEnemyDist) {
+                nearestEnemyDist = d;
+                nearestEnemy = m;
+            }
+        }
+        if (nearestEnemy) {
+            this.enterCombat(nearestEnemy);
+            return true;
+        }
+        return false;
+    }
+
     // ── Задачи ──────────────────────────────────────────────────
 
     // Найти ближайший добываемый ресурс не занятый рукой или другим гоблином.
     // zoneOnly=true — искать только в зоне 42×42 (±GATHER_ZONE_RADIUS) вокруг замка.
-    findNearestResource(items, zoneOnly = false) {
+    findNearestResource(items, zoneOnly = false, allMinions = null) {
         let nearest = null;
         let nearestDist = Infinity;
         for (const item of items) {
             if (!item.typeDef.gatherable) continue;
             if (item.state === 'carried' || item.state === 'lifting' || item.state === 'goblin_carried') continue;
             if (zoneOnly && (Math.abs(item.ix) > GATHER_ZONE_RADIUS || Math.abs(item.iy) > GATHER_ZONE_RADIUS)) continue;
+            // Пропускаем ресурс, если другой гоблин уже идёт к нему
+            if (allMinions) {
+                let taken = false;
+                for (const m of allMinions) {
+                    if (m === this) continue;
+                    if (m.targetItem === item && (m.state === 'busy')) {
+                        taken = true;
+                        break;
+                    }
+                }
+                if (taken) continue;
+            }
             const dx = item.ix - this.ix;
             const dy = item.iy - this.iy;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -252,6 +291,9 @@ export class Minion extends GameObject {
         this.dropCarriedItem(); // бросаем камень если несли
         this.combatTarget = null;
         this.savedState = null;
+        this.savedTask = null;
+        this.savedTargetItem = null;
+        this.savedGathererMode = false;
         if (this.state === 'crumbled') return; // скелет уже разрушен в onLand
         if (this.isUndead) {
             // Скелет после приземления — продолжает бродить
@@ -290,31 +332,19 @@ export class Minion extends GameObject {
     }
 
     update(dt, hand, triggerShake, items, castle, allMinions) {
-        this.stateTime += dt;
+        // stateTime инкрементируется здесь только для нефизических состояний;
+        // для физических (lifting/carried/thrown/bouncing/sliding) — в updatePhysics
+        const physicsStates = ['lifting', 'carried', 'thrown', 'bouncing', 'sliding'];
+        if (!physicsStates.includes(this.state)) {
+            this.stateTime += dt;
+        }
         if (this.damageWobble > 0) this.damageWobble = Math.max(0, this.damageWobble - dt);
 
         switch (this.state) {
             // ── 1. Свободен ─────────────────────────────────────────
             case 'free': {
                 // Проактивный агро: свободные гоблины ищут врагов в зоне видимости
-                if (allMinions) {
-                    let nearestEnemy = null, nearestEnemyDist = GOBLIN_AGGRO_RANGE;
-                    for (const m of allMinions) {
-                        if (m === this || !m.isUndead) continue;
-                        if (m.state !== 'skeleton') continue;
-                        const ddx = m.ix - this.ix;
-                        const ddy = m.iy - this.iy;
-                        const d = Math.sqrt(ddx * ddx + ddy * ddy);
-                        if (d < nearestEnemyDist) {
-                            nearestEnemyDist = d;
-                            nearestEnemy = m;
-                        }
-                    }
-                    if (nearestEnemy) {
-                        this.enterCombat(nearestEnemy);
-                        break;
-                    }
-                }
+                if (this._tryAggro(allMinions)) break;
 
                 const dx = this.targetX - this.ix;
                 const dy = this.targetY - this.iy;
@@ -364,6 +394,8 @@ export class Minion extends GameObject {
 
             // ── 5. Занят: идёт к камню ──────────────────────────────
             case 'busy': {
+                // Сборщики тоже реагируют на скелетов поблизости
+                if (this._tryAggro(allMinions)) break;
                 if (this.task === 'gather') {
                     // Проверяем что цель ещё доступна
                     if (!this.targetItem ||
@@ -414,6 +446,8 @@ export class Minion extends GameObject {
 
             // ── 6. Возвращается: несёт камень в замок ───────────────
             case 'returning': {
+                // Носильщики тоже реагируют на скелетов поблизости
+                if (this._tryAggro(allMinions)) break;
                 if (this.task === 'gather' && this.carriedItem) {
                     // Камень следует за гоблином
                     this.carriedItem.ix = this.ix;
@@ -554,6 +588,16 @@ export class Minion extends GameObject {
                     this.hp = SKELETON_MAX_HP;
                     this.state = 'skeleton';
                     this.stateTime = 0;
+                    // Очистка stale-полей от прошлой жизни гоблина
+                    this.combatTarget = null;
+                    this.savedState = null;
+                    this.savedTask = null;
+                    this.savedTargetItem = null;
+                    this.savedGathererMode = false;
+                    this.task = null;
+                    this.targetItem = null;
+                    this.carriedItem = null;
+                    this.gathererMode = false;
                     this.pickNewTarget();
                 }
                 break;

@@ -624,6 +624,19 @@ function update(dt) {
         } else if (hand.grabbedMinion !== null && hand.grabbedMinion > i) {
             hand.grabbedMinion--;
         }
+        // Корректируем индексы выделенных миньонов
+        const newSelected = [];
+        for (const idx of hand.selectedMinions) {
+            if (idx === i) continue; // удалённый — пропускаем
+            newSelected.push(idx > i ? idx - 1 : idx);
+        }
+        hand.selectedMinions = newSelected;
+        // Корректируем hoveredMinion
+        if (hoveredMinion === i) {
+            hoveredMinion = null;
+        } else if (hoveredMinion !== null && hoveredMinion > i) {
+            hoveredMinion--;
+        }
         minions.splice(i, 1);
     }
 

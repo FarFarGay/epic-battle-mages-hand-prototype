@@ -63,6 +63,7 @@ export class GameMap {
     // rMin/rMax — диапазон расстояния от замка (iso-единицы).
     _generateInitialItems() {
         const items = [];
+        const occupied = new Set();
         // [typeIndex, startAngle, rMin, rMax]
         const typeParams = [
             [0,  0,                4,  35], // Пшеница  — ближние поля
@@ -77,8 +78,18 @@ export class GameMap {
                 const r = rMin + (rMax - rMin) * t;
                 // 5 полных витков → хорошее угловое покрытие
                 const angle = angleStart + t * Math.PI * 10;
-                const ix = Math.round(r * Math.cos(angle));
-                const iy = Math.round(r * Math.sin(angle));
+                let ix = Math.round(r * Math.cos(angle));
+                let iy = Math.round(r * Math.sin(angle));
+                // Избегаем стакания предметов на одном тайле
+                let key = `${ix},${iy}`;
+                let tries = 0;
+                while (occupied.has(key) && tries < 8) {
+                    ix += (tries % 2 === 0) ? 1 : 0;
+                    iy += (tries % 2 === 1) ? 1 : 0;
+                    key = `${ix},${iy}`;
+                    tries++;
+                }
+                occupied.add(key);
                 items.push({ type, ix, iy });
             }
         }
@@ -203,8 +214,8 @@ export class GameMap {
         const marginY = TILE_H;
         const sxMin = w / 2 * (1 - 1 / z) + camera.x / z - marginX;
         const sxMax = w / 2 * (1 + 1 / z) + camera.x / z + marginX;
-        const syMin = h / 2 * (1 - 1 / z) + camera.y / z - marginY;
-        const syMax = h / 2 * (1 + 1 / z) + camera.y / z + marginY;
+        const syMin = h / 2 * (1 - 1 / z) + camera.y / z - marginY - CAMERA_OFFSET_Y;
+        const syMax = h / 2 * (1 + 1 / z) + camera.y / z + marginY - CAMERA_OFFSET_Y;
 
         for (let iy = -this.size; iy <= this.size; iy++) {
             for (let ix = -this.size; ix <= this.size; ix++) {
