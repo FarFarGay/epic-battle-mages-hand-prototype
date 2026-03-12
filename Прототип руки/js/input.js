@@ -221,9 +221,6 @@ export function initInput(canvas, hand, world, cam, statusEl) {
         if (e.button !== 0) return;
         world.mouseDown = true;
 
-        // ЛКМ — сбрасываем выделение
-        hand.selectedMinions = [];
-
         // ── Артиллерия: выстрел ──────────────────────────────────
         if (artilleryMode.active && artilleryMode.state === 'aiming') {
             const iso = screenToIso(world.mouseX, world.mouseY, canvas);

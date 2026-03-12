@@ -12,6 +12,7 @@ import {
     MANA_MAX, MANA_FIREBALL_COST,
     MONK_MAX_COUNT, MONK_MANA_REGEN, MONK_UPGRADE_INTERVAL, MONK_FOOD_COST,
     MONK_TOTEM_MIN_DIST, MONK_TOTEM_MAX_DIST,
+    MINION_MAX_HP, SKELETON_MAX_HP,
 } from './constants.js';
 import { MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H, MONK_ROBE_PIXELS, MONK_ROBE_W, MONK_TOTEM_PIXELS, MONK_TOTEM_W, MONK_TOTEM_H } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
@@ -31,8 +32,6 @@ let mouseY = canvas.height / 2;
 let mouseDown = false;
 let hoveredItem = null;
 let hoveredMinion = null;
-let selectionAge = 0;
-let prevSelectionLength = 0;
 
 // Таймер апгрейда обычных гоблинов в воинов
 let warriorUpgradeTimer = WARRIOR_UPGRADE_INTERVAL * Math.random(); // стагрированный старт
@@ -163,12 +162,14 @@ const world = {
 };
 
 // Области HUD (обновляются при рендере)
-const goblinHudRect  = { x: 0, y: 0, w: 0, h: 0 };
-const warriorHudRect = { x: 0, y: 0, w: 0, h: 0 };
-const scoutHudRect   = { x: 0, y: 0, w: 0, h: 0 };
-const monkHudRect    = { x: 0, y: 0, w: 0, h: 0 };
-const hudPanelRect   = { x: 0, y: 0, w: 0, h: 0 }; // весь правый HUD-панель (блокирует edge scroll)
-const spellPanelRect = { x: 0, y: 0, w: 0, h: 0 }; // левая панель заклинаний
+const goblinHudRect    = { x: 0, y: 0, w: 0, h: 0 };
+const warriorHudRect   = { x: 0, y: 0, w: 0, h: 0 };
+const scoutHudRect     = { x: 0, y: 0, w: 0, h: 0 };
+const monkHudRect      = { x: 0, y: 0, w: 0, h: 0 };
+const hudPanelRect     = { x: 0, y: 0, w: 0, h: 0 }; // весь правый HUD-панель (блокирует edge scroll)
+const spellPanelRect   = { x: 0, y: 0, w: 0, h: 0 }; // левая панель заклинаний
+const selectionBarRects = [];                          // слоты иконок выделенных гоблинов
+const selectionBarPanel = { x: 0, y: 0, w: 0, h: 0 }; // вся панель выделения (блокирует edge scroll)
 
 // Производство воинов: active = автоматически апгрейдить гоблинов при наличии железа
 const warriorProduction = { active: false };
@@ -182,6 +183,16 @@ const monkProduction = { active: false };
 // Клик по кнопкам HUD — перехватываем ДО input.js (capture phase)
 canvas.addEventListener('mousedown', (e) => {
     const mx = e.clientX, my = e.clientY;
+
+    // Панель выделения — клик по слоту исключает гоблина из выделения
+    for (let i = 0; i < selectionBarRects.length; i++) {
+        const r = selectionBarRects[i];
+        if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
+            hand.selectedMinions.splice(r.selIdx, 1);
+            e.stopImmediatePropagation();
+            return;
+        }
+    }
 
     if (
         mx >= goblinHudRect.x && mx <= goblinHudRect.x + goblinHudRect.w &&
@@ -602,17 +613,6 @@ function update(dt) {
         });
     }
 
-    // Таймер автосброса выделения (5 сек)
-    if (hand.selectedMinions.length !== prevSelectionLength) {
-        selectionAge = 0;
-    } else if (hand.selectedMinions.length > 0) {
-        selectionAge += dt;
-        if (selectionAge >= 5) {
-            hand.selectedMinions = [];
-        }
-    }
-    prevSelectionLength = hand.selectedMinions.length;
-
     // Учитываем доставленные в замок ресурсы
     for (const minion of minions) {
         if (minion.pendingDelivery !== null) {
@@ -842,6 +842,11 @@ function update(dt) {
         (mouseX >= spellPanelRect.x && mouseY >= spellPanelRect.y
             && mouseX <= spellPanelRect.x + spellPanelRect.w
             && mouseY <= spellPanelRect.y + spellPanelRect.h)
+        ||
+        (selectionBarPanel.w > 0
+            && mouseX >= selectionBarPanel.x && mouseY >= selectionBarPanel.y
+            && mouseX <= selectionBarPanel.x + selectionBarPanel.w
+            && mouseY <= selectionBarPanel.y + selectionBarPanel.h)
     );
     if (!overHud) {
         if (edgeSrcX < edgeW) {
@@ -881,6 +886,116 @@ function update(dt) {
             statusEl.textContent = `Выделено ${hand.selectedMinions.length} гоблин(а) — ПКМ для команды`;
         } else if (nothingHeld) {
             statusEl.textContent = 'Рука открыта';
+        }
+    }
+}
+
+// ============================================================
+//  ПАНЕЛЬ ВЫДЕЛЕНИЯ
+// ============================================================
+function drawSelectionBar() {
+    const sel = hand.selectedMinions;
+    selectionBarRects.length = 0;
+
+    if (sel.length === 0) {
+        selectionBarPanel.w = 0;
+        return;
+    }
+
+    const HS = 2;           // HUD_SCALE
+    const HP_H = 4;         // высота HP-бара
+    const PAD_X = 5;        // горизонтальный отступ внутри слота
+    const PAD_Y = 5;        // вертикальный отступ внутри слота
+    const GAP = 4;          // расстояние между слотами
+    const PANEL_PAD = 8;    // отступ панели
+
+    const slotW = MINION_W * HS + PAD_X * 2;
+    const slotH = MINION_H * HS + HP_H + 5 + PAD_Y * 2;
+    const totalW = sel.length * slotW + (sel.length - 1) * GAP + PANEL_PAD * 2;
+    const totalH = slotH + PANEL_PAD * 2;
+    const panelX = Math.round(canvas.width / 2 - totalW / 2);
+    const panelY = canvas.height - totalH - 12;
+
+    selectionBarPanel.x = panelX;
+    selectionBarPanel.y = panelY;
+    selectionBarPanel.w = totalW;
+    selectionBarPanel.h = totalH;
+
+    // Фон панели
+    ctx.save();
+    ctx.globalAlpha = 0.75;
+    ctx.fillStyle = '#0a0a18';
+    ctx.fillRect(panelX, panelY, totalW, totalH);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#44ff88';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(panelX + 0.5, panelY + 0.5, totalW - 1, totalH - 1);
+    ctx.restore();
+
+    for (let i = 0; i < sel.length; i++) {
+        const mIdx = sel[i];
+        const m = minions[mIdx];
+        if (!m) continue;
+
+        const slotX = panelX + PANEL_PAD + i * (slotW + GAP);
+        const slotY = panelY + PANEL_PAD;
+
+        selectionBarRects.push({ x: slotX, y: slotY, w: slotW, h: slotH, selIdx: i });
+
+        const isHov = mouseX >= slotX && mouseX <= slotX + slotW
+                   && mouseY >= slotY && mouseY <= slotY + slotH;
+
+        // Фон слота
+        ctx.save();
+        ctx.globalAlpha = isHov ? 0.55 : 0.3;
+        ctx.fillStyle = isHov ? '#1a2a1a' : '#111122';
+        ctx.fillRect(slotX, slotY, slotW, slotH);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = isHov ? '#88ffaa' : '#2a4a2a';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(slotX + 0.5, slotY + 0.5, slotW - 1, slotH - 1);
+        ctx.restore();
+
+        // Спрайт гоблина
+        const sprX = Math.round(slotX + (slotW - MINION_W * HS) / 2);
+        const sprY = slotY + PAD_Y;
+        drawPixelArt(sprX, sprY, MINION_PIXELS, HS);
+
+        // Наложение класса
+        if (m.goblinClass === 'warrior') {
+            const ox = Math.round(sprX + (MINION_W - WARRIOR_HELMET_W) / 2 * HS);
+            drawPixelArt(ox, sprY, WARRIOR_HELMET_PIXELS, HS);
+        } else if (m.goblinClass === 'scout') {
+            const ox = Math.round(sprX + (MINION_W - SCOUT_HOOD_W) / 2 * HS);
+            drawPixelArt(ox, sprY, SCOUT_HOOD_PIXELS, HS);
+        } else if (m.goblinClass === 'monk') {
+            const ox = Math.round(sprX + (MINION_W - MONK_ROBE_W) / 2 * HS);
+            drawPixelArt(ox, sprY, MONK_ROBE_PIXELS, HS);
+        }
+
+        // HP-бар
+        const barX = slotX + PAD_X;
+        const barW = slotW - PAD_X * 2;
+        const barY = sprY + MINION_H * HS + 4;
+        const maxHp = m.isUndead ? SKELETON_MAX_HP : MINION_MAX_HP;
+        const hpFrac = Math.max(0, m.hp / maxHp);
+        ctx.fillStyle = '#1a1a2a';
+        ctx.fillRect(barX, barY, barW, HP_H);
+        if (hpFrac > 0) {
+            ctx.fillStyle = hpFrac > 0.5 ? '#44cc44' : hpFrac > 0.25 ? '#ccaa22' : '#cc3322';
+            ctx.fillRect(barX, barY, Math.round(barW * hpFrac), HP_H);
+        }
+
+        // × при наведении
+        if (isHov) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(220, 60, 60, 0.85)';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'top';
+            ctx.fillText('×', slotX + slotW - 2, slotY + 2);
+            ctx.restore();
+            canvas.style.cursor = 'pointer';
         }
     }
 }
@@ -1730,6 +1845,9 @@ function render() {
         ctx.textAlign = 'center';
         ctx.fillText('М', barX + barW / 2, barY - 3);
     }
+
+    // ── ПАНЕЛЬ ВЫДЕЛЕНИЯ — нижний центр экрана ─────────────────
+    drawSelectionBar();
 
     // Курсор-точка (вне зума и тряски — стабильный)
     ctx.fillStyle = '#ff4444';
