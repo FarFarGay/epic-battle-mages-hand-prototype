@@ -211,6 +211,7 @@ export class Minion extends GameObject {
         for (const item of items) {
             if (!item.typeDef.gatherable) continue;
             if (item.state === 'carried' || item.state === 'lifting' || item.state === 'goblin_carried') continue;
+            if (item.state === 'thrown' || item.state === 'bouncing') continue; // летящие предметы — не цель
             if (zoneOnly && (Math.abs(item.ix) > GATHER_ZONE_RADIUS || Math.abs(item.iy) > GATHER_ZONE_RADIUS)) continue;
             // Пропускаем ресурс, если другой гоблин уже идёт к нему
             if (allMinions) {
@@ -237,6 +238,15 @@ export class Minion extends GameObject {
 
     // Назначить задачу «добывать» (через флаг). Возвращает true если задача принята.
     assignGatherTask(items) {
+        // Корректно сбрасываем переносимый предмет перед сменой задачи
+        if (this.carriedItem) {
+            this.carriedItem.state = 'thrown';
+            this.carriedItem.vx = 0;
+            this.carriedItem.vy = 0;
+            this.carriedItem.vz = 0;
+            this.carriedItem.stateTime = 0;
+            this.carriedItem = null;
+        }
         this.gathererMode = true; // назначен флагом → цикличный сбор в зоне 42×42
         this.task = 'gather';
         const stone = this.findNearestResource(items, true);
@@ -248,7 +258,6 @@ export class Minion extends GameObject {
             return false;
         }
         this.targetItem = stone;
-        this.carriedItem = null;
         this.state = 'busy';
         this.stateTime = 0;
         return true;
@@ -461,7 +470,9 @@ export class Minion extends GameObject {
                     if (!this.targetItem ||
                         this.targetItem.state === 'carried' ||
                         this.targetItem.state === 'lifting' ||
-                        this.targetItem.state === 'goblin_carried') {
+                        this.targetItem.state === 'goblin_carried' ||
+                        this.targetItem.state === 'thrown' ||
+                        this.targetItem.state === 'bouncing') {
                         const stone = this.findNearestResource(items, this.gathererMode);
                         if (!stone) {
                             this.task = null;
@@ -492,7 +503,7 @@ export class Minion extends GameObject {
                         this.targetItem = null;
                         this.state = 'returning';
                         this.stateTime = 0;
-                    } else {
+                    } else if (dist > 0.001) {
                         const spd = MINION_SPEED * dt;
                         this.ix += (dx / dist) * spd;
                         this.iy += (dy / dist) * spd;
