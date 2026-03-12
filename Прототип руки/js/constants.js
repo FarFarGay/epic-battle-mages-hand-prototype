@@ -124,3 +124,8 @@ export const FIREBALL_BURN_RADIUS   = 2.0;   // радиус огня на зе�
 export const FIREBALL_BURN_DURATION = 1.0;   // секунд горит земля
 export const FIREBALL_BURN_DPS      = 2;     // урон горения (HP/сек)
 export const FIREBALL_COOLDOWN      = 8.0;   // секунд перезарядки
+
+// — Мана —
+export const MANA_MAX           = 100;   // максимальный запас маны
+export const MANA_FIREBALL_COST = 25;    // стоимость огненного шара (25% маны)
+export const MANA_REGEN         = 5.0;   // восстановление маны (ед/сек)

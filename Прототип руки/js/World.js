@@ -2,7 +2,7 @@
 //  МИР — предметы, миньоны, флаг, тряска экрана
 // ============================================================
 import { gameMap } from './Map.js';
-import { ITEM_TYPES, WARRIOR_GUARD_RADIUS, WARRIOR_WALL_STEP } from './constants.js';
+import { ITEM_TYPES, WARRIOR_GUARD_RADIUS, WARRIOR_WALL_STEP, MANA_MAX } from './constants.js';
 import { Item } from './Item.js';
 import { Minion } from './Minion.js';
 import { Castle } from './Castle.js';
@@ -65,6 +65,9 @@ export const artilleryMode = {
 
 // Счётчики ресурсов: castleResources[typeIndex] = количество доставленных в замок
 export const castleResources = [];
+
+// Мана игрока
+export const manaPool = { value: MANA_MAX };
 
 export let castle = null;
 
@@ -257,4 +260,6 @@ export function initWorld() {
 
     fireball.reset();
     firePatches.length = 0;
+
+    manaPool.value = MANA_MAX;
 }

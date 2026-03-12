@@ -9,13 +9,14 @@ import {
     SCOUT_MAX_COUNT, SCOUT_UPGRADE_INTERVAL, SCOUT_WOOD_COST, SCOUT_FOOD_COST, SCOUT_FOG_RADIUS,
     FIREBALL_BLAST_RADIUS, FIREBALL_BLAST_DAMAGE, FIREBALL_BURN_RADIUS,
     FIREBALL_BURN_DURATION, FIREBALL_BURN_DPS, FIREBALL_COOLDOWN,
+    MANA_MAX, MANA_FIREBALL_COST, MANA_REGEN,
 } from './constants.js';
 import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth, worldToScreen, screenToCanvas } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, firePatches } from './World.js';
+import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, firePatches, manaPool } from './World.js';
 import { initInput } from './input.js';
 
 // ============================================================
@@ -43,7 +44,7 @@ function tryUpgradeWarrior() {
     if (castleResources[3] < WARRIOR_IRON_COST) return;
     const eligible = [];
     for (const m of minions) {
-        if (m.goblinClass === 'basic' && !m.isUndead && !m.dead && m.state === 'free') {
+        if (m.goblinClass === 'basic' && !m.isUndead && !m.dead && m.state !== 'carried' && m.state !== 'lifting') {
             eligible.push(m);
         }
     }
@@ -68,7 +69,7 @@ function tryUpgradeScout() {
     if (castleResources[0] < SCOUT_FOOD_COST) return; // пшеница
     const eligible = [];
     for (const m of minions) {
-        if (m.goblinClass === 'basic' && !m.isUndead && !m.dead && m.state === 'free') {
+        if (m.goblinClass === 'basic' && !m.isUndead && !m.dead && m.state !== 'carried' && m.state !== 'lifting') {
             eligible.push(m);
         }
     }
@@ -293,9 +294,11 @@ canvas.addEventListener('mousedown', (e) => {
         mx >= spellPanelRect.x && mx <= spellPanelRect.x + spellPanelRect.w &&
         my >= spellPanelRect.y && my <= spellPanelRect.y + spellPanelRect.h &&
         fireball.state === 'ready' &&
+        manaPool.value >= MANA_FIREBALL_COST &&
         hand.grabbedItem === null && hand.grabbedMinion === null &&
         !hand.grabbedFlag && !artilleryMode.active
     ) {
+        manaPool.value -= MANA_FIREBALL_COST;
         fireball.ix = hand.isoX;
         fireball.iy = hand.isoY;
         fireball.iz = 0;
@@ -601,6 +604,9 @@ function update(dt) {
         scoutUpgradeTimer = SCOUT_UPGRADE_INTERVAL;
         tryUpgradeScout();
     }
+
+    // ── МАНА — восстановление ──────────────────────────────────
+    manaPool.value = Math.min(MANA_MAX, manaPool.value + MANA_REGEN * dt);
 
     // ── ОГНЕННЫЙ ШАР — обновление ──────────────────────────────
     fireball.update(dt, hand, triggerScreenShake);
@@ -1692,7 +1698,72 @@ function render() {
         ctx.textAlign = 'center';
         ctx.fillText('Огнешар', panelX + PANEL_W / 2, slotY + SLOT_SIZE + 13);
 
-        if (fbReady && isHov) canvas.style.cursor = 'pointer';
+        // Оверлей недостаточно маны
+        const hasEnoughMana = manaPool.value >= MANA_FIREBALL_COST;
+        if (fbReady && !hasEnoughMana) {
+            ctx.save();
+            ctx.globalAlpha = 0.5;
+            ctx.fillStyle = '#000044';
+            ctx.fillRect(slotX, slotY, SLOT_SIZE, SLOT_SIZE);
+            ctx.restore();
+            ctx.fillStyle = '#6688ff';
+            ctx.font = 'bold 9px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('мало маны', slotX + SLOT_SIZE / 2, slotY + SLOT_SIZE / 2 + 4);
+        }
+
+        if (fbReady && hasEnoughMana && isHov) canvas.style.cursor = 'pointer';
+    }
+
+    // ── ПОЛОСА МАНЫ — справа от панели заклинаний ─────────────
+    {
+        const HUD_MARGIN = 40;
+        const PANEL_W = 52 + 20;
+        const PANEL_H = 52 + 44;
+        const panelX = HUD_MARGIN;
+        const panelY = HUD_MARGIN;
+
+        const barX = panelX + PANEL_W + 8 + 4;
+        const barY = panelY - 4;
+        const barW = 12;
+        const barH = PANEL_H + 8;
+        const manaFrac = manaPool.value / MANA_MAX;
+        const fillH = Math.round(barH * manaFrac);
+
+        // Фон
+        ctx.save();
+        ctx.globalAlpha = 0.65;
+        ctx.fillStyle = '#08081a';
+        ctx.fillRect(barX, barY, barW, barH);
+        ctx.globalAlpha = 1;
+        // Заполнение снизу вверх
+        if (fillH > 0) {
+            const grad = ctx.createLinearGradient(barX, barY + barH, barX, barY);
+            grad.addColorStop(0, '#1a33bb');
+            grad.addColorStop(1, '#7799ff');
+            ctx.fillStyle = grad;
+            ctx.fillRect(barX, barY + barH - fillH, barW, fillH);
+        }
+        // Метка стоимости фаербола
+        const costY = barY + barH - Math.round(barH * (MANA_FIREBALL_COST / MANA_MAX));
+        ctx.globalAlpha = 0.8;
+        ctx.strokeStyle = '#ffaa44';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(barX - 1, costY);
+        ctx.lineTo(barX + barW + 1, costY);
+        ctx.stroke();
+        // Граница
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = '#223366';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(barX + 0.5, barY + 0.5, barW - 1, barH - 1);
+        ctx.restore();
+        // Подпись «М» над баром
+        ctx.fillStyle = '#5577ee';
+        ctx.font = '8px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('М', barX + barW / 2, barY - 3);
     }
 
     // Панель выделенных юнитов — нижний центр, при активном флаге
