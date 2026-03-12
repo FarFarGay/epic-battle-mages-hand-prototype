@@ -10,6 +10,9 @@ import { FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H } from './sprites.js';
 import { ctx, drawPixelArt, drawItemShadow } from './renderer.js';
 import { worldToScreen, screenToCanvas } from './isometry.js';
 
+const TRAIL_MAX    = 20;
+const TRAIL_COLOR  = '#ff6600';
+
 export class Fireball extends GameObject {
     constructor() {
         super(0, 0, FIREBALL_MASS, FIREBALL_BOUNCINESS, FIREBALL_FRICTION);
@@ -17,6 +20,7 @@ export class Fireball extends GameObject {
         this.cooldown = 0;
         this.pendingExplosion = false;
         this._exploded = false;
+        this.trail = [];
     }
 
     reset() {
@@ -29,6 +33,7 @@ export class Fireball extends GameObject {
         this.cooldown = 0;
         this.pendingExplosion = false;
         this._exploded = false;
+        this.trail = [];
     }
 
     onLand(impactVz) {
@@ -64,10 +69,17 @@ export class Fireball extends GameObject {
 
         this.updatePhysics(dt, hand, triggerShake);
 
+        // Трейл — сохраняем позицию в полёте
+        if (this.state === 'thrown' || this.state === 'bouncing' || this.state === 'sliding') {
+            this.trail.push({ ix: this.ix, iy: this.iy, iz: this.iz });
+            if (this.trail.length > TRAIL_MAX) this.trail.shift();
+        }
+
         // После физики: если взрыв помечен — переходим к settling
         if (this.pendingExplosion && this.state !== 'done' && this.state !== 'settling') {
             this.state = 'settling';
             this.stateTime = 0;
+            this.trail = [];
         }
     }
 
@@ -92,6 +104,25 @@ export class Fireball extends GameObject {
             const heightOffset = this.iz * HEIGHT_TO_SCREEN;
             ox = s.x - (FIREBALL_W * PIXEL_SCALE) / 2;
             oy = s.y - (FIREBALL_H * PIXEL_SCALE) - 4 - heightOffset;
+        }
+
+        // Трейл
+        if (this.trail.length > 1) {
+            const n = this.trail.length;
+            for (let i = 0; i < n; i++) {
+                const t = this.trail[i];
+                const ts = worldToScreen(t.ix, t.iy);
+                const frac = (i + 1) / n;
+                ctx.save();
+                ctx.globalAlpha = frac * 0.55;
+                ctx.fillStyle = TRAIL_COLOR;
+                ctx.shadowColor = TRAIL_COLOR;
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.arc(ts.x, ts.y - t.iz * HEIGHT_TO_SCREEN, frac * 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
         }
 
         ctx.save();

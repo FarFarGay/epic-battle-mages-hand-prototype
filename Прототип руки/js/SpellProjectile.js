@@ -14,10 +14,12 @@ import {
 import { ctx, drawPixelArt, drawItemShadow } from './renderer.js';
 import { worldToScreen, screenToCanvas } from './isometry.js';
 
+const TRAIL_MAX = 20;
+
 const SPELL_SPRITES = {
-    water: { pixels: WATER_SPELL_PIXELS, w: WATER_SPELL_W, h: WATER_SPELL_H, glow: '#3399ff' },
-    earth: { pixels: EARTH_SPELL_PIXELS, w: EARTH_SPELL_W, h: EARTH_SPELL_H, glow: '#aa7744' },
-    wind:  { pixels: WIND_SPELL_PIXELS,  w: WIND_SPELL_W,  h: WIND_SPELL_H,  glow: '#44cc66' },
+    water: { pixels: WATER_SPELL_PIXELS, w: WATER_SPELL_W, h: WATER_SPELL_H, glow: '#3399ff', trail: '#3399ff' },
+    earth: { pixels: EARTH_SPELL_PIXELS, w: EARTH_SPELL_W, h: EARTH_SPELL_H, glow: '#aa7744', trail: '#cc9955' },
+    wind:  { pixels: WIND_SPELL_PIXELS,  w: WIND_SPELL_W,  h: WIND_SPELL_H,  glow: '#44cc66', trail: '#88ffaa' },
 };
 
 export class SpellProjectile extends GameObject {
@@ -27,6 +29,7 @@ export class SpellProjectile extends GameObject {
         this.spellType = null; // 'water' | 'earth' | 'wind'
         this.pendingExplosion = false;
         this._exploded = false;
+        this.trail = [];
     }
 
     reset() {
@@ -39,6 +42,7 @@ export class SpellProjectile extends GameObject {
         this.spellType = null;
         this.pendingExplosion = false;
         this._exploded = false;
+        this.trail = [];
     }
 
     onLand(impactVz) {
@@ -64,9 +68,16 @@ export class SpellProjectile extends GameObject {
 
         this.updatePhysics(dt, hand, triggerShake);
 
+        // Трейл — сохраняем позицию в полёте
+        if (this.state === 'thrown' || this.state === 'bouncing' || this.state === 'sliding') {
+            this.trail.push({ ix: this.ix, iy: this.iy, iz: this.iz });
+            if (this.trail.length > TRAIL_MAX) this.trail.shift();
+        }
+
         if (this.pendingExplosion && this.state !== 'done' && this.state !== 'settling') {
             this.state = 'settling';
             this.stateTime = 0;
+            this.trail = [];
         }
     }
 
@@ -95,6 +106,25 @@ export class SpellProjectile extends GameObject {
             const heightOffset = this.iz * HEIGHT_TO_SCREEN;
             ox = s.x - (sp.w * PIXEL_SCALE) / 2;
             oy = s.y - (sp.h * PIXEL_SCALE) - 4 - heightOffset;
+        }
+
+        // Трейл
+        if (this.trail.length > 1) {
+            const n = this.trail.length;
+            for (let i = 0; i < n; i++) {
+                const t = this.trail[i];
+                const ts = worldToScreen(t.ix, t.iy);
+                const frac = (i + 1) / n;
+                ctx.save();
+                ctx.globalAlpha = frac * 0.55;
+                ctx.fillStyle = sp.trail;
+                ctx.shadowColor = sp.trail;
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.arc(ts.x, ts.y - t.iz * HEIGHT_TO_SCREEN, frac * 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
         }
 
         ctx.save();
