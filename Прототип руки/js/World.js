@@ -36,6 +36,10 @@ export const spellProjectile = new SpellProjectile();
 // Огненные пятна после взрыва (DEPRECATED — заменено тайловыми трансформациями)
 export const firePatches = [];
 
+// Постоянные и временные зоны рассеивания тумана от заклинаний
+// { ix, iy, radius, timer } — timer < 0 означает постоянный источник
+export const spellFogReveals = [];
+
 // Состояния заклинаний (кроме огненного шара — он в Fireball.js)
 export const spellStates = {
     water: { cooldown: 0, maxCooldown: WATER_SPELL_COOLDOWN },
@@ -274,6 +278,7 @@ export function initWorld() {
     spellProjectile.reset();
     firePatches.length = 0;
     activeTiles.length = 0;
+    spellFogReveals.length = 0;
 
     spellStates.water.cooldown = 0;
     spellStates.earth.cooldown = 0;

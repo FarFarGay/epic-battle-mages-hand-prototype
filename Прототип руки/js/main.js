@@ -22,7 +22,7 @@ import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth, worldToScreen } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, monkTotem, commandMarkers } from './World.js';
+import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, monkTotem, commandMarkers } from './World.js';
 import { initInput } from './input.js';
 import { updateActiveTiles, applySpellInRadius } from './tileEffects.js';
 
@@ -640,6 +640,17 @@ function update(dt) {
                           : WIND_SPELL_RADIUS;
         applySpellInRadius(spellKey, ex, ey, spellRadius);
 
+        // Туман войны: вода и ветер — временно, земля — навсегда
+        {
+            const fogTimer  = spellKey === 'earth' ? -1        // навсегда
+                            : spellKey === 'water' ? 8.0
+                            : 6.0; // wind
+            const fogRadius = spellKey === 'water' ? WATER_SPELL_RADIUS + 1
+                            : spellKey === 'wind'  ? WIND_SPELL_RADIUS  + 2
+                            : EARTH_SPELL_RADIUS + 1;
+            spellFogReveals.push({ ix: ex, iy: ey, radius: fogRadius, timer: fogTimer });
+        }
+
         // Ветер: отбросить юнитов в радиусе
         if (spellKey === 'wind') {
             const r2 = WIND_SPELL_RADIUS * WIND_SPELL_RADIUS;
@@ -881,6 +892,25 @@ function update(dt) {
     // Летящий огненный шар рассеивает туман войны
     if (fireball.state === 'thrown' || fireball.state === 'bouncing') {
         fogSources.push({ ix: fireball.ix, iy: fireball.iy, radius: 3 });
+    }
+    // Летящий снаряд заклинания рассеивает туман
+    if (spellProjectile.state === 'thrown' || spellProjectile.state === 'bouncing') {
+        fogSources.push({ ix: spellProjectile.ix, iy: spellProjectile.iy, radius: 2 });
+    }
+    // Горящие тайлы рассеивают туман до потухания
+    for (const tile of activeTiles) {
+        if (tile.type === 'burning') {
+            fogSources.push({ ix: tile.ix, iy: tile.iy, radius: 1.5 });
+        }
+    }
+    // Заклинания: вода/ветер — временно, земля — навсегда
+    for (let i = spellFogReveals.length - 1; i >= 0; i--) {
+        const r = spellFogReveals[i];
+        fogSources.push({ ix: r.ix, iy: r.iy, radius: r.radius });
+        if (r.timer >= 0) {
+            r.timer -= dt;
+            if (r.timer <= 0) spellFogReveals.splice(i, 1);
+        }
     }
     gameMap.tickFog(fogSources);
 
