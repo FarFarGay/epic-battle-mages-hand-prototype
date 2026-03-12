@@ -342,6 +342,9 @@ function updateArtillery(dt) {
             // Тряска экрана
             triggerScreenShake(15);
 
+            // Туман войны — открываем зону взрыва на 5 секунд
+            art.fogRevealTimer = 5.0;
+
             // Урон миньонам и скелетам в радиусе взрыва
             for (const m of minions) {
                 if (m.state === 'dead' || m.state === 'crumbled') continue;
@@ -799,6 +802,15 @@ function update(dt) {
     // иначе гоблин гасит собственный туман и рука мгновенно его роняет
     if (hand.grabbedMinion !== null && hand.minionGrabIso !== null) {
         fogSources.push({ ix: hand.minionGrabIso.ix, iy: hand.minionGrabIso.iy, radius: 2 });
+    }
+    // Летящий артиллерийский снаряд рассеивает туман
+    if (artilleryMode.active && artilleryMode.state === 'flying') {
+        fogSources.push({ ix: artilleryMode.projectile.ix, iy: artilleryMode.projectile.iy, radius: 3 });
+    }
+    // Зона взрыва артиллерии остаётся открытой после попадания
+    if (artilleryMode.fogRevealTimer > 0) {
+        artilleryMode.fogRevealTimer -= dt;
+        fogSources.push({ ix: artilleryMode.explosion.ix, iy: artilleryMode.explosion.iy, radius: ARTILLERY_BLAST_RADIUS + 2 });
     }
     // Летящий огненный шар рассеивает туман войны
     if (fireball.state === 'thrown' || fireball.state === 'bouncing') {

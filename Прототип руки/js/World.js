@@ -44,6 +44,7 @@ export const artilleryMode = {
     // Таймеры
     timer: 0,
     flightDuration: 0,
+    fogRevealTimer: 0,    // секунды туманоснятия после взрыва
     // Взрыв
     explosion: {
         active: false,
@@ -250,6 +251,7 @@ export function initWorld() {
     artilleryMode.active = false;
     artilleryMode.state = 'aiming';
     artilleryMode.explosion.active = false;
+    artilleryMode.fogRevealTimer = 0;
 
     fireball.reset();
     firePatches.length = 0;
