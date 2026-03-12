@@ -1130,13 +1130,10 @@ function render() {
             const s = worldToScreen(fp.ix, fp.iy);
             const rW = fp.radius * (TILE_W / 2);
             const rH = fp.radius * (TILE_H / 2);
+            // Гарь — тёмный рваный полигон (как у артиллерии)
             ctx.save();
-            ctx.globalAlpha = alpha;
-            const grad = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, rW);
-            grad.addColorStop(0, '#ffcc00');
-            grad.addColorStop(0.4, '#ff6600');
-            grad.addColorStop(1, 'rgba(180,30,0,0)');
-            ctx.fillStyle = grad;
+            ctx.globalAlpha = alpha * 0.85;
+            ctx.fillStyle = '#111100';
             ctx.beginPath();
             const EN = fp.edgePoints.length;
             for (let i = 0; i <= EN; i++) {
@@ -1148,18 +1145,25 @@ function render() {
             }
             ctx.closePath();
             ctx.fill();
-            // Искры
-            const now = performance.now() / 1000;
-            for (let k = 0; k < 6; k++) {
-                const angle = (k / 6) * Math.PI * 2 + now * 2.5;
-                const d = rW * 0.4;
-                const sx2 = s.x + Math.cos(angle) * d;
-                const sy2 = s.y + Math.sin(angle) * d * 0.5 - Math.abs(Math.sin(now * 5 + k)) * 6;
-                ctx.globalAlpha = alpha * 0.9;
-                ctx.fillStyle = k % 2 === 0 ? '#ffdd44' : '#ff8800';
-                ctx.fillRect(Math.round(sx2 - 1.5), Math.round(sy2 - 1.5), 3, 3);
-            }
             ctx.restore();
+            // Огненные частицы (как у артиллерии)
+            const fireColors = ['#ff4400', '#ff6600', '#ffaa00', '#ffcc00', '#ff2200', '#aa3300'];
+            const now = performance.now() / 1000;
+            for (let k = 0; k < 18; k++) {
+                const seed = k * 137.508;
+                const cycleT = (now * 0.9 + seed * 0.01) % 1.0;
+                const pAngle = seed * 0.38 + now * 0.2 * ((k % 3) - 1);
+                const d = (0.15 + (k % 6) * 0.12) * rW;
+                const px = s.x + Math.cos(pAngle) * d;
+                const py = s.y + Math.sin(pAngle) * d * 0.5 - cycleT * rW * 0.7;
+                const pAlpha = alpha * (1 - cycleT) * 0.9;
+                const size = PIXEL_SCALE * (1 + (k % 3));
+                ctx.save();
+                ctx.globalAlpha = pAlpha;
+                ctx.fillStyle = fireColors[k % fireColors.length];
+                ctx.fillRect(Math.round(px - size / 2), Math.round(py - size / 2), size, size);
+                ctx.restore();
+            }
         } else if (obj.type === 'fireball') {
             fireball.draw(hand);
         } else if (obj.type === 'hand') {
