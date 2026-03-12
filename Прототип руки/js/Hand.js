@@ -32,7 +32,7 @@ export class Hand {
         this.velocityHistory = [];
         this.selectedMinions = [];    // индексы выделенных миньонов (ПКМ-выделение)
         this.minionGrabIso = null;    // {ix, iy} — позиция подбора гоблина (для поддержки тумана)
-        this.grabbedSpell = null;   // 'fireball' | null
+        this.grabbedSpell = null;   // 'fireball' | 'water' | 'earth' | 'wind' | null
     }
 
     update(dt, mouseX, mouseY, canvas, screenToIso) {

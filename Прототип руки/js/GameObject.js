@@ -40,6 +40,18 @@ export class GameObject {
             this.iy = limit;
             this.vy = -Math.abs(this.vy) * WALL_BOUNCE;
         }
+
+        // Отскок от тайлов-стен (только на земле или близко к ней)
+        if (this.iz < 1.0) {
+            const tileType = gameMap.getTile(Math.round(this.ix), Math.round(this.iy));
+            if (tileType === 'wall') {
+                // Откатить позицию на шаг назад и отразить скорость
+                this.ix -= this.vx * 0.016; // примерно 1 кадр назад
+                this.iy -= this.vy * 0.016;
+                this.vx *= -WALL_BOUNCE;
+                this.vy *= -WALL_BOUNCE;
+            }
+        }
     }
 
     // Хуки — переопределяются в подклассах

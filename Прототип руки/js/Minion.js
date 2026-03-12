@@ -13,6 +13,7 @@ import {
     SCOUT_LIFESPAN,
 } from './constants.js';
 import { gameMap } from './Map.js';
+import { getTileEffect } from './tileEffects.js';
 import {
     MINION_PIXELS, MINION_DEAD_PIXELS, MINION_W, MINION_H,
     TOMBSTONE_PIXELS, TOMBSTONE_W, TOMBSTONE_H,
@@ -75,7 +76,49 @@ export class Minion extends GameObject {
         this.gathererMode = false; // true = назначен флагом (цикличный сбор в 42×42)
         this.pendingDelivery = null; // typeIndex ресурса, сданного в замок в этом кадре
 
+        // Тайловые эффекты
+        this._currentSpeedMult = 1.0; // множитель скорости от тайла (обновляется каждый кадр)
+        this.windPushed = false;      // флаг: отброшен ветром → нет урона от падения
+
         this.pickNewTarget();
+    }
+
+    // Проверяет, можно ли войти на тайл (стены непроходимы)
+    _canMoveTo(ix, iy) {
+        const tileType = gameMap.getTile(Math.round(ix), Math.round(iy));
+        if (tileType === 'wall') return false;
+        return true;
+    }
+
+    // Двигает юнита к цели с учётом непроходимости. Возвращает true если двигался.
+    _moveToward(tx, ty, speed) {
+        const dx = tx - this.ix;
+        const dy = ty - this.iy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 0.001) return false;
+        const step = Math.min(speed, dist);
+        const nx = this.ix + (dx / dist) * step;
+        const ny = this.iy + (dy / dist) * step;
+        if (!this._canMoveTo(nx, ny)) {
+            // Попробовать обойти: сдвиг перпендикулярно
+            const px = -(dy / dist) * step;
+            const py = (dx / dist) * step;
+            if (this._canMoveTo(this.ix + px, this.iy + py)) {
+                this.ix += px;
+                this.iy += py;
+            } else if (this._canMoveTo(this.ix - px, this.iy - py)) {
+                this.ix -= px;
+                this.iy -= py;
+            }
+            // Иначе — стоим на месте
+            return false;
+        }
+        this.ix = nx;
+        this.iy = ny;
+        const lim = gameMap.size - 0.5;
+        this.ix = Math.max(-lim, Math.min(lim, this.ix));
+        this.iy = Math.max(-lim, Math.min(lim, this.iy));
+        return true;
     }
 
     pickNewTarget() {
@@ -278,6 +321,11 @@ export class Minion extends GameObject {
     }
 
     onLand(impactVz) {
+        // Мягкая посадка после отталкивания ветром — нет урона от падения
+        if (this.windPushed) {
+            this.windPushed = false;
+            return;
+        }
         if (this.isUndead) {
             // Скелет получает урон от падения как гоблин
             const prevHp = this.hp;
@@ -405,6 +453,45 @@ export class Minion extends GameObject {
         }
         if (this.damageWobble > 0) this.damageWobble = Math.max(0, this.damageWobble - dt);
 
+        // ── Тайловые эффекты (скорость, урон) ────────────────────
+        this._currentSpeedMult = 1.0;
+        if (!PHYSICS_STATES.has(this.state) && !this.dead && this.state !== 'crumbled') {
+            const tileEff = getTileEffect(this.ix, this.iy);
+            if (tileEff) {
+                this._currentSpeedMult = tileEff.speedMult;
+                // Урон от тайла (burning, swamp)
+                if (tileEff.dps > 0) {
+                    const prevHp = this.hp;
+                    this.hp -= tileEff.dps * dt;
+                    // Визуальная обратная связь: тряска + кровь каждые 10 HP урона
+                    if (Math.floor(prevHp / 10) > Math.floor(this.hp / 10) && this.hp > 0) {
+                        this.damageWobble = 0.3;
+                        if (this.isUndead) {
+                            this.pendingBoneEffect = { ix: this.ix, iy: this.iy };
+                        } else {
+                            this.pendingBloodEffect = { type: 'hit', ix: this.ix, iy: this.iy };
+                        }
+                    }
+                    if (this.hp <= 0 && !this.dead) {
+                        this.hp = 0;
+                        if (this.isUndead) {
+                            this.pendingBoneEffect = { ix: this.ix, iy: this.iy };
+                            this.pendingRemove = true;
+                            this.state = 'crumbled';
+                        } else {
+                            this.dead = true;
+                            this.dropCarriedItem();
+                            this.pendingBloodEffect = { type: 'death', ix: this.ix, iy: this.iy };
+                            this.state = 'dead';
+                            this.stateTime = 0;
+                            this.deadTime = 0;
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
         // Разведчик стареет только в активных (не физических) состояниях.
         // В 'carried'/'lifting' возраст не растёт — чтобы не умирать в руке.
         if (this.goblinClass === 'scout' && !this.dead && !this.isUndead && !PHYSICS_STATES.has(this.state)) {
@@ -431,12 +518,8 @@ export class Minion extends GameObject {
                 if (dist < 0.25) {
                     this.pickNewTarget();
                 } else {
-                    const spd = MINION_SPEED * dt;
-                    this.ix += (dx / dist) * spd;
-                    this.iy += (dy / dist) * spd;
-                    const lim = gameMap.size - 0.5;
-                    this.ix = Math.max(-lim, Math.min(lim, this.ix));
-                    this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                    const spd = MINION_SPEED * this._currentSpeedMult * dt;
+                    this._moveToward(this.targetX, this.targetY, spd);
                 }
                 break;
             }
@@ -451,12 +534,8 @@ export class Minion extends GameObject {
                     this.state = 'free';
                     this.stateTime = 0;
                 } else {
-                    const spd = MINION_SPEED * dt;
-                    this.ix += (dx / dist) * spd;
-                    this.iy += (dy / dist) * spd;
-                    const lim = gameMap.size - 0.5;
-                    this.ix = Math.max(-lim, Math.min(lim, this.ix));
-                    this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                    const spd = MINION_SPEED * this._currentSpeedMult * dt;
+                    this._moveToward(this.targetX, this.targetY, spd);
                 }
                 break;
             }
@@ -504,12 +583,8 @@ export class Minion extends GameObject {
                         this.state = 'returning';
                         this.stateTime = 0;
                     } else if (dist > 0.001) {
-                        const spd = MINION_SPEED * dt;
-                        this.ix += (dx / dist) * spd;
-                        this.iy += (dy / dist) * spd;
-                        const lim = gameMap.size - 0.5;
-                        this.ix = Math.max(-lim, Math.min(lim, this.ix));
-                        this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                        const spd = MINION_SPEED * this._currentSpeedMult * dt;
+                        this._moveToward(this.targetItem.ix, this.targetItem.iy, spd);
                     }
                 }
                 break;
@@ -563,12 +638,8 @@ export class Minion extends GameObject {
                             this.stateTime = 0;
                         }
                     } else {
-                        const spd = MINION_SPEED * dt;
-                        this.ix += (dx / dist) * spd;
-                        this.iy += (dy / dist) * spd;
-                        const lim = gameMap.size - 0.5;
-                        this.ix = Math.max(-lim, Math.min(lim, this.ix));
-                        this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                        const spd = MINION_SPEED * this._currentSpeedMult * dt;
+                        this._moveToward(castle.ix, castle.iy, spd);
                     }
                 }
                 break;
@@ -588,12 +659,8 @@ export class Minion extends GameObject {
                     this.state = 'fighting';
                     this.stateTime = 0;
                 } else {
-                    const spd = MINION_SPEED * dt;
-                    this.ix += (ddx / dist) * spd;
-                    this.iy += (ddy / dist) * spd;
-                    const lim = gameMap.size - 0.5;
-                    this.ix = Math.max(-lim, Math.min(lim, this.ix));
-                    this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                    const spd = MINION_SPEED * this._currentSpeedMult * dt;
+                    this._moveToward(this.combatTarget.ix, this.combatTarget.iy, spd);
                 }
                 break;
             }
@@ -653,9 +720,8 @@ export class Minion extends GameObject {
                     const dy = this.guardY - this.iy;
                     const d = Math.sqrt(dx * dx + dy * dy);
                     if (d > 0.3) {
-                        const spd = MINION_SPEED * dt;
-                        this.ix += (dx / d) * Math.min(spd, d);
-                        this.iy += (dy / d) * Math.min(spd, d);
+                        const spd = Math.min(MINION_SPEED * this._currentSpeedMult * dt, d);
+                        this._moveToward(this.guardX, this.guardY, spd);
                     }
                 }
                 break;
@@ -676,12 +742,8 @@ export class Minion extends GameObject {
                     this.state = 'guarding';
                     this.stateTime = 0;
                 } else {
-                    const spd = MINION_SPEED * dt;
-                    this.ix += (dx / d) * Math.min(spd, d);
-                    this.iy += (dy / d) * Math.min(spd, d);
-                    const lim = gameMap.size - 0.5;
-                    this.ix = Math.max(-lim, Math.min(lim, this.ix));
-                    this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                    const spd = Math.min(MINION_SPEED * this._currentSpeedMult * dt, d);
+                    this._moveToward(this.guardX, this.guardY, spd);
                 }
                 break;
             }
@@ -696,12 +758,8 @@ export class Minion extends GameObject {
                     this.state = 'monk_praying';
                     this.stateTime = 0;
                 } else {
-                    const spd = MINION_SPEED * dt;
-                    this.ix += (dx / dist) * spd;
-                    this.iy += (dy / dist) * spd;
-                    const lim = gameMap.size - 0.5;
-                    this.ix = Math.max(-lim, Math.min(lim, this.ix));
-                    this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                    const spd = MINION_SPEED * this._currentSpeedMult * dt;
+                    this._moveToward(this.totemX, this.totemY, spd);
                 }
                 break;
             }
@@ -765,6 +823,8 @@ export class Minion extends GameObject {
                         if (m === this) continue;
                         if (m.isUndead || m.dead) continue;
                         if (m.state === 'carried' || m.state === 'lifting') continue;
+                        // Пар скрывает гоблинов от скелетов
+                        if (gameMap.getTile(Math.round(m.ix), Math.round(m.iy)) === 'steam') continue;
                         const ddx = m.ix - this.ix;
                         const ddy = m.iy - this.iy;
                         const dSq = ddx * ddx + ddy * ddy;
@@ -812,11 +872,8 @@ export class Minion extends GameObject {
                     }
                 } else if (prey) {
                     // Есть цель — идём к ней
-                    const ddx = prey.ix - this.ix;
-                    const ddy = prey.iy - this.iy;
-                    const spd = MINION_SPEED * SKELETON_SPEED_FACTOR * dt;
-                    this.ix += (ddx / preyDist) * spd;
-                    this.iy += (ddy / preyDist) * spd;
+                    const spd = MINION_SPEED * SKELETON_SPEED_FACTOR * this._currentSpeedMult * dt;
+                    this._moveToward(prey.ix, prey.iy, spd);
                 } else {
                     // Нет цели — свободное блуждание по карте
                     const dx = this.targetX - this.ix;
@@ -825,15 +882,10 @@ export class Minion extends GameObject {
                     if (dist < 0.25) {
                         this.pickNewTarget();
                     } else {
-                        const spd = MINION_SPEED * SKELETON_SPEED_FACTOR * dt;
-                        this.ix += (dx / dist) * spd;
-                        this.iy += (dy / dist) * spd;
+                        const spd = MINION_SPEED * SKELETON_SPEED_FACTOR * this._currentSpeedMult * dt;
+                        this._moveToward(this.targetX, this.targetY, spd);
                     }
                 }
-
-                const lim = gameMap.size - 0.5;
-                this.ix = Math.max(-lim, Math.min(lim, this.ix));
-                this.iy = Math.max(-lim, Math.min(lim, this.iy));
                 break;
             }
 

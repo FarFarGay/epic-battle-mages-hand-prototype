@@ -2,7 +2,10 @@
 //  МИР — предметы, миньоны, тряска экрана
 // ============================================================
 import { gameMap } from './Map.js';
-import { ITEM_TYPES, WARRIOR_GUARD_RADIUS, WARRIOR_WALL_STEP, MANA_MAX } from './constants.js';
+import {
+    ITEM_TYPES, WARRIOR_GUARD_RADIUS, WARRIOR_WALL_STEP, MANA_MAX,
+    WATER_SPELL_COOLDOWN, EARTH_SPELL_COOLDOWN, WIND_SPELL_COOLDOWN,
+} from './constants.js';
 import { Item } from './Item.js';
 import { Minion } from './Minion.js';
 import { Castle } from './Castle.js';
@@ -26,8 +29,15 @@ export const bloodPuddles   = [];  // { ix, iy, size, t, duration }
 // Огненный шар
 export const fireball = new Fireball();
 
-// Огненные пятна после взрыва: { ix, iy, timer, duration, radius }
+// Огненные пятна после взрыва (DEPRECATED — заменено тайловыми трансформациями)
 export const firePatches = [];
+
+// Состояния заклинаний (кроме огненного шара — он в Fireball.js)
+export const spellStates = {
+    water: { cooldown: 0, maxCooldown: WATER_SPELL_COOLDOWN },
+    earth: { cooldown: 0, maxCooldown: EARTH_SPELL_COOLDOWN },
+    wind:  { cooldown: 0, maxCooldown: WIND_SPELL_COOLDOWN },
+};
 
 // Режим артиллерии замка
 export const artilleryMode = {
@@ -70,6 +80,9 @@ export const monkTotem = { active: false, ix: 0, iy: 0 };
 
 // Маркеры команд ПКМ: { ix, iy, timer, maxTime, type: 'gather'|'attack'|'move' }
 export const commandMarkers = [];
+
+// Активные тайлы с таймерами: { ix, iy, type, timer, maxTime, nextType }
+export const activeTiles = [];
 
 export let castle = null;
 
@@ -255,6 +268,14 @@ export function initWorld() {
 
     fireball.reset();
     firePatches.length = 0;
+    activeTiles.length = 0;
+
+    spellStates.water.cooldown = 0;
+    spellStates.earth.cooldown = 0;
+    spellStates.wind.cooldown = 0;
+
+    // Сброс всех тайлов к исходным типам
+    gameMap._tiles = {};
 
     manaPool.value = MANA_MAX;
 

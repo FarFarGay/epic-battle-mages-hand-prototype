@@ -6,10 +6,13 @@ import {
     ARTILLERY_GRAB_RADIUS, ARTILLERY_FLIGHT_TIME_K,
     ARTILLERY_MIN_FLIGHT, ARTILLERY_MAX_FLIGHT,
     MONK_TOTEM_MIN_DIST, MONK_TOTEM_MAX_DIST,
+    WATER_SPELL_RADIUS, EARTH_SPELL_RADIUS,
+    WIND_SPELL_RADIUS, WIND_KNOCKBACK_FORCE,
 } from './constants.js';
 import { MINION_H } from './sprites.js';
 import { screenToIso, worldToScreen, screenToCanvas } from './isometry.js';
-import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, monkTotem, commandMarkers } from './World.js';
+import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellStates, monkTotem, commandMarkers } from './World.js';
+import { applySpellToTile, applySpellInRadius } from './tileEffects.js';
 
 const RMB_DRAG_THRESHOLD = 5;
 
@@ -350,6 +353,50 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             return;
         }
 
+        // Каст мгновенного заклинания (water/earth/wind) — по позиции курсора
+        if (hand.grabbedSpell === 'water' || hand.grabbedSpell === 'earth' || hand.grabbedSpell === 'wind') {
+            const spellKey = hand.grabbedSpell;
+            const ss = spellStates[spellKey];
+            ss.cooldown = ss.maxCooldown;
+            const spellRadius = spellKey === 'water' ? WATER_SPELL_RADIUS
+                              : spellKey === 'earth' ? EARTH_SPELL_RADIUS
+                              : WIND_SPELL_RADIUS;
+            applySpellInRadius(spellKey, hand.isoX, hand.isoY, spellRadius);
+            triggerScreenShake(4);
+
+            // Ветер: отбросить юнитов в радиусе
+            if (spellKey === 'wind') {
+                const cx = hand.isoX, cy = hand.isoY;
+                const r2 = WIND_SPELL_RADIUS * WIND_SPELL_RADIUS;
+                for (const m of minions) {
+                    if (m.dead || m.pendingRemove || m.state === 'crumbled') continue;
+                    if (m.state === 'carried' || m.state === 'lifting') continue;
+                    const dx = m.ix - cx, dy = m.iy - cy;
+                    const d2 = dx * dx + dy * dy;
+                    if (d2 > r2 || d2 < 0.01) continue;
+                    const dist = Math.sqrt(d2);
+                    const nx = dx / dist, ny = dy / dist;
+                    const force = WIND_KNOCKBACK_FORCE * (1 - dist / WIND_SPELL_RADIUS);
+                    m.vx = nx * force;
+                    m.vy = ny * force;
+                    m.vz = force * 0.4;
+                    m.iz = 0.1;
+                    m.state = 'thrown';
+                    m.stateTime = 0;
+                    m.bounceCount = 0;
+                    m.windPushed = true;
+                }
+            }
+
+            hand.grabbedSpell = null;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+            const spellNames = { water: 'Водный поток!', earth: 'Каменная стена!', wind: 'Порыв ветра!' };
+            statusEl.textContent = spellNames[spellKey];
+            return;
+        }
+
         if (hand.grabbedItem !== null) {
             const item = items[hand.grabbedItem];
             const type = item.typeDef;
@@ -426,6 +473,17 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             selection.active = false;
             cam.zoom = 1.0;
             cam.targetZoom = 1.0;
+        }
+
+        // ── Дебаг: F1–F4 — применить стихию к тайлу под курсором ──
+        const debugSpells = { F1: 'fire', F2: 'water', F3: 'earth', F4: 'wind' };
+        if (debugSpells[e.key]) {
+            const iso = screenToIso(world.mouseX, world.mouseY, canvas);
+            const tix = Math.round(iso.x), tiy = Math.round(iso.y);
+            const result = applySpellToTile(debugSpells[e.key], tix, tiy);
+            statusEl.textContent = result
+                ? `[debug] ${debugSpells[e.key]} → (${tix},${tiy}) = ${result}`
+                : `[debug] ${debugSpells[e.key]} → (${tix},${tiy}) — нет эффекта`;
         }
     });
 }

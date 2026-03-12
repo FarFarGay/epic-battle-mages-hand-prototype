@@ -16,6 +16,14 @@ export const TILE_TYPES = {
     stone:   { even: '#3a3535', evenStr: '#2e2a2a', odd: '#353030', oddStr: '#2a2525' },
     village: { even: '#3a2a1a', evenStr: '#2e2010', odd: '#3e2e1e', oddStr: '#322414' },
     ice:     { even: '#2a3a4a', evenStr: '#203040', odd: '#2e3e4e', oddStr: '#243444' },
+    // — Новые тайлы (создаются заклинаниями) —
+    burning: { even: '#cc4400', evenStr: '#aa3300', odd: '#dd5500', oddStr: '#993300', animated: true },
+    scorched:{ even: '#2a1a0a', evenStr: '#1e1206', odd: '#261808', oddStr: '#1a1004' },
+    puddle:  { even: '#2244aa', evenStr: '#1a3388', odd: '#2a4ebb', oddStr: '#1e3a99', animated: true },
+    steam:   { even: '#aabbcc', evenStr: '#99aabb', odd: '#bbccdd', oddStr: '#aabbcc', animated: true },
+    swamp:   { even: '#2a3a1a', evenStr: '#1e2e10', odd: '#243416', oddStr: '#1a280c' },
+    wall:    { even: '#667788', evenStr: '#556677', odd: '#5a6a7a', oddStr: '#4a5a6a' },
+    rubble:  { even: '#8899aa', evenStr: '#778899', odd: '#7a8a9a', oddStr: '#6a7a8a' },
 };
 
 // ============================================================
@@ -241,6 +249,28 @@ export class GameMap {
                     // Посещённые, но вне обзора — фиксированный тёмный цвет
                     const fill   = isEven ? '#181828' : '#141420';
                     const stroke = isEven ? '#121220' : '#0e0e1c';
+                    drawIsoDiamond(sx, sy, fill, stroke);
+                } else if (colors.animated && tileType === 'burning') {
+                    // Мерцающий огненный тайл
+                    const t = performance.now() * 0.005 + ix * 3.7 + iy * 2.3;
+                    const flicker = Math.sin(t) * 0.5 + 0.5; // 0..1
+                    const r1 = 0xcc + Math.round((0xff - 0xcc) * flicker);
+                    const g1 = 0x33 + Math.round((0x66 - 0x33) * flicker);
+                    const fill = `rgb(${r1},${g1},0)`;
+                    const stroke = `rgb(${r1 - 0x22},${Math.max(0, g1 - 0x11)},0)`;
+                    drawIsoDiamond(sx, sy, fill, stroke);
+                } else if (colors.animated && tileType === 'puddle') {
+                    // Лёгкая волна на луже
+                    const t = performance.now() * 0.002 + ix * 1.1 + iy * 0.7;
+                    const wave = Math.sin(t) * 0.15 + 0.85;
+                    const b = Math.round(0xaa * wave);
+                    const fill = `rgb(34,${Math.round(68 * wave)},${b})`;
+                    const stroke = `rgb(26,${Math.round(51 * wave)},${Math.round(b * 0.8)})`;
+                    drawIsoDiamond(sx, sy, fill, stroke);
+                } else if (colors.animated && tileType === 'steam') {
+                    // Полупрозрачный пар
+                    const fill   = isEven ? colors.even   : colors.odd;
+                    const stroke = isEven ? colors.evenStr : colors.oddStr;
                     drawIsoDiamond(sx, sy, fill, stroke);
                 } else {
                     // VISIBLE — нормальный цвет тайла
