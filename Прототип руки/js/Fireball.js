@@ -3,27 +3,12 @@
 // ============================================================
 import { GameObject } from './GameObject.js';
 import {
-    MAX_BOUNCES, PIXEL_SCALE, HEIGHT_TO_SCREEN, CAMERA_OFFSET_Y,
+    MAX_BOUNCES, PIXEL_SCALE, HEIGHT_TO_SCREEN,
     FIREBALL_MASS, FIREBALL_BOUNCINESS, FIREBALL_FRICTION, FIREBALL_COOLDOWN,
 } from './constants.js';
 import { FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H } from './sprites.js';
-import { ctx, canvas, drawPixelArt, drawItemShadow } from './renderer.js';
-import { isoToScreen, camera } from './isometry.js';
-
-function worldToScreen(wx, wy) {
-    const iso = isoToScreen(wx, wy);
-    return {
-        x: iso.x + canvas.width / 2,
-        y: iso.y + canvas.height / 2 - CAMERA_OFFSET_Y,
-    };
-}
-
-function screenToCanvas(sx, sy) {
-    return {
-        x: (sx - canvas.width / 2 + camera.x) / camera.zoom + canvas.width / 2,
-        y: (sy - canvas.height / 2 + camera.y) / camera.zoom + canvas.height / 2,
-    };
-}
+import { ctx, drawPixelArt, drawItemShadow } from './renderer.js';
+import { worldToScreen, screenToCanvas } from './isometry.js';
 
 export class Fireball extends GameObject {
     constructor() {

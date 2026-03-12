@@ -4,7 +4,7 @@
 import {
     PIXEL_SCALE, HEIGHT_TO_SCREEN, MINION_SPEED, MINION_MAX_HP,
     FALL_DMG_MED_VZ, FALL_DMG_HI_VZ, FALL_DMG_MED, FALL_DMG_HI,
-    CAMERA_OFFSET_Y, SKELETON_RISE_DELAY, SKELETON_SPEED_FACTOR, SKELETON_MAX_HP,
+    SKELETON_RISE_DELAY, SKELETON_SPEED_FACTOR, SKELETON_MAX_HP,
     SKELETON_AGGRO_RANGE, SKELETON_ATTACK_RANGE, SKELETON_ATTACK_DAMAGE, SKELETON_ATTACK_CD,
     GOBLIN_ATTACK_DAMAGE, GOBLIN_ATTACK_CD, GOBLIN_ATTACK_RANGE,
     GOBLIN_AGGRO_RANGE, GOBLIN_RALLY_RANGE,
@@ -21,23 +21,13 @@ import {
     SCOUT_HOOD_PIXELS, SCOUT_HOOD_W,
 } from './sprites.js';
 import { GameObject } from './GameObject.js';
-import { canvas, ctx, drawPixelArt, drawItemShadow, drawHighlight } from './renderer.js';
-import { camera, isoToScreen } from './isometry.js';
+import { ctx, drawPixelArt, drawItemShadow, drawHighlight } from './renderer.js';
+import { worldToScreen, screenToCanvas } from './isometry.js';
 
-function worldToScreen(wx, wy) {
-    const iso = isoToScreen(wx, wy);
-    return {
-        x: iso.x + canvas.width / 2,
-        y: iso.y + canvas.height / 2 - CAMERA_OFFSET_Y
-    };
-}
-
-function screenToCanvas(sx, sy) {
-    return {
-        x: (sx - canvas.width / 2 + camera.x) / camera.zoom + canvas.width / 2,
-        y: (sy - canvas.height / 2 + camera.y) / camera.zoom + canvas.height / 2,
-    };
-}
+// Состояния в которых миньон находится в физическом режиме (не игровая логика)
+const PHYSICS_STATES = new Set(['lifting', 'carried', 'thrown', 'bouncing', 'sliding']);
+// Состояния в которых нельзя входить в бой
+const COMBAT_BLOCKED_STATES = new Set(['carried', 'lifting', 'thrown', 'bouncing', 'sliding', 'settling', 'dead', 'crumbled', 'skeleton']);
 
 // Зоны патруля (iso-тайлы от замка в центре 0,0)
 const FREE_PATROL_RADIUS = 10;  // свободный гоблин: 21×21 тайл вокруг замка
@@ -104,8 +94,7 @@ export class Minion extends GameObject {
     enterCombat(enemy) {
         if (this.isUndead || this.dead) return;
         if (this.state === 'war' || this.state === 'fighting') return;
-        const BLOCKED = ['carried', 'lifting', 'thrown', 'bouncing', 'sliding', 'settling', 'dead', 'crumbled', 'skeleton'];
-        if (BLOCKED.includes(this.state)) return;
+        if (COMBAT_BLOCKED_STATES.has(this.state)) return;
 
         // Сохраняем состояние
         this.savedState = this.state;
@@ -178,15 +167,15 @@ export class Minion extends GameObject {
     _tryAggro(allMinions) {
         if (!allMinions || this.isUndead || this.dead) return false;
         const aggroRange = this.goblinClass === 'warrior' ? WARRIOR_AGGRO_RANGE : GOBLIN_AGGRO_RANGE;
-        let nearestEnemy = null, nearestEnemyDist = aggroRange;
+        let nearestEnemy = null, nearestEnemyDistSq = aggroRange * aggroRange;
         for (const m of allMinions) {
             if (m === this || !m.isUndead) continue;
             if (m.state !== 'skeleton') continue;
             const ddx = m.ix - this.ix;
             const ddy = m.iy - this.iy;
-            const d = Math.sqrt(ddx * ddx + ddy * ddy);
-            if (d < nearestEnemyDist) {
-                nearestEnemyDist = d;
+            const dSq = ddx * ddx + ddy * ddy;
+            if (dSq < nearestEnemyDistSq) {
+                nearestEnemyDistSq = dSq;
                 nearestEnemy = m;
             }
         }
@@ -203,7 +192,7 @@ export class Minion extends GameObject {
     // zoneOnly=true — искать только в зоне 42×42 (±GATHER_ZONE_RADIUS) вокруг замка.
     findNearestResource(items, zoneOnly = false, allMinions = null) {
         let nearest = null;
-        let nearestDist = Infinity;
+        let nearestDistSq = Infinity;
         for (const item of items) {
             if (!item.typeDef.gatherable) continue;
             if (item.state === 'carried' || item.state === 'lifting' || item.state === 'goblin_carried') continue;
@@ -222,9 +211,9 @@ export class Minion extends GameObject {
             }
             const dx = item.ix - this.ix;
             const dy = item.iy - this.iy;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < nearestDist) {
-                nearestDist = dist;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < nearestDistSq) {
+                nearestDistSq = distSq;
                 nearest = item;
             }
         }
@@ -366,15 +355,14 @@ export class Minion extends GameObject {
     update(dt, hand, triggerShake, items, castle, allMinions) {
         // stateTime инкрементируется здесь только для нефизических состояний;
         // для физических (lifting/carried/thrown/bouncing/sliding) — в updatePhysics
-        const physicsStates = ['lifting', 'carried', 'thrown', 'bouncing', 'sliding'];
-        if (!physicsStates.includes(this.state)) {
+        if (!PHYSICS_STATES.has(this.state)) {
             this.stateTime += dt;
         }
         if (this.damageWobble > 0) this.damageWobble = Math.max(0, this.damageWobble - dt);
 
         // Разведчик стареет только в активных (не физических) состояниях.
         // В 'carried'/'lifting' возраст не растёт — чтобы не умирать в руке.
-        if (this.goblinClass === 'scout' && !this.dead && !this.isUndead && !physicsStates.includes(this.state)) {
+        if (this.goblinClass === 'scout' && !this.dead && !this.isUndead && !PHYSICS_STATES.has(this.state)) {
             this.scoutAge += dt;
             if (this.scoutAge >= SCOUT_LIFESPAN) {
                 this.dropCarriedItem(); // не оставлять ресурс висеть в воздухе
@@ -699,7 +687,8 @@ export class Minion extends GameObject {
                 if (this.attackCooldown > 0) this.attackCooldown -= dt;
 
                 // Ищем ближайшего живого гоблина (не скелета, не мёртвого, не в руке)
-                let prey = null, preyDist = SKELETON_AGGRO_RANGE;
+                let prey = null, preyDistSq = SKELETON_AGGRO_RANGE * SKELETON_AGGRO_RANGE;
+                let preyDist = SKELETON_AGGRO_RANGE;
                 if (allMinions) {
                     for (const m of allMinions) {
                         if (m === this) continue;
@@ -707,9 +696,10 @@ export class Minion extends GameObject {
                         if (m.state === 'carried' || m.state === 'lifting') continue;
                         const ddx = m.ix - this.ix;
                         const ddy = m.iy - this.iy;
-                        const d = Math.sqrt(ddx * ddx + ddy * ddy);
-                        if (d < preyDist) {
-                            preyDist = d;
+                        const dSq = ddx * ddx + ddy * ddy;
+                        if (dSq < preyDistSq) {
+                            preyDistSq = dSq;
+                            preyDist = Math.sqrt(dSq);
                             prey = m;
                         }
                     }

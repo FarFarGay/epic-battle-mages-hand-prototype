@@ -2,6 +2,7 @@
 //  ИЗОМЕТРИЧЕСКАЯ ПРОЕКЦИЯ
 // ============================================================
 import { TILE_W, TILE_H, CAMERA_OFFSET_Y } from './constants.js';
+import { canvas } from './renderer.js';
 
 export const camera = {
     zoom: 1.0,
@@ -29,4 +30,21 @@ export function screenToIso(sx, sy, canvas) {
 
 export function getDepth(isoX, isoY) {
     return isoX + isoY;
+}
+
+// Изо-координаты → canvas-пиксели (с учётом размера canvas, без зума/пана)
+export function worldToScreen(wx, wy) {
+    const iso = isoToScreen(wx, wy);
+    return {
+        x: iso.x + canvas.width / 2,
+        y: iso.y + canvas.height / 2 - CAMERA_OFFSET_Y,
+    };
+}
+
+// Экранные координаты → canvas-координаты (с учётом зума и пана камеры)
+export function screenToCanvas(sx, sy) {
+    return {
+        x: (sx - canvas.width / 2 + camera.x) / camera.zoom + canvas.width / 2,
+        y: (sy - canvas.height / 2 + camera.y) / camera.zoom + canvas.height / 2,
+    };
 }

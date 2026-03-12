@@ -2,29 +2,13 @@
 //  ВВОД — все обработчики событий
 // ============================================================
 import {
-    ITEM_TYPES, PIXEL_SCALE, CAMERA_OFFSET_Y, GRAVITY,
+    ITEM_TYPES, PIXEL_SCALE, GRAVITY,
     ARTILLERY_GRAB_RADIUS, ARTILLERY_FLIGHT_TIME_K,
     ARTILLERY_MIN_FLIGHT, ARTILLERY_MAX_FLIGHT,
 } from './constants.js';
 import { MINION_H } from './sprites.js';
-import { isoToScreen, screenToIso } from './isometry.js';
-import { camera } from './isometry.js';
+import { screenToIso, worldToScreen, screenToCanvas } from './isometry.js';
 import { restartMap, flag, items, minions, castle, artilleryMode, triggerScreenShake, fireball } from './World.js';
-
-function worldToScreen(wx, wy, canvas) {
-    const iso = isoToScreen(wx, wy);
-    return {
-        x: iso.x + canvas.width / 2,
-        y: iso.y + canvas.height / 2 - CAMERA_OFFSET_Y
-    };
-}
-
-function screenToCanvas(sx, sy, canvas) {
-    return {
-        x: (sx - canvas.width / 2 + camera.x) / camera.zoom + canvas.width / 2,
-        y: (sy - canvas.height / 2 + camera.y) / camera.zoom + canvas.height / 2,
-    };
-}
 
 export function initInput(canvas, hand, world, cam, statusEl) {
     // world = { items, minions, flag, screenShake, selection, flagEffect, hoveredItem, hoveredMinion }
@@ -174,7 +158,6 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             const item = items[world.hoveredItem];
             if (item.state !== 'carried' && item.state !== 'lifting') {
                 hand.grabbedItem = world.hoveredItem;
-                item.grabbed = true;
                 item.state = 'lifting';
                 item.stateTime = 0;
                 item.liftProgress = 0;
@@ -263,7 +246,6 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             const item = items[hand.grabbedItem];
             const type = item.typeDef;
 
-            item.grabbed = false;
             item.iz = 0;
 
             const throwVel = hand.calculateThrowVelocity(type);
@@ -311,13 +293,11 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             if (selW > 5 || selH > 5) {
                 const tl = screenToCanvas(
                     Math.min(selection.startX, selection.endX),
-                    Math.min(selection.startY, selection.endY),
-                    canvas
+                    Math.min(selection.startY, selection.endY)
                 );
                 const br = screenToCanvas(
                     Math.max(selection.startX, selection.endX),
-                    Math.max(selection.startY, selection.endY),
-                    canvas
+                    Math.max(selection.startY, selection.endY)
                 );
                 const SELECTABLE = ['free', 'listening', 'moving', 'waiting', 'busy', 'returning', 'war', 'fighting', 'guarding', 'warrior_returning'];
                 hand.selectedMinions = [];
@@ -325,7 +305,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                     const m = minions[i];
                     if (!SELECTABLE.includes(m.state)) continue;
                     if (m.isUndead) continue;             // скелеты не выделяются лассо
-                    const s = worldToScreen(m.ix, m.iy, canvas);
+                    const s = worldToScreen(m.ix, m.iy);
                     const mx = s.x;
                     const my = s.y - (MINION_H * PIXEL_SCALE) / 2;
                     if (mx >= tl.x && mx <= br.x && my >= tl.y && my <= br.y) {

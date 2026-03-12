@@ -2,7 +2,7 @@
 //  MAIN — точка входа, игровой цикл
 // ============================================================
 import {
-    ITEM_TYPES, PIXEL_SCALE, HEIGHT_TO_SCREEN, CAMERA_OFFSET_Y, GRAVITY, TILE_W, TILE_H,
+    ITEM_TYPES, PIXEL_SCALE, HEIGHT_TO_SCREEN, GRAVITY, TILE_W, TILE_H,
     ARTILLERY_BLAST_RADIUS, ARTILLERY_DAMAGE, ARTILLERY_RETURN_DELAY,
     ARTILLERY_GRAB_RADIUS,
     WARRIOR_UPGRADE_INTERVAL, WARRIOR_IRON_COST,
@@ -13,28 +13,10 @@ import {
 import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
-import { camera, isoToScreen, screenToIso, getDepth } from './isometry.js';
+import { camera, isoToScreen, screenToIso, getDepth, worldToScreen, screenToCanvas } from './isometry.js';
 import { Hand } from './Hand.js';
 import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, firePatches } from './World.js';
 import { initInput } from './input.js';
-
-// ============================================================
-//  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (worldToScreen, screenToCanvas)
-// ============================================================
-function worldToScreen(wx, wy) {
-    const iso = isoToScreen(wx, wy);
-    return {
-        x: iso.x + canvas.width / 2,
-        y: iso.y + canvas.height / 2 - CAMERA_OFFSET_Y
-    };
-}
-
-function screenToCanvas(sx, sy) {
-    return {
-        x: (sx - canvas.width / 2 + camera.x) / camera.zoom + canvas.width / 2,
-        y: (sy - canvas.height / 2 + camera.y) / camera.zoom + canvas.height / 2,
-    };
-}
 
 // ============================================================
 //  СОСТОЯНИЕ ВВОДА / UI
@@ -544,7 +526,6 @@ function update(dt) {
     if (gameMap.getFog(Math.round(hand.isoX), Math.round(hand.isoY)) !== FOG.VISIBLE) {
         if (hand.grabbedItem !== null) {
             const item = items[hand.grabbedItem];
-            item.grabbed = false;
             item.vx = 0; item.vy = 0; item.vz = 0;
             item.state = 'thrown';
             item.stateTime = 0;

@@ -3,25 +3,8 @@
 // ============================================================
 import { ITEM_TYPES, PIXEL_SCALE, HEIGHT_TO_SCREEN } from './constants.js';
 import { GameObject } from './GameObject.js';
-import { canvas, ctx, drawPixelArt, drawItemShadow, drawHighlight } from './renderer.js';
-import { camera } from './isometry.js';
-import { isoToScreen } from './isometry.js';
-import { CAMERA_OFFSET_Y } from './constants.js';
-
-function worldToScreen(wx, wy) {
-    const iso = isoToScreen(wx, wy);
-    return {
-        x: iso.x + canvas.width / 2,
-        y: iso.y + canvas.height / 2 - CAMERA_OFFSET_Y
-    };
-}
-
-function screenToCanvas(sx, sy) {
-    return {
-        x: (sx - canvas.width / 2 + camera.x) / camera.zoom + canvas.width / 2,
-        y: (sy - canvas.height / 2 + camera.y) / camera.zoom + canvas.height / 2,
-    };
-}
+import { drawPixelArt, drawItemShadow, drawHighlight } from './renderer.js';
+import { worldToScreen, screenToCanvas } from './isometry.js';
 
 export class Item extends GameObject {
     constructor(typeIndex, ix, iy) {
@@ -29,7 +12,6 @@ export class Item extends GameObject {
         super(ix, iy, typeDef.mass, typeDef.bounciness, typeDef.friction);
         this.typeIndex = typeIndex;
         this.radius = typeDef.radius; // для коллизий с замком
-        this.grabbed = false;
         this.state = 'idle';
     }
 
@@ -38,8 +20,6 @@ export class Item extends GameObject {
     }
 
     update(dt, hand, triggerShake) {
-        const type = this.typeDef;
-
         if (this.state === 'idle') {
             this.iz = 0;
             this.vx = 0;
@@ -66,7 +46,6 @@ export class Item extends GameObject {
         this.state = 'idle';
         this.stateTime = 0;
         this.bounceCount = 0;
-        this.grabbed = false;
     }
 
     draw(index, hand, hoveredItem) {

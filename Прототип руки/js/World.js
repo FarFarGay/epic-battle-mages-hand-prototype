@@ -103,7 +103,7 @@ export function updateScreenShake(dt) {
     if (screenShake.intensity > 0.1) {
         screenShake.offsetX = (Math.random() - 0.5) * screenShake.intensity * 2;
         screenShake.offsetY = (Math.random() - 0.5) * screenShake.intensity * 2;
-        screenShake.intensity *= Math.pow(0.05, dt);
+        screenShake.intensity *= Math.exp(-3 * dt); // эквивалентно pow(0.05, dt), но быстрее
     } else {
         screenShake.intensity = 0;
         screenShake.offsetX = 0;
@@ -195,23 +195,7 @@ export function resolveCastleCollisions() {
 //  РЕСТАРТ КАРТЫ
 // ============================================================
 export function restartMap(hand, statusEl) {
-    // Сброс предметов на начальные позиции
-    items.length = 0;
-    for (const pos of gameMap.initialItems) {
-        items.push(new Item(pos.type, pos.ix, pos.iy));
-    }
-
-    // Сброс миньонов
-    minions.length = 0;
-    for (const pos of gameMap.initialMinions) {
-        minions.push(new Minion(pos.ix, pos.iy));
-    }
-
-    // Сброс флага
-    flag.state = 'docked';
-    flag.ix = 0;
-    flag.iy = 0;
-    flag.iz = 0;
+    initWorld();
 
     // Сброс руки
     hand.grabbedItem = null;
@@ -220,38 +204,10 @@ export function restartMap(hand, statusEl) {
     hand.state = 'open';
     hand.animProgress = 0;
     hand.velocityHistory = [];
-
-    // Сброс тряски
-    screenShake.intensity = 0;
-    screenShake.offsetX = 0;
-    screenShake.offsetY = 0;
-
-    // Сброс крови
-    bloodParticles.length = 0;
-    bloodPuddles.length = 0;
-
-    // Сброс счётчиков ресурсов
-    castleResources.length = 0;
-    for (let i = 0; i < ITEM_TYPES.length; i++) castleResources.push(0);
-
-    // Сброс shake-детектора, выделения
     hand.shakeHistory = [];
     hand.prevScreenXForShake = 0;
     hand.selectedMinions = [];
     hand.grabbedSpell = null;
-
-    castle = new Castle(gameMap.castlePos.ix, gameMap.castlePos.iy);
-
-    // Сброс стены воинов
-    resetWarriorWall();
-
-    // Сброс артиллерии
-    artilleryMode.active = false;
-    artilleryMode.state = 'aiming';
-    artilleryMode.explosion.active = false;
-
-    fireball.reset();
-    firePatches.length = 0;
 
     statusEl.textContent = 'Карта перезапущена!';
 }
@@ -282,6 +238,10 @@ export function initWorld() {
     flag.iy = 0;
     flag.iz = 0;
 
+    screenShake.intensity = 0;
+    screenShake.offsetX = 0;
+    screenShake.offsetY = 0;
+
     bloodParticles.length = 0;
     bloodPuddles.length = 0;
 
@@ -290,6 +250,11 @@ export function initWorld() {
 
     castle = new Castle(gameMap.castlePos.ix, gameMap.castlePos.iy);
     resetWarriorWall();
+
+    artilleryMode.active = false;
+    artilleryMode.state = 'aiming';
+    artilleryMode.explosion.active = false;
+
     fireball.reset();
     firePatches.length = 0;
 }
