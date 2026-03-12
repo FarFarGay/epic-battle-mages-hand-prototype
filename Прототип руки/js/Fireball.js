@@ -11,7 +11,7 @@ import { ctx, drawPixelArt, drawItemShadow } from './renderer.js';
 import { worldToScreen, screenToCanvas } from './isometry.js';
 
 const TRAIL_MAX    = 20;
-const TRAIL_COLOR  = '#ff6600';
+const TRAIL_COLOR  = '#ffdd44'; // жёлтый — контрастнее на фоне оранжевого свечения
 
 export class Fireball extends GameObject {
     constructor() {
@@ -114,12 +114,12 @@ export class Fireball extends GameObject {
                 const ts = worldToScreen(t.ix, t.iy);
                 const frac = (i + 1) / n;
                 ctx.save();
-                ctx.globalAlpha = frac * 0.55;
+                ctx.globalAlpha = frac * 0.75;
                 ctx.fillStyle = TRAIL_COLOR;
                 ctx.shadowColor = TRAIL_COLOR;
-                ctx.shadowBlur = 10;
+                ctx.shadowBlur = 14;
                 ctx.beginPath();
-                ctx.arc(ts.x, ts.y - t.iz * HEIGHT_TO_SCREEN, frac * 5, 0, Math.PI * 2);
+                ctx.arc(ts.x, ts.y - t.iz * HEIGHT_TO_SCREEN, frac * 7, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.restore();
             }
