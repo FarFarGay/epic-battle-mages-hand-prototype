@@ -13,12 +13,12 @@ import {
     MONK_MAX_COUNT, MONK_MANA_REGEN, MONK_UPGRADE_INTERVAL, MONK_FOOD_COST,
     MONK_TOTEM_MIN_DIST, MONK_TOTEM_MAX_DIST,
 } from './constants.js';
-import { FLAG_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H, MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H, MONK_ROBE_PIXELS, MONK_ROBE_W, MONK_TOTEM_PIXELS, MONK_TOTEM_W, MONK_TOTEM_H } from './sprites.js';
+import { MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H, MONK_ROBE_PIXELS, MONK_ROBE_W, MONK_TOTEM_PIXELS, MONK_TOTEM_W, MONK_TOTEM_H } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
-import { camera, isoToScreen, screenToIso, getDepth, worldToScreen, screenToCanvas } from './isometry.js';
+import { camera, isoToScreen, screenToIso, getDepth, worldToScreen } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, flag, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, firePatches, manaPool, monkTotem } from './World.js';
+import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, firePatches, manaPool, monkTotem, commandMarkers } from './World.js';
 import { initInput } from './input.js';
 
 // ============================================================
@@ -31,7 +31,8 @@ let mouseY = canvas.height / 2;
 let mouseDown = false;
 let hoveredItem = null;
 let hoveredMinion = null;
-let hoveredFlag = false;
+let selectionAge = 0;
+let prevSelectionLength = 0;
 
 // Таймер апгрейда обычных гоблинов в воинов
 let warriorUpgradeTimer = WARRIOR_UPGRADE_INTERVAL * Math.random(); // стагрированный старт
@@ -129,101 +130,10 @@ const selection = {
     endX: 0, endY: 0,
 };
 
-const flagEffect = {
-    active: false,
-    originX: 0, originY: 0,
-    t: 0,
-    duration: 0.5,
-    particles: [],
-};
-
 // ============================================================
 //  РУКА
 // ============================================================
 const hand = new Hand();
-
-// ============================================================
-//  ФЛАГ — рисование
-// ============================================================
-function drawFlagAt(sx, sy, isHovered) {
-    if (isHovered) {
-        ctx.save();
-        ctx.globalAlpha = 0.3 + 0.15 * Math.sin(performance.now() / 300);
-        ctx.strokeStyle = '#ffff44';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(sx - 4, sy - 4, SPR_FLAG_W * PIXEL_SCALE + 8, SPR_FLAG_H * PIXEL_SCALE + 8);
-        ctx.restore();
-    }
-    drawPixelArt(sx, sy, FLAG_PIXELS, PIXEL_SCALE);
-}
-
-function drawFlagInWorld(isHovered) {
-    const s = worldToScreen(flag.ix, flag.iy);
-    drawItemShadow(s.x, s.y, SPR_FLAG_W, SPR_FLAG_H, flag.iz);
-    const heightOffset = flag.iz * HEIGHT_TO_SCREEN;
-    const ox = s.x - (SPR_FLAG_W * PIXEL_SCALE) / 2;
-    const oy = s.y - (SPR_FLAG_H * PIXEL_SCALE) - 4 - heightOffset;
-    drawFlagAt(ox, oy, isHovered);
-}
-
-// ============================================================
-//  ВСТРЯХИВАНИЕ ФЛАГА
-// ============================================================
-function spawnFlagParticles(originX, originY) {
-    flagEffect.active = true;
-    flagEffect.originX = originX;
-    flagEffect.originY = originY;
-    flagEffect.t = 0;
-    flagEffect.particles = FLAG_PIXELS.map(p => ({
-        x: p[0] * PIXEL_SCALE,
-        y: p[1] * PIXEL_SCALE,
-        vx: (Math.random() - 0.5) * 80,
-        vy: (Math.random() - 0.5) * 80 - 30,
-        color: p[2],
-    }));
-}
-
-// Эффект рассеивания флага в руке (при встряхивании или выдаче задачи с рукой)
-function triggerFlagEffectAtHand() {
-    const cp = screenToCanvas(hand.screenX, hand.screenY);
-    spawnFlagParticles(
-        cp.x - (SPR_FLAG_W * PIXEL_SCALE) / 2,
-        cp.y - (SPR_FLAG_H * PIXEL_SCALE) / 2 - 8
-    );
-}
-
-// Эффект рассеивания флага на поле (когда флаг стоит на земле)
-function triggerFlagEffectAtWorld(ix, iy) {
-    const s = worldToScreen(ix, iy);
-    spawnFlagParticles(
-        s.x - (SPR_FLAG_W * PIXEL_SCALE) / 2,
-        s.y - (SPR_FLAG_H * PIXEL_SCALE) - 4
-    );
-}
-
-function dismissFlag() {
-    triggerFlagEffectAtHand();
-
-    flag.state = 'docked';
-    hand.grabbedFlag = false;
-    hand.state = 'opening';
-    hand.animProgress = 0;
-    hand.shakeHistory = [];
-    hand.selectedMinions = [];
-
-    for (const m of minions) {
-        if (m.goblinClass === 'warrior' && m.state === 'listening') {
-            m.state = 'warrior_returning';
-            m.stateTime = 0;
-        } else if (m.state === 'listening' || m.state === 'moving' || m.state === 'waiting') {
-            m.pickNewTarget();
-            m.state = 'free';
-            m.stateTime = 0;
-        }
-    }
-
-    statusEl.textContent = 'Флаг рассеян!';
-}
 
 // ============================================================
 //  ИНИЦИАЛИЗАЦИЯ
@@ -238,18 +148,12 @@ initWorld();
 const world = {
     items,
     minions,
-    flag,
     screenShake,
     selection,
-    flagEffect,
-    triggerFlagEffectAtWorld,
-    triggerFlagEffectAtHand,
     get hoveredItem() { return hoveredItem; },
     set hoveredItem(v) { hoveredItem = v; },
     get hoveredMinion() { return hoveredMinion; },
     set hoveredMinion(v) { hoveredMinion = v; },
-    get hoveredFlag() { return hoveredFlag; },
-    set hoveredFlag(v) { hoveredFlag = v; },
     get mouseX() { return mouseX; },
     set mouseX(v) { mouseX = v; },
     get mouseY() { return mouseY; },
@@ -265,8 +169,6 @@ const scoutHudRect   = { x: 0, y: 0, w: 0, h: 0 };
 const monkHudRect    = { x: 0, y: 0, w: 0, h: 0 };
 const hudPanelRect   = { x: 0, y: 0, w: 0, h: 0 }; // весь правый HUD-панель (блокирует edge scroll)
 const spellPanelRect = { x: 0, y: 0, w: 0, h: 0 }; // левая панель заклинаний
-const selectionBarRects = []; // иконки выделенных юнитов внизу экрана; очищается каждый кадр
-const selectionBarPanel = { x: 0, y: 0, w: 0, h: 0 }; // вся панель бара; блокирует edge scroll
 
 // Производство воинов: active = автоматически апгрейдить гоблинов при наличии железа
 const warriorProduction = { active: false };
@@ -280,32 +182,6 @@ const monkProduction = { active: false };
 // Клик по кнопкам HUD — перехватываем ДО input.js (capture phase)
 canvas.addEventListener('mousedown', (e) => {
     const mx = e.clientX, my = e.clientY;
-
-    // Панель выделенных юнитов (нижний центр)
-    for (const r of selectionBarRects) {
-        if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) {
-            const m = minions[r.minionIdx];
-            if (m.goblinClass === 'warrior') {
-                m.state = 'warrior_returning';
-                m.stateTime = 0;
-            } else {
-                m.pickNewTarget();
-                m.state = 'free';
-                m.stateTime = 0;
-            }
-            hand.selectedMinions = hand.selectedMinions.filter(i => i !== r.minionIdx);
-            if (hand.selectedMinions.length === 0) {
-                flag.state = 'docked';
-                hand.grabbedFlag = false;
-                hand.state = 'opening';
-                hand.animProgress = 0;
-                hand.velocityHistory = [];
-                statusEl.textContent = 'Выделение снято';
-            }
-            e.stopImmediatePropagation();
-            return;
-        }
-    }
 
     if (
         mx >= goblinHudRect.x && mx <= goblinHudRect.x + goblinHudRect.w &&
@@ -347,7 +223,7 @@ canvas.addEventListener('mousedown', (e) => {
         fireball.state === 'ready' &&
         manaPool.value >= MANA_FIREBALL_COST &&
         hand.grabbedItem === null && hand.grabbedMinion === null &&
-        !hand.grabbedFlag && !artilleryMode.active
+        !artilleryMode.active
     ) {
         manaPool.value -= MANA_FIREBALL_COST;
         fireball.ix = hand.isoX;
@@ -603,27 +479,6 @@ function update(dt) {
         }
     }
 
-    // Детектор встряхивания флага
-    if (hand.grabbedFlag) {
-        hand.checkFlagShake(dismissFlag);
-    } else {
-        hand.prevScreenXForShake = hand.screenX;
-    }
-
-    // Обновление эффекта растворения флага
-    if (flagEffect.active) {
-        flagEffect.t += dt;
-        if (flagEffect.t >= flagEffect.duration) {
-            flagEffect.active = false;
-        } else {
-            for (const p of flagEffect.particles) {
-                p.x += p.vx * dt;
-                p.y += p.vy * dt;
-                p.vy += 120 * dt; // гравитация частиц
-            }
-        }
-    }
-
     // Обновляем физику всех предметов
     for (let i = 0; i < items.length; i++) {
         items[i].update(dt, hand, triggerScreenShake);
@@ -740,19 +595,23 @@ function update(dt) {
     }
 
     // Очищаем мёртвых/нежить из выделенных миньонов (могли умереть в этом кадре)
-    if (hand.grabbedFlag && hand.selectedMinions.length > 0) {
+    if (hand.selectedMinions.length > 0) {
         hand.selectedMinions = hand.selectedMinions.filter(idx => {
             const m = minions[idx];
             return m && !m.dead && !m.isUndead;
         });
-        if (hand.selectedMinions.length === 0) {
-            flag.state = 'docked';
-            hand.grabbedFlag = false;
-            hand.state = 'opening';
-            hand.animProgress = 0;
-            hand.velocityHistory = [];
+    }
+
+    // Таймер автосброса выделения (5 сек)
+    if (hand.selectedMinions.length !== prevSelectionLength) {
+        selectionAge = 0;
+    } else if (hand.selectedMinions.length > 0) {
+        selectionAge += dt;
+        if (selectionAge >= 5) {
+            hand.selectedMinions = [];
         }
     }
+    prevSelectionLength = hand.selectedMinions.length;
 
     // Учитываем доставленные в замок ресурсы
     for (const minion of minions) {
@@ -762,13 +621,12 @@ function update(dt) {
         }
     }
 
-    // Проверяем наведение на предметы, миньонов и флаг
+    // Проверяем наведение на предметы и миньонов
     hoveredItem = null;
     hoveredMinion = null;
-    hoveredFlag = false;
     if (artilleryMode.active) {
         // В режиме артиллерии наведение отключено
-    } else if (hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag) {
+    } else if (hand.grabbedItem === null && hand.grabbedMinion === null) {
         let minDist = 1.5;
         for (let i = 0; i < items.length; i++) {
             const it = items[i];
@@ -787,7 +645,7 @@ function update(dt) {
         for (let i = 0; i < minions.length; i++) {
             const m = minions[i];
             if (m.state === 'carried' || m.state === 'lifting') continue;
-            if (m.state === 'dead' || m.state === 'crumbled') continue; // труп/надгробие нельзя взять
+            if (m.state === 'dead' || m.state === 'crumbled') continue;
             if (m.iz > 2.0) continue;
             if (gameMap.getFog(Math.round(m.ix), Math.round(m.iy)) !== FOG.VISIBLE) continue;
             const dx = hand.isoX - m.ix;
@@ -797,29 +655,6 @@ function update(dt) {
                 minDist = dist;
                 hoveredItem = null;
                 hoveredMinion = i;
-            }
-        }
-        // Флаг на земле — наведение для подбора
-        if (hoveredItem === null && hoveredMinion === null && flag.state === 'placed') {
-            const dx = hand.isoX - flag.ix;
-            const dy = hand.isoY - flag.iy;
-            if (Math.sqrt(dx * dx + dy * dy) < 1.2) hoveredFlag = true;
-        }
-    } else if (hand.grabbedFlag) {
-        // С флагом в руке — подсвечиваем ближайший видимый добываемый ресурс
-        let minDist = 1.5;
-        for (let i = 0; i < items.length; i++) {
-            const it = items[i];
-            if (!it.typeDef.gatherable) continue;
-            if (it.state === 'carried' || it.state === 'lifting' || it.state === 'goblin_carried') continue;
-            if (it.iz > 2.0) continue;
-            if (gameMap.getFog(Math.round(it.ix), Math.round(it.iy)) !== FOG.VISIBLE) continue;
-            const dx = hand.isoX - it.ix;
-            const dy = hand.isoY - it.iy;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < minDist) {
-                minDist = dist;
-                hoveredItem = i;
             }
         }
     }
@@ -975,6 +810,14 @@ function update(dt) {
     }
     gameMap.tickFog(fogSources);
 
+    // Обновляем маркеры команд (таймер, удаляем истёкшие)
+    for (let i = commandMarkers.length - 1; i >= 0; i--) {
+        commandMarkers[i].timer += dt;
+        if (commandMarkers[i].timer >= commandMarkers[i].maxTime) {
+            commandMarkers.splice(i, 1);
+        }
+    }
+
     // Тряска экрана
     updateScreenShake(dt);
 
@@ -995,11 +838,6 @@ function update(dt) {
         (mouseX >= hudPanelRect.x && mouseY >= hudPanelRect.y
             && mouseX <= hudPanelRect.x + hudPanelRect.w
             && mouseY <= hudPanelRect.y + hudPanelRect.h)
-        ||
-        (selectionBarPanel.w > 0
-            && mouseX >= selectionBarPanel.x && mouseY >= selectionBarPanel.y
-            && mouseX <= selectionBarPanel.x + selectionBarPanel.w
-            && mouseY <= selectionBarPanel.y + selectionBarPanel.h)
         ||
         (mouseX >= spellPanelRect.x && mouseY >= spellPanelRect.y
             && mouseX <= spellPanelRect.x + spellPanelRect.w
@@ -1025,7 +863,7 @@ function update(dt) {
     if (artilleryMode.active) {
         // Статус управляется артиллерией (updateArtillery / input.js)
     } else {
-        const nothingHeld = hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag;
+        const nothingHeld = hand.grabbedItem === null && hand.grabbedMinion === null;
         // Проверяем наведение на замок
         let hoveredCastle = false;
         if (nothingHeld && castle) {
@@ -1033,29 +871,16 @@ function update(dt) {
             const cdy = hand.isoY - castle.iy;
             hoveredCastle = Math.sqrt(cdx * cdx + cdy * cdy) < ARTILLERY_GRAB_RADIUS;
         }
-        if (hand.grabbedFlag) {
-            if (hoveredItem !== null && hand.selectedMinions.length > 0) {
-                statusEl.textContent = `Кликни — ${hand.selectedMinions.length} гоблин(а) начнут добычу!`;
-            } else if (hoveredItem !== null) {
-                statusEl.textContent = 'Ресурс — выдели гоблинов лассо для отправки на добычу';
-            } else {
-                statusEl.textContent = 'Флаг в руке — кликни чтобы установить';
-            }
-        } else if (nothingHeld && hoveredCastle) {
+        if (nothingHeld && hoveredCastle) {
             statusEl.textContent = 'Замок [ЛКМ — режим стрельбы]';
-        } else if (nothingHeld && hoveredFlag) {
-            statusEl.textContent = 'Флаг [зажми ЛКМ чтобы подобрать]';
         } else if (nothingHeld && hoveredItem !== null) {
             statusEl.textContent = `Навести: ${ITEM_TYPES[items[hoveredItem].typeIndex].name} [зажми ЛКМ]`;
         } else if (nothingHeld && hoveredMinion !== null) {
             statusEl.textContent = 'Навести: Миньон [зажми ЛКМ]';
+        } else if (nothingHeld && hand.selectedMinions.length > 0) {
+            statusEl.textContent = `Выделено ${hand.selectedMinions.length} гоблин(а) — ПКМ для команды`;
         } else if (nothingHeld) {
-            const waitingCount = minions.filter(m => m.state === 'waiting').length;
-            if (waitingCount > 0) {
-                statusEl.textContent = `${waitingCount} гоблин(а) ждут задачу [1 — добывать]`;
-            } else {
-                statusEl.textContent = 'Рука открыта';
-            }
+            statusEl.textContent = 'Рука открыта';
         }
     }
 }
@@ -1136,14 +961,6 @@ function render() {
         });
     }
 
-    // Флаг всегда виден над туманом войны (игрок должен знать куда поставил флаг)
-    if (flag.state === 'placed') {
-        renderList.push({
-            type: 'flag',
-            depth: getDepth(flag.ix, flag.iy)
-        });
-    }
-
     // Замок (два слоя: основание и башня)
     for (const entry of castle.getRenderEntries()) {
         renderList.push(entry);
@@ -1181,8 +998,6 @@ function render() {
             ctx.restore();
         } else if (obj.type === 'castle') {
             castle.draw();
-        } else if (obj.type === 'flag') {
-            drawFlagInWorld(hoveredFlag);
         } else if (obj.type === 'firePatch') {
             const fp = firePatches[obj.index];
             const progress = fp.timer / fp.duration;
@@ -1254,19 +1069,26 @@ function render() {
         ctx.restore();
     }
 
-    // Эффект растворения флага
-    if (flagEffect.active) {
-        const alpha = Math.pow(1 - flagEffect.t / flagEffect.duration, 1.5);
+    // ── МАРКЕРЫ КОМАНД ─────────────────────────────────────────
+    for (const m of commandMarkers) {
+        const s = worldToScreen(m.ix, m.iy);
+        const progress = m.timer / m.maxTime;
+        const alpha = (1 - progress) * 0.7;
+        const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 200);
+        const color = m.type === 'attack' ? '#ff4444'
+                    : m.type === 'gather' ? '#ffcc44'
+                    : '#44ff88';
+        const r = (8 + pulse * 4) * (1 - progress * 0.5);
         ctx.save();
         ctx.globalAlpha = alpha;
-        for (const p of flagEffect.particles) {
-            ctx.fillStyle = p.color;
-            ctx.fillRect(
-                Math.floor(flagEffect.originX + p.x),
-                Math.floor(flagEffect.originY + p.y),
-                PIXEL_SCALE, PIXEL_SCALE
-            );
-        }
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = alpha * 0.25;
+        ctx.fillStyle = color;
+        ctx.fill();
         ctx.restore();
     }
 
@@ -1907,103 +1729,6 @@ function render() {
         ctx.font = '8px monospace';
         ctx.textAlign = 'center';
         ctx.fillText('М', barX + barW / 2, barY - 3);
-    }
-
-    // Панель выделенных юнитов — нижний центр, при активном флаге
-    selectionBarRects.length = 0;
-    selectionBarPanel.w = 0; // сбрасываем — если бар не рисуется, edge scroll не блокируется
-    if (hand.grabbedFlag && hand.selectedMinions.length > 0) {
-        const ICON_SCALE = 2;
-        const SLOT_W = MINION_W * ICON_SCALE + 12;
-        const SLOT_H = MINION_H * ICON_SCALE + 12;
-        const GAP = 4;
-        const N = hand.selectedMinions.length;
-        const totalW = N * SLOT_W + (N - 1) * GAP;
-        const panelX = Math.round(canvas.width / 2 - totalW / 2) - 10;
-        const panelY = canvas.height - SLOT_H - 32;
-        const startX = panelX + 10;
-
-        // Обновляем rect панели для блокировки edge scroll
-        selectionBarPanel.x = panelX;
-        selectionBarPanel.y = panelY;
-        selectionBarPanel.w = totalW + 20;
-        selectionBarPanel.h = SLOT_H + 16;
-
-        // Фон панели
-        ctx.save();
-        ctx.globalAlpha = 0.72;
-        ctx.fillStyle = '#0a0a18';
-        ctx.fillRect(panelX, panelY, totalW + 20, SLOT_H + 16);
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = '#334455';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(panelX + 0.5, panelY + 0.5, totalW + 19, SLOT_H + 15);
-        ctx.restore();
-
-        for (let i = 0; i < N; i++) {
-            const mIdx = hand.selectedMinions[i];
-            const m = minions[mIdx];
-            const slotX = startX + i * (SLOT_W + GAP);
-            const slotY = panelY + 8;
-
-            selectionBarRects.push({ minionIdx: mIdx, x: slotX, y: slotY, w: SLOT_W, h: SLOT_H });
-
-            const hov = mouseX >= slotX && mouseX <= slotX + SLOT_W
-                     && mouseY >= slotY && mouseY <= slotY + SLOT_H;
-
-            // Слот фон
-            ctx.save();
-            ctx.globalAlpha = hov ? 0.75 : 0.35;
-            ctx.fillStyle = hov ? '#552200' : '#111122';
-            ctx.fillRect(slotX, slotY, SLOT_W, SLOT_H);
-            ctx.restore();
-
-            // Рамка — толстая оранжевая на hover
-            ctx.save();
-            ctx.globalAlpha = 1;
-            ctx.strokeStyle = hov ? '#ff6600' : '#445566';
-            ctx.lineWidth = hov ? 2 : 1;
-            ctx.strokeRect(slotX + 1, slotY + 1, SLOT_W - 2, SLOT_H - 2);
-            ctx.restore();
-
-            // Спрайт гоблина
-            const iconX = slotX + Math.floor((SLOT_W - MINION_W * ICON_SCALE) / 2);
-            const iconY = slotY + Math.floor((SLOT_H - MINION_H * ICON_SCALE) / 2);
-
-            // На hover — приглушаем спрайт и рисуем крест
-            if (hov) {
-                ctx.save();
-                ctx.globalAlpha = 0.35;
-                drawPixelArt(iconX, iconY, MINION_PIXELS, ICON_SCALE);
-                if (m.goblinClass === 'warrior') {
-                    const helmetOx = Math.round(iconX + (MINION_W - WARRIOR_HELMET_W) / 2 * ICON_SCALE);
-                    drawPixelArt(helmetOx, iconY, WARRIOR_HELMET_PIXELS, ICON_SCALE);
-                } else if (m.goblinClass === 'scout') {
-                    const hoodOx = Math.round(iconX + (MINION_W - SCOUT_HOOD_W) / 2 * ICON_SCALE);
-                    drawPixelArt(hoodOx, iconY, SCOUT_HOOD_PIXELS, ICON_SCALE);
-                }
-                ctx.restore();
-                ctx.save();
-                ctx.globalAlpha = 1;
-                ctx.fillStyle = '#ff6600';
-                ctx.font = `bold ${SLOT_H - 4}px monospace`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('✕', slotX + SLOT_W / 2, slotY + SLOT_H / 2);
-                ctx.restore();
-            } else {
-                drawPixelArt(iconX, iconY, MINION_PIXELS, ICON_SCALE);
-                if (m.goblinClass === 'warrior') {
-                    const helmetOx = Math.round(iconX + (MINION_W - WARRIOR_HELMET_W) / 2 * ICON_SCALE);
-                    drawPixelArt(helmetOx, iconY, WARRIOR_HELMET_PIXELS, ICON_SCALE);
-                } else if (m.goblinClass === 'scout') {
-                    const hoodOx = Math.round(iconX + (MINION_W - SCOUT_HOOD_W) / 2 * ICON_SCALE);
-                    drawPixelArt(hoodOx, iconY, SCOUT_HOOD_PIXELS, ICON_SCALE);
-                }
-            }
-
-            if (hov) canvas.style.cursor = 'pointer';
-        }
     }
 
     // Курсор-точка (вне зума и тряски — стабильный)

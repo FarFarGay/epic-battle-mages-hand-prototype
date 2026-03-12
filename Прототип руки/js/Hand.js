@@ -5,12 +5,10 @@ import {
     PIXEL_SCALE, THROW_VZ_BASE, THROW_SCALE, MAX_THROW_SPEED,
     VELOCITY_HISTORY
 } from './constants.js';
-import { FLAG_PIXELS, HAND_OPEN_PIXELS, HAND_CLOSED_PIXELS, FLAG_W as SPR_FLAG_W, FLAG_H as SPR_FLAG_H } from './sprites.js';
-import { canvas, ctx, drawPixelArt, drawShadow } from './renderer.js';
+import { HAND_OPEN_PIXELS, HAND_CLOSED_PIXELS } from './sprites.js';
+import { canvas, drawPixelArt, drawShadow } from './renderer.js';
 import { camera } from './isometry.js';
 
-// Re-export so other modules can use FLAG_W/FLAG_H from sprites via Hand if needed
-// (they're also exported from constants.js directly)
 
 function screenToCanvas(sx, sy) {
     return {
@@ -29,13 +27,10 @@ export class Hand {
         this.animProgress = 0;
         this.grabbedItem = null;
         this.grabbedMinion = null;
-        this.grabbedFlag = false;
         this.prevIsoX = 0;
         this.prevIsoY = 0;
         this.velocityHistory = [];
-        this.prevScreenXForShake = 0;
-        this.shakeHistory = [];       // { dx, t } для определения встряхивания
-        this.selectedMinions = [];    // индексы выделенных миньонов (пока флаг в руке)
+        this.selectedMinions = [];    // индексы выделенных миньонов (ПКМ-выделение)
         this.minionGrabIso = null;    // {ix, iy} — позиция подбора гоблина (для поддержки тумана)
         this.grabbedSpell = null;   // 'fireball' | null
     }
@@ -109,59 +104,8 @@ export class Hand {
         return { vx: tvx, vy: tvy, vz: Math.min(tvz, MAX_THROW_SPEED) };
     }
 
-    checkFlagShake(dismissCallback) {
-        const dsx = this.screenX - this.prevScreenXForShake;
-        const now = performance.now();
-        if (Math.abs(dsx) > 2) {
-            this.shakeHistory.push({ dx: dsx, t: now });
-        }
-        // Держим только последние 0.6с
-        const cutoff = now - 600;
-        while (this.shakeHistory.length > 0 && this.shakeHistory[0].t < cutoff) {
-            this.shakeHistory.shift();
-        }
-        // Считаем смены направления
-        let signChanges = 0;
-        let prevSign = 0;
-        for (const h of this.shakeHistory) {
-            const s = Math.sign(h.dx);
-            if (prevSign !== 0 && s !== prevSign) signChanges++;
-            prevSign = s;
-        }
-        if (signChanges >= 5) {
-            this.shakeHistory = [];
-            dismissCallback();
-        }
-        this.prevScreenXForShake = this.screenX;
-    }
-
     draw() {
-        // Рисуем захваченные предметы и руку
-        // Захваченные объекты рисуются внешними методами (Item.draw / Minion.draw)
-        // Флаг в руке
-        if (this.grabbedFlag) {
-            const cp = screenToCanvas(this.screenX, this.screenY);
-            const wobbleX = Math.sin(performance.now() / 300) * 1.5;
-            const wobbleY = Math.cos(performance.now() / 230) * 1;
-            this._drawFlagAt(
-                cp.x - (SPR_FLAG_W * PIXEL_SCALE) / 2 + wobbleX,
-                cp.y - (SPR_FLAG_H * PIXEL_SCALE) / 2 - 8 + wobbleY,
-                false
-            );
-        }
         this._drawHand();
-    }
-
-    _drawFlagAt(sx, sy, isHovered) {
-        if (isHovered) {
-            ctx.save();
-            ctx.globalAlpha = 0.3 + 0.15 * Math.sin(performance.now() / 300);
-            ctx.strokeStyle = '#ffff44';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(sx - 4, sy - 4, SPR_FLAG_W * PIXEL_SCALE + 8, SPR_FLAG_H * PIXEL_SCALE + 8);
-            ctx.restore();
-        }
-        drawPixelArt(sx, sy, FLAG_PIXELS, PIXEL_SCALE);
     }
 
     _drawHand() {

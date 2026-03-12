@@ -1,5 +1,5 @@
 // ============================================================
-//  МИР — предметы, миньоны, флаг, тряска экрана
+//  МИР — предметы, миньоны, тряска экрана
 // ============================================================
 import { gameMap } from './Map.js';
 import { ITEM_TYPES, WARRIOR_GUARD_RADIUS, WARRIOR_WALL_STEP, MANA_MAX } from './constants.js';
@@ -13,11 +13,6 @@ import { Fireball } from './Fireball.js';
 // ============================================================
 export const items = [];
 export const minions = [];
-
-export const flag = {
-    state: 'docked', // 'docked' | 'placed'
-    ix: 0, iy: 0, iz: 0,
-};
 
 export const screenShake = {
     intensity: 0,
@@ -71,6 +66,9 @@ export const manaPool = { value: MANA_MAX };
 
 // Тотем монахов
 export const monkTotem = { active: false, ix: 0, iy: 0 };
+
+// Маркеры команд ПКМ: { ix, iy, timer, maxTime, type: 'gather'|'attack'|'move' }
+export const commandMarkers = [];
 
 export let castle = null;
 
@@ -206,12 +204,9 @@ export function restartMap(hand, statusEl) {
     // Сброс руки
     hand.grabbedItem = null;
     hand.grabbedMinion = null;
-    hand.grabbedFlag = false;
     hand.state = 'open';
     hand.animProgress = 0;
     hand.velocityHistory = [];
-    hand.shakeHistory = [];
-    hand.prevScreenXForShake = 0;
     hand.selectedMinions = [];
     hand.grabbedSpell = null;
 
@@ -239,11 +234,6 @@ export function initWorld() {
         minions.push(new Minion(pos.ix, pos.iy));
     }
 
-    flag.state = 'docked';
-    flag.ix = 0;
-    flag.iy = 0;
-    flag.iz = 0;
-
     screenShake.intensity = 0;
     screenShake.offsetX = 0;
     screenShake.offsetY = 0;
@@ -269,4 +259,6 @@ export function initWorld() {
     monkTotem.active = false;
     monkTotem.ix = 0;
     monkTotem.iy = 0;
+
+    commandMarkers.length = 0;
 }

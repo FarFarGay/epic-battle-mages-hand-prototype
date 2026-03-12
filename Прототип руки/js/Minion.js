@@ -153,7 +153,7 @@ export class Minion extends GameObject {
                 this.gathererMode = this.savedGathererMode;
                 this.targetItem = null;
                 this.state = 'busy';
-            } else if (this.savedState === 'listening' || this.savedState === 'waiting' || this.savedState === 'moving') {
+            } else if (this.savedState === 'moving_to_point') {
                 // Восстановить назначенное игроком состояние
                 this.state = this.savedState;
             } else {
@@ -308,7 +308,7 @@ export class Minion extends GameObject {
         }
     }
 
-    onSettle(items) {
+    onSettle(items, allMinions) {
         this.bounceCount = 0;
         this.stateTime = 0;
         this.dropCarriedItem(); // бросаем камень если несли
@@ -347,6 +347,21 @@ export class Minion extends GameObject {
             this.stateTime = 0;
             return;
         }
+        // При приземлении проверяем ближайшего врага в радиусе 1.5 тайла — auto-attack
+        const AUTO_ATTACK_RADIUS = 1.5;
+        if (allMinions) {
+            let nearestEnemy = null, nearestEnemyDist = AUTO_ATTACK_RADIUS;
+            for (const m of allMinions) {
+                if (m === this || !m.isUndead) continue;
+                if (m.state !== 'skeleton') continue;
+                const ddx = m.ix - this.ix;
+                const ddy = m.iy - this.iy;
+                const d = Math.sqrt(ddx * ddx + ddy * ddy);
+                if (d < nearestEnemyDist) { nearestEnemyDist = d; nearestEnemy = m; }
+            }
+            if (nearestEnemy) { this.enterCombat(nearestEnemy); return; }
+        }
+
         // При приземлении ищем ближайший ресурс в радиусе 1.5 тайла
         const AUTO_GATHER_RADIUS = 1.5;
         let nearest = null, nearestDist = AUTO_GATHER_RADIUS;
@@ -417,19 +432,14 @@ export class Minion extends GameObject {
                 break;
             }
 
-            // ── 2. Слушает ──────────────────────────────────────────
-            case 'listening':
-                // Стоит на месте, ждёт команду игрока
-                break;
-
-            // ── 3. Передвигается ────────────────────────────────────
-            case 'moving': {
+            // ── 2. Идёт к точке по команде ПКМ ─────────────────────
+            case 'moving_to_point': {
                 const dx = this.targetX - this.ix;
                 const dy = this.targetY - this.iy;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 if (dist < 0.25) {
-                    // Дошёл до флага → ждёт задачу рядом
-                    this.state = 'waiting';
+                    this.pickNewTarget();
+                    this.state = 'free';
                     this.stateTime = 0;
                 } else {
                     const spd = MINION_SPEED * dt;
@@ -442,12 +452,7 @@ export class Minion extends GameObject {
                 break;
             }
 
-            // ── 4. Ожидает задачу ───────────────────────────────────
-            case 'waiting':
-                // Стоит у флага, ждёт задачу от игрока
-                break;
-
-            // ── 5. Занят: идёт к камню ──────────────────────────────
+            // ── 3. Занят: идёт к камню ──────────────────────────────
             case 'busy': {
                 // Сборщики тоже реагируют на скелетов поблизости
                 if (this._tryAggro(allMinions)) break;
@@ -706,7 +711,7 @@ export class Minion extends GameObject {
 
             case 'settling':
                 if (this.stateTime > 0.3) {
-                    this.onSettle(items);
+                    this.onSettle(items, allMinions);
                 }
                 break;
 
@@ -926,7 +931,7 @@ export class Minion extends GameObject {
         const oy = s.y - (sprH * PIXEL_SCALE) - 4 - heightOffset + hitOffsetY;
 
         // Рамка выделения — только для живых гоблинов
-        if (!this.isUndead && hand.grabbedFlag && hand.selectedMinions.includes(index)) {
+        if (!this.isUndead && hand.selectedMinions.includes(index)) {
             ctx.save();
             const time = performance.now() / 400;
             ctx.globalAlpha = 0.35 + 0.2 * Math.sin(time);

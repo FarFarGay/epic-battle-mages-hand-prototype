@@ -9,12 +9,190 @@ import {
 } from './constants.js';
 import { MINION_H } from './sprites.js';
 import { screenToIso, worldToScreen, screenToCanvas } from './isometry.js';
-import { restartMap, flag, items, minions, castle, artilleryMode, triggerScreenShake, fireball, monkTotem } from './World.js';
+import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, monkTotem, commandMarkers } from './World.js';
+
+const RMB_DRAG_THRESHOLD = 5;
+
+let rmbStart = null; // { x, y } — начало ПКМ нажатия
+
+// ── Вспомогательные функции ────────────────────────────────
+
+function findEnemyAt(ix, iy) {
+    const RADIUS = 1.5;
+    const rSq = RADIUS * RADIUS;
+    for (const m of minions) {
+        if (!m.isUndead || m.state !== 'skeleton') continue;
+        const dx = m.ix - ix;
+        const dy = m.iy - iy;
+        if (dx * dx + dy * dy <= rSq) return m;
+    }
+    return null;
+}
+
+function findResourceAt(ix, iy) {
+    const RADIUS = 1.5;
+    let nearest = null, nearestDistSq = RADIUS * RADIUS;
+    for (const item of items) {
+        if (!item.typeDef.gatherable) continue;
+        if (item.state === 'carried' || item.state === 'lifting' || item.state === 'goblin_carried') continue;
+        const dx = item.ix - ix;
+        const dy = item.iy - iy;
+        const dSq = dx * dx + dy * dy;
+        if (dSq < nearestDistSq) { nearestDistSq = dSq; nearest = item; }
+    }
+    return nearest;
+}
+
+// Ищет до count ближайших миньонов к точке (ix, iy), удовлетворяющих фильтру
+function findNearestMinions(ix, iy, count, filter) {
+    const candidates = [];
+    for (let i = 0; i < minions.length; i++) {
+        const m = minions[i];
+        if (!filter(m)) continue;
+        const dx = m.ix - ix;
+        const dy = m.iy - iy;
+        candidates.push({ idx: i, distSq: dx * dx + dy * dy });
+    }
+    candidates.sort((a, b) => a.distSq - b.distSq);
+    return candidates.slice(0, count).map(c => c.idx);
+}
+
+function handleRMBCommand(ix, iy, hand, statusEl) {
+    const SELECTABLE = ['free', 'moving_to_point', 'busy', 'returning', 'war', 'fighting',
+                        'guarding', 'warrior_returning', 'monk_walking', 'monk_praying'];
+
+    const enemy = findEnemyAt(ix, iy);
+    const resource = enemy ? null : findResourceAt(ix, iy);
+
+    let targetIdxs = hand.selectedMinions.slice();
+
+    if (targetIdxs.length === 0) {
+        // Нет выделения — берём 2-3 ближайших подходящих гоблина
+        if (enemy) {
+            targetIdxs = findNearestMinions(ix, iy, 3,
+                m => !m.isUndead && !m.dead && SELECTABLE.includes(m.state) && m.goblinClass !== 'warrior');
+        } else if (resource) {
+            targetIdxs = findNearestMinions(ix, iy, 3,
+                m => !m.isUndead && !m.dead && SELECTABLE.includes(m.state) && m.goblinClass === 'basic');
+        } else {
+            targetIdxs = findNearestMinions(ix, iy, 2,
+                m => !m.isUndead && !m.dead && SELECTABLE.includes(m.state));
+        }
+    }
+
+    if (targetIdxs.length === 0) return;
+
+    if (enemy) {
+        // Атаковать врага
+        for (const idx of targetIdxs) {
+            const m = minions[idx];
+            if (!m || m.isUndead || m.dead) continue;
+            m.enterCombat(enemy);
+        }
+        commandMarkers.push({ ix, iy, timer: 0, maxTime: 3, type: 'attack' });
+        statusEl.textContent = `${targetIdxs.length} гоблин(а) атакуют!`;
+
+    } else if (resource) {
+        // Добывать ресурс
+        let count = 0;
+        for (const idx of targetIdxs) {
+            const m = minions[idx];
+            if (!m || m.isUndead || m.dead) continue;
+            if (m.goblinClass === 'warrior') { m.state = 'warrior_returning'; m.stateTime = 0; continue; }
+            if (m.goblinClass === 'scout')   { m.pickNewTarget(); m.state = 'free'; m.stateTime = 0; continue; }
+            if (m.goblinClass === 'monk')    { m.state = 'monk_walking'; m.stateTime = 0; continue; }
+            if (m.assignGatherTask(items)) count++;
+        }
+        commandMarkers.push({ ix, iy, timer: 0, maxTime: 3, type: 'gather' });
+        statusEl.textContent = count > 0 ? `${count} гоблин(а) начинают добычу!` : 'Нет доступных ресурсов';
+
+    } else {
+        // Идти к точке: монахи — тотем, воины — кольцо, остальные — move_to_point
+        const monkIdxs = targetIdxs.filter(idx => minions[idx].goblinClass === 'monk');
+        if (monkIdxs.length > 0) {
+            const dx = ix - castle.ix, dy = iy - castle.iy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const clampedDist = Math.max(MONK_TOTEM_MIN_DIST, Math.min(MONK_TOTEM_MAX_DIST, dist));
+            const angle = dist > 0.01 ? Math.atan2(dy, dx) : 0;
+            monkTotem.ix = castle.ix + Math.cos(angle) * clampedDist;
+            monkTotem.iy = castle.iy + Math.sin(angle) * clampedDist;
+            monkTotem.active = true;
+            for (const m of minions) {
+                if (m.goblinClass === 'monk' && !m.dead && !m.isUndead) {
+                    m.totemX = monkTotem.ix;
+                    m.totemY = monkTotem.iy;
+                    m.state = 'monk_walking';
+                    m.stateTime = 0;
+                }
+            }
+        }
+
+        const warriorIdxs = targetIdxs.filter(idx => minions[idx].goblinClass === 'warrior');
+        const Nw = warriorIdxs.length;
+        const warRadius = Nw <= 1 ? 0 : Math.max(5, Nw * 10 / (2 * Math.PI));
+        warriorIdxs.forEach((idx, i) => {
+            const m = minions[idx];
+            const angle = (2 * Math.PI * i / Math.max(1, Nw));
+            m.guardX = ix + (Nw > 1 ? warRadius * Math.cos(angle) : 0);
+            m.guardY = iy + (Nw > 1 ? warRadius * Math.sin(angle) : 0);
+            m.state = 'warrior_returning';
+            m.stateTime = 0;
+        });
+
+        for (const idx of targetIdxs) {
+            const m = minions[idx];
+            if (!m || m.isUndead || m.dead) continue;
+            if (m.goblinClass === 'warrior' || m.goblinClass === 'monk') continue;
+            m.targetX = ix;
+            m.targetY = iy;
+            m.state = 'moving_to_point';
+            m.stateTime = 0;
+        }
+
+        commandMarkers.push({ ix, iy, timer: 0, maxTime: 3, type: 'move' });
+        statusEl.textContent = monkIdxs.length > 0
+            ? 'Тотем перемещён'
+            : Nw > 0
+                ? 'Воины идут в строй'
+                : `${targetIdxs.length} гоблин(а) идут к точке`;
+    }
+}
+
+function finishLassoSelection(selection, hand, statusEl) {
+    selection.active = false;
+    const selW = Math.abs(selection.endX - selection.startX);
+    const selH = Math.abs(selection.endY - selection.startY);
+    if (selW <= 5 && selH <= 5) return;
+
+    const SELECTABLE = ['free', 'moving_to_point', 'busy', 'returning', 'war', 'fighting',
+                        'guarding', 'warrior_returning', 'monk_walking', 'monk_praying'];
+    const tl = screenToCanvas(
+        Math.min(selection.startX, selection.endX),
+        Math.min(selection.startY, selection.endY)
+    );
+    const br = screenToCanvas(
+        Math.max(selection.startX, selection.endX),
+        Math.max(selection.startY, selection.endY)
+    );
+    hand.selectedMinions = [];
+    for (let i = 0; i < minions.length; i++) {
+        const m = minions[i];
+        if (!SELECTABLE.includes(m.state)) continue;
+        if (m.isUndead) continue;
+        const s = worldToScreen(m.ix, m.iy);
+        const mx = s.x;
+        const my = s.y - (MINION_H * PIXEL_SCALE) / 2;
+        if (mx >= tl.x && mx <= br.x && my >= tl.y && my <= br.y) {
+            hand.selectedMinions.push(i);
+        }
+    }
+    if (hand.selectedMinions.length > 0) {
+        statusEl.textContent = `Выделено ${hand.selectedMinions.length} миньон(а) — ПКМ для команды`;
+    }
+}
 
 export function initInput(canvas, hand, world, cam, statusEl) {
-    // world = { items, minions, flag, screenShake, selection, flagEffect, hoveredItem, hoveredMinion }
-    // cam = camera object (for zoom)
-    const { selection, flagEffect } = world;
+    const { selection } = world;
 
     canvas.addEventListener('mousemove', (e) => {
         world.mouseX = e.clientX;
@@ -25,9 +203,26 @@ export function initInput(canvas, hand, world, cam, statusEl) {
         }
     });
 
+    // Подавляем контекстное меню ПКМ
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
     canvas.addEventListener('mousedown', (e) => {
+        // ── ПКМ нажатие: начало RMB (клик или лассо) ─────────────
+        if (e.button === 2) {
+            rmbStart = { x: e.clientX, y: e.clientY };
+            selection.active = true;
+            selection.startX = e.clientX;
+            selection.startY = e.clientY;
+            selection.endX = e.clientX;
+            selection.endY = e.clientY;
+            return;
+        }
+
         if (e.button !== 0) return;
         world.mouseDown = true;
+
+        // ЛКМ — сбрасываем выделение
+        hand.selectedMinions = [];
 
         // ── Артиллерия: выстрел ──────────────────────────────────
         if (artilleryMode.active && artilleryMode.state === 'aiming') {
@@ -35,7 +230,6 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             artilleryMode.targetX = iso.x;
             artilleryMode.targetY = iso.y;
 
-            // Рассчитываем траекторию
             const dx = iso.x - castle.ix;
             const dy = iso.y - castle.iy;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -47,7 +241,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             proj.iz = 0;
             proj.vx = dx / T;
             proj.vy = dy / T;
-            proj.vz = 0.5 * GRAVITY * T; // чтобы приземлиться точно через T секунд
+            proj.vz = 0.5 * GRAVITY * T;
 
             artilleryMode.flightDuration = T;
             artilleryMode.timer = 0;
@@ -59,10 +253,9 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             return;
         }
 
-        // В режиме полёта/взрыва — игнорируем клики
         if (artilleryMode.active) return;
 
-        const handFree = hand.grabbedItem === null && hand.grabbedMinion === null && !hand.grabbedFlag;
+        const handFree = hand.grabbedItem === null && hand.grabbedMinion === null;
 
         // ── Артиллерия: захват замка ─────────────────────────────
         if (handFree && castle) {
@@ -78,114 +271,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             }
         }
 
-        if (hand.grabbedFlag && world.hoveredItem !== null && hand.selectedMinions.length > 0) {
-            // Флаг + ресурс + выбранные гоблины → мгновенная задача «добывать»
-            let count = 0;
-            for (const idx of hand.selectedMinions) {
-                const m = minions[idx];
-                if (m.goblinClass === 'warrior') {
-                    // Воины не добывают — возвращаются на пост
-                    m.state = 'warrior_returning';
-                    m.stateTime = 0;
-                    continue;
-                }
-                if (m.goblinClass === 'scout') {
-                    // Разведчики не добывают — продолжают разведку
-                    m.pickNewTarget();
-                    m.state = 'free';
-                    m.stateTime = 0;
-                    continue;
-                }
-                if (m.goblinClass === 'monk') {
-                    // Монахи не добывают — возвращаются к тотему молиться
-                    m.state = 'monk_walking';
-                    m.stateTime = 0;
-                    continue;
-                }
-                if (m.state === 'listening') {
-                    if (m.assignGatherTask(items)) count++;
-                }
-            }
-            world.triggerFlagEffectAtHand();
-            flag.state = 'docked';
-            hand.grabbedFlag = false;
-            hand.state = 'opening';
-            hand.animProgress = 0;
-            hand.velocityHistory = [];
-            hand.selectedMinions = [];
-            statusEl.textContent = count > 0
-                ? `${count} гоблин(а) начинают добычу!`
-                : 'Нет доступных ресурсов';
-        } else if (hand.grabbedFlag && world.hoveredMinion === null) {
-            // Устанавливаем флаг кликом на свободное место (или ресурс без гоблинов)
-            flag.ix = hand.isoX;
-            flag.iy = hand.isoY;
-            flag.iz = 0;
-            flag.state = 'placed';
-
-            // Воины — кольцевой строй вокруг точки (шаг ~10 тайлов)
-            const warriorIdxs = hand.selectedMinions.filter(
-                idx => minions[idx].goblinClass === 'warrior' && minions[idx].state === 'listening'
-            );
-            const Nw = warriorIdxs.length;
-            const warRadius = Nw <= 1 ? 0 : Math.max(5, Nw * 10 / (2 * Math.PI));
-            warriorIdxs.forEach((idx, i) => {
-                const m = minions[idx];
-                const angle = (2 * Math.PI * i / Nw);
-                m.guardX = flag.ix + (Nw > 1 ? warRadius * Math.cos(angle) : 0);
-                m.guardY = flag.iy + (Nw > 1 ? warRadius * Math.sin(angle) : 0);
-                m.state = 'warrior_returning';
-                m.stateTime = 0;
-            });
-
-            // Монахи — переносят тотем на место флага
-            const monkIdxs = hand.selectedMinions.filter(idx => minions[idx].goblinClass === 'monk');
-            if (monkIdxs.length > 0) {
-                const fx = flag.ix, fy = flag.iy;
-                // Смещаем тотем в пределах допустимого расстояния от замка
-                const dx = fx - castle.ix, dy = fy - castle.iy;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                const clampedDist = Math.max(MONK_TOTEM_MIN_DIST, Math.min(MONK_TOTEM_MAX_DIST, dist));
-                const angle = dist > 0.01 ? Math.atan2(dy, dx) : 0;
-                monkTotem.ix = castle.ix + Math.cos(angle) * clampedDist;
-                monkTotem.iy = castle.iy + Math.sin(angle) * clampedDist;
-                monkTotem.active = true;
-                // Все монахи идут к новому тотему
-                for (const m of minions) {
-                    if (m.goblinClass === 'monk' && !m.dead && !m.isUndead) {
-                        m.totemX = monkTotem.ix;
-                        m.totemY = monkTotem.iy;
-                        m.state = 'monk_walking';
-                        m.stateTime = 0;
-                    }
-                }
-            }
-
-            // Обычные гоблины — идут прямо к флагу; разведчики и монахи — уже обработаны
-            for (const idx of hand.selectedMinions) {
-                const m = minions[idx];
-                if (m.goblinClass === 'warrior') continue;
-                if (m.goblinClass === 'scout') {
-                    m.pickNewTarget();
-                    m.state = 'free';
-                    m.stateTime = 0;
-                    continue;
-                }
-                if (m.goblinClass === 'monk') continue;
-                if (m.state === 'listening') {
-                    m.targetX = flag.ix;
-                    m.targetY = flag.iy;
-                    m.state = 'moving';
-                    m.stateTime = 0;
-                }
-            }
-            hand.grabbedFlag = false;
-            hand.state = 'opening';
-            hand.animProgress = 0;
-            hand.velocityHistory = [];
-            hand.selectedMinions = [];
-            statusEl.textContent = monkIdxs.length > 0 ? 'Тотем перемещён' : Nw > 0 ? `Воины идут в строй` : 'Флаг установлен';
-        } else if (world.hoveredItem !== null && handFree) {
+        if (world.hoveredItem !== null && handFree) {
             const item = items[world.hoveredItem];
             if (item.state !== 'carried' && item.state !== 'lifting') {
                 hand.grabbedItem = world.hoveredItem;
@@ -204,7 +290,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
         } else if (world.hoveredMinion !== null && handFree) {
             const minion = minions[world.hoveredMinion];
             if (minion.state !== 'carried' && minion.state !== 'lifting' && minion.state !== 'dead') {
-                minion.dropCarriedItem(); // бросить камень если нёс
+                minion.dropCarriedItem();
                 hand.grabbedMinion = world.hoveredMinion;
                 hand.minionGrabIso = { ix: minion.ix, iy: minion.iy };
                 minion.state = 'lifting';
@@ -219,36 +305,30 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                 hand.velocityHistory = [];
                 statusEl.textContent = 'Захвачено: Миньон';
             }
-        } else if (world.hoveredFlag && handFree) {
-            // Подбираем флаг с земли — возвращаем гоблинов в ожидание
-            flag.state = 'docked';
-            hand.grabbedFlag = true;
-            hand.state = 'closing';
-            hand.animProgress = 0;
-            hand.velocityHistory = [];
-            hand.selectedMinions = [];
-            for (let i = 0; i < minions.length; i++) {
-                const m = minions[i];
-                if (m.state === 'moving' || m.state === 'waiting') {
-                    m.state = 'listening';
-                    m.stateTime = 0;
-                    hand.selectedMinions.push(i);
-                }
-            }
-            statusEl.textContent = hand.selectedMinions.length > 0
-                ? `Флаг подобран — ${hand.selectedMinions.length} гоблин(а) ждут приказа`
-                : 'Флаг подобран';
-        } else if (handFree) {
-            // Начинаем выделение рамкой — от позиции мыши (не руки, чтобы координаты совпадали)
-            selection.active = true;
-            selection.startX = world.mouseX;
-            selection.startY = world.mouseY;
-            selection.endX = world.mouseX;
-            selection.endY = world.mouseY;
         }
     });
 
     canvas.addEventListener('mouseup', (e) => {
+        // ── ПКМ отпущена ─────────────────────────────────────────
+        if (e.button === 2) {
+            if (!rmbStart) return;
+            const dx = e.clientX - rmbStart.x;
+            const dy = e.clientY - rmbStart.y;
+            const dragDist = Math.sqrt(dx * dx + dy * dy);
+            rmbStart = null;
+
+            if (dragDist < RMB_DRAG_THRESHOLD) {
+                // Клик — команда
+                selection.active = false;
+                const iso = screenToIso(e.clientX, e.clientY, canvas);
+                handleRMBCommand(iso.x, iso.y, hand, statusEl);
+            } else {
+                // Перетаскивание — лассо-выделение
+                finishLassoSelection(selection, hand, statusEl);
+            }
+            return;
+        }
+
         if (e.button !== 0) return;
         world.mouseDown = false;
         if (artilleryMode.active) return;
@@ -293,11 +373,8 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             hand.velocityHistory = [];
 
             const speed = Math.sqrt(throwVel.vx ** 2 + throwVel.vy ** 2);
-            if (speed > 2) {
-                statusEl.textContent = `Брошено: ${type.name}!`;
-            } else {
-                statusEl.textContent = `Отпущено: ${type.name}`;
-            }
+            statusEl.textContent = speed > 2 ? `Брошено: ${type.name}!` : `Отпущено: ${type.name}`;
+
         } else if (hand.grabbedMinion !== null) {
             const minion = minions[hand.grabbedMinion];
             minion.iz = 0;
@@ -317,70 +394,14 @@ export function initInput(canvas, hand, world, cam, statusEl) {
 
             const speed = Math.sqrt(throwVel.vx ** 2 + throwVel.vy ** 2);
             statusEl.textContent = speed > 2 ? 'Брошен: Миньон!' : 'Отпущен: Миньон';
-        } else if (selection.active) {
-            selection.active = false;
-            const selW = Math.abs(selection.endX - selection.startX);
-            const selH = Math.abs(selection.endY - selection.startY);
-            if (selW > 5 || selH > 5) {
-                const tl = screenToCanvas(
-                    Math.min(selection.startX, selection.endX),
-                    Math.min(selection.startY, selection.endY)
-                );
-                const br = screenToCanvas(
-                    Math.max(selection.startX, selection.endX),
-                    Math.max(selection.startY, selection.endY)
-                );
-                const SELECTABLE = ['free', 'listening', 'moving', 'waiting', 'busy', 'returning', 'war', 'fighting', 'guarding', 'warrior_returning', 'monk_walking', 'monk_praying'];
-                hand.selectedMinions = [];
-                for (let i = 0; i < minions.length; i++) {
-                    const m = minions[i];
-                    if (!SELECTABLE.includes(m.state)) continue;
-                    if (m.isUndead) continue;             // скелеты не выделяются лассо
-                    const s = worldToScreen(m.ix, m.iy);
-                    const mx = s.x;
-                    const my = s.y - (MINION_H * PIXEL_SCALE) / 2;
-                    if (mx >= tl.x && mx <= br.x && my >= tl.y && my <= br.y) {
-                        hand.selectedMinions.push(i);
-                    }
-                }
-                if (hand.selectedMinions.length > 0) {
-                    // Выбранные гоблины переходят в состояние «слушает»
-                    for (const idx of hand.selectedMinions) {
-                        const m = minions[idx];
-                        m.dropCarriedItem(); // бросить камень если нёс
-                        m.state = 'listening';
-                        m.stateTime = 0;
-                    }
-                    hand.grabbedFlag = true;
-                    hand.state = 'closing';
-                    hand.animProgress = 0;
-                    hand.velocityHistory = [];
-                    if (flag.state === 'placed') {
-                        flag.state = 'docked';
-                        // Остальные двигавшиеся к старому флагу → свободны
-                        for (const m of minions) {
-                            if (m.state === 'moving') {
-                                m.pickNewTarget();
-                                m.state = 'free';
-                                m.stateTime = 0;
-                            }
-                        }
-                    }
-                    statusEl.textContent = `Выделено ${hand.selectedMinions.length} миньон(а) — кликни чтобы поставить флаг`;
-                }
-            }
         }
     });
 
-    // Зум камеры: Z — отдалить, X — приблизить, C — сброс
-    // Рестарт карты: R
+    // Зум камеры: Z — отдалить, X — приблизить, C — сброс; R — рестарт
     window.addEventListener('keydown', (e) => {
-        // Не перехватываем клавиши пока сфокусирован HTML input (например поле цели воинов)
         if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
 
-        // Выход из режима артиллерии
         if ((e.key === 'q' || e.key === 'й') && artilleryMode.active) {
-            // Сброс снаряда на позицию замка (чтобы не осталось stale-данных)
             const proj = artilleryMode.projectile;
             proj.ix = castle.ix; proj.iy = castle.iy; proj.iz = 0;
             proj.vx = 0; proj.vy = 0; proj.vz = 0;
@@ -401,31 +422,11 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             cam.targetZoom = Math.min(cam.targetZoom * 1.1, 3.0);
         } else if (e.key === 'c' || e.key === 'с') {
             cam.targetZoom = 1.0;
-        } else if (e.key === '1') {
-            // Назначить задачу «добывать» всем ожидающим гоблинам
-            let count = 0;
-            for (const m of minions) {
-                if (m.state === 'waiting') {
-                    if (m.assignGatherTask(items)) count++;
-                }
-            }
-            if (count > 0) {
-                statusEl.textContent = `${count} гоблин(а) начинают добычу камней`;
-                // Флаг больше не нужен — убираем с поля с эффектом рассеивания
-                if (flag.state === 'placed') {
-                    world.triggerFlagEffectAtWorld(flag.ix, flag.iy);
-                    flag.state = 'docked';
-                }
-            } else {
-                statusEl.textContent = 'Нет гоблинов ожидающих задачу';
-            }
         } else if (e.key === 'r' || e.key === 'к') {
             restartMap(hand, statusEl);
-            // Сбрасываем наведение и выделение
             world.hoveredItem = null;
             world.hoveredMinion = null;
             selection.active = false;
-            flagEffect.active = false;
             cam.zoom = 1.0;
             cam.targetZoom = 1.0;
         }
