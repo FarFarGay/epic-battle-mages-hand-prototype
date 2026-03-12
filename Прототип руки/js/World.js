@@ -40,6 +40,9 @@ export const firePatches = [];
 // { ix, iy, radius, timer } — timer < 0 означает постоянный источник
 export const spellFogReveals = [];
 
+// Дебаг-флаги
+export const debugFlags = { fogDisabled: false };
+
 // Состояния заклинаний (кроме огненного шара — он в Fireball.js)
 export const spellStates = {
     water: { cooldown: 0, maxCooldown: WATER_SPELL_COOLDOWN },

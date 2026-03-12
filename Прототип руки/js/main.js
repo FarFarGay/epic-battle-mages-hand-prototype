@@ -22,7 +22,7 @@ import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth, worldToScreen } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, monkTotem, commandMarkers } from './World.js';
+import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers } from './World.js';
 import { initInput } from './input.js';
 import { updateActiveTiles, applySpellInRadius } from './tileEffects.js';
 
@@ -911,6 +911,10 @@ function update(dt) {
             r.timer -= dt;
             if (r.timer <= 0) spellFogReveals.splice(i, 1);
         }
+    }
+    if (debugFlags.fogDisabled) {
+        // P — туман отключён: добавляем источник, покрывающий всю карту
+        fogSources.push({ ix: 0, iy: 0, radius: 200 });
     }
     gameMap.tickFog(fogSources);
 
