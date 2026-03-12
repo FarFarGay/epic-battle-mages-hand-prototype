@@ -10,6 +10,7 @@ import { Item } from './Item.js';
 import { Minion } from './Minion.js';
 import { Castle } from './Castle.js';
 import { Fireball } from './Fireball.js';
+import { SpellProjectile } from './SpellProjectile.js';
 
 // ============================================================
 //  СОСТОЯНИЕ МИРА
@@ -28,6 +29,9 @@ export const bloodPuddles   = [];  // { ix, iy, size, t, duration }
 
 // Огненный шар
 export const fireball = new Fireball();
+
+// Снаряд заклинания (water/earth/wind — общий объект, т.к. одновременно летит только один)
+export const spellProjectile = new SpellProjectile();
 
 // Огненные пятна после взрыва (DEPRECATED — заменено тайловыми трансформациями)
 export const firePatches = [];
@@ -267,6 +271,7 @@ export function initWorld() {
     artilleryMode.fogRevealTimer = 0;
 
     fireball.reset();
+    spellProjectile.reset();
     firePatches.length = 0;
     activeTiles.length = 0;
 

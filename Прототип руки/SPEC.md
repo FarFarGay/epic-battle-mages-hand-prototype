@@ -4,7 +4,7 @@
 
 **Проект:** Прототип механики руки для игры "Epic Battle Mages"
 **Технологии:** Vanilla HTML5 Canvas 2D, JavaScript ES Modules (без зависимостей, без сборщика)
-**Файл:** `index.html` + модули в `js/` (~5170 строк суммарно)
+**Файл:** `index.html` + модули в `js/` (~5270 строк суммарно)
 **Запуск:** Только через локальный HTTP-сервер (ES modules требуют HTTP): `python3 -m http.server 8080`
 
 Прототип реализует основную механику игры — руку волшебника, которая служит курсором. Рука может подбирать, переносить и бросать предметы с реалистичной физикой (гравитация, отскоки, трение, скольжение). Также реализовано управление миньонами через флаг.
@@ -28,7 +28,9 @@ js/
 ├── Minion.js           — class Minion extends GameObject: AI, HP, смерть, отрисовка
 ├── Hand.js             — class Hand: движение руки, захват, бросок, shake-детектор
 ├── Castle.js           — class Castle: коллизия, рендер, пушка с отдачей, spawnPoint
-├── World.js            — items[], minions[], commandMarkers[], castle, screenShake, resolveCollisions, restartMap
+├── Fireball.js         — class Fireball extends GameObject: физика огненного шара, взрыв
+├── SpellProjectile.js  — class SpellProjectile extends GameObject: бросаемый снаряд для water/earth/wind
+├── World.js            — items[], minions[], commandMarkers[], castle, fireball, spellProjectile, screenShake, resolveCollisions, restartMap
 ├── input.js            — все обработчики событий мыши и клавиатуры
 └── main.js             — игровой цикл: update(), render(), gameLoop()
 ```
@@ -37,8 +39,10 @@ js/
 
 ```
 GameObject (базовая физика)
-├── Item     (ресурсы: пшеница, камень, дерево, железо, свиток)
-└── Minion   (гоблины: AI блуждания, HP, мёртвое состояние → скелет)
+├── Item            (ресурсы: пшеница, камень, дерево, железо, свиток)
+├── Minion          (гоблины: AI блуждания, HP, мёртвое состояние → скелет)
+├── Fireball        (огненный шар: взрыв при приземлении, горящие патчи)
+└── SpellProjectile (снаряд water/earth/wind: общий объект, spellType на лету)
 
 Hand         (рука-курсор, не наследует GameObject)
 Castle       (замок: коллизия, рендер, пушка — не наследует GameObject)
@@ -1229,8 +1233,8 @@ aiming → (ЛКМ) → flying → (приземление) → aftermath → (1
 ### Архитектура
 
 - `Fireball extends GameObject` — singleton в `World.js`, сбрасывается через `restartMap()`
-- Стейт-машина: `ready → lifting → carried → thrown → bouncing → done`
-- `fireball.pendingExplosion = true` — триггер взрыва, обрабатывается в `update()` следующим кадром
+- Стейт-машина: `ready → lifting → carried → thrown → bouncing → settling → done`
+- `fireball.pendingExplosion = true` — триггер взрыва, обрабатывается в `main.js` следующим кадром
 - `firePatches[]` — массив активных горящих зон в `World.js`
 
 ### Файлы
@@ -1242,6 +1246,43 @@ aiming → (ЛКМ) → flying → (приземление) → aftermath → (1
 | `World.js` | `fireball` singleton, `firePatches[]`, сброс в `restartMap()` |
 | `input.js` | Захват из панели заклинаний (зажатие ЛКМ), бросок (`mouseup`) |
 | `main.js` | Обработка `pendingExplosion`, урон, создание `firePatch`; обновление патчей (урон по времени, удаление); рендер патча и шара в depth-sort; `fogSources` от `firePatches` |
+
+---
+
+## 15.5. Бросаемые заклинания (water / earth / wind)
+
+### Концепция
+
+Все три стихийных заклинания теперь бросаются **физическим снарядом** с той же механикой, что и фаербол. Ранее они кастовались мгновенно при отпускании кнопки мыши.
+
+### Реализация
+
+- `SpellProjectile extends GameObject` — один shared-объект в `World.js` для всех трёх заклинаний
+- `spellType` (`'water'` | `'earth'` | `'wind'`) устанавливается при захвате из панели, хранится до приземления
+- Масса/упругость/трение идентичны фаерболу (`FIREBALL_MASS/BOUNCINESS/FRICTION`)
+- `onLand()` — то же что у `Fireball`: выставляет `pendingExplosion`, блокирует последующие отскоки
+- Кулдаун **не** хранится в самом объекте — по-прежнему в `spellStates[spellKey]`; выставляется при `pendingExplosion` в `main.js`
+- Эффект применяется через `applySpellInRadius(spellKey, ex, ey, radius)` — радиусы из констант
+- Ветер дополнительно отбрасывает юниты в радиусе (`WIND_KNOCKBACK_FORCE`, только при `spellKey === 'wind'`)
+- Cooldown не блокирует вылет снаряда, если тот уже был в воздухе от другого заклинания (`spellProjectile.state !== 'ready'` → break)
+
+### Стейт-машина снаряда
+
+```
+ready → lifting → carried → thrown → (bouncing/sliding/settling) → done → reset → ready
+```
+
+Переход `done → ready` происходит в `main.js` сразу после установки кулдауна.
+
+### Файлы
+
+| Файл | Что изменено |
+|------|-------------|
+| `SpellProjectile.js` | Новый класс — физика, `onLand()`, `draw()` с нужным спрайтом и glowом |
+| `constants.js` | Добавлены `WATER/EARTH/WIND_SPELL_RADIUS` и `WIND_KNOCKBACK_FORCE` в main.js (перемещены из input.js) |
+| `World.js` | `spellProjectile` singleton, сброс в `initWorld()` |
+| `main.js` | Захват из панели (инициализация `spellProjectile`); обновление; обработка `pendingExplosion` + кулдаун + эффекты + ветер-нокбэк; depth-sort рендер в полёте; рендер при `carried`/`lifting` через `draw()` |
+| `input.js` | Мгновенный каст заменён на `calculateThrowVelocity` + переход в `thrown`, как у фаербола; удалены неиспользуемые импорты `WATER/EARTH/WIND_SPELL_RADIUS`, `WIND_KNOCKBACK_FORCE`, `applySpellInRadius`, `spellStates` |
 
 ---
 
@@ -1728,3 +1769,4 @@ fireball.vz = throwVel.vz;
 - [x] Баг: апгрейд воинов/разведчиков требовал `state === 'free'` — исправлено; теперь апгрейдится любой живой базовый гоблин не в руке игрока
 - [x] Selection HUD: панель выбранных гоблинов внизу экрана после лассо; клик по иконке исключает из выделения; выделение персистентно до нового лассо (нет авто-сброса, ЛКМ не сбрасывает)
 - [x] Артиллерийский снаряд рассеивает туман войны: радиус 3 тайла в полёте, радиус `BLAST_RADIUS+2` в течение 5 сек после взрыва (`fogRevealTimer`)
+- [x] Бросаемые заклинания (water/earth/wind): теперь летят физическим снарядом как фаербол (гравитация, отскок, глубинная сортировка); эффект применяется при приземлении; `SpellProjectile extends GameObject` — shared singleton в `World.js` [см. раздел 15.5]

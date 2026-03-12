@@ -10,9 +10,9 @@ import {
     FIREBALL_BLAST_RADIUS, FIREBALL_BLAST_DAMAGE,
     FIREBALL_COOLDOWN, FIREBALL_TILE_RADIUS,
     MANA_MAX, MANA_FIREBALL_COST, MANA_WATER_COST, MANA_EARTH_COST, MANA_WIND_COST,
-    WATER_SPELL_COOLDOWN,
-    EARTH_SPELL_COOLDOWN,
-    WIND_SPELL_COOLDOWN,
+    WATER_SPELL_COOLDOWN, WATER_SPELL_RADIUS,
+    EARTH_SPELL_COOLDOWN, EARTH_SPELL_RADIUS,
+    WIND_SPELL_COOLDOWN, WIND_SPELL_RADIUS, WIND_KNOCKBACK_FORCE,
     MONK_MAX_COUNT, MONK_MANA_REGEN, MONK_UPGRADE_INTERVAL, MONK_FOOD_COST,
     MONK_TOTEM_MIN_DIST, MONK_TOTEM_MAX_DIST,
     MINION_MAX_HP, SKELETON_MAX_HP,
@@ -20,9 +20,9 @@ import {
 import { MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H, MONK_ROBE_PIXELS, MONK_ROBE_W, MONK_TOTEM_PIXELS, MONK_TOTEM_W, MONK_TOTEM_H, WATER_SPELL_PIXELS, WATER_SPELL_W, WATER_SPELL_H, EARTH_SPELL_PIXELS, EARTH_SPELL_W, EARTH_SPELL_H, WIND_SPELL_PIXELS, WIND_SPELL_W, WIND_SPELL_H } from './sprites.js';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
-import { camera, isoToScreen, screenToIso, getDepth, worldToScreen, screenToCanvas } from './isometry.js';
+import { camera, isoToScreen, screenToIso, getDepth, worldToScreen } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, manaPool, spellStates, monkTotem, commandMarkers } from './World.js';
+import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, monkTotem, commandMarkers } from './World.js';
 import { initInput } from './input.js';
 import { updateActiveTiles, applySpellInRadius } from './tileEffects.js';
 
@@ -259,8 +259,20 @@ canvas.addEventListener('mousedown', (e) => {
             } else if (sr.key === 'water' || sr.key === 'earth' || sr.key === 'wind') {
                 const ss = spellStates[sr.key];
                 if (ss.cooldown > 0) break;
+                if (spellProjectile.state !== 'ready') break;
                 manaPool.value -= sr.cost;
-                // Заклинание подхватывается рукой — каст при отпускании
+                // Инициализируем снаряд — как фаербол
+                spellProjectile.spellType = sr.key;
+                spellProjectile.ix = hand.isoX;
+                spellProjectile.iy = hand.isoY;
+                spellProjectile.iz = 0;
+                spellProjectile.state = 'lifting';
+                spellProjectile.stateTime = 0;
+                spellProjectile.liftProgress = 0;
+                spellProjectile.vx = 0; spellProjectile.vy = 0; spellProjectile.vz = 0;
+                spellProjectile.bounceCount = 0;
+                spellProjectile.pendingExplosion = false;
+                spellProjectile._exploded = false;
                 hand.grabbedSpell = sr.key;
                 hand.state = 'closing';
                 hand.animProgress = 0;
@@ -607,6 +619,54 @@ function update(dt) {
 
         // Трансформация тайлов в зоне взрыва (burning, steam и т.д.)
         applySpellInRadius('fire', ex, ey, FIREBALL_TILE_RADIUS);
+    }
+
+    // ── СНАРЯД ЗАКЛИНАНИЯ — обновление ────────────────────────
+    spellProjectile.update(dt, hand, triggerScreenShake);
+
+    // Обрабатываем приземление снаряда
+    if (spellProjectile.pendingExplosion) {
+        spellProjectile.pendingExplosion = false;
+        const ex = spellProjectile.ix, ey = spellProjectile.iy;
+        const spellKey = spellProjectile.spellType;
+
+        // Ставим кулдаун
+        spellStates[spellKey].cooldown = spellStates[spellKey].maxCooldown;
+
+        triggerScreenShake(4);
+
+        const spellRadius = spellKey === 'water' ? WATER_SPELL_RADIUS
+                          : spellKey === 'earth' ? EARTH_SPELL_RADIUS
+                          : WIND_SPELL_RADIUS;
+        applySpellInRadius(spellKey, ex, ey, spellRadius);
+
+        // Ветер: отбросить юнитов в радиусе
+        if (spellKey === 'wind') {
+            const r2 = WIND_SPELL_RADIUS * WIND_SPELL_RADIUS;
+            for (const m of minions) {
+                if (m.dead || m.pendingRemove || m.state === 'crumbled') continue;
+                if (m.state === 'carried' || m.state === 'lifting') continue;
+                const dx = m.ix - ex, dy = m.iy - ey;
+                const d2 = dx * dx + dy * dy;
+                if (d2 > r2 || d2 < 0.01) continue;
+                const dist = Math.sqrt(d2);
+                const nx = dx / dist, ny = dy / dist;
+                const force = WIND_KNOCKBACK_FORCE * (1 - dist / WIND_SPELL_RADIUS);
+                m.vx = nx * force;
+                m.vy = ny * force;
+                m.vz = force * 0.4;
+                m.iz = 0.1;
+                m.state = 'thrown';
+                m.stateTime = 0;
+                m.bounceCount = 0;
+                m.windPushed = true;
+            }
+        }
+    }
+
+    // После settling — сбрасываем снаряд
+    if (spellProjectile.state === 'done') {
+        spellProjectile.reset();
     }
 
     // Обновляем миньонов
@@ -1073,6 +1133,15 @@ function render() {
         });
     }
 
+    // Снаряд заклинания в полёте
+    if (spellProjectile.state !== 'ready' && spellProjectile.state !== 'done' &&
+        spellProjectile.state !== 'lifting' && spellProjectile.state !== 'carried') {
+        renderList.push({
+            type: 'spellProjectile',
+            depth: getDepth(spellProjectile.ix, spellProjectile.iy) + spellProjectile.iz * 0.1,
+        });
+    }
+
     // Тотем монахов
     if (monkTotem.active) {
         renderList.push({
@@ -1126,6 +1195,8 @@ function render() {
             drawPixelArt(tx, ty, MONK_TOTEM_PIXELS, TOTEM_SCALE);
         } else if (obj.type === 'fireball') {
             fireball.draw(hand);
+        } else if (obj.type === 'spellProjectile') {
+            spellProjectile.draw(hand);
         } else if (obj.type === 'hand') {
             if (hand.grabbedItem !== null) {
                 items[hand.grabbedItem].draw(hand.grabbedItem, hand, hoveredItem);
@@ -1134,21 +1205,7 @@ function render() {
             } else if (hand.grabbedSpell === 'fireball') {
                 fireball.draw(hand);
             } else if (hand.grabbedSpell === 'water' || hand.grabbedSpell === 'earth' || hand.grabbedSpell === 'wind') {
-                // Рисуем иконку заклинания у руки
-                const spellSprites = {
-                    water: { pixels: WATER_SPELL_PIXELS, w: WATER_SPELL_W, h: WATER_SPELL_H, glow: '#3399ff' },
-                    earth: { pixels: EARTH_SPELL_PIXELS, w: EARTH_SPELL_W, h: EARTH_SPELL_H, glow: '#aa7744' },
-                    wind:  { pixels: WIND_SPELL_PIXELS,  w: WIND_SPELL_W,  h: WIND_SPELL_H,  glow: '#44cc66' },
-                };
-                const sp = spellSprites[hand.grabbedSpell];
-                const cp = screenToCanvas(hand.screenX, hand.screenY);
-                const spOx = cp.x - (sp.w * PIXEL_SCALE) / 2;
-                const spOy = cp.y - (sp.h * PIXEL_SCALE) / 2 - 8;
-                ctx.save();
-                ctx.shadowColor = sp.glow;
-                ctx.shadowBlur = 18;
-                drawPixelArt(spOx, spOy, sp.pixels, PIXEL_SCALE);
-                ctx.restore();
+                spellProjectile.draw(hand);
             }
             hand.draw();
         }

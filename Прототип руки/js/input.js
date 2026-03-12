@@ -6,13 +6,11 @@ import {
     ARTILLERY_GRAB_RADIUS, ARTILLERY_FLIGHT_TIME_K,
     ARTILLERY_MIN_FLIGHT, ARTILLERY_MAX_FLIGHT,
     MONK_TOTEM_MIN_DIST, MONK_TOTEM_MAX_DIST,
-    WATER_SPELL_RADIUS, EARTH_SPELL_RADIUS,
-    WIND_SPELL_RADIUS, WIND_KNOCKBACK_FORCE,
 } from './constants.js';
 import { MINION_H } from './sprites.js';
 import { screenToIso, worldToScreen, screenToCanvas } from './isometry.js';
-import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellStates, monkTotem, commandMarkers } from './World.js';
-import { applySpellToTile, applySpellInRadius } from './tileEffects.js';
+import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellProjectile, monkTotem, commandMarkers } from './World.js';
+import { applySpellToTile } from './tileEffects.js';
 
 const RMB_DRAG_THRESHOLD = 5;
 
@@ -353,47 +351,24 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             return;
         }
 
-        // Каст мгновенного заклинания (water/earth/wind) — по позиции курсора
+        // Бросок заклинания (water/earth/wind) — физика как у фаербола
         if (hand.grabbedSpell === 'water' || hand.grabbedSpell === 'earth' || hand.grabbedSpell === 'wind') {
-            const spellKey = hand.grabbedSpell;
-            const ss = spellStates[spellKey];
-            ss.cooldown = ss.maxCooldown;
-            const spellRadius = spellKey === 'water' ? WATER_SPELL_RADIUS
-                              : spellKey === 'earth' ? EARTH_SPELL_RADIUS
-                              : WIND_SPELL_RADIUS;
-            applySpellInRadius(spellKey, hand.isoX, hand.isoY, spellRadius);
-            triggerScreenShake(4);
-
-            // Ветер: отбросить юнитов в радиусе
-            if (spellKey === 'wind') {
-                const cx = hand.isoX, cy = hand.isoY;
-                const r2 = WIND_SPELL_RADIUS * WIND_SPELL_RADIUS;
-                for (const m of minions) {
-                    if (m.dead || m.pendingRemove || m.state === 'crumbled') continue;
-                    if (m.state === 'carried' || m.state === 'lifting') continue;
-                    const dx = m.ix - cx, dy = m.iy - cy;
-                    const d2 = dx * dx + dy * dy;
-                    if (d2 > r2 || d2 < 0.01) continue;
-                    const dist = Math.sqrt(d2);
-                    const nx = dx / dist, ny = dy / dist;
-                    const force = WIND_KNOCKBACK_FORCE * (1 - dist / WIND_SPELL_RADIUS);
-                    m.vx = nx * force;
-                    m.vy = ny * force;
-                    m.vz = force * 0.4;
-                    m.iz = 0.1;
-                    m.state = 'thrown';
-                    m.stateTime = 0;
-                    m.bounceCount = 0;
-                    m.windPushed = true;
-                }
-            }
-
+            const throwVel = hand.calculateThrowVelocity({ mass: spellProjectile.mass });
+            spellProjectile.iz = 0;
+            spellProjectile.vx = throwVel.vx;
+            spellProjectile.vy = throwVel.vy;
+            spellProjectile.vz = throwVel.vz;
+            spellProjectile.state = 'thrown';
+            spellProjectile.stateTime = 0;
+            spellProjectile.bounceCount = 0;
+            spellProjectile.pendingExplosion = false;
+            spellProjectile._exploded = false;
             hand.grabbedSpell = null;
             hand.state = 'opening';
             hand.animProgress = 0;
             hand.velocityHistory = [];
             const spellNames = { water: 'Водный поток!', earth: 'Каменная стена!', wind: 'Порыв ветра!' };
-            statusEl.textContent = spellNames[spellKey];
+            statusEl.textContent = spellNames[spellProjectile.spellType] ?? 'Заклинание!';
             return;
         }
 
