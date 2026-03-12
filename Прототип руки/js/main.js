@@ -265,6 +265,10 @@ function updateArtillery(dt) {
             expl.t = 0;
             expl.duration = 1.0;
 
+            // Рваные края гари и вспышки (pre-generated, чтобы не мерцать)
+            expl.scorchPoints = Array.from({ length: 28 }, () => 0.5 + Math.random() * 1.0);
+            expl.flashPoints  = Array.from({ length: 18 }, () => 0.6 + Math.random() * 0.8);
+
             // Частицы взрыва
             expl.particles = [];
             const colors = ['#ff4400', '#ff6600', '#ffaa00', '#ffcc00', '#ff2200', '#aa3300', '#883300'];
@@ -1008,7 +1012,7 @@ function render() {
             const expl = art.explosion;
             const es = worldToScreen(expl.ix, expl.iy);
 
-            // Вспышка
+            // Вспышка (рваная форма)
             if (expl.t < 0.15) {
                 const flashAlpha = (1 - expl.t / 0.15) * 0.6;
                 ctx.save();
@@ -1016,7 +1020,15 @@ function render() {
                 ctx.fillStyle = '#ffdd44';
                 ctx.beginPath();
                 const flashR = 40 + expl.t * 300;
-                ctx.ellipse(es.x, es.y, flashR, flashR * 0.5, 0, 0, Math.PI * 2);
+                const FN = expl.flashPoints.length;
+                for (let i = 0; i <= FN; i++) {
+                    const angle = (i % FN) / FN * Math.PI * 2;
+                    const r = expl.flashPoints[i % FN];
+                    const x = es.x + Math.cos(angle) * flashR * r;
+                    const y = es.y + Math.sin(angle) * flashR * 0.5 * r;
+                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.closePath();
                 ctx.fill();
                 ctx.restore();
             }
@@ -1036,7 +1048,7 @@ function render() {
                 ctx.restore();
             }
 
-            // Гарь на земле
+            // Гарь на земле (рваные края)
             if (expl.t > 0.2) {
                 ctx.save();
                 ctx.globalAlpha = Math.min(0.3, (expl.t - 0.2) * 0.6) * (1 - expl.t / expl.duration);
@@ -1044,7 +1056,15 @@ function render() {
                 const blastPxW = ARTILLERY_BLAST_RADIUS * (TILE_W / 2) * 0.8;
                 const blastPxH = ARTILLERY_BLAST_RADIUS * (TILE_H / 2) * 0.8;
                 ctx.beginPath();
-                ctx.ellipse(es.x, es.y, blastPxW, blastPxH, 0, 0, Math.PI * 2);
+                const SN = expl.scorchPoints.length;
+                for (let i = 0; i <= SN; i++) {
+                    const angle = (i % SN) / SN * Math.PI * 2;
+                    const r = expl.scorchPoints[i % SN];
+                    const x = es.x + Math.cos(angle) * blastPxW * r;
+                    const y = es.y + Math.sin(angle) * blastPxH * r;
+                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.closePath();
                 ctx.fill();
                 ctx.restore();
             }
