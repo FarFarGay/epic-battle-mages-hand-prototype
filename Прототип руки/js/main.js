@@ -921,6 +921,10 @@ function update(dt) {
     if (fireball.state === 'thrown' || fireball.state === 'bouncing') {
         fogSources.push({ ix: fireball.ix, iy: fireball.iy, radius: 3 });
     }
+    // Зона горения остаётся открытой пока активен firePatch
+    for (const fp of firePatches) {
+        fogSources.push({ ix: fp.ix, iy: fp.iy, radius: fp.radius });
+    }
     gameMap.tickFog(fogSources);
 
     // Тряска экрана
