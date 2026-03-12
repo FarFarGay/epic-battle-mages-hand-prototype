@@ -653,11 +653,13 @@ function update(dt) {
         }
 
         // Огненное пятно
+        const fpN = 22;
         firePatches.push({
             ix: ex, iy: ey,
             timer: 0,
             duration: FIREBALL_BURN_DURATION,
             radius: FIREBALL_BURN_RADIUS,
+            edgePoints: Array.from({ length: fpN }, () => 0.45 + Math.random() * 1.1),
         });
     }
 
@@ -1136,7 +1138,15 @@ function render() {
             grad.addColorStop(1, 'rgba(180,30,0,0)');
             ctx.fillStyle = grad;
             ctx.beginPath();
-            ctx.ellipse(s.x, s.y, rW, rH, 0, 0, Math.PI * 2);
+            const EN = fp.edgePoints.length;
+            for (let i = 0; i <= EN; i++) {
+                const angle = (i % EN) / EN * Math.PI * 2;
+                const r = fp.edgePoints[i % EN];
+                const px = s.x + Math.cos(angle) * rW * r;
+                const py = s.y + Math.sin(angle) * rH * r;
+                if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
             ctx.fill();
             // Искры
             const now = performance.now() / 1000;
