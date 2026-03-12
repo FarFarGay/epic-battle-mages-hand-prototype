@@ -5,10 +5,11 @@ import {
     ITEM_TYPES, PIXEL_SCALE, GRAVITY,
     ARTILLERY_GRAB_RADIUS, ARTILLERY_FLIGHT_TIME_K,
     ARTILLERY_MIN_FLIGHT, ARTILLERY_MAX_FLIGHT,
+    MONK_TOTEM_MIN_DIST, MONK_TOTEM_MAX_DIST,
 } from './constants.js';
 import { MINION_H } from './sprites.js';
 import { screenToIso, worldToScreen, screenToCanvas } from './isometry.js';
-import { restartMap, flag, items, minions, castle, artilleryMode, triggerScreenShake, fireball } from './World.js';
+import { restartMap, flag, items, minions, castle, artilleryMode, triggerScreenShake, fireball, monkTotem } from './World.js';
 
 export function initInput(canvas, hand, world, cam, statusEl) {
     // world = { items, minions, flag, screenShake, selection, flagEffect, hoveredItem, hoveredMinion }
@@ -95,6 +96,12 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                     m.stateTime = 0;
                     continue;
                 }
+                if (m.goblinClass === 'monk') {
+                    // Монахи не добывают — возвращаются к тотему молиться
+                    m.state = 'monk_walking';
+                    m.stateTime = 0;
+                    continue;
+                }
                 if (m.state === 'listening') {
                     if (m.assignGatherTask(items)) count++;
                 }
@@ -131,7 +138,30 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                 m.stateTime = 0;
             });
 
-            // Обычные гоблины — идут прямо к флагу; разведчики продолжают блуждать
+            // Монахи — переносят тотем на место флага
+            const monkIdxs = hand.selectedMinions.filter(idx => minions[idx].goblinClass === 'monk');
+            if (monkIdxs.length > 0) {
+                const fx = flag.ix, fy = flag.iy;
+                // Смещаем тотем в пределах допустимого расстояния от замка
+                const dx = fx - castle.ix, dy = fy - castle.iy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const clampedDist = Math.max(MONK_TOTEM_MIN_DIST, Math.min(MONK_TOTEM_MAX_DIST, dist));
+                const angle = dist > 0.01 ? Math.atan2(dy, dx) : 0;
+                monkTotem.ix = castle.ix + Math.cos(angle) * clampedDist;
+                monkTotem.iy = castle.iy + Math.sin(angle) * clampedDist;
+                monkTotem.active = true;
+                // Все монахи идут к новому тотему
+                for (const m of minions) {
+                    if (m.goblinClass === 'monk' && !m.dead && !m.isUndead) {
+                        m.totemX = monkTotem.ix;
+                        m.totemY = monkTotem.iy;
+                        m.state = 'monk_walking';
+                        m.stateTime = 0;
+                    }
+                }
+            }
+
+            // Обычные гоблины — идут прямо к флагу; разведчики и монахи — уже обработаны
             for (const idx of hand.selectedMinions) {
                 const m = minions[idx];
                 if (m.goblinClass === 'warrior') continue;
@@ -141,6 +171,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                     m.stateTime = 0;
                     continue;
                 }
+                if (m.goblinClass === 'monk') continue;
                 if (m.state === 'listening') {
                     m.targetX = flag.ix;
                     m.targetY = flag.iy;
@@ -153,7 +184,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             hand.animProgress = 0;
             hand.velocityHistory = [];
             hand.selectedMinions = [];
-            statusEl.textContent = Nw > 0 ? `Воины идут в строй` : 'Флаг установлен';
+            statusEl.textContent = monkIdxs.length > 0 ? 'Тотем перемещён' : Nw > 0 ? `Воины идут в строй` : 'Флаг установлен';
         } else if (world.hoveredItem !== null && handFree) {
             const item = items[world.hoveredItem];
             if (item.state !== 'carried' && item.state !== 'lifting') {
@@ -299,7 +330,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                     Math.max(selection.startX, selection.endX),
                     Math.max(selection.startY, selection.endY)
                 );
-                const SELECTABLE = ['free', 'listening', 'moving', 'waiting', 'busy', 'returning', 'war', 'fighting', 'guarding', 'warrior_returning'];
+                const SELECTABLE = ['free', 'listening', 'moving', 'waiting', 'busy', 'returning', 'war', 'fighting', 'guarding', 'warrior_returning', 'monk_walking', 'monk_praying'];
                 hand.selectedMinions = [];
                 for (let i = 0; i < minions.length; i++) {
                     const m = minions[i];

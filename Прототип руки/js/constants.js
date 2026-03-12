@@ -126,6 +126,14 @@ export const FIREBALL_BURN_DPS      = 2;     // урон горения (HP/се
 export const FIREBALL_COOLDOWN      = 8.0;   // секунд перезарядки
 
 // — Мана —
-export const MANA_MAX           = 100;   // максимальный запас маны
-export const MANA_FIREBALL_COST = 25;    // стоимость огненного шара (25% маны)
-export const MANA_REGEN         = 5.0;   // восстановление маны (ед/сек)
+export const MANA_MAX           = 1000;  // максимальный запас маны
+export const MANA_FIREBALL_COST = 500;   // стоимость огненного шара (50% маны)
+// Пассивная регенерация убрана — мана восстанавливается только монахами (MONK_MANA_REGEN * кол-во)
+
+// — Гоблин монах (молельщик) —
+export const MONK_MAX_COUNT        = 5;    // макс. одновременно живых монахов
+export const MONK_MANA_REGEN       = 5.0;  // восстановление маны за монаха (ед/сек), пока молится
+export const MONK_UPGRADE_INTERVAL = 10.0; // секунд между производственными циклами
+export const MONK_FOOD_COST        = 1;    // единиц пшеницы на монаха (typeIndex 0)
+export const MONK_TOTEM_MIN_DIST   = 10.0; // мин. расстояние тотема от замка (iso-тайлы)
+export const MONK_TOTEM_MAX_DIST   = 25.0; // макс. расстояние тотема от замка (iso-тайлы)

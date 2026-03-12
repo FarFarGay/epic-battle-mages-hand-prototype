@@ -69,6 +69,9 @@ export const castleResources = [];
 // Мана игрока
 export const manaPool = { value: MANA_MAX };
 
+// Тотем монахов
+export const monkTotem = { active: false, ix: 0, iy: 0 };
+
 export let castle = null;
 
 // ============================================================
@@ -262,4 +265,8 @@ export function initWorld() {
     firePatches.length = 0;
 
     manaPool.value = MANA_MAX;
+
+    monkTotem.active = false;
+    monkTotem.ix = 0;
+    monkTotem.iy = 0;
 }

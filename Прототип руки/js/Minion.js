@@ -19,6 +19,7 @@ import {
     SKELETON_PIXELS, SKELETON_W, SKELETON_H,
     WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W,
     SCOUT_HOOD_PIXELS, SCOUT_HOOD_W,
+    MONK_ROBE_PIXELS, MONK_ROBE_W,
 } from './sprites.js';
 import { GameObject } from './GameObject.js';
 import { ctx, drawPixelArt, drawItemShadow, drawHighlight } from './renderer.js';
@@ -51,6 +52,8 @@ export class Minion extends GameObject {
         this.guardX = null;             // позиция охраны воина (iso X)
         this.guardY = null;             // позиция охраны воина (iso Y)
         this.scoutAge = 0;              // секунд прожито (только для разведчика)
+        this.totemX = null;             // позиция тотема монахов (iso X)
+        this.totemY = null;             // позиция тотема монахов (iso Y)
 
         // Скелет
         this.isUndead = false;          // true = скелет (после воскрешения)
@@ -81,6 +84,8 @@ export class Minion extends GameObject {
             const lim = gameMap.size - 1;
             this.targetX = (Math.random() * 2 - 1) * lim;
             this.targetY = (Math.random() * 2 - 1) * lim;
+        } else if (this.goblinClass === 'monk') {
+            // Монах не выбирает случайные цели — целью всегда является тотем
         } else {
             // Свободные гоблины патрулируют 21×21 область вокруг замка (0,0)
             this.targetX = (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
@@ -121,6 +126,16 @@ export class Minion extends GameObject {
     exitCombat() {
         this.combatTarget = null;
         this.attackCooldown = 0;
+        // Монах возвращается к тотему
+        if (this.goblinClass === 'monk') {
+            this.state = 'monk_walking';
+            this.stateTime = 0;
+            this.savedState = null;
+            this.savedTask = null;
+            this.savedTargetItem = null;
+            this.savedGathererMode = false;
+            return;
+        }
         // Воины всегда возвращаются на пост охраны
         if (this.goblinClass === 'warrior') {
             this.state = 'warrior_returning';
@@ -316,6 +331,12 @@ export class Minion extends GameObject {
         // Воин возвращается на пост (не подбирает ресурсы)
         if (this.goblinClass === 'warrior') {
             this.state = 'warrior_returning';
+            this.stateTime = 0;
+            return;
+        }
+        // Монах возвращается к тотему
+        if (this.goblinClass === 'monk') {
+            this.state = 'monk_walking';
             this.stateTime = 0;
             return;
         }
@@ -649,6 +670,40 @@ export class Minion extends GameObject {
                 break;
             }
 
+            // ── Монах: идёт к тотему ─────────────────────────────────
+            case 'monk_walking': {
+                if (this.totemX === null) break; // тотем ещё не установлен
+                const dx = this.totemX - this.ix;
+                const dy = this.totemY - this.iy;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < 1.0) {
+                    this.state = 'monk_praying';
+                    this.stateTime = 0;
+                } else {
+                    const spd = MINION_SPEED * dt;
+                    this.ix += (dx / dist) * spd;
+                    this.iy += (dy / dist) * spd;
+                    const lim = gameMap.size - 0.5;
+                    this.ix = Math.max(-lim, Math.min(lim, this.ix));
+                    this.iy = Math.max(-lim, Math.min(lim, this.iy));
+                }
+                break;
+            }
+
+            // ── Монах: молится у тотема ──────────────────────────────
+            case 'monk_praying': {
+                if (this.totemX !== null) {
+                    const dx = this.totemX - this.ix;
+                    const dy = this.totemY - this.iy;
+                    if (dx * dx + dy * dy > 4.0) { // > 2 тайлов от тотема
+                        this.state = 'monk_walking';
+                        this.stateTime = 0;
+                    }
+                }
+                // Мана восстанавливается в main.js подсчётом monk_praying гоблинов
+                break;
+            }
+
             case 'settling':
                 if (this.stateTime > 0.3) {
                     this.onSettle(items);
@@ -861,7 +916,13 @@ export class Minion extends GameObject {
             hitOffsetY = Math.cos(now * 0.07) * shake * 0.4;
         }
 
-        const ox = s.x - (sprW * PIXEL_SCALE) / 2 + hitOffsetX;
+        // Покачивание монаха во время молитвы
+        let praySwayX = 0;
+        if (this.state === 'monk_praying') {
+            praySwayX = Math.sin(performance.now() / 700 + index * 1.7) * 2;
+        }
+
+        const ox = s.x - (sprW * PIXEL_SCALE) / 2 + hitOffsetX + praySwayX;
         const oy = s.y - (sprH * PIXEL_SCALE) - 4 - heightOffset + hitOffsetY;
 
         // Рамка выделения — только для живых гоблинов
@@ -891,6 +952,12 @@ export class Minion extends GameObject {
         if (this.goblinClass === 'scout' && !this.isUndead) {
             const hoodOx = Math.round(ox + (sprW - SCOUT_HOOD_W) / 2 * PIXEL_SCALE);
             drawPixelArt(hoodOx, oy, SCOUT_HOOD_PIXELS, PIXEL_SCALE);
+        }
+
+        // Балахон монаха — накладывается поверх головы живого гоблина-монаха
+        if (this.goblinClass === 'monk' && !this.isUndead) {
+            const robeOx = Math.round(ox + (sprW - MONK_ROBE_W) / 2 * PIXEL_SCALE);
+            drawPixelArt(robeOx, oy, MONK_ROBE_PIXELS, PIXEL_SCALE);
         }
     }
 }
