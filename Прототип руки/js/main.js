@@ -441,7 +441,7 @@ function updateArtillery(dt) {
                 }
             }
 
-            // Тайлы: стены в радиусе взрыва → щебень
+            // Тайлы: стены → щебень, лес → plain + дроп дерева
             {
                 const blastR = Math.ceil(ARTILLERY_BLAST_RADIUS);
                 const blastR2 = ARTILLERY_BLAST_RADIUS * ARTILLERY_BLAST_RADIUS;
@@ -449,8 +449,19 @@ function updateArtillery(dt) {
                 for (let dx = -blastR; dx <= blastR; dx++) {
                     for (let dy = -blastR; dy <= blastR; dy++) {
                         if (dx * dx + dy * dy > blastR2) continue;
-                        if (gameMap.getTile(bix + dx, biy + dy) === 'wall')
-                            gameMap.setTile(bix + dx, biy + dy, 'rubble', 'artillery');
+                        const tix = bix + dx, tiy = biy + dy;
+                        const tile = gameMap.getTile(tix, tiy);
+                        if (tile === 'wall') {
+                            gameMap.setTile(tix, tiy, 'rubble', 'artillery');
+                        } else if (tile === 'forest') {
+                            gameMap.setTile(tix, tiy, 'plain', 'artillery');
+                            const count = 1 + Math.floor(Math.random() * 2);
+                            for (let i = 0; i < count; i++) {
+                                items.push(new Item(2,
+                                    tix + (Math.random() - 0.5) * 0.8,
+                                    tiy + (Math.random() - 0.5) * 0.8));
+                            }
+                        }
                     }
                 }
             }
