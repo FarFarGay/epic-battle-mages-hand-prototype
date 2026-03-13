@@ -747,6 +747,7 @@ function update(dt) {
                         [tx + ndx + ndy, ty + ndy - ndx],
                         [tx + ndx - ndy, ty + ndy + ndx],
                     ]) {
+                        if (!gameMap.isInBounds(nx, ny)) continue;
                         const nt = gameMap.getTile(nx, ny);
                         if (nt === 'forest' || nt === 'plain' || nt === 'village')
                             applySpellToTile('fire', nx, ny);
@@ -1366,7 +1367,7 @@ function render() {
                     for (const puff of t.steamPuffs) {
                         const sc    = worldToScreen(t.ix + puff.ox, t.iy + puff.oy);
                         const yOff  = -(((now * 15) + puff.phase) % 30);
-                        const alpha =  0.35 * ((-yOff) / 30);
+                        const alpha =  0.35 * (1 - (-yOff) / 30);
                         if (alpha < 0.01) continue;
                         const xWobble = Math.sin(now * 2 + puff.wobblePhase) * 3;
                         ctx.globalAlpha = alpha;
