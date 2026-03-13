@@ -25,6 +25,7 @@ import { Hand } from './Hand.js';
 import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers } from './World.js';
 import { initInput } from './input.js';
 import { updateActiveTiles, applySpellInRadius } from './tileEffects.js';
+import { addDecorationsToRenderList } from './decorations.js';
 
 // ============================================================
 //  СОСТОЯНИЕ ВВОДА / UI
@@ -914,7 +915,7 @@ function update(dt) {
     }
     if (debugFlags.fogDisabled) {
         // P — туман отключён: добавляем источник, покрывающий всю карту
-        fogSources.push({ ix: 0, iy: 0, radius: 200 });
+        fogSources.push({ ix: gameMap.castlePos.ix, iy: gameMap.castlePos.iy, radius: 200 });
     }
     gameMap.tickFog(fogSources);
 
@@ -1195,6 +1196,9 @@ function render() {
         depth: Infinity,
     });
 
+    // Декорации (деревья, камни, домики)
+    addDecorationsToRenderList(renderList, canvas);
+
     // Сортируем по глубине
     renderList.sort((a, b) => a.depth - b.depth);
 
@@ -1242,6 +1246,8 @@ function render() {
                 spellProjectile.draw(hand);
             }
             hand.draw();
+        } else if (typeof obj.draw === 'function') {
+            obj.draw();
         }
     }
 
@@ -1969,6 +1975,12 @@ function render() {
         ctx.font = '12px monospace';
         ctx.fillText(`Зум: ${Math.round(camera.zoom * 100)}%`, 16, canvas.height - 16);
     }
+
+    // Seed display
+    ctx.fillStyle = '#889';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Seed: ${gameMap.seed}  [R] restart  [N] new map`, 8, 14);
 }
 
 // ============================================================

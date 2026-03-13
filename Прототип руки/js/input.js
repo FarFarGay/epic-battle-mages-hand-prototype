@@ -11,6 +11,7 @@ import { MINION_H } from './sprites.js';
 import { screenToIso, worldToScreen, screenToCanvas } from './isometry.js';
 import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellProjectile, monkTotem, commandMarkers, debugFlags } from './World.js';
 import { applySpellToTile } from './tileEffects.js';
+import { gameMap } from './Map.js';
 
 const RMB_DRAG_THRESHOLD = 5;
 
@@ -448,6 +449,15 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             selection.active = false;
             cam.zoom = 1.0;
             cam.targetZoom = 1.0;
+        } else if (e.key === 'n' || e.key === 'т') {
+            gameMap.seed = Math.floor(Math.random() * 1_000_000);
+            restartMap(hand, statusEl);
+            world.hoveredItem = null;
+            world.hoveredMinion = null;
+            selection.active = false;
+            cam.zoom = 1.0;
+            cam.targetZoom = 1.0;
+            statusEl.textContent = `Новая карта! Seed: ${gameMap.seed}`;
         } else if (e.key === 'p' || e.key === 'з') {
             debugFlags.fogDisabled = !debugFlags.fogDisabled;
             statusEl.textContent = debugFlags.fogDisabled ? '[debug] Туман войны отключён' : '[debug] Туман войны включён';

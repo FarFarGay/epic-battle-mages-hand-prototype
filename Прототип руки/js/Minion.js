@@ -130,9 +130,9 @@ export class Minion extends GameObject {
         } else if (this.goblinClass === 'monk') {
             // Монах не выбирает случайные цели — целью всегда является тотем
         } else {
-            // Свободные гоблины патрулируют 21×21 область вокруг замка (0,0)
-            this.targetX = (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
-            this.targetY = (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
+            // Свободные гоблины патрулируют область вокруг замка
+            this.targetX = gameMap.castlePos.ix + (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
+            this.targetY = gameMap.castlePos.iy + (Math.random() * 2 - 1) * FREE_PATROL_RADIUS;
         }
     }
 

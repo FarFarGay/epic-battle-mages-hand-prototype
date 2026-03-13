@@ -1,7 +1,7 @@
 // ============================================================
 //  МИР — предметы, миньоны, тряска экрана
 // ============================================================
-import { gameMap } from './Map.js';
+import { gameMap, setTileChangedCallback } from './Map.js';
 import {
     ITEM_TYPES, WARRIOR_GUARD_RADIUS, WARRIOR_WALL_STEP, MANA_MAX,
     WATER_SPELL_COOLDOWN, EARTH_SPELL_COOLDOWN, WIND_SPELL_COOLDOWN,
@@ -11,6 +11,11 @@ import { Minion } from './Minion.js';
 import { Castle } from './Castle.js';
 import { Fireball } from './Fireball.js';
 import { SpellProjectile } from './SpellProjectile.js';
+import { generateMap, placeResources, placeDecorations } from './mapGenerator.js';
+import { onTileChanged } from './decorations.js';
+
+// Регистрируем callback изменения тайлов → обновление декораций
+setTileChangedCallback(onTileChanged);
 
 // ============================================================
 //  СОСТОЯНИЕ МИРА
@@ -24,95 +29,58 @@ export const screenShake = {
     offsetY: 0,
 };
 
-export const bloodParticles = [];  // { x, y, vx, vy, life, maxLife, size }
-export const bloodPuddles   = [];  // { ix, iy, size, t, duration }
+export const bloodParticles = [];
+export const bloodPuddles   = [];
 
-// Огненный шар
 export const fireball = new Fireball();
-
-// Снаряд заклинания (water/earth/wind — общий объект, т.к. одновременно летит только один)
 export const spellProjectile = new SpellProjectile();
 
-// Огненные пятна после взрыва (DEPRECATED — заменено тайловыми трансформациями)
+// (DEPRECATED — заменено тайловыми трансформациями)
 export const firePatches = [];
 
-// Постоянные и временные зоны рассеивания тумана от заклинаний
-// { ix, iy, radius, timer } — timer < 0 означает постоянный источник
 export const spellFogReveals = [];
-
-// Дебаг-флаги
 export const debugFlags = { fogDisabled: false };
 
-// Состояния заклинаний (кроме огненного шара — он в Fireball.js)
 export const spellStates = {
     water: { cooldown: 0, maxCooldown: WATER_SPELL_COOLDOWN },
     earth: { cooldown: 0, maxCooldown: EARTH_SPELL_COOLDOWN },
     wind:  { cooldown: 0, maxCooldown: WIND_SPELL_COOLDOWN },
 };
 
-// Режим артиллерии замка
 export const artilleryMode = {
     active: false,
-    state: 'aiming',     // 'aiming' | 'flying' | 'aftermath'
-    // Прицел (iso координаты)
-    crosshairX: 0,
-    crosshairY: 0,
-    // Снаряд
+    state: 'aiming',
+    crosshairX: 0, crosshairY: 0,
     projectile: { ix: 0, iy: 0, iz: 0, vx: 0, vy: 0, vz: 0 },
-    // Цель
-    targetX: 0,
-    targetY: 0,
-    // Таймеры
-    timer: 0,
-    flightDuration: 0,
-    fogRevealTimer: 0,    // секунды туманоснятия после взрыва
-    // Взрыв
-    explosion: {
-        active: false,
-        ix: 0, iy: 0,
-        t: 0,
-        duration: 1.0,
-        particles: [],
-    },
-    // Сохранённая камера
-    savedCameraX: 0,
-    savedCameraY: 0,
-    savedZoom: 1.0,
+    targetX: 0, targetY: 0,
+    timer: 0, flightDuration: 0, fogRevealTimer: 0,
+    explosion: { active: false, ix: 0, iy: 0, t: 0, duration: 1.0, particles: [] },
+    savedCameraX: 0, savedCameraY: 0, savedZoom: 1.0,
 };
 
-// Счётчики ресурсов: castleResources[typeIndex] = количество доставленных в замок
 export const castleResources = [];
-
-// Мана игрока
-export const manaPool = { value: MANA_MAX };
-
-// Тотем монахов
-export const monkTotem = { active: false, ix: 0, iy: 0 };
-
-// Маркеры команд ПКМ: { ix, iy, timer, maxTime, type: 'gather'|'attack'|'move' }
-export const commandMarkers = [];
-
-// Активные тайлы с таймерами: { ix, iy, type, timer, maxTime, nextType }
-export const activeTiles = [];
+export const manaPool        = { value: MANA_MAX };
+export const monkTotem       = { active: false, ix: 0, iy: 0 };
+export const commandMarkers  = [];
+export const activeTiles     = [];
 
 export let castle = null;
 
 // ============================================================
-//  СТЕНА ВОИНОВ — позиции охраны на границе WARRIOR_GUARD_RADIUS
+//  СТЕНА ВОИНОВ
 // ============================================================
 const warriorWall = {
-    baseAngle: Math.random() * Math.PI * 2, // случайное начальное направление стены
-    count: 0,                                // сколько воинов уже поставлено
+    baseAngle: Math.random() * Math.PI * 2,
+    count: 0,
 };
 
-// Возвращает следующую позицию охраны для нового воина.
-// Воины выстраиваются в линию вдоль периметра окружности радиуса WARRIOR_GUARD_RADIUS.
 export function getNextWarriorGuardPos() {
     const angle = warriorWall.baseAngle + warriorWall.count * WARRIOR_WALL_STEP;
     warriorWall.count++;
+    // Позиция относительно замка (не относительно (0,0)!)
     return {
-        ix: Math.cos(angle) * WARRIOR_GUARD_RADIUS,
-        iy: Math.sin(angle) * WARRIOR_GUARD_RADIUS,
+        ix: gameMap.castlePos.ix + Math.cos(angle) * WARRIOR_GUARD_RADIUS,
+        iy: gameMap.castlePos.iy + Math.sin(angle) * WARRIOR_GUARD_RADIUS,
     };
 }
 
@@ -132,11 +100,11 @@ export function updateScreenShake(dt) {
     if (screenShake.intensity > 0.1) {
         screenShake.offsetX = (Math.random() - 0.5) * screenShake.intensity * 2;
         screenShake.offsetY = (Math.random() - 0.5) * screenShake.intensity * 2;
-        screenShake.intensity *= Math.exp(-3 * dt); // эквивалентно pow(0.05, dt), но быстрее
+        screenShake.intensity *= Math.exp(-3 * dt);
     } else {
         screenShake.intensity = 0;
-        screenShake.offsetX = 0;
-        screenShake.offsetY = 0;
+        screenShake.offsetX   = 0;
+        screenShake.offsetY   = 0;
     }
 }
 
@@ -146,31 +114,20 @@ export function updateScreenShake(dt) {
 export function resolveItemCollisions() {
     for (let i = 0; i < items.length; i++) {
         for (let j = i + 1; j < items.length; j++) {
-            const a = items[i];
-            const b = items[j];
-
-            // Предметы в руке или у гоблина не участвуют в коллизиях
+            const a = items[i], b = items[j];
             if (a.state === 'carried' || a.state === 'lifting' || a.state === 'goblin_carried') continue;
             if (b.state === 'carried' || b.state === 'lifting' || b.state === 'goblin_carried') continue;
 
-            const typeA = a.typeDef;
-            const typeB = b.typeDef;
+            const typeA = a.typeDef, typeB = b.typeDef;
             const minDist = typeA.radius + typeB.radius;
 
-            // Проверяем высоту — сталкиваются только если на одном уровне
             if (Math.abs(a.iz - b.iz) > minDist * 0.5) continue;
 
-            const dx = b.ix - a.ix;
-            const dy = b.iy - a.iy;
+            const dx = b.ix - a.ix, dy = b.iy - a.iy;
             const dist = Math.sqrt(dx * dx + dy * dy);
-
             if (dist >= minDist || dist < 0.0001) continue;
 
-            // Нормаль столкновения
-            const nx = dx / dist;
-            const ny = dy / dist;
-
-            // Раздвигаем предметы пропорционально массам
+            const nx = dx / dist, ny = dy / dist;
             const overlap = minDist - dist;
             const totalMass = typeA.mass + typeB.mass;
             a.ix -= nx * overlap * (typeB.mass / totalMass);
@@ -178,9 +135,7 @@ export function resolveItemCollisions() {
             b.ix += nx * overlap * (typeA.mass / totalMass);
             b.iy += ny * overlap * (typeA.mass / totalMass);
 
-            // Импульс только если предметы сближаются
-            const dvx = b.vx - a.vx;
-            const dvy = b.vy - a.vy;
+            const dvx = b.vx - a.vx, dvy = b.vy - a.vy;
             const dot = dvx * nx + dvy * ny;
             if (dot >= 0) continue;
 
@@ -192,17 +147,9 @@ export function resolveItemCollisions() {
             b.vx += impulse * typeA.mass * nx;
             b.vy += impulse * typeA.mass * ny;
 
-            // Будим неподвижные предметы
-            if (a.state === 'idle' || a.state === 'settling') {
-                a.state = 'sliding';
-                a.stateTime = 0;
-            }
-            if (b.state === 'idle' || b.state === 'settling') {
-                b.state = 'sliding';
-                b.stateTime = 0;
-            }
+            if (a.state === 'idle' || a.state === 'settling') { a.state = 'sliding'; a.stateTime = 0; }
+            if (b.state === 'idle' || b.state === 'settling') { b.state = 'sliding'; b.stateTime = 0; }
 
-            // Тряска экрана при сильном ударе тяжёлых предметов
             const impactSpeed = Math.abs(dot);
             if (impactSpeed > 2.0) {
                 triggerScreenShake(Math.min(typeA.mass, typeB.mass) * impactSpeed * 0.2);
@@ -226,14 +173,13 @@ export function resolveCastleCollisions() {
 export function restartMap(hand, statusEl) {
     initWorld();
 
-    // Сброс руки
-    hand.grabbedItem = null;
-    hand.grabbedMinion = null;
-    hand.state = 'open';
-    hand.animProgress = 0;
+    hand.grabbedItem     = null;
+    hand.grabbedMinion   = null;
+    hand.state           = 'open';
+    hand.animProgress    = 0;
     hand.velocityHistory = [];
     hand.selectedMinions = [];
-    hand.grabbedSpell = null;
+    hand.grabbedSpell    = null;
 
     statusEl.textContent = 'Карта перезапущена!';
 }
@@ -249,52 +195,66 @@ export function spawnMinion(ix, iy) {
 //  ИНИЦИАЛИЗАЦИЯ МИРА
 // ============================================================
 export function initWorld() {
+    // 1. Генерация карты (биомы + высоты)
+    generateMap(gameMap.seed);
+
+    // 2. Декорации
+    placeDecorations(gameMap.seed);
+
+    // 3. Ресурсы
+    const resourcePositions = placeResources(gameMap.seed);
     items.length = 0;
-    for (const pos of gameMap.initialItems) {
+    for (const pos of resourcePositions) {
         items.push(new Item(pos.type, pos.ix, pos.iy));
     }
 
+    // 4. Миньоны
     minions.length = 0;
     for (const pos of gameMap.initialMinions) {
         minions.push(new Minion(pos.ix, pos.iy));
     }
 
+    // 5. Сброс состояния экрана
     screenShake.intensity = 0;
-    screenShake.offsetX = 0;
-    screenShake.offsetY = 0;
+    screenShake.offsetX   = 0;
+    screenShake.offsetY   = 0;
 
     bloodParticles.length = 0;
-    bloodPuddles.length = 0;
+    bloodPuddles.length   = 0;
 
+    // 6. Замок
     castleResources.length = 0;
     for (let i = 0; i < ITEM_TYPES.length; i++) castleResources.push(0);
-
     castle = new Castle(gameMap.castlePos.ix, gameMap.castlePos.iy);
     resetWarriorWall();
 
+    // 7. Заклинания и артиллерия
     artilleryMode.active = false;
-    artilleryMode.state = 'aiming';
+    artilleryMode.state  = 'aiming';
     artilleryMode.explosion.active = false;
-    artilleryMode.fogRevealTimer = 0;
+    artilleryMode.fogRevealTimer   = 0;
 
     fireball.reset();
     spellProjectile.reset();
-    firePatches.length = 0;
-    activeTiles.length = 0;
+    firePatches.length   = 0;
+    activeTiles.length   = 0;
     spellFogReveals.length = 0;
 
     spellStates.water.cooldown = 0;
     spellStates.earth.cooldown = 0;
-    spellStates.wind.cooldown = 0;
+    spellStates.wind.cooldown  = 0;
 
-    // Сброс всех тайлов к исходным типам
-    gameMap._tiles = {};
+    // 8. Сброс тайлов заклинаний (декорации уже обновлены через generateMap)
+    // (generateMap сам сбрасывает _tiles, так что здесь не нужно)
 
     manaPool.value = MANA_MAX;
 
     monkTotem.active = false;
-    monkTotem.ix = 0;
-    monkTotem.iy = 0;
+    monkTotem.ix     = 0;
+    monkTotem.iy     = 0;
 
     commandMarkers.length = 0;
+
+    // 9. Туман войны — полный сброс
+    gameMap._fog = {};
 }
