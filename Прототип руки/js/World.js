@@ -12,7 +12,8 @@ import { Castle } from './Castle.js';
 import { Fireball } from './Fireball.js';
 import { SpellProjectile } from './SpellProjectile.js';
 import { generateMap, placeResources, placeDecorations } from './mapGenerator.js';
-import { onTileChanged } from './decorations.js';
+import { onTileChanged, decoParticles } from './decorations.js';
+export { decoParticles };
 
 // Регистрируем callback изменения тайлов → обновление декораций
 setTileChangedCallback(onTileChanged);
@@ -221,6 +222,7 @@ export function initWorld() {
 
     bloodParticles.length = 0;
     bloodPuddles.length   = 0;
+    decoParticles.length  = 0;
 
     // 6. Замок
     castleResources.length = 0;

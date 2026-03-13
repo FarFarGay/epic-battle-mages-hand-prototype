@@ -22,9 +22,9 @@ import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth, worldToScreen } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers } from './World.js';
+import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers, decoParticles } from './World.js';
 import { initInput } from './input.js';
-import { updateActiveTiles, applySpellInRadius, applySpellToTile } from './tileEffects.js';
+import { updateActiveTiles, applySpellInRadius, applySpellToTile, IMPACT_DUR, FADING_DUR } from './tileEffects.js';
 import { Item } from './Item.js';
 import { addDecorationsToRenderList } from './decorations.js';
 
@@ -32,9 +32,11 @@ import { addDecorationsToRenderList } from './decorations.js';
 const tileParticles = [];
 
 // Палитры для тайловых эффектов (module-level, не аллоцируются в game loop)
-const _FIRE_COLORS  = ['#ff4400', '#ff6600', '#ff8800', '#ffaa00', '#ffcc00'];
+const _FIRE_COLORS   = ['#ff4400', '#ff6600', '#ff8800', '#ffaa00', '#ffcc00'];
+const _FIRE_FADING   = ['#882200', '#661100', '#441100', '#552200', '#331100'];
 const _SPLASH_COLORS = ['#3388cc', '#55aaee', '#77ccff', '#2266aa'];
 const _WIND_COLORS   = ['#aaffbb', '#88eebb', '#bbffcc', '#77ddaa'];
+const _EARTH_COLORS  = ['#aa8855', '#887744', '#cc9955', '#665533', '#998855'];
 
 // ============================================================
 //  СОСТОЯНИЕ ВВОДА / UI
@@ -443,7 +445,7 @@ function updateArtillery(dt) {
                     for (let dy = -blastR; dy <= blastR; dy++) {
                         if (dx * dx + dy * dy > blastR2) continue;
                         if (gameMap.getTile(bix + dx, biy + dy) === 'wall')
-                            gameMap.setTile(bix + dx, biy + dy, 'rubble');
+                            gameMap.setTile(bix + dx, biy + dy, 'rubble', 'artillery');
                     }
                 }
             }
@@ -643,7 +645,7 @@ function update(dt) {
         }
 
         // Трансформация тайлов в зоне взрыва (burning, steam и т.д.)
-        applySpellInRadius('fire', ex, ey, FIREBALL_TILE_RADIUS);
+        applySpellInRadius('fire', ex, ey, FIREBALL_TILE_RADIUS, 'fire');
     }
 
     // ── СНАРЯД ЗАКЛИНАНИЯ — обновление ────────────────────────
@@ -675,7 +677,26 @@ function update(dt) {
                     const tix = rcx + dx, tiy = rcy + dy;
                     if (!gameMap.isInBounds(tix, tiy)) continue;
                     const oldType = gameMap.getTile(tix, tiy);
-                    if (!applySpellToTile('earth', tix, tiy)) continue;
+                    if (!applySpellToTile('earth', tix, tiy, 'earth')) continue;
+                    // Пыль при ударе земли
+                    {
+                        const dustCount = 2 + Math.floor(Math.random() * 3);
+                        for (let d = 0; d < dustCount; d++) {
+                            const da = Math.random() * Math.PI * 2;
+                            const ds = 28 + Math.random() * 32;
+                            const sc2 = worldToScreen(tix + (Math.random() - 0.5) * 0.4, tiy + (Math.random() - 0.5) * 0.4);
+                            tileParticles.push({
+                                type: 'dust',
+                                x: sc2.x, y: sc2.y,
+                                vx: Math.cos(da) * ds,
+                                vy: Math.sin(da) * ds * 0.5 - 8,
+                                life: 0.45 + Math.random() * 0.20,
+                                maxLife: 0.65,
+                                size: 2 + Math.floor(Math.random() * 2),
+                                color: _EARTH_COLORS[Math.floor(Math.random() * _EARTH_COLORS.length)],
+                            });
+                        }
+                    }
                     if (oldType === 'forest') {
                         const count = 1 + Math.floor(Math.random() * 2);
                         for (let i = 0; i < count; i++) {
@@ -687,7 +708,7 @@ function update(dt) {
                 }
             }
         } else {
-            applySpellInRadius(spellKey, ex, ey, spellRadius);
+            applySpellInRadius(spellKey, ex, ey, spellRadius, spellKey);
         }
 
         // Туман войны: вода и ветер — временно, земля — навсегда
@@ -750,7 +771,7 @@ function update(dt) {
                         if (!gameMap.isInBounds(nx, ny)) continue;
                         const nt = gameMap.getTile(nx, ny);
                         if (nt === 'forest' || nt === 'plain' || nt === 'village')
-                            applySpellToTile('fire', nx, ny);
+                            applySpellToTile('fire', nx, ny, 'wind');
                     }
                 }
             }
@@ -776,9 +797,18 @@ function update(dt) {
             }
         }
 
-        // Ветер: закрученные частицы-лепестки при приземлении
+        // Ветер: ударное кольцо + закрученные частицы-лепестки при приземлении
         if (spellKey === 'wind') {
             const sc = worldToScreen(ex, ey);
+            // Расширяющееся кольцо ударной волны
+            tileParticles.push({
+                type: 'windRing',
+                x: sc.x, y: sc.y,
+                maxRx: WIND_SPELL_RADIUS * TILE_W / 2,
+                maxRy: WIND_SPELL_RADIUS * TILE_H / 2,
+                life: 0.35, maxLife: 0.35,
+            });
+            // Спиральные частицы
             for (let i = 0; i < 14; i++) {
                 const angle = (i / 14) * Math.PI * 2 + Math.random() * 0.3;
                 const speed = 60 + Math.random() * 40;
@@ -975,21 +1005,32 @@ function update(dt) {
         if (p.life <= 0) bloodParticles.splice(i, 1);
     }
 
-    // Обновляем тайловые частицы (всплеск воды, взрыв ветра)
+    // Обновляем тайловые частицы (всплеск воды, взрыв ветра, пыль земли, кольцо ветра)
     for (let i = tileParticles.length - 1; i >= 0; i--) {
         const p = tileParticles[i];
         p.life -= dt;
         if (p.life <= 0) { tileParticles.splice(i, 1); continue; }
+        if (p.type === 'windRing') continue; // без физики — только таймер
         if (p.type === 'wind') {
             const perpX = -p.vy * p.angularSpeed * dt;
             const perpY =  p.vx * p.angularSpeed * dt * 0.5;
             p.vx = (p.vx + perpX) * 0.97;
             p.vy = (p.vy + perpY) * 0.97;
         } else {
-            p.vy += 150 * dt;
+            p.vy += 150 * dt; // гравитация (splash, dust)
         }
         p.x += p.vx * dt;
         p.y += p.vy * dt;
+    }
+
+    // Обновляем частицы разрушения декораций
+    for (let i = decoParticles.length - 1; i >= 0; i--) {
+        const p = decoParticles[i];
+        p.life -= dt;
+        if (p.life <= 0) { decoParticles.splice(i, 1); continue; }
+        p.vy += p.gravity * dt;
+        p.x  += p.vx * dt;
+        p.y  += p.vy * dt;
     }
 
     // Обновляем лужицы крови
@@ -1341,64 +1382,116 @@ function render() {
     // Тайловые визуальные эффекты — огонь, пар, рябь (world space, через draw-closure)
     for (const tile of activeTiles) {
         if (gameMap.getFog(tile.ix, tile.iy) !== FOG.VISIBLE) continue;
-        if (tile.type === 'burning' && tile.firePixels) {
-            const t = tile;
-            renderList.push({
-                depth: t.ix + t.iy + 0.05,
-                draw() {
-                    const now = performance.now() * 0.001;
+        const t = tile;
+
+        if (t.type === 'burning') {
+            renderList.push({ depth: t.ix + t.iy + 0.05, draw() {
+                const now = performance.now() * 0.001;
+                const sc  = worldToScreen(t.ix, t.iy);
+
+                if (t.phase === 'impact') {
+                    // Вспышка: оранжевый эллипс затухает
+                    const imp   = IMPACT_DUR.burning ?? 0.5;
+                    const prog  = Math.max(0, 1 - t.phaseTimer / imp);
+                    ctx.save();
+                    ctx.globalAlpha = prog * 0.65;
+                    ctx.fillStyle   = '#ffdd44';
+                    ctx.beginPath();
+                    ctx.ellipse(sc.x, sc.y, Math.max(1, (TILE_W / 4) * prog), Math.max(1, (TILE_H / 4) * prog), 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                } else if ((t.phase === 'active' || t.phase === 'fading') && t.firePixels) {
+                    const fadeFrac = t.phase === 'fading'
+                        ? Math.min(1, t.phaseTimer / (FADING_DUR.burning ?? 1.0))
+                        : 0;
+                    const alphaScale = 1 - fadeFrac * 0.85;
+                    const palette    = fadeFrac > 0.5 ? _FIRE_FADING : _FIRE_COLORS;
                     for (const px of t.firePixels) {
-                        const sc = worldToScreen(t.ix + px.ox, t.iy + px.oy);
-                        const yOff  = -Math.abs(Math.sin(now * 6 + px.phase)) * 8;
-                        const alpha =  0.6 + 0.4 * (0.5 + 0.5 * Math.sin(now * 8 + px.phase));
-                        ctx.globalAlpha = alpha;
-                        ctx.fillStyle   = _FIRE_COLORS[px.colorIdx];
-                        ctx.fillRect(Math.round(sc.x - px.size / 2), Math.round(sc.y + yOff - px.size / 2), px.size, px.size);
+                        const psc  = worldToScreen(t.ix + px.ox, t.iy + px.oy);
+                        const yOff = -Math.abs(Math.sin(now * 6 + px.phase)) * 8 * (1 - fadeFrac * 0.7);
+                        const a    = (0.6 + 0.4 * (0.5 + 0.5 * Math.sin(now * 8 + px.phase))) * alphaScale;
+                        ctx.globalAlpha = Math.max(0, a);
+                        ctx.fillStyle   = palette[px.colorIdx % palette.length];
+                        const sz = Math.max(1, px.size * (1 - fadeFrac * 0.5));
+                        ctx.fillRect(Math.round(psc.x - sz / 2), Math.round(psc.y + yOff - sz / 2), sz, sz);
                     }
                     ctx.globalAlpha = 1;
-                },
-            });
-        } else if (tile.type === 'steam' && tile.steamPuffs) {
-            const t = tile;
-            renderList.push({
-                depth: t.ix + t.iy + 0.05,
-                draw() {
-                    const now = performance.now() * 0.001;
+                }
+            }});
+        } else if (t.type === 'steam' && t.steamPuffs) {
+            renderList.push({ depth: t.ix + t.iy + 0.05, draw() {
+                const now = performance.now() * 0.001;
+                const sc  = worldToScreen(t.ix, t.iy);
+
+                if (t.phase === 'impact') {
+                    // Белая вспышка
+                    const imp  = IMPACT_DUR.steam ?? 0.4;
+                    const prog = Math.max(0, 1 - t.phaseTimer / imp);
+                    ctx.save();
+                    ctx.globalAlpha = prog * 0.5;
+                    ctx.fillStyle   = '#ddddee';
+                    ctx.beginPath();
+                    ctx.ellipse(sc.x, sc.y, Math.max(1, (TILE_W / 5) * prog), Math.max(1, (TILE_H / 5) * prog), 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                } else {
+                    const fadeFrac = t.phase === 'fading'
+                        ? Math.min(1, t.phaseTimer / (FADING_DUR.steam ?? 0.8))
+                        : 0;
                     for (const puff of t.steamPuffs) {
-                        const sc    = worldToScreen(t.ix + puff.ox, t.iy + puff.oy);
-                        const yOff  = -(((now * 15) + puff.phase) % 30);
-                        const alpha =  0.35 * (1 - (-yOff) / 30);
+                        const psc    = worldToScreen(t.ix + puff.ox, t.iy + puff.oy);
+                        const yOff   = -(((now * 15) + puff.phase) % 30);
+                        const baseA  = 0.35 * (1 - (-yOff) / 30);
+                        const alpha  = baseA * (1 - fadeFrac);
                         if (alpha < 0.01) continue;
                         const xWobble = Math.sin(now * 2 + puff.wobblePhase) * 3;
+                        const sz      = (puff.size / 2) * (1 + fadeFrac * 0.6);
                         ctx.globalAlpha = alpha;
                         ctx.fillStyle   = '#ccccdd';
                         ctx.beginPath();
-                        ctx.arc(sc.x + xWobble, sc.y + yOff, puff.size / 2, 0, Math.PI * 2);
+                        ctx.arc(psc.x + xWobble, psc.y + yOff, sz, 0, Math.PI * 2);
                         ctx.fill();
                     }
                     ctx.globalAlpha = 1;
-                },
-            });
-        } else if (tile.type === 'puddle' && tile.ripplePhase !== undefined) {
-            const t = tile;
-            renderList.push({
-                depth: t.ix + t.iy - 0.01,
-                draw() {
-                    const now    = performance.now() * 0.001;
-                    const ringR  = ((now * 20 + t.ripplePhase) % 20);
-                    const alpha  = 0.35 * (1 - ringR / 20);
-                    const rx     = (ringR / 20) * (TILE_W / 2);
-                    const ry     = (ringR / 20) * (TILE_H / 2);
-                    const sc     = worldToScreen(t.ix, t.iy);
-                    ctx.globalAlpha  = alpha;
-                    ctx.strokeStyle  = '#77bbee';
-                    ctx.lineWidth    = 1;
+                }
+            }});
+        } else if (t.type === 'puddle' && t.ripplePhase !== undefined) {
+            renderList.push({ depth: t.ix + t.iy - 0.01, draw() {
+                const now = performance.now() * 0.001;
+                const sc  = worldToScreen(t.ix, t.iy);
+
+                if (t.phase === 'impact') {
+                    // Яркое голубое кольцо расширяется
+                    const imp  = IMPACT_DUR.puddle ?? 0.4;
+                    const prog = Math.max(0, t.phaseTimer / imp); // 0 → 1
+                    const rx   = prog * (TILE_W / 3);
+                    const ry   = prog * (TILE_H / 3);
+                    ctx.save();
+                    ctx.globalAlpha = (1 - prog) * 0.65;
+                    ctx.strokeStyle = '#77ddff';
+                    ctx.lineWidth   = 2;
+                    ctx.beginPath();
+                    ctx.ellipse(sc.x, sc.y, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                } else {
+                    const fadeFrac  = t.phase === 'fading'
+                        ? Math.min(1, t.phaseTimer / (FADING_DUR.puddle ?? 1.0))
+                        : 0;
+                    const speedMult = 1 - fadeFrac * 0.6; // замедление ряби
+                    const ringR     = ((now * 20 * speedMult + t.ripplePhase) % 20);
+                    const alpha     = 0.35 * (1 - ringR / 20) * (1 - fadeFrac);
+                    const rx        = (ringR / 20) * (TILE_W / 2);
+                    const ry        = (ringR / 20) * (TILE_H / 2);
+                    ctx.globalAlpha = alpha;
+                    ctx.strokeStyle = '#77bbee';
+                    ctx.lineWidth   = 1;
                     ctx.beginPath();
                     ctx.ellipse(sc.x, sc.y, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
                     ctx.stroke();
                     ctx.globalAlpha = 1;
-                },
-            });
+                }
+            }});
         }
     }
 
@@ -1464,9 +1557,34 @@ function render() {
         ctx.restore();
     }
 
-    // Тайловые частицы — всплеск воды, взрыв ветра
+    // Тайловые частицы — всплеск воды, взрыв ветра, пыль земли, кольцо ветра
     for (const p of tileParticles) {
-        const alpha = Math.pow(p.life / p.maxLife, 0.5) * 0.9;
+        if (p.type === 'windRing') {
+            const progress = 1 - p.life / p.maxLife;
+            const alpha = (1 - progress) * 0.55;
+            const rx = Math.max(1, progress * p.maxRx);
+            const ry = Math.max(1, progress * p.maxRy);
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.strokeStyle = '#88ffaa';
+            ctx.lineWidth = Math.max(1, 2 * (1 - progress));
+            ctx.beginPath();
+            ctx.ellipse(p.x, p.y, rx, ry, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        } else {
+            const alpha = Math.pow(p.life / p.maxLife, 0.5) * 0.9;
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = p.color;
+            ctx.fillRect(Math.round(p.x - p.size / 2), Math.round(p.y - p.size / 2), p.size, p.size);
+            ctx.restore();
+        }
+    }
+
+    // Частицы разрушения декораций
+    for (const p of decoParticles) {
+        const alpha = Math.pow(p.life / p.maxLife, 0.6) * 0.92;
         ctx.save();
         ctx.globalAlpha = alpha;
         ctx.fillStyle = p.color;

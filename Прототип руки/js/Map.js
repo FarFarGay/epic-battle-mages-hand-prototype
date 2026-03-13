@@ -86,13 +86,13 @@ export class GameMap {
     // ============================================================
     //  ТАЙЛЫ
     // ============================================================
-    setTile(ix, iy, type) {
+    setTile(ix, iy, type, cause) {
         if (!(type in TILE_TYPES)) return;
         const key = this._key(ix, iy);
         const oldType = this._tiles[key] ?? 'plain';
         this._tiles[key] = type;
         delete this._colorCache[key];
-        if (_onTileChangedCb) _onTileChangedCb(ix, iy, oldType, type);
+        if (_onTileChangedCb) _onTileChangedCb(ix, iy, oldType, type, cause);
     }
 
     getTile(ix, iy) {

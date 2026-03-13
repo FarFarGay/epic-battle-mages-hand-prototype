@@ -74,10 +74,17 @@ const TILE_TIMERS = {
 };
 
 // ============================================================
+//  ДЛИТЕЛЬНОСТИ ФАЗ (экспортируются для рендера в main.js)
+// ============================================================
+export const IMPACT_DUR = { burning: 0.5, puddle: 0.4, steam: 0.4 };
+export const FADING_DUR = { burning: 1.0, puddle: 1.0, steam: 0.8 };
+
+// ============================================================
 //  ПРИМЕНЕНИЕ ЗАКЛИНАНИЯ К ТАЙЛУ
 // ============================================================
+// cause — источник: 'fire' | 'water' | 'earth' | 'wind' | 'artillery' | 'expire' | etc.
 // Возвращает новый тип тайла (строку) или null если трансформации нет.
-export function applySpellToTile(spell, ix, iy) {
+export function applySpellToTile(spell, ix, iy, cause) {
     const currentType = gameMap.getTile(ix, iy);
     if (!currentType) return null;
 
@@ -87,7 +94,7 @@ export function applySpellToTile(spell, ix, iy) {
     const newType = transforms[currentType];
     if (newType === undefined || newType === null) return null;
 
-    gameMap.setTile(ix, iy, newType);
+    gameMap.setTile(ix, iy, newType, cause ?? spell);
 
     // Если новый тайл временный — добавить таймер
     const timerInfo = TILE_TIMERS[newType];
@@ -105,6 +112,8 @@ export function applySpellToTile(spell, ix, iy) {
             timer: 0,
             maxTime: timerInfo.maxTime,
             nextType: timerInfo.nextType,
+            phase: 'impact',
+            phaseTimer: 0,
         };
         if (newType === 'burning') {
             entry.firePixels = Array.from({ length: 3 + Math.floor(Math.random() * 3) }, () => ({
@@ -143,7 +152,7 @@ export function applySpellToTile(spell, ix, iy) {
 //  ПРИМЕНЕНИЕ ЗАКЛИНАНИЯ В РАДИУСЕ
 // ============================================================
 // Возвращает количество трансформированных тайлов.
-export function applySpellInRadius(spell, cx, cy, radius) {
+export function applySpellInRadius(spell, cx, cy, radius, cause) {
     const rcx = Math.round(cx);
     const rcy = Math.round(cy);
     const ri = Math.ceil(radius);
@@ -155,7 +164,7 @@ export function applySpellInRadius(spell, cx, cy, radius) {
             const tix = rcx + dx;
             const tiy = rcy + dy;
             if (!gameMap.isInBounds(tix, tiy)) continue;
-            if (applySpellToTile(spell, tix, tiy)) count++;
+            if (applySpellToTile(spell, tix, tiy, cause ?? spell)) count++;
         }
     }
     return count;
@@ -167,7 +176,24 @@ export function applySpellInRadius(spell, cx, cy, radius) {
 export function updateActiveTiles(dt) {
     for (let i = activeTiles.length - 1; i >= 0; i--) {
         const tile = activeTiles[i];
-        tile.timer += dt;
+        tile.timer     += dt;
+        tile.phaseTimer += dt;
+
+        // Переходы между фазами
+        if (tile.phase === 'impact') {
+            const impactDur = IMPACT_DUR[tile.type] ?? 0.4;
+            if (tile.phaseTimer >= impactDur) {
+                tile.phase     = 'active';
+                tile.phaseTimer = 0;
+            }
+        } else if (tile.phase === 'active') {
+            const fadingDur = FADING_DUR[tile.type];
+            if (fadingDur && tile.maxTime > 0 && tile.timer >= tile.maxTime - fadingDur) {
+                tile.phase     = 'fading';
+                tile.phaseTimer = 0;
+            }
+        }
+        // 'fading' — без дополнительных переходов, тайл удаляется по maxTime
 
         // Распространение огня на лес
         if (tile.type === 'burning' && tile.timer > 1.0) {
@@ -181,13 +207,13 @@ export function updateActiveTiles(dt) {
                 if (!gameMap.isInBounds(nx, ny)) continue;
                 const nType = gameMap.getTile(nx, ny);
                 if (nType === 'forest' && Math.random() < 0.3 * dt) {
-                    applySpellToTile('fire', nx, ny);
+                    applySpellToTile('fire', nx, ny, 'fire');
                 }
             }
         }
 
         if (tile.timer >= tile.maxTime) {
-            gameMap.setTile(tile.ix, tile.iy, tile.nextType);
+            gameMap.setTile(tile.ix, tile.iy, tile.nextType, 'expire');
             activeTiles.splice(i, 1);
         }
     }

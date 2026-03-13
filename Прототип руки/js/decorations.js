@@ -1,7 +1,7 @@
 // ============================================================
 //  ДЕКОРАЦИИ — визуальные объекты на тайлах (деревья, камни, домики...)
 // ============================================================
-import { PIXEL_SCALE, HEIGHT_TO_SCREEN } from './constants.js';
+import { PIXEL_SCALE } from './constants.js';
 import { drawPixelArt } from './renderer.js';
 import { worldToScreen } from './isometry.js';
 import { gameMap, FOG } from './Map.js';
@@ -40,6 +40,63 @@ const DECO_SPRITES = {
 export const decorations = [];
 
 // ============================================================
+//  ЧАСТИЦЫ РАЗРУШЕНИЯ ДЕКОРАЦИЙ
+// ============================================================
+// Формат: { x, y, vx, vy, gravity, life, maxLife, size, color }
+// Координаты — camera space (worldToScreen), рендерятся внутри camera transform.
+export const decoParticles = [];
+
+// ============================================================
+//  РАЗРУШЕНИЕ ДЕКОРАЦИИ С ЭФФЕКТОМ
+// ============================================================
+function destroyDecorationWithEffect(deco, cause) {
+    const sp = DECO_SPRITES[deco.spriteKey];
+    if (!sp) return;
+
+    const s  = worldToScreen(deco.ix, deco.iy);
+    const ox = s.x - (sp.w * PIXEL_SCALE) / 2;
+    const oy = s.y - sp.h * PIXEL_SCALE;
+
+    for (const [px, py, color] of sp.pixels) {
+        if (!color) continue;
+
+        const cx = ox + px * PIXEL_SCALE;
+        const cy = oy + py * PIXEL_SCALE;
+
+        let vx, vy, gravity, life;
+
+        if (cause === 'fire') {
+            // Вверх-вверх, медленно тает
+            vx      = (Math.random() - 0.5) * 38;
+            vy      = -(12 + Math.random() * 32);
+            gravity = -18;   // продолжает лететь вверх
+            life    = 0.30 + Math.random() * 0.20;
+        } else if (cause === 'earth') {
+            // Щепки — в стороны и вниз
+            vx      = (Math.random() - 0.5) * 70;
+            vy      = -8 + (Math.random() - 0.5) * 38;
+            gravity = 130;
+            life    = 0.35 + Math.random() * 0.20;
+        } else if (cause === 'artillery') {
+            const a = Math.random() * Math.PI * 2;
+            const spd = 70 + Math.random() * 80;
+            vx      = Math.cos(a) * spd;
+            vy      = Math.sin(a) * spd * 0.5 - 30;
+            gravity = 110;
+            life    = 0.45 + Math.random() * 0.30;
+        } else {
+            // water / wind / expire / unknown
+            vx      = (Math.random() - 0.5) * 28;
+            vy      = -(8 + Math.random() * 18);
+            gravity = 80;
+            life    = 0.25 + Math.random() * 0.20;
+        }
+
+        decoParticles.push({ x: cx, y: cy, vx, vy, gravity, life, maxLife: life, size: PIXEL_SCALE, color });
+    }
+}
+
+// ============================================================
 //  УДАЛЕНИЕ ДЕКОРАЦИЙ С ТАЙЛА
 // ============================================================
 // filter(deco) — если передан, удаляем только декорации, для которых filter(deco) === true
@@ -55,16 +112,34 @@ export function removeDecorationsAt(ix, iy, filter) {
 // ============================================================
 //  CALLBACK ПРИ СМЕНЕ ТАЙЛА
 // ============================================================
-export function onTileChanged(ix, iy, oldType, newType) {
+export function onTileChanged(ix, iy, oldType, newType, cause) {
     if (newType === 'burning' || newType === 'wall' || newType === 'water') {
-        removeDecorationsAt(ix, iy);
+        // Сначала спавним частицы, потом удаляем
+        for (let i = decorations.length - 1; i >= 0; i--) {
+            const d = decorations[i];
+            if (d.tileIx !== ix || d.tileIy !== iy) continue;
+            destroyDecorationWithEffect(d, cause);
+            decorations.splice(i, 1);
+        }
     } else if (newType === 'scorched') {
         // Убираем деревья, оставляем камни
-        removeDecorationsAt(ix, iy, d => d.spriteKey.startsWith('TREE'));
+        for (let i = decorations.length - 1; i >= 0; i--) {
+            const d = decorations[i];
+            if (d.tileIx !== ix || d.tileIy !== iy) continue;
+            if (!d.spriteKey.startsWith('TREE')) continue;
+            destroyDecorationWithEffect(d, cause);
+            decorations.splice(i, 1);
+        }
     } else if (newType === 'plain' || newType === 'puddle' || newType === 'swamp') {
         // Лес срублен/затоплен — убираем деревья
         if (oldType === 'forest') {
-            removeDecorationsAt(ix, iy, d => d.spriteKey.startsWith('TREE'));
+            for (let i = decorations.length - 1; i >= 0; i--) {
+                const d = decorations[i];
+                if (d.tileIx !== ix || d.tileIy !== iy) continue;
+                if (!d.spriteKey.startsWith('TREE')) continue;
+                destroyDecorationWithEffect(d, cause);
+                decorations.splice(i, 1);
+            }
         }
     }
 }
