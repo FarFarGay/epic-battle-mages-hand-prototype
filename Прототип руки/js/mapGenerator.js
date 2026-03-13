@@ -270,13 +270,15 @@ export function placeDecorations(seed) {
 
     decorations.length = 0;
 
-    // Вероятности и спрайты по биому
+    // Вероятности, спрайты и разброс позиции по биому.
+    // offset = радиус случайного смещения (±offset тайлов).
+    // plain: prob=0.25, список 4:1 → ~20% GRASS_1, ~5% TREE_3 на тайл.
     const decoByBiome = {
-        forest:  { prob: 0.70, sprites: ['TREE_1', 'TREE_2', 'TREE_3'], maxPerTile: 2 },
-        stone:   { prob: 0.40, sprites: ['ROCK_1', 'ROCK_2'],           maxPerTile: 1 },
-        plain:   { prob: 0.15, sprites: ['GRASS_1', 'TREE_3'],          maxPerTile: 1 },
-        village: { prob: 0.80, sprites: ['HOUSE_1', 'HOUSE_2'],         maxPerTile: 1 },
-        ice:     { prob: 0.20, sprites: ['ICE_CRACK'],                  maxPerTile: 1 },
+        forest:  { prob: 0.50, sprites: ['TREE_1', 'TREE_2', 'TREE_3'],                    offset: 0.4 },
+        stone:   { prob: 0.30, sprites: ['ROCK_1', 'ROCK_2'],                              offset: 0.3 },
+        plain:   { prob: 0.25, sprites: ['GRASS_1','GRASS_1','GRASS_1','GRASS_1','TREE_3'], offset: 0.2 },
+        village: { prob: 0.60, sprites: ['HOUSE_1', 'HOUSE_2'],                            offset: 0.4 },
+        ice:     { prob: 0.15, sprites: ['ICE_CRACK'],                                     offset: 0.2 },
     };
 
     // Viewport/bound-check: только внутри карты
@@ -287,13 +289,11 @@ export function placeDecorations(seed) {
             if (!rule) continue;
             if (rng() > rule.prob) continue;
 
-            const count = 1 + (rule.maxPerTile > 1 && rng() < 0.3 ? 1 : 0);
-            for (let k = 0; k < count; k++) {
-                const spriteKey = rule.sprites[Math.floor(rng() * rule.sprites.length)];
-                const offsetX = (rng() - 0.5) * 0.6;
-                const offsetY = (rng() - 0.5) * 0.6;
-                decorations.push({ ix: ix + offsetX, iy: iy + offsetY, tileIx: ix, tileIy: iy, spriteKey });
-            }
+            const spriteKey = rule.sprites[Math.floor(rng() * rule.sprites.length)];
+            const sp = rule.offset;
+            const offsetX = (rng() - 0.5) * sp * 2;
+            const offsetY = (rng() - 0.5) * sp * 2;
+            decorations.push({ ix: ix + offsetX, iy: iy + offsetY, tileIx: ix, tileIy: iy, spriteKey });
         }
     }
 }

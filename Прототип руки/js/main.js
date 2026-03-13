@@ -17,16 +17,16 @@ import {
     MONK_TOTEM_MIN_DIST, MONK_TOTEM_MAX_DIST,
     MINION_MAX_HP, SKELETON_MAX_HP,
 } from './constants.js';
-import { MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H, MONK_ROBE_PIXELS, MONK_ROBE_W, MONK_TOTEM_PIXELS, MONK_TOTEM_W, MONK_TOTEM_H, WATER_SPELL_PIXELS, WATER_SPELL_W, WATER_SPELL_H, EARTH_SPELL_PIXELS, EARTH_SPELL_W, EARTH_SPELL_H, WIND_SPELL_PIXELS, WIND_SPELL_W, WIND_SPELL_H } from './sprites.js';
+import { MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H, MONK_ROBE_PIXELS, MONK_ROBE_W, MONK_TOTEM_PIXELS, MONK_TOTEM_W, MONK_TOTEM_H, WATER_SPELL_PIXELS, WATER_SPELL_W, WATER_SPELL_H, EARTH_SPELL_PIXELS, EARTH_SPELL_W, EARTH_SPELL_H, WIND_SPELL_PIXELS, WIND_SPELL_W, WIND_SPELL_H } from './sprites.js?v=3';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth, worldToScreen } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers, decoParticles } from './World.js';
+import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers, decoParticles } from './World.js?v=3';
 import { initInput } from './input.js';
 import { updateActiveTiles, applySpellInRadius, applySpellToTile, IMPACT_DUR, FADING_DUR } from './tileEffects.js?v=2';
 import { Item } from './Item.js';
-import { addDecorationsToRenderList } from './decorations.js';
+import { addDecorationsToRenderList } from './decorations.js?v=3';
 
 // Тайловые частицы — одноразовые эффекты (всплеск воды, взрыв ветра)
 const tileParticles = [];

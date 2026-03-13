@@ -11,8 +11,8 @@ import { Minion } from './Minion.js';
 import { Castle } from './Castle.js';
 import { Fireball } from './Fireball.js';
 import { SpellProjectile } from './SpellProjectile.js';
-import { generateMap, placeResources, placeDecorations } from './mapGenerator.js';
-import { onTileChanged, decoParticles } from './decorations.js';
+import { generateMap, placeResources, placeDecorations } from './mapGenerator.js?v=3';
+import { onTileChanged, decoParticles } from './decorations.js?v=3';
 export { decoParticles };
 
 // Регистрируем callback изменения тайлов → обновление декораций

@@ -15,7 +15,7 @@ import {
     DECO_HOUSE_1, DECO_HOUSE_1_W, DECO_HOUSE_1_H,
     DECO_HOUSE_2, DECO_HOUSE_2_W, DECO_HOUSE_2_H,
     DECO_ICE_CRACK, DECO_ICE_CRACK_W, DECO_ICE_CRACK_H,
-} from './sprites.js';
+} from './sprites.js?v=3';
 
 // ============================================================
 //  ДАННЫЕ СПРАЙТОВ ПО КЛЮЧУ
@@ -30,6 +30,22 @@ const DECO_SPRITES = {
     HOUSE_1:   { pixels: DECO_HOUSE_1,   w: DECO_HOUSE_1_W,   h: DECO_HOUSE_1_H   },
     HOUSE_2:   { pixels: DECO_HOUSE_2,   w: DECO_HOUSE_2_W,   h: DECO_HOUSE_2_H   },
     ICE_CRACK: { pixels: DECO_ICE_CRACK, w: DECO_ICE_CRACK_W, h: DECO_ICE_CRACK_H },
+};
+
+// ============================================================
+//  МАСШТАБ РЕНДЕРА ПО КЛЮЧУ
+// ============================================================
+// GRASS_1 рисуется мельче (scale=2) — фоновый шум, остальные scale=3
+const DECO_RENDER_SCALE = {
+    TREE_1:    3,
+    TREE_2:    3,
+    TREE_3:    3,
+    ROCK_1:    3,
+    ROCK_2:    3,
+    GRASS_1:   2,
+    HOUSE_1:   3,
+    HOUSE_2:   3,
+    ICE_CRACK: 3,
 };
 
 // ============================================================
@@ -53,15 +69,16 @@ function destroyDecorationWithEffect(deco, cause) {
     const sp = DECO_SPRITES[deco.spriteKey];
     if (!sp) return;
 
+    const scale = DECO_RENDER_SCALE[deco.spriteKey] || PIXEL_SCALE;
     const s  = worldToScreen(deco.ix, deco.iy);
-    const ox = s.x - (sp.w * PIXEL_SCALE) / 2;
-    const oy = s.y - sp.h * PIXEL_SCALE;
+    const ox = s.x - (sp.w * scale) / 2;
+    const oy = s.y - sp.h * scale;
 
     for (const [px, py, color] of sp.pixels) {
         if (!color) continue;
 
-        const cx = ox + px * PIXEL_SCALE;
-        const cy = oy + py * PIXEL_SCALE;
+        const cx = ox + px * scale;
+        const cy = oy + py * scale;
 
         let vx, vy, gravity, life;
 
@@ -92,7 +109,7 @@ function destroyDecorationWithEffect(deco, cause) {
             life    = 0.25 + Math.random() * 0.20;
         }
 
-        decoParticles.push({ x: cx, y: cy, vx, vy, gravity, life, maxLife: life, size: PIXEL_SCALE, color });
+        decoParticles.push({ x: cx, y: cy, vx, vy, gravity, life, maxLife: life, size: scale, color });
     }
 }
 
@@ -161,15 +178,16 @@ export function addDecorationsToRenderList(renderList, canvas) {
         if (s.x < -100 || s.x > canvas.width + 100 ||
             s.y < -150 || s.y > canvas.height + 100) continue;
 
-        const depth = deco.ix + deco.iy;
-        const ox = s.x - (sp.w * PIXEL_SCALE) / 2;
-        const oy = s.y - sp.h * PIXEL_SCALE;
+        const scale = DECO_RENDER_SCALE[deco.spriteKey] || PIXEL_SCALE;
+        const depth = deco.ix + deco.iy - 0.1; // чуть позади юнитов на том же тайле
+        const ox = s.x - (sp.w * scale) / 2;
+        const oy = s.y - sp.h * scale;
 
         // Capture values for closure
-        const _ox = ox, _oy = oy, _sp = sp;
+        const _ox = ox, _oy = oy, _sp = sp, _scale = scale;
         renderList.push({
             depth,
-            draw: () => drawPixelArt(_ox, _oy, _sp.pixels, PIXEL_SCALE),
+            draw: () => drawPixelArt(_ox, _oy, _sp.pixels, _scale),
         });
     }
 }
