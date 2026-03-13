@@ -84,6 +84,7 @@ function _placeVillages(rng) {
     const size = gameMap.size;
     const { ix: cx, iy: cy } = gameMap.castlePos;
     const candidates = [];
+    const fallback = []; // plain-тайлы без nearBiome — запасной вариант
 
     for (let iy = -size; iy <= size; iy++) {
         for (let ix = -size; ix <= size; ix++) {
@@ -100,10 +101,16 @@ function _placeVillages(rng) {
                 }
             }
             if (nearBiome) candidates.push([ix, iy]);
+            else fallback.push([ix, iy]);
         }
     }
 
     const count = 3 + Math.floor(rng() * 4); // 3–6
+
+    // Если кандидатов у биомов мало — добавить fallback
+    if (candidates.length < count * 3) {
+        for (const fb of fallback) candidates.push(fb);
+    }
     const placed = [];
 
     for (let v = 0; v < count && candidates.length > 0; v++) {
@@ -277,7 +284,7 @@ export function placeDecorations(seed) {
         forest:  { prob: 0.50, sprites: ['TREE_1', 'TREE_2', 'TREE_3'],                    offset: 0.4 },
         stone:   { prob: 0.30, sprites: ['ROCK_1', 'ROCK_2'],                              offset: 0.3 },
         plain:   { prob: 0.25, sprites: ['GRASS_1','GRASS_1','GRASS_1','GRASS_1','TREE_3'], offset: 0.2 },
-        village: { prob: 0.60, sprites: ['HOUSE_1', 'HOUSE_2'],                            offset: 0.4 },
+        village: { prob: 0.80, sprites: ['HOUSE_1', 'HOUSE_2'],                            offset: 0.4 },
         ice:     { prob: 0.15, sprites: ['ICE_CRACK'],                                     offset: 0.2 },
     };
 
@@ -294,6 +301,21 @@ export function placeDecorations(seed) {
             const offsetX = (rng() - 0.5) * sp * 2;
             const offsetY = (rng() - 0.5) * sp * 2;
             decorations.push({ ix: ix + offsetX, iy: iy + offsetY, tileIx: ix, tileIy: iy, spriteKey });
+        }
+    }
+
+    // Пустые village-тайлы (без дома) получают каменные плитки
+    for (let iy = -size; iy <= size; iy++) {
+        for (let ix = -size; ix <= size; ix++) {
+            if (gameMap.getTile(ix, iy) !== 'village') continue;
+            const hasDeco = decorations.some(d => d.tileIx === ix && d.tileIy === iy);
+            if (hasDeco) continue;
+            decorations.push({
+                ix: ix + (rng() - 0.5) * 0.3,
+                iy: iy + (rng() - 0.5) * 0.3,
+                tileIx: ix, tileIy: iy,
+                spriteKey: 'SLAB_1',
+            });
         }
     }
 }

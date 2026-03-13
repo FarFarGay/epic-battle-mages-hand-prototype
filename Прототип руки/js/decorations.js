@@ -15,7 +15,8 @@ import {
     DECO_HOUSE_1, DECO_HOUSE_1_W, DECO_HOUSE_1_H,
     DECO_HOUSE_2, DECO_HOUSE_2_W, DECO_HOUSE_2_H,
     DECO_ICE_CRACK, DECO_ICE_CRACK_W, DECO_ICE_CRACK_H,
-} from './sprites.js?v=3';
+    DECO_SLAB_1, DECO_SLAB_1_W, DECO_SLAB_1_H,
+} from './sprites.js?v=4';
 
 // ============================================================
 //  ДАННЫЕ СПРАЙТОВ ПО КЛЮЧУ
@@ -30,6 +31,7 @@ const DECO_SPRITES = {
     HOUSE_1:   { pixels: DECO_HOUSE_1,   w: DECO_HOUSE_1_W,   h: DECO_HOUSE_1_H   },
     HOUSE_2:   { pixels: DECO_HOUSE_2,   w: DECO_HOUSE_2_W,   h: DECO_HOUSE_2_H   },
     ICE_CRACK: { pixels: DECO_ICE_CRACK, w: DECO_ICE_CRACK_W, h: DECO_ICE_CRACK_H },
+    SLAB_1:    { pixels: DECO_SLAB_1,    w: DECO_SLAB_1_W,    h: DECO_SLAB_1_H    },
 };
 
 // ============================================================
@@ -46,6 +48,7 @@ const DECO_RENDER_SCALE = {
     HOUSE_1:   3,
     HOUSE_2:   3,
     ICE_CRACK: 3,
+    SLAB_1:    3,
 };
 
 // ============================================================
