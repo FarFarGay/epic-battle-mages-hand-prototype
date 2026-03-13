@@ -12,6 +12,8 @@ import { screenToIso, worldToScreen, screenToCanvas } from './isometry.js';
 import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellProjectile, monkTotem, commandMarkers, debugFlags } from './World.js?v=3';
 import { applySpellToTile } from './tileEffects.js?v=2';
 import { gameMap } from './Map.js';
+import { destroyDecorationWithEffect } from './decorations.js?v=3';
+import { Item } from './Item.js';
 
 const RMB_DRAG_THRESHOLD = 5;
 
@@ -269,7 +271,25 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             }
         }
 
-        if (world.hoveredItem !== null && handFree) {
+        if (world.hoveredDeco !== null && handFree) {
+            // Вырвать дерево → создать ресурс дерева в руке
+            const decos = world.decorations;
+            const deco = decos[world.hoveredDeco];
+            destroyDecorationWithEffect(deco, 'hand');
+            decos.splice(world.hoveredDeco, 1);
+            world.hoveredDeco = null;
+
+            const item = new Item(2, hand.isoX, hand.isoY);
+            item.state = 'lifting';
+            item.stateTime = 0;
+            item.liftProgress = 0;
+            items.push(item);
+            hand.grabbedItem = items.length - 1;
+            hand.state = 'closing';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+            statusEl.textContent = 'Вырвано: Дерево!';
+        } else if (world.hoveredItem !== null && handFree) {
             const item = items[world.hoveredItem];
             if (item.state !== 'carried' && item.state !== 'lifting') {
                 hand.grabbedItem = world.hoveredItem;

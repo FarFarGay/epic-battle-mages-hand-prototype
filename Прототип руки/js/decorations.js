@@ -65,7 +65,7 @@ export const decoParticles = [];
 // ============================================================
 //  РАЗРУШЕНИЕ ДЕКОРАЦИИ С ЭФФЕКТОМ
 // ============================================================
-function destroyDecorationWithEffect(deco, cause) {
+export function destroyDecorationWithEffect(deco, cause) {
     const sp = DECO_SPRITES[deco.spriteKey];
     if (!sp) return;
 

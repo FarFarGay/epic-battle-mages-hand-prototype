@@ -26,7 +26,7 @@ import { items, minions, castle, screenShake, triggerScreenShake, updateScreenSh
 import { initInput } from './input.js';
 import { updateActiveTiles, applySpellInRadius, applySpellToTile, IMPACT_DUR, FADING_DUR } from './tileEffects.js?v=2';
 import { Item } from './Item.js';
-import { addDecorationsToRenderList } from './decorations.js?v=3';
+import { addDecorationsToRenderList, decorations, destroyDecorationWithEffect } from './decorations.js?v=3';
 
 // Тайловые частицы — одноразовые эффекты (всплеск воды, взрыв ветра)
 const tileParticles = [];
@@ -53,6 +53,7 @@ let mouseY = canvas.height / 2;
 let mouseDown = false;
 let hoveredItem = null;
 let hoveredMinion = null;
+let hoveredDeco = null; // индекс в decorations[] (только TREE_1/TREE_2)
 
 // Таймер апгрейда обычных гоблинов в воинов
 let warriorUpgradeTimer = WARRIOR_UPGRADE_INTERVAL * Math.random(); // стагрированный старт
@@ -175,6 +176,9 @@ const world = {
     set hoveredItem(v) { hoveredItem = v; },
     get hoveredMinion() { return hoveredMinion; },
     set hoveredMinion(v) { hoveredMinion = v; },
+    get hoveredDeco() { return hoveredDeco; },
+    set hoveredDeco(v) { hoveredDeco = v; },
+    decorations,
     get mouseX() { return mouseX; },
     set mouseX(v) { mouseX = v; },
     get mouseY() { return mouseY; },
@@ -894,9 +898,10 @@ function update(dt) {
         }
     }
 
-    // Проверяем наведение на предметы и миньонов
+    // Проверяем наведение на предметы, миньонов и деревья
     hoveredItem = null;
     hoveredMinion = null;
+    hoveredDeco = null;
     if (artilleryMode.active) {
         // В режиме артиллерии наведение отключено
     } else if (hand.grabbedItem === null && hand.grabbedMinion === null) {
@@ -913,6 +918,7 @@ function update(dt) {
                 minDist = dist;
                 hoveredItem = i;
                 hoveredMinion = null;
+                hoveredDeco = null;
             }
         }
         for (let i = 0; i < minions.length; i++) {
@@ -928,6 +934,22 @@ function update(dt) {
                 minDist = dist;
                 hoveredItem = null;
                 hoveredMinion = i;
+                hoveredDeco = null;
+            }
+        }
+        // Деревья (TREE_1, TREE_2) — можно вырвать рукой
+        for (let i = 0; i < decorations.length; i++) {
+            const d = decorations[i];
+            if (d.spriteKey !== 'TREE_1' && d.spriteKey !== 'TREE_2') continue;
+            if (gameMap.getFog(d.tileIx, d.tileIy) !== FOG.VISIBLE) continue;
+            const dx = hand.isoX - d.ix;
+            const dy = hand.isoY - d.iy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < minDist) {
+                minDist = dist;
+                hoveredItem = null;
+                hoveredMinion = null;
+                hoveredDeco = i;
             }
         }
     }
