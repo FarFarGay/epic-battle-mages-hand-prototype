@@ -38,6 +38,11 @@ const _SPLASH_COLORS = ['#3388cc', '#55aaee', '#77ccff', '#2266aa'];
 const _WIND_COLORS   = ['#aaffbb', '#88eebb', '#bbffcc', '#77ddaa'];
 const _EARTH_COLORS  = ['#aa8855', '#887744', '#cc9955', '#665533', '#998855'];
 
+// Кэшируемые HUD-значения (статические — вычислить один раз)
+const _HUD_ITEM_MAX_W = Math.max(...ITEM_TYPES.map(t => t.w)); // макс. ширина спрайта ресурса (px)
+// Spell states как массив для итерации без Object.keys() каждый кадр
+const _SPELL_STATES = [spellStates.water, spellStates.earth, spellStates.wind];
+
 // ============================================================
 //  СОСТОЯНИЕ ВВОДА / UI
 // ============================================================
@@ -589,14 +594,16 @@ function update(dt) {
     }
 
     // ── МАНА — восстановление монахами ─────────────────────────
-    const prayingMonks = minions.filter(m => m.goblinClass === 'monk' && m.state === 'monk_praying' && !m.dead && !m.isUndead).length;
+    let prayingMonks = 0;
+    for (const m of minions) {
+        if (m.goblinClass === 'monk' && m.state === 'monk_praying' && !m.dead && !m.isUndead) prayingMonks++;
+    }
     if (prayingMonks > 0) {
         manaPool.value = Math.min(MANA_MAX, manaPool.value + prayingMonks * MONK_MANA_REGEN * dt);
     }
 
     // ── ПЕРЕЗАРЯДКА ЗАКЛИНАНИЙ ──────────────────────────────────
-    for (const key of Object.keys(spellStates)) {
-        const ss = spellStates[key];
+    for (const ss of _SPELL_STATES) {
         if (ss.cooldown > 0) ss.cooldown = Math.max(0, ss.cooldown - dt);
     }
 
@@ -1786,12 +1793,23 @@ function render() {
         ctx.restore();
     }
 
+    // Подсчёт гоблинов для HUD — один проход вместо 5 отдельных filter()
+    let _aliveCount = 0, _warriorCount = 0, _totalGoblins = 0, _scoutCount = 0, _monkCount = 0;
+    for (const m of minions) {
+        if (m.isUndead || m.dead) continue;
+        _aliveCount++;
+        _totalGoblins++;
+        if (m.goblinClass === 'warrior') _warriorCount++;
+        else if (m.goblinClass === 'scout') _scoutCount++;
+        else if (m.goblinClass === 'monk') _monkCount++;
+    }
+
     // HUD ресурсов — правый верхний угол (screen space)
     {
         const HUD_SCALE = 2;
         const HUD_MARGIN = 40;
         const HUD_ROW_H = 22;
-        const maxW = Math.max(...ITEM_TYPES.map(t => t.w)) * HUD_SCALE;
+        const maxW = _HUD_ITEM_MAX_W * HUD_SCALE;
         const totalH = ITEM_TYPES.length * HUD_ROW_H + 4;
         const hudX = canvas.width - HUD_MARGIN - maxW - 50;
         const hudY = HUD_MARGIN;
@@ -1821,7 +1839,7 @@ function render() {
         const HUD_SCALE = 2;
         const HUD_MARGIN = 40;
         const HUD_ROW_H = 22;
-        const maxW = Math.max(...ITEM_TYPES.map(t => t.w)) * HUD_SCALE;
+        const maxW = _HUD_ITEM_MAX_W * HUD_SCALE;
         const resBlockH = ITEM_TYPES.length * HUD_ROW_H + 4;
         const hudX = canvas.width - HUD_MARGIN - maxW - 50;
 
@@ -1857,7 +1875,7 @@ function render() {
         drawPixelArt(hudX, gobY, MINION_PIXELS, HUD_SCALE);
 
         // Счётчик живых гоблинов
-        const aliveCount = minions.filter(m => m.state !== 'dead' && !m.isUndead).length;
+        const aliveCount = _aliveCount;
         ctx.fillStyle = '#ffffff';
         ctx.font = '12px monospace';
         ctx.textAlign = 'left';
@@ -1894,7 +1912,7 @@ function render() {
     {
         const HUD_SCALE = 2;
         const HUD_MARGIN = 40;
-        const maxW = Math.max(...ITEM_TYPES.map(t => t.w)) * HUD_SCALE;
+        const maxW = _HUD_ITEM_MAX_W * HUD_SCALE;
         const hudX = canvas.width - HUD_MARGIN - maxW - 50;
         const blockW = maxW + 50;
         const barH = 8;
@@ -1930,8 +1948,8 @@ function render() {
         drawPixelArt(helmetOx, warY, WARRIOR_HELMET_PIXELS, HUD_SCALE);
 
         // Счётчик: воины в строю / всего гоблинов
-        const warriorCount = minions.filter(m => m.goblinClass === 'warrior' && !m.dead).length;
-        const totalGoblins = minions.filter(m => !m.isUndead && !m.dead).length;
+        const warriorCount = _warriorCount;
+        const totalGoblins = _totalGoblins;
         ctx.fillStyle = '#ffffff';
         ctx.font = '12px monospace';
         ctx.textAlign = 'left';
@@ -1964,7 +1982,7 @@ function render() {
     {
         const HUD_SCALE = 2;
         const HUD_MARGIN = 40;
-        const maxW = Math.max(...ITEM_TYPES.map(t => t.w)) * HUD_SCALE;
+        const maxW = _HUD_ITEM_MAX_W * HUD_SCALE;
         const hudX = canvas.width - HUD_MARGIN - maxW - 50;
         const blockW = maxW + 50;
         const barH = 8;
@@ -2000,7 +2018,7 @@ function render() {
         drawPixelArt(hoodOx, scoutY, SCOUT_HOOD_PIXELS, HUD_SCALE);
 
         // Счётчик: живые разведчики / макс
-        const scoutCount = minions.filter(m => m.goblinClass === 'scout' && !m.dead && !m.isUndead).length;
+        const scoutCount = _scoutCount;
         ctx.fillStyle = '#ffffff';
         ctx.font = '12px monospace';
         ctx.textAlign = 'left';
@@ -2033,7 +2051,7 @@ function render() {
     {
         const HUD_SCALE = 2;
         const HUD_MARGIN = 40;
-        const maxW = Math.max(...ITEM_TYPES.map(t => t.w)) * HUD_SCALE;
+        const maxW = _HUD_ITEM_MAX_W * HUD_SCALE;
         const hudX = canvas.width - HUD_MARGIN - maxW - 50;
         const blockW = maxW + 50;
         const barH = 8;
@@ -2069,7 +2087,7 @@ function render() {
         drawPixelArt(robeOx, monkY, MONK_ROBE_PIXELS, HUD_SCALE);
 
         // Счётчик: живые монахи / макс
-        const monkCount = minions.filter(m => m.goblinClass === 'monk' && !m.dead && !m.isUndead).length;
+        const monkCount = _monkCount;
         ctx.fillStyle = '#ffffff';
         ctx.font = '12px monospace';
         ctx.textAlign = 'left';

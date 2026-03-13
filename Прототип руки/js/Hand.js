@@ -6,16 +6,8 @@ import {
     VELOCITY_HISTORY
 } from './constants.js';
 import { HAND_OPEN_PIXELS, HAND_CLOSED_PIXELS } from './sprites.js?v=3';
-import { canvas, drawPixelArt, drawShadow } from './renderer.js';
-import { camera } from './isometry.js';
-
-
-function screenToCanvas(sx, sy) {
-    return {
-        x: (sx - canvas.width / 2 + camera.x) / camera.zoom + canvas.width / 2,
-        y: (sy - canvas.height / 2 + camera.y) / camera.zoom + canvas.height / 2,
-    };
-}
+import { drawPixelArt, drawShadow } from './renderer.js';
+import { screenToCanvas } from './isometry.js';
 
 export class Hand {
     constructor() {

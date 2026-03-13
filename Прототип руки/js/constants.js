@@ -154,3 +154,9 @@ export const MONK_UPGRADE_INTERVAL = 10.0; // секунд между произ
 export const MONK_FOOD_COST        = 1;    // единиц пшеницы на монаха (typeIndex 0)
 export const MONK_TOTEM_MIN_DIST   = 10.0; // мин. расстояние тотема от замка (iso-тайлы)
 export const MONK_TOTEM_MAX_DIST   = 25.0; // макс. расстояние тотема от замка (iso-тайлы)
+
+// — Зоны патруля и авто-реакции гоблинов —
+export const FREE_PATROL_RADIUS  = 10;    // свободный гоблин: 21×21 тайл вокруг замка
+export const GATHER_ZONE_RADIUS  = 21;    // сборщик: 42×42 тайл вокруг замка
+export const AUTO_ATTACK_RADIUS  = 1.5;   // радиус авто-атаки при приземлении (iso-тайлы)
+export const AUTO_GATHER_RADIUS  = 1.5;   // радиус авто-сбора ресурса при приземлении (iso-тайлы)

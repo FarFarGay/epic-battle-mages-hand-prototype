@@ -11,6 +11,8 @@ import {
     WARRIOR_AGGRO_RANGE, WARRIOR_ATTACK_DAMAGE, WARRIOR_ATTACK_CD, WARRIOR_ATTACK_RANGE,
     WARRIOR_GUARD_RADIUS,
     SCOUT_LIFESPAN,
+    FREE_PATROL_RADIUS, GATHER_ZONE_RADIUS,
+    AUTO_ATTACK_RADIUS, AUTO_GATHER_RADIUS,
 } from './constants.js';
 import { gameMap } from './Map.js';
 import { getTileEffect } from './tileEffects.js?v=2';
@@ -31,9 +33,7 @@ const PHYSICS_STATES = new Set(['lifting', 'carried', 'thrown', 'bouncing', 'sli
 // Состояния в которых нельзя входить в бой
 const COMBAT_BLOCKED_STATES = new Set(['carried', 'lifting', 'thrown', 'bouncing', 'sliding', 'settling', 'dead', 'crumbled', 'skeleton']);
 
-// Зоны патруля (iso-тайлы от замка в центре 0,0)
-const FREE_PATROL_RADIUS = 10;  // свободный гоблин: 21×21 тайл вокруг замка
-const GATHER_ZONE_RADIUS = 21;  // сборщик: 42×42 тайл вокруг замка
+// FREE_PATROL_RADIUS, GATHER_ZONE_RADIUS, AUTO_ATTACK_RADIUS, AUTO_GATHER_RADIUS — из constants.js
 
 export class Minion extends GameObject {
     constructor(ix, iy) {
@@ -404,32 +404,30 @@ export class Minion extends GameObject {
             this.stateTime = 0;
             return;
         }
-        // При приземлении проверяем ближайшего врага в радиусе 1.5 тайла — auto-attack
-        const AUTO_ATTACK_RADIUS = 1.5;
+        // При приземлении проверяем ближайшего врага в радиусе AUTO_ATTACK_RADIUS — auto-attack
         if (allMinions) {
-            let nearestEnemy = null, nearestEnemyDist = AUTO_ATTACK_RADIUS;
+            let nearestEnemy = null, nearestEnemyDistSq = AUTO_ATTACK_RADIUS * AUTO_ATTACK_RADIUS;
             for (const m of allMinions) {
                 if (m === this || !m.isUndead) continue;
                 if (m.state !== 'skeleton') continue;
                 const ddx = m.ix - this.ix;
                 const ddy = m.iy - this.iy;
-                const d = Math.sqrt(ddx * ddx + ddy * ddy);
-                if (d < nearestEnemyDist) { nearestEnemyDist = d; nearestEnemy = m; }
+                const dSq = ddx * ddx + ddy * ddy;
+                if (dSq < nearestEnemyDistSq) { nearestEnemyDistSq = dSq; nearestEnemy = m; }
             }
             if (nearestEnemy) { this.enterCombat(nearestEnemy); return; }
         }
 
-        // При приземлении ищем ближайший ресурс в радиусе 1.5 тайла
-        const AUTO_GATHER_RADIUS = 1.5;
-        let nearest = null, nearestDist = AUTO_GATHER_RADIUS;
+        // При приземлении ищем ближайший ресурс в радиусе AUTO_GATHER_RADIUS
+        let nearest = null, nearestDistSq = AUTO_GATHER_RADIUS * AUTO_GATHER_RADIUS;
         if (items) {
             for (const item of items) {
                 if (!item.typeDef.gatherable) continue;
                 if (item.state === 'carried' || item.state === 'lifting' || item.state === 'goblin_carried') continue;
                 const dx = item.ix - this.ix;
                 const dy = item.iy - this.iy;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist < nearestDist) { nearestDist = dist; nearest = item; }
+                const distSq = dx * dx + dy * dy;
+                if (distSq < nearestDistSq) { nearestDistSq = distSq; nearest = item; }
             }
         }
         if (nearest) {
@@ -514,8 +512,7 @@ export class Minion extends GameObject {
 
                 const dx = this.targetX - this.ix;
                 const dy = this.targetY - this.iy;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist < 0.25) {
+                if (dx * dx + dy * dy < 0.0625) {
                     this.pickNewTarget();
                 } else {
                     const spd = MINION_SPEED * this._currentSpeedMult * dt;
@@ -528,8 +525,7 @@ export class Minion extends GameObject {
             case 'moving_to_point': {
                 const dx = this.targetX - this.ix;
                 const dy = this.targetY - this.iy;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist < 0.25) {
+                if (dx * dx + dy * dy < 0.0625) {
                     this.pickNewTarget();
                     this.state = 'free';
                     this.stateTime = 0;
@@ -565,11 +561,11 @@ export class Minion extends GameObject {
                     }
                     const dx = this.targetItem.ix - this.ix;
                     const dy = this.targetItem.iy - this.iy;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const distSq = dx * dx + dy * dy;
                     const canPickUp = this.targetItem.state === 'idle' ||
                                       this.targetItem.state === 'settling' ||
                                       this.targetItem.state === 'sliding';
-                    if (dist < 0.6 && canPickUp) {
+                    if (distSq < 0.36 && canPickUp) {
                         // Поднять ресурс; если он снаружи зоны 42×42 — после доставки станем свободным
                         this.gathererMode = this.gathererMode &&
                             Math.abs(this.targetItem.ix - gameMap.castlePos.ix) <= GATHER_ZONE_RADIUS &&
@@ -582,7 +578,7 @@ export class Minion extends GameObject {
                         this.targetItem = null;
                         this.state = 'returning';
                         this.stateTime = 0;
-                    } else if (dist > 0.001) {
+                    } else if (distSq > 0.000001) {
                         const spd = MINION_SPEED * this._currentSpeedMult * dt;
                         this._moveToward(this.targetItem.ix, this.targetItem.iy, spd);
                     }
@@ -604,9 +600,8 @@ export class Minion extends GameObject {
 
                     const dx = castle.ix - this.ix;
                     const dy = castle.iy - this.iy;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-
-                    if (dist < castle.baseRadius + this.radius) {
+                    const threshold = castle.baseRadius + this.radius;
+                    if (dx * dx + dy * dy < threshold * threshold) {
                         // Сдать камень
                         const deliveredTypeIndex = this.carriedItem.typeIndex;
                         const idx = items.indexOf(this.carriedItem);
@@ -654,8 +649,7 @@ export class Minion extends GameObject {
                 const atkRange = this.goblinClass === 'warrior' ? WARRIOR_ATTACK_RANGE : GOBLIN_ATTACK_RANGE;
                 const ddx = this.combatTarget.ix - this.ix;
                 const ddy = this.combatTarget.iy - this.iy;
-                const dist = Math.sqrt(ddx * ddx + ddy * ddy);
-                if (dist <= atkRange) {
+                if (ddx * ddx + ddy * ddy <= atkRange * atkRange) {
                     this.state = 'fighting';
                     this.stateTime = 0;
                 } else {
@@ -678,9 +672,8 @@ export class Minion extends GameObject {
                 const atkCd    = this.goblinClass === 'warrior' ? WARRIOR_ATTACK_CD : GOBLIN_ATTACK_CD;
                 const ddx = this.combatTarget.ix - this.ix;
                 const ddy = this.combatTarget.iy - this.iy;
-                const dist = Math.sqrt(ddx * ddx + ddy * ddy);
 
-                if (dist > atkRange * 2) {
+                if (ddx * ddx + ddy * ddy > atkRange * atkRange * 4) {
                     // Враг отошёл — догоняем
                     this.state = 'war';
                     this.stateTime = 0;
@@ -753,8 +746,7 @@ export class Minion extends GameObject {
                 if (this.totemX === null) break; // тотем ещё не установлен
                 const dx = this.totemX - this.ix;
                 const dy = this.totemY - this.iy;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist < 1.0) {
+                if (dx * dx + dy * dy < 1.0) {
                     this.state = 'monk_praying';
                     this.stateTime = 0;
                 } else {
@@ -817,7 +809,6 @@ export class Minion extends GameObject {
 
                 // Ищем ближайшего живого гоблина (не скелета, не мёртвого, не в руке)
                 let prey = null, preyDistSq = SKELETON_AGGRO_RANGE * SKELETON_AGGRO_RANGE;
-                let preyDist = SKELETON_AGGRO_RANGE;
                 if (allMinions) {
                     for (const m of allMinions) {
                         if (m === this) continue;
@@ -830,13 +821,12 @@ export class Minion extends GameObject {
                         const dSq = ddx * ddx + ddy * ddy;
                         if (dSq < preyDistSq) {
                             preyDistSq = dSq;
-                            preyDist = Math.sqrt(dSq);
                             prey = m;
                         }
                     }
                 }
 
-                if (prey && preyDist <= SKELETON_ATTACK_RANGE) {
+                if (prey && preyDistSq <= SKELETON_ATTACK_RANGE * SKELETON_ATTACK_RANGE) {
                     // В радиусе удара — атаковать
                     if (this.attackCooldown <= 0) {
                         this.attackCooldown = SKELETON_ATTACK_CD;
@@ -865,7 +855,7 @@ export class Minion extends GameObject {
                             const rdx = m.ix - prey.ix;
                             const rdy = m.iy - prey.iy;
                             const rallyRange = m.goblinClass === 'warrior' ? WARRIOR_GUARD_RADIUS : GOBLIN_RALLY_RANGE;
-                            if (Math.sqrt(rdx * rdx + rdy * rdy) <= rallyRange) {
+                            if (rdx * rdx + rdy * rdy <= rallyRange * rallyRange) {
                                 m.enterCombat(this);
                             }
                         }
@@ -878,8 +868,7 @@ export class Minion extends GameObject {
                     // Нет цели — свободное блуждание по карте
                     const dx = this.targetX - this.ix;
                     const dy = this.targetY - this.iy;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    if (dist < 0.25) {
+                    if (dx * dx + dy * dy < 0.0625) {
                         this.pickNewTarget();
                     } else {
                         const spd = MINION_SPEED * SKELETON_SPEED_FACTOR * this._currentSpeedMult * dt;

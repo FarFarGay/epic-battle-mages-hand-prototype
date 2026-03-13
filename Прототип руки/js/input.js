@@ -15,6 +15,10 @@ import { gameMap } from './Map.js';
 
 const RMB_DRAG_THRESHOLD = 5;
 
+// Состояния, в которых гоблин может получить команду или попасть в лассо
+const SELECTABLE = new Set(['free', 'moving_to_point', 'busy', 'returning', 'war', 'fighting',
+                             'guarding', 'warrior_returning', 'monk_walking', 'monk_praying']);
+
 let rmbStart = null; // { x, y } — начало ПКМ нажатия
 
 // ── Вспомогательные функции ────────────────────────────────
@@ -60,9 +64,6 @@ function findNearestMinions(ix, iy, count, filter) {
 }
 
 function handleRMBCommand(ix, iy, hand, statusEl) {
-    const SELECTABLE = ['free', 'moving_to_point', 'busy', 'returning', 'war', 'fighting',
-                        'guarding', 'warrior_returning', 'monk_walking', 'monk_praying'];
-
     const enemy = findEnemyAt(ix, iy);
     const resource = enemy ? null : findResourceAt(ix, iy);
 
@@ -72,13 +73,13 @@ function handleRMBCommand(ix, iy, hand, statusEl) {
         // Нет выделения — берём 2-3 ближайших подходящих гоблина
         if (enemy) {
             targetIdxs = findNearestMinions(ix, iy, 3,
-                m => !m.isUndead && !m.dead && SELECTABLE.includes(m.state) && m.goblinClass !== 'warrior');
+                m => !m.isUndead && !m.dead && SELECTABLE.has(m.state) && m.goblinClass !== 'warrior');
         } else if (resource) {
             targetIdxs = findNearestMinions(ix, iy, 3,
-                m => !m.isUndead && !m.dead && SELECTABLE.includes(m.state) && m.goblinClass === 'basic');
+                m => !m.isUndead && !m.dead && SELECTABLE.has(m.state) && m.goblinClass === 'basic');
         } else {
             targetIdxs = findNearestMinions(ix, iy, 2,
-                m => !m.isUndead && !m.dead && SELECTABLE.includes(m.state));
+                m => !m.isUndead && !m.dead && SELECTABLE.has(m.state));
         }
     }
 
@@ -166,8 +167,6 @@ function finishLassoSelection(selection, hand, statusEl) {
     const selH = Math.abs(selection.endY - selection.startY);
     if (selW <= 5 && selH <= 5) return;
 
-    const SELECTABLE = ['free', 'moving_to_point', 'busy', 'returning', 'war', 'fighting',
-                        'guarding', 'warrior_returning', 'monk_walking', 'monk_praying'];
     const tl = screenToCanvas(
         Math.min(selection.startX, selection.endX),
         Math.min(selection.startY, selection.endY)
@@ -179,7 +178,7 @@ function finishLassoSelection(selection, hand, statusEl) {
     hand.selectedMinions = [];
     for (let i = 0; i < minions.length; i++) {
         const m = minions[i];
-        if (!SELECTABLE.includes(m.state)) continue;
+        if (!SELECTABLE.has(m.state)) continue;
         if (m.isUndead) continue;
         const s = worldToScreen(m.ix, m.iy);
         const mx = s.x;
