@@ -385,6 +385,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             item.state = 'thrown';
             item.stateTime = 0;
             item.bounceCount = 0;
+            item.thrownByHand = true;
 
             hand.grabbedItem = null;
             hand.state = 'opening';

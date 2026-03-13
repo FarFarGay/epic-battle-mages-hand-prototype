@@ -573,6 +573,28 @@ function update(dt) {
     // Коллизии между предметами
     resolveItemCollisions();
 
+    // Сбор ресурсов рукой: брошенный игроком предмет попал в замок
+    {
+        const cr = castle.baseRadius;
+        const cr2 = cr * cr;
+        for (let i = items.length - 1; i >= 0; i--) {
+            const item = items[i];
+            if (!item.thrownByHand) continue;
+            if (item.state === 'carried' || item.state === 'lifting') continue;
+            const dx = item.ix - castle.ix;
+            const dy = item.iy - castle.iy;
+            if (dx * dx + dy * dy < cr2 && item.iz < castle.towerHeight) {
+                castleResources[item.typeIndex]++;
+                items.splice(i, 1);
+                // Сдвигаем индекс схваченного предмета если нужно
+                if (hand.grabbedItem !== null) {
+                    if (hand.grabbedItem === i) hand.grabbedItem = null;
+                    else if (hand.grabbedItem > i) hand.grabbedItem--;
+                }
+            }
+        }
+    }
+
     // Коллизии с замком
     resolveCastleCollisions();
     castle.update(dt, minions, castleResources);

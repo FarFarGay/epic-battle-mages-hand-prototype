@@ -91,6 +91,7 @@ export class Castle {
     pushObjects(objects) {
         for (const obj of objects) {
             if (obj.state === 'carried' || obj.state === 'lifting' || obj.state === 'goblin_carried' || obj.state === 'returning') continue;
+            if (obj.thrownByHand) continue; // брошен игроком → пролетает в замок
             if (obj.iz > this.towerHeight) continue;
 
             const dx = obj.ix - this.ix;

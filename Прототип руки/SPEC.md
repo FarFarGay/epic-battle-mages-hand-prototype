@@ -383,6 +383,7 @@ placeResources(gameMap.seed);    // ресурсы
 | ЛКМ зажать на предмете | Схватить предмет |
 | ЛКМ зажать на миньоне | Схватить миньона |
 | ЛКМ отпустить | Бросить предмет / миньона (с трекингом скорости) |
+| Бросить предмет в замок | Ресурс засчитывается в `castleResources`, предмет исчезает |
 | ЛКМ на замке (рука свободна) | Войти в режим стрельбы |
 | ЛКМ (режим стрельбы) | Выстрел ядром в прицел |
 | ЛКМ (любом месте) | Сбросить выделение `selectedMinions` |
@@ -2032,3 +2033,4 @@ import { getDepth, worldToScreen } from './isometry.js';
 - [x] Дебаг-сессия: устранены 4 системных бага — декорации не рендерились (сплит `decorations.js`), гоблины-сборщики не находили ресурсы вблизи замка (`GATHER_ZONE_RADIUS` по абсолютным координатам), замок тонул в рельефе (локальная копия `worldToScreen` без высоты), полный сплит состояния из-за несогласованных `?v=N` в импортах (`World.js`, `tileEffects.js`, `sprites.js`) — унифицированы все импорты shared-модулей по всему проекту
 - [x] Пыль земли: 2–4 частицы на каждый трансформированный тайл earth-заклинания
 - [x] Оптимизация производительности (сессия 2): устранены источники GC-давления — 6×`filter()` + 5×`map()` в render-петле заменены единым imperative-счётчиком (`_aliveCount/_warriorCount/_scoutCount/_monkCount/_totalGoblins`); `Math.max(...ITEM_TYPES.map(...))` предвычислен в `_HUD_ITEM_MAX_W`; `Object.keys(spellStates)` заменён на `_SPELL_STATES[]`; модуль-уровневая `Set SELECTABLE` в `input.js` вместо двух локальных массивов (O(1) вместо O(n)); 12 лишних `Math.sqrt` в `Minion.js` заменены distSq-сравнениями (comparison-only); skeleton-поиск добычи: `preyDist` убран, порог в distSq; замок-доставка: `(dx²+dy²) < threshold²` вместо sqrt
+- [x] Сбор ресурсов рукой: игрок бросает предмет в замок → ресурс засчитывается в `castleResources[typeIndex]`, предмет удаляется. Флаг `item.thrownByHand` ставится в `input.js` при броске из руки, сбрасывается в `onSettle()`. В `Castle.pushObjects()` предметы с `thrownByHand` пропускают коллизию замка (пролетают внутрь). Проверка в `main.js` после `resolveItemCollisions()`: если `thrownByHand && dist < baseRadius && iz < towerHeight` → absorb

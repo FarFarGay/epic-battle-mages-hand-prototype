@@ -13,6 +13,7 @@ export class Item extends GameObject {
         this.typeIndex = typeIndex;
         this.radius = typeDef.radius; // для коллизий с замком
         this.state = 'idle';
+        this.thrownByHand = false;   // true → брошен игроком, может быть собран замком
     }
 
     get typeDef() {
@@ -46,6 +47,7 @@ export class Item extends GameObject {
         this.state = 'idle';
         this.stateTime = 0;
         this.bounceCount = 0;
+        this.thrownByHand = false;
     }
 
     draw(index, hand, hoveredItem) {
