@@ -22,7 +22,7 @@ js/
 ├── sprites.js          — пиксельные спрайты (*_PIXELS массивы) + спрайты декораций (DECO_*)
 ├── noise.js            — SimplexNoise 2D, fbm (fractal Brownian motion), createRNG (mulberry32)
 ├── mapGenerator.js     — generateMap(), placeResources(), placeDecorations() — процедурная генерация
-├── decorations.js      — массив decorations[], onTileChanged(), addDecorationsToRenderList()
+├── decorations.js      — decorations[], decoParticles[], onTileChanged(cause), destroyDecorationWithEffect(), addDecorationsToRenderList()
 ├── isometry.js         — изометрическая проекция, camera, screenToIso/isoToScreen, worldToScreen (с высотой)
 ├── renderer.js         — canvas/ctx, drawPixel, drawPixelArt, drawIsoDiamond, тени
 ├── Map.js              — class GameMap: размер, типы тайлов, heightMap, colorCache, seed, туман войны, castlePos
@@ -459,13 +459,32 @@ placeResources(gameMap.seed);    // ресурсы
 - **Тряска при уроне** — гоблин резко пошатывается при получении урона (`damageWobble` таймер, 0.4с, sin/cos шейк)
 - **Частицы крови** — красные пиксели разлетаются из места удара (8 шт. при уроне, 20 при смерти), с гравитацией и затуханием по alpha
 - **Лужица крови** — пиксельный паттерн на полу: при уроне (малая, 2с), при смерти (большая, 4с); рваные края с внешними брызгами; мёртвый гоблин крови не оставляет
-- **Тайловые эффекты — анимированные частицы на тайлах** (`activeTiles[]` в `tileEffects.js`):
-  - **Огонь** (`burning`): 3–6 пиксельных искр на тайл, генерируются при создании тайла; анимация — движение вверх через `sin(time + phase)`, мерцание alpha; цвета `#ff4400`–`#ffcc00`
-  - **Пар** (`steam`): 4–7 плавающих кружков, поднимаются вверх с покачиванием, alpha затухает к верхней части; возникает когда вода встречает огонь
-  - **Лужа** (`puddle`): пульсирующий изометрический эллипс-рябь, расширяется от 0 до полутайла за 20 кадров, alpha инвертирована
-- **Частицы заклинаний (`tileParticles[]`)** — массив в `main.js`, screen-space координаты, рендерятся вне camera transform:
-  - **Всплеск воды** (`splash`): 10 пикселей при приземлении water-снаряда; разлетаются по углам с vy вверх, затем падают под гравитацией 150; цвета `#3388cc`–`#77ccff`; живут 0.45–0.55с
-  - **Порыв ветра** (`wind`): 14 пикселей при приземлении wind-снаряда; спираль — к скорости добавляется перпендикулярная компонента (`angularSpeed`), затухание 0.97/кадр; цвета `#aaffbb`–`#77ddaa`; живут 0.6–0.9с
+- **Тайловые эффекты — трёхфазная система** (`activeTiles[]` в `tileEffects.js`):
+  - Каждый `activeTile` имеет `phase: 'impact' | 'active' | 'fading'` + `phaseTimer` (отсчёт внутри фазы)
+  - Переходы: `impact → active` по `IMPACT_DUR`; `active → fading` когда `timer >= maxTime - FADING_DUR`
+  - **Огонь** (`burning`, 5с → `scorched`):
+    - *impact* (0.5с): жёлтый эллипс (`#ffdd44`) затухает по alpha
+    - *active*: 3–6 пиксельных языков пламени колышутся вверх через `sin(time + phase)`, мерцание alpha; цвета `#ff4400`–`#ffcc00`
+    - *fading* (1.0с): языки убывают в размере, цвета сдвигаются к `#441100`
+  - **Пар** (`steam`, 4с → `plain`):
+    - *impact* (0.4с): белый эллипс (`#ddddee`) затухает
+    - *active*: 4–7 кружков поднимаются вверх с покачиванием, alpha 0.35 × (1 − yOff/30)
+    - *fading* (0.8с): alpha × (1 − fadeFrac), радиус кружков увеличивается × 1.6
+  - **Лужа** (`puddle`, 10с → `plain`):
+    - *impact* (0.4с): голубое кольцо (`#77ddff`) расширяется от 0 до TILE_W/3, alpha убывает
+    - *active*: зацикленная рябь-эллипс, скорость расширения × 20 px/с; alpha 0.35 × (1 − ringR/20)
+    - *fading* (1.0с): скорость ряби × 0.4, alpha × (1 − fadeFrac)
+  - `IMPACT_DUR` и `FADING_DUR` экспортируются из `tileEffects.js` и используются в рендере в `main.js`
+- **Разрушение декораций** (`decoParticles[]` в `decorations.js`):
+  - При смене тайла (`onTileChanged`) каждый пиксель спрайта декорации превращается в частицу
+  - Поведение зависит от `cause`: `fire` — летит вверх (gravity −18), `earth` — щепки в стороны (gravity 130), `artillery` — взрыв во все стороны (speed 70–150, gravity 110), остальное — мягкое рассеивание
+  - `cause` передаётся через весь стек: `applySpellToTile(spell, ix, iy, cause)` → `gameMap.setTile(ix, iy, type, cause)` → `onTileChanged(ix, iy, oldType, newType, cause)`
+  - `decoParticles` экспортируется через `World.js`; очищается в `initWorld()`; рендерится внутри camera transform после `tileParticles`
+- **Частицы заклинаний (`tileParticles[]`)** — массив в `main.js`, camera-space координаты, рендерятся внутри camera transform:
+  - **Всплеск воды** (`splash`): 10 пикселей при приземлении water-снаряда; разлетаются с vy вверх, гравитация 150; цвета `#3388cc`–`#77ccff`; живут 0.45–0.55с
+  - **Порыв ветра** (`wind`): 14 пикселей при приземлении wind-снаряда; спираль через перпендикулярную компоненту скорости (`angularSpeed`), затухание ×0.97/кадр; цвета `#aaffbb`–`#77ddaa`; 0.6–0.9с
+  - **Кольцо ветра** (`windRing`): один expanding эллипс при приземлении wind; без физики, только таймер; от 0 до `WIND_SPELL_RADIUS × TILE_W/2` за 0.35с, stroke `#88ffaa`, alpha убывает
+  - **Пыль земли** (`dust`): 2–4 частицы на каждый трансформированный тайл earth-заклинания; разлетаются от центра тайла, гравитация 150; цвета `#aa8855`–`#665533`; 0.45–0.65с
 
 ---
 
@@ -1895,3 +1914,7 @@ fireball.vz = throwVel.vz;
 - [x] Wind spell распространяет огонь: горящие тайлы в радиусе ветра поджигают соседей по направлению от центра заклинания (3 соседа: прямо + ±перпендикуляр); только `forest`/`plain`/`village`
 - [x] Визуальный polish тайловых эффектов: огненные пиксели (`firePixels`) на `burning`-тайлах, пар (`steamPuffs`) на `steam`, рябь-эллипс на `puddle`; `tileParticles[]` в `main.js` — всплеск воды (10 частиц) и спираль ветра (14 частиц) при приземлении заклинания
 - [x] AUDIT.md: полный аудит механик прототипа (6 блоков, 75 проверок)
+- [x] Трёхфазные визуальные эффекты заклинаний: система `impact→active→fading` для всех активных тайлов (`IMPACT_DUR`/`FADING_DUR`); огонь — вспышка → языки пламени → угасание с цветовым сдвигом; лужа — расширяющееся кольцо → рябь → замедление; пар — белая вспышка → клубы → рассеивание
+- [x] Разрушение декораций с эффектом: `destroyDecorationWithEffect(deco, cause)` — каждый пиксель спрайта разлетается частицей; поведение зависит от причины (fire/earth/artillery/water); `decoParticles[]` в `decorations.js`, cause передаётся через весь стек `setTile→onTileChanged`
+- [x] Кольцо ударной волны ветра (`windRing`): expanding эллипс при приземлении wind-снаряда, stroke `#88ffaa`, 0.35с
+- [x] Пыль земли: 2–4 частицы на каждый трансформированный тайл earth-заклинания
