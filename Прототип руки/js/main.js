@@ -24,8 +24,17 @@ import { camera, isoToScreen, screenToIso, getDepth, worldToScreen } from './iso
 import { Hand } from './Hand.js';
 import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers } from './World.js';
 import { initInput } from './input.js';
-import { updateActiveTiles, applySpellInRadius } from './tileEffects.js';
+import { updateActiveTiles, applySpellInRadius, applySpellToTile } from './tileEffects.js';
+import { Item } from './Item.js';
 import { addDecorationsToRenderList } from './decorations.js';
+
+// Тайловые частицы — одноразовые эффекты (всплеск воды, взрыв ветра)
+const tileParticles = [];
+
+// Палитры для тайловых эффектов (module-level, не аллоцируются в game loop)
+const _FIRE_COLORS  = ['#ff4400', '#ff6600', '#ff8800', '#ffaa00', '#ffcc00'];
+const _SPLASH_COLORS = ['#3388cc', '#55aaee', '#77ccff', '#2266aa'];
+const _WIND_COLORS   = ['#aaffbb', '#88eebb', '#bbffcc', '#77ddaa'];
 
 // ============================================================
 //  СОСТОЯНИЕ ВВОДА / UI
@@ -147,6 +156,7 @@ window.addEventListener('resize', resize);
 ctx.imageSmoothingEnabled = false;
 
 initWorld();
+tileParticles.length = 0;
 
 // Объект мирового состояния для input.js
 const world = {
@@ -424,6 +434,20 @@ function updateArtillery(dt) {
                 }
             }
 
+            // Тайлы: стены в радиусе взрыва → щебень
+            {
+                const blastR = Math.ceil(ARTILLERY_BLAST_RADIUS);
+                const blastR2 = ARTILLERY_BLAST_RADIUS * ARTILLERY_BLAST_RADIUS;
+                const bix = Math.round(proj.ix), biy = Math.round(proj.iy);
+                for (let dx = -blastR; dx <= blastR; dx++) {
+                    for (let dy = -blastR; dy <= blastR; dy++) {
+                        if (dx * dx + dy * dy > blastR2) continue;
+                        if (gameMap.getTile(bix + dx, biy + dy) === 'wall')
+                            gameMap.setTile(bix + dx, biy + dy, 'rubble');
+                    }
+                }
+            }
+
             statusEl.textContent = 'Попадание!';
         }
     }
@@ -639,7 +663,32 @@ function update(dt) {
         const spellRadius = spellKey === 'water' ? WATER_SPELL_RADIUS
                           : spellKey === 'earth' ? EARTH_SPELL_RADIUS
                           : WIND_SPELL_RADIUS;
-        applySpellInRadius(spellKey, ex, ey, spellRadius);
+
+        if (spellKey === 'earth') {
+            // Per-tile чтобы отследить вырубку леса → дроп дерева
+            const rcx = Math.round(ex), rcy = Math.round(ey);
+            const ri = Math.ceil(EARTH_SPELL_RADIUS);
+            const r2 = EARTH_SPELL_RADIUS * EARTH_SPELL_RADIUS;
+            for (let dy = -ri; dy <= ri; dy++) {
+                for (let dx = -ri; dx <= ri; dx++) {
+                    if (dx * dx + dy * dy > r2) continue;
+                    const tix = rcx + dx, tiy = rcy + dy;
+                    if (!gameMap.isInBounds(tix, tiy)) continue;
+                    const oldType = gameMap.getTile(tix, tiy);
+                    if (!applySpellToTile('earth', tix, tiy)) continue;
+                    if (oldType === 'forest') {
+                        const count = 1 + Math.floor(Math.random() * 2);
+                        for (let i = 0; i < count; i++) {
+                            items.push(new Item(2,
+                                tix + (Math.random() - 0.5) * 0.8,
+                                tiy + (Math.random() - 0.5) * 0.8));
+                        }
+                    }
+                }
+            }
+        } else {
+            applySpellInRadius(spellKey, ex, ey, spellRadius);
+        }
 
         // Туман войны: вода и ветер — временно, земля — навсегда
         {
@@ -672,6 +721,78 @@ function update(dt) {
                 m.stateTime = 0;
                 m.bounceCount = 0;
                 m.windPushed = true;
+            }
+        }
+
+        // Ветер раздувает огонь: burning-тайлы распространяют огонь «по ветру»
+        if (spellKey === 'wind') {
+            const windIx = Math.round(ex), windIy = Math.round(ey);
+            const ri = Math.ceil(WIND_SPELL_RADIUS);
+            const r2 = WIND_SPELL_RADIUS * WIND_SPELL_RADIUS;
+            for (let dy = -ri; dy <= ri; dy++) {
+                for (let dx = -ri; dx <= ri; dx++) {
+                    if (dx * dx + dy * dy > r2) continue;
+                    const tx = windIx + dx, ty = windIy + dy;
+                    if (gameMap.getTile(tx, ty) !== 'burning') continue;
+
+                    // Направление «по ветру» — от центра взрыва через горящий тайл
+                    const len = Math.sqrt(dx * dx + dy * dy);
+                    if (len < 0.01) continue;
+                    const ndx = Math.round(dx / len);
+                    const ndy = Math.round(dy / len);
+
+                    // Поджигаем три тайла «впереди» горящего (прямо + чуть по бокам)
+                    for (const [nx, ny] of [
+                        [tx + ndx,       ty + ndy      ],
+                        [tx + ndx + ndy, ty + ndy - ndx],
+                        [tx + ndx - ndy, ty + ndy + ndx],
+                    ]) {
+                        const nt = gameMap.getTile(nx, ny);
+                        if (nt === 'forest' || nt === 'plain' || nt === 'village')
+                            applySpellToTile('fire', nx, ny);
+                    }
+                }
+            }
+        }
+
+        // Вода: всплеск при приземлении
+        if (spellKey === 'water') {
+            const sc = worldToScreen(ex, ey);
+            for (let i = 0; i < 10; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 35 + Math.random() * 45;
+                tileParticles.push({
+                    type: 'splash',
+                    x: sc.x + (Math.random() - 0.5) * 4,
+                    y: sc.y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed * 0.4 - 25,
+                    life: 0.45 + Math.random() * 0.1,
+                    maxLife: 0.55,
+                    size: 2 + Math.floor(Math.random() * 2),
+                    color: _SPLASH_COLORS[Math.floor(Math.random() * _SPLASH_COLORS.length)],
+                });
+            }
+        }
+
+        // Ветер: закрученные частицы-лепестки при приземлении
+        if (spellKey === 'wind') {
+            const sc = worldToScreen(ex, ey);
+            for (let i = 0; i < 14; i++) {
+                const angle = (i / 14) * Math.PI * 2 + Math.random() * 0.3;
+                const speed = 60 + Math.random() * 40;
+                tileParticles.push({
+                    type: 'wind',
+                    x: sc.x,
+                    y: sc.y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed * 0.5,
+                    life: 0.6 + Math.random() * 0.3,
+                    maxLife: 0.9,
+                    size: 1 + Math.floor(Math.random() * 2),
+                    color: _WIND_COLORS[Math.floor(Math.random() * _WIND_COLORS.length)],
+                    angularSpeed: 2 + Math.random() * 3,
+                });
             }
         }
     }
@@ -851,6 +972,23 @@ function update(dt) {
         p.vy += 150 * dt; // гравитация частиц
         p.life -= dt;
         if (p.life <= 0) bloodParticles.splice(i, 1);
+    }
+
+    // Обновляем тайловые частицы (всплеск воды, взрыв ветра)
+    for (let i = tileParticles.length - 1; i >= 0; i--) {
+        const p = tileParticles[i];
+        p.life -= dt;
+        if (p.life <= 0) { tileParticles.splice(i, 1); continue; }
+        if (p.type === 'wind') {
+            const perpX = -p.vy * p.angularSpeed * dt;
+            const perpY =  p.vx * p.angularSpeed * dt * 0.5;
+            p.vx = (p.vx + perpX) * 0.97;
+            p.vy = (p.vy + perpY) * 0.97;
+        } else {
+            p.vy += 150 * dt;
+        }
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
     }
 
     // Обновляем лужицы крови
@@ -1199,6 +1337,70 @@ function render() {
     // Декорации (деревья, камни, домики)
     addDecorationsToRenderList(renderList, canvas);
 
+    // Тайловые визуальные эффекты — огонь, пар, рябь (world space, через draw-closure)
+    for (const tile of activeTiles) {
+        if (gameMap.getFog(tile.ix, tile.iy) !== FOG.VISIBLE) continue;
+        if (tile.type === 'burning' && tile.firePixels) {
+            const t = tile;
+            renderList.push({
+                depth: t.ix + t.iy + 0.05,
+                draw() {
+                    const now = performance.now() * 0.001;
+                    for (const px of t.firePixels) {
+                        const sc = worldToScreen(t.ix + px.ox, t.iy + px.oy);
+                        const yOff  = -Math.abs(Math.sin(now * 6 + px.phase)) * 8;
+                        const alpha =  0.6 + 0.4 * (0.5 + 0.5 * Math.sin(now * 8 + px.phase));
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle   = _FIRE_COLORS[px.colorIdx];
+                        ctx.fillRect(Math.round(sc.x - px.size / 2), Math.round(sc.y + yOff - px.size / 2), px.size, px.size);
+                    }
+                    ctx.globalAlpha = 1;
+                },
+            });
+        } else if (tile.type === 'steam' && tile.steamPuffs) {
+            const t = tile;
+            renderList.push({
+                depth: t.ix + t.iy + 0.05,
+                draw() {
+                    const now = performance.now() * 0.001;
+                    for (const puff of t.steamPuffs) {
+                        const sc    = worldToScreen(t.ix + puff.ox, t.iy + puff.oy);
+                        const yOff  = -(((now * 15) + puff.phase) % 30);
+                        const alpha =  0.35 * ((-yOff) / 30);
+                        if (alpha < 0.01) continue;
+                        const xWobble = Math.sin(now * 2 + puff.wobblePhase) * 3;
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle   = '#ccccdd';
+                        ctx.beginPath();
+                        ctx.arc(sc.x + xWobble, sc.y + yOff, puff.size / 2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.globalAlpha = 1;
+                },
+            });
+        } else if (tile.type === 'puddle' && tile.ripplePhase !== undefined) {
+            const t = tile;
+            renderList.push({
+                depth: t.ix + t.iy - 0.01,
+                draw() {
+                    const now    = performance.now() * 0.001;
+                    const ringR  = ((now * 20 + t.ripplePhase) % 20);
+                    const alpha  = 0.35 * (1 - ringR / 20);
+                    const rx     = (ringR / 20) * (TILE_W / 2);
+                    const ry     = (ringR / 20) * (TILE_H / 2);
+                    const sc     = worldToScreen(t.ix, t.iy);
+                    ctx.globalAlpha  = alpha;
+                    ctx.strokeStyle  = '#77bbee';
+                    ctx.lineWidth    = 1;
+                    ctx.beginPath();
+                    ctx.ellipse(sc.x, sc.y, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                },
+            });
+        }
+    }
+
     // Сортируем по глубине
     renderList.sort((a, b) => a.depth - b.depth);
 
@@ -1257,6 +1459,16 @@ function render() {
         ctx.save();
         ctx.globalAlpha = alpha;
         ctx.fillStyle = p.color ?? '#cc1111';
+        ctx.fillRect(Math.round(p.x - p.size / 2), Math.round(p.y - p.size / 2), p.size, p.size);
+        ctx.restore();
+    }
+
+    // Тайловые частицы — всплеск воды, взрыв ветра
+    for (const p of tileParticles) {
+        const alpha = Math.pow(p.life / p.maxLife, 0.5) * 0.9;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = p.color;
         ctx.fillRect(Math.round(p.x - p.size / 2), Math.round(p.y - p.size / 2), p.size, p.size);
         ctx.restore();
     }

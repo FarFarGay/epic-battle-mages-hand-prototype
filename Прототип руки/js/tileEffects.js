@@ -99,13 +99,33 @@ export function applySpellToTile(spell, ix, iy) {
                 break;
             }
         }
-        activeTiles.push({
+        const entry = {
             ix, iy,
             type: newType,
             timer: 0,
             maxTime: timerInfo.maxTime,
             nextType: timerInfo.nextType,
-        });
+        };
+        if (newType === 'burning') {
+            entry.firePixels = Array.from({ length: 3 + Math.floor(Math.random() * 3) }, () => ({
+                ox: (Math.random() - 0.5) * 0.6,
+                oy: (Math.random() - 0.5) * 0.6,
+                phase: Math.random() * Math.PI * 2,
+                colorIdx: Math.floor(Math.random() * 5),
+                size: 2 + Math.floor(Math.random() * 3),
+            }));
+        } else if (newType === 'steam') {
+            entry.steamPuffs = Array.from({ length: 4 + Math.floor(Math.random() * 3) }, () => ({
+                ox: (Math.random() - 0.5) * 0.5,
+                oy: (Math.random() - 0.5) * 0.5,
+                phase: Math.random() * 30,
+                wobblePhase: Math.random() * Math.PI * 2,
+                size: 4 + Math.floor(Math.random() * 5),
+            }));
+        } else if (newType === 'puddle') {
+            entry.ripplePhase = Math.random() * 20;
+        }
+        activeTiles.push(entry);
     } else {
         // Постоянный тайл — убираем старый таймер если был
         for (let i = activeTiles.length - 1; i >= 0; i--) {
