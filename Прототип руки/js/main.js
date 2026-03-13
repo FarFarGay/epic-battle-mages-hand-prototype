@@ -22,7 +22,7 @@ import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth, worldToScreen } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers, decoParticles } from './World.js?v=4';
+import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers, decoParticles } from './World.js?v=3';
 import { initInput } from './input.js';
 import { updateActiveTiles, applySpellInRadius, applySpellToTile, IMPACT_DUR, FADING_DUR } from './tileEffects.js?v=2';
 import { Item } from './Item.js';
