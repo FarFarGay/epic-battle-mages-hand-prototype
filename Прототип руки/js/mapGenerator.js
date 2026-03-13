@@ -3,7 +3,7 @@
 // ============================================================
 import { SimplexNoise, fbm, createRNG } from './noise.js';
 import { gameMap } from './Map.js';
-import { decorations } from './decorations.js';
+import { decorations } from './decorations.js?v=3';
 
 // ============================================================
 //  БИОМ ПО СЛОЯМ ШУМА

@@ -2,7 +2,6 @@
 //  ЗАМОК
 // ============================================================
 import {
-    PIXEL_SCALE, CAMERA_OFFSET_Y,
     CASTLE_BASE_RADIUS, CASTLE_TOWER_HEIGHT,
     WALL_BOUNCE,
     GOBLIN_MAX, GOBLIN_SPAWN_DURATION, GOBLIN_FOOD_COST, GOBLIN_FOOD_TYPE,
@@ -11,16 +10,8 @@ import {
     CASTLE_PIXELS, CASTLE_W, CASTLE_H,
     CASTLE_CANNON_PIXELS,
 } from './sprites.js';
-import { canvas, ctx, drawPixelArt } from './renderer.js';
-import { isoToScreen, getDepth } from './isometry.js';
-
-function worldToScreen(wx, wy) {
-    const iso = isoToScreen(wx, wy);
-    return {
-        x: iso.x + canvas.width / 2,
-        y: iso.y + canvas.height / 2 - CAMERA_OFFSET_Y,
-    };
-}
+import { ctx, drawPixelArt } from './renderer.js';
+import { getDepth, worldToScreen } from './isometry.js';
 
 export class Castle {
     constructor(ix, iy) {

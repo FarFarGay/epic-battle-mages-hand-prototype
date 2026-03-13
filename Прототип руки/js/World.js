@@ -7,11 +7,11 @@ import {
     WATER_SPELL_COOLDOWN, EARTH_SPELL_COOLDOWN, WIND_SPELL_COOLDOWN,
 } from './constants.js';
 import { Item } from './Item.js';
-import { Minion } from './Minion.js';
-import { Castle } from './Castle.js';
+import { Minion } from './Minion.js?v=1';
+import { Castle } from './Castle.js?v=1';
 import { Fireball } from './Fireball.js';
 import { SpellProjectile } from './SpellProjectile.js';
-import { generateMap, placeResources, placeDecorations } from './mapGenerator.js?v=3';
+import { generateMap, placeResources, placeDecorations } from './mapGenerator.js?v=4';
 import { onTileChanged, decoParticles } from './decorations.js?v=3';
 export { decoParticles };
 

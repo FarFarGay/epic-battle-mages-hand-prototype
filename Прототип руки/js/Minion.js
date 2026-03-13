@@ -255,7 +255,7 @@ export class Minion extends GameObject {
             if (!item.typeDef.gatherable) continue;
             if (item.state === 'carried' || item.state === 'lifting' || item.state === 'goblin_carried') continue;
             if (item.state === 'thrown' || item.state === 'bouncing') continue; // летящие предметы — не цель
-            if (zoneOnly && (Math.abs(item.ix) > GATHER_ZONE_RADIUS || Math.abs(item.iy) > GATHER_ZONE_RADIUS)) continue;
+            if (zoneOnly && (Math.abs(item.ix - gameMap.castlePos.ix) > GATHER_ZONE_RADIUS || Math.abs(item.iy - gameMap.castlePos.iy) > GATHER_ZONE_RADIUS)) continue;
             // Пропускаем ресурс, если другой гоблин уже идёт к нему
             if (allMinions) {
                 let taken = false;
@@ -434,7 +434,7 @@ export class Minion extends GameObject {
         }
         if (nearest) {
             // Если ресурс в зоне 42×42 — после доставки продолжит сбор; снаружи — станет свободным
-            this.gathererMode = Math.abs(nearest.ix) <= GATHER_ZONE_RADIUS && Math.abs(nearest.iy) <= GATHER_ZONE_RADIUS;
+            this.gathererMode = Math.abs(nearest.ix - gameMap.castlePos.ix) <= GATHER_ZONE_RADIUS && Math.abs(nearest.iy - gameMap.castlePos.iy) <= GATHER_ZONE_RADIUS;
             this.task = 'gather';
             this.targetItem = nearest;
             this.carriedItem = null;
@@ -572,8 +572,8 @@ export class Minion extends GameObject {
                     if (dist < 0.6 && canPickUp) {
                         // Поднять ресурс; если он снаружи зоны 42×42 — после доставки станем свободным
                         this.gathererMode = this.gathererMode &&
-                            Math.abs(this.targetItem.ix) <= GATHER_ZONE_RADIUS &&
-                            Math.abs(this.targetItem.iy) <= GATHER_ZONE_RADIUS;
+                            Math.abs(this.targetItem.ix - gameMap.castlePos.ix) <= GATHER_ZONE_RADIUS &&
+                            Math.abs(this.targetItem.iy - gameMap.castlePos.iy) <= GATHER_ZONE_RADIUS;
                         this.targetItem.state = 'goblin_carried';
                         this.targetItem.vx = 0;
                         this.targetItem.vy = 0;
