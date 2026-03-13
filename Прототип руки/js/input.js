@@ -7,10 +7,10 @@ import {
     ARTILLERY_MIN_FLIGHT, ARTILLERY_MAX_FLIGHT,
     MONK_TOTEM_MIN_DIST, MONK_TOTEM_MAX_DIST,
 } from './constants.js';
-import { MINION_H } from './sprites.js';
+import { MINION_H } from './sprites.js?v=3';
 import { screenToIso, worldToScreen, screenToCanvas } from './isometry.js';
-import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellProjectile, monkTotem, commandMarkers, debugFlags } from './World.js';
-import { applySpellToTile } from './tileEffects.js';
+import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellProjectile, monkTotem, commandMarkers, debugFlags } from './World.js?v=3';
+import { applySpellToTile } from './tileEffects.js?v=2';
 import { gameMap } from './Map.js';
 
 const RMB_DRAG_THRESHOLD = 5;

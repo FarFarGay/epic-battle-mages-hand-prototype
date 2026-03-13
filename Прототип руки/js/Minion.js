@@ -13,7 +13,7 @@ import {
     SCOUT_LIFESPAN,
 } from './constants.js';
 import { gameMap } from './Map.js';
-import { getTileEffect } from './tileEffects.js';
+import { getTileEffect } from './tileEffects.js?v=2';
 import {
     MINION_PIXELS, MINION_DEAD_PIXELS, MINION_W, MINION_H,
     TOMBSTONE_PIXELS, TOMBSTONE_W, TOMBSTONE_H,
@@ -21,7 +21,7 @@ import {
     WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W,
     SCOUT_HOOD_PIXELS, SCOUT_HOOD_W,
     MONK_ROBE_PIXELS, MONK_ROBE_W,
-} from './sprites.js';
+} from './sprites.js?v=3';
 import { GameObject } from './GameObject.js';
 import { ctx, drawPixelArt, drawItemShadow, drawHighlight } from './renderer.js';
 import { worldToScreen, screenToCanvas } from './isometry.js';

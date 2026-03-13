@@ -9,7 +9,7 @@ import {
 import {
     CASTLE_PIXELS, CASTLE_W, CASTLE_H,
     CASTLE_CANNON_PIXELS,
-} from './sprites.js';
+} from './sprites.js?v=3';
 import { ctx, drawPixelArt } from './renderer.js';
 import { getDepth, worldToScreen } from './isometry.js';
 
