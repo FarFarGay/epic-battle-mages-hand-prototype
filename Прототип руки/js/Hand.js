@@ -5,7 +5,7 @@ import {
     PIXEL_SCALE, THROW_VZ_BASE, THROW_SCALE, MAX_THROW_SPEED,
     VELOCITY_HISTORY
 } from './constants.js';
-import { HAND_OPEN_PIXELS, HAND_CLOSED_PIXELS } from './sprites.js?v=4';
+import { HAND_OPEN_PIXELS, HAND_CLOSED_PIXELS } from './sprites.js?v=5';
 import { drawPixelArt, drawShadow } from './renderer.js';
 import { screenToCanvas } from './isometry.js';
 

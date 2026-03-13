@@ -11,13 +11,14 @@ import {
     FIREBALL_COOLDOWN, FIREBALL_TILE_RADIUS,
     MANA_MAX, MANA_FIREBALL_COST, MANA_WATER_COST, MANA_EARTH_COST, MANA_WIND_COST,
     WATER_SPELL_COOLDOWN, WATER_SPELL_RADIUS,
-    EARTH_SPELL_COOLDOWN, EARTH_SPELL_RADIUS,
+    EARTH_SPELL_COOLDOWN,
+    BOULDER_DAMAGE, BOULDER_DAMAGE_RADIUS, BOULDER_HIT_COOLDOWN, BOULDER_PUSH_FORCE,
     WIND_SPELL_COOLDOWN, WIND_SPELL_RADIUS, WIND_KNOCKBACK_FORCE,
     MONK_MAX_COUNT, MONK_MANA_REGEN, MONK_UPGRADE_INTERVAL, MONK_FOOD_COST,
     MONK_TOTEM_MIN_DIST, MONK_TOTEM_MAX_DIST,
     MINION_MAX_HP, SKELETON_MAX_HP,
 } from './constants.js';
-import { MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H, MONK_ROBE_PIXELS, MONK_ROBE_W, MONK_TOTEM_PIXELS, MONK_TOTEM_W, MONK_TOTEM_H, WATER_SPELL_PIXELS, WATER_SPELL_W, WATER_SPELL_H, EARTH_SPELL_PIXELS, EARTH_SPELL_W, EARTH_SPELL_H, WIND_SPELL_PIXELS, WIND_SPELL_W, WIND_SPELL_H } from './sprites.js?v=4';
+import { MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H, MONK_ROBE_PIXELS, MONK_ROBE_W, MONK_TOTEM_PIXELS, MONK_TOTEM_W, MONK_TOTEM_H, WATER_SPELL_PIXELS, WATER_SPELL_W, WATER_SPELL_H, EARTH_SPELL_PIXELS, EARTH_SPELL_W, EARTH_SPELL_H, WIND_SPELL_PIXELS, WIND_SPELL_W, WIND_SPELL_H } from './sprites.js?v=5';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth, worldToScreen } from './isometry.js';
@@ -26,7 +27,7 @@ import { items, minions, castle, screenShake, triggerScreenShake, updateScreenSh
 import { initInput } from './input.js';
 import { updateActiveTiles, applySpellInRadius, applySpellToTile, IMPACT_DUR, FADING_DUR } from './tileEffects.js?v=2';
 import { Item } from './Item.js';
-import { addDecorationsToRenderList, decorations, destroyDecorationWithEffect } from './decorations.js?v=3';
+import { addDecorationsToRenderList, decorations } from './decorations.js?v=3';
 
 // Тайловые частицы — одноразовые эффекты (всплеск воды, взрыв ветра)
 const tileParticles = [];
@@ -37,6 +38,27 @@ const _FIRE_FADING   = ['#882200', '#661100', '#441100', '#552200', '#331100'];
 const _SPLASH_COLORS = ['#3388cc', '#55aaee', '#77ccff', '#2266aa'];
 const _WIND_COLORS   = ['#aaffbb', '#88eebb', '#bbffcc', '#77ddaa'];
 const _EARTH_COLORS  = ['#aa8855', '#887744', '#cc9955', '#665533', '#998855'];
+const _BOULDER_CRASH_COLORS = ['#889999', '#778888', '#667777', '#997755', '#887744'];
+
+// Частицы разрушения валуна (удар о камень/стену/замок)
+function _spawnBoulderCrashParticles(ix, iy) {
+    const sc = worldToScreen(ix, iy);
+    for (let i = 0; i < 14; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const spd = 40 + Math.random() * 60;
+        tileParticles.push({
+            type: 'dust',
+            x: sc.x + (Math.random() - 0.5) * 6,
+            y: sc.y + (Math.random() - 0.5) * 4,
+            vx: Math.cos(a) * spd,
+            vy: Math.sin(a) * spd * 0.5 - 20,
+            life: 0.4 + Math.random() * 0.3,
+            maxLife: 0.7,
+            size: 2 + Math.floor(Math.random() * 3),
+            color: _BOULDER_CRASH_COLORS[Math.floor(Math.random() * _BOULDER_CRASH_COLORS.length)],
+        });
+    }
+}
 
 // Кэшируемые HUD-значения (статические — вычислить один раз)
 const _HUD_ITEM_MAX_W = Math.max(...ITEM_TYPES.map(t => t.w)); // макс. ширина спрайта ресурса (px)
@@ -707,41 +729,40 @@ function update(dt) {
         triggerScreenShake(4);
 
         const spellRadius = spellKey === 'water' ? WATER_SPELL_RADIUS
-                          : spellKey === 'earth' ? EARTH_SPELL_RADIUS
                           : WIND_SPELL_RADIUS;
 
         if (spellKey === 'earth') {
-            // Per-tile чтобы отследить вырубку леса → дроп дерева
-            const rcx = Math.round(ex), rcy = Math.round(ey);
-            const ri = Math.ceil(EARTH_SPELL_RADIUS);
-            const r2 = EARTH_SPELL_RADIUS * EARTH_SPELL_RADIUS;
-            for (let dy = -ri; dy <= ri; dy++) {
-                for (let dx = -ri; dx <= ri; dx++) {
-                    if (dx * dx + dy * dy > r2) continue;
-                    const tix = rcx + dx, tiy = rcy + dy;
-                    if (!gameMap.isInBounds(tix, tiy)) continue;
-                    const oldType = gameMap.getTile(tix, tiy);
-                    if (!applySpellToTile('earth', tix, tiy, 'earth')) continue;
-                    // Пыль при ударе земли
-                    {
-                        const dustCount = 2 + Math.floor(Math.random() * 3);
-                        for (let d = 0; d < dustCount; d++) {
-                            const da = Math.random() * Math.PI * 2;
-                            const ds = 28 + Math.random() * 32;
-                            const sc2 = worldToScreen(tix + (Math.random() - 0.5) * 0.4, tiy + (Math.random() - 0.5) * 0.4);
-                            tileParticles.push({
-                                type: 'dust',
-                                x: sc2.x, y: sc2.y,
-                                vx: Math.cos(da) * ds,
-                                vy: Math.sin(da) * ds * 0.5 - 8,
-                                life: 0.45 + Math.random() * 0.20,
-                                maxLife: 0.65,
-                                size: 2 + Math.floor(Math.random() * 2),
-                                color: _EARTH_COLORS[Math.floor(Math.random() * _EARTH_COLORS.length)],
-                            });
-                        }
-                    }
-                    if (oldType === 'forest') {
+            // Валун — начинает катиться вместо кругового взрыва
+            // Пыль при приземлении
+            {
+                const sc2 = worldToScreen(ex, ey);
+                for (let d = 0; d < 8; d++) {
+                    const da = Math.random() * Math.PI * 2;
+                    const ds = 30 + Math.random() * 40;
+                    tileParticles.push({
+                        type: 'dust',
+                        x: sc2.x + (Math.random() - 0.5) * 6, y: sc2.y,
+                        vx: Math.cos(da) * ds,
+                        vy: Math.sin(da) * ds * 0.5 - 12,
+                        life: 0.4 + Math.random() * 0.2,
+                        maxLife: 0.6,
+                        size: 2 + Math.floor(Math.random() * 2),
+                        color: _EARTH_COLORS[Math.floor(Math.random() * _EARTH_COLORS.length)],
+                    });
+                }
+            }
+            // Трансформация тайла под точкой приземления
+            {
+                const tix = Math.round(ex), tiy = Math.round(ey);
+                const tileType = gameMap.getTile(tix, tiy);
+                // Камень/стена — валун разбивается сразу
+                if (tileType === 'stone' || tileType === 'wall') {
+                    triggerScreenShake(8);
+                    _spawnBoulderCrashParticles(ex, ey);
+                    spellProjectile.state = 'done';
+                } else {
+                    applySpellToTile('earth', tix, tiy, 'earth');
+                    if (tileType === 'forest') {
                         const count = 1 + Math.floor(Math.random() * 2);
                         for (let i = 0; i < count; i++) {
                             items.push(new Item(2,
@@ -749,20 +770,18 @@ function update(dt) {
                                 tiy + (Math.random() - 0.5) * 0.8));
                         }
                     }
+                    spellProjectile.startRolling();
                 }
             }
         } else {
             applySpellInRadius(spellKey, ex, ey, spellRadius, spellKey);
         }
 
-        // Туман войны: вода и ветер — временно, земля — навсегда
-        {
-            const fogTimer  = spellKey === 'earth' ? -1        // навсегда
-                            : spellKey === 'water' ? 8.0
-                            : 6.0; // wind
+        // Туман войны: вода и ветер — временно (земля — через fogSources при rolling)
+        if (spellKey !== 'earth') {
+            const fogTimer  = spellKey === 'water' ? 8.0 : 6.0;
             const fogRadius = spellKey === 'water' ? WATER_SPELL_RADIUS + 1
-                            : spellKey === 'wind'  ? WIND_SPELL_RADIUS  + 2
-                            : EARTH_SPELL_RADIUS + 1;
+                            : WIND_SPELL_RADIUS + 2;
             spellFogReveals.push({ ix: ex, iy: ey, radius: fogRadius, timer: fogTimer });
         }
 
@@ -872,7 +891,124 @@ function update(dt) {
         }
     }
 
-    // После settling — сбрасываем снаряд
+    // ── КАТЯЩИЙСЯ ВАЛУН (earth rolling) ──────────────────────
+    if (spellProjectile.state === 'rolling') {
+        // Проверка нового тайла
+        const newKey = spellProjectile.getNewTileKey();
+        if (newKey) {
+            const tix = Math.round(spellProjectile.ix);
+            const tiy = Math.round(spellProjectile.iy);
+            const tileType = gameMap.getTile(tix, tiy);
+
+            // Камень/стена — валун разбивается
+            if (tileType === 'stone' || tileType === 'wall') {
+                triggerScreenShake(8);
+                _spawnBoulderCrashParticles(spellProjectile.ix, spellProjectile.iy);
+                spellProjectile.stopRolling();
+            } else {
+                const oldType = tileType;
+                // Трансформация тайла
+                applySpellToTile('earth', tix, tiy, 'earth');
+
+                // Дроп дерева при повалке леса
+                if (oldType === 'forest') {
+                    const count = 1 + Math.floor(Math.random() * 2);
+                    for (let i = 0; i < count; i++) {
+                        items.push(new Item(2,
+                            tix + (Math.random() - 0.5) * 0.8,
+                            tiy + (Math.random() - 0.5) * 0.8));
+                    }
+                }
+
+                // Скорость на спец-тайлах
+                if (tileType === 'ice') {
+                    spellProjectile.multiplyRollSpeed(1.1);
+                } else if (tileType === 'swamp') {
+                    spellProjectile.multiplyRollSpeed(0.3);
+                } else if (tileType === 'water') {
+                    spellProjectile.multiplyRollSpeed(0.5);
+                }
+
+                // Пыль за валуном
+                const sc = worldToScreen(tix, tiy);
+                for (let d = 0; d < 2; d++) {
+                    const da = Math.random() * Math.PI * 2;
+                    const ds = 15 + Math.random() * 20;
+                    tileParticles.push({
+                        type: 'dust',
+                        x: sc.x + (Math.random() - 0.5) * 4, y: sc.y,
+                        vx: Math.cos(da) * ds,
+                        vy: Math.sin(da) * ds * 0.4 - 6,
+                        life: 0.3 + Math.random() * 0.15,
+                        maxLife: 0.45,
+                        size: 2,
+                        color: _EARTH_COLORS[Math.floor(Math.random() * _EARTH_COLORS.length)],
+                    });
+                }
+            }
+        }
+
+        // Столкновение с замком
+        {
+            const dx = spellProjectile.ix - castle.ix;
+            const dy = spellProjectile.iy - castle.iy;
+            if (dx * dx + dy * dy < castle.baseRadius * castle.baseRadius) {
+                triggerScreenShake(6);
+                _spawnBoulderCrashParticles(spellProjectile.ix, spellProjectile.iy);
+                spellProjectile.stopRolling();
+            }
+        }
+
+        // Урон юнитам на пути
+        if (spellProjectile.state === 'rolling') {
+            const speed = spellProjectile.getRollingSpeed();
+            for (const m of minions) {
+                if (m.dead || m.pendingRemove || m.state === 'crumbled') continue;
+                if (m.state === 'carried' || m.state === 'lifting') continue;
+                if (m._boulderHitCooldown > 0) { m._boulderHitCooldown -= dt; continue; }
+                const mdx = m.ix - spellProjectile.ix;
+                const mdy = m.iy - spellProjectile.iy;
+                if (mdx * mdx + mdy * mdy < BOULDER_DAMAGE_RADIUS * BOULDER_DAMAGE_RADIUS) {
+                    m.hp -= BOULDER_DAMAGE;
+                    m._boulderHitCooldown = BOULDER_HIT_COOLDOWN;
+                    // Отбрасывание в направлении качения
+                    if (speed > 0.01) {
+                        m.vx = (spellProjectile.rollVx / speed) * BOULDER_PUSH_FORCE;
+                        m.vy = (spellProjectile.rollVy / speed) * BOULDER_PUSH_FORCE;
+                        m.vz = BOULDER_PUSH_FORCE * 0.5;
+                        m.iz = 0.1;
+                        m.state = 'thrown';
+                        m.stateTime = 0;
+                        m.bounceCount = 0;
+                    }
+                }
+            }
+        }
+
+        // Периодическая пыль за валуном
+        if (spellProjectile.state === 'rolling' && spellProjectile._dustTimer > 0.1) {
+            spellProjectile._dustTimer = 0;
+            const speed = spellProjectile.getRollingSpeed();
+            if (speed > 0.5) {
+                const bsc = worldToScreen(
+                    spellProjectile.ix - spellProjectile.rollVx * 0.3,
+                    spellProjectile.iy - spellProjectile.rollVy * 0.3
+                );
+                tileParticles.push({
+                    type: 'dust',
+                    x: bsc.x, y: bsc.y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: -(4 + Math.random() * 8),
+                    life: 0.25 + Math.random() * 0.1,
+                    maxLife: 0.35,
+                    size: 2,
+                    color: _EARTH_COLORS[Math.floor(Math.random() * _EARTH_COLORS.length)],
+                });
+            }
+        }
+    }
+
+    // После settling/rolling — сбрасываем снаряд
     if (spellProjectile.state === 'done') {
         spellProjectile.reset();
     }
@@ -1136,8 +1272,8 @@ function update(dt) {
     if (fireball.state === 'thrown' || fireball.state === 'bouncing') {
         fogSources.push({ ix: fireball.ix, iy: fireball.iy, radius: 3 });
     }
-    // Летящий снаряд заклинания рассеивает туман
-    if (spellProjectile.state === 'thrown' || spellProjectile.state === 'bouncing') {
+    // Летящий / катящийся снаряд заклинания рассеивает туман
+    if (spellProjectile.state === 'thrown' || spellProjectile.state === 'bouncing' || spellProjectile.state === 'rolling') {
         fogSources.push({ ix: spellProjectile.ix, iy: spellProjectile.iy, radius: 2 });
     }
     // Горящие тайлы рассеивают туман до потухания

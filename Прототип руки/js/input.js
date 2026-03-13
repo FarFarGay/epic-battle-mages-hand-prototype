@@ -7,7 +7,7 @@ import {
     ARTILLERY_MIN_FLIGHT, ARTILLERY_MAX_FLIGHT,
     MONK_TOTEM_MIN_DIST, MONK_TOTEM_MAX_DIST,
 } from './constants.js';
-import { MINION_H } from './sprites.js?v=4';
+import { MINION_H } from './sprites.js?v=5';
 import { screenToIso, worldToScreen, screenToCanvas } from './isometry.js';
 import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellProjectile, monkTotem, commandMarkers, debugFlags } from './World.js?v=3';
 import { applySpellToTile } from './tileEffects.js?v=2';
@@ -387,7 +387,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             hand.state = 'opening';
             hand.animProgress = 0;
             hand.velocityHistory = [];
-            const spellNames = { water: 'Водный поток!', earth: 'Каменная стена!', wind: 'Порыв ветра!' };
+            const spellNames = { water: 'Водный поток!', earth: 'Валун!', wind: 'Порыв ветра!' };
             statusEl.textContent = spellNames[spellProjectile.spellType] ?? 'Заклинание!';
             return;
         }

@@ -7,7 +7,7 @@ import {
     WOOD_PIXELS, WOOD_W, WOOD_H,
     IRON_PIXELS, IRON_W, IRON_H,
     SCROLL_PIXELS, SCROLL_W, SCROLL_H,
-} from './sprites.js?v=4';
+} from './sprites.js?v=5';
 
 // — Изометрическая проекция —
 export const ISO_ANGLE       = Math.PI / 4; // 45 градусов
@@ -130,9 +130,15 @@ export const FIREBALL_TILE_RADIUS   = 2.5;   // радиус трансформ�
 export const WATER_SPELL_RADIUS     = 3.0;   // радиус зоны (iso-тайлы)
 export const WATER_SPELL_COOLDOWN   = 6.0;   // перезарядка (сек)
 
-// — Заклинание земли —
-export const EARTH_SPELL_RADIUS     = 2.0;   // радиус зоны (iso-тайлы)
+// — Заклинание земли (катящийся валун) —
 export const EARTH_SPELL_COOLDOWN   = 10.0;  // перезарядка (сек)
+export const BOULDER_FRICTION       = 0.97;  // трение за 1/60 сек
+export const BOULDER_MIN_SPEED      = 0.3;   // порог остановки (iso ед/сек)
+export const BOULDER_MAX_SPEED      = 6.0;   // макс. скорость при старте
+export const BOULDER_DAMAGE         = 40;    // урон юнитам на пути
+export const BOULDER_DAMAGE_RADIUS  = 0.8;   // радиус проверки урона (iso)
+export const BOULDER_HIT_COOLDOWN   = 0.5;   // секунд между ударами по одному юниту
+export const BOULDER_PUSH_FORCE     = 3.0;   // сила отбрасывания юнитов
 
 // — Заклинание ветра —
 export const WIND_SPELL_RADIUS      = 3.5;   // радиус зоны (iso-тайлы)

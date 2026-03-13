@@ -28,15 +28,16 @@ export const TILE_TRANSFORMS = {
         // forest, ice, wall, puddle, steam, rubble — не реагируют
     },
     earth: {
-        plain:    'wall',
+        plain:    'rubble',     // след валуна
+        forest:   'plain',     // повалил деревья (+ дроп дерева)
         water:    'swamp',
-        puddle:   'plain',
-        forest:   'plain',      // + дроп ресурса дерева (обрабатывается вызывающим кодом)
+        village:  'rubble',    // разрушил деревню
         burning:  'scorched',
+        puddle:   'swamp',
         swamp:    'plain',
-        ice:      'stone',
         scorched: 'plain',
-        // stone, wall, rubble — не реагируют
+        // ice — ускорение валуна, не трансформация
+        // stone, wall, rubble — остановка / не реагируют
     },
     wind: {
         // Ветер НЕ трансформирует тайлы через эту таблицу.

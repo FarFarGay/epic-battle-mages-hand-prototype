@@ -16,7 +16,8 @@ import {
     DECO_HOUSE_2, DECO_HOUSE_2_W, DECO_HOUSE_2_H,
     DECO_ICE_CRACK, DECO_ICE_CRACK_W, DECO_ICE_CRACK_H,
     DECO_SLAB_1, DECO_SLAB_1_W, DECO_SLAB_1_H,
-} from './sprites.js?v=4';
+    DECO_WALL_1, DECO_WALL_1_W, DECO_WALL_1_H,
+} from './sprites.js?v=5';
 
 // ============================================================
 //  ДАННЫЕ СПРАЙТОВ ПО КЛЮЧУ
@@ -32,6 +33,7 @@ const DECO_SPRITES = {
     HOUSE_2:   { pixels: DECO_HOUSE_2,   w: DECO_HOUSE_2_W,   h: DECO_HOUSE_2_H   },
     ICE_CRACK: { pixels: DECO_ICE_CRACK, w: DECO_ICE_CRACK_W, h: DECO_ICE_CRACK_H },
     SLAB_1:    { pixels: DECO_SLAB_1,    w: DECO_SLAB_1_W,    h: DECO_SLAB_1_H    },
+    WALL_1:    { pixels: DECO_WALL_1,    w: DECO_WALL_1_W,    h: DECO_WALL_1_H    },
 };
 
 // ============================================================
@@ -49,6 +51,7 @@ const DECO_RENDER_SCALE = {
     HOUSE_2:   3,
     ICE_CRACK: 3,
     SLAB_1:    3,
+    WALL_1:    3,
 };
 
 // ============================================================
@@ -133,6 +136,17 @@ export function removeDecorationsAt(ix, iy, filter) {
 //  CALLBACK ПРИ СМЕНЕ ТАЙЛА
 // ============================================================
 export function onTileChanged(ix, iy, oldType, newType, cause) {
+    // Стена разрушена — удалить спрайт стены
+    if (oldType === 'wall' && newType !== 'wall') {
+        for (let i = decorations.length - 1; i >= 0; i--) {
+            const d = decorations[i];
+            if (d.tileIx !== ix || d.tileIy !== iy) continue;
+            if (d.spriteKey !== 'WALL_1') continue;
+            destroyDecorationWithEffect(d, cause);
+            decorations.splice(i, 1);
+        }
+    }
+
     if (newType === 'burning' || newType === 'wall' || newType === 'water') {
         // Сначала спавним частицы, потом удаляем
         for (let i = decorations.length - 1; i >= 0; i--) {
@@ -140,6 +154,13 @@ export function onTileChanged(ix, iy, oldType, newType, cause) {
             if (d.tileIx !== ix || d.tileIy !== iy) continue;
             destroyDecorationWithEffect(d, cause);
             decorations.splice(i, 1);
+        }
+        // Каменная стена получает спрайт
+        if (newType === 'wall') {
+            decorations.push({
+                ix, iy, tileIx: ix, tileIy: iy,
+                spriteKey: 'WALL_1',
+            });
         }
     } else if (newType === 'scorched') {
         // Убираем деревья, оставляем камни

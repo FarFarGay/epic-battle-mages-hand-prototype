@@ -5,14 +5,16 @@ import { GameObject } from './GameObject.js';
 import {
     MAX_BOUNCES, PIXEL_SCALE, HEIGHT_TO_SCREEN,
     FIREBALL_MASS, FIREBALL_BOUNCINESS, FIREBALL_FRICTION,
+    BOULDER_FRICTION, BOULDER_MIN_SPEED, BOULDER_MAX_SPEED,
 } from './constants.js';
 import {
     WATER_SPELL_PIXELS, WATER_SPELL_W, WATER_SPELL_H,
     EARTH_SPELL_PIXELS, EARTH_SPELL_W, EARTH_SPELL_H,
     WIND_SPELL_PIXELS, WIND_SPELL_W, WIND_SPELL_H,
-} from './sprites.js?v=4';
+} from './sprites.js?v=5';
 import { ctx, drawPixelArt, drawItemShadow } from './renderer.js';
 import { worldToScreen, screenToCanvas } from './isometry.js';
+import { gameMap } from './Map.js';
 
 const TRAIL_MAX = 20;
 
@@ -30,6 +32,14 @@ export class SpellProjectile extends GameObject {
         this.pendingExplosion = false;
         this._exploded = false;
         this.trail = [];
+
+        // Rolling boulder (earth)
+        this.rollVx = 0;
+        this.rollVy = 0;
+        this._savedVx = 0;
+        this._savedVy = 0;
+        this._lastTile = null;
+        this._dustTimer = 0;
     }
 
     reset() {
@@ -43,11 +53,20 @@ export class SpellProjectile extends GameObject {
         this.pendingExplosion = false;
         this._exploded = false;
         this.trail = [];
+        this.rollVx = 0;
+        this.rollVy = 0;
+        this._savedVx = 0;
+        this._savedVy = 0;
+        this._lastTile = null;
+        this._dustTimer = 0;
     }
 
     onLand(impactVz) {
         if (!this._exploded) {
             this._exploded = true;
+            // Сохраняем горизонтальную скорость для качения (earth)
+            this._savedVx = this.vx;
+            this._savedVy = this.vy;
             this.vx = 0;
             this.vy = 0;
             this.bounceCount = MAX_BOUNCES + 1;
@@ -55,8 +74,83 @@ export class SpellProjectile extends GameObject {
         }
     }
 
+    // Запуск качения валуна (вызывается из main.js при earth pendingExplosion)
+    startRolling() {
+        const vx = this._savedVx;
+        const vy = this._savedVy;
+        const speed = Math.sqrt(vx * vx + vy * vy);
+        if (speed < BOULDER_MIN_SPEED) {
+            // Слишком медленно — валун просто падает
+            this.state = 'done';
+            return;
+        }
+        const clampedSpeed = Math.min(speed, BOULDER_MAX_SPEED);
+        const scale = clampedSpeed / speed;
+        this.rollVx = vx * scale;
+        this.rollVy = vy * scale;
+        this.state = 'rolling';
+        this.stateTime = 0;
+        this.iz = 0;
+        this._lastTile = `${Math.round(this.ix)},${Math.round(this.iy)}`;
+        this._dustTimer = 0;
+        this.trail = [];
+    }
+
+    // Возвращает ключ нового тайла если валун перешёл на новый тайл, иначе null
+    getNewTileKey() {
+        const key = `${Math.round(this.ix)},${Math.round(this.iy)}`;
+        if (key !== this._lastTile) {
+            this._lastTile = key;
+            return key;
+        }
+        return null;
+    }
+
+    getRollingSpeed() {
+        return Math.sqrt(this.rollVx * this.rollVx + this.rollVy * this.rollVy);
+    }
+
+    // Модификация скорости качения (от тайлов — лёд ускоряет, болото замедляет)
+    multiplyRollSpeed(factor) {
+        this.rollVx *= factor;
+        this.rollVy *= factor;
+    }
+
+    stopRolling() {
+        this.state = 'done';
+    }
+
     update(dt, hand, triggerShake) {
         if (this.state === 'ready' || this.state === 'done') return;
+
+        // Качение валуна — своя физика, не через GameObject
+        if (this.state === 'rolling') {
+            this.stateTime += dt;
+            this._dustTimer += dt;
+
+            // Движение
+            this.ix += this.rollVx * dt;
+            this.iy += this.rollVy * dt;
+            this.iz = 0;
+
+            // Трение
+            const frictionMult = Math.pow(BOULDER_FRICTION, dt * 60);
+            this.rollVx *= frictionMult;
+            this.rollVy *= frictionMult;
+
+            // Граница карты
+            const limit = gameMap.size + 0.5;
+            if (Math.abs(this.ix) > limit || Math.abs(this.iy) > limit) {
+                this.state = 'done';
+                return;
+            }
+
+            // Проверка остановки
+            if (this.getRollingSpeed() < BOULDER_MIN_SPEED) {
+                this.state = 'done';
+            }
+            return;
+        }
 
         if (this.state === 'settling') {
             this.stateTime += dt;
@@ -89,6 +183,17 @@ export class SpellProjectile extends GameObject {
         if (!sp) return;
 
         const s = worldToScreen(this.ix, this.iy);
+
+        // Качение — на земле, с покачиванием
+        if (this.state === 'rolling') {
+            drawItemShadow(s.x, s.y, sp.w, sp.h, 0);
+            const wobbleY = Math.sin(this.stateTime * 12) * 1.5;
+            const ox = s.x - (sp.w * PIXEL_SCALE) / 2;
+            const oy = s.y - (sp.h * PIXEL_SCALE) - 4 + wobbleY;
+            drawPixelArt(ox, oy, sp.pixels, PIXEL_SCALE);
+            return;
+        }
+
         drawItemShadow(s.x, s.y, sp.w, sp.h, this.iz);
 
         let ox, oy;
