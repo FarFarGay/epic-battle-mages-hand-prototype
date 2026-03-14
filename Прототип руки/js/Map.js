@@ -22,6 +22,15 @@ export const TILE_TYPES = {
     swamp:   { even: '#2a3a1a', evenStr: '#1e2e10', odd: '#243416', oddStr: '#1a280c' },
     wall:    { even: '#667788', evenStr: '#556677', odd: '#5a6a7a', oddStr: '#4a5a6a' },
     rubble:  { even: '#8899aa', evenStr: '#778899', odd: '#7a8a9a', oddStr: '#6a7a8a' },
+    // Деревни
+    village_square: { even: '#c4a46a', evenStr: '#b0904a', odd: '#bfa060', oddStr: '#a88c44' },
+    village_house:  { even: '#7a5c3a', evenStr: '#6a4c2a', odd: '#724e30', oddStr: '#604020' },
+    village_road:   { even: '#b8a080', evenStr: '#a89070', odd: '#b09878', oddStr: '#a08868' },
+    // Зоны производства
+    farmland:       { even: '#8a9a3a', evenStr: '#7a8a2a', odd: '#829234', oddStr: '#728224' },
+    farmland_ripe:  { even: '#ccaa22', evenStr: '#bb9918', odd: '#c4a21c', oddStr: '#b39214' },
+    mine_tile:      { even: '#4a4a55', evenStr: '#3a3a45', odd: '#44444f', oddStr: '#34343f' },
+    lumber_tile:    { even: '#5a6a3a', evenStr: '#4a5a2a', odd: '#546434', oddStr: '#445424' },
 };
 
 // ============================================================
@@ -242,9 +251,41 @@ export class GameMap {
                     }
                 }
 
+                // Декорации зон производства поверх ромба
+                this._drawProductionOverlay(sx, sy, tileType, ix, iy);
+
                 // Боковая грань при перепаде высот
                 this._drawSideFace(ix, iy, sx, sy, tileType, tileHeight);
             }
+        }
+    }
+
+    _drawProductionOverlay(sx, sy, tileType, ix, iy) {
+        if (tileType === 'farmland' || tileType === 'farmland_ripe') {
+            // Ряды посевов — 4 вертикальных штриха
+            const color = tileType === 'farmland_ripe'
+                ? `rgb(${200 + Math.round(Math.sin(performance.now() * 0.003 + ix * 2.1) * 20)},${170 + Math.round(Math.sin(performance.now() * 0.003 + iy * 1.7) * 15)},34)`
+                : '#6a8a2a';
+            ctx.fillStyle = color;
+            for (let i = -1; i <= 1; i++) {
+                const ox = sx + i * 8;
+                ctx.fillRect(ox, sy - 4, 1, 8);
+            }
+        } else if (tileType === 'mine_tile') {
+            // 3 точки руды
+            ctx.fillStyle = '#887766';
+            const seed = (ix * 7 + iy * 13) & 0xff;
+            ctx.fillRect(sx - 8 + (seed & 7), sy - 3 + ((seed >> 3) & 3), 2, 2);
+            ctx.fillRect(sx + 2 + ((seed >> 4) & 5), sy + 1 + ((seed >> 6) & 3), 2, 2);
+            ctx.fillRect(sx - 3 + ((seed >> 2) & 5), sy + 4, 2, 2);
+        } else if (tileType === 'lumber_tile') {
+            // 2 маленьких пня
+            ctx.fillStyle = '#6a4a2a';
+            ctx.fillRect(sx - 6, sy + 2, 3, 2);
+            ctx.fillRect(sx + 4, sy - 1, 3, 2);
+            ctx.fillStyle = '#8a6a4a';
+            ctx.fillRect(sx - 5, sy + 1, 1, 1);
+            ctx.fillRect(sx + 5, sy - 2, 1, 1);
         }
     }
 

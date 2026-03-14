@@ -7,7 +7,7 @@ import {
     WOOD_PIXELS, WOOD_W, WOOD_H,
     IRON_PIXELS, IRON_W, IRON_H,
     SCROLL_PIXELS, SCROLL_W, SCROLL_H,
-} from './sprites.js?v=5';
+} from './sprites.js?v=6';
 
 // — Изометрическая проекция —
 export const ISO_ANGLE       = Math.PI / 4; // 45 градусов

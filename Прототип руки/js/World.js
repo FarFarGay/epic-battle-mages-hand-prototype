@@ -11,8 +11,8 @@ import { Minion } from './Minion.js';
 import { Castle } from './Castle.js';
 import { Fireball } from './Fireball.js';
 import { SpellProjectile } from './SpellProjectile.js';
-import { generateMap, placeResources, placeDecorations } from './mapGenerator.js?v=4';
-import { onTileChanged, decoParticles } from './decorations.js?v=3';
+import { generateMap, placeResources, placeDecorations, lastVillages } from './mapGenerator.js?v=5';
+import { onTileChanged, decoParticles } from './decorations.js?v=4';
 export { decoParticles };
 
 // Регистрируем callback изменения тайлов → обновление декораций
@@ -40,7 +40,7 @@ export const spellProjectile = new SpellProjectile();
 export const firePatches = [];
 
 export const spellFogReveals = [];
-export const debugFlags = { fogDisabled: false };
+export const debugFlags = { fogDisabled: false, showVillages: false };
 
 export const spellStates = {
     water: { cooldown: 0, maxCooldown: WATER_SPELL_COOLDOWN },
@@ -64,6 +64,7 @@ export const manaPool        = { value: MANA_MAX };
 export const monkTotem       = { active: false, ix: 0, iy: 0 };
 export const commandMarkers  = [];
 export const activeTiles     = [];
+export let   villages        = [];
 
 export let castle = null;
 
@@ -196,8 +197,9 @@ export function spawnMinion(ix, iy) {
 //  ИНИЦИАЛИЗАЦИЯ МИРА
 // ============================================================
 export function initWorld() {
-    // 1. Генерация карты (биомы + высоты)
+    // 1. Генерация карты (биомы + высоты + деревни)
     generateMap(gameMap.seed);
+    villages = lastVillages;
 
     // 2. Декорации
     placeDecorations(gameMap.seed);

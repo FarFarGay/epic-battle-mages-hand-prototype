@@ -7,12 +7,12 @@ import {
     ARTILLERY_MIN_FLIGHT, ARTILLERY_MAX_FLIGHT,
     MONK_TOTEM_MIN_DIST, MONK_TOTEM_MAX_DIST,
 } from './constants.js';
-import { MINION_H } from './sprites.js?v=5';
+import { MINION_H } from './sprites.js?v=6';
 import { screenToIso, worldToScreen, screenToCanvas } from './isometry.js';
-import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellProjectile, monkTotem, commandMarkers, debugFlags } from './World.js?v=3';
+import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellProjectile, monkTotem, commandMarkers, debugFlags } from './World.js?v=4';
 import { applySpellToTile } from './tileEffects.js?v=2';
 import { gameMap } from './Map.js';
-import { destroyDecorationWithEffect } from './decorations.js?v=3';
+import { destroyDecorationWithEffect } from './decorations.js?v=4';
 import { Item } from './Item.js';
 
 const RMB_DRAG_THRESHOLD = 5;
@@ -481,6 +481,9 @@ export function initInput(canvas, hand, world, cam, statusEl) {
         } else if (e.key === 'p' || e.key === 'з') {
             debugFlags.fogDisabled = !debugFlags.fogDisabled;
             statusEl.textContent = debugFlags.fogDisabled ? '[debug] Туман войны отключён' : '[debug] Туман войны включён';
+        } else if (e.key === 'v' || e.key === 'м') {
+            debugFlags.showVillages = !debugFlags.showVillages;
+            statusEl.textContent = debugFlags.showVillages ? '[debug] Панель деревень вкл' : '[debug] Панель деревень выкл';
         }
 
         // ── Дебаг: F1–F4 — применить стихию к тайлу под курсором ──

@@ -18,16 +18,16 @@ import {
     MONK_TOTEM_MIN_DIST, MONK_TOTEM_MAX_DIST,
     MINION_MAX_HP, SKELETON_MAX_HP,
 } from './constants.js';
-import { MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H, MONK_ROBE_PIXELS, MONK_ROBE_W, MONK_TOTEM_PIXELS, MONK_TOTEM_W, MONK_TOTEM_H, WATER_SPELL_PIXELS, WATER_SPELL_W, WATER_SPELL_H, EARTH_SPELL_PIXELS, EARTH_SPELL_W, EARTH_SPELL_H, WIND_SPELL_PIXELS, WIND_SPELL_W, WIND_SPELL_H } from './sprites.js?v=5';
+import { MINION_PIXELS, MINION_W, MINION_H, CANNONBALL_PIXELS, CANNONBALL_W, CANNONBALL_H, WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W, SCOUT_HOOD_PIXELS, SCOUT_HOOD_W, FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H, MONK_ROBE_PIXELS, MONK_ROBE_W, MONK_TOTEM_PIXELS, MONK_TOTEM_W, MONK_TOTEM_H, WATER_SPELL_PIXELS, WATER_SPELL_W, WATER_SPELL_H, EARTH_SPELL_PIXELS, EARTH_SPELL_W, EARTH_SPELL_H, WIND_SPELL_PIXELS, WIND_SPELL_W, WIND_SPELL_H } from './sprites.js?v=6';
 import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js';
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth, worldToScreen } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers, decoParticles } from './World.js?v=3';
+import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers, decoParticles, villages } from './World.js?v=4';
 import { initInput } from './input.js';
 import { updateActiveTiles, applySpellInRadius, applySpellToTile, IMPACT_DUR, FADING_DUR } from './tileEffects.js?v=2';
 import { Item } from './Item.js';
-import { addDecorationsToRenderList, decorations } from './decorations.js?v=3';
+import { addDecorationsToRenderList, decorations } from './decorations.js?v=4';
 
 // Тайловые частицы — одноразовые эффекты (всплеск воды, взрыв ветра)
 const tileParticles = [];
@@ -2521,6 +2521,33 @@ function render() {
     ctx.font = '10px monospace';
     ctx.textAlign = 'left';
     ctx.fillText(`Seed: ${gameMap.seed}  [R] restart  [N] new map`, 8, 14);
+
+    // ── ПАНЕЛЬ ДЕРЕВЕНЬ (V) ─────────────────────────────────────
+    if (debugFlags.showVillages && villages.length > 0) {
+        const px = 8, py = 28;
+        ctx.save();
+        ctx.globalAlpha = 0.8;
+        ctx.fillStyle = '#0a0a1a';
+        ctx.fillRect(px - 4, py - 12, 340, 14 + villages.length * 14);
+        ctx.restore();
+
+        ctx.fillStyle = '#ccaa66';
+        ctx.font = 'bold 10px monospace';
+        ctx.fillText('[V] ДЕРЕВНИ', px, py);
+
+        ctx.font = '10px monospace';
+        for (let vi = 0; vi < villages.length; vi++) {
+            const v = villages[vi];
+            const zones = [];
+            if (v.productionZoneTiles.farm)   zones.push('farm');
+            if (v.productionZoneTiles.mine)   zones.push('mine');
+            if (v.productionZoneTiles.lumber) zones.push('lumber');
+            const pop = v.houseTiles.length * 2;
+            const line = `${v.name.padEnd(12)} ${v.personality}  ${v.sizeType.padEnd(6)} pop:${String(pop).padStart(2)}  at(${v.centerIx},${v.centerIy})  zones: ${zones.join(',') || 'none'}`;
+            ctx.fillStyle = '#99aa88';
+            ctx.fillText(line, px, py + 14 + vi * 14);
+        }
+    }
 }
 
 // ============================================================

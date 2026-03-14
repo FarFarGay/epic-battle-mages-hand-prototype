@@ -17,7 +17,10 @@ import {
     DECO_ICE_CRACK, DECO_ICE_CRACK_W, DECO_ICE_CRACK_H,
     DECO_SLAB_1, DECO_SLAB_1_W, DECO_SLAB_1_H,
     DECO_WALL_1, DECO_WALL_1_W, DECO_WALL_1_H,
-} from './sprites.js?v=5';
+    DECO_VILLAGE_HOUSE_S, DECO_VILLAGE_HOUSE_S_W, DECO_VILLAGE_HOUSE_S_H,
+    DECO_VILLAGE_HOUSE_M, DECO_VILLAGE_HOUSE_M_W, DECO_VILLAGE_HOUSE_M_H,
+    DECO_VILLAGE_WELL, DECO_VILLAGE_WELL_W, DECO_VILLAGE_WELL_H,
+} from './sprites.js?v=6';
 
 // ============================================================
 //  ДАННЫЕ СПРАЙТОВ ПО КЛЮЧУ
@@ -34,6 +37,9 @@ const DECO_SPRITES = {
     ICE_CRACK: { pixels: DECO_ICE_CRACK, w: DECO_ICE_CRACK_W, h: DECO_ICE_CRACK_H },
     SLAB_1:    { pixels: DECO_SLAB_1,    w: DECO_SLAB_1_W,    h: DECO_SLAB_1_H    },
     WALL_1:    { pixels: DECO_WALL_1,    w: DECO_WALL_1_W,    h: DECO_WALL_1_H    },
+    VILLAGE_HOUSE_S: { pixels: DECO_VILLAGE_HOUSE_S, w: DECO_VILLAGE_HOUSE_S_W, h: DECO_VILLAGE_HOUSE_S_H },
+    VILLAGE_HOUSE_M: { pixels: DECO_VILLAGE_HOUSE_M, w: DECO_VILLAGE_HOUSE_M_W, h: DECO_VILLAGE_HOUSE_M_H },
+    VILLAGE_WELL:    { pixels: DECO_VILLAGE_WELL,    w: DECO_VILLAGE_WELL_W,    h: DECO_VILLAGE_WELL_H    },
 };
 
 // ============================================================
@@ -52,6 +58,9 @@ const DECO_RENDER_SCALE = {
     ICE_CRACK: 3,
     SLAB_1:    3,
     WALL_1:    3,
+    VILLAGE_HOUSE_S: 3,
+    VILLAGE_HOUSE_M: 3,
+    VILLAGE_WELL:    3,
 };
 
 // ============================================================

@@ -3,7 +3,11 @@
 // ============================================================
 import { SimplexNoise, fbm, createRNG } from './noise.js';
 import { gameMap } from './Map.js';
-import { decorations } from './decorations.js?v=3';
+import { decorations } from './decorations.js?v=4';
+import { generateVillages } from './VillageGenerator.js';
+
+// Последний сгенерированный массив деревень — доступен после generateMap()
+export let lastVillages = [];
 
 // ============================================================
 //  БИОМ ПО СЛОЯМ ШУМА
@@ -20,7 +24,6 @@ function getBiome(elevation, moisture) {
 //  ГЕНЕРАЦИЯ КАРТЫ
 // ============================================================
 export function generateMap(seed) {
-    const rng  = createRNG(seed);
     const size = gameMap.size;
 
     const elevNoise  = new SimplexNoise(seed);
@@ -56,8 +59,8 @@ export function generateMap(seed) {
     // Расчистить зону вокруг замка игрока
     _clearZone(gameMap.castlePos.ix, gameMap.castlePos.iy, 8);
 
-    // Расставить деревни
-    _placeVillages(rng);
+    // Расставить деревни (новый генератор)
+    lastVillages = generateVillages(gameMap, seed);
 
     // Проверить проходимость; при провале — сгладить водные/каменные блоки
     if (!_checkPassability()) {
@@ -80,61 +83,6 @@ function _clearZone(cx, cy, radius) {
     }
 }
 
-function _placeVillages(rng) {
-    const size = gameMap.size;
-    const { ix: cx, iy: cy } = gameMap.castlePos;
-    const candidates = [];
-    const fallback = []; // plain-тайлы без nearBiome — запасной вариант
-
-    for (let iy = -size; iy <= size; iy++) {
-        for (let ix = -size; ix <= size; ix++) {
-            if (gameMap.getTile(ix, iy) !== 'plain') continue;
-            const dCastle = (ix - cx) ** 2 + (iy - cy) ** 2;
-            if (dCastle < 225) continue; // < 15 тайлов
-
-            // Проверить есть ли лес или вода в радиусе 5
-            let nearBiome = false;
-            outer: for (let dy = -5; dy <= 5; dy++) {
-                for (let dx = -5; dx <= 5; dx++) {
-                    const t = gameMap.getTile(ix + dx, iy + dy);
-                    if (t === 'forest' || t === 'water') { nearBiome = true; break outer; }
-                }
-            }
-            if (nearBiome) candidates.push([ix, iy]);
-            else fallback.push([ix, iy]);
-        }
-    }
-
-    const count = 3 + Math.floor(rng() * 4); // 3–6
-
-    // Если кандидатов у биомов мало — добавить fallback
-    if (candidates.length < count * 3) {
-        for (const fb of fallback) candidates.push(fb);
-    }
-    const placed = [];
-
-    for (let v = 0; v < count && candidates.length > 0; v++) {
-        const idx = Math.floor(rng() * candidates.length);
-        const [vx, vy] = candidates[idx];
-
-        // Мин. расстояние 12 тайлов между деревнями
-        let tooClose = false;
-        for (const [ex, ey] of placed) {
-            if ((vx - ex) ** 2 + (vy - ey) ** 2 < 144) { tooClose = true; break; }
-        }
-        candidates.splice(idx, 1);
-        if (tooClose) { v--; continue; }
-
-        placed.push([vx, vy]);
-        // Кластер 3×3
-        for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-                const key = `${vx + dx},${vy + dy}`;
-                gameMap._tiles[key] = 'village';
-            }
-        }
-    }
-}
 
 // BFS от позиции замка; возвращает false если связность < 40% тайлов
 function _checkPassability() {
@@ -200,12 +148,19 @@ export function placeResources(seed) {
     const result = [];
     const occupied = new Set();
 
+    // Тайлы деревень и зон производства — запрет на спавн диких ресурсов
+    const forbiddenTypes = new Set([
+        'village_square', 'village_house', 'village_road',
+        'farmland', 'farmland_ripe', 'mine_tile', 'lumber_tile',
+    ]);
+
     // Собираем тайлы по типам (один проход)
     const byBiome = { plain: [], forest: [], stone: [], village: [], any: [] };
     for (let iy = -size; iy <= size; iy++) {
         for (let ix = -size; ix <= size; ix++) {
             const t = gameMap.getTile(ix, iy);
             if (t === 'water') continue;
+            if (forbiddenTypes.has(t)) continue;
             const d2 = (ix - cx) ** 2 + (iy - cy) ** 2;
             if (d2 < 9) continue; // < 3 тайла от замка
             if (byBiome[t]) byBiome[t].push([ix, iy]);
@@ -228,20 +183,25 @@ export function placeResources(seed) {
     });
 
     // Пшеница (typeIndex 0): plain + village, кластеры 3-5
-    _scatter(rng, [...byBiome.plain, ...byBiome.village], 0, 80, 120, 4, 2, occupied, result);
+    _scatter(rng, [...byBiome.plain, ...byBiome.village], 0, 30, 40, 4, 2, occupied, result);
     // Камень (typeIndex 1): stone + stoneEdge, кластеры 2-4
-    _scatter(rng, [...byBiome.stone, ...stoneEdge], 1, 60, 80, 3, 2, occupied, result);
+    _scatter(rng, [...byBiome.stone, ...stoneEdge], 1, 25, 35, 3, 2, occupied, result);
     // Дерево (typeIndex 2): forest + forestEdge, кластеры 3-6
-    _scatter(rng, [...byBiome.forest, ...forestEdge], 2, 60, 80, 4, 2, occupied, result);
+    _scatter(rng, [...byBiome.forest, ...forestEdge], 2, 25, 35, 4, 2, occupied, result);
     // Железо (typeIndex 3): stone, далеко от замка
     const deepStone = byBiome.stone.filter(([ix, iy]) => (ix - cx) ** 2 + (iy - cy) ** 2 > 400);
-    _scatter(rng, deepStone, 3, 20, 30, 2, 1, occupied, result);
+    _scatter(rng, deepStone, 3, 10, 15, 2, 1, occupied, result);
     // Свитки (typeIndex 4): любой тайл, далеко, одиночные
     const farAny = byBiome.any.filter(([ix, iy]) => (ix - cx) ** 2 + (iy - cy) ** 2 > 625);
-    _scatter(rng, farAny, 4, 10, 15, 1, 1, occupied, result);
+    _scatter(rng, farAny, 4, 5, 8, 1, 1, occupied, result);
 
     return result;
 }
+
+const _FORBIDDEN_RESOURCE_TILES = new Set([
+    'village_square', 'village_house', 'village_road',
+    'farmland', 'farmland_ripe', 'mine_tile', 'lumber_tile',
+]);
 
 function _scatter(rng, tiles, typeIdx, minTotal, maxTotal, clusterSize, clusterRadius, occupied, out) {
     if (tiles.length === 0) return;
@@ -258,7 +218,9 @@ function _scatter(rng, tiles, typeIdx, minTotal, maxTotal, clusterSize, clusterR
             const oy = Math.round((rng() - 0.5) * clusterRadius * 2);
             const ix = bx + ox, iy = by + oy;
             if (!gameMap.isInBounds(ix, iy)) continue;
-            if (gameMap.getTile(ix, iy) === 'water') continue;
+            const tileAtPos = gameMap.getTile(ix, iy);
+            if (tileAtPos === 'water') continue;
+            if (_FORBIDDEN_RESOURCE_TILES.has(tileAtPos)) continue;
             const key = `${ix},${iy}`;
             if (occupied.has(key)) continue;
             occupied.add(key);
@@ -281,11 +243,12 @@ export function placeDecorations(seed) {
     // offset = радиус случайного смещения (±offset тайлов).
     // plain: prob=0.25, список 4:1 → ~20% GRASS_1, ~5% TREE_3 на тайл.
     const decoByBiome = {
-        forest:  { prob: 0.50, sprites: ['TREE_1', 'TREE_2', 'TREE_3'],                    offset: 0.4 },
-        stone:   { prob: 0.30, sprites: ['ROCK_1', 'ROCK_2'],                              offset: 0.3 },
-        plain:   { prob: 0.25, sprites: ['GRASS_1','GRASS_1','GRASS_1','GRASS_1','TREE_3'], offset: 0.2 },
-        village: { prob: 0.80, sprites: ['HOUSE_1', 'HOUSE_2'],                            offset: 0.4 },
-        ice:     { prob: 0.15, sprites: ['ICE_CRACK'],                                     offset: 0.2 },
+        forest:        { prob: 0.50, sprites: ['TREE_1', 'TREE_2', 'TREE_3'],                    offset: 0.4 },
+        stone:         { prob: 0.30, sprites: ['ROCK_1', 'ROCK_2'],                              offset: 0.3 },
+        plain:         { prob: 0.25, sprites: ['GRASS_1','GRASS_1','GRASS_1','GRASS_1','TREE_3'], offset: 0.2 },
+        village:       { prob: 0.80, sprites: ['HOUSE_1', 'HOUSE_2'],                            offset: 0.4 },
+        village_house: { prob: 1.00, sprites: ['VILLAGE_HOUSE_S', 'VILLAGE_HOUSE_S', 'VILLAGE_HOUSE_M'], offset: 0.15 },
+        ice:           { prob: 0.15, sprites: ['ICE_CRACK'],                                     offset: 0.2 },
     };
 
     // Viewport/bound-check: только внутри карты
@@ -316,6 +279,22 @@ export function placeDecorations(seed) {
                 tileIx: ix, tileIy: iy,
                 spriteKey: 'SLAB_1',
             });
+        }
+    }
+
+    // Колодец на одном village_square тайле каждой деревни (первый тайл площади без декорации)
+    for (let iy = -size; iy <= size; iy++) {
+        for (let ix = -size; ix <= size; ix++) {
+            if (gameMap.getTile(ix, iy) !== 'village_square') continue;
+            const hasDeco = decorations.some(d => d.tileIx === ix && d.tileIy === iy);
+            if (hasDeco) continue;
+            decorations.push({
+                ix: ix + (rng() - 0.5) * 0.2,
+                iy: iy + (rng() - 0.5) * 0.2,
+                tileIx: ix, tileIy: iy,
+                spriteKey: 'VILLAGE_WELL',
+            });
+            break; // один колодец на площадь — перейти к следующему iy
         }
     }
 }
