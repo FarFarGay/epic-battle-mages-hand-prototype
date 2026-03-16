@@ -23,7 +23,7 @@ js/
 ├── noise.js            — SimplexNoise 2D, fbm (fractal Brownian motion), createRNG (mulberry32)
 ├── mapGenerator.js     — generateMap(), placeResources(), placeDecorations(), lastVillages — процедурная генерация
 ├── VillageGenerator.js — generateVillages() — генерация 4 деревень с зонами производства
-├── ProductionZone.js   — class ProductionZone: таймер роста, harvestReady, boost, damaged, syncFarmVisual
+├── ProductionZone.js   — class ProductionZone: таймер роста, harvestReady, boost, damaged, syncFarmVisual, syncResourceVisual (lumber/mine)
 ├── decorations.js      — decorations[], decoParticles[], onTileChanged(cause), destroyDecorationWithEffect(), addDecorationsToRenderList(), getHarvestType(), harvestDecoration(), setItemSpawnCallback() — дроп ресурсов при разрушении тайлов
 ├── isometry.js         — изометрическая проекция, camera, screenToIso/isoToScreen, worldToScreen (с высотой)
 ├── renderer.js         — canvas/ctx, drawPixel, drawPixelArt (с кэшем offscreen canvas), drawIsoDiamond, тени
@@ -480,7 +480,9 @@ generateVillages(gameMap, seed) → Village[]
 2. Если все тайлы мертвы → `damaged = true`, производство останавливается
 3. `efficiency = alive / total`, `rate = growthRate × boostMult × efficiency`
 4. `growthTimer += dt × rate`. При достижении периода → `harvestReady++` (до `maxHarvest`)
-5. Для ферм: `_syncFarmVisual()` синхронизирует количество `farmland_ripe` тайлов с `harvestReady`
+5. Синхронизация визуала:
+   - Фермы: `_syncFarmVisual()` — синхронизирует количество `farmland_ripe` тайлов с `harvestReady` через `setTile` → `onTileChanged`
+   - Шахты/лесоповалы: `_syncResourceVisual()` — добавляет декорации (TREE_1/2/3 или ROCK_1/2) на тайлы зоны при росте `harvestReady`
 
 **Магия и зоны (`handleSpellOnZone` в `tileEffects.js`):**
 
@@ -492,7 +494,19 @@ generateVillages(gameMap, seed) → Village[]
 | Земля | любая | Дроп ресурсов через `onTileChanged` (дерево, руда, пшеница) |
 | Артиллерия | любая | Усиленный дроп через `onTileChanged` с cause='artillery' |
 
-**Ручной сбор CROP_RIPE:** при срыве спелой пшеницы рукой → `harvestReady--`, тайл возвращается в `farmland`, `onTileChanged` ставит CROP_GREEN.
+**Ручной сбор ресурсов зон:** при срыве ресурса рукой → `harvestReady--`, `_lastSyncCount--`:
+- Ферма (CROP_RIPE): тайл возвращается в `farmland`, `onTileChanged` ставит CROP_GREEN
+- Лесоповал (TREE_1/2/3): декорация удаляется, дерево не отрастает до следующего тика `_syncResourceVisual`
+- Шахта (ROCK_1/2): декорация удаляется, камень не отрастает до следующего тика `_syncResourceVisual`
+
+**Инициализация `harvestReady` (`initWorld`):**
+- Фермы: подсчёт тайлов `farmland_ripe` (до `placeDecorations`)
+- Шахты: подсчёт декораций ROCK_1/ROCK_2 на тайлах зоны (после `placeDecorations`)
+- Лесоповалы: подсчёт декораций TREE_1/TREE_2/TREE_3 на тайлах зоны (после `placeDecorations`)
+
+**Вспомогательные поля:** `_tileKeys` (Set координат тайлов зоны для быстрого поиска декораций), `_lastSyncCount` (последнее синхронизированное количество, предотвращает лишние обновления).
+
+**Спрайты зон:** `ZONE_SPRITES = { lumber: ['TREE_1','TREE_2','TREE_3'], mine: ['ROCK_1','ROCK_2'] }`. Тип тайла: `ZONE_TILE_TYPE = { lumber: 'lumber_tile', mine: 'mine_tile' }`.
 
 **Дроп из шахты (`_dropMineOre`):** 70% камень (typeIndex=1), 30% железо (typeIndex=3). 2–4 предмета с 3D-физикой.
 
