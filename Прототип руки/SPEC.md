@@ -23,7 +23,7 @@ js/
 ├── noise.js            — SimplexNoise 2D, fbm (fractal Brownian motion), createRNG (mulberry32)
 ├── mapGenerator.js     — generateMap(), placeResources(), placeDecorations(), lastVillages — процедурная генерация
 ├── VillageGenerator.js — generateVillages() — генерация 4 деревень с зонами производства
-├── decorations.js      — decorations[], decoParticles[], onTileChanged(cause), destroyDecorationWithEffect(), addDecorationsToRenderList()
+├── decorations.js      — decorations[], decoParticles[], onTileChanged(cause), destroyDecorationWithEffect(), addDecorationsToRenderList(), getHarvestType(), harvestDecoration()
 ├── isometry.js         — изометрическая проекция, camera, screenToIso/isoToScreen, worldToScreen (с высотой)
 ├── renderer.js         — canvas/ctx, drawPixel, drawPixelArt, drawIsoDiamond, тени
 ├── Map.js              — class GameMap: размер, типы тайлов, heightMap, colorCache, seed, туман войны, castlePos
@@ -283,7 +283,7 @@ API: `gameMap.setTile(ix, iy, 'forest')` / `gameMap.getTile(ix, iy)`
 - Если рука **выходит за пределы** `FOG.VISIBLE` с уже захваченным предметом или миньоном — она **немедленно роняет** его с нулевой скоростью (свободное падение на месте). Это предотвращает разведку картой через перенос гоблина.
 - **Исключение — брошенный гоблин:** если гоблин **заброшен в темноту** и выжил при падении, он становится дружественным источником видимости (радиус 2). В его зоне видимости рука **может** подобрать как самого гоблина, так и любые предметы рядом с ним. Это намеренная игровая механика — бросок гоблина как «разведывательный» риск.
 
-Объекты вне `FOG.VISIBLE` скрыты и недоступны для взаимодействия (hover, захват). Состояние `FOG.EXPLORED` — тайл виден серым, но объекты на нём скрыты.
+Объекты вне `FOG.VISIBLE` скрыты и недоступны для взаимодействия (hover, захват). Состояние `FOG.EXPLORED` — тайл виден серым, объекты на нём скрыты, но **декорации отображаются с alpha=0.35** (полупрозрачные силуэты деревьев, камней и т.д.).
 
 Флаг `gameMap.fogEnabled = false` отключает туман полностью (удобно для дебага).
 
@@ -332,7 +332,7 @@ placeResources(gameMap.seed);    // ресурсы
 | `noise.js` | `SimplexNoise`, `fbm`, `createRNG` | Шум и RNG |
 | `mapGenerator.js` | `generateMap`, `placeResources`, `placeDecorations`, `lastVillages` | Генерация |
 | `VillageGenerator.js` | `generateVillages(gameMap, seed)` | Генерация деревень |
-| `decorations.js` | `decorations[]`, `onTileChanged`, `addDecorationsToRenderList` | Визуальные декорации |
+| `decorations.js` | `decorations[]`, `onTileChanged`, `addDecorationsToRenderList`, `getHarvestType`, `harvestDecoration` | Визуальные декорации |
 
 ### Слои шума (`generateMap`)
 
@@ -369,9 +369,16 @@ placeResources(gameMap.seed);    // ресурсы
 | forest | 50% | TREE_1, TREE_2, TREE_3 |
 | village | 80% | HOUSE_1, HOUSE_2 |
 | village_house | 100% | VILLAGE_HOUSE_S (2/3), VILLAGE_HOUSE_M (1/3) |
+| village_road | 50% | VILLAGE_HOUSE_S, SLAB_1 |
 | stone | 30% | ROCK_1, ROCK_2 |
 | plain | 25% | GRASS_1 (4/5), TREE_3 (1/5) |
 | ice | 15% | ICE_CRACK |
+| lumber_tile | 100% | TREE_1, TREE_2, TREE_3 |
+| mine_tile | 100% | ROCK_1, ROCK_2 |
+| farmland | 100% | CROP_GREEN |
+| farmland_ripe | 100% | CROP_RIPE |
+
+Смещение (`offset`): village_road — 0.15, lumber_tile — 0.25, mine_tile — 0.2, farmland/farmland_ripe — 0.15.
 
 Каждая декорация: `{ ix, iy, tileIx, tileIy, spriteKey }`. `ix/iy` — точные координаты с рандомным смещением ±0.3. `tileIx/tileIy` — ячейка тайла для fog-check и удаления.
 
@@ -381,20 +388,28 @@ placeResources(gameMap.seed);    // ресурсы
 - `scorched` → удалить только деревья (TREE_*)
 - `plain`, `puddle`, `swamp` (если был `forest`) → удалить деревья
 
-Декорации добавляются в renderList через `addDecorationsToRenderList(renderList, canvas)` с fog-check, viewport culling и depth = `ix + iy`.
+Декорации добавляются в renderList через `addDecorationsToRenderList(renderList, canvas)` с fog-check, viewport culling и depth = `ix + iy`. Viewport culling использует `camera.zoom` для корректного вычисления видимых границ (ранее при zoom < 1 отсекалось 70%+ видимых декораций). Декорации на `EXPLORED`-тайлах рендерятся с alpha = 0.35 (полупрозрачные, через `renderCtx` из `renderer.js`); на `VISIBLE` — как обычно.
 
 Колодцы (`VILLAGE_WELL`) размещаются на `village_square` тайлах — один на площадь.
 
-### Визуальные оверлеи зон производства
+### Визуальные декорации зон производства
 
-Рисуются в `Map._drawProductionOverlay()` поверх ромба тайла:
+~~`Map._drawProductionOverlay()` удалён~~ — заменён спрайтовыми декорациями через `decoByBiome` (см. таблицу выше). Каждый производственный тайл получает декорацию с вероятностью 100%:
 
-| Тайл | Оверлей |
-|------|---------|
-| `farmland` | 3 зелёных вертикальных штриха (1px) — ряды посевов |
-| `farmland_ripe` | 3 золотых штриха с пульсацией яркости (`sin(time)`) |
-| `mine_tile` | 3 точки `#887766` (руда) — детерминированная позиция от `ix*7+iy*13` |
-| `lumber_tile` | 2 маленьких пня (3×2 px коричневые) |
+| Тайл | Спрайт-декорация |
+|------|-----------------|
+| `farmland` | CROP_GREEN (зелёный посев, 5×7 px, scale=3) |
+| `farmland_ripe` | CROP_RIPE (золотой созревший посев, 5×7 px, scale=3) |
+| `mine_tile` | ROCK_1 / ROCK_2 |
+| `lumber_tile` | TREE_1 / TREE_2 / TREE_3 |
+
+### Система сбора (harvest)
+
+В `decorations.js` добавлены функции для сбора ресурсов с производственных тайлов:
+
+- `getHarvestType(tileIx, tileIy)` — возвращает `typeIndex` предмета для производственных тайлов: `lumber_tile` → 2 (дерево), `mine_tile` → 1 (камень), `farmland`/`farmland_ripe` → 0 (пшеница). Для прочих тайлов — `null`.
+- `harvestDecoration(deco)` — уничтожает декорацию с эффектом `'harvest'`, возвращает `{ typeIndex, ix, iy }` для спавна предмета.
+- Эффект `'harvest'` в `destroyDecorationWithEffect` — частицы летят вверх (плавающее рассеивание).
 
 ---
 
@@ -419,9 +434,9 @@ generateVillages(gameMap, seed) → Village[]
 
 | Тип | tileSize | Домов |
 |-----|----------|-------|
-| small | 5×5 | 3–4 |
-| medium | 7×7 | 6–8 |
-| large | 9×9 | 10–14 |
+| small | 5×5 | 8–10 |
+| medium | 7×7 | 16–20 |
+| large | 9×9 | 28–35 |
 
 ### Заполнение тайлов
 
@@ -471,6 +486,8 @@ generateVillages(gameMap, seed) → Village[]
 | VILLAGE_HOUSE_S | 10×18 | 30×54 | Одноэтажный дом, скатная крыша, окно, дверь |
 | VILLAGE_HOUSE_M | 12×22 | 36×66 | Двухэтажный дом, дымоход, 2 окна |
 | VILLAGE_WELL | 5×6 | 15×18 | Колодец, каменное кольцо, стойка с крышей |
+| DECO_CROP_GREEN | 5×7 | 15×21 | Зелёный растущий посев (3 стебля) |
+| DECO_CROP_RIPE | 5×7 | 15×21 | Золотой созревший посев |
 
 ### Дебаг-панель [V]
 
@@ -2154,3 +2171,9 @@ import { getDepth, worldToScreen } from './isometry.js';
 - [x] Оптимизация производительности (сессия 2): устранены источники GC-давления — 6×`filter()` + 5×`map()` в render-петле заменены единым imperative-счётчиком (`_aliveCount/_warriorCount/_scoutCount/_monkCount/_totalGoblins`); `Math.max(...ITEM_TYPES.map(...))` предвычислен в `_HUD_ITEM_MAX_W`; `Object.keys(spellStates)` заменён на `_SPELL_STATES[]`; модуль-уровневая `Set SELECTABLE` в `input.js` вместо двух локальных массивов (O(1) вместо O(n)); 12 лишних `Math.sqrt` в `Minion.js` заменены distSq-сравнениями (comparison-only); skeleton-поиск добычи: `preyDist` убран, порог в distSq; замок-доставка: `(dx²+dy²) < threshold²` вместо sqrt
 - [x] Сбор ресурсов рукой: игрок бросает предмет в замок → ресурс засчитывается в `castleResources[typeIndex]`, предмет удаляется. Флаг `item.thrownByHand` ставится в `input.js` при броске из руки, сбрасывается в `onSettle()`. В `Castle.pushObjects()` предметы с `thrownByHand` пропускают коллизию замка (пролетают внутрь). Проверка в `main.js` после `resolveItemCollisions()`: если `thrownByHand && dist < baseRadius && iz < towerHeight` → absorb
 - [x] Генерация деревень (задача 1/4): `VillageGenerator.js` — 4 деревни (2 small 5×5, 1 medium 7×7, 1 large 9×9) с площадями, дорогами, домами и зонами производства (фермы, шахты, лесоповалы); 7 новых типов тайлов; 3 новых спрайта (VILLAGE_HOUSE_S, VILLAGE_HOUSE_M, VILLAGE_WELL); визуальные оверлеи зон производства (посевы, руда, пни); дикие ресурсы уменьшены и исключены с тайлов деревень; дебаг-панель [V]
+- [x] Спрайтовые декорации на производственных тайлах: `_drawProductionOverlay` удалён из `Map.js`; производственные тайлы (farmland, mine_tile, lumber_tile) получают декорации через `decoByBiome` (prob=1.00); 2 новых спрайта DECO_CROP_GREEN и DECO_CROP_RIPE (5×7 px, scale=3); village_road добавлен в decoByBiome (prob=0.50)
+- [x] Увеличение количества домов в деревнях: small 8–10, medium 16–20, large 28–35 (ранее: 3–4, 6–8, 10–14)
+- [x] Фикс viewport culling декораций: `addDecorationsToRenderList` теперь учитывает `camera.zoom` при вычислении видимых границ (ранее при zoom < 1 отсекалось 70%+ декораций)
+- [x] Декорации на EXPLORED-тайлах: рендерятся с alpha=0.35 (ранее показывались только на VISIBLE)
+- [x] Система сбора (harvest): `getHarvestType(tileIx, tileIy)` и `harvestDecoration(deco)` в `decorations.js`; эффект 'harvest' с плавающими частицами; возвращает typeIndex для спавна предмета (lumber→2, mine→1, farm→0)
+- [x] Импорт `camera` из `isometry.js` в `decorations.js` для viewport bounds; cache bust версии обновлены (sprites v7, decorations v10, mapGenerator v11, World v11, main v11)
