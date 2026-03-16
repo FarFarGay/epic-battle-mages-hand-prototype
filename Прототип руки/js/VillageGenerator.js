@@ -15,10 +15,10 @@ const PERSONALITIES = ['TRD', 'MIL', 'REL', 'COW'];
 
 // ── Размеры деревень ────────────────────────────────────────
 const SIZE_DEFS = [
-    { type: 'small',  tileSize: 5,  housesMin: 3,  housesMax: 4  },
-    { type: 'small',  tileSize: 5,  housesMin: 3,  housesMax: 4  },
-    { type: 'medium', tileSize: 7,  housesMin: 6,  housesMax: 8  },
-    { type: 'large',  tileSize: 9,  housesMin: 10, housesMax: 14 },
+    { type: 'small',  tileSize: 5,  housesMin: 8,  housesMax: 10  },
+    { type: 'small',  tileSize: 5,  housesMin: 8,  housesMax: 10  },
+    { type: 'medium', tileSize: 7,  housesMin: 16, housesMax: 20  },
+    { type: 'large',  tileSize: 9,  housesMin: 28, housesMax: 35  },
 ];
 
 // ── Минимальные расстояния ──────────────────────────────────

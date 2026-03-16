@@ -11,7 +11,7 @@ import {
     WATER_SPELL_PIXELS, WATER_SPELL_W, WATER_SPELL_H,
     EARTH_SPELL_PIXELS, EARTH_SPELL_W, EARTH_SPELL_H,
     WIND_SPELL_PIXELS, WIND_SPELL_W, WIND_SPELL_H,
-} from './sprites.js?v=6';
+} from './sprites.js?v=7';
 import { ctx, drawPixelArt, drawItemShadow } from './renderer.js';
 import { worldToScreen, screenToCanvas } from './isometry.js';
 import { gameMap } from './Map.js';

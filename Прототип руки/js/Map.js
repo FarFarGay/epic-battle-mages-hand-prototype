@@ -251,41 +251,9 @@ export class GameMap {
                     }
                 }
 
-                // Декорации зон производства поверх ромба
-                this._drawProductionOverlay(sx, sy, tileType, ix, iy);
-
                 // Боковая грань при перепаде высот
                 this._drawSideFace(ix, iy, sx, sy, tileType, tileHeight);
             }
-        }
-    }
-
-    _drawProductionOverlay(sx, sy, tileType, ix, iy) {
-        if (tileType === 'farmland' || tileType === 'farmland_ripe') {
-            // Ряды посевов — 4 вертикальных штриха
-            const color = tileType === 'farmland_ripe'
-                ? `rgb(${200 + Math.round(Math.sin(performance.now() * 0.003 + ix * 2.1) * 20)},${170 + Math.round(Math.sin(performance.now() * 0.003 + iy * 1.7) * 15)},34)`
-                : '#6a8a2a';
-            ctx.fillStyle = color;
-            for (let i = -1; i <= 1; i++) {
-                const ox = sx + i * 8;
-                ctx.fillRect(ox, sy - 4, 1, 8);
-            }
-        } else if (tileType === 'mine_tile') {
-            // 3 точки руды
-            ctx.fillStyle = '#887766';
-            const seed = (ix * 7 + iy * 13) & 0xff;
-            ctx.fillRect(sx - 8 + (seed & 7), sy - 3 + ((seed >> 3) & 3), 2, 2);
-            ctx.fillRect(sx + 2 + ((seed >> 4) & 5), sy + 1 + ((seed >> 6) & 3), 2, 2);
-            ctx.fillRect(sx - 3 + ((seed >> 2) & 5), sy + 4, 2, 2);
-        } else if (tileType === 'lumber_tile') {
-            // 2 маленьких пня
-            ctx.fillStyle = '#6a4a2a';
-            ctx.fillRect(sx - 6, sy + 2, 3, 2);
-            ctx.fillRect(sx + 4, sy - 1, 3, 2);
-            ctx.fillStyle = '#8a6a4a';
-            ctx.fillRect(sx - 5, sy + 1, 1, 1);
-            ctx.fillRect(sx + 5, sy - 2, 1, 1);
         }
     }
 

@@ -2,8 +2,8 @@
 //  ДЕКОРАЦИИ — визуальные объекты на тайлах (деревья, камни, домики...)
 // ============================================================
 import { PIXEL_SCALE } from './constants.js';
-import { drawPixelArt } from './renderer.js';
-import { worldToScreen } from './isometry.js';
+import { drawPixelArt, ctx as renderCtx } from './renderer.js';
+import { worldToScreen, camera } from './isometry.js';
 import { gameMap, FOG } from './Map.js';
 import {
     DECO_TREE_1, DECO_TREE_1_W, DECO_TREE_1_H,
@@ -20,7 +20,9 @@ import {
     DECO_VILLAGE_HOUSE_S, DECO_VILLAGE_HOUSE_S_W, DECO_VILLAGE_HOUSE_S_H,
     DECO_VILLAGE_HOUSE_M, DECO_VILLAGE_HOUSE_M_W, DECO_VILLAGE_HOUSE_M_H,
     DECO_VILLAGE_WELL, DECO_VILLAGE_WELL_W, DECO_VILLAGE_WELL_H,
-} from './sprites.js?v=6';
+    DECO_CROP_GREEN, DECO_CROP_GREEN_W, DECO_CROP_GREEN_H,
+    DECO_CROP_RIPE, DECO_CROP_RIPE_W, DECO_CROP_RIPE_H,
+} from './sprites.js?v=7';
 
 // ============================================================
 //  ДАННЫЕ СПРАЙТОВ ПО КЛЮЧУ
@@ -40,6 +42,8 @@ const DECO_SPRITES = {
     VILLAGE_HOUSE_S: { pixels: DECO_VILLAGE_HOUSE_S, w: DECO_VILLAGE_HOUSE_S_W, h: DECO_VILLAGE_HOUSE_S_H },
     VILLAGE_HOUSE_M: { pixels: DECO_VILLAGE_HOUSE_M, w: DECO_VILLAGE_HOUSE_M_W, h: DECO_VILLAGE_HOUSE_M_H },
     VILLAGE_WELL:    { pixels: DECO_VILLAGE_WELL,    w: DECO_VILLAGE_WELL_W,    h: DECO_VILLAGE_WELL_H    },
+    CROP_GREEN:      { pixels: DECO_CROP_GREEN,     w: DECO_CROP_GREEN_W,     h: DECO_CROP_GREEN_H     },
+    CROP_RIPE:       { pixels: DECO_CROP_RIPE,      w: DECO_CROP_RIPE_W,      h: DECO_CROP_RIPE_H      },
 };
 
 // ============================================================
@@ -61,6 +65,8 @@ const DECO_RENDER_SCALE = {
     VILLAGE_HOUSE_S: 3,
     VILLAGE_HOUSE_M: 3,
     VILLAGE_WELL:    3,
+    CROP_GREEN:      3,
+    CROP_RIPE:       3,
 };
 
 // ============================================================
@@ -109,6 +115,12 @@ export function destroyDecorationWithEffect(deco, cause) {
             vy      = -8 + (Math.random() - 0.5) * 38;
             gravity = 130;
             life    = 0.35 + Math.random() * 0.20;
+        } else if (cause === 'harvest') {
+            // Сбор ресурса — частицы вверх, мягко рассеиваются
+            vx      = (Math.random() - 0.5) * 20;
+            vy      = -(20 + Math.random() * 25);
+            gravity = 40;
+            life    = 0.40 + Math.random() * 0.25;
         } else if (cause === 'artillery') {
             const a = Math.random() * Math.PI * 2;
             const spd = 70 + Math.random() * 80;
@@ -126,6 +138,34 @@ export function destroyDecorationWithEffect(deco, cause) {
 
         decoParticles.push({ x: cx, y: cy, vx, vy, gravity, life, maxLife: life, size: scale, color });
     }
+}
+
+// ============================================================
+//  СБОР РЕСУРСА ИЗ ДЕКОРАЦИИ
+// ============================================================
+// Тип предмета, который выпадает при сборе декорации на производственном тайле.
+// Возвращает typeIndex (ITEM_TYPES) или -1 если тайл не производственный.
+export function getHarvestType(tileIx, tileIy) {
+    const tile = gameMap.getTile(tileIx, tileIy);
+    if (tile === 'lumber_tile')  return 2;  // дерево
+    if (tile === 'mine_tile')    return 1;  // камень
+    if (tile === 'farmland' || tile === 'farmland_ripe') return 0;  // пшеница
+    return -1;
+}
+
+// Собрать декорацию: разрушить спрайт с эффектом, вернуть { typeIndex, ix, iy }
+// для спавна предмета. Возвращает null если декорация не найдена / не ресурсная.
+export function harvestDecoration(deco) {
+    const idx = decorations.indexOf(deco);
+    if (idx === -1) return null;
+
+    const harvestType = getHarvestType(deco.tileIx, deco.tileIy);
+    if (harvestType < 0) return null;
+
+    destroyDecorationWithEffect(deco, 'harvest');
+    decorations.splice(idx, 1);
+
+    return { typeIndex: harvestType, ix: deco.ix, iy: deco.iy };
 }
 
 // ============================================================
@@ -198,29 +238,42 @@ export function onTileChanged(ix, iy, oldType, newType, cause) {
 //  ДОБАВЛЕНИЕ В RENDER LIST
 // ============================================================
 export function addDecorationsToRenderList(renderList, canvas) {
+    // Viewport bounds с учётом камерного зума
+    const z  = camera.zoom || 1;
+    const w  = canvas.width, h = canvas.height;
+    const m  = 150; // margin в screen-пикселях
+    const xMin = (camera.x - w / 2 - m) / z + w / 2;
+    const xMax = (camera.x - w / 2 + w + m) / z + w / 2;
+    const yMin = (camera.y - h / 2 - m) / z + h / 2;
+    const yMax = (camera.y - h / 2 + h + m) / z + h / 2;
+
     for (const deco of decorations) {
-        // Fog check по тайлу
-        if (gameMap.getFog(deco.tileIx, deco.tileIy) !== FOG.VISIBLE) continue;
+        // Fog: скрытые тайлы не рисуем, исследованные — с затемнением
+        const fog = gameMap.getFog(deco.tileIx, deco.tileIy);
+        if (fog === FOG.HIDDEN) continue;
 
         const sp = DECO_SPRITES[deco.spriteKey];
         if (!sp) continue;
 
         const s = worldToScreen(deco.ix, deco.iy);
 
-        // Viewport culling
-        if (s.x < -100 || s.x > canvas.width + 100 ||
-            s.y < -150 || s.y > canvas.height + 100) continue;
+        // Viewport culling с учётом зума
+        if (s.x < xMin || s.x > xMax || s.y < yMin || s.y > yMax) continue;
 
         const scale = DECO_RENDER_SCALE[deco.spriteKey] || PIXEL_SCALE;
-        const depth = deco.ix + deco.iy - 0.1; // чуть позади юнитов на том же тайле
+        const depth = deco.ix + deco.iy - 0.1;
         const ox = s.x - (sp.w * scale) / 2;
         const oy = s.y - sp.h * scale;
 
-        // Capture values for closure
         const _ox = ox, _oy = oy, _sp = sp, _scale = scale;
+        const _explored = (fog === FOG.EXPLORED);
         renderList.push({
             depth,
-            draw: () => drawPixelArt(_ox, _oy, _sp.pixels, _scale),
+            draw: () => {
+                if (_explored) renderCtx.globalAlpha = 0.35;
+                drawPixelArt(_ox, _oy, _sp.pixels, _scale);
+                if (_explored) renderCtx.globalAlpha = 1.0;
+            },
         });
     }
 }

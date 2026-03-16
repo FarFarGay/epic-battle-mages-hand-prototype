@@ -23,7 +23,7 @@ import {
     WARRIOR_HELMET_PIXELS, WARRIOR_HELMET_W,
     SCOUT_HOOD_PIXELS, SCOUT_HOOD_W,
     MONK_ROBE_PIXELS, MONK_ROBE_W,
-} from './sprites.js?v=6';
+} from './sprites.js?v=7';
 import { GameObject } from './GameObject.js';
 import { ctx, drawPixelArt, drawItemShadow, drawHighlight } from './renderer.js';
 import { worldToScreen, screenToCanvas } from './isometry.js';

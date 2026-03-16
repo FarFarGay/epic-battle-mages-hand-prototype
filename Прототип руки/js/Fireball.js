@@ -6,7 +6,7 @@ import {
     MAX_BOUNCES, PIXEL_SCALE, HEIGHT_TO_SCREEN,
     FIREBALL_MASS, FIREBALL_BOUNCINESS, FIREBALL_FRICTION, FIREBALL_COOLDOWN,
 } from './constants.js';
-import { FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H } from './sprites.js?v=6';
+import { FIREBALL_PIXELS, FIREBALL_W, FIREBALL_H } from './sprites.js?v=7';
 import { ctx, drawPixelArt, drawItemShadow } from './renderer.js';
 import { worldToScreen, screenToCanvas } from './isometry.js';
 

@@ -3,8 +3,8 @@
 // ============================================================
 import { SimplexNoise, fbm, createRNG } from './noise.js';
 import { gameMap } from './Map.js';
-import { decorations } from './decorations.js?v=4';
-import { generateVillages } from './VillageGenerator.js';
+import { decorations } from './decorations.js?v=10';
+import { generateVillages } from './VillageGenerator.js?v=3';
 
 // Последний сгенерированный массив деревень — доступен после generateMap()
 export let lastVillages = [];
@@ -246,9 +246,13 @@ export function placeDecorations(seed) {
         forest:        { prob: 0.50, sprites: ['TREE_1', 'TREE_2', 'TREE_3'],                    offset: 0.4 },
         stone:         { prob: 0.30, sprites: ['ROCK_1', 'ROCK_2'],                              offset: 0.3 },
         plain:         { prob: 0.25, sprites: ['GRASS_1','GRASS_1','GRASS_1','GRASS_1','TREE_3'], offset: 0.2 },
-        village:       { prob: 0.80, sprites: ['HOUSE_1', 'HOUSE_2'],                            offset: 0.4 },
         village_house: { prob: 1.00, sprites: ['VILLAGE_HOUSE_S', 'VILLAGE_HOUSE_S', 'VILLAGE_HOUSE_M'], offset: 0.15 },
+        village_road:  { prob: 0.50, sprites: ['VILLAGE_HOUSE_S', 'SLAB_1'],                      offset: 0.15 },
         ice:           { prob: 0.15, sprites: ['ICE_CRACK'],                                     offset: 0.2 },
+        lumber_tile:   { prob: 1.00, sprites: ['TREE_1', 'TREE_2', 'TREE_3'],                   offset: 0.25 },
+        mine_tile:     { prob: 1.00, sprites: ['ROCK_1', 'ROCK_2'],                              offset: 0.2 },
+        farmland:      { prob: 1.00, sprites: ['CROP_GREEN'],                                    offset: 0.15 },
+        farmland_ripe: { prob: 1.00, sprites: ['CROP_RIPE'],                                     offset: 0.15 },
     };
 
     // Viewport/bound-check: только внутри карты
@@ -267,34 +271,19 @@ export function placeDecorations(seed) {
         }
     }
 
-    // Пустые village-тайлы (без дома) получают каменные плитки
-    for (let iy = -size; iy <= size; iy++) {
-        for (let ix = -size; ix <= size; ix++) {
-            if (gameMap.getTile(ix, iy) !== 'village') continue;
-            const hasDeco = decorations.some(d => d.tileIx === ix && d.tileIy === iy);
+    // Колодец — ровно 1 на деревню, на первом свободном village_square тайле
+    for (const v of lastVillages) {
+        const sqTiles = v.tiles.filter(t => t.type === 'village_square');
+        for (const sq of sqTiles) {
+            const hasDeco = decorations.some(d => d.tileIx === sq.ix && d.tileIy === sq.iy);
             if (hasDeco) continue;
             decorations.push({
-                ix: ix + (rng() - 0.5) * 0.3,
-                iy: iy + (rng() - 0.5) * 0.3,
-                tileIx: ix, tileIy: iy,
-                spriteKey: 'SLAB_1',
-            });
-        }
-    }
-
-    // Колодец на одном village_square тайле каждой деревни (первый тайл площади без декорации)
-    for (let iy = -size; iy <= size; iy++) {
-        for (let ix = -size; ix <= size; ix++) {
-            if (gameMap.getTile(ix, iy) !== 'village_square') continue;
-            const hasDeco = decorations.some(d => d.tileIx === ix && d.tileIy === iy);
-            if (hasDeco) continue;
-            decorations.push({
-                ix: ix + (rng() - 0.5) * 0.2,
-                iy: iy + (rng() - 0.5) * 0.2,
-                tileIx: ix, tileIy: iy,
+                ix: sq.ix + (rng() - 0.5) * 0.2,
+                iy: sq.iy + (rng() - 0.5) * 0.2,
+                tileIx: sq.ix, tileIy: sq.iy,
                 spriteKey: 'VILLAGE_WELL',
             });
-            break; // один колодец на площадь — перейти к следующему iy
+            break; // один колодец на деревню
         }
     }
 }
