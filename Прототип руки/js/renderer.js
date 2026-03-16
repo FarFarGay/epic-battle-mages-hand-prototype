@@ -22,15 +22,49 @@ export function drawPixel(x, y, color, scale = PIXEL_SCALE) {
     ctx.fillRect(Math.floor(x), Math.floor(y), scale, scale);
 }
 
-export function drawPixelArt(screenX, screenY, pixels, scale = PIXEL_SCALE) {
+// Кэш спрайтов: pixels array → Map(scale → {img, w, h})
+const _spriteCache = new Map();
+
+function _renderSpriteToCache(pixels, scale) {
+    // Определяем bounds спрайта
+    let maxX = 0, maxY = 0;
     for (const p of pixels) {
-        drawPixel(
-            screenX + p[0] * scale,
-            screenY + p[1] * scale,
-            p[2],
-            scale
-        );
+        if (p[0] + 1 > maxX) maxX = p[0] + 1;
+        if (p[1] + 1 > maxY) maxY = p[1] + 1;
     }
+    const w = maxX * scale;
+    const h = maxY * scale;
+
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width = w;
+    offCanvas.height = h;
+    const offCtx = offCanvas.getContext('2d');
+
+    for (const p of pixels) {
+        if (!p[2]) continue;
+        offCtx.fillStyle = p[2];
+        offCtx.fillRect(p[0] * scale, p[1] * scale, scale, scale);
+    }
+
+    return { img: offCanvas, w, h };
+}
+
+export function drawPixelArt(screenX, screenY, pixels, scale = PIXEL_SCALE) {
+    let scaleMap = _spriteCache.get(pixels);
+    if (!scaleMap) {
+        scaleMap = new Map();
+        _spriteCache.set(pixels, scaleMap);
+    }
+    let cached = scaleMap.get(scale);
+    if (!cached) {
+        cached = _renderSpriteToCache(pixels, scale);
+        scaleMap.set(scale, cached);
+    }
+    ctx.drawImage(cached.img, Math.floor(screenX), Math.floor(screenY));
+}
+
+export function clearSpriteCache() {
+    _spriteCache.clear();
 }
 
 export function drawIsoDiamond(cx, cy, fillColor, strokeColor) {

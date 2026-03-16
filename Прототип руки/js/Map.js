@@ -80,6 +80,7 @@ export class GameMap {
 
         // Туман войны
         this._fog = {};
+        this._visibleKeys = new Set();
     }
 
     // ============================================================
@@ -127,7 +128,10 @@ export class GameMap {
     }
 
     setFog(ix, iy, state) {
-        this._fog[this._key(ix, iy)] = state;
+        const key = this._key(ix, iy);
+        this._fog[key] = state;
+        if (state === FOG.VISIBLE) this._visibleKeys.add(key);
+        else this._visibleKeys.delete(key);
     }
 
     revealAround(ix, iy, radius = 3) {
@@ -137,8 +141,11 @@ export class GameMap {
             for (let dx = -ri; dx <= ri; dx++) {
                 if (dx * dx + dy * dy <= r2) {
                     const fx = cx + dx, fy = cy + dy;
-                    if (this.isInBounds(fx, fy))
-                        this._fog[this._key(fx, fy)] = FOG.VISIBLE;
+                    if (this.isInBounds(fx, fy)) {
+                        const key = this._key(fx, fy);
+                        this._fog[key] = FOG.VISIBLE;
+                        this._visibleKeys.add(key);
+                    }
                 }
             }
         }
@@ -149,17 +156,21 @@ export class GameMap {
         for (let dy = -halfSize; dy <= halfSize; dy++) {
             for (let dx = -halfSize; dx <= halfSize; dx++) {
                 const fx = cx + dx, fy = cy + dy;
-                if (this.isInBounds(fx, fy))
-                    this._fog[this._key(fx, fy)] = FOG.VISIBLE;
+                if (this.isInBounds(fx, fy)) {
+                    const key = this._key(fx, fy);
+                    this._fog[key] = FOG.VISIBLE;
+                    this._visibleKeys.add(key);
+                }
             }
         }
     }
 
     tickFog(sources) {
         if (!this.fogEnabled) return;
-        for (const key of Object.keys(this._fog)) {
-            if (this._fog[key] === FOG.VISIBLE) this._fog[key] = FOG.EXPLORED;
+        for (const key of this._visibleKeys) {
+            this._fog[key] = FOG.EXPLORED;
         }
+        this._visibleKeys.clear();
         for (const src of sources) {
             if (src.shape === 'square') this._revealSquare(src.ix, src.iy, src.radius);
             else                        this.revealAround(src.ix, src.iy, src.radius);

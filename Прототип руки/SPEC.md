@@ -23,9 +23,9 @@ js/
 ├── noise.js            — SimplexNoise 2D, fbm (fractal Brownian motion), createRNG (mulberry32)
 ├── mapGenerator.js     — generateMap(), placeResources(), placeDecorations(), lastVillages — процедурная генерация
 ├── VillageGenerator.js — generateVillages() — генерация 4 деревень с зонами производства
-├── decorations.js      — decorations[], decoParticles[], onTileChanged(cause), destroyDecorationWithEffect(), addDecorationsToRenderList(), getHarvestType(), harvestDecoration()
+├── decorations.js      — decorations[], decoParticles[], onTileChanged(cause), destroyDecorationWithEffect(), addDecorationsToRenderList(), getHarvestType(), harvestDecoration(), setItemSpawnCallback() — дроп ресурсов при разрушении тайлов
 ├── isometry.js         — изометрическая проекция, camera, screenToIso/isoToScreen, worldToScreen (с высотой)
-├── renderer.js         — canvas/ctx, drawPixel, drawPixelArt, drawIsoDiamond, тени
+├── renderer.js         — canvas/ctx, drawPixel, drawPixelArt (с кэшем offscreen canvas), drawIsoDiamond, тени
 ├── Map.js              — class GameMap: размер, типы тайлов, heightMap, colorCache, seed, туман войны, castlePos
 ├── GameObject.js       — базовый класс: общая физика (lifting→carried→thrown→…)
 ├── Item.js             — class Item extends GameObject: логика и отрисовка предмета
@@ -59,7 +59,7 @@ Castle       (замок: коллизия, рендер, пушка — не н
 ### Рендеринг
 - **Изометрическая проекция** — угол 45° (`ISO_ANGLE = π/4`)
 - **Тайловая сетка** — `TILE_W = 64px`, `TILE_H ≈ 45px`
-- **Pixel-art** — масштаб `PIXEL_SCALE = 3`, сглаживание отключено (`imageSmoothingEnabled = false`)
+- **Pixel-art** — масштаб `PIXEL_SCALE = 3`, сглаживание отключено (`imageSmoothingEnabled = false`). `drawPixelArt` кэширует спрайты на offscreen canvas (Map: pixels→scale→canvas), `ctx.drawImage` вместо попиксельного `fillRect`
 - **Глубинная сортировка** — по сумме `ix + iy` для корректного порядка отрисовки
 - **Рука** — всегда рендерится последней (`depth: Infinity`), поверх всех объектов
 
@@ -261,8 +261,8 @@ API: `gameMap.setTile(ix, iy, 'forest')` / `gameMap.getTile(ix, iy)`
 | `visible` | Нормальный цвет типа тайла |
 
 Туман обновляется каждый кадр через `gameMap.tickFog(sources)`:
-- Все `visible` → `explored`
-- Затем `revealAround(ix, iy, radius)` для каждого источника
+- Все `visible` → `explored` (через dirty-flag Set `_visibleKeys` — итерация только по видимым, не по всем тайлам)
+- Затем `revealAround(ix, iy, radius)` для каждого источника (добавляет в `_visibleKeys`)
 
 **Источники видимости** (радиус в тайлах):
 | Источник | Радиус | Форма | Условие |
@@ -382,13 +382,19 @@ placeResources(gameMap.seed);    // ресурсы
 
 Каждая декорация: `{ ix, iy, tileIx, tileIy, spriteKey }`. `ix/iy` — точные координаты с рандомным смещением ±0.3. `tileIx/tileIy` — ячейка тайла для fog-check и удаления.
 
-`onTileChanged(ix, iy, oldType, newType)` — при смене тайла через заклинание:
+`onTileChanged(ix, iy, oldType, newType, cause)` — при смене тайла через заклинание:
 - `oldType === 'wall'` → удалить спрайт стены (WALL_1) с эффектом
-- `burning`, `wall`, `water` → удалить все декорации тайла; `wall` → добавить спрайт стены (WALL_1)
-- `scorched` → удалить только деревья (TREE_*)
+- **Камнепад** (`stone → stone`, cause `earth`/`artillery`) → разрушить камни-декорации, спавнить 2–4 камня (typeIndex 1) разлетающихся в 3D (vz 2–5, горизонтальная скорость 1.5–5.0)
+- **Лес/лесопилка → plain/rubble** (ветер, земля, артиллерия) → разрушить деревья, дроп 1–2 брёвен (typeIndex 2) подлетающих вверх
+- `burning`, `wall`, `water` → удалить все декорации тайла; поля/фермы (если причина не `fire`) дропают пшеницу перед уничтожением; `wall` → добавить спрайт стены (WALL_1)
+- `rubble` → разрушение с дропом: `village_house`/`village_square` → камнепад, `mine_tile` → камнепад, `farmland`/`farmland_ripe` → дроп пшеницы, `village_road` → частицы
+- `scorched` → удалить деревья, урожай, деревенские постройки (камни остаются)
+- `farmland → farmland_ripe` (вода) → заменить CROP_GREEN на CROP_RIPE
 - `plain`, `puddle`, `swamp` (если был `forest`) → удалить деревья
 
-Декорации добавляются в renderList через `addDecorationsToRenderList(renderList, canvas)` с fog-check, viewport culling и depth = `ix + iy`. Viewport culling использует `camera.zoom` для корректного вычисления видимых границ (ранее при zoom < 1 отсекалось 70%+ видимых декораций). Декорации на `EXPLORED`-тайлах рендерятся с alpha = 0.35 (полупрозрачные, через `renderCtx` из `renderer.js`); на `VISIBLE` — как обычно.
+**Система спавна предметов**: `setItemSpawnCallback(cb)` в `decorations.js`, подключается в `World.js`. При спавне Item получает `vx/vy/vz` и `state='thrown'`, что запускает полноценную 3D-физику (гравитация, отскоки, затухание).
+
+Декорации добавляются в renderList через `addDecorationsToRenderList(renderList, canvas)` с fog-check, viewport culling и depth = `ix + iy`. Viewport culling использует `camera.zoom` для корректного вычисления видимых границ. Декорации пушатся как data-объекты `{type:'decoration', depth, ox, oy, pixels, scale, explored}` (без замыканий); рендер dispatch в `main.js` обрабатывает `obj.type === 'decoration'` с `ctx.globalAlpha = 0.35` для explored-тайлов.
 
 Колодцы (`VILLAGE_WELL`) размещаются на `village_square` тайлах — один на площадь.
 
@@ -1518,7 +1524,8 @@ aiming → (ЛКМ) → flying → (приземление) → aftermath → (1
 - Кулдаун **не** хранится в самом объекте — по-прежнему в `spellStates[spellKey]`; выставляется при `pendingExplosion` в `main.js`
 - Эффект применяется через `applySpellInRadius(spellKey, ex, ey, radius)` — для water/wind; **earth** использует механику катящегося валуна (см. ниже)
 - **Earth spell — катящийся валун**: при приземлении валун начинает **катиться по земле** в направлении броска (`startRolling()`). Линия разрушения вместо кругового взрыва. Трансформирует тайлы на пути (`plain→rubble`, `forest→plain` + дроп дерева, `village→rubble`, `water→swamp`, `burning→scorched`, `puddle→swamp`). Ускоряется на льду (×1.1), вязнет в болоте (×0.3) и воде (×0.5). Останавливается при `speed < BOULDER_MIN_SPEED` или столкновении с `stone`/`wall`/замком. Давит юнитов (40 HP + отбрасывание, кулдаун 0.5с). Пылевой след за валуном.
-- **Wind spell — распространение огня**: после knockback-прохода дополнительный цикл ищет горящие тайлы (`burning`) в радиусе ветра; для каждого горящего тайла вычисляется направление от центра взрыва → поджигает через `applySpellToTile('fire', ...)` до 3 соседних тайлов (прямо + ±перпендикуляр); поджигаются только `forest`, `plain`, `village`
+- **Wind spell — распространение огня**: после knockback-прохода дополнительный цикл ищет горящие тайлы (`burning`) в радиусе ветра; для каждого горящего тайла вычисляется направление от центра взрыва → поджигает через `applySpellToTile('fire', ...)` до 3 соседних тайлов (прямо + ±перпендикуляр); поджигаются `forest`, `plain`, `village`, `farmland`, `farmland_ripe`, `lumber_tile`, `village_house`, `village_road`
+- **Wind spell — повал деревьев**: ветер трансформирует `forest → plain` и `lumber_tile → plain`, что вызывает `onTileChanged` с дропом 1–2 брёвен
 - Ветер дополнительно отбрасывает юниты в радиусе (`WIND_KNOCKBACK_FORCE`, только при `spellKey === 'wind'`)
 - Cooldown не блокирует вылет снаряда, если тот уже был в воздухе от другого заклинания (`spellProjectile.state !== 'ready'` → break)
 
@@ -1552,6 +1559,55 @@ ready → lifting → carried → thrown → (bouncing/sliding/settling) → don
 | `World.js` | `spellProjectile` singleton, сброс в `initWorld()` |
 | `main.js` | Захват из панели (инициализация `spellProjectile`); обновление; обработка `pendingExplosion` + кулдаун + эффекты + ветер-нокбэк; depth-sort рендер в полёте; рендер при `carried`/`lifting` через `draw()` |
 | `input.js` | Мгновенный каст заменён на `calculateThrowVelocity` + переход в `thrown`, как у фаербола; удалены неиспользуемые импорты `WATER/EARTH/WIND_SPELL_RADIUS`, `WIND_KNOCKBACK_FORCE`, `applySpellInRadius`, `spellStates` |
+
+### Таблица трансформаций заклинаний (`TILE_TRANSFORMS`)
+
+| Заклинание | Тайл | Результат | Эффект |
+|------------|------|-----------|--------|
+| **Fire** | forest, lumber_tile | burning | Деревья горят, огонь распространяется |
+| **Fire** | farmland, farmland_ripe | burning | Урожай сгорает |
+| **Fire** | village_square, village_house | burning | Деревня горит, огонь перекидывается |
+| **Fire** | village_road | scorched | Дорога обгорает |
+| **Water** | farmland | farmland_ripe | Урожай созревает (CROP_GREEN → CROP_RIPE) |
+| **Earth** | stone | stone (тот же) | Камнепад — 2–4 камня разлетаются в 3D |
+| **Earth** | forest, lumber_tile | plain | Деревья повалены, дроп 1–2 брёвен |
+| **Earth** | village_square/house/road | rubble | Деревня разрушена, камни из обломков |
+| **Earth** | mine_tile | rubble | Камнепад из шахты |
+| **Earth** | farmland, farmland_ripe | rubble | Поле уничтожено, дроп пшеницы |
+| **Wind** | forest, lumber_tile | plain | Деревья повалены ветром, дроп брёвен |
+| **Wind** | steam | plain | Сдувает пар |
+
+### Артиллерия и ресурсные тайлы
+
+Артиллерия рушит всё в радиусе `ARTILLERY_BLAST_RADIUS` (3 тайла). Трансформации через `gameMap.setTile(..., 'artillery')`:
+
+| Тайл | Результат | Дроп |
+|------|-----------|------|
+| wall | rubble | — |
+| forest, lumber_tile | plain | 1–2 бревна (3D) |
+| stone | stone | 2–4 камня (камнепад) |
+| mine_tile | rubble | 2–4 камня |
+| village_square/house | rubble | 2–4 камня из обломков |
+| village_road | scorched | — |
+| farmland, farmland_ripe | rubble | 1–2 пшеницы |
+| village | rubble | — |
+
+### Распространение огня
+
+Горящие тайлы (`burning`) каждый кадр с вероятностью `0.3 × dt` поджигают соседние тайлы:
+- `forest`, `lumber_tile`, `farmland`, `farmland_ripe`, `village_house`, `village_road`
+
+### Ручной сбор декораций
+
+Рукой можно вырвать декорации с тайлов (без ограничения по типу тайла):
+
+| Спрайт | Ресурс | typeIndex |
+|--------|--------|-----------|
+| TREE_1, TREE_2, TREE_3 | Дерево | 2 |
+| ROCK_1, ROCK_2 | Камень | 1 |
+| CROP_GREEN, CROP_RIPE | Пшеница | 0 |
+
+Реализация: `HARVESTABLE_SPRITES` Set в `main.js` для hover-детекции, `_decoToResource()` в `input.js` для маппинга spriteKey → typeIndex.
 
 ---
 

@@ -12,11 +12,22 @@ import { Castle } from './Castle.js';
 import { Fireball } from './Fireball.js';
 import { SpellProjectile } from './SpellProjectile.js';
 import { generateMap, placeResources, placeDecorations, lastVillages } from './mapGenerator.js?v=11';
-import { onTileChanged, decoParticles } from './decorations.js?v=10';
+import { onTileChanged, decoParticles, setItemSpawnCallback } from './decorations.js?v=10';
 export { decoParticles };
 
 // Регистрируем callback изменения тайлов → обновление декораций
 setTileChangedCallback(onTileChanged);
+
+// Регистрируем callback спавна предметов из декораций
+setItemSpawnCallback((typeIndex, ix, iy, vx, vy, vz) => {
+    const item = new Item(typeIndex, ix, iy);
+    item.vx = vx;
+    item.vy = vy;
+    item.vz = vz;
+    item.state = vz > 0 ? 'thrown' : 'idle';
+    item.bounceCount = 0;
+    items.push(item);
+});
 
 // ============================================================
 //  СОСТОЯНИЕ МИРА
@@ -261,4 +272,5 @@ export function initWorld() {
 
     // 9. Туман войны — полный сброс
     gameMap._fog = {};
+    gameMap._visibleKeys.clear();
 }

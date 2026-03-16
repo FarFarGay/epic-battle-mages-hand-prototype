@@ -17,7 +17,14 @@ export const TILE_TRANSFORMS = {
         ice:      'puddle',
         swamp:    'burning',
         puddle:   'steam',
-        // stone, wall, scorched, burning, rubble, steam — не реагируют
+        // Поля и деревни
+        farmland:       'burning',
+        farmland_ripe:  'burning',
+        lumber_tile:    'burning',
+        village_square: 'burning',
+        village_house:  'burning',
+        village_road:   'scorched',
+        // stone, wall, scorched, burning, rubble, steam, mine_tile — не реагируют
     },
     water: {
         plain:    'puddle',
@@ -25,6 +32,8 @@ export const TILE_TRANSFORMS = {
         scorched: 'puddle',
         stone:    'puddle',
         swamp:    'water',
+        // Вода + пустое поле → восстанавливает урожай
+        farmland: 'farmland_ripe',
         // forest, ice, wall, puddle, steam, rubble — не реагируют
     },
     earth: {
@@ -36,13 +45,25 @@ export const TILE_TRANSFORMS = {
         puddle:   'swamp',
         swamp:    'plain',
         scorched: 'plain',
+        // Камень → камнепад (тайл остаётся stone, но спавним камни)
+        stone:    'stone',     // маркер: onTileChanged увидит stone→stone
+        // Деревня — повреждение по тайлам
+        village_square: 'rubble',
+        village_house:  'rubble',
+        village_road:   'rubble',
+        // Производственные тайлы
+        lumber_tile:    'plain',   // повалил деревья
+        mine_tile:      'rubble',  // камнепад
+        farmland:       'rubble',
+        farmland_ripe:  'rubble',
         // ice — ускорение валуна, не трансформация
-        // stone, wall, rubble — остановка / не реагируют
+        // wall, rubble — остановка / не реагируют
     },
     wind: {
-        // Ветер НЕ трансформирует тайлы через эту таблицу.
-        // Он сдувает пар и раздувает огонь — обрабатывается отдельной логикой.
         steam:    'plain',      // сдувает пар
+        // Ветер валит деревья в лесу
+        forest:         'plain',
+        lumber_tile:    'plain',
     },
 };
 
@@ -207,7 +228,10 @@ export function updateActiveTiles(dt) {
             for (const [nx, ny] of neighbors) {
                 if (!gameMap.isInBounds(nx, ny)) continue;
                 const nType = gameMap.getTile(nx, ny);
-                if (nType === 'forest' && Math.random() < 0.3 * dt) {
+                const flammable = nType === 'forest' || nType === 'lumber_tile' ||
+                    nType === 'farmland' || nType === 'farmland_ripe' ||
+                    nType === 'village_house' || nType === 'village_road';
+                if (flammable && Math.random() < 0.3 * dt) {
                     applySpellToTile('fire', nx, ny, 'fire');
                 }
             }

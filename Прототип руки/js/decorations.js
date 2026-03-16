@@ -2,7 +2,6 @@
 //  ДЕКОРАЦИИ — визуальные объекты на тайлах (деревья, камни, домики...)
 // ============================================================
 import { PIXEL_SCALE } from './constants.js';
-import { drawPixelArt, ctx as renderCtx } from './renderer.js';
 import { worldToScreen, camera } from './isometry.js';
 import { gameMap, FOG } from './Map.js';
 import {
@@ -182,55 +181,163 @@ export function removeDecorationsAt(ix, iy, filter) {
 }
 
 // ============================================================
+//  CALLBACK СПАВНА ПРЕДМЕТОВ (устанавливается из World.js)
+// ============================================================
+// cb(typeIndex, ix, iy, vx, vy, vz)
+let _onItemSpawnCb = null;
+export function setItemSpawnCallback(cb) { _onItemSpawnCb = cb; }
+
+function _spawnItem(typeIndex, ix, iy, vx, vy, vz) {
+    if (_onItemSpawnCb) _onItemSpawnCb(typeIndex, ix, iy, vx || 0, vy || 0, vz || 0);
+}
+
+// ============================================================
+//  ВСПОМОГАТЕЛЬНЫЕ: удаление декораций с тайла
+// ============================================================
+function _destroyAllDecosAt(ix, iy, cause) {
+    for (let i = decorations.length - 1; i >= 0; i--) {
+        const d = decorations[i];
+        if (d.tileIx !== ix || d.tileIy !== iy) continue;
+        destroyDecorationWithEffect(d, cause);
+        decorations.splice(i, 1);
+    }
+}
+
+function _destroyDecosAt(ix, iy, cause, filter) {
+    for (let i = decorations.length - 1; i >= 0; i--) {
+        const d = decorations[i];
+        if (d.tileIx !== ix || d.tileIy !== iy) continue;
+        if (filter && !filter(d)) continue;
+        destroyDecorationWithEffect(d, cause);
+        decorations.splice(i, 1);
+    }
+}
+
+// ============================================================
+//  СПАВН РЕСУРСОВ ИЗ ДЕКОРАЦИЙ ПРИ РАЗРУШЕНИИ ТАЙЛА
+// ============================================================
+// Дроп дерева из леса/лесопилки
+function _dropWood(ix, iy, cause) {
+    const count = 1 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < count; i++) {
+        const ox = ix + (Math.random() - 0.5) * 0.8;
+        const oy = iy + (Math.random() - 0.5) * 0.8;
+        const spread = cause === 'artillery' ? 3.0 : 1.5;
+        const vx = (Math.random() - 0.5) * spread;
+        const vy = (Math.random() - 0.5) * spread;
+        const vz = 1.5 + Math.random() * 2.0;
+        _spawnItem(2, ox, oy, vx, vy, vz);
+    }
+}
+
+// Камнепад: камни летят в стороны в 3D
+function _dropRocks(ix, iy, cause) {
+    const count = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = cause === 'artillery' ? (2.0 + Math.random() * 3.0) : (1.5 + Math.random() * 2.5);
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed;
+        const vz = 2.0 + Math.random() * 3.0;
+        const ox = ix + (Math.random() - 0.5) * 0.4;
+        const oy = iy + (Math.random() - 0.5) * 0.4;
+        _spawnItem(1, ox, oy, vx, vy, vz);
+    }
+}
+
+// Дроп пшеницы
+function _dropWheat(ix, iy) {
+    const count = 1 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < count; i++) {
+        const ox = ix + (Math.random() - 0.5) * 0.6;
+        const oy = iy + (Math.random() - 0.5) * 0.6;
+        _spawnItem(0, ox, oy, (Math.random() - 0.5) * 0.8, (Math.random() - 0.5) * 0.8, 1.0 + Math.random());
+    }
+}
+
+// ============================================================
 //  CALLBACK ПРИ СМЕНЕ ТАЙЛА
 // ============================================================
 export function onTileChanged(ix, iy, oldType, newType, cause) {
-    // Стена разрушена — удалить спрайт стены
+    // --- Стена разрушена ---
     if (oldType === 'wall' && newType !== 'wall') {
-        for (let i = decorations.length - 1; i >= 0; i--) {
-            const d = decorations[i];
-            if (d.tileIx !== ix || d.tileIy !== iy) continue;
-            if (d.spriteKey !== 'WALL_1') continue;
-            destroyDecorationWithEffect(d, cause);
-            decorations.splice(i, 1);
-        }
+        _destroyDecosAt(ix, iy, cause, d => d.spriteKey === 'WALL_1');
     }
 
+    // --- Камнепад: earth/artillery + stone → stone (тайл не меняется, но камни летят) ---
+    if (oldType === 'stone' && newType === 'stone' && (cause === 'earth' || cause === 'artillery')) {
+        _destroyDecosAt(ix, iy, cause, d => d.spriteKey === 'ROCK_1' || d.spriteKey === 'ROCK_2');
+        _dropRocks(ix, iy, cause);
+        return;
+    }
+
+    // --- Лес/лесопилка → plain (ветер, земля, артиллерия) ---
+    if ((oldType === 'forest' || oldType === 'lumber_tile') &&
+        (newType === 'plain' || newType === 'rubble')) {
+        _destroyDecosAt(ix, iy, cause, d => d.spriteKey.startsWith('TREE'));
+        _dropWood(ix, iy, cause);
+        return;
+    }
+
+    // --- Горение: уничтожает всё на тайле ---
     if (newType === 'burning' || newType === 'wall' || newType === 'water') {
-        // Сначала спавним частицы, потом удаляем
-        for (let i = decorations.length - 1; i >= 0; i--) {
-            const d = decorations[i];
-            if (d.tileIx !== ix || d.tileIy !== iy) continue;
-            destroyDecorationWithEffect(d, cause);
-            decorations.splice(i, 1);
+        // Поля/фермы → дроп пшеницы перед сгоранием (если причина не огонь)
+        if ((oldType === 'farmland' || oldType === 'farmland_ripe') && cause !== 'fire') {
+            _dropWheat(ix, iy);
         }
-        // Каменная стена получает спрайт
+        _destroyAllDecosAt(ix, iy, cause);
         if (newType === 'wall') {
-            decorations.push({
-                ix, iy, tileIx: ix, tileIy: iy,
-                spriteKey: 'WALL_1',
-            });
+            decorations.push({ ix, iy, tileIx: ix, tileIy: iy, spriteKey: 'WALL_1' });
         }
-    } else if (newType === 'scorched') {
-        // Убираем деревья, оставляем камни
-        for (let i = decorations.length - 1; i >= 0; i--) {
-            const d = decorations[i];
-            if (d.tileIx !== ix || d.tileIy !== iy) continue;
-            if (!d.spriteKey.startsWith('TREE')) continue;
-            destroyDecorationWithEffect(d, cause);
-            decorations.splice(i, 1);
+        return;
+    }
+
+    // --- Щебень (earth/artillery по деревне, производственным тайлам) ---
+    if (newType === 'rubble') {
+        // Деревня → дроп камня из обломков
+        if (oldType === 'village_house' || oldType === 'village_square') {
+            _destroyAllDecosAt(ix, iy, cause);
+            _dropRocks(ix, iy, cause);
+        } else if (oldType === 'mine_tile') {
+            _destroyAllDecosAt(ix, iy, cause);
+            _dropRocks(ix, iy, cause);
+        } else if (oldType === 'farmland' || oldType === 'farmland_ripe') {
+            _destroyAllDecosAt(ix, iy, cause);
+            _dropWheat(ix, iy);
+        } else if (oldType === 'village_road') {
+            _destroyAllDecosAt(ix, iy, cause);
+        } else {
+            _destroyAllDecosAt(ix, iy, cause);
         }
-    } else if (newType === 'plain' || newType === 'puddle' || newType === 'swamp') {
-        // Лес срублен/затоплен — убираем деревья
-        if (oldType === 'forest') {
-            for (let i = decorations.length - 1; i >= 0; i--) {
-                const d = decorations[i];
-                if (d.tileIx !== ix || d.tileIy !== iy) continue;
-                if (!d.spriteKey.startsWith('TREE')) continue;
-                destroyDecorationWithEffect(d, cause);
-                decorations.splice(i, 1);
-            }
-        }
+        return;
+    }
+
+    // --- Scorched: убираем деревья и урожай, оставляем камни ---
+    if (newType === 'scorched') {
+        _destroyDecosAt(ix, iy, cause, d =>
+            d.spriteKey.startsWith('TREE') ||
+            d.spriteKey.startsWith('CROP') ||
+            d.spriteKey.startsWith('VILLAGE') ||
+            d.spriteKey === 'GRASS_1');
+        return;
+    }
+
+    // --- Вода + пустое поле → спелый урожай ---
+    if (oldType === 'farmland' && newType === 'farmland_ripe') {
+        // Убираем зелёный урожай, ставим спелый
+        _destroyDecosAt(ix, iy, cause, d => d.spriteKey === 'CROP_GREEN');
+        decorations.push({
+            ix: ix + (Math.random() - 0.5) * 0.3,
+            iy: iy + (Math.random() - 0.5) * 0.3,
+            tileIx: ix, tileIy: iy,
+            spriteKey: 'CROP_RIPE',
+        });
+        return;
+    }
+
+    // --- Лес → puddle/swamp (вода) ---
+    if ((newType === 'plain' || newType === 'puddle' || newType === 'swamp') && oldType === 'forest') {
+        _destroyDecosAt(ix, iy, cause, d => d.spriteKey.startsWith('TREE'));
     }
 }
 
@@ -265,15 +372,13 @@ export function addDecorationsToRenderList(renderList, canvas) {
         const ox = s.x - (sp.w * scale) / 2;
         const oy = s.y - sp.h * scale;
 
-        const _ox = ox, _oy = oy, _sp = sp, _scale = scale;
-        const _explored = (fog === FOG.EXPLORED);
         renderList.push({
+            type: 'decoration',
             depth,
-            draw: () => {
-                if (_explored) renderCtx.globalAlpha = 0.35;
-                drawPixelArt(_ox, _oy, _sp.pixels, _scale);
-                if (_explored) renderCtx.globalAlpha = 1.0;
-            },
+            ox, oy,
+            pixels: sp.pixels,
+            scale,
+            explored: fog === FOG.EXPLORED,
         });
     }
 }

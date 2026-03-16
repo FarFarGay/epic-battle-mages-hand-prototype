@@ -23,6 +23,14 @@ const SELECTABLE = new Set(['free', 'moving_to_point', 'busy', 'returning', 'war
 
 let rmbStart = null; // { x, y } — начало ПКМ нажатия
 
+// spriteKey декорации → typeIndex ресурса (ITEM_TYPES)
+function _decoToResource(spriteKey) {
+    if (spriteKey === 'TREE_1' || spriteKey === 'TREE_2' || spriteKey === 'TREE_3') return 2; // дерево
+    if (spriteKey === 'ROCK_1' || spriteKey === 'ROCK_2') return 1; // камень
+    if (spriteKey === 'CROP_GREEN' || spriteKey === 'CROP_RIPE') return 0; // пшеница
+    return -1;
+}
+
 // ── Вспомогательные функции ────────────────────────────────
 
 function findEnemyAt(ix, iy) {
@@ -272,23 +280,27 @@ export function initInput(canvas, hand, world, cam, statusEl) {
         }
 
         if (world.hoveredDeco !== null && handFree) {
-            // Вырвать дерево → создать ресурс дерева в руке
+            // Вырвать декорацию → создать ресурс в руке
             const decos = world.decorations;
             const deco = decos[world.hoveredDeco];
-            destroyDecorationWithEffect(deco, 'hand');
-            decos.splice(world.hoveredDeco, 1);
-            world.hoveredDeco = null;
+            const typeIdx = _decoToResource(deco.spriteKey);
+            if (typeIdx < 0) { world.hoveredDeco = null; }
+            else {
+                destroyDecorationWithEffect(deco, 'hand');
+                decos.splice(world.hoveredDeco, 1);
+                world.hoveredDeco = null;
 
-            const item = new Item(2, hand.isoX, hand.isoY);
-            item.state = 'lifting';
-            item.stateTime = 0;
-            item.liftProgress = 0;
-            items.push(item);
-            hand.grabbedItem = items.length - 1;
-            hand.state = 'closing';
-            hand.animProgress = 0;
-            hand.velocityHistory = [];
-            statusEl.textContent = 'Вырвано: Дерево!';
+                const item = new Item(typeIdx, hand.isoX, hand.isoY);
+                item.state = 'lifting';
+                item.stateTime = 0;
+                item.liftProgress = 0;
+                items.push(item);
+                hand.grabbedItem = items.length - 1;
+                hand.state = 'closing';
+                hand.animProgress = 0;
+                hand.velocityHistory = [];
+                statusEl.textContent = `Вырвано: ${ITEM_TYPES[typeIdx].name}!`;
+            }
         } else if (world.hoveredItem !== null && handFree) {
             const item = items[world.hoveredItem];
             if (item.state !== 'carried' && item.state !== 'lifting') {

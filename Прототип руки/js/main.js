@@ -75,7 +75,8 @@ let mouseY = canvas.height / 2;
 let mouseDown = false;
 let hoveredItem = null;
 let hoveredMinion = null;
-let hoveredDeco = null; // индекс в decorations[] (только TREE_1/TREE_2)
+let hoveredDeco = null; // индекс в decorations[]
+const HARVESTABLE_SPRITES = new Set(['TREE_1','TREE_2','TREE_3','ROCK_1','ROCK_2','CROP_GREEN','CROP_RIPE']);
 
 // Таймер апгрейда обычных гоблинов в воинов
 let warriorUpgradeTimer = WARRIOR_UPGRADE_INTERVAL * Math.random(); // стагрированный старт
@@ -467,26 +468,32 @@ function updateArtillery(dt) {
                 }
             }
 
-            // Тайлы: стены → щебень, лес → plain + дроп дерева
+            // Тайлы: артиллерия рушит всё — лес, камни, деревни, поля, стены
             {
                 const blastR = Math.ceil(ARTILLERY_BLAST_RADIUS);
                 const blastR2 = ARTILLERY_BLAST_RADIUS * ARTILLERY_BLAST_RADIUS;
                 const bix = Math.round(proj.ix), biy = Math.round(proj.iy);
+                const ARTILLERY_TRANSFORMS = {
+                    wall:           'rubble',
+                    forest:         'plain',
+                    lumber_tile:    'plain',
+                    stone:          'stone',     // камнепад (тайл остаётся)
+                    mine_tile:      'rubble',
+                    village_square: 'rubble',
+                    village_house:  'rubble',
+                    village_road:   'scorched',
+                    farmland:       'rubble',
+                    farmland_ripe:  'rubble',
+                    village:        'rubble',
+                };
                 for (let dx = -blastR; dx <= blastR; dx++) {
                     for (let dy = -blastR; dy <= blastR; dy++) {
                         if (dx * dx + dy * dy > blastR2) continue;
                         const tix = bix + dx, tiy = biy + dy;
                         const tile = gameMap.getTile(tix, tiy);
-                        if (tile === 'wall') {
-                            gameMap.setTile(tix, tiy, 'rubble', 'artillery');
-                        } else if (tile === 'forest') {
-                            gameMap.setTile(tix, tiy, 'plain', 'artillery');
-                            const count = 1 + Math.floor(Math.random() * 2);
-                            for (let i = 0; i < count; i++) {
-                                items.push(new Item(2,
-                                    tix + (Math.random() - 0.5) * 0.8,
-                                    tiy + (Math.random() - 0.5) * 0.8));
-                            }
+                        const newTile = ARTILLERY_TRANSFORMS[tile];
+                        if (newTile) {
+                            gameMap.setTile(tix, tiy, newTile, 'artillery');
                         }
                     }
                 }
@@ -833,7 +840,9 @@ function update(dt) {
                     ]) {
                         if (!gameMap.isInBounds(nx, ny)) continue;
                         const nt = gameMap.getTile(nx, ny);
-                        if (nt === 'forest' || nt === 'plain' || nt === 'village')
+                        if (nt === 'forest' || nt === 'plain' || nt === 'village' ||
+                            nt === 'farmland' || nt === 'farmland_ripe' || nt === 'lumber_tile' ||
+                            nt === 'village_house' || nt === 'village_road')
                             applySpellToTile('fire', nx, ny, 'wind');
                     }
                 }
@@ -1073,10 +1082,10 @@ function update(dt) {
                 hoveredDeco = null;
             }
         }
-        // Деревья (TREE_1, TREE_2) — можно вырвать рукой
+        // Ресурсные декорации — можно вырвать рукой
         for (let i = 0; i < decorations.length; i++) {
             const d = decorations[i];
-            if (d.spriteKey !== 'TREE_1' && d.spriteKey !== 'TREE_2') continue;
+            if (!HARVESTABLE_SPRITES.has(d.spriteKey)) continue;
             if (gameMap.getFog(d.tileIx, d.tileIy) !== FOG.VISIBLE) continue;
             const dx = hand.isoX - d.ix;
             const dy = hand.isoY - d.iy;
@@ -1740,6 +1749,10 @@ function render() {
                 spellProjectile.draw(hand);
             }
             hand.draw();
+        } else if (obj.type === 'decoration') {
+            if (obj.explored) ctx.globalAlpha = 0.35;
+            drawPixelArt(obj.ox, obj.oy, obj.pixels, obj.scale);
+            if (obj.explored) ctx.globalAlpha = 1.0;
         } else if (typeof obj.draw === 'function') {
             obj.draw();
         }
