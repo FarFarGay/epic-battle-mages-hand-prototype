@@ -13,7 +13,7 @@ import { Fireball } from './Fireball.js';
 import { SpellProjectile } from './SpellProjectile.js';
 import { generateMap, placeResources, placeDecorations, lastVillages } from './mapGenerator.js?v=11';
 import { ProductionZone } from './ProductionZone.js';
-import { onTileChanged, decoParticles, setItemSpawnCallback } from './decorations.js?v=10';
+import { onTileChanged, decoParticles, decorations as decoArr, setItemSpawnCallback } from './decorations.js?v=10';
 export { decoParticles };
 
 // Регистрируем callback изменения тайлов → обновление декораций
@@ -248,14 +248,14 @@ export function initWorld() {
                 Math.round(sx / tiles.length), Math.round(sy / tiles.length),
                 tiles, v.id
             );
-            // Начальный harvestReady для ферм с farmland_ripe
+            // Начальный harvestReady для ферм (по количеству farmland_ripe тайлов)
             if (zoneType === 'farm') {
                 let ripe = 0;
                 for (const t of tiles) {
                     if (gameMap.getTile(t.ix, t.iy) === 'farmland_ripe') ripe++;
                 }
                 zone.harvestReady = ripe;
-                zone._lastRipeCount = ripe;
+                zone._lastSyncCount = ripe;
             }
             productionZones.push(zone);
         }
@@ -264,6 +264,22 @@ export function initWorld() {
 
     // 2. Декорации
     placeDecorations(gameMap.seed);
+
+    // 2b. Начальный harvestReady для шахт/лесоповалов (по количеству декораций)
+    for (const zone of productionZones) {
+        if (zone.type === 'farm') continue;
+        const spriteKeys = zone.type === 'lumber'
+            ? new Set(['TREE_1', 'TREE_2', 'TREE_3'])
+            : new Set(['ROCK_1', 'ROCK_2']);
+        let count = 0;
+        for (const d of decoArr) {
+            if (zone._tileKeys.has(`${d.tileIx},${d.tileIy}`) && spriteKeys.has(d.spriteKey)) {
+                count++;
+            }
+        }
+        zone.harvestReady = count;
+        zone._lastSyncCount = count;
+    }
 
     // 3. Ресурсы
     const resourcePositions = placeResources(gameMap.seed);

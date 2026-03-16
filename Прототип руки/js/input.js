@@ -286,15 +286,18 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             const typeIdx = _decoToResource(deco.spriteKey);
             if (typeIdx < 0) { world.hoveredDeco = null; }
             else {
-                // Если сорвали спелый урожай — уменьшить harvestReady зоны + вернуть тайл
-                const wasRipe = deco.spriteKey === 'CROP_RIPE';
-                const ripeTileIx = deco.tileIx;
-                const ripeTileIy = deco.tileIy;
-                if (wasRipe) {
-                    const zone = findZoneAtTile(ripeTileIx, ripeTileIy);
-                    if (zone && zone.harvestReady > 0) {
+                // Уменьшить harvestReady зоны при сборе ресурса из зоны
+                const decoTileIx = deco.tileIx;
+                const decoTileIy = deco.tileIy;
+                const zone = findZoneAtTile(decoTileIx, decoTileIy);
+                if (zone && zone.harvestReady > 0) {
+                    const isZoneResource =
+                        (zone.type === 'farm'   && deco.spriteKey === 'CROP_RIPE') ||
+                        (zone.type === 'lumber' && deco.spriteKey.startsWith('TREE')) ||
+                        (zone.type === 'mine'   && deco.spriteKey.startsWith('ROCK'));
+                    if (isZoneResource) {
                         zone.harvestReady--;
-                        zone._lastRipeCount = Math.max(0, zone._lastRipeCount - 1);
+                        zone._lastSyncCount = Math.max(0, zone._lastSyncCount - 1);
                     }
                 }
 
@@ -302,9 +305,9 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                 decos.splice(world.hoveredDeco, 1);
                 world.hoveredDeco = null;
 
-                // Тайл обратно в farmland → onTileChanged добавит CROP_GREEN
-                if (wasRipe && gameMap.getTile(ripeTileIx, ripeTileIy) === 'farmland_ripe') {
-                    gameMap.setTile(ripeTileIx, ripeTileIy, 'farmland', 'harvest');
+                // Ферма: тайл обратно в farmland → onTileChanged добавит CROP_GREEN
+                if (deco.spriteKey === 'CROP_RIPE' && gameMap.getTile(decoTileIx, decoTileIy) === 'farmland_ripe') {
+                    gameMap.setTile(decoTileIx, decoTileIy, 'farmland', 'harvest');
                 }
 
                 const item = new Item(typeIdx, hand.isoX, hand.isoY);

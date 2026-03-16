@@ -2,6 +2,7 @@
 //  ЗОНА ПРОИЗВОДСТВА — рост ресурсов + магия
 // ============================================================
 import { gameMap } from './Map.js';
+import { decorations } from './decorations.js?v=10';
 
 // Период роста (секунды до +1 harvestReady при rate=1.0, efficiency=1.0)
 const GROWTH_PERIOD = { farm: 30, mine: 45, lumber: 35 };
@@ -10,6 +11,18 @@ const GROWTH_PERIOD = { farm: 30, mine: 45, lumber: 35 };
 const DEAD_TILES = new Set([
     'burning', 'rubble', 'swamp', 'water', 'scorched', 'steam', 'puddle',
 ]);
+
+// Спрайты ресурсов по типу зоны
+const ZONE_SPRITES = {
+    lumber: ['TREE_1', 'TREE_2', 'TREE_3'],
+    mine:   ['ROCK_1', 'ROCK_2'],
+};
+
+// Тип тайла зоны (для проверки что тайл жив)
+const ZONE_TILE_TYPE = {
+    lumber: 'lumber_tile',
+    mine:   'mine_tile',
+};
 
 export class ProductionZone {
     /**
@@ -38,8 +51,11 @@ export class ProductionZone {
         this.boostTimer    = 0;
         this.boostMult     = 1.0;
 
-        // Кэш: последнее известное число «ripe» тайлов (для визуала фермы)
-        this._lastRipeCount = 0;
+        // Кэш: последний синхронизированный визуал (тайлы для farm, декорации для lumber/mine)
+        this._lastSyncCount = 0;
+
+        // Set координат тайлов зоны (для быстрого поиска декораций)
+        this._tileKeys = new Set(tiles.map(t => `${t.ix},${t.iy}`));
     }
 
     // ── Тик производства ─────────────────────────────────────
@@ -81,19 +97,19 @@ export class ProductionZone {
             }
         }
 
-        // Визуал фермы: синхронизировать farmland ↔ farmland_ripe
+        // Синхронизация визуала
         if (this.type === 'farm') {
             this._syncFarmVisual();
+        } else {
+            this._syncResourceVisual();
         }
     }
 
     // ── Синхронизация визуала фермы ──────────────────────────
-    // Когда harvestReady растёт → превращаем farmland → farmland_ripe
-    // Когда harvestReady падает → превращаем farmland_ripe → farmland
+    // farmland ↔ farmland_ripe через setTile → onTileChanged → декорации
     _syncFarmVisual() {
-        // Считаем сколько тайлов должны быть ripe
         const targetRipe = Math.min(this.harvestReady, this.tiles.length);
-        if (targetRipe === this._lastRipeCount) return;
+        if (targetRipe === this._lastSyncCount) return;
 
         let currentRipe = 0;
         for (const t of this.tiles) {
@@ -101,7 +117,6 @@ export class ProductionZone {
         }
 
         if (currentRipe < targetRipe) {
-            // Нужно больше ripe — превращаем farmland → farmland_ripe
             for (const t of this.tiles) {
                 if (currentRipe >= targetRipe) break;
                 if (gameMap.getTile(t.ix, t.iy) === 'farmland') {
@@ -110,7 +125,6 @@ export class ProductionZone {
                 }
             }
         } else if (currentRipe > targetRipe) {
-            // Нужно меньше ripe — превращаем farmland_ripe → farmland
             for (const t of this.tiles) {
                 if (currentRipe <= targetRipe) break;
                 if (gameMap.getTile(t.ix, t.iy) === 'farmland_ripe') {
@@ -120,7 +134,50 @@ export class ProductionZone {
             }
         }
 
-        this._lastRipeCount = targetRipe;
+        this._lastSyncCount = targetRipe;
+    }
+
+    // ── Синхронизация визуала шахты/лесоповала ───────────────
+    // Добавляет/не трогает декорации (TREE/ROCK) на тайлах зоны
+    _syncResourceVisual() {
+        const targetCount = Math.min(this.harvestReady, this.tiles.length);
+        if (targetCount === this._lastSyncCount) return;
+
+        const spriteKeys = ZONE_SPRITES[this.type];
+        const tileType   = ZONE_TILE_TYPE[this.type];
+        const spriteSet  = new Set(spriteKeys);
+
+        // Подсчёт текущих декораций зоны
+        const tilesWithDeco = new Set();
+        for (const d of decorations) {
+            if (this._tileKeys.has(`${d.tileIx},${d.tileIy}`) && spriteSet.has(d.spriteKey)) {
+                tilesWithDeco.add(`${d.tileIx},${d.tileIy}`);
+            }
+        }
+
+        let currentCount = tilesWithDeco.size;
+
+        if (currentCount < targetCount) {
+            // Нужно больше декораций — добавить на тайлы без них
+            for (const t of this.tiles) {
+                if (currentCount >= targetCount) break;
+                const key = `${t.ix},${t.iy}`;
+                if (tilesWithDeco.has(key)) continue;
+                if (gameMap.getTile(t.ix, t.iy) !== tileType) continue;
+
+                const spriteKey = spriteKeys[Math.floor(Math.random() * spriteKeys.length)];
+                decorations.push({
+                    ix: t.ix + (Math.random() - 0.5) * 0.3,
+                    iy: t.iy + (Math.random() - 0.5) * 0.3,
+                    tileIx: t.ix, tileIy: t.iy,
+                    spriteKey,
+                });
+                currentCount++;
+            }
+        }
+        // Не убираем лишние — они удаляются при ручном сборе или разрушении тайлов
+
+        this._lastSyncCount = targetCount;
     }
 
     // ── Секунды до следующего harvestReady (для дебага) ─────
