@@ -9,7 +9,7 @@ import {
 } from './constants.js';
 import { MINION_H } from './sprites.js?v=7';
 import { screenToIso, worldToScreen, screenToCanvas } from './isometry.js';
-import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellProjectile, monkTotem, commandMarkers, debugFlags } from './World.js?v=11';
+import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellProjectile, monkTotem, commandMarkers, debugFlags, findZoneAtTile } from './World.js?v=11';
 import { applySpellToTile } from './tileEffects.js?v=2';
 import { gameMap } from './Map.js';
 import { destroyDecorationWithEffect } from './decorations.js?v=10';
@@ -286,9 +286,26 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             const typeIdx = _decoToResource(deco.spriteKey);
             if (typeIdx < 0) { world.hoveredDeco = null; }
             else {
+                // Если сорвали спелый урожай — уменьшить harvestReady зоны + вернуть тайл
+                const wasRipe = deco.spriteKey === 'CROP_RIPE';
+                const ripeTileIx = deco.tileIx;
+                const ripeTileIy = deco.tileIy;
+                if (wasRipe) {
+                    const zone = findZoneAtTile(ripeTileIx, ripeTileIy);
+                    if (zone && zone.harvestReady > 0) {
+                        zone.harvestReady--;
+                        zone._lastRipeCount = Math.max(0, zone._lastRipeCount - 1);
+                    }
+                }
+
                 destroyDecorationWithEffect(deco, 'hand');
                 decos.splice(world.hoveredDeco, 1);
                 world.hoveredDeco = null;
+
+                // Тайл обратно в farmland → onTileChanged добавит CROP_GREEN
+                if (wasRipe && gameMap.getTile(ripeTileIx, ripeTileIy) === 'farmland_ripe') {
+                    gameMap.setTile(ripeTileIx, ripeTileIy, 'farmland', 'harvest');
+                }
 
                 const item = new Item(typeIdx, hand.isoX, hand.isoY);
                 item.state = 'lifting';

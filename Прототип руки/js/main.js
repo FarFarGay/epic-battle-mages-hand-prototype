@@ -23,10 +23,9 @@ import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth, worldToScreen } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers, decoParticles, villages } from './World.js?v=11';
+import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers, decoParticles, villages, productionZones } from './World.js?v=11';
 import { initInput } from './input.js';
-import { updateActiveTiles, applySpellInRadius, applySpellToTile, IMPACT_DUR, FADING_DUR } from './tileEffects.js?v=2';
-import { Item } from './Item.js';
+import { updateActiveTiles, applySpellInRadius, applySpellToTile, handleSpellOnZone, IMPACT_DUR, FADING_DUR } from './tileEffects.js?v=2';
 import { addDecorationsToRenderList, decorations } from './decorations.js?v=10';
 
 // Тайловые частицы — одноразовые эффекты (всплеск воды, взрыв ветра)
@@ -490,6 +489,7 @@ function updateArtillery(dt) {
                     for (let dy = -blastR; dy <= blastR; dy++) {
                         if (dx * dx + dy * dy > blastR2) continue;
                         const tix = bix + dx, tiy = biy + dy;
+                        handleSpellOnZone('artillery', tix, tiy);
                         const tile = gameMap.getTile(tix, tiy);
                         const newTile = ARTILLERY_TRANSFORMS[tile];
                         if (newTile) {
@@ -676,6 +676,11 @@ function update(dt) {
     // ── ОБНОВЛЕНИЕ АКТИВНЫХ ТАЙЛОВ (burning → scorched, puddle → plain и т.д.)
     updateActiveTiles(dt);
 
+    // ── ПРОИЗВОДСТВО ЗОН ──────────────────────────────────────
+    for (const zone of productionZones) {
+        zone.updateProduction(dt);
+    }
+
     // ── ОГНЕННЫЙ ШАР — обновление ──────────────────────────────
     fireball.update(dt, hand, triggerScreenShake);
 
@@ -713,6 +718,19 @@ function update(dt) {
                             m.pendingBloodEffect = { type: 'hit', ix: m.ix, iy: m.iy };
                         }
                     }
+                }
+            }
+        }
+
+        // Зоны производства — обработать ДО трансформации тайлов
+        {
+            const rcx = Math.round(ex), rcy = Math.round(ey);
+            const ri = Math.ceil(FIREBALL_TILE_RADIUS);
+            const r2 = FIREBALL_TILE_RADIUS * FIREBALL_TILE_RADIUS;
+            for (let dy = -ri; dy <= ri; dy++) {
+                for (let dx = -ri; dx <= ri; dx++) {
+                    if (dx * dx + dy * dy > r2) continue;
+                    handleSpellOnZone('fire', rcx + dx, rcy + dy);
                 }
             }
         }
@@ -768,19 +786,25 @@ function update(dt) {
                     _spawnBoulderCrashParticles(ex, ey);
                     spellProjectile.state = 'done';
                 } else {
+                    handleSpellOnZone('earth', tix, tiy);
                     applySpellToTile('earth', tix, tiy, 'earth');
-                    if (tileType === 'forest') {
-                        const count = 1 + Math.floor(Math.random() * 2);
-                        for (let i = 0; i < count; i++) {
-                            items.push(new Item(2,
-                                tix + (Math.random() - 0.5) * 0.8,
-                                tiy + (Math.random() - 0.5) * 0.8));
-                        }
-                    }
+                    // Дроп дерева обрабатывается через onTileChanged → _dropWood
                     spellProjectile.startRolling();
                 }
             }
         } else {
+            // Зоны производства — обработать ДО трансформации тайлов
+            {
+                const rcx = Math.round(ex), rcy = Math.round(ey);
+                const ri = Math.ceil(spellRadius);
+                const r2 = spellRadius * spellRadius;
+                for (let dy = -ri; dy <= ri; dy++) {
+                    for (let dx = -ri; dx <= ri; dx++) {
+                        if (dx * dx + dy * dy > r2) continue;
+                        handleSpellOnZone(spellKey, rcx + dx, rcy + dy);
+                    }
+                }
+            }
             applySpellInRadius(spellKey, ex, ey, spellRadius, spellKey);
         }
 
@@ -915,19 +939,10 @@ function update(dt) {
                 _spawnBoulderCrashParticles(spellProjectile.ix, spellProjectile.iy);
                 spellProjectile.stopRolling();
             } else {
-                const oldType = tileType;
-                // Трансформация тайла
+                // Зоны производства — обработать ДО трансформации
+                handleSpellOnZone('earth', tix, tiy);
+                // Трансформация тайла (дроп ресурсов через onTileChanged)
                 applySpellToTile('earth', tix, tiy, 'earth');
-
-                // Дроп дерева при повалке леса
-                if (oldType === 'forest') {
-                    const count = 1 + Math.floor(Math.random() * 2);
-                    for (let i = 0; i < count; i++) {
-                        items.push(new Item(2,
-                            tix + (Math.random() - 0.5) * 0.8,
-                            tiy + (Math.random() - 0.5) * 0.8));
-                    }
-                }
 
                 // Скорость на спец-тайлах
                 if (tileType === 'ice') {
@@ -2538,10 +2553,17 @@ function render() {
     // ── ПАНЕЛЬ ДЕРЕВЕНЬ (V) ─────────────────────────────────────
     if (debugFlags.showVillages && villages.length > 0) {
         const px = 8, py = 28;
+        // Подсчитаем высоту панели (деревня + её зоны)
+        let totalLines = 1; // заголовок
+        for (const v of villages) {
+            totalLines++; // строка деревни
+            const vZones = productionZones.filter(z => z.villageId === v.id);
+            if (vZones.length > 0) totalLines++; // строка зон
+        }
         ctx.save();
         ctx.globalAlpha = 0.8;
         ctx.fillStyle = '#0a0a1a';
-        ctx.fillRect(px - 4, py - 12, 340, 14 + villages.length * 14);
+        ctx.fillRect(px - 4, py - 12, 440, 14 + totalLines * 14);
         ctx.restore();
 
         ctx.fillStyle = '#ccaa66';
@@ -2549,16 +2571,30 @@ function render() {
         ctx.fillText('[V] ДЕРЕВНИ', px, py);
 
         ctx.font = '10px monospace';
-        for (let vi = 0; vi < villages.length; vi++) {
-            const v = villages[vi];
-            const zones = [];
-            if (v.productionZoneTiles.farm)   zones.push('farm');
-            if (v.productionZoneTiles.mine)   zones.push('mine');
-            if (v.productionZoneTiles.lumber) zones.push('lumber');
+        let lineIdx = 0;
+        for (const v of villages) {
+            lineIdx++;
             const pop = v.houseTiles.length * 2;
-            const line = `${v.name.padEnd(12)} ${v.personality}  ${v.sizeType.padEnd(6)} pop:${String(pop).padStart(2)}  at(${v.centerIx},${v.centerIy})  zones: ${zones.join(',') || 'none'}`;
+            const header = `${v.name.padEnd(12)} ${v.personality}  ${v.sizeType.padEnd(6)} pop:${String(pop).padStart(2)}  at(${v.centerIx},${v.centerIy})`;
             ctx.fillStyle = '#99aa88';
-            ctx.fillText(line, px, py + 14 + vi * 14);
+            ctx.fillText(header, px, py + lineIdx * 14);
+
+            // Зоны производства с детальным статусом
+            const vZones = productionZones.filter(z => z.villageId === v.id);
+            if (vZones.length > 0) {
+                lineIdx++;
+                const zoneParts = vZones.map(z => {
+                    const status = z.damaged ? 'DMG' : 'ok';
+                    let info = `${z.type}(${status}, ${z.harvestReady}/${z.maxHarvest}`;
+                    const ttn = z.timeToNext;
+                    if (ttn >= 0) info += `, next:${Math.ceil(ttn)}s`;
+                    if (z.boosted) info += `, boost:${Math.ceil(z.boostTimer)}s`;
+                    info += ')';
+                    return info;
+                });
+                ctx.fillStyle = '#88aacc';
+                ctx.fillText(`  zones: ${zoneParts.join(' ')}`, px, py + lineIdx * 14);
+            }
         }
     }
 }

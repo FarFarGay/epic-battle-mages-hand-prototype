@@ -2,7 +2,7 @@
 //  ТАЙЛОВЫЕ ЭФФЕКТЫ — трансформации заклинаний и влияние на юнитов
 // ============================================================
 import { gameMap } from './Map.js';
-import { activeTiles } from './World.js?v=11';
+import { activeTiles, findZoneAtTile } from './World.js?v=11';
 
 // ============================================================
 //  ТАБЛИЦА ТРАНСФОРМАЦИЙ: spell × currentTile → newTile
@@ -32,8 +32,7 @@ export const TILE_TRANSFORMS = {
         scorched: 'puddle',
         stone:    'puddle',
         swamp:    'water',
-        // Вода + пустое поле → восстанавливает урожай
-        farmland: 'farmland_ripe',
+        // farmland — НЕ трансформируется, вода бустит зону производства (handleSpellOnZone)
         // forest, ice, wall, puddle, steam, rubble — не реагируют
     },
     earth: {
@@ -250,4 +249,38 @@ export function updateActiveTiles(dt) {
 export function getTileEffect(ix, iy) {
     const tileType = gameMap.getTile(Math.round(ix), Math.round(iy));
     return TILE_EFFECTS[tileType] || null;
+}
+
+// ============================================================
+//  ВЗАИМОДЕЙСТВИЕ ЗАКЛИНАНИЙ С ЗОНАМИ ПРОИЗВОДСТВА
+// ============================================================
+// Вызывается ДО applySpellToTile для каждого затронутого тайла.
+// Возвращает true если зона была затронута.
+export function handleSpellOnZone(spell, ix, iy) {
+    const zone = findZoneAtTile(ix, iy);
+    if (!zone) return false;
+
+    switch (spell) {
+        case 'water':
+            if (zone.type === 'farm') {
+                zone.applyBoost(2.0, 60); // ×2 скорость роста на 60 сек
+            }
+            break;
+
+        case 'wind':
+            if (zone.type === 'farm') {
+                zone.applyBoost(1.5, 30); // ×1.5 на 30 сек
+            }
+            break;
+
+        case 'earth':
+        case 'fire':
+        case 'artillery':
+            // Физические эффекты (дроп ресурсов, разрушение) уже обработаны
+            // через TILE_TRANSFORMS → onTileChanged → _dropWood/_dropRocks/_dropWheat.
+            // Зона пометится damaged автоматически в updateProduction.
+            break;
+    }
+
+    return true;
 }

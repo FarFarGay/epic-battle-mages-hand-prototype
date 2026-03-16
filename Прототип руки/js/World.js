@@ -12,6 +12,7 @@ import { Castle } from './Castle.js';
 import { Fireball } from './Fireball.js';
 import { SpellProjectile } from './SpellProjectile.js';
 import { generateMap, placeResources, placeDecorations, lastVillages } from './mapGenerator.js?v=11';
+import { ProductionZone } from './ProductionZone.js';
 import { onTileChanged, decoParticles, setItemSpawnCallback } from './decorations.js?v=10';
 export { decoParticles };
 
@@ -76,8 +77,28 @@ export const monkTotem       = { active: false, ix: 0, iy: 0 };
 export const commandMarkers  = [];
 export const activeTiles     = [];
 export let   villages        = [];
+export let   productionZones = [];
 
 export let castle = null;
+
+// ============================================================
+//  ПОИСК ЗОНЫ ПО ТАЙЛУ
+// ============================================================
+// Кэш: координаты → зона (перестраивается при initWorld)
+const _tileToZone = new Map();
+
+export function findZoneAtTile(ix, iy) {
+    return _tileToZone.get(`${ix},${iy}`) || null;
+}
+
+function _rebuildTileToZoneCache() {
+    _tileToZone.clear();
+    for (const z of productionZones) {
+        for (const t of z.tiles) {
+            _tileToZone.set(`${t.ix},${t.iy}`, z);
+        }
+    }
+}
 
 // ============================================================
 //  СТЕНА ВОИНОВ
@@ -211,6 +232,35 @@ export function initWorld() {
     // 1. Генерация карты (биомы + высоты + деревни)
     generateMap(gameMap.seed);
     villages = lastVillages;
+
+    // 1b. Зоны производства из деревень
+    productionZones = [];
+    for (const v of villages) {
+        const pzt = v.productionZoneTiles;
+        for (const zoneType of ['farm', 'mine', 'lumber']) {
+            const tiles = pzt[zoneType];
+            if (!tiles || tiles.length === 0) continue;
+            // Центр зоны — среднее координат тайлов
+            let sx = 0, sy = 0;
+            for (const t of tiles) { sx += t.ix; sy += t.iy; }
+            const zone = new ProductionZone(
+                `${v.id}_${zoneType}`, zoneType,
+                Math.round(sx / tiles.length), Math.round(sy / tiles.length),
+                tiles, v.id
+            );
+            // Начальный harvestReady для ферм с farmland_ripe
+            if (zoneType === 'farm') {
+                let ripe = 0;
+                for (const t of tiles) {
+                    if (gameMap.getTile(t.ix, t.iy) === 'farmland_ripe') ripe++;
+                }
+                zone.harvestReady = ripe;
+                zone._lastRipeCount = ripe;
+            }
+            productionZones.push(zone);
+        }
+    }
+    _rebuildTileToZoneCache();
 
     // 2. Декорации
     placeDecorations(gameMap.seed);

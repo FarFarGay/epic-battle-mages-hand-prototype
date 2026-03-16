@@ -245,6 +245,22 @@ function _dropRocks(ix, iy, cause) {
     }
 }
 
+// Дроп руды из шахты: 70% камень, 30% железо
+function _dropMineOre(ix, iy, cause) {
+    const count = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < count; i++) {
+        const typeIdx = Math.random() < 0.7 ? 1 : 3; // камень или железо
+        const angle = Math.random() * Math.PI * 2;
+        const speed = cause === 'artillery' ? (2.0 + Math.random() * 3.0) : (1.5 + Math.random() * 2.5);
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed;
+        const vz = 2.0 + Math.random() * 3.0;
+        const ox = ix + (Math.random() - 0.5) * 0.4;
+        const oy = iy + (Math.random() - 0.5) * 0.4;
+        _spawnItem(typeIdx, ox, oy, vx, vy, vz);
+    }
+}
+
 // Дроп пшеницы
 function _dropWheat(ix, iy) {
     const count = 1 + Math.floor(Math.random() * 2);
@@ -300,7 +316,7 @@ export function onTileChanged(ix, iy, oldType, newType, cause) {
             _dropRocks(ix, iy, cause);
         } else if (oldType === 'mine_tile') {
             _destroyAllDecosAt(ix, iy, cause);
-            _dropRocks(ix, iy, cause);
+            _dropMineOre(ix, iy, cause);
         } else if (oldType === 'farmland' || oldType === 'farmland_ripe') {
             _destroyAllDecosAt(ix, iy, cause);
             _dropWheat(ix, iy);
@@ -322,15 +338,26 @@ export function onTileChanged(ix, iy, oldType, newType, cause) {
         return;
     }
 
-    // --- Вода + пустое поле → спелый урожай ---
+    // --- Созревание: farmland → farmland_ripe ---
     if (oldType === 'farmland' && newType === 'farmland_ripe') {
-        // Убираем зелёный урожай, ставим спелый
         _destroyDecosAt(ix, iy, cause, d => d.spriteKey === 'CROP_GREEN');
         decorations.push({
             ix: ix + (Math.random() - 0.5) * 0.3,
             iy: iy + (Math.random() - 0.5) * 0.3,
             tileIx: ix, tileIy: iy,
             spriteKey: 'CROP_RIPE',
+        });
+        return;
+    }
+
+    // --- Сбор урожая: farmland_ripe → farmland ---
+    if (oldType === 'farmland_ripe' && newType === 'farmland') {
+        _destroyDecosAt(ix, iy, cause, d => d.spriteKey === 'CROP_RIPE');
+        decorations.push({
+            ix: ix + (Math.random() - 0.5) * 0.3,
+            iy: iy + (Math.random() - 0.5) * 0.3,
+            tileIx: ix, tileIy: iy,
+            spriteKey: 'CROP_GREEN',
         });
         return;
     }

@@ -23,6 +23,7 @@ js/
 ├── noise.js            — SimplexNoise 2D, fbm (fractal Brownian motion), createRNG (mulberry32)
 ├── mapGenerator.js     — generateMap(), placeResources(), placeDecorations(), lastVillages — процедурная генерация
 ├── VillageGenerator.js — generateVillages() — генерация 4 деревень с зонами производства
+├── ProductionZone.js   — class ProductionZone: таймер роста, harvestReady, boost, damaged, syncFarmVisual
 ├── decorations.js      — decorations[], decoParticles[], onTileChanged(cause), destroyDecorationWithEffect(), addDecorationsToRenderList(), getHarvestType(), harvestDecoration(), setItemSpawnCallback() — дроп ресурсов при разрушении тайлов
 ├── isometry.js         — изометрическая проекция, camera, screenToIso/isoToScreen, worldToScreen (с высотой)
 ├── renderer.js         — canvas/ctx, drawPixel, drawPixelArt (с кэшем offscreen canvas), drawIsoDiamond, тени
@@ -34,7 +35,7 @@ js/
 ├── Castle.js           — class Castle: коллизия, рендер, пушка с отдачей, spawnPoint
 ├── Fireball.js         — class Fireball extends GameObject: физика огненного шара, взрыв
 ├── SpellProjectile.js  — class SpellProjectile extends GameObject: бросаемый снаряд для water/earth/wind
-├── World.js            — items[], minions[], commandMarkers[], castle, fireball, spellProjectile, screenShake, resolveCollisions, restartMap, initWorld
+├── World.js            — items[], minions[], commandMarkers[], castle, fireball, spellProjectile, screenShake, productionZones[], findZoneAtTile(), resolveCollisions, restartMap, initWorld
 ├── input.js            — все обработчики событий мыши и клавиатуры
 └── main.js             — игровой цикл: update(), render(), gameLoop()
 ```
@@ -462,6 +463,39 @@ generateVillages(gameMap, seed) → Village[]
 | Шахта | 2×3 | stone (или plain рядом с stone) | `mine_tile` |
 | Лесоповал | 3×3 | forest (или plain рядом с forest) | `lumber_tile` |
 
+### Система производства ресурсов (`ProductionZone.js`)
+
+Каждая зона — экземпляр `ProductionZone`. Создаются в `initWorld()` из `productionZoneTiles` деревень, хранятся в `productionZones[]` (World.js). Быстрый поиск: `findZoneAtTile(ix, iy)` через кэш `_tileToZone` (Map key → zone).
+
+**Параметры:**
+
+| Тип зоны | Период роста (сек) | maxHarvest |
+|----------|-------------------|------------|
+| farm | 30 | 10 |
+| mine | 45 | 10 |
+| lumber | 35 | 10 |
+
+**Логика тика (`updateProduction(dt)`):**
+1. Подсчёт живых тайлов (не в `DEAD_TILES`: burning, rubble, swamp, water, scorched, steam, puddle)
+2. Если все тайлы мертвы → `damaged = true`, производство останавливается
+3. `efficiency = alive / total`, `rate = growthRate × boostMult × efficiency`
+4. `growthTimer += dt × rate`. При достижении периода → `harvestReady++` (до `maxHarvest`)
+5. Для ферм: `_syncFarmVisual()` синхронизирует количество `farmland_ripe` тайлов с `harvestReady`
+
+**Магия и зоны (`handleSpellOnZone` в `tileEffects.js`):**
+
+| Заклинание | Тип зоны | Эффект |
+|------------|----------|--------|
+| Вода | farm | Буст ×2.0 на 60 сек (ускорение роста) |
+| Ветер | farm | Буст ×1.5 на 30 сек |
+| Огонь | любая | Тайлы → burning через TILE_TRANSFORMS, зона помечается `damaged` автоматически |
+| Земля | любая | Дроп ресурсов через `onTileChanged` (дерево, руда, пшеница) |
+| Артиллерия | любая | Усиленный дроп через `onTileChanged` с cause='artillery' |
+
+**Ручной сбор CROP_RIPE:** при срыве спелой пшеницы рукой → `harvestReady--`, тайл возвращается в `farmland`, `onTileChanged` ставит CROP_GREEN.
+
+**Дроп из шахты (`_dropMineOre`):** 70% камень (typeIndex=1), 30% железо (typeIndex=3). 2–4 предмета с 3D-физикой.
+
 ### Структура Village
 
 ```js
@@ -497,7 +531,12 @@ generateVillages(gameMap, seed) → Village[]
 
 ### Дебаг-панель [V]
 
-Клавиша **V** / **М** toggle `debugFlags.showVillages`. Панель отображает для каждой деревни: имя, personality, sizeType, pop (houseTiles×2), координаты, доступные зоны производства.
+Клавиша **V** / **М** toggle `debugFlags.showVillages`. Панель отображает для каждой деревни:
+- Имя, personality, sizeType, pop (houseTiles×2), координаты
+- Статус каждой зоны: `type(status, harvestReady/max, next:Ns, boost:Ns)`
+  - `status`: `ok` или `DMG` (все тайлы уничтожены)
+  - `next:Ns`: секунд до следующего `harvestReady++` (скрыто при `maxHarvest` или `damaged`)
+  - `boost:Ns`: оставшееся время буста (только при активном бусте)
 
 ---
 
@@ -1568,7 +1607,7 @@ ready → lifting → carried → thrown → (bouncing/sliding/settling) → don
 | **Fire** | farmland, farmland_ripe | burning | Урожай сгорает |
 | **Fire** | village_square, village_house | burning | Деревня горит, огонь перекидывается |
 | **Fire** | village_road | scorched | Дорога обгорает |
-| **Water** | farmland | farmland_ripe | Урожай созревает (CROP_GREEN → CROP_RIPE) |
+| **Water** | farmland | _(нет трансформации)_ | Бустит зону производства ×2.0 на 60 сек (через `handleSpellOnZone`) |
 | **Earth** | stone | stone (тот же) | Камнепад — 2–4 камня разлетаются в 3D |
 | **Earth** | forest, lumber_tile | plain | Деревья повалены, дроп 1–2 брёвен |
 | **Earth** | village_square/house/road | rubble | Деревня разрушена, камни из обломков |
@@ -1586,7 +1625,7 @@ ready → lifting → carried → thrown → (bouncing/sliding/settling) → don
 | wall | rubble | — |
 | forest, lumber_tile | plain | 1–2 бревна (3D) |
 | stone | stone | 2–4 камня (камнепад) |
-| mine_tile | rubble | 2–4 камня |
+| mine_tile | rubble | 2–4 камня/железа (70/30%) |
 | village_square/house | rubble | 2–4 камня из обломков |
 | village_road | scorched | — |
 | farmland, farmland_ripe | rubble | 1–2 пшеницы |
