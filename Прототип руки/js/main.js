@@ -152,12 +152,12 @@ function tryUpgradeMonk() {
     castleResources[0] -= MONK_FOOD_COST;
     goblin.goblinClass = 'monk';
 
-    // Если тотем ещё не установлен — первый монах ставит его
+    // Если тотем ещё не установлен — первый монах ставит его (относительно замка!)
     if (!monkTotem.active) {
         const angle = Math.random() * Math.PI * 2;
         const dist = MONK_TOTEM_MIN_DIST + Math.random() * (MONK_TOTEM_MAX_DIST - MONK_TOTEM_MIN_DIST);
-        monkTotem.ix = Math.cos(angle) * dist;
-        monkTotem.iy = Math.sin(angle) * dist;
+        monkTotem.ix = castle.ix + Math.cos(angle) * dist;
+        monkTotem.iy = castle.iy + Math.sin(angle) * dist;
         monkTotem.active = true;
     }
 
@@ -420,38 +420,12 @@ function updateArtillery(dt) {
 
             // Урон миньонам и скелетам в радиусе взрыва
             for (const m of minions) {
-                if (m.state === 'dead' || m.state === 'crumbled') continue;
+                if (m.dead || m.state === 'crumbled') continue;
                 const mdx = m.ix - proj.ix;
                 const mdy = m.iy - proj.iy;
                 const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
                 if (mdist <= ARTILLERY_BLAST_RADIUS) {
-                    const prevHp = m.hp;
-                    m.hp = Math.max(0, m.hp - ARTILLERY_DAMAGE);
-                    if (m.hp < prevHp) {
-                        m.damageWobble = 0.4;
-                        if (m.hp <= 0) {
-                            if (m.isUndead) {
-                                // Скелет разрушается
-                                m.pendingBoneEffect = { ix: m.ix, iy: m.iy };
-                                m.pendingRemove = true;
-                                m.state = 'crumbled';
-                            } else if (!m.dead) {
-                                // Гоблин умирает
-                                m.dead = true;
-                                m.pendingBloodEffect = { type: 'death', ix: m.ix, iy: m.iy };
-                                m.dropCarriedItem();
-                                m.state = 'dead';
-                                m.stateTime = 0;
-                                m.deadTime = 0;
-                            }
-                        } else {
-                            if (m.isUndead) {
-                                m.pendingBoneEffect = { ix: m.ix, iy: m.iy };
-                            } else {
-                                m.pendingBloodEffect = { type: 'hit', ix: m.ix, iy: m.iy };
-                            }
-                        }
-                    }
+                    m.takeDamage(ARTILLERY_DAMAGE);
                     // Отбросить
                     if (mdist > 0.01 && m.state !== 'crumbled') {
                         const pushForce = (1 - mdist / ARTILLERY_BLAST_RADIUS) * 6;
@@ -699,26 +673,7 @@ function update(dt) {
             const dist = Math.sqrt(dx * dx + dy * dy);
             if (dist < FIREBALL_BLAST_RADIUS) {
                 const dmg = Math.round((1 - dist / FIREBALL_BLAST_RADIUS) * FIREBALL_BLAST_DAMAGE);
-                if (dmg > 0) {
-                    m.hp -= dmg;
-                    if (m.hp <= 0) {
-                        m.hp = 0;
-                        if (m.isUndead) {
-                            m.pendingBoneEffect = { ix: m.ix, iy: m.iy };
-                            m.pendingRemove = true;
-                            m.state = 'crumbled';
-                        } else {
-                            m.dead = true;
-                            m.pendingBloodEffect = { type: 'death', ix: m.ix, iy: m.iy };
-                        }
-                    } else {
-                        if (m.isUndead) {
-                            m.pendingBoneEffect = { ix: m.ix, iy: m.iy };
-                        } else {
-                            m.pendingBloodEffect = { type: 'hit', ix: m.ix, iy: m.iy };
-                        }
-                    }
-                }
+                m.takeDamage(dmg);
             }
         }
 
@@ -993,10 +948,10 @@ function update(dt) {
                 const mdx = m.ix - spellProjectile.ix;
                 const mdy = m.iy - spellProjectile.iy;
                 if (mdx * mdx + mdy * mdy < BOULDER_DAMAGE_RADIUS * BOULDER_DAMAGE_RADIUS) {
-                    m.hp -= BOULDER_DAMAGE;
+                    m.takeDamage(BOULDER_DAMAGE);
                     m._boulderHitCooldown = BOULDER_HIT_COOLDOWN;
-                    // Отбрасывание в направлении качения
-                    if (speed > 0.01) {
+                    // Отбрасывание в направлении качения (только живых)
+                    if (speed > 0.01 && m.state !== 'dead' && m.state !== 'crumbled') {
                         m.vx = (spellProjectile.rollVx / speed) * BOULDER_PUSH_FORCE;
                         m.vy = (spellProjectile.rollVy / speed) * BOULDER_PUSH_FORCE;
                         m.vz = BOULDER_PUSH_FORCE * 0.5;

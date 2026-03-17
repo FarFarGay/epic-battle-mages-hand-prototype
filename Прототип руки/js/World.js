@@ -48,8 +48,6 @@ export const bloodPuddles   = [];
 export const fireball = new Fireball();
 export const spellProjectile = new SpellProjectile();
 
-// (DEPRECATED — заменено тайловыми трансформациями)
-export const firePatches = [];
 
 export const spellFogReveals = [];
 export const debugFlags = { fogDisabled: false, showVillages: false };
@@ -317,7 +315,6 @@ export function initWorld() {
 
     fireball.reset();
     spellProjectile.reset();
-    firePatches.length   = 0;
     activeTiles.length   = 0;
     spellFogReveals.length = 0;
 

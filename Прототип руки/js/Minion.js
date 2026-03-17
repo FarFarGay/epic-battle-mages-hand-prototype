@@ -136,6 +136,40 @@ export class Minion extends GameObject {
         }
     }
 
+    // ── Единый метод нанесения урона ────────────────────────────
+    // Вызывается из всех источников: артиллерия, фаербол, валун, тайл DPS, бой.
+    // Возвращает true если юнит погиб от этого урона.
+    takeDamage(amount) {
+        if (this.dead || this.state === 'crumbled' || this.pendingRemove) return false;
+        if (amount <= 0) return false;
+        const prevHp = this.hp;
+        this.hp = Math.max(0, this.hp - amount);
+        if (this.hp >= prevHp) return false; // нет фактического урона
+        this.damageWobble = 0.4;
+        if (this.hp <= 0) {
+            if (this.isUndead) {
+                this.pendingBoneEffect = { ix: this.ix, iy: this.iy };
+                this.pendingRemove = true;
+                this.state = 'crumbled';
+            } else {
+                this.dropCarriedItem();
+                this.dead = true;
+                this.pendingBloodEffect = { type: 'death', ix: this.ix, iy: this.iy };
+                this.state = 'dead';
+                this.stateTime = 0;
+                this.deadTime = 0;
+            }
+            return true;
+        }
+        // Жив — визуальная обратная связь
+        if (this.isUndead) {
+            this.pendingBoneEffect = { ix: this.ix, iy: this.iy };
+        } else {
+            this.pendingBloodEffect = { type: 'hit', ix: this.ix, iy: this.iy };
+        }
+        return false;
+    }
+
     // ── Боевая система ─────────────────────────────────────────
 
     // Войти в бой с врагом. Сохраняет текущее состояние для возврата после победы.
@@ -457,7 +491,7 @@ export class Minion extends GameObject {
             const tileEff = getTileEffect(this.ix, this.iy);
             if (tileEff) {
                 this._currentSpeedMult = tileEff.speedMult;
-                // Урон от тайла (burning, swamp)
+                // Урон от тайла (burning, swamp) — дробный DPS
                 if (tileEff.dps > 0) {
                     const prevHp = this.hp;
                     this.hp -= tileEff.dps * dt;
@@ -472,18 +506,9 @@ export class Minion extends GameObject {
                     }
                     if (this.hp <= 0 && !this.dead) {
                         this.hp = 0;
-                        if (this.isUndead) {
-                            this.pendingBoneEffect = { ix: this.ix, iy: this.iy };
-                            this.pendingRemove = true;
-                            this.state = 'crumbled';
-                        } else {
-                            this.dead = true;
-                            this.dropCarriedItem();
-                            this.pendingBloodEffect = { type: 'death', ix: this.ix, iy: this.iy };
-                            this.state = 'dead';
-                            this.stateTime = 0;
-                            this.deadTime = 0;
-                        }
+                        // Используем takeDamage(0) для единообразной смерти
+                        // (hp уже 0, takeDamage обработает death/crumbled корректно)
+                        this.takeDamage(0.01);
                         return;
                     }
                 }
@@ -683,22 +708,9 @@ export class Minion extends GameObject {
                 if (this.attackCooldown <= 0) {
                     this.attackCooldown = atkCd;
                     const target = this.combatTarget;
-                    target.hp = Math.max(0, target.hp - atkDmg);
-                    target.damageWobble = 0.4;
-
-                    if (target.hp <= 0) {
-                        if (target.isUndead) {
-                            target.pendingBoneEffect = { ix: target.ix, iy: target.iy };
-                            target.pendingRemove = true;
-                            target.state = 'crumbled';
-                        }
+                    const killed = target.takeDamage(atkDmg);
+                    if (killed || !this.isCombatTargetValid()) {
                         this.exitCombat();
-                    } else {
-                        if (target.isUndead) {
-                            target.pendingBoneEffect = { ix: target.ix, iy: target.iy };
-                        } else {
-                            target.pendingBloodEffect = { type: 'hit', ix: target.ix, iy: target.iy };
-                        }
                     }
                 }
                 break;
@@ -830,18 +842,8 @@ export class Minion extends GameObject {
                     // В радиусе удара — атаковать
                     if (this.attackCooldown <= 0) {
                         this.attackCooldown = SKELETON_ATTACK_CD;
-                        prey.hp = Math.max(0, prey.hp - SKELETON_ATTACK_DAMAGE);
-                        prey.damageWobble = 0.4;
-
-                        if (prey.hp <= 0) {
-                            prey.dead = true;
-                            prey.pendingBloodEffect = { type: 'death', ix: prey.ix, iy: prey.iy };
-                            prey.dropCarriedItem();
-                            prey.state = 'dead';
-                            prey.stateTime = 0;
-                            prey.deadTime = 0;
-                        } else {
-                            prey.pendingBloodEffect = { type: 'hit', ix: prey.ix, iy: prey.iy };
+                        const killed = prey.takeDamage(SKELETON_ATTACK_DAMAGE);
+                        if (!killed) {
                             // Жертва даёт отпор
                             prey.enterCombat(this);
                         }
