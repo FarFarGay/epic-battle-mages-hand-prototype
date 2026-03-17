@@ -23,7 +23,8 @@ import { canvas, ctx, resize, drawPixelArt, drawItemShadow } from './renderer.js
 import { gameMap, FOG } from './Map.js';
 import { camera, isoToScreen, screenToIso, getDepth, worldToScreen } from './isometry.js';
 import { Hand } from './Hand.js';
-import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers, decoParticles, villages, productionZones } from './World.js?v=11';
+import { items, minions, castle, screenShake, triggerScreenShake, updateScreenShake, resolveItemCollisions, resolveCastleCollisions, initWorld, bloodParticles, bloodPuddles, castleResources, spawnMinion, artilleryMode, getNextWarriorGuardPos, fireball, spellProjectile, manaPool, spellStates, activeTiles, spellFogReveals, debugFlags, monkTotem, commandMarkers, decoParticles, villages, productionZones, villagers, setRestartCallback } from './World.js?v=12';
+import { Villager, assignWorkers, ASSIGN_WORKER_INTERVAL } from './Villager.js';
 import { initInput } from './input.js';
 import { updateActiveTiles, applySpellInRadius, applySpellToTile, handleSpellOnZone, IMPACT_DUR, FADING_DUR } from './tileEffects.js?v=2';
 import { addDecorationsToRenderList, decorations } from './decorations.js?v=10';
@@ -75,6 +76,7 @@ let mouseDown = false;
 let hoveredItem = null;
 let hoveredMinion = null;
 let hoveredDeco = null; // индекс в decorations[]
+let hoveredVillager = null; // индекс в villagers[]
 const HARVESTABLE_SPRITES = new Set(['TREE_1','TREE_2','TREE_3','ROCK_1','ROCK_2','CROP_GREEN','CROP_RIPE']);
 
 // Таймер апгрейда обычных гоблинов в воинов
@@ -85,6 +87,9 @@ let scoutUpgradeTimer = SCOUT_UPGRADE_INTERVAL * Math.random();
 
 // Таймер производства монахов
 let monkUpgradeTimer = MONK_UPGRADE_INTERVAL * Math.random();
+
+// Таймер назначения жителей на работу
+let villagerAssignTimer = ASSIGN_WORKER_INTERVAL;
 
 // Попытаться превратить случайного свободного гоблина в воина.
 // Стоимость: 1 железо (typeIndex 3). Гоблин марширует на пост у границы WARRIOR_GUARD_RADIUS.
@@ -174,6 +179,35 @@ const selection = {
 };
 
 // ============================================================
+//  СПАВН ЖИТЕЛЕЙ ДЕРЕВЕНЬ
+// ============================================================
+function _spawnVillagers() {
+    villagers.length = 0;
+    for (const v of villages) {
+        // Аугментация объекта деревни runtime-свойствами
+        v.workers = [];
+        v.resources = { farm: 0, mine: 0, lumber: 0 };
+        v.addResource = function(type, amount) {
+            if (this.resources[type] !== undefined) this.resources[type] += amount;
+        };
+
+        const pop = v.houseTiles.length * 2;
+        const workerCount = Math.min(pop, 6);
+        for (let i = 0; i < workerCount; i++) {
+            const worker = new Villager(
+                v.centerIx + (Math.random() - 0.5) * 3,
+                v.centerIy + (Math.random() - 0.5) * 3,
+                v.id, 'worker'
+            );
+            worker.homeIx = v.centerIx;
+            worker.homeIy = v.centerIy;
+            v.workers.push(worker);
+            villagers.push(worker);
+        }
+    }
+}
+
+// ============================================================
 //  РУКА
 // ============================================================
 const hand = new Hand();
@@ -186,6 +220,8 @@ window.addEventListener('resize', resize);
 ctx.imageSmoothingEnabled = false;
 
 initWorld();
+_spawnVillagers();
+setRestartCallback(_spawnVillagers);
 tileParticles.length = 0;
 
 // Объект мирового состояния для input.js
@@ -200,6 +236,8 @@ const world = {
     set hoveredMinion(v) { hoveredMinion = v; },
     get hoveredDeco() { return hoveredDeco; },
     set hoveredDeco(v) { hoveredDeco = v; },
+    get hoveredVillager() { return hoveredVillager; },
+    set hoveredVillager(v) { hoveredVillager = v; },
     decorations,
     get mouseX() { return mouseX; },
     set mouseX(v) { mouseX = v; },
@@ -277,7 +315,7 @@ canvas.addEventListener('mousedown', (e) => {
     }
 
     // Захват заклинания из панели (4 слота)
-    if (hand.grabbedItem === null && hand.grabbedMinion === null && !artilleryMode.active) {
+    if (hand.grabbedItem === null && hand.grabbedMinion === null && hand.grabbedVillager === null && !artilleryMode.active) {
         for (const sr of spellSlotRects) {
             if (!sr.key) continue;
             if (mx < sr.x || mx > sr.x + sr.w || my < sr.y || my > sr.y + sr.h) continue;
@@ -566,6 +604,17 @@ function update(dt) {
             minion.bounceCount = 0;
             hand.grabbedMinion = null;
             hand.minionGrabIso = null;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+        }
+        if (hand.grabbedVillager !== null) {
+            const vl = villagers[hand.grabbedVillager];
+            vl.vx = 0; vl.vy = 0; vl.vz = 0;
+            vl.state = 'thrown';
+            vl.stateTime = 0;
+            vl.bounceCount = 0;
+            hand.grabbedVillager = null;
             hand.state = 'opening';
             hand.animProgress = 0;
             hand.velocityHistory = [];
@@ -1013,13 +1062,51 @@ function update(dt) {
         }
     }
 
-    // Проверяем наведение на предметы, миньонов и деревья
+    // ── ЖИТЕЛИ ДЕРЕВЕНЬ ────────────────────────────────────────
+    // Обновление
+    for (let i = 0; i < villagers.length; i++) {
+        const vl = villagers[i];
+        if (vl.pendingRemove) continue;
+        const village = villages.find(v => v.id === vl.villageId);
+        vl.update(dt, village, hand, triggerScreenShake);
+    }
+    // Очистка мёртвых
+    for (let i = villagers.length - 1; i >= 0; i--) {
+        if (!villagers[i].pendingRemove) continue;
+        // Корректируем индекс схваченного жителя
+        if (hand.grabbedVillager === i) {
+            hand.grabbedVillager = null;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+        } else if (hand.grabbedVillager !== null && hand.grabbedVillager > i) {
+            hand.grabbedVillager--;
+        }
+        if (hoveredVillager === i) hoveredVillager = null;
+        else if (hoveredVillager !== null && hoveredVillager > i) hoveredVillager--;
+        villagers.splice(i, 1);
+    }
+    // Обновить ссылки в деревнях
+    for (const v of villages) {
+        if (v.workers) v.workers = v.workers.filter(w => !w.pendingRemove);
+    }
+    // Назначение рабочих на зоны
+    villagerAssignTimer -= dt;
+    if (villagerAssignTimer <= 0) {
+        villagerAssignTimer = ASSIGN_WORKER_INTERVAL;
+        for (const v of villages) {
+            assignWorkers(v, villagers, productionZones);
+        }
+    }
+
+    // Проверяем наведение на предметы, миньонов, жителей и деревья
     hoveredItem = null;
     hoveredMinion = null;
+    hoveredVillager = null;
     hoveredDeco = null;
     if (artilleryMode.active) {
         // В режиме артиллерии наведение отключено
-    } else if (hand.grabbedItem === null && hand.grabbedMinion === null) {
+    } else if (hand.grabbedItem === null && hand.grabbedMinion === null && hand.grabbedVillager === null) {
         let minDist = 1.5;
         for (let i = 0; i < items.length; i++) {
             const it = items[i];
@@ -1033,6 +1120,7 @@ function update(dt) {
                 minDist = dist;
                 hoveredItem = i;
                 hoveredMinion = null;
+                hoveredVillager = null;
                 hoveredDeco = null;
             }
         }
@@ -1049,6 +1137,25 @@ function update(dt) {
                 minDist = dist;
                 hoveredItem = null;
                 hoveredMinion = i;
+                hoveredVillager = null;
+                hoveredDeco = null;
+            }
+        }
+        // Жители деревень — grabbable
+        for (let i = 0; i < villagers.length; i++) {
+            const vl = villagers[i];
+            if (vl.dead || vl.pendingRemove) continue;
+            if (vl.state === 'carried' || vl.state === 'lifting') continue;
+            if (vl.iz > 2.0) continue;
+            if (gameMap.getFog(Math.round(vl.ix), Math.round(vl.iy)) !== FOG.VISIBLE) continue;
+            const dx = hand.isoX - vl.ix;
+            const dy = hand.isoY - vl.iy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < minDist) {
+                minDist = dist;
+                hoveredItem = null;
+                hoveredMinion = null;
+                hoveredVillager = i;
                 hoveredDeco = null;
             }
         }
@@ -1064,6 +1171,7 @@ function update(dt) {
                 minDist = dist;
                 hoveredItem = null;
                 hoveredMinion = null;
+                hoveredVillager = null;
                 hoveredDeco = i;
             }
         }
@@ -1334,7 +1442,7 @@ function update(dt) {
     if (artilleryMode.active) {
         // Статус управляется артиллерией (updateArtillery / input.js)
     } else {
-        const nothingHeld = hand.grabbedItem === null && hand.grabbedMinion === null;
+        const nothingHeld = hand.grabbedItem === null && hand.grabbedMinion === null && hand.grabbedVillager === null;
         // Проверяем наведение на замок
         let hoveredCastle = false;
         if (nothingHeld && castle) {
@@ -1348,6 +1456,8 @@ function update(dt) {
             statusEl.textContent = `Навести: ${ITEM_TYPES[items[hoveredItem].typeIndex].name} [зажми ЛКМ]`;
         } else if (nothingHeld && hoveredMinion !== null) {
             statusEl.textContent = 'Навести: Миньон [зажми ЛКМ]';
+        } else if (nothingHeld && hoveredVillager !== null) {
+            statusEl.textContent = 'Навести: Житель [зажми ЛКМ]';
         } else if (nothingHeld && hand.selectedMinions.length > 0) {
             statusEl.textContent = `Выделено ${hand.selectedMinions.length} гоблин(а) — ПКМ для команды`;
         } else if (nothingHeld) {
@@ -1504,6 +1614,19 @@ function render() {
             type: 'minion',
             index: i,
             depth: getDepth(minions[i].ix, minions[i].iy)
+        });
+    }
+
+    // Жители деревень
+    for (let i = 0; i < villagers.length; i++) {
+        const vl = villagers[i];
+        if (vl.pendingRemove) continue;
+        if (vl.state === 'carried' || vl.state === 'lifting') continue;
+        if (gameMap.getFog(Math.round(vl.ix), Math.round(vl.iy)) !== FOG.VISIBLE) continue;
+        renderList.push({
+            type: 'villager',
+            index: i,
+            depth: getDepth(vl.ix, vl.iy),
         });
     }
 
@@ -1681,6 +1804,8 @@ function render() {
             items[obj.index].draw(obj.index, hand, hoveredItem);
         } else if (obj.type === 'minion') {
             minions[obj.index].draw(obj.index, hand, hoveredMinion);
+        } else if (obj.type === 'villager') {
+            villagers[obj.index].draw();
         } else if (obj.type === 'bloodPuddle') {
             const p = bloodPuddles[obj.index];
             const s = worldToScreen(p.ix, p.iy);
@@ -1713,6 +1838,8 @@ function render() {
                 items[hand.grabbedItem].draw(hand.grabbedItem, hand, hoveredItem);
             } else if (hand.grabbedMinion !== null) {
                 minions[hand.grabbedMinion].draw(hand.grabbedMinion, hand, hoveredMinion);
+            } else if (hand.grabbedVillager !== null) {
+                villagers[hand.grabbedVillager].draw();
             } else if (hand.grabbedSpell === 'fireball') {
                 fireball.draw(hand);
             } else if (hand.grabbedSpell === 'water' || hand.grabbedSpell === 'earth' || hand.grabbedSpell === 'wind') {
@@ -2514,6 +2641,7 @@ function render() {
             totalLines++; // строка деревни
             const vZones = productionZones.filter(z => z.villageId === v.id);
             if (vZones.length > 0) totalLines++; // строка зон
+            if (v.resources) totalLines++; // строка ресурсов
         }
         ctx.save();
         ctx.globalAlpha = 0.8;
@@ -2530,7 +2658,8 @@ function render() {
         for (const v of villages) {
             lineIdx++;
             const pop = v.houseTiles.length * 2;
-            const header = `${v.name.padEnd(12)} ${v.personality}  ${v.sizeType.padEnd(6)} pop:${String(pop).padStart(2)}  at(${v.centerIx},${v.centerIy})`;
+            const aliveWorkers = v.workers ? v.workers.filter(w => !w.dead).length : 0;
+            const header = `${v.name.padEnd(12)} ${v.personality}  ${v.sizeType.padEnd(6)} pop:${String(pop).padStart(2)} wk:${aliveWorkers}  at(${v.centerIx},${v.centerIy})`;
             ctx.fillStyle = '#99aa88';
             ctx.fillText(header, px, py + lineIdx * 14);
 
@@ -2549,6 +2678,13 @@ function render() {
                 });
                 ctx.fillStyle = '#88aacc';
                 ctx.fillText(`  zones: ${zoneParts.join(' ')}`, px, py + lineIdx * 14);
+            }
+            // Ресурсы деревни
+            if (v.resources) {
+                lineIdx++;
+                const res = v.resources;
+                ctx.fillStyle = '#aacc88';
+                ctx.fillText(`  res: food:${res.farm} stone:${res.mine} wood:${res.lumber}`, px, py + lineIdx * 14);
             }
         }
     }

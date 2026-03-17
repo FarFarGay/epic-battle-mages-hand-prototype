@@ -9,7 +9,7 @@ import {
 } from './constants.js';
 import { MINION_H } from './sprites.js?v=7';
 import { screenToIso, worldToScreen, screenToCanvas } from './isometry.js';
-import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellProjectile, monkTotem, commandMarkers, debugFlags, findZoneAtTile } from './World.js?v=11';
+import { restartMap, items, minions, castle, artilleryMode, triggerScreenShake, fireball, spellProjectile, monkTotem, commandMarkers, debugFlags, findZoneAtTile, villagers } from './World.js?v=12';
 import { applySpellToTile } from './tileEffects.js?v=2';
 import { gameMap } from './Map.js';
 import { destroyDecorationWithEffect } from './decorations.js?v=10';
@@ -263,7 +263,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
 
         if (artilleryMode.active) return;
 
-        const handFree = hand.grabbedItem === null && hand.grabbedMinion === null;
+        const handFree = hand.grabbedItem === null && hand.grabbedMinion === null && hand.grabbedVillager === null;
 
         // ── Артиллерия: захват замка ─────────────────────────────
         if (handFree && castle) {
@@ -354,6 +354,23 @@ export function initInput(canvas, hand, world, cam, statusEl) {
                 hand.animProgress = 0;
                 hand.velocityHistory = [];
                 statusEl.textContent = 'Захвачено: Миньон';
+            }
+        } else if (world.hoveredVillager !== null && handFree) {
+            const vl = villagers[world.hoveredVillager];
+            if (vl.state !== 'carried' && vl.state !== 'lifting' && !vl.dead) {
+                vl.carriedResource = null; // бросает ресурс при захвате
+                hand.grabbedVillager = world.hoveredVillager;
+                vl.state = 'lifting';
+                vl.stateTime = 0;
+                vl.liftProgress = 0;
+                vl.vx = 0;
+                vl.vy = 0;
+                vl.vz = 0;
+                vl.bounceCount = 0;
+                hand.state = 'closing';
+                hand.animProgress = 0;
+                hand.velocityHistory = [];
+                statusEl.textContent = 'Захвачено: Житель';
             }
         }
     });
@@ -466,6 +483,24 @@ export function initInput(canvas, hand, world, cam, statusEl) {
 
             const speed = Math.sqrt(throwVel.vx ** 2 + throwVel.vy ** 2);
             statusEl.textContent = speed > 2 ? 'Брошен: Миньон!' : 'Отпущен: Миньон';
+        } else if (hand.grabbedVillager !== null) {
+            const vl = villagers[hand.grabbedVillager];
+            vl.iz = 0;
+            const throwVel = hand.calculateThrowVelocity({ mass: vl.mass });
+            vl.vx = throwVel.vx;
+            vl.vy = throwVel.vy;
+            vl.vz = throwVel.vz;
+            vl.state = 'thrown';
+            vl.stateTime = 0;
+            vl.bounceCount = 0;
+
+            hand.grabbedVillager = null;
+            hand.state = 'opening';
+            hand.animProgress = 0;
+            hand.velocityHistory = [];
+
+            const speed = Math.sqrt(throwVel.vx ** 2 + throwVel.vy ** 2);
+            statusEl.textContent = speed > 2 ? 'Брошен: Житель!' : 'Отпущен: Житель';
         }
     });
 
@@ -498,6 +533,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             restartMap(hand, statusEl);
             world.hoveredItem = null;
             world.hoveredMinion = null;
+            world.hoveredVillager = null;
             selection.active = false;
             cam.zoom = 1.0;
             cam.targetZoom = 1.0;
@@ -506,6 +542,7 @@ export function initInput(canvas, hand, world, cam, statusEl) {
             restartMap(hand, statusEl);
             world.hoveredItem = null;
             world.hoveredMinion = null;
+            world.hoveredVillager = null;
             selection.active = false;
             cam.zoom = 1.0;
             cam.targetZoom = 1.0;

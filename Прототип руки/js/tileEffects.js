@@ -2,7 +2,7 @@
 //  ТАЙЛОВЫЕ ЭФФЕКТЫ — трансформации заклинаний и влияние на юнитов
 // ============================================================
 import { gameMap } from './Map.js';
-import { activeTiles, findZoneAtTile } from './World.js?v=11';
+import { activeTiles, findZoneAtTile } from './World.js?v=12';
 
 // ============================================================
 //  ТАБЛИЦА ТРАНСФОРМАЦИЙ: spell × currentTile → newTile

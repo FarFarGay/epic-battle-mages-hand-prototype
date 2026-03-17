@@ -76,6 +76,7 @@ export const commandMarkers  = [];
 export const activeTiles     = [];
 export let   villages        = [];
 export let   productionZones = [];
+export let   villagers       = [];
 
 export let castle = null;
 
@@ -207,14 +208,21 @@ export function restartMap(hand, statusEl) {
 
     hand.grabbedItem     = null;
     hand.grabbedMinion   = null;
+    hand.grabbedVillager = null;
     hand.state           = 'open';
     hand.animProgress    = 0;
     hand.velocityHistory = [];
     hand.selectedMinions = [];
     hand.grabbedSpell    = null;
 
+    // Вызываем callback для респавна жителей (устанавливается из main.js)
+    if (_onRestartCb) _onRestartCb();
+
     statusEl.textContent = 'Карта перезапущена!';
 }
+
+let _onRestartCb = null;
+export function setRestartCallback(cb) { _onRestartCb = cb; }
 
 // ============================================================
 //  СПАВН МИНЬОНОВ
@@ -332,6 +340,9 @@ export function initWorld() {
     monkTotem.iy     = 0;
 
     commandMarkers.length = 0;
+
+    // 8b. Жители деревень (создаются в main.js после initWorld)
+    villagers = [];
 
     // 9. Туман войны — полный сброс
     gameMap._fog = {};

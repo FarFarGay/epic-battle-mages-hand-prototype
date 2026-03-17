@@ -19,6 +19,7 @@ export class Hand {
         this.animProgress = 0;
         this.grabbedItem = null;
         this.grabbedMinion = null;
+        this.grabbedVillager = null;  // индекс в villagers[]
         this.prevIsoX = 0;
         this.prevIsoY = 0;
         this.velocityHistory = [];
@@ -128,7 +129,7 @@ export class Hand {
 
         // Если что-то захвачено, немного покачиваем
         let wobbleX = 0, wobbleY = 0;
-        if (this.grabbedItem !== null) {
+        if (this.grabbedItem !== null || this.grabbedVillager !== null) {
             const time = performance.now() / 300;
             wobbleX = Math.sin(time) * 1.5;
             wobbleY = Math.cos(time * 1.3) * 1;
