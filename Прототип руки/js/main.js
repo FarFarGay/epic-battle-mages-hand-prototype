@@ -181,18 +181,39 @@ const selection = {
 // ============================================================
 //  СПАВН ЖИТЕЛЕЙ ДЕРЕВЕНЬ
 // ============================================================
+// ── Константы экономики деревень ──────────────────────────
+const FOOD_PER_POP_PER_SEC  = 0.01;  // 1 еда на жителя за 100 сек
+const GROWTH_FOOD_THRESHOLD = 5.0;   // еды/жителя для начала роста
+const GROWTH_INTERVAL       = 60;    // сек между рождениями
+const STARVATION_INTERVAL   = 10;    // сек между смертями от голода
+const VILLAGE_ECON_TICK     = 1.0;   // сек между тиками экономики
+let villageEconTimer = 0;
+
 function _spawnVillagers() {
     villagers.length = 0;
+    villageEconTimer = 0;
     for (const v of villages) {
         // Аугментация объекта деревни runtime-свойствами
         v.workers = [];
-        v.resources = { farm: 0, mine: 0, lumber: 0 };
-        v.addResource = function(type, amount) {
-            if (this.resources[type] !== undefined) this.resources[type] += amount;
+        v.pop = v.houseTiles.length * 2;
+        v.maxPop = v.pop + 10;
+        v.abandoned = false;
+        v._starvationTimer = 0;
+        v._growthTimer = 0;
+        v.resources = {
+            food:  v.houseTiles.length * 8,
+            wood:  10,
+            stone: 5,
+        };
+        v.addResource = function(zoneType, amount) {
+            switch (zoneType) {
+                case 'farm':   this.resources.food  += amount; break;
+                case 'mine':   this.resources.stone += amount; break;
+                case 'lumber': this.resources.wood  += amount; break;
+            }
         };
 
-        const pop = v.houseTiles.length * 2;
-        const workerCount = Math.min(pop, 6);
+        const workerCount = Math.min(v.pop, 6);
         for (let i = 0; i < workerCount; i++) {
             const worker = new Villager(
                 v.centerIx + (Math.random() - 0.5) * 3,
@@ -205,6 +226,78 @@ function _spawnVillagers() {
             villagers.push(worker);
         }
     }
+}
+
+// ── Экономика деревни ─────────────────────────────────────
+function updateVillageEconomy(village, dt) {
+    if (village.abandoned) return;
+
+    // Потребление еды
+    const consumption = village.pop * FOOD_PER_POP_PER_SEC * dt;
+    village.resources.food -= consumption;
+
+    // Голод
+    if (village.resources.food <= 0) {
+        village.resources.food = 0;
+        village._starvationTimer += dt;
+
+        if (village._starvationTimer >= STARVATION_INTERVAL) {
+            village._starvationTimer = 0;
+            _killRandomVillager(village);
+        }
+    } else {
+        village._starvationTimer = 0;
+    }
+
+    // Рост населения
+    const foodPerPop = village.pop > 0 ? village.resources.food / village.pop : 0;
+    if (foodPerPop >= GROWTH_FOOD_THRESHOLD && village.pop < village.maxPop) {
+        village._growthTimer += dt;
+
+        if (village._growthTimer >= GROWTH_INTERVAL) {
+            village._growthTimer = 0;
+            village.pop++;
+            _spawnVillagerWorker(village);
+        }
+    } else {
+        village._growthTimer = 0;
+    }
+}
+
+function _killRandomVillager(village) {
+    if (village.pop <= 0) return;
+
+    village.pop--;
+
+    // Найти живого жителя и убить
+    const alive = villagers.filter(v =>
+        v.villageId === village.id && !v.dead && !v.pendingRemove
+    );
+    if (alive.length > 0) {
+        const victim = alive[Math.floor(Math.random() * alive.length)];
+        victim.hp = 0;
+        victim.dead = true;
+        victim.state = 'dead';
+        victim.deadTime = 0;
+        victim.carriedResource = null;
+    }
+
+    if (village.pop <= 0) {
+        village.pop = 0;
+        village.abandoned = true;
+    }
+}
+
+function _spawnVillagerWorker(village) {
+    const worker = new Villager(
+        village.centerIx + (Math.random() - 0.5) * 3,
+        village.centerIy + (Math.random() - 0.5) * 3,
+        village.id, 'worker'
+    );
+    worker.homeIx = village.centerIx;
+    worker.homeIy = village.centerIy;
+    village.workers.push(worker);
+    villagers.push(worker);
 }
 
 // ============================================================
@@ -1096,6 +1189,14 @@ function update(dt) {
         villagerAssignTimer = ASSIGN_WORKER_INTERVAL;
         for (const v of villages) {
             assignWorkers(v, villagers, productionZones);
+        }
+    }
+    // Экономика деревень
+    villageEconTimer += dt;
+    if (villageEconTimer >= VILLAGE_ECON_TICK) {
+        villageEconTimer = 0;
+        for (const v of villages) {
+            updateVillageEconomy(v, VILLAGE_ECON_TICK);
         }
     }
 
@@ -2639,6 +2740,7 @@ function render() {
         let totalLines = 1; // заголовок
         for (const v of villages) {
             totalLines++; // строка деревни
+            if (v.abandoned) continue;
             const vZones = productionZones.filter(z => z.villageId === v.id);
             if (vZones.length > 0) totalLines++; // строка зон
             if (v.resources) totalLines++; // строка ресурсов
@@ -2646,7 +2748,7 @@ function render() {
         ctx.save();
         ctx.globalAlpha = 0.8;
         ctx.fillStyle = '#0a0a1a';
-        ctx.fillRect(px - 4, py - 12, 440, 14 + totalLines * 14);
+        ctx.fillRect(px - 4, py - 12, 520, 14 + totalLines * 14);
         ctx.restore();
 
         ctx.fillStyle = '#ccaa66';
@@ -2657,11 +2759,32 @@ function render() {
         let lineIdx = 0;
         for (const v of villages) {
             lineIdx++;
-            const pop = v.houseTiles.length * 2;
             const aliveWorkers = v.workers ? v.workers.filter(w => !w.dead).length : 0;
-            const header = `${v.name.padEnd(12)} ${v.personality}  ${v.sizeType.padEnd(6)} pop:${String(pop).padStart(2)} wk:${aliveWorkers}  at(${v.centerIx},${v.centerIy})`;
-            ctx.fillStyle = '#99aa88';
+
+            // Статус экономики
+            let econStatus;
+            if (v.abandoned) {
+                econStatus = 'ABANDONED';
+            } else if (v.resources.food <= 0) {
+                const nextDeath = Math.max(0, STARVATION_INTERVAL - (v._starvationTimer || 0));
+                econStatus = `STARVING (death:${Math.ceil(nextDeath)}s)`;
+            } else {
+                const foodPerPop = v.pop > 0 ? v.resources.food / v.pop : 0;
+                if (foodPerPop >= GROWTH_FOOD_THRESHOLD) {
+                    const nextBirth = Math.max(0, GROWTH_INTERVAL - (v._growthTimer || 0));
+                    econStatus = `GROWING (birth:${Math.ceil(nextBirth)}s)`;
+                } else if (v.resources.food < v.pop * 2) {
+                    econStatus = 'LOW';
+                } else {
+                    econStatus = 'OK';
+                }
+            }
+
+            const header = `${v.name.padEnd(12)} ${v.personality}  ${v.sizeType.padEnd(6)} pop:${v.pop}/${v.maxPop} wk:${aliveWorkers}  ${econStatus}`;
+            ctx.fillStyle = v.abandoned ? '#cc4444' : v.resources.food <= 0 ? '#cc8833' : '#99aa88';
             ctx.fillText(header, px, py + lineIdx * 14);
+
+            if (v.abandoned) continue;
 
             // Зоны производства с детальным статусом
             const vZones = productionZones.filter(z => z.villageId === v.id);
@@ -2684,7 +2807,7 @@ function render() {
                 lineIdx++;
                 const res = v.resources;
                 ctx.fillStyle = '#aacc88';
-                ctx.fillText(`  res: food:${res.farm} stone:${res.mine} wood:${res.lumber}`, px, py + lineIdx * 14);
+                ctx.fillText(`  res: food:${Math.floor(res.food)} wood:${res.wood} stone:${res.stone}`, px, py + lineIdx * 14);
             }
         }
     }

@@ -609,10 +609,37 @@ generateVillages(gameMap, seed) → Village[]
 
 Каждые 5 сек: idle worker'ы назначаются на зоны с `harvestReady > 0`. Зоны сортируются по убыванию `harvestReady`. Максимум 3 рабочих на зону.
 
+#### Экономика деревни
+
+Каждые `VILLAGE_ECON_TICK` (1 сек) для каждой деревни вызывается `updateVillageEconomy()`:
+
+**Ресурсы деревни:**
+```js
+village.resources = { food, wood, stone }
+```
+- Стартовая еда: `houseTiles.length * 8`
+- `addResource(zoneType, amount)`: farm→food, mine→stone, lumber→wood
+
+**Потребление:** `pop × FOOD_PER_POP_PER_SEC × dt` еды/сек (0.01 = 1 еда на жителя за 100 сек)
+
+**Голод:** при `food = 0` тикает `_starvationTimer`. Каждые `STARVATION_INTERVAL` (10 сек) умирает случайный житель (`_killRandomVillager`). При `pop = 0` → `village.abandoned = true`.
+
+**Рост:** при `food/pop ≥ GROWTH_FOOD_THRESHOLD` (5.0) тикает `_growthTimer`. Каждые `GROWTH_INTERVAL` (60 сек) рождается новый worker (`_spawnVillagerWorker`), `pop++`. Рост ограничен `maxPop = startPop + 10`.
+
+| Константа | Значение | Описание |
+|-----------|----------|----------|
+| `FOOD_PER_POP_PER_SEC` | 0.01 | 1 еда / 100 сек / жителя |
+| `GROWTH_FOOD_THRESHOLD` | 5.0 | Еды/жителя для начала роста |
+| `GROWTH_INTERVAL` | 60 сек | Время между рождениями |
+| `STARVATION_INTERVAL` | 10 сек | Время между смертями от голода |
+| `VILLAGE_ECON_TICK` | 1.0 сек | Частота тика экономики |
+
+**Дебаг-панель [V]** статусы: `OK`, `LOW` (food < pop×2), `STARVING (death:Ns)`, `GROWING (birth:Ns)`, `ABANDONED`. Цвет: красный/оранжевый/зелёный.
+
 #### Интеграция
 
 - **World.js**: `export let villagers = []`, сброс в `initWorld()`/`restartMap()`
-- **main.js**: спавн через `setRestartCallback(_spawnVillagers)`, update-loop с передачей `village` и `hand`, рендер в `renderList`
+- **main.js**: спавн через `setRestartCallback(_spawnVillagers)`, update-loop с передачей `village` и `hand`, рендер в `renderList`, экономический тик `villageEconTimer`
 - **input.js**: захват/бросок аналогично миньонам (`hand.grabbedVillager`)
 - **Hand.js**: `grabbedVillager` учитывается в `handFree` и wobble-чеках
 
@@ -2352,3 +2379,4 @@ import { getDepth, worldToScreen } from './isometry.js';
 - [x] Импорт `camera` из `isometry.js` в `decorations.js` для viewport bounds; cache bust версии обновлены (sprites v7, decorations v10, mapGenerator v11, World v11, main v11)
 - [x] Жители деревень (задача 3/4): `Villager.js` — автономные NPC (worker/carrier/militia/refugee), наследуют `GameObject`; стейт-машина (idle, working, returning, carrying, fleeing, extinguishing, patrolling, fighting); `villageSprites.js` — спрайты 6×8 px (идентичный силуэт гоблину, человеческая палитра); назначение рабочих на зоны производства; захват/бросок рукой; интеграция в World/main/input/Hand; дебаг: `wk:N` и ресурсы деревни
 - [x] Фикс рендера жителя в руке: `draw(hand)` теперь рисует спрайт под курсором через `screenToCanvas` с wobble и lerpT (ранее спрайт оставался на iso-координатах, не следовал за рукой)
+- [x] Экономика деревни: потребление еды (`0.01 food/pop/sec`), голод (смерть каждые 10с при food=0), рост населения (рождение каждые 60с при food/pop≥5); `village.resources = {food, wood, stone}`; `addResource` маппит farm→food, mine→stone, lumber→wood; дебаг-панель [V] обновлена со статусами OK/LOW/STARVING/GROWING/ABANDONED и цветовой индикацией
