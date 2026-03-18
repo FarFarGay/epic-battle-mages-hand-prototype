@@ -1805,7 +1805,7 @@ function render() {
         } else if (obj.type === 'minion') {
             minions[obj.index].draw(obj.index, hand, hoveredMinion);
         } else if (obj.type === 'villager') {
-            villagers[obj.index].draw();
+            villagers[obj.index].draw(hand);
         } else if (obj.type === 'bloodPuddle') {
             const p = bloodPuddles[obj.index];
             const s = worldToScreen(p.ix, p.iy);
@@ -1839,7 +1839,7 @@ function render() {
             } else if (hand.grabbedMinion !== null) {
                 minions[hand.grabbedMinion].draw(hand.grabbedMinion, hand, hoveredMinion);
             } else if (hand.grabbedVillager !== null) {
-                villagers[hand.grabbedVillager].draw();
+                villagers[hand.grabbedVillager].draw(hand);
             } else if (hand.grabbedSpell === 'fireball') {
                 fireball.draw(hand);
             } else if (hand.grabbedSpell === 'water' || hand.grabbedSpell === 'earth' || hand.grabbedSpell === 'wind') {

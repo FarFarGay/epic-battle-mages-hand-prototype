@@ -552,6 +552,70 @@ generateVillages(gameMap, seed) → Village[]
   - `next:Ns`: секунд до следующего `harvestReady++` (скрыто при `maxHarvest` или `damaged`)
   - `boost:Ns`: оставшееся время буста (только при активном бусте)
 
+### Жители деревень (`Villager.js`, `villageSprites.js`)
+
+Автономные NPC, привязанные к деревням. Наследуют `GameObject` (та же физика подъёма/броска/отскока).
+
+#### Типы жителей
+
+| Тип | HP | Одежда | Роль |
+|-----|-----|--------|------|
+| `worker` | 30 | Коричневая | Собирает урожай из зон, носит в деревню |
+| `carrier` | 30 | Синяя | Переносит грузы между деревнями |
+| `militia` | 60 | Серо-зелёная (шлем) | Патрулирует, атакует врагов (dmg=8, cd=1.2с) |
+| `refugee` | 15 | Серая рваная | Бежит в ближайшую деревню |
+
+#### Спрайты
+
+Все типы — **6×8 px** (идентичный силуэт MINION_PIXELS гоблина), палитра — человеческая:
+- Голова (ряды 0–1): бежевая кожа (`#d4a86a`, `#e0b878`, `#ecc888`)
+- Глаза (ряд 2): `#110011`; Рот (ряд 3): `#995555`
+- Тело (ряды 4–5): цвет зависит от типа (см. таблицу)
+- Ноги (ряды 6–7): тёмно-коричневые (`#5a4020`, `#4a3018`)
+- Dead: 8×4 px лежащий спрайт
+- Иконки ресурсов: 3×3 px (farm/mine/lumber) — рисуются над головой при переноске
+
+#### Стейт-машина
+
+| Состояние | Описание |
+|-----------|----------|
+| `idle` | Бродит в радиусе 4 от дома, таймер 3–8 сек |
+| `working` | Идёт к зоне производства, собирает урожай |
+| `returning` | Несёт ресурс в центр деревни, сдаёт `village.addResource()` |
+| `carrying` | Переносит груз (carrier), удаляется по прибытии |
+| `fleeing` | Бежит к цели (refugee), скорость ×0.8 |
+| `extinguishing` | Тушит пожар: бежит к горящему тайлу (×1.3), ставит `plain` |
+| `patrolling` | Militia: обходит радиус 6–10 от центра деревни |
+| `fighting` | Militia: преследует и атакует цель |
+| `settling` | После приземления: 0.3с → `idle` или `dead` |
+
+Физика (`lifting`, `carried`, `thrown`, `bouncing`, `sliding`) — через `PHYSICS_STATES` и `updatePhysics()`.
+
+#### Рендер при захвате рукой
+
+`draw(hand)` — при `carried`/`lifting` спрайт рисуется под курсором руки через `screenToCanvas(hand.screenX, hand.screenY)` с плавным подъёмом (`lerpT`) и покачиванием (wobble), идентично гоблину `Minion.draw()`.
+
+#### Константы
+
+| Константа | Значение | Описание |
+|-----------|----------|----------|
+| `VILLAGER_SPEED` | 1.2 | iso units/sec |
+| `ARRIVE_DIST` | 0.8 | Порог «дошёл до цели» |
+| `DEAD_REMOVE_TIME` | 10 | Сек до удаления трупа |
+| `ASSIGN_WORKER_INTERVAL` | 5.0 | Сек между назначениями рабочих |
+| `MAX_WORKERS_PER_ZONE` | 3 | Макс. рабочих на 1 зону |
+
+#### Назначение рабочих (`assignWorkers`)
+
+Каждые 5 сек: idle worker'ы назначаются на зоны с `harvestReady > 0`. Зоны сортируются по убыванию `harvestReady`. Максимум 3 рабочих на зону.
+
+#### Интеграция
+
+- **World.js**: `export let villagers = []`, сброс в `initWorld()`/`restartMap()`
+- **main.js**: спавн через `setRestartCallback(_spawnVillagers)`, update-loop с передачей `village` и `hand`, рендер в `renderList`
+- **input.js**: захват/бросок аналогично миньонам (`hand.grabbedVillager`)
+- **Hand.js**: `grabbedVillager` учитывается в `handFree` и wobble-чеках
+
 ---
 
 ## 8. Управление
@@ -2286,3 +2350,5 @@ import { getDepth, worldToScreen } from './isometry.js';
 - [x] Декорации на EXPLORED-тайлах: рендерятся с alpha=0.35 (ранее показывались только на VISIBLE)
 - [x] Система сбора (harvest): `getHarvestType(tileIx, tileIy)` и `harvestDecoration(deco)` в `decorations.js`; эффект 'harvest' с плавающими частицами; возвращает typeIndex для спавна предмета (lumber→2, mine→1, farm→0)
 - [x] Импорт `camera` из `isometry.js` в `decorations.js` для viewport bounds; cache bust версии обновлены (sprites v7, decorations v10, mapGenerator v11, World v11, main v11)
+- [x] Жители деревень (задача 3/4): `Villager.js` — автономные NPC (worker/carrier/militia/refugee), наследуют `GameObject`; стейт-машина (idle, working, returning, carrying, fleeing, extinguishing, patrolling, fighting); `villageSprites.js` — спрайты 6×8 px (идентичный силуэт гоблину, человеческая палитра); назначение рабочих на зоны производства; захват/бросок рукой; интеграция в World/main/input/Hand; дебаг: `wk:N` и ресурсы деревни
+- [x] Фикс рендера жителя в руке: `draw(hand)` теперь рисует спрайт под курсором через `screenToCanvas` с wobble и lerpT (ранее спрайт оставался на iso-координатах, не следовал за рукой)

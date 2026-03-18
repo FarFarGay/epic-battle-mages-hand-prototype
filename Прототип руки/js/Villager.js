@@ -5,7 +5,7 @@ import { GameObject } from './GameObject.js';
 import { PIXEL_SCALE, HEIGHT_TO_SCREEN } from './constants.js';
 import { gameMap } from './Map.js';
 import { getTileEffect } from './tileEffects.js?v=2';
-import { worldToScreen } from './isometry.js';
+import { worldToScreen, screenToCanvas } from './isometry.js';
 import { ctx, drawPixelArt, drawItemShadow } from './renderer.js';
 import {
     VILLAGER_SPRITES,
@@ -337,7 +337,7 @@ export class Villager extends GameObject {
     //  РЕНДЕР
     // ============================================================
 
-    draw() {
+    draw(hand) {
         const s = worldToScreen(this.ix, this.iy);
         const sprite = VILLAGER_SPRITES[this.type] || VILLAGER_SPRITES.worker;
 
@@ -351,6 +351,24 @@ export class Villager extends GameObject {
 
         // Тень
         drawItemShadow(s.x, s.y, sprite.w, sprite.h, this.iz);
+
+        // При захвате — рисуем под рукой (как гоблин)
+        if (this.state === 'carried' || this.state === 'lifting') {
+            const time = performance.now() / 300;
+            const wobbleX = Math.sin(time) * 1.5;
+            const wobbleY = Math.cos(time * 1.3) * 1;
+            const gripOffsetY = -8;
+            const lerpT = this.state === 'lifting' ? (1 - Math.pow(1 - this.liftProgress, 2)) : 1;
+            const canvasPos = screenToCanvas(hand.screenX, hand.screenY);
+            const groundOx = s.x - (sprite.w * PIXEL_SCALE) / 2;
+            const groundOy = s.y - (sprite.h * PIXEL_SCALE) - 4;
+            const handOx = canvasPos.x - (sprite.w * PIXEL_SCALE) / 2 + wobbleX;
+            const handOy = canvasPos.y - (sprite.h * PIXEL_SCALE) / 2 + gripOffsetY + wobbleY;
+            const ox = groundOx + (handOx - groundOx) * lerpT;
+            const oy = groundOy + (handOy - groundOy) * lerpT;
+            drawPixelArt(ox, oy, sprite.pixels, PIXEL_SCALE);
+            return;
+        }
 
         // Позиция спрайта
         const heightOffset = this.iz * HEIGHT_TO_SCREEN;
