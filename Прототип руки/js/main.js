@@ -265,11 +265,7 @@ function updateVillageEconomy(village, dt) {
 }
 
 function _killRandomVillager(village) {
-    if (village.pop <= 0) return;
-
-    village.pop--;
-
-    // Найти живого жителя и убить
+    // Найти живого жителя и убить (pop-- произойдёт в update через _popCounted)
     const alive = villagers.filter(v =>
         v.villageId === village.id && !v.dead && !v.pendingRemove
     );
@@ -280,11 +276,6 @@ function _killRandomVillager(village) {
         victim.state = 'dead';
         victim.deadTime = 0;
         victim.carriedResource = null;
-    }
-
-    if (village.pop <= 0) {
-        village.pop = 0;
-        village.abandoned = true;
     }
 }
 
@@ -1162,6 +1153,17 @@ function update(dt) {
         if (vl.pendingRemove) continue;
         const village = villages.find(v => v.id === vl.villageId);
         vl.update(dt, village, hand, triggerScreenShake);
+    }
+    // Уменьшаем pop при гибели (сразу, не дожидаясь удаления трупа)
+    for (const vl of villagers) {
+        if (vl.dead && !vl._popCounted) {
+            vl._popCounted = true;
+            const vOwner = villages.find(v => v.id === vl.villageId);
+            if (vOwner && vOwner.pop > 0) {
+                vOwner.pop--;
+                if (vOwner.pop <= 0) { vOwner.pop = 0; vOwner.abandoned = true; }
+            }
+        }
     }
     // Очистка мёртвых
     for (let i = villagers.length - 1; i >= 0; i--) {
