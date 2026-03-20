@@ -3,6 +3,7 @@
 // ============================================================
 import { gameMap } from './Map.js';
 import { activeTiles, findZoneAtTile } from './World.js?v=12';
+import { notifyVillages } from './VillageEvents.js';
 
 // ============================================================
 //  ТАБЛИЦА ТРАНСФОРМАЦИЙ: spell × currentTile → newTile
@@ -264,12 +265,14 @@ export function handleSpellOnZone(spell, ix, iy) {
         case 'water':
             if (zone.type === 'farm') {
                 zone.applyBoost(2.0, 60); // ×2 скорость роста на 60 сек
+                notifyVillages({ code: 'water_farm', ix, iy, src: 'player', gameTime: performance.now() / 1000 });
             }
             break;
 
         case 'wind':
             if (zone.type === 'farm') {
                 zone.applyBoost(1.5, 30); // ×1.5 на 30 сек
+                notifyVillages({ code: 'wind_farm', ix, iy, src: 'player', gameTime: performance.now() / 1000 });
             }
             break;
 

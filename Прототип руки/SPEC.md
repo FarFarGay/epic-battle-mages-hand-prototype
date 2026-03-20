@@ -36,6 +36,7 @@ js/
 ├── Fireball.js         — class Fireball extends GameObject: физика огненного шара, взрыв
 ├── SpellProjectile.js  — class SpellProjectile extends GameObject: бросаемый снаряд для water/earth/wind
 ├── World.js            — items[], minions[], commandMarkers[], castle, fireball, spellProjectile, screenShake, productionZones[], findZoneAtTile(), resolveCollisions, restartMap, initWorld
+├── VillageEvents.js    — notifyVillages(), detectTileEvent(), VILLAGE_SIGHT — система событий и отношений деревень к магу
 ├── input.js            — все обработчики событий мыши и клавиатуры
 └── main.js             — игровой цикл: update(), render(), gameLoop()
 ```
@@ -530,6 +531,18 @@ generateVillages(gameMap, seed) → Village[]
     neighbors: {                // заполняется после генерации всех деревень
         v1: { name, dist, dir } // dir: 'N','NE','E','SE','S','SW','W','NW'
     },
+    // === Отношения к магу (инициализируются в _spawnVillagers) ===
+    loy: 0,                     // loyalty: -100..+100
+    fear: 0,                    // 0..100
+    trust: 0,                   // 0..100
+    // === Память и решения (для будущего LLM) ===
+    memory: 'не знаем о маге',  // текстовая память, обновляется LLM
+    knownEvents: [],            // последние 15 событий
+    // Формат: { t, code, dist, dir, src, isNew }
+    action: null,               // 'tribute'|'militia'|'evacuate'|'extinguish'|'nothing'|null
+    actionTimer: 0,             // секунд до сброса действия
+    _towerSeen: false,          // для детекции приближения башни
+    _fearDecayTimer: 0,         // таймер затухания fear
 }
 ```
 
@@ -546,11 +559,17 @@ generateVillages(gameMap, seed) → Village[]
 ### Дебаг-панель [V]
 
 Клавиша **V** / **М** toggle `debugFlags.showVillages`. Панель отображает для каждой деревни:
-- Имя, personality, sizeType, pop (houseTiles×2), координаты
-- Статус каждой зоны: `type(status, harvestReady/max, next:Ns, boost:Ns)`
+- **Header**: Имя, personality, sizeType, pop/maxPop, wk:N, статус экономики (OK/LOW/STARVING/GROWING/ABANDONED)
+- **rel**: `loy:±N fear:N trust:N` — отношения к магу
+  - Цвета `loy`: зелёный (`>20`), красный (`<-20`), жёлтый (иначе)
+  - Цвета `fear`: красный (`>60`), оранжевый (`>30`), белый (иначе)
+- **mem**: текстовая память деревни, **act**: текущее действие (или `none`)
+- **events(N)**: последние 5 из 15 событий в формате `code:distDir`
+- **zones**: `type(status, harvestReady/max, next:Ns, boost:Ns)` — зоны производства
   - `status`: `ok` или `DMG` (все тайлы уничтожены)
-  - `next:Ns`: секунд до следующего `harvestReady++` (скрыто при `maxHarvest` или `damaged`)
-  - `boost:Ns`: оставшееся время буста (только при активном бусте)
+  - `next:Ns`: секунд до следующего `harvestReady++`
+  - `boost:Ns`: оставшееся время буста
+- **res**: `food:N wood:N stone:N` — ресурсы деревни
 
 ### Жители деревень (`Villager.js`, `villageSprites.js`)
 
@@ -642,6 +661,51 @@ village.resources = { food, wood, stone }
 - **main.js**: спавн через `setRestartCallback(_spawnVillagers)`, update-loop с передачей `village` и `hand`, рендер в `renderList`, экономический тик `villageEconTimer`
 - **input.js**: захват/бросок аналогично миньонам (`hand.grabbedVillager`)
 - **Hand.js**: `grabbedVillager` учитывается в `handFree` и wobble-чеках
+
+#### Система событий и отношений (`VillageEvents.js`)
+
+Инфраструктура для будущей LLM-режиссуры. Деревни «видят» действия мага в радиусе `VILLAGE_SIGHT = 20` тайлов, ведут лог событий и обновляют числовые отношения.
+
+**Отношения к магу:**
+- `loy` (loyalty): −100..+100 — ненависть..любовь
+- `fear`: 0..100 — спокойствие..ужас
+- `trust`: 0..100 — недоверие..полное доверие
+
+**Лог событий:** `knownEvents[]` — до 15 последних событий `{ t, code, dist, dir, src, isNew }`.
+
+**Коды событий:**
+
+| Код | Описание | loy | fear | Источник |
+|-----|----------|-----|------|----------|
+| `fire` | Фаербол приземлился | −5 | +10 | pendingExplosion fireball |
+| `water` | Водяной шар приземлился | 0 | 0 | pendingExplosion water |
+| `wind` | Ветер приземлился | −2 | 0 | pendingExplosion wind |
+| `boulder` | Валун прокатился | −15 | +15 | каждый тайл при rolling |
+| `artillery` | Артиллерийский взрыв | −5 | +20 | updateArtillery |
+| `burn_forest` | Лес/лесоповал загорелся | −10 | 0 | onTileChanged (forest→burning) |
+| `burn_village` | Дом/площадь загорелся | −25 | +25 | onTileChanged (village→burning) |
+| `destroy_house` | Дом разрушен | −20 | +15 | onTileChanged (village→rubble) |
+| `destroy_farm` | Ферма уничтожена | −15 | 0 | onTileChanged (farmland→burning/rubble/scorched) |
+| `extinguish` | Пожар потушен | +15 | −5 | onTileChanged (burning→plain, cause=water) |
+| `kill_villager` | Житель убит | −30 | 0 | update loop (_eventNotified) |
+| `kill_skel` | Скелет убит | +10 | −5 | pendingBoneEffect |
+| `water_farm` | Ферма полита водой | +5 | −3 | handleSpellOnZone (water+farm) |
+| `wind_farm` | Ферма ускорена ветром | +3 | 0 | handleSpellOnZone (wind+farm) |
+| `tower_approach` | Башня приблизилась | 0 | +10 | castle dist < VILLAGE_SIGHT |
+
+**Множитель расстояния:** эффект × `(1.0 − (dist/VILLAGE_SIGHT) × 0.5)`. На 1 тайле ≈ ×1.0, на 20 тайлах ≈ ×0.5.
+
+**Trust:** +1 при позитивном событии, −2 при негативном (медленная аккумуляция).
+
+**Затухание fear:** −1 каждые 10 сек в `updateVillageEconomy()`.
+
+**Таймер действия:** `village.action` автосбрасывается через `village.actionTimer` сек.
+
+**Файлы:**
+- `VillageEvents.js`: `notifyVillages(event)`, `detectTileEvent()`, `VILLAGE_SIGHT`
+- `World.js`: обёртка `setTileChangedCallback` вызывает `detectTileEvent` после `onTileChanged`
+- `tileEffects.js`: `water_farm`/`wind_farm` события в `handleSpellOnZone`
+- `main.js`: все остальные интеграционные точки, `gameTime` счётчик
 
 ---
 
@@ -2381,3 +2445,4 @@ import { getDepth, worldToScreen } from './isometry.js';
 - [x] Фикс рендера жителя в руке: `draw(hand)` теперь рисует спрайт под курсором через `screenToCanvas` с wobble и lerpT (ранее спрайт оставался на iso-координатах, не следовал за рукой)
 - [x] Экономика деревни: потребление еды (`0.01 food/pop/sec`), голод (смерть каждые 10с при food=0), рост населения (рождение каждые 60с при food/pop≥5); `village.resources = {food, wood, stone}`; `addResource` маппит farm→food, mine→stone, lumber→wood; дебаг-панель [V] обновлена со статусами OK/LOW/STARVING/GROWING/ABANDONED и цветовой индикацией
 - [x] Фикс: гибель жителя (урон, падение, огонь) теперь мгновенно уменьшает `village.pop` через флаг `_popCounted` в update-loop; ранее pop не менялся при боевых смертях, а при голоде декрементировался дважды
+- [x] Инфраструктура событий и отношений деревень (`VillageEvents.js`): деревни «видят» действия мага в радиусе 20 тайлов; 15 типов событий (fire, water, wind, boulder, artillery, burn_forest, burn_village, destroy_house, destroy_farm, extinguish, kill_villager, kill_skel, water_farm, wind_farm, tower_approach); числовые отношения `loy` (−100..+100), `fear` (0..100), `trust` (0..100) с таблицами дельт и множителем расстояния; лог до 15 событий; `memory` и `action`/`actionTimer` для будущего LLM; fear затухает −1/10с; дебаг-панель [V] расширена: rel, mem, act, events; `gameTime` счётчик в main.js; интеграция в 7 точках (fireball, spellProjectile, artillery, boulder rolling, tile changes, villager death, skeleton death, farm boost, tower approach)

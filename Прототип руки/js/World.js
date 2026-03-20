@@ -14,10 +14,14 @@ import { SpellProjectile } from './SpellProjectile.js';
 import { generateMap, placeResources, placeDecorations, lastVillages } from './mapGenerator.js?v=11';
 import { ProductionZone } from './ProductionZone.js';
 import { onTileChanged, decoParticles, decorations as decoArr, setItemSpawnCallback } from './decorations.js?v=10';
+import { detectTileEvent } from './VillageEvents.js';
 export { decoParticles };
 
-// Регистрируем callback изменения тайлов → обновление декораций
-setTileChangedCallback(onTileChanged);
+// Регистрируем callback изменения тайлов → обновление декораций + события деревень
+setTileChangedCallback((ix, iy, oldType, newType, cause) => {
+    onTileChanged(ix, iy, oldType, newType, cause);
+    detectTileEvent(ix, iy, oldType, newType, cause, performance.now() / 1000);
+});
 
 // Регистрируем callback спавна предметов из декораций
 setItemSpawnCallback((typeIndex, ix, iy, vx, vy, vz) => {

@@ -28,6 +28,7 @@ import { Villager, assignWorkers, ASSIGN_WORKER_INTERVAL } from './Villager.js';
 import { initInput } from './input.js';
 import { updateActiveTiles, applySpellInRadius, applySpellToTile, handleSpellOnZone, IMPACT_DUR, FADING_DUR } from './tileEffects.js?v=2';
 import { addDecorationsToRenderList, decorations } from './decorations.js?v=10';
+import { notifyVillages, VILLAGE_SIGHT } from './VillageEvents.js';
 
 // Тайловые частицы — одноразовые эффекты (всплеск воды, взрыв ветра)
 const tileParticles = [];
@@ -188,10 +189,12 @@ const GROWTH_INTERVAL       = 60;    // сек между рождениями
 const STARVATION_INTERVAL   = 10;    // сек между смертями от голода
 const VILLAGE_ECON_TICK     = 1.0;   // сек между тиками экономики
 let villageEconTimer = 0;
+let gameTime = 0; // глобальный счётчик времени (сек)
 
 function _spawnVillagers() {
     villagers.length = 0;
     villageEconTimer = 0;
+    gameTime = 0;
     for (const v of villages) {
         // Аугментация объекта деревни runtime-свойствами
         v.workers = [];
@@ -200,6 +203,17 @@ function _spawnVillagers() {
         v.abandoned = false;
         v._starvationTimer = 0;
         v._growthTimer = 0;
+        // Отношения к магу
+        v.loy = 0;        // loyalty: -100..+100
+        v.fear = 0;       // 0..100
+        v.trust = 0;      // 0..100
+        // Память и события
+        v.memory = 'не знаем о маге';
+        v.knownEvents = [];
+        v.action = null;
+        v.actionTimer = 0;
+        v._towerSeen = false;
+        v._fearDecayTimer = 0;
         v.resources = {
             food:  v.houseTiles.length * 8,
             wood:  10,
@@ -261,6 +275,22 @@ function updateVillageEconomy(village, dt) {
         }
     } else {
         village._growthTimer = 0;
+    }
+
+    // Fear затухает: -1 каждые 10 сек
+    village._fearDecayTimer = (village._fearDecayTimer || 0) + dt;
+    if (village._fearDecayTimer >= 10) {
+        village._fearDecayTimer = 0;
+        if (village.fear > 0) village.fear = Math.max(0, village.fear - 1);
+    }
+
+    // Таймер текущего действия
+    if (village.actionTimer > 0) {
+        village.actionTimer -= dt;
+        if (village.actionTimer <= 0) {
+            village.action = null;
+            village.actionTimer = 0;
+        }
     }
 }
 
@@ -595,6 +625,9 @@ function updateArtillery(dt) {
                 }
             }
 
+            // Событие для деревень
+            notifyVillages({ code: 'artillery', ix: proj.ix, iy: proj.iy, src: 'player', gameTime });
+
             statusEl.textContent = 'Попадание!';
         }
     }
@@ -639,6 +672,8 @@ function updateArtillery(dt) {
 //  ОБНОВЛЕНИЕ
 // ============================================================
 function update(dt) {
+    gameTime += dt;
+
     // ── АРТИЛЛЕРИЯ — обновление ──────────────────────────────────
     if (artilleryMode.active) {
         updateArtillery(dt);
@@ -825,6 +860,9 @@ function update(dt) {
 
         // Трансформация тайлов в зоне взрыва (burning, steam и т.д.)
         applySpellInRadius('fire', ex, ey, FIREBALL_TILE_RADIUS, 'fire');
+
+        // Событие для деревень
+        notifyVillages({ code: 'fire', ix: ex, iy: ey, src: 'player', gameTime });
     }
 
     // ── СНАРЯД ЗАКЛИНАНИЯ — обновление ────────────────────────
@@ -895,6 +933,10 @@ function update(dt) {
             }
             applySpellInRadius(spellKey, ex, ey, spellRadius, spellKey);
         }
+
+        // Событие для деревень (water/wind/earth приземление)
+        const evCode = spellKey === 'water' ? 'water' : spellKey === 'wind' ? 'wind' : 'boulder';
+        notifyVillages({ code: evCode, ix: ex, iy: ey, src: 'player', gameTime });
 
         // Туман войны: вода и ветер — временно (земля — через fogSources при rolling)
         if (spellKey !== 'earth') {
@@ -1032,6 +1074,9 @@ function update(dt) {
                 // Трансформация тайла (дроп ресурсов через onTileChanged)
                 applySpellToTile('earth', tix, tiy, 'earth');
 
+                // Событие для деревень — валун на каждом тайле
+                notifyVillages({ code: 'boulder', ix: tix, iy: tiy, src: 'player', gameTime });
+
                 // Скорость на спец-тайлах
                 if (tileType === 'ice') {
                     spellProjectile.multiplyRollSpeed(1.1);
@@ -1164,6 +1209,11 @@ function update(dt) {
                 if (vOwner.pop <= 0) { vOwner.pop = 0; vOwner.abandoned = true; }
             }
         }
+        // Событие смерти жителя для деревень
+        if (vl.dead && !vl._eventNotified) {
+            vl._eventNotified = true;
+            notifyVillages({ code: 'kill_villager', ix: vl.ix, iy: vl.iy, src: 'player', gameTime });
+        }
     }
     // Очистка мёртвых
     for (let i = villagers.length - 1; i >= 0; i--) {
@@ -1199,6 +1249,21 @@ function update(dt) {
         villageEconTimer = 0;
         for (const v of villages) {
             updateVillageEconomy(v, VILLAGE_ECON_TICK);
+        }
+    }
+
+    // Проверка приближения башни к деревням (каждый эконом-тик)
+    if (castle) {
+        for (const v of villages) {
+            if (v.abandoned) continue;
+            const tdx = castle.ix - v.centerIx;
+            const tdy = castle.iy - v.centerIy;
+            const tDist = Math.sqrt(tdx * tdx + tdy * tdy);
+            if (tDist < VILLAGE_SIGHT && !v._towerSeen) {
+                v._towerSeen = true;
+                notifyVillages({ code: 'tower_approach', ix: castle.ix, iy: castle.iy, src: 'player', gameTime });
+            }
+            if (tDist >= VILLAGE_SIGHT + 5) v._towerSeen = false;
         }
     }
 
@@ -1339,6 +1404,8 @@ function update(dt) {
         if (minion.pendingBoneEffect) {
             const effect = minion.pendingBoneEffect;
             minion.pendingBoneEffect = null;
+            // Скелет убит — событие для деревень
+            notifyVillages({ code: 'kill_skel', ix: effect.ix, iy: effect.iy, src: 'player', gameTime });
             const s = worldToScreen(effect.ix, effect.iy);
             for (let i = 0; i < 18; i++) {
                 bloodParticles.push({
@@ -2738,19 +2805,22 @@ function render() {
     // ── ПАНЕЛЬ ДЕРЕВЕНЬ (V) ─────────────────────────────────────
     if (debugFlags.showVillages && villages.length > 0) {
         const px = 8, py = 28;
-        // Подсчитаем высоту панели (деревня + её зоны)
+        // Подсчитаем высоту панели
         let totalLines = 1; // заголовок
         for (const v of villages) {
-            totalLines++; // строка деревни
+            totalLines++; // header
             if (v.abandoned) continue;
+            totalLines++; // rel
+            totalLines++; // mem + act
+            if (v.knownEvents && v.knownEvents.length > 0) totalLines++; // events
             const vZones = productionZones.filter(z => z.villageId === v.id);
-            if (vZones.length > 0) totalLines++; // строка зон
-            if (v.resources) totalLines++; // строка ресурсов
+            if (vZones.length > 0) totalLines++; // zones
+            if (v.resources) totalLines++; // res
         }
         ctx.save();
         ctx.globalAlpha = 0.8;
         ctx.fillStyle = '#0a0a1a';
-        ctx.fillRect(px - 4, py - 12, 520, 14 + totalLines * 14);
+        ctx.fillRect(px - 4, py - 12, 620, 14 + totalLines * 14);
         ctx.restore();
 
         ctx.fillStyle = '#ccaa66';
@@ -2787,6 +2857,39 @@ function render() {
             ctx.fillText(header, px, py + lineIdx * 14);
 
             if (v.abandoned) continue;
+
+            // Отношения: loy, fear, trust
+            lineIdx++;
+            const loyStr = (v.loy >= 0 ? '+' : '') + Math.round(v.loy);
+            const fearStr = Math.round(v.fear);
+            const trustStr = Math.round(v.trust);
+            // Цвета loy
+            const loyColor = v.loy > 20 ? '#66cc66' : v.loy < -20 ? '#cc4444' : '#cccc66';
+            // Цвета fear
+            const fearColor = v.fear > 60 ? '#cc4444' : v.fear > 30 ? '#cc8833' : '#cccccc';
+            ctx.fillStyle = loyColor;
+            ctx.fillText(`  rel: loy:${loyStr}`, px, py + lineIdx * 14);
+            ctx.fillStyle = fearColor;
+            ctx.fillText(`fear:${fearStr}`, px + 120, py + lineIdx * 14);
+            ctx.fillStyle = '#aabbcc';
+            ctx.fillText(`trust:${trustStr}`, px + 180, py + lineIdx * 14);
+
+            // Память и действие
+            lineIdx++;
+            ctx.fillStyle = '#aa99cc';
+            const actStr = v.action ? `${v.action}(${Math.ceil(v.actionTimer)}s)` : 'none';
+            ctx.fillText(`  mem: "${v.memory || ''}"  act: ${actStr}`, px, py + lineIdx * 14);
+
+            // События
+            if (v.knownEvents && v.knownEvents.length > 0) {
+                lineIdx++;
+                const evStrs = v.knownEvents.slice(-5).map(e => {
+                    const str = `${e.code}:${e.dist}${e.dir}`;
+                    return str;
+                });
+                ctx.fillStyle = '#8899aa';
+                ctx.fillText(`  events(${v.knownEvents.length}): [${evStrs.join(', ')}]`, px, py + lineIdx * 14);
+            }
 
             // Зоны производства с детальным статусом
             const vZones = productionZones.filter(z => z.villageId === v.id);
