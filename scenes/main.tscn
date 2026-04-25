@@ -1,10 +1,12 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="PackedScene" path="res://scenes/tower.tscn" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/hand.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/camera_rig.tscn" id="3"]
 [ext_resource type="PackedScene" path="res://scenes/item.tscn" id="4"]
 [ext_resource type="Shader" path="res://resources/grid.gdshader" id="5"]
+[ext_resource type="Script" path="res://scripts/enemy_spawner.gd" id="6"]
+[ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="7"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(200, 1, 200)
@@ -28,7 +30,7 @@ shadow_enabled = true
 [node name="Ground" type="StaticBody3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
 collision_layer = 1
-collision_mask = 15
+collision_mask = 31
 
 [node name="GroundCollision" type="CollisionShape3D" parent="Ground"]
 shape = SubResource("BoxShape3D_ground")
@@ -77,3 +79,10 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 1.25, -3)
 item_color = Color(0.4, 0.25, 0.15, 1)
 item_size = Vector3(2.5, 2.5, 2.5)
 mass = 20.0
+
+[node name="EnemySpawner" type="Node3D" parent="."]
+script = ExtResource("6")
+skeleton_scene = ExtResource("7")
+target_path = NodePath("../Tower")
+spawn_radius = 25.0
+spawn_count = 50

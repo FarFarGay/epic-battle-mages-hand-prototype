@@ -73,14 +73,19 @@ hand_gameplay_prot/
 | Слой | Имя | Кто на нём | Кто его сканирует |
 |---|---|---|---|
 | 1 | Terrain | Ground (в будущем — холмы, стены) | все динамические тела + Hand-raycast |
-| 2 | Items | все `Item` (поднимаемые ящики) | все динамические тела + Hand-raycast + GrabArea/MagnetArea |
-| 3 | Actors | Tower (в будущем — NPC, враги) | другие Actors, Items, Projectiles |
-| 4 | Projectiles | (заготовка под магию) | Terrain, Actors, Items |
+| 2 | Items | все `Item` (поднимаемые ящики) | все динамические тела + Hand-raycast + GrabArea/MagnetArea + Slam |
+| 3 | Actors | Tower (player-side) | Items, Enemies |
+| 4 | Projectiles | (заготовка под магию) | Terrain, Actors, Enemies |
+| 5 | Enemies | `Skeleton` и будущие враги | Tower (Actors), Slam |
 
-Маски на телах в текущей итерации — `15` (все 4 бита) у всех. Это сохраняет «всё со всем сталкивается» на уровне физики; слои несут только семантическую информацию для **запросов** (raycast, area-overlap).
+**Маски в текущей итерации:**
+- `Tower`, `Item`, `Ground`: `mask = 31` (все 5 слоёв) — взаимодействуют с чем угодно.
+- `Skeleton`: `mask = 23` (Terrain + Items + Actors + Enemies) — включает свой же слой, поэтому скелеты блокируют друг друга. Так как оба кинематика, не «пушат» — просто скользят вдоль; визуально это даёт плотную толкучку у цели.
 
-`Hand.GrabArea` и `Hand.MagnetArea` имеют `collision_mask = 2` — на физическом уровне видят только `Item`.
-`Hand._raycast_terrain` использует `terrain_mask` (по умолчанию `3` = Terrain + Items) — рука поднимается над полом и ящиками, но не реагирует на башню/будущих врагов/снаряды.
+**Маски запросов (не тел):**
+- `Hand.GrabArea` / `Hand.MagnetArea`: `collision_mask = 2` (только Items) — нельзя схватить башню или скелета.
+- `Hand.terrain_mask`: `3` (Terrain + Items) — рука поднимается над полом и ящиками, но не лезет на башню/врагов/снаряды.
+- `Hand:PhysicalActions.slam_mask`: `18` (Items + Enemies) — slam задевает только то, что должно «разлетаться».
 
 ---
 
@@ -96,22 +101,37 @@ hand_gameplay_prot/
 - `move_speed: float = 8.0` — горизонтальная скорость.
 - `gravity: float = 20.0` — ускорение свободного падения.
 - `mass: float = 10.0` — эффективная масса башни (для сравнения с `Item.mass`).
-- `push_strength: float = 1.0` — множитель импульса при толкании.
+- `hp: float = 1000.0` — здоровье. На 0 → `died.emit()` (без queue_free — game-over UI отдельно).
+- `push_strength: float = 1.0` — множитель импульса при толкании предметов (группа `Push Items`).
+- `enemy_push_speed_factor: float = 1.5` — множитель скорости knockback'а, который башня сообщает врагу при контакте (группа `Push Enemies`).
+- `enemy_push_duration: float = 0.2` — длительность knockback'а врагу. Refresh'ится каждый физкадр контакта.
 - `debug_log: bool = true` — включить событийные логи.
+
+**Сигналы:**
+- `damaged(amount: float)` — каждый раз при `take_damage`.
+- `died` — в момент перехода `hp ≤ 0`.
+
+**Публичный API:**
+- `take_damage(amount: float)` — общий «damageable»-контракт. Враги бьют через него.
 
 **Логика движения:**
 - `velocity.y -= gravity * delta`, обнуляется при `is_on_floor()`.
 - `velocity.x/z = input_dir * move_speed`, где `input_dir` — нормализованный вектор от `Input.get_axis`.
 - `move_and_slide()` — стандартный кинематический шаг.
 
-**Логика толкания (`_push_items`, после `move_and_slide`):**
+**Логика разрешения контактов (`_resolve_contacts`, после `move_and_slide`):**
 - Скорость **до** `move_and_slide` запоминается в `intended_velocity` (после слайда компонент в сторону препятствия обнуляется, и без этого нельзя понять, что туда шли).
-- Для каждой слайд-коллизии: если коллайдер — `Item`, не `freeze`, и `tower.mass > item.mass`:
-  - `push_dir = -col.get_normal()` — направление от башни в предмет.
-  - `v_into = intended_velocity.dot(push_dir)` — насколько башня туда «ехала».
-  - `v_diff = v_into − item.linear_velocity.dot(push_dir)` — разница между «куда хочет башня» и «куда уже едет предмет».
-  - Импульс: `push_dir × v_diff × item.mass × ratio × push_strength`, где `ratio = (mass − item.mass) / mass` ∈ [0, 1).
-  - Чем больше превосходство в массе, тем сильнее толкает. Если массы равны — push'а нет.
+- Для каждой слайд-коллизии диспатч по типу:
+  - **`Item` (`_push_item`)**, при условиях не-freeze и `tower.mass > item.mass`:
+    - `push_dir = -col.get_normal()` — направление от башни в предмет.
+    - `v_into = intended_velocity.dot(push_dir)`, `v_diff = v_into − item.linear_velocity.dot(push_dir)`.
+    - Импульс: `push_dir × v_diff × item.mass × ratio × push_strength`, где `ratio = (mass − item.mass) / mass` ∈ [0, 1).
+  - **`Enemy` (`_push_enemy`)**:
+    - Горизонтальный `push_dir_h = -col.get_normal().horizontal.normalized()`.
+    - Если `intended_velocity.dot(push_dir_h) ≤ 0.1` — башня не едет в эту сторону, скип.
+    - `enemy.apply_knockback(push_dir_h × v_into × enemy_push_speed_factor, enemy_push_duration)`.
+    - В `_contacts_last` врагов не пишем — слишком много, спам логов.
+    - Эффект: пока башня едет в скелетов, knockback каждый физкадр обновляется → они летят в сторону движения и тут же выводятся из-под башни. После того как тоwer проедет, AI скелетов снова включается, они разворачиваются и идут обратно.
 
 **Логирование (когда `debug_log=true`):**
 - `print` на: контакт с полом ↔ воздух, любое изменение `input_dir` (старт/стоп/смена направления).
@@ -181,8 +201,9 @@ hand_gameplay_prot/
 - `slam_lift_factor: float = 0.4` — вертикальная компонента толчка.
 - `slam_damage: float = 20.0` — базовый урон в эпицентре.
 - `slam_cooldown: float = 0.5` — секунды между хлопками.
-- `slam_mask: int = 6` (`@export_flags_3d_physics`) — Items + Actors. Terrain не задевается.
+- `slam_mask: int = 18` (`@export_flags_3d_physics`) — Items + Enemies.
 - `slam_visual_color: Color` — цвет вспышки.
+- `slam_knockback_duration: float = 0.4` — на сколько секунд враги «оглушены» knockback'ом (их AI не работает в это время).
 
 **Экспорты (группа `Flick (RMB hold-release)`):**
 - `flick_orbit_radius: float = 1.5` — расстояние, на которое рука «отъезжает» от цели по направлению курсора.
@@ -201,13 +222,11 @@ hand_gameplay_prot/
 **Логика хлопка (`_perform_slam`):**
 1. Кулдаун-гейт через `_slam_cooldown_remaining`.
 2. `PhysicsShapeQueryParameters3D` со сферой `slam_radius` в `_hand.global_position`, маска = `slam_mask`. `intersect_shape` возвращает все тела в зоне.
-3. Для каждого `Item` (не `freeze`):
-   - Falloff = `1 − horizontal_dist / slam_radius` (горизонтальная, не 3D — иначе `hand_height` съел бы всю силу).
-   - Направление = `(horizontal + UP × slam_lift_factor).normalized()`.
-   - `apply_central_impulse(direction × slam_force × falloff)`.
-   - `take_damage(slam_damage × falloff)`.
-4. Спавним полупрозрачную сферу с emission в эпицентре; `Tween` масштабирует до `slam_radius` и фейдит альфу за 0.3s, потом `queue_free`.
-5. `slammed.emit(origin, slam_radius)`.
+3. Falloff = `1 − horizontal_dist / slam_radius` (горизонтальная, не 3D — иначе `hand_height` съел бы всю силу). Направление = `(horizontal + UP × slam_lift_factor).normalized()`. Считаются вспомогательной `_slam_direction_and_falloff`, общей для всех типов целей.
+4. Для каждого `Item` (не `freeze`): `apply_central_impulse(dir × slam_force × falloff)` + `take_damage(slam_damage × falloff)`.
+5. Для каждого `Enemy`: `enemy.apply_knockback(dir × slam_force × falloff, slam_knockback_duration)` + `take_damage(slam_damage × falloff)`. У `CharacterBody3D` нет `apply_central_impulse`, поэтому через метод `apply_knockback`, который подменяет velocity и временно отключает AI.
+6. Спавним полупрозрачную сферу с emission в эпицентре; `Tween` масштабирует до `slam_radius` и фейдит альфу за 0.3s, потом `queue_free`.
+7. `slammed.emit(origin, slam_radius)`.
 
 **Логика щелбана (flick):**
 1. **Press (`_flick_pressed`):** Если рука уже что-то держит — отказ. Иначе ищем `_find_closest_item` в `GrabArea`; если пусто — отказ. При успехе:
@@ -305,7 +324,106 @@ hand_gameplay_prot/
 
 **Внешние зависимости:** ничего.
 
-### 5.5 Ground — inline в `main.tscn`
+### 5.5 Enemies — категория врагов
+
+Иерархия: `Enemy` (база) → `Skeleton` (конкретный тип). Спавн делает отдельный узел `EnemySpawner` в `main.tscn`.
+
+#### 5.5.1 Enemy — `scripts/enemy.gd`
+
+**Тип корня:** `CharacterBody3D` с `class_name Enemy`. **Базовый класс**, не используется напрямую — только через подклассы (Skeleton и будущие).
+
+**Назначение:** общая инфраструктура врагов — HP/урон, knockback, гравитация, цикл `_physics_process`. Поведение оставляется подклассам в виртуальном `_ai_step(delta)`.
+
+**Экспорты:**
+- `hp: float = 30.0` — здоровье.
+- `move_speed: float = 4.0` — горизонтальная скорость передвижения (используется подклассами через `velocity`).
+- `gravity: float = 20.0` — ускорение свободного падения.
+- `attack_range: float = 1.5` — на каком расстоянии до цели начинается атака.
+- `attack_damage: float = 5.0` — урон цели при атаке.
+- `attack_cooldown: float = 1.0` — секунды между атаками. Тикает всегда (в т.ч. в knockback'е), иначе lunge-knockback растягивал бы реальный кулдаун.
+- `knockback_friction: float = 5.0` — насколько быстро затухает knockback-velocity (lerp coefficient).
+- Группа **Knockback contacts:**
+  - `bounce_restitution: float = 0.6` — коэффициент отскока от `_target` при ударе во время knockback'а.
+  - `neighbor_push_factor: float = 0.5` — доля собственной скорости, передаваемая соседу-Enemy при контакте в knockback'е.
+  - `neighbor_push_duration: float = 0.15` — длительность knockback'а на соседа.
+
+**Сигналы:** `damaged(amount: float)`, `died`.
+
+**Публичный API:**
+- `take_damage(amount)` — общий damageable-контракт. На `hp ≤ 0` → `died.emit()` + `queue_free()`.
+- `apply_knockback(impulse: Vector3, duration: float)` — внешний толчок. На время `duration` AI отключён, скорость подменяется на `impulse` и плавно затухает к нулю по `knockback_friction`. После применения зовётся виртуальный `_on_knockback()` — подклассы могут сбросить локальное состояние.
+- `set_target(target: Node3D)` — кого преследовать. Подклассы используют `_target` в своём AI.
+
+**Виртуальные хуки:**
+- `_ai_step(delta)` — поведение в активной фазе.
+- `_on_knockback()` — реакция на внешний толчок (например, отменить начатый замах атаки).
+
+**Цикл (`_physics_process`):**
+- Применяется гравитация → `velocity.y`.
+- `_attack_cooldown_remaining` декрементируется (всегда).
+- Если `_knockback_timer > 0` — AI заглушен, горизонтальная velocity лерпится к нулю.
+- Иначе — зовётся `_ai_step(delta)`.
+- `move_and_slide`.
+- **Если в knockback'е** — `_resolve_knockback_contacts()`:
+  - Если задели `_target` — `_bounce_off_target(normal)`: компонент скорости в нормаль инвертируется по правилу elastic с `bounce_restitution`.
+  - Если задели другого Enemy — `_push_neighbor(other, col)`: соседу применяется `apply_knockback(push_dir × my_speed × neighbor_push_factor, neighbor_push_duration)`. Лунж пробивает толпу, отбрасывая ближних.
+
+**Зависимости:** ничего, кроме физики и Input. Не знает про Tower, Hand, Item.
+
+#### 5.5.2 Skeleton — `scenes/skeleton.tscn`, `scripts/skeleton.gd`
+
+**Тип корня:** `CharacterBody3D` с `class_name Skeleton extends Enemy`.
+
+**Назначение:** простейший враг. Идёт к `_target`, в `attack_range` выполняет **телеграфированный замах**, затем бьёт.
+
+**Дочерние узлы:**
+- `CollisionShape3D` — `CapsuleShape3D` r=0.4, h=2.
+- `MeshInstance3D` — `CapsuleMesh` того же размера, тёплый бело-серый цвет.
+
+**Экспорты (поверх Enemy):**
+- `windup_color: Color` — цвет emission'а во время замаха (по умолчанию красный).
+- `windup_intensity: float` (0..5) — `emission_energy_multiplier` во время замаха.
+- `attack_windup: float = 0.4` — секунды от начала замаха до удара. У игрока ровно столько, чтобы среагировать (slam'ом отбросить).
+- Группа **Strike (физический выпад):**
+  - `lunge_speed: float = 8.0` — m/s в момент удара (выше `move_speed`, чтобы выпад был резким).
+  - `lunge_duration: float = 0.2` — длительность knockback'а на сам выпад.
+
+**Override в инстансе:** `move_speed = 2.7` (медленнее общего дефолта Enemy=4.0, для теста).
+
+**Слой/маска:** `collision_layer = 16` (Enemies), `collision_mask = 23` (Terrain + Items + Actors + Enemies). Скелеты мутуально видят друг друга; CharacterBody3D-vs-CharacterBody3D просто блокирует движение (без «push»), и у цели образуется плотная толкучка.
+
+**Жизненный цикл:** APPROACH → WINDUP → STRIKE → (LUNGE-knockback) → COOLDOWN → APPROACH.
+- **APPROACH:** `dist > attack_range` → `velocity.xz = (target − pos).xz.normalized() × move_speed`.
+- **WINDUP:** в `attack_range` и `_attack_cooldown_remaining ≤ 0` → `_in_windup = true`, `_windup_remaining = attack_windup`, `_set_glow(true)`. Скелет стоит, светится красным.
+- **STRIKE:** `_windup_remaining ≤ 0` → `_set_glow(false)`, взвести `_attack_cooldown_remaining`, `target.take_damage(...)`, **`_do_lunge()`**.
+- **LUNGE-knockback:** `_do_lunge` зовёт `apply_knockback(dir × lunge_speed, lunge_duration)` сам себе — фактически self-induced knockback. На `lunge_duration` AI выключен, скелет физически летит в цель через `move_and_slide`. Удар о башню → `Enemy._bounce_off_target` инвертирует скорость с `bounce_restitution`. Контакт с соседним скелетом → `Enemy._push_neighbor` отбрасывает соседа на `my_speed × neighbor_push_factor`. Лунж буквально «врезается и расталкивает».
+- **COOLDOWN:** AI в обычной фазе, кулдаун декрементируется (тикает всегда, в т.ч. в knockback'е). Может сдвинуться, если цель ушла.
+
+**Реакция на knockback (`_on_knockback`):** если был в windup — отменяем. Должен снова подойти и зарядиться.
+
+**Уникальный материал:** в `_ready` дублируем `material_override`, чтобы emission менялся только у этого инстанса. Иначе все 50 скелетов засветились бы одновременно.
+
+**Зависимости:** наследует Enemy. Не знает, что цель именно Tower — просто `Node3D`, у которого может быть `take_damage`.
+
+#### 5.5.3 EnemySpawner — `scripts/enemy_spawner.gd` (Node3D в `main.tscn`)
+
+**Назначение:** по input action порождает партию врагов кольцом вокруг цели.
+
+**Экспорты:**
+- `skeleton_scene: PackedScene` — какую сцену спавнить. Привязывается из `main.tscn`.
+- `target_path: NodePath` — кого ставить в `set_target` каждому врагу (через `Node3D`-цель).
+- `spawn_radius: float = 25.0` — радиус кольца от цели.
+- `spawn_radius_jitter: float = 0.3` — разброс ±jitter от радиуса (1 = ±50%).
+- `spawn_count: int = 50` — сколько порождать за волну.
+- `debug_log: bool = true`.
+
+**Логика:**
+- В `_process` ловит `Input.is_action_just_pressed("spawn_enemies")` → `spawn_skeleton_wave()`.
+- На каждую волну: цикл `spawn_count` раз — случайный угол на `TAU`, дистанция = `spawn_radius × (1 + ±jitter/2)`, добавляем инстанс `skeleton_scene` в `current_scene`, зовём `set_target(_target)`.
+
+**Зависимости:** только PackedScene и Node3D через NodePath. Спавнер не знает ни Skeleton, ни Tower по имени; их имена/типы заданы из `main.tscn` на инстансе.
+
+### 5.6 Ground — inline в `main.tscn`
 
 **Тип корня:** `StaticBody3D`.
 
@@ -337,6 +455,7 @@ hand_gameplay_prot/
 | `hand_action` | RMB | Hand:PhysicalActions (триггер активной способности — slam/flick) |
 | `equip_slam` | 1 | Hand:PhysicalActions (экипировать хлопок) |
 | `equip_flick` | 2 | Hand:PhysicalActions (экипировать щелбан) |
+| `spawn_enemies` | P | EnemySpawner (волна скелетов) |
 
 Курсор мыши — позиция руки. Системного захвата курсора нет, он движется свободно.
 
@@ -402,6 +521,36 @@ hand_gameplay_prot/
     - Если курсор «попадает» прямо на цель (XZ почти совпадают) — держим прошлое направление вместо нулевой нормали. Без рывков и NaN'ов.
     - `flick_orbit_speed` удалён за ненадобностью.
 
+18. **Категория врагов: Enemy / Skeleton / EnemySpawner.** Первый внешний противник для башни.
+    - Введён слой `5: Enemies`. Скелеты на нём, маска изначально была `7` (Terrain+Items+Actors) — без своего слоя; через шаг переделана (см. этап 19). Tower / Item / Ground получили `mask = 31`, чтобы все остальные с врагами симметрично взаимодействовали.
+    - `class_name Enemy extends CharacterBody3D` — общая база с `hp`, `take_damage`, `apply_knockback`, гравитацией, кулдаунами и виртуальным `_ai_step`. Состояние knockback'а отдельно от AI: `_knockback_timer` блокирует `_ai_step`, velocity лерпится к нулю.
+    - `class_name Skeleton extends Enemy` — простой AI «иди и бей». Цель ставится извне через `set_target(Node3D)`, и Skeleton не знает, что это именно башня — duck-typed `target.has_method("take_damage")`.
+    - `EnemySpawner` (Node3D со скриптом, в `main.tscn`) — spawnit'ит скелетов кольцом вокруг target по `Input.spawn_enemies` (P). Параметры: `spawn_radius`, `spawn_count`, `spawn_radius_jitter`. Зависит только от `PackedScene` и `NodePath`.
+    - `Tower` обзавёлся `hp` + `take_damage` + сигналы `damaged/died` — иначе скелетам некуда «бить». На `hp ≤ 0` сигнал есть, а `queue_free` нет: это игровой стейт, обработается отдельным UI-узлом, когда дойдём до game-over.
+    - Slam расширен: `slam_mask = 18` (Items + Enemies), цикл результатов разбит на `_apply_slam_to_item` (через `apply_central_impulse`) и `_apply_slam_to_enemy` (через `apply_knockback` — у CharacterBody3D нет импульса). Расчёт falloff/направления вынесен в `_slam_direction_and_falloff`, общий для обоих.
+
+19. **Телеграф атаки скелета + само-коллизии + замедление.** После первой партии тестов:
+    - **Телеграф.** Раньше скелет в `attack_range` мгновенно бил без визуала — у игрока не было шанса среагировать. Введён state-machine APPROACH → WINDUP (0.4s, красная подсветка через emission) → STRIKE → COOLDOWN. Чтобы emission менялся локально, материал дублируется в `_ready` (без этого все 50 скелетов засветились бы одновременно).
+    - **Хук `_on_knockback`.** Если slam попадает в скелета во время windup, замах должен отменяться. Добавлен виртуальный `Enemy._on_knockback()` — `apply_knockback` теперь зовёт его в конце; `Skeleton` переопределяет, сбрасывая `_in_windup`. Чистый расширяемый паттерн для будущих врагов.
+    - **Само-коллизии.** Раньше `Skeleton.collision_mask = 7` (без Enemies) → скелеты проходили друг сквозь друга. Меняем на `23` — мутуально блокируются. Поскольку оба CharacterBody3D, физического push'а между ними нет, но `move_and_slide` корректно слайдит вдоль соседа → плотная толкучка возле цели вместо «вложенных капсул».
+    - **Скорость.** `move_speed: 4.0 → 2.7` через override на инстансе в `skeleton.tscn` (не меняя дефолт `Enemy.move_speed`, чтобы будущие враги могли иметь свой темп).
+
+20. **Тактильность атаки и проницаемость толпы (первая итерация).** 
+    - **Lunge-выпад при ударе через Tween.** Сразу после windup'а, в `_strike`, скелет играл короткий «удар»: `Tween` двигал `MeshInstance3D.position` от `(0,0,0)` до `dir × lunge_distance` и обратно. Только меш — коллизия и AI не трогались.
+    - **Tower-push для врагов.** Бывший `_push_items` переименован в `_resolve_contacts` и расширен ветвлением: `Item` обрабатывается как раньше (impulse с массовым ratio), `Enemy` получает `apply_knockback(push_dir × v_into × enemy_push_speed_factor, enemy_push_duration)`. Башня теперь **рассекает** толпу скелетов, не упираясь в них как в стену: каждый кадр контакта knockback обновляется, скелет вылетает из-под башни и AI снова подключается, как только башня проедет.
+    - Лог по враг-контактам отключён (50+ скелетов = спам). Item-контакты по-прежнему фиксируются в `_contacts_last`.
+
+21. **Lunge физический + bounce + push соседей (вторая итерация).** Tween-lunge меша в башню проходил визуально насквозь — выглядело некрасиво.
+    - **Tween-lunge удалён.** Вместо него `_strike` вызывает `_do_lunge` → `apply_knockback(dir × lunge_speed, lunge_duration)` **сам себе**. AI выключен, физическое тело летит вперёд через `move_and_slide`. Башня (CharacterBody3D) блокирует физически — скелет упирается, как и положено.
+    - **Bounce-off от цели.** В `Enemy._physics_process` после `move_and_slide`, если `_knockback_timer > 0` и одна из slide-коллизий — `_target`, считается elastic-отскок: компонент скорости в нормаль инвертируется по `(1 + bounce_restitution)`. Скелет «отлетает» от башни.
+    - **Расталкивание соседей.** В той же пост-slide фазе для каждой коллизии с другим `Enemy` — `apply_knockback(push_dir × my_speed × neighbor_push_factor, neighbor_push_duration)`. Лунжущий скелет пробивает первый ряд толпы, тот толкает следующий, цепная реакция (затухает через `neighbor_push_factor < 1`).
+    - **Кулдаун всегда тикает.** Раньше в knockback'е `_attack_cooldown_remaining` стоял, и lunge-knockback (0.2s) фактически удлинял атак-цикл. Перенёс декремент кулдауна выше ветки knockback'а.
+    - Бонусом: больше нет per-strike Tween — это снимает часть нагрузки при 50+ скелетах одновременно атакующих.
+
+22. **Bounce и neighbor-push не срабатывали — pre-slide velocity.** Сразу после реализации (этап 21) обнаружилось: при ударе скелетов о башню они не отскакивали, и соседей тоже не толкали — никто ни от кого. Причина:
+    - `move_and_slide` **зануляет** компоненту `velocity` в направлении препятствия (это её работа — слайдить вдоль, а не пробивать). Поэтому когда `_resolve_knockback_contacts` смотрел `velocity.dot(into_dir)` уже **после** slide'а, получал ~0 и `bounce` ничего не добавлял. У `_push_neighbor` та же беда: `Vector2(velocity.x, velocity.z).length()` отдавал почти 0, push был мизерный.
+    - Лечение: запомнить `pre_slide_velocity := velocity` до `move_and_slide` и передать в `_resolve_knockback_contacts`. Bounce-формула стала «добавить `−into_dir × pre_into × restitution` к текущей velocity» (эквивалентно reflection, но к зануленному компоненту). Push соседа использует pre-slide-скорость для расчёта силы.
+
 ### 7.3 Решённые ошибки
 
 | # | Ошибка | Причина | Исправление |
@@ -426,7 +575,10 @@ hand_gameplay_prot/
 
 | Модуль | Что экспортирует наружу | Что слушает |
 |---|---|---|
-| Tower | — (поведение замкнуто) | Input actions WASD; читает `Item.mass`, `Item.freeze`; пушит `Item` через `apply_central_impulse` |
+| Tower | сигналы `damaged/died`, метод `take_damage(float)` | Input actions WASD; читает `Item.mass`, `Item.freeze`; пушит `Item` через `apply_central_impulse` |
+| Enemy (база) | сигналы `damaged/died`, методы `take_damage(float)` / `apply_knockback(Vector3, float)` / `set_target(Node3D)`; виртуальный `_ai_step(delta)` | физика, наследники |
+| Skeleton | (наследует Enemy) | `_target.take_damage(...)` (duck-typed) |
+| EnemySpawner | — | `Input "spawn_enemies"`, PackedScene + NodePath из main.tscn |
 | Hand | сигналы `grabbed/released` (re-emit из PhysicalActions), публичный API для подмодулей (`global_position`, `smoothed_velocity()`, `grab_area`, `magnet_area`) | активная камера; тип `Item` |
 | Hand:PhysicalActions | сигналы `grabbed/released/slammed/flicked`, методы `get_held_item()/is_holding()`, экспорт `equipped` | Input `hand_grab`/`hand_action`/`equip_slam`/`equip_flick`, родитель Hand (включая `lock_position`), тип `Item` (включая `take_damage`) |
 | Hand:SpellActions | сигнал `spell_cast(name, position)` (черновик) | родитель Hand (план) |

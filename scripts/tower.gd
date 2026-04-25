@@ -1,11 +1,28 @@
 extends CharacterBody3D
 ## Башня — управляется WASD.
 ## Если башня тяжелее, чем встретившийся Item, она толкает его телом при движении.
+## Имеет HP — враги наносят урон через take_damage(amount).
+
+signal damaged(amount: float)
+signal died
 
 @export var move_speed: float = 8.0
 @export var gravity: float = 20.0
 @export var mass: float = 10.0
+@export var hp: float = 1000.0
+
+@export_group("Push Items")
 @export var push_strength: float = 1.0
+
+@export_group("Push Enemies")
+## Множитель горизонтальной скорости, с которой башня сообщает врагу knockback.
+## 1.0 — враг получает свою-же-скорость, 1.5 — чуть быстрее, чтобы выходить из-под башни.
+@export var enemy_push_speed_factor: float = 1.5
+## Длительность knockback'а врагу. Малое значение, потому что в контакте мы
+## refresh'им knockback каждый физкадр.
+@export var enemy_push_duration: float = 0.2
+
+@export_group("")
 @export var debug_log: bool = true
 
 var _was_on_floor: bool = true
@@ -14,6 +31,24 @@ var _was_stuck: bool = false
 # Item -> "push" | "block": набор Item'ов, с которыми сейчас контакт.
 # Используется для логов фронт-перехода (старт/смена/конец контакта).
 var _contacts_last: Dictionary = {}
+var _dying: bool = false
+
+
+# --- Публичный API ---
+
+func take_damage(amount: float) -> void:
+	if _dying or amount <= 0.0:
+		return
+	hp -= amount
+	damaged.emit(amount)
+	if debug_log:
+		print("[Tower] получил %.1f урона, hp=%.1f" % [amount, hp])
+	if hp <= 0.0:
+		_dying = true
+		died.emit()
+		if debug_log:
+			print("[Tower] DEAD")
+		# Не queue_free — game-over UI будет в следующих итерациях.
 
 
 func _physics_process(delta: float) -> void:
@@ -36,43 +71,61 @@ func _physics_process(delta: float) -> void:
 
 	move_and_slide()
 
-	_push_items(intended_velocity)
+	_resolve_contacts(intended_velocity)
 
 	if debug_log:
 		_debug_log(input_dir)
 
 
-func _push_items(intended_velocity: Vector3) -> void:
+func _resolve_contacts(intended_velocity: Vector3) -> void:
+	# Items — push с массовым ratio (бывшая логика).
+	# Enemies — knockback в направлении движения, чтобы башня могла плавно
+	# рассекать толпу скелетов вместо того, чтобы упираться в стену.
 	var contacts_now: Dictionary = {}
 
 	for i in range(get_slide_collision_count()):
 		var col := get_slide_collision(i)
 		var collider := col.get_collider()
-		if not (collider is Item):
-			continue
-		var item := collider as Item
-		if item.freeze:
-			continue
-
-		if mass <= item.mass:
-			contacts_now[item] = "block"
-			continue
-
-		contacts_now[item] = "push"
-		var push_dir: Vector3 = -col.get_normal()
-		var v_into := intended_velocity.dot(push_dir)
-		if v_into <= 0.0:
-			continue
-		var item_v_into := item.linear_velocity.dot(push_dir)
-		var v_diff := v_into - item_v_into
-		if v_diff <= 0.0:
-			continue
-		var ratio: float = clampf((mass - item.mass) / mass, 0.0, 1.0)
-		item.apply_central_impulse(push_dir * v_diff * item.mass * ratio * push_strength)
+		if collider is Item:
+			_push_item(collider as Item, col, intended_velocity, contacts_now)
+		elif collider is Enemy:
+			_push_enemy(collider as Enemy, col, intended_velocity)
+			# В contacts_now врагов не записываем — для 50+ скелетов получится спам логов.
 
 	if debug_log:
 		_log_contact_transitions(contacts_now)
 	_contacts_last = contacts_now
+
+
+func _push_item(item: Item, col: KinematicCollision3D, intended_velocity: Vector3, contacts_now: Dictionary) -> void:
+	if item.freeze:
+		return
+	if mass <= item.mass:
+		contacts_now[item] = "block"
+		return
+	contacts_now[item] = "push"
+	var push_dir: Vector3 = -col.get_normal()
+	var v_into := intended_velocity.dot(push_dir)
+	if v_into <= 0.0:
+		return
+	var item_v_into := item.linear_velocity.dot(push_dir)
+	var v_diff := v_into - item_v_into
+	if v_diff <= 0.0:
+		return
+	var ratio: float = clampf((mass - item.mass) / mass, 0.0, 1.0)
+	item.apply_central_impulse(push_dir * v_diff * item.mass * ratio * push_strength)
+
+
+func _push_enemy(enemy: Enemy, col: KinematicCollision3D, intended_velocity: Vector3) -> void:
+	var push_dir: Vector3 = -col.get_normal()
+	var push_dir_h := Vector3(push_dir.x, 0.0, push_dir.z)
+	if push_dir_h.length_squared() < 0.0001:
+		return
+	push_dir_h = push_dir_h.normalized()
+	var v_into := intended_velocity.dot(push_dir_h)
+	if v_into <= 0.1:
+		return  # башня не движется в эту сторону — нечего толкать
+	enemy.apply_knockback(push_dir_h * v_into * enemy_push_speed_factor, enemy_push_duration)
 
 
 func _log_contact_transitions(contacts_now: Dictionary) -> void:

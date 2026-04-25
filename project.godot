@@ -25,6 +25,7 @@ window/size/viewport_height=720
 3d_physics/layer_2="Items"
 3d_physics/layer_3="Actors"
 3d_physics/layer_4="Projectiles"
+3d_physics/layer_5="Enemies"
 
 [input]
 
@@ -66,5 +67,10 @@ equip_slam={
 equip_flick={
 "deadzone": 0.5,
 "events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":50,"physical_keycode":0,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
+]
+}
+spawn_enemies={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":80,"physical_keycode":0,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
 ]
 }

@@ -41,9 +41,11 @@ const ABILITY_FLICK := "flick"
 @export var slam_lift_factor: float = 0.4
 @export var slam_damage: float = 20.0
 @export var slam_cooldown: float = 0.5
-## По каким слоям бьёт хлопок: Items + Actors по умолчанию.
-@export_flags_3d_physics var slam_mask: int = 6
+## По каким слоям бьёт хлопок: Items + Enemies по умолчанию.
+@export_flags_3d_physics var slam_mask: int = 18
 @export var slam_visual_color: Color = Color(1.0, 0.7, 0.3, 0.6)
+## Длительность knockback'а на врагах (в течение этого времени их AI отключён).
+@export var slam_knockback_duration: float = 0.4
 
 @export_group("Flick (RMB hold-release)")
 @export var flick_orbit_radius: float = 1.5
@@ -254,7 +256,10 @@ func _perform_slam() -> void:
 			var item := collider as Item
 			if item.freeze:
 				continue
-			_apply_slam_to(item, origin)
+			_apply_slam_to_item(item, origin)
+			affected_count += 1
+		elif collider is Enemy:
+			_apply_slam_to_enemy(collider as Enemy, origin)
 			affected_count += 1
 
 	if debug_log:
@@ -264,20 +269,40 @@ func _perform_slam() -> void:
 	slammed.emit(origin, slam_radius)
 
 
-func _apply_slam_to(item: Item, origin: Vector3) -> void:
-	var to_item: Vector3 = item.global_position - origin
-	var horizontal_dist := Vector2(to_item.x, to_item.z).length()
+func _slam_direction_and_falloff(target_pos: Vector3, origin: Vector3) -> Array:
+	# Возвращает [direction: Vector3, falloff: float]. falloff=0 если за радиусом.
+	var to_target: Vector3 = target_pos - origin
+	var horizontal_dist := Vector2(to_target.x, to_target.z).length()
 	var falloff: float = clampf(1.0 - horizontal_dist / slam_radius, 0.0, 1.0)
 	if falloff <= 0.0:
-		return
-	var horizontal_dir := Vector3(to_item.x, 0.0, to_item.z)
+		return [Vector3.UP, 0.0]
+	var horizontal_dir := Vector3(to_target.x, 0.0, to_target.z)
 	if horizontal_dir.length_squared() < 0.0001:
 		horizontal_dir = Vector3.UP
 	else:
 		horizontal_dir = horizontal_dir.normalized() + Vector3.UP * slam_lift_factor
 		horizontal_dir = horizontal_dir.normalized()
-	item.apply_central_impulse(horizontal_dir * slam_force * falloff)
+	return [horizontal_dir, falloff]
+
+
+func _apply_slam_to_item(item: Item, origin: Vector3) -> void:
+	var dir_falloff := _slam_direction_and_falloff(item.global_position, origin)
+	var falloff: float = dir_falloff[1]
+	if falloff <= 0.0:
+		return
+	item.apply_central_impulse(dir_falloff[0] * slam_force * falloff)
 	item.take_damage(slam_damage * falloff)
+
+
+func _apply_slam_to_enemy(enemy: Enemy, origin: Vector3) -> void:
+	var dir_falloff := _slam_direction_and_falloff(enemy.global_position, origin)
+	var falloff: float = dir_falloff[1]
+	if falloff <= 0.0:
+		return
+	# CharacterBody3D — нет apply_central_impulse, поэтому передаём через
+	# apply_knockback: enemy подменяет velocity и затухает к нулю.
+	enemy.apply_knockback(dir_falloff[0] * slam_force * falloff, slam_knockback_duration)
+	enemy.take_damage(slam_damage * falloff)
 
 
 func _spawn_slam_visual(pos: Vector3) -> void:
