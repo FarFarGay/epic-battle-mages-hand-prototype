@@ -14,7 +14,7 @@ extends Node
 signal grabbed(item: Item)
 signal released(item: Item, velocity: Vector3)
 signal slammed(position: Vector3, radius: float)
-signal flicked(target: Item, velocity: Vector3)
+signal flicked(target: Node3D, velocity: Vector3)
 
 enum AbilityType { NONE = -1, SLAM, FLICK }
 
@@ -72,7 +72,7 @@ func _ready() -> void:
 	# grabbed/released пробрасывает Hand (он re-emit'ит из подмодуля); здесь
 	# отправляем напрямую только slammed/flicked, у Hand их нет.
 	slammed.connect(func(position: Vector3, radius: float) -> void: EventBus.hand_slammed.emit(position, radius))
-	flicked.connect(func(target: Item, velocity: Vector3) -> void: EventBus.hand_flicked.emit(target, velocity))
+	flicked.connect(func(target: Node3D, velocity: Vector3) -> void: EventBus.hand_flicked.emit(target, velocity))
 
 
 func _process(delta: float) -> void:
@@ -112,6 +112,24 @@ func is_holding() -> bool:
 ## для логики «кто сейчас под рукой».
 func find_grab_candidate() -> Item:
 	return _find_closest_item(_hand.grab_area.get_overlapping_bodies())
+
+
+## Возвращает ближайшую цель для щелбана: Item (с mass-фильтром) или Enemy.
+## Враги в GrabArea видны благодаря collision_mask=18 (Items+Enemies).
+func find_flick_target() -> Node3D:
+	var closest: Node3D = null
+	var closest_dist := INF
+	for body in _hand.grab_area.get_overlapping_bodies():
+		if body is Item:
+			if (body as Item).mass >= max_lift_mass:
+				continue
+		elif not (body is Enemy):
+			continue
+		var d := _hand.global_position.distance_to(body.global_position)
+		if d < closest_dist:
+			closest_dist = d
+			closest = body
+	return closest
 
 
 # --- Raycast excluder ---

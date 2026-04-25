@@ -24,4 +24,4 @@ signal tower_destroyed
 signal hand_grabbed(item: Item)
 signal hand_released(item: Item, velocity: Vector3)
 signal hand_slammed(position: Vector3, radius: float)
-signal hand_flicked(target: Item, velocity: Vector3)
+signal hand_flicked(target: Node3D, velocity: Vector3)

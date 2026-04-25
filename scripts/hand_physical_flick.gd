@@ -5,17 +5,22 @@ extends Node
 ## Hold-state: пока ПКМ зажата, рука «прилипает» к орбите вокруг цели; на release —
 ## импульс в противоположную сторону.
 
-signal flicked(target: Item, velocity: Vector3)
+signal flicked(target: Node3D, velocity: Vector3)
 
 @export var flick_orbit_radius: float = 1.5
 @export var flick_force: float = 25.0
-@export var flick_damage: float = 5.0
+## Минимум диапазона урона. На скелете hp=30 минимум 15 → два удара минимума ровно убивают.
+@export var flick_damage_min: float = 15.0
+## Максимум диапазона. ≥ skeleton hp → шанс one-shot'а.
+@export var flick_damage_max: float = 35.0
+## Длительность knockback'а на враге при щелбане (AI отключён это время).
+@export var flick_knockback_duration: float = 0.3
 
 @export var debug_log: bool = true
 
 var _hand: Hand
 var _coord: HandPhysicalActions
-var _flick_target: Item = null
+var _flick_target: Node3D = null
 # Текущее горизонтальное направление от цели к руке. Обновляется каждый кадр
 # из cursor_world_position(); если курсор «заехал» прямо на цель и горизонталь
 # пропала — держим прошлое направление, а не дрожим.
@@ -49,10 +54,10 @@ func on_press() -> bool:
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:Physical:Flick] щелбан: рука занята, сначала отпустите предмет")
 		return false
-	var target := _coord.find_grab_candidate()
+	var target := _coord.find_flick_target()
 	if not target:
 		if debug_log and LogConfig.master_enabled:
-			print("[Hand:Physical:Flick] щелбан: предмета под рукой нет")
+			print("[Hand:Physical:Flick] щелбан: цели под рукой нет")
 		return false
 	_flick_target = target
 	# Стартовое направление — текущая горизонтальная разница руки и цели.
@@ -84,10 +89,18 @@ func on_release() -> void:
 		return
 	dir = dir.normalized()
 	var velocity: Vector3 = dir * flick_force
-	_flick_target.apply_central_impulse(velocity)
-	_flick_target.take_damage(flick_damage)
+	var damage := randf_range(flick_damage_min, flick_damage_max)
+	if _flick_target is Item:
+		var item := _flick_target as Item
+		item.apply_central_impulse(velocity)
+		item.take_damage(damage)
+	elif _flick_target is Enemy:
+		# CharacterBody3D — нет apply_central_impulse, толкаем через knockback.
+		var enemy := _flick_target as Enemy
+		enemy.apply_knockback(velocity, flick_knockback_duration)
+		enemy.take_damage(damage)
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:Physical:Flick] щелбан: %s полетел в (%.2f, %.2f), |v|=%.2f" % [_flick_target.name, dir.x, dir.z, velocity.length()])
+		print("[Hand:Physical:Flick] щелбан: %s полетел в (%.2f, %.2f), |v|=%.2f, dmg=%.1f" % [_flick_target.name, dir.x, dir.z, velocity.length(), damage])
 	flicked.emit(_flick_target, velocity)
 	_flick_target = null
 

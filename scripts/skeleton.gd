@@ -26,6 +26,13 @@ const BODY_ALBEDO_COLOR := Color(0.88, 0.85, 0.78, 1.0)
 const WINDUP_EMISSION_COLOR := Color(1.0, 0.2, 0.2, 1.0)
 const WINDUP_EMISSION_INTENSITY := 1.5
 
+# --- Shatter (рассыпание на смерти) ---
+const SHATTER_FRAGMENT_COUNT := 7
+const SHATTER_FRAGMENT_SIZE := 0.25
+const SHATTER_IMPULSE_RADIAL := 4.0
+const SHATTER_IMPULSE_VERTICAL := 5.0
+const SHATTER_LIFETIME := 2.0
+
 @export var attack_windup: float = 0.4  # секунды от «замаха» до удара
 
 @export_group("Strike (физический выпад)")
@@ -136,6 +143,55 @@ func _on_knockback() -> void:
 		_in_windup = false
 		_windup_remaining = 0.0
 		_set_glow(false)
+
+
+func _on_destroyed() -> void:
+	# Прячем тело и спавним осколки. Осколки живут в current_scene — переживают
+	# queue_free самого скелета, который произойдёт в Enemy.take_damage сразу после.
+	var mesh := $MeshInstance3D as MeshInstance3D
+	if mesh:
+		mesh.visible = false
+	var scene_root := get_tree().current_scene
+	if not scene_root:
+		return
+	var body_pos := global_position
+	for i in range(SHATTER_FRAGMENT_COUNT):
+		_spawn_shatter_fragment(scene_root, body_pos)
+
+
+func _spawn_shatter_fragment(scene_root: Node, body_pos: Vector3) -> void:
+	var body := RigidBody3D.new()
+	# Layer=0: ничего не сканирует осколки. Mask=1: осколки падают на Terrain,
+	# но проходят сквозь всё остальное (включая друг друга) — без завалов.
+	body.collision_layer = 0
+	body.collision_mask = 1
+	body.mass = 0.1
+	var shape := BoxShape3D.new()
+	shape.size = Vector3.ONE * SHATTER_FRAGMENT_SIZE
+	var coll := CollisionShape3D.new()
+	coll.shape = shape
+	body.add_child(coll)
+	var mesh := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3.ONE * SHATTER_FRAGMENT_SIZE
+	mesh.mesh = box
+	# Тот же общий material — GPU батчит вместе с живыми скелетами.
+	mesh.material_override = _shared_normal_material
+	body.add_child(mesh)
+	scene_root.add_child(body)
+	body.global_position = body_pos + Vector3(
+		randf_range(-0.3, 0.3),
+		randf_range(0.0, 2.0),
+		randf_range(-0.3, 0.3)
+	)
+	var radial := Vector3(randf_range(-1.0, 1.0), 0.0, randf_range(-1.0, 1.0))
+	if radial.length_squared() > 0.0:
+		radial = radial.normalized()
+	body.linear_velocity = radial * SHATTER_IMPULSE_RADIAL + Vector3.UP * SHATTER_IMPULSE_VERTICAL * randf_range(0.5, 1.0)
+	body.angular_velocity = Vector3(randf_range(-5.0, 5.0), randf_range(-5.0, 5.0), randf_range(-5.0, 5.0))
+	var tween := body.create_tween()
+	tween.tween_interval(SHATTER_LIFETIME)
+	tween.tween_callback(body.queue_free)
 
 
 func _set_glow(active: bool) -> void:

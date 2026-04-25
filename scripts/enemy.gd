@@ -67,7 +67,10 @@ func set_targets(targets: Array[Node3D]) -> void:
 
 ## Удобная обёртка для случая «одна цель» — оборачивает в массив.
 func set_target(target: Node3D) -> void:
-	_targets = [target] if target else []
+	var new_targets: Array[Node3D] = []
+	if target:
+		new_targets.append(target)
+	_targets = new_targets
 
 
 ## Возвращает ближайшую валидную цель, либо null. Невалидные (queue_free)
@@ -93,6 +96,7 @@ func take_damage(amount: float) -> void:
 	if hp <= 0.0:
 		_dying = true
 		destroyed.emit()
+		_on_destroyed()
 		queue_free()
 
 
@@ -144,6 +148,13 @@ func _ai_step(_delta: float) -> void:
 # Виртуальный хук: вызывается, когда кто-то снаружи нанёс knockback.
 # Подклассы могут сбросить локальное состояние (например, отменить замах атаки).
 func _on_knockback() -> void:
+	pass
+
+
+# Виртуальный хук: вызывается ровно перед queue_free на смерти, после destroyed.emit.
+# Подклассы могут спавнить визуальные эффекты смерти (осколки, частицы) — они
+# добавляются в current_scene и переживают самого врага.
+func _on_destroyed() -> void:
 	pass
 
 

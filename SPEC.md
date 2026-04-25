@@ -83,7 +83,8 @@ hand_gameplay_prot/
 - `Skeleton`: `mask = 23` (Terrain + Items + Actors + Enemies) — включает свой же слой, поэтому скелеты блокируют друг друга. Так как оба кинематика, не «пушат» — просто скользят вдоль; визуально это даёт плотную толкучку у цели.
 
 **Маски запросов (не тел):**
-- `Hand.GrabArea` / `Hand.MagnetArea`: `collision_mask = 2` (только Items) — нельзя схватить башню или скелета.
+- `Hand.GrabArea`: `collision_mask = 18` (Items + Enemies) — flick должен видеть скелетов как цели. LMB-grab и подсветка кандидата по-прежнему фильтруют через `body is Item`, поэтому скелета случайно не схватить.
+- `Hand.MagnetArea`: `collision_mask = 2` (только Items) — магнит тянет только ящики.
 - `Hand.terrain_mask`: `3` (Terrain + Items) — рука поднимается над полом и ящиками, но не лезет на башню/врагов/снаряды.
 - `Hand:PhysicalActions.slam_mask`: `18` (Items + Enemies) — slam задевает только то, что должно «разлетаться».
 
@@ -147,7 +148,7 @@ hand_gameplay_prot/
 
 **Дочерние узлы:**
 - `HandMesh` — `MeshInstance3D` со сферой r=0.5 (визуал).
-- `GrabArea` — `Area3D` со сферой r=2 на оффсете `(0, −1.5, 0)`, `collision_mask=2` (Items). Зона мгновенного захвата.
+- `GrabArea` — `Area3D` со сферой r=2 на оффсете `(0, −1.5, 0)`, `collision_mask=18` (Items + Enemies). Зона мгновенного захвата (Items) и поиска цели для щелбана (Items/Enemies).
 - `MagnetArea` — `Area3D` со сферой r=4 на том же оффсете, `collision_mask=2`. Зона притяжения.
 - `PhysicalActions` — `Node` со скриптом `hand_physical.gd` (см. §5.2.1).
 - `SpellActions` — `Node` со скриптом `hand_spell.gd` (см. §5.2.2).
@@ -207,13 +208,14 @@ hand_gameplay_prot/
 
 **Экспорты (группа `Flick (RMB hold-release)`):**
 - `flick_orbit_radius: float = 1.5` — расстояние, на которое рука «отъезжает» от цели по направлению курсора.
-- `flick_force: float = 25.0` — импульс при отпускании ПКМ.
-- `flick_damage: float = 5.0` — урон цели при щелчке.
+- `flick_force: float = 25.0` — импульс/скорость knockback'а при отпускании ПКМ.
+- `flick_damage_min: float = 15.0`, `flick_damage_max: float = 35.0` — диапазон урона. На каждый щелбан выбирается `randf_range(min, max)`. Подобраны под скелета hp=30: минимум 15 (два удара минимума ровно добивают), максимум 35 (есть шанс one-shot'а), средний 25 (~2 удара).
+- `flick_knockback_duration: float = 0.3` — длительность knockback'а на враге (его AI отключён это время).
 
 **Сигналы:**
 - `grabbed(item)`, `released(item, velocity)` — Hand их re-emit'ит наружу.
 - `slammed(position: Vector3, radius: float)` — в момент хлопка.
-- `flicked(target: Item, velocity: Vector3)` — в момент отпускания щелбана.
+- `flicked(target: Node3D, velocity: Vector3)` — в момент отпускания щелбана. Цель — `Item` или `Enemy`.
 
 **Публичный API:** `get_held_item() -> Item`, `is_holding() -> bool`.
 
@@ -229,7 +231,7 @@ hand_gameplay_prot/
 7. `slammed.emit(origin, slam_radius)`.
 
 **Логика щелбана (flick):**
-1. **Press (`_flick_pressed`):** Если рука уже что-то держит — отказ. Иначе ищем `_find_closest_item` в `GrabArea`; если пусто — отказ. При успехе:
+1. **Press (`_flick_pressed`):** Если рука уже что-то держит — отказ. Иначе ищем `find_flick_target` в `GrabArea` — ближайший Item (с mass-фильтром) или Enemy; если пусто — отказ. При успехе:
    - `_flick_target = target`.
    - Стартовое `_flick_orbit_dir` = горизонтальная разница `(hand − target)`, или дефолтный `+X` если рука прямо над целью.
    - `_hand.lock_position(true)` — Hand перестаёт перетаскивать руку под курсор. **При этом `cursor_world_position()` продолжает обновляться** — flick читает её каждый кадр.
@@ -239,7 +241,10 @@ hand_gameplay_prot/
    - Если ненулевое → `_flick_orbit_dir = to_cursor_h.normalized()`. Если курсор слишком близко к цели — держим прошлое направление (без дёрганий).
    - `hand.global_position = target + _flick_orbit_dir × flick_orbit_radius`. Куда курсор — туда рука.
    - Если цель уничтожилась посреди прицеливания — отмена и разлок руки.
-3. **Release (`_flick_released`):** `_hand.lock_position(false)`. Направление импульса = `(target − hand).normalized()` = `−_flick_orbit_dir` (предмет летит **противоположно** руке). `apply_central_impulse(dir × flick_force)` + `take_damage(flick_damage)`. `flicked.emit(target, velocity)`.
+3. **Release (`_flick_released`):** `_hand.lock_position(false)`. Направление = `(target − hand).normalized()` = `−_flick_orbit_dir` (цель летит **противоположно** руке). Урон каждый раз ролится: `damage = randf_range(flick_damage_min, flick_damage_max)`. Диспатч по типу:
+   - `Item`: `apply_central_impulse(dir × flick_force)` + `take_damage(damage)`.
+   - `Enemy`: `apply_knockback(dir × flick_force, flick_knockback_duration)` + `take_damage(damage)` (CharacterBody3D без `apply_central_impulse`, толкаем через knockback-канал, как в slam).
+   `flicked.emit(target, velocity)`.
 
 **Подсветка кандидата:**
 Каждый кадр `_update_candidate_highlight` ищет ближайший `Item` в `GrabArea` (проходящий по массе). На фронте смены — `set_highlighted` у старого/нового. Пока `_held != null` — кандидата нет. Во время орбиты щелбана подсветка остаётся на цели — она самая близкая к руке.
@@ -250,7 +255,7 @@ hand_gameplay_prot/
 - Магнит: `магнит тянет X (mass=, dist=)` / `магнит: цели нет` — на фронте.
 - Кандидат: `кандидат: X` / `кандидат: —` — на фронте.
 - Хлопок: `хлопок @ (x, y, z), задело: N` / `хлопок на кулдауне (Xs)`.
-- Щелбан: `щелбан: захват цели X` / `щелбан: предмета под рукой нет` / `щелбан: рука занята...` / `щелбан: X полетел в (...), |v|=...`.
+- Щелбан: `щелбан: захват цели X` / `щелбан: цели под рукой нет` / `щелбан: рука занята...` / `щелбан: X полетел в (...), |v|=...`.
 
 #### 5.2.2 SpellActions — `scripts/hand_spell.gd`
 
@@ -357,6 +362,7 @@ hand_gameplay_prot/
 **Виртуальные хуки:**
 - `_ai_step(delta)` — поведение в активной фазе.
 - `_on_knockback()` — реакция на внешний толчок (например, отменить начатый замах атаки).
+- `_on_destroyed()` — вызывается ровно перед `queue_free` на смерти, после `destroyed.emit`. Подклассы спавнят визуал смерти (осколки, частицы) — он добавляется в `current_scene` и переживает сам труп.
 
 **Цикл (`_physics_process`):**
 - Применяется гравитация → `velocity.y`.
@@ -400,6 +406,8 @@ hand_gameplay_prot/
 - **COOLDOWN:** AI в обычной фазе, кулдаун декрементируется (тикает всегда, в т.ч. в knockback'е). Может сдвинуться, если цель ушла.
 
 **Реакция на knockback (`_on_knockback`):** если был в windup — отменяем. Должен снова подойти и зарядиться.
+
+**Смерть (`_on_destroyed`):** прячем `MeshInstance3D` и спавним 7 кубиков-осколков (`SHATTER_FRAGMENT_*` константы) в позициях вдоль высоты капсулы. Каждый осколок — `RigidBody3D` с `collision_layer=0`, `mask=1` (падает на Terrain, проходит сквозь всё остальное и сквозь друг друга — без завалов). Импульс: радиальный наружу + вертикальный вверх с рандомным масштабом. Угловая скорость рандомная по всем осям. `material_override` — общий `_shared_normal_material`, тот же что у живых скелетов (GPU батчит вместе). Через `SHATTER_LIFETIME` (2с) Tween само-уничтожает осколок.
 
 **Уникальный материал:** в `_ready` дублируем `material_override`, чтобы emission менялся только у этого инстанса. Иначе все 50 скелетов засветились бы одновременно.
 
@@ -551,6 +559,20 @@ hand_gameplay_prot/
     - `move_and_slide` **зануляет** компоненту `velocity` в направлении препятствия (это её работа — слайдить вдоль, а не пробивать). Поэтому когда `_resolve_knockback_contacts` смотрел `velocity.dot(into_dir)` уже **после** slide'а, получал ~0 и `bounce` ничего не добавлял. У `_push_neighbor` та же беда: `Vector2(velocity.x, velocity.z).length()` отдавал почти 0, push был мизерный.
     - Лечение: запомнить `pre_slide_velocity := velocity` до `move_and_slide` и передать в `_resolve_knockback_contacts`. Bounce-формула стала «добавить `−into_dir × pre_into × restitution` к текущей velocity» (эквивалентно reflection, но к зануленному компоненту). Push соседа использует pre-slide-скорость для расчёта силы.
 
+23. **Flick расширен на врагов + диапазон урона.** Раньше щелбан работал только по `Item`'ам и наносил фиксированный урон 5 — для скелетов был бесполезен. Изменения:
+    - `GrabArea.collision_mask: 2 → 18` (Items + Enemies). LMB-grab/магнит/подсветка кандидата по-прежнему фильтруют через `body is Item`, поэтому случайно схватить или примагнитить скелета нельзя.
+    - В `HandPhysicalActions` появился `find_flick_target() -> Node3D` — отдельный поиск кандидата для щелбана, видит и Item (с mass-фильтром), и Enemy (без фильтра). `find_grab_candidate()` остался Item-only для LMB-канала.
+    - `_flick_target: Item → Node3D`. На release — диспатч по типу: Item получает `apply_central_impulse`, Enemy получает `apply_knockback(velocity, flick_knockback_duration)` (CharacterBody3D без impulse-API). Урон через общий `take_damage` — damageable-контракт уже был.
+    - Сигнал `flicked(target: Node3D, ...)` (был `Item`). `EventBus.hand_flicked` тоже расширен.
+    - **Диапазон урона.** Замена `flick_damage: float = 5.0` на пару `flick_damage_min = 15.0` / `flick_damage_max = 35.0`. Каждый щелбан ролится через `randf_range`. На скелете hp=30: минимум 15 (два удара минимума ровно добивают), максимум 35 (есть шанс one-shot'а). Получили «убийство за 1-2 удара» с рандомизацией, как просил геймдизайн.
+
+24. **Шатер скелета на смерти.** Раньше скелет на hp=0 просто исчезал через `queue_free` — без визуальной обратной связи на удар. Добавлена «рассыпающаяся» смерть:
+    - В `Enemy` появился виртуальный хук `_on_destroyed()` — вызывается после `destroyed.emit()` и до `queue_free()`. Тот же паттерн расширения, что у `_on_knockback`.
+    - `Skeleton._on_destroyed` прячет свой `MeshInstance3D` (visible=false) и спавнит 7 `RigidBody3D`-кубиков вдоль высоты капсулы в `current_scene` — они переживают `queue_free` самого скелета. Импульс: радиальный наружу × `SHATTER_IMPULSE_RADIAL` + вертикальный вверх с рандомным масштабом. Угловая скорость рандомная по всем осям.
+    - `collision_layer = 0`, `mask = 1` — осколки падают на Terrain, проходят сквозь всё остальное (включая друг друга и башню). Без завалов и физ-нагрузки от взаимодействий.
+    - `material_override = _shared_normal_material` — тот же общий материал, что у живых скелетов. GPU батчит их вместе (никакого дополнительного draw call'а на тип).
+    - `Tween` на самом теле: `tween_interval(SHATTER_LIFETIME) → tween_callback(queue_free)`. Без таймер-нодов, всё само-уничтожается через 2с.
+
 ### 7.3 Решённые ошибки
 
 | # | Ошибка | Причина | Исправление |
@@ -558,6 +580,7 @@ hand_gameplay_prot/
 | 1 | Камера смотрит вверх и в сторону, башню не видно | В `Transform3D(...)` я записал базисные векторы по столбцам, а Godot хранит матрицу базиса по строкам. Получилось другое вращение. | Перепаковал значения: `Transform3D(X.x, Y.x, Z.x, X.y, Y.y, Z.y, X.z, Y.z, Z.z, ox, oy, oz)`. |
 | 2 | Лог башни показывает один input, а позиция уползла в неожиданную сторону | Логирование триггерилось только на смену «движется ↔ стоит», смены направления (например, S → A+S → A) проходили молча. | Стал логировать **любое изменение `input_dir`**, а не только on/off-переходы. |
 | 3 | Чтобы схватить предмет, курсор приходится точно поставить «над» ним; малейший отступ — и захват не работает | `GrabArea` располагался **на самой руке** (y=2.5), сфера r=2 «касалась» предмета на полу (y=0.5) только в нижней точке. При сдвиге курсора на 0.5 м дистанция уже превышала радиус. | (а) Опустил `GrabArea` на y=−1.5 относительно руки (центр сферы у пола). (б) Добавил отдельный `MagnetArea` r=4 + притягивающую силу — предмет «доползает» к руке, если игрок чуть-чуть не дотянулся. |
+| 4 | `SCRIPT ERROR: Trying to assign an array of type "Array" to a variable of type "Array[Node3D]"` в `Skeleton.set_target → Enemy.set_target`, спавн волны падал каждый раз. | В `Enemy.set_target` стояло `_targets = [target] if target else []` — ветви тернарника возвращают **нетипизированный** `Array`, который GDScript отказывается присвоить типизированному `Array[Node3D]`. Тип теряется на уровне выражения, а не присваивания. | Заменил на типизированную локальную: `var new_targets: Array[Node3D] = []; if target: new_targets.append(target); _targets = new_targets`. Локальное объявление с типом — единственный способ построить типизированный литерал в условии. |
 
 ### 7.4 Решения, которые мы ОТВЕРГЛИ (и почему)
 
@@ -580,7 +603,7 @@ hand_gameplay_prot/
 | Skeleton | (наследует Enemy) | `_target.take_damage(...)` (duck-typed) |
 | EnemySpawner | — | `Input "spawn_enemies"`, PackedScene + NodePath из main.tscn |
 | Hand | сигналы `grabbed/released` (re-emit из PhysicalActions), публичный API для подмодулей (`global_position`, `smoothed_velocity()`, `grab_area`, `magnet_area`) | активная камера; тип `Item` |
-| Hand:PhysicalActions | сигналы `grabbed/released/slammed/flicked`, методы `get_held_item()/is_holding()`, экспорт `equipped` | Input `hand_grab`/`hand_action`/`equip_slam`/`equip_flick`, родитель Hand (включая `lock_position`), тип `Item` (включая `take_damage`) |
+| Hand:PhysicalActions | сигналы `grabbed/released/slammed`, `flicked(target: Node3D, velocity)`, методы `get_held_item()/is_holding()/find_flick_target()`, экспорт `equipped` | Input `hand_grab`/`hand_action`/`equip_slam`/`equip_flick`, родитель Hand (включая `lock_position`), типы `Item` и `Enemy` (включая `take_damage`/`apply_knockback`) |
 | Hand:SpellActions | сигнал `spell_cast(name, position)` (черновик) | родитель Hand (план) |
 | CameraRig | — | `@export target_path` |
 | Item | `@export item_color/item_size/highlight_*/hp`, наследует `mass`, методы `set_highlighted(bool)` / `take_damage(float)`, сигналы `damaged(amount)` / `destroyed` | физика, телепорт от руки в `freeze` |
@@ -611,7 +634,7 @@ hand_gameplay_prot/
 | `hand_grabbed` | `(item: Item)` | `Hand._ready` re-emit |
 | `hand_released` | `(item: Item, velocity: Vector3)` | `Hand._ready` re-emit |
 | `hand_slammed` | `(position: Vector3, radius: float)` | `HandPhysical._ready` re-emit |
-| `hand_flicked` | `(target: Item, velocity: Vector3)` | `HandPhysical._ready` re-emit |
+| `hand_flicked` | `(target: Node3D, velocity: Vector3)` | `HandPhysical._ready` re-emit |
 
 **Паттерн re-emit'а в сущности:**
 ```gdscript
