@@ -25,3 +25,7 @@ signal hand_grabbed(item: Item)
 signal hand_released(item: Item, velocity: Vector3)
 signal hand_slammed(position: Vector3, radius: float)
 signal hand_flicked(target: Node3D, velocity: Vector3)
+
+# --- Camp ---
+signal camp_deployed(anchor: Vector3)
+signal camp_packed

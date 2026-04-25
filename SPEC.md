@@ -447,6 +447,65 @@ hand_gameplay_prot/
 - Принимает освещение от `DirectionalLight3D` (тень от башни падает на пол).
 - Параметры: `base_color`, `grid_color`, `grid_size`, `line_width`. Дефолты в `main.tscn`: `grid_size=2.0`, `line_width=0.04`.
 
+### 5.7 Camp — `scenes/camp.tscn`, `scripts/camp.gd`
+
+**Тип корня:** `Node3D` с `class_name Camp`.
+
+**Назначение:** модуль «лагеря» — несколько палаток, в режиме каравана следующих за башней цепочкой. По зажатию клавиши `R` (при неподвижной башне) палатки разворачиваются вокруг текущей позиции башни в кольцо палаток-блокаторов; повторное зажатие `R` сворачивает их обратно в караван. Зависит от Tower через `target_path`.
+
+**Дочерние узлы:**
+- 4× `StaticBody3D` (`CaravanPart1`..`CaravanPart4`), каждая с:
+  - `CollisionShape3D` — `BoxShape3D` 2.0×1.5×1.5.
+  - `MeshInstance3D` — `BoxMesh` того же размера, коричневый `StandardMaterial3D`.
+- Стартовые позиции — линия позади origin'а Camp (например, `x = 0, −3, −6, −9`).
+- `collision_layer` управляется рантайм-кодом (см. ниже), `collision_mask = 0` — палатки сами ничего не сканируют.
+
+**Экспорты:**
+- `target_path: NodePath` (`@export_node_path("Node3D")`) — за кем следует караван. Обычно Tower.
+- `follow_speed: float = 4.0` — коэффициент `lerp` для каждой палатки в follow-режиме.
+- `part_gap: float = 2.5` — целевая дистанция между соседними палатками (и между башней и `parts[0]`).
+- `follow_max_distance: float = 30.0` — «зона видимости». Если `parts[0]` дальше этого от башни, ведущая палатка стоит на месте; остальные подтягиваются к своим лидерам, и цепочка естественным образом сжимается.
+- `deploy_duration: float = 3.0` — секунды зажатой `R` при неподвижной башне для развёртки.
+- `pack_duration: float = 4.0` — секунды зажатой `R` в развёрнутом состоянии для свёртки. Башня может двигаться.
+- `deploy_radius: float = 4.0` — радиус кольца палаток вокруг anchor.
+- `stationary_speed_threshold: float = 0.5` — горизонтальная скорость башни ниже этого считается «стоит».
+- `debug_log: bool = true`.
+
+**Сигналы:**
+- `deployed(anchor: Vector3)` — на переходе `CARAVAN_FOLLOWING → DEPLOYED`. `anchor` — позиция башни в момент развёртки.
+- `packed` — на переходе `DEPLOYED → CARAVAN_FOLLOWING`.
+
+**Состояния (внутреннее enum):**
+- `CARAVAN_FOLLOWING` — базовое. Палатки следуют цепочкой за башней. `collision_layer = 0`, не блокируют движение башни.
+- `DEPLOYED` — палатки в кольце вокруг `_deploy_anchor`, статически. `collision_layer = 4` (Actors), блокируют башню физически.
+
+**Логика follow (`_update_caravan_follow`):**
+- Distance gate: если `parts[0].distance_to(tower) > follow_max_distance`, ведущая стоит.
+- Цепочка: `leader_pos[i] = tower.global_position if i == 0 else parts[i-1].global_position`. `target = leader_pos − dir × part_gap`, где `dir = (leader_pos − part).normalized()` (горизонтально). `part.global_position = lerp(part.global_position, target, follow_speed × delta)`. Y палатки не трогается (сохраняется стартовая высота).
+
+**Логика развёртки (`_handle_input` в `CARAVAN_FOLLOWING`):**
+- Пока зажата `R` И башня неподвижна (`Vector2(tower.velocity.x, tower.velocity.z).length() < stationary_speed_threshold`) — `_hold_progress += delta`. Если башня сдвинулась — `_hold_progress = 0`. Если `R` отпущена — `_hold_progress = 0`.
+- Когда `_hold_progress >= deploy_duration` → `_start_deploy()`:
+  - `_deploy_anchor = tower.global_position`.
+  - `_deployed_targets[i] = anchor + (cos(i × TAU / 4), 0, sin(i × TAU / 4)) × deploy_radius` (Y берём как у палаток).
+  - Каждой палатке `collision_layer = 4`.
+  - Переход в `DEPLOYED`, `deployed.emit(anchor)`.
+
+**Логика DEPLOYED (`_update_deployed`):** каждая палатка lerp'ит к своей `_deployed_targets[i]` с тем же `follow_speed` — это даёт плавный «приезд» в кольцо после развёртки, после чего палатки практически неподвижны.
+
+**Логика свёртки (`_handle_input` в `DEPLOYED`):**
+- Пока зажата `R` — `_hold_progress += delta` (без stationary-чека). Если отпущена — сброс.
+- Когда `_hold_progress >= pack_duration` → `_start_pack()`:
+  - Каждой палатке `collision_layer = 0`.
+  - Переход в `CARAVAN_FOLLOWING`, `packed.emit()`. Палатки возобновляют follow с текущих позиций (без teleport'а).
+
+**Логирование (`debug_log=true`):**
+- `[Camp] лагерь развёрнут @ (x, y, z)`.
+- `[Camp] лагерь свёрнут`.
+- Опционально — фронт выхода/возврата башни в зону видимости.
+
+**Внешние зависимости:** только Tower через `target_path` (читается `velocity` для проверки неподвижности и `global_position` для follow). Hand модуль их не видит — `GrabArea` / `MagnetArea` / `slam_mask` не включают слой Actors. В `CARAVAN_FOLLOWING` палатки на `collision_layer = 0`, башня их не блокирует — это намеренно, чтобы караван не мешал движению.
+
 ---
 
 ## 6. Управление и инпуты
@@ -464,6 +523,7 @@ hand_gameplay_prot/
 | `equip_slam` | 1 | Hand:PhysicalActions (экипировать хлопок) |
 | `equip_flick` | 2 | Hand:PhysicalActions (экипировать щелбан) |
 | `spawn_enemies` | P | EnemySpawner (волна скелетов) |
+| `camp_toggle` | R | Camp (зажать для развёртки/свёртки) |
 
 Курсор мыши — позиция руки. Системного захвата курсора нет, он движется свободно.
 
@@ -573,6 +633,18 @@ hand_gameplay_prot/
     - `material_override = _shared_normal_material` — тот же общий материал, что у живых скелетов. GPU батчит их вместе (никакого дополнительного draw call'а на тип).
     - `Tween` на самом теле: `tween_interval(SHATTER_LIFETIME) → tween_callback(queue_free)`. Без таймер-нодов, всё само-уничтожается через 2с.
 
+25. **Модуль Camp (караван + развёртка вокруг башни).** Добавлен новый модуль `Camp` (`scenes/camp.tscn`, `scripts/camp.gd`) — четыре палатки-`StaticBody3D`, которые в режиме каравана идут цепочкой за башней, а по зажатию `R` разворачиваются в кольцо палаток-блокаторов вокруг текущей позиции башни и так же сворачиваются обратно. Зависит от Tower через `@export target_path`, никто из других модулей про Camp не знает.
+
+    **State machine на двух состояниях вместо четырёх.** Первой мыслью было разнести жизненный цикл на `CARAVAN_FOLLOWING / DEPLOYING / DEPLOYED / PACKING` — отдельная фаза «удержания R» как промежуточный state. На практике «удержание» — это просто `_hold_progress` внутри текущего состояния: в `CARAVAN_FOLLOWING` оно копит ход к развёртке, в `DEPLOYED` — к свёртке. Никаких визуальных отличий между «жду R» и «зажат R, идёт прогресс» нет, отдельный state ничего не давал бы. В итоге `enum {CARAVAN_FOLLOWING, DEPLOYED}` и переменная `_hold_progress`, сбрасываемая на отпускании клавиши или при движении башни (для развёртки). Проще, без потери функциональности.
+
+    **Цепочка вместо position-history-buffer для follow.** Был соблазн делать «змейку» через буфер прошлых позиций башни и каждой палатке выдавать N-ный сэмпл назад — даёт точный «след шаг-в-шаг». Отверг: буфер требует размера, частоты сэмплинга, и плохо реагирует на телепорты. Цепочка — каждая палатка тянется к `leader_pos − dir × part_gap`, где лидер — предыдущая палатка (или башня для нулевой), `lerp` даёт плавность. Гибче в зоне видимости: при «выпадении» башни за `follow_max_distance` ведущая встаёт, остальные подтягиваются к своим лидерам, и цепочка естественным образом сжимается, не нужно отдельного gather-режима.
+
+    **`collision_layer` toggle (0 ↔ 4) при смене режима.** В `CARAVAN_FOLLOWING` палатки на `collision_layer = 0` — башня их не видит, караван не мешает движению. В `DEPLOYED` — `collision_layer = 4` (Actors), палатки блокируют башню физически, как и положено лагерю-препятствию. Альтернативу «палатки всегда блокируют» отверг: караван бы упирался башне в спину при любом тормозящем шаге. Альтернативу «никогда не блокируют» отверг: тогда развёрнутый «лагерь» перестаёт быть препятствием и теряет смысл.
+
+    **Stationary-чек через `_tower.velocity` (CharacterBody3D field).** Для развёртки нужно «башня стоит». Велосипед типа position-delta-за-кадр считать не стал — `CharacterBody3D` уже держит `velocity`, читаем горизонтальную составляющую и сравниваем с `stationary_speed_threshold`. Для прототипа этого достаточно, никаких допфакторов.
+
+    **Развёртка не требует движения палаток в нужные позиции синхронно.** При входе в `DEPLOYED` каждой палатке вычисляется свой `_deployed_targets[i]` = точка кольца на `cos/sin(i × TAU / 4) × deploy_radius` от anchor'а; дальше каждая независимо `lerp`'ит к своей цели тем же `follow_speed`. Эстетически выходит «съезжаются в кольцо» — каждая палатка идёт по своей траектории, без чёткой хореографии. Кода меньше, выглядит живее.
+
 ### 7.3 Решённые ошибки
 
 | # | Ошибка | Причина | Исправление |
@@ -605,6 +677,7 @@ hand_gameplay_prot/
 | Hand | сигналы `grabbed/released` (re-emit из PhysicalActions), публичный API для подмодулей (`global_position`, `smoothed_velocity()`, `grab_area`, `magnet_area`) | активная камера; тип `Item` |
 | Hand:PhysicalActions | сигналы `grabbed/released/slammed`, `flicked(target: Node3D, velocity)`, методы `get_held_item()/is_holding()/find_flick_target()`, экспорт `equipped` | Input `hand_grab`/`hand_action`/`equip_slam`/`equip_flick`, родитель Hand (включая `lock_position`), типы `Item` и `Enemy` (включая `take_damage`/`apply_knockback`) |
 | Hand:SpellActions | сигнал `spell_cast(name, position)` (черновик) | родитель Hand (план) |
+| Camp | сигналы `deployed(anchor: Vector3)` / `packed`, экспорт `target_path` | Input `camp_toggle`, читает `Tower.velocity` (для проверки неподвижности) и `Tower.global_position` (для follow) |
 | CameraRig | — | `@export target_path` |
 | Item | `@export item_color/item_size/highlight_*/hp`, наследует `mass`, методы `set_highlighted(bool)` / `take_damage(float)`, сигналы `damaged(amount)` / `destroyed` | физика, телепорт от руки в `freeze` |
 | Ground | — | — |
@@ -635,6 +708,8 @@ hand_gameplay_prot/
 | `hand_released` | `(item: Item, velocity: Vector3)` | `Hand._ready` re-emit |
 | `hand_slammed` | `(position: Vector3, radius: float)` | `HandPhysical._ready` re-emit |
 | `hand_flicked` | `(target: Node3D, velocity: Vector3)` | `HandPhysical._ready` re-emit |
+| `camp_deployed` | `(anchor: Vector3)` | `Camp._ready` re-emit |
+| `camp_packed` | — | `Camp._ready` re-emit |
 
 **Паттерн re-emit'а в сущности:**
 ```gdscript
