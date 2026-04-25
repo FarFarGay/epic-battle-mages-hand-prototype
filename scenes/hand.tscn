@@ -1,6 +1,8 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/hand.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/hand_physical.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/hand_spell.gd" id="3"]
 
 [sub_resource type="SphereMesh" id="SphereMesh_hand"]
 radius = 0.5
@@ -35,3 +37,9 @@ collision_mask = 2
 
 [node name="MagnetCollision" type="CollisionShape3D" parent="MagnetArea"]
 shape = SubResource("SphereShape3D_magnet")
+
+[node name="PhysicalActions" type="Node" parent="."]
+script = ExtResource("2")
+
+[node name="SpellActions" type="Node" parent="."]
+script = ExtResource("3")

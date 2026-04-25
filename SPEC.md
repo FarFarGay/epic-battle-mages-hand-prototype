@@ -119,65 +119,132 @@ hand_gameplay_prot/
 
 **Внешние зависимости:** только `Input` actions и физика. Ни одной ссылки на другие модули.
 
-### 5.2 Hand — `scenes/hand.tscn`, `scripts/hand.gd`
+### 5.2 Hand — `scenes/hand.tscn`
 
-**Тип корня:** `Node3D`.
+**Тип корня:** `Node3D` с `class_name Hand`.
 
-**Назначение:** позиция руки в мире = проекция курсора мыши на горизонтальную плоскость. По удержанию ЛКМ ловит предметы; по отпусканию — бросает с инерцией.
+**Назначение:** координатор. Сама Hand отвечает только за позиционирование под курсором (с учётом высоты поверхности), сглаженный трекинг скорости и проксирование сигналов наружу. Все «действия» вынесены в подузлы по категориям, у каждой категории — собственный скрипт и собственные экспорты.
 
 **Дочерние узлы:**
 - `HandMesh` — `MeshInstance3D` со сферой r=0.5 (визуал).
-- `GrabArea` — `Area3D` со сферой r=2 на оффсете `(0, −1.5, 0)` от руки. Зона мгновенного захвата.
-- `MagnetArea` — `Area3D` со сферой r=4 на том же оффсете. Зона притяжения.
+- `GrabArea` — `Area3D` со сферой r=2 на оффсете `(0, −1.5, 0)`, `collision_mask=2` (Items). Зона мгновенного захвата.
+- `MagnetArea` — `Area3D` со сферой r=4 на том же оффсете, `collision_mask=2`. Зона притяжения.
+- `PhysicalActions` — `Node` со скриптом `hand_physical.gd` (см. §5.2.1).
+- `SpellActions` — `Node` со скриптом `hand_spell.gd` (см. §5.2.2).
 
-**Экспорты:**
+**Экспорты на самой Hand (`scripts/hand.gd`):**
 - `hand_height: float = 2.5` — просвет между рукой и поверхностью под курсором.
-- `max_lift_mass: float = 10.0` — порог: рука не поднимает (и не магнитит) предметы с `mass ≥ max_lift_mass`.
-- `throw_strength: float = 1.2` — множитель импульса при броске.
-- `max_throw_speed: float = 30.0` — потолок скорости выпускаемого предмета.
-- `hold_offset: Vector3 = (0, −1, 0)` — где предмет висит относительно руки.
-- `magnet_force: float = 30.0` — постоянная сила притяжения предметов из `MagnetArea`.
-- `terrain_mask: int = 3` (`@export_flags_3d_physics`) — слои, по которым поднимается рука. По умолчанию Terrain + Items; Actors и Projectiles исключены.
-- `debug_log: bool = true` — событийные логи (см. ниже).
+- `terrain_mask: int = 3` (`@export_flags_3d_physics`) — слои для raycast'а высоты. Terrain + Items.
+- `debug_log: bool = true` — лог только смены поверхности (всё остальное логируется в подмодулях).
 
-**Логирование (когда `debug_log=true`):**
-- `[Hand] поверхность: <имя> [<слой>], y=...` — на фронте смены поверхности под курсором. Показывает имя коллайдера, его слой (через `ProjectSettings.layer_names`) и Y. Полезно проверить, что raycast пропускает башню (Actors) и видит только Terrain/Items.
-- `[Hand] кандидат: <имя>` / `[Hand] кандидат: —` — на фронте смены кандидата на захват (того, кого подсвечиваем).
-- `[Hand] схвачен <имя> (mass=, layer=)` / `[Hand] отпущен <имя>, v=...` — при захвате/броске.
-- `[Hand] магнит тянет <имя> (mass=, dist=)` / `магнит: цели нет` — на фронте магнит-фазы.
+**Публичный API для подмодулей:**
+- `hand.global_position` — мировая позиция (на луче камеры, на высоте `surface_y + hand_height`).
+- `hand.smoothed_velocity()` — сглаженная скорость движения за 6 кадров (для «силы» броска и пр.).
+- `hand.grab_area: Area3D`, `hand.magnet_area: Area3D` — Area-зоны.
+- `hand.physical_actions`, `hand.spell_actions` — ссылки на подмодули.
+- `hand.lock_position(bool)` — пока залочено, Hand перестаёт перетаскивать руку под курсор. Подмодуль может временно ставить руку куда хочет (используется щелбаном для орбиты вокруг цели).
+- `hand.cursor_world_position()` — точка-под-курсором в мире. Обновляется каждый кадр **независимо** от lock'а. Подмодуль может читать её, чтобы реагировать на мышь, даже когда сам перехватил позицию руки.
+
+**Сигналы (re-emit из PhysicalActions, для совместимости):**
+- `grabbed(item: Item)`, `released(item: Item, velocity: Vector3)`.
+
+**Логика позиционирования (`_follow_cursor`):**
+1. `intersect_ray` от камеры через `mouse_pos` по `terrain_mask` → `surface_y`. Удерживаемый предмет (если PhysicalActions сейчас что-то держит) исключается из запроса. Промах → `surface_y = 0`.
+2. Пересечение **того же** луча камеры с горизонтальной плоскостью на `surface_y + hand_height` → позиция руки. Так рука и на луче (под пиксельным курсором), и над поверхностью на нужный просвет.
+
+**Логирование Hand (`debug_log=true`):**
+- `[Hand] поверхность: <имя> [<слой>], y=...` — на фронте смены поверхности.
+
+**Внешние зависимости:** активная камера сцены, тип `Item` (для сигналов).
+
+#### 5.2.1 PhysicalActions — `scripts/hand_physical.gd`
+
+**Категория:** физика. Содержит:
+- **Постоянное действие** — захват / бросок / магнит (ЛКМ).
+- **Активная способность** на ПКМ — диспатчится по `equipped`. Сейчас две: `slam` (хлопок) и `flick` (щелбан). Смена клавишами `1` / `2`.
+
+**Архитектурно:** `_handle_input` обрабатывает три набора триггеров — `equip_*` (смена экипировки), `hand_action` (press/release с диспатчем по `equipped` через `_dispatch_action_press/_release`), `hand_grab` (захват — отключён, пока активен `flick`, иначе схватили бы цель щелбана). Состояние текущего ПКМ-действия — в `_action_active` (`""`/`"flick"`; для `slam` остаётся `""`, потому что hold-state ему не нужен).
+
+**Экспорты (захват/бросок/магнит):**
+- `max_lift_mass: float = 10.0` — порог массы для подъёма (и магнита).
+- `throw_strength: float = 1.2` — множитель импульса при броске.
+- `max_throw_speed: float = 30.0` — потолок скорости броска.
+- `hold_offset: Vector3 = (0, −1, 0)` — где предмет висит относительно руки.
+- `magnet_force: float = 30.0` — сила притяжения из `MagnetArea`.
+
+**Экспорты (группа `Equipment`):**
+- `equipped: String` (`@export_enum("slam", "flick")`) — текущая активная способность. Дефолт `slam`. Меняется клавишами `1` / `2` или из инспектора. Сеттер логирует смену.
+
+**Экспорты (группа `Slam (RMB)`):**
+- `slam_radius: float = 5.0` — радиус AOE.
+- `slam_force: float = 30.0` — базовая сила импульса в эпицентре.
+- `slam_lift_factor: float = 0.4` — вертикальная компонента толчка.
+- `slam_damage: float = 20.0` — базовый урон в эпицентре.
+- `slam_cooldown: float = 0.5` — секунды между хлопками.
+- `slam_mask: int = 6` (`@export_flags_3d_physics`) — Items + Actors. Terrain не задевается.
+- `slam_visual_color: Color` — цвет вспышки.
+
+**Экспорты (группа `Flick (RMB hold-release)`):**
+- `flick_orbit_radius: float = 1.5` — расстояние, на которое рука «отъезжает» от цели по направлению курсора.
+- `flick_force: float = 25.0` — импульс при отпускании ПКМ.
+- `flick_damage: float = 5.0` — урон цели при щелчке.
+
+**Сигналы:**
+- `grabbed(item)`, `released(item, velocity)` — Hand их re-emit'ит наружу.
+- `slammed(position: Vector3, radius: float)` — в момент хлопка.
+- `flicked(target: Item, velocity: Vector3)` — в момент отпускания щелбана.
+
+**Публичный API:** `get_held_item() -> Item`, `is_holding() -> bool`.
+
+**Зависимости:** только родитель Hand. Через него `_hand.global_position`, `_hand.smoothed_velocity()`, `_hand.grab_area`, `_hand.magnet_area`, `_hand.get_world_3d()` (для шейп-каста хлопка), `_hand.lock_position(bool)` (для удержания позиции при щелбане). Тип `Item` (для фильтра, `set_highlighted`, `take_damage`).
+
+**Логика хлопка (`_perform_slam`):**
+1. Кулдаун-гейт через `_slam_cooldown_remaining`.
+2. `PhysicsShapeQueryParameters3D` со сферой `slam_radius` в `_hand.global_position`, маска = `slam_mask`. `intersect_shape` возвращает все тела в зоне.
+3. Для каждого `Item` (не `freeze`):
+   - Falloff = `1 − horizontal_dist / slam_radius` (горизонтальная, не 3D — иначе `hand_height` съел бы всю силу).
+   - Направление = `(horizontal + UP × slam_lift_factor).normalized()`.
+   - `apply_central_impulse(direction × slam_force × falloff)`.
+   - `take_damage(slam_damage × falloff)`.
+4. Спавним полупрозрачную сферу с emission в эпицентре; `Tween` масштабирует до `slam_radius` и фейдит альфу за 0.3s, потом `queue_free`.
+5. `slammed.emit(origin, slam_radius)`.
+
+**Логика щелбана (flick):**
+1. **Press (`_flick_pressed`):** Если рука уже что-то держит — отказ. Иначе ищем `_find_closest_item` в `GrabArea`; если пусто — отказ. При успехе:
+   - `_flick_target = target`.
+   - Стартовое `_flick_orbit_dir` = горизонтальная разница `(hand − target)`, или дефолтный `+X` если рука прямо над целью.
+   - `_hand.lock_position(true)` — Hand перестаёт перетаскивать руку под курсор. **При этом `cursor_world_position()` продолжает обновляться** — flick читает её каждый кадр.
+   - `_action_active = "flick"`.
+2. **Hold (`_update_flick`, в `_process`):** Направление орбиты берётся из курсора:
+   - `to_cursor_h = (cursor − target)` в плоскости XZ.
+   - Если ненулевое → `_flick_orbit_dir = to_cursor_h.normalized()`. Если курсор слишком близко к цели — держим прошлое направление (без дёрганий).
+   - `hand.global_position = target + _flick_orbit_dir × flick_orbit_radius`. Куда курсор — туда рука.
+   - Если цель уничтожилась посреди прицеливания — отмена и разлок руки.
+3. **Release (`_flick_released`):** `_hand.lock_position(false)`. Направление импульса = `(target − hand).normalized()` = `−_flick_orbit_dir` (предмет летит **противоположно** руке). `apply_central_impulse(dir × flick_force)` + `take_damage(flick_damage)`. `flicked.emit(target, velocity)`.
 
 **Подсветка кандидата:**
-Каждый кадр `_update_candidate_highlight` ищет ближайший `Item` в `GrabArea` (проходящий по массе). На фронте смены — у старого `set_highlighted(false)`, у нового `set_highlighted(true)`. Пока `_held != null` — кандидата нет (всё равно второй ящик не поднять), все подсветки сброшены.
+Каждый кадр `_update_candidate_highlight` ищет ближайший `Item` в `GrabArea` (проходящий по массе). На фронте смены — `set_highlighted` у старого/нового. Пока `_held != null` — кандидата нет. Во время орбиты щелбана подсветка остаётся на цели — она самая близкая к руке.
 
-**Сигналы (публичный интерфейс):**
-- `grabbed(item: Item)` — в момент захвата.
-- `released(item: Item, velocity: Vector3)` — в момент отпускания (с реальной скоростью броска).
+**Логи (`[Hand:Physical] ...`):**
+- Экипировка: `экипировано: X` (на фронте).
+- Захват: `схвачен X (mass=)`. Бросок: `отпущен X, |v|=...`.
+- Магнит: `магнит тянет X (mass=, dist=)` / `магнит: цели нет` — на фронте.
+- Кандидат: `кандидат: X` / `кандидат: —` — на фронте.
+- Хлопок: `хлопок @ (x, y, z), задело: N` / `хлопок на кулдауне (Xs)`.
+- Щелбан: `щелбан: захват цели X` / `щелбан: предмета под рукой нет` / `щелбан: рука занята...` / `щелбан: X полетел в (...), |v|=...`.
 
-**Логика по фазам:**
+#### 5.2.2 SpellActions — `scripts/hand_spell.gd`
 
-1. **Следование за курсором (`_process`).**
-   В два этапа:
-   - `PhysicsDirectSpaceState3D.intersect_ray` от камеры через `mouse_pos` по реальной геометрии — узнаём Y поверхности под курсором (`surface_y`). Удерживаемый предмет исключается из запроса (иначе рука самоудаляется от собственного захваченного ящика). Промах → `surface_y = 0`.
-   - Пересечение **того же** луча камеры с горизонтальной плоскостью на `surface_y + hand_height` — позиция руки. Так рука гарантированно лежит на луче (визуально под пиксельным курсором) и одновременно поднимается над поверхностью на нужный просвет. Прямое прибавление `UP × hand_height` к точке попадания в изометрии давало бы визуальный сдвиг между рукой и курсором.
+**Категория:** заклинания. **ЗАГЛУШКА** на текущей итерации.
 
-2. **Трекинг скорости (`_process`).**
-   Кольцевой буфер на 6 кадров: `(pos_now − pos_prev) / delta`. Сглаженная скорость = среднее по буферу — для «силы» броска.
+**План (TBD):**
+- Привязка ввода: ПКМ или клавиши 1..N.
+- Реестр заклинаний (`name → cost / cooldown / scene-effect`).
+- Сигнал `spell_cast(spell_name: String, position: Vector3)` для слушателей (UI, звук, анимация башни).
 
-3. **Ввод (`_process`).**
-   - LMB-press → `_is_grabbing = true`, попытка мгновенного захвата.
-   - LMB-release → `_is_grabbing = false`, бросок если что-то держим.
+**Экспорты сейчас:** `debug_log: bool = true`.
 
-4. **Захват + магнит (`_physics_process`, только если ЛКМ зажата и не держим).**
-   - Пробуем `_try_grab` (через `GrabArea.get_overlapping_bodies()`, фильтр `is Item`, ближайший).
-   - Если нет — `apply_central_force` к ближайшему Item в `MagnetArea`, направление: рука − предмет.
-
-5. **Удержание (`_process`).**
-   Каждый кадр `_held.global_position = global_position + hold_offset`. Тело в `freeze=true`, физика на нём не работает.
-
-6. **Бросок.**
-   `freeze = false`, `linear_velocity = смягчённая_скорость × throw_strength`, кэп на `max_throw_speed`.
-
-**Внешние зависимости:** активная камера сцены (через `get_viewport().get_camera_3d()`). Тип `Item` (через `class_name`).
+**Зависимости (проектируемые):** только родитель Hand. Через него позиция (для исхода заклинания) и скорость (если каст должен учитывать движение руки).
 
 ### 5.3 CameraRig — `scenes/camera_rig.tscn`, `scripts/camera_rig.gd`
 
@@ -213,12 +280,18 @@ hand_gameplay_prot/
 - `item_size: Vector3` — размер бокса (XYZ).
 - `highlight_color: Color` — цвет emission'а при подсветке (по умолчанию тёплый жёлтый).
 - `highlight_intensity: float` (0..5) — `emission_energy_multiplier` при подсветке.
+- `hp: float = 100.0` — здоровье. На 0 → `destroyed.emit()` + `queue_free()`.
 - Унаследованный `mass: float` — стандартное свойство `RigidBody3D`, переопределяется на инстансе.
 
 В `_ready` скрипт создаёт уникальные `BoxMesh`, `BoxShape3D` и `StandardMaterial3D` с заданными параметрами. Ссылка на материал кэшируется в `_material` для последующего управления emission'ом. Ресурсы из `item.tscn` остаются только для превью пустой заготовки в редакторе.
 
+**Сигналы:**
+- `damaged(amount: float)` — каждый раз при `take_damage`.
+- `destroyed` — когда `hp` ушло в 0 (один раз, перед `queue_free`).
+
 **Публичный API:**
 - `set_highlighted(value: bool)` — включает/выключает emission на материале. Дёргается рукой, когда предмет становится текущим кандидатом захвата.
+- `take_damage(amount: float)` — наносит урон, эмитит сигналы, при `hp ≤ 0` уничтожает узел. Заготовка под общий «damageable»-контракт, который потом разделят с будущими врагами.
 
 **Тестовый набор предметов в `main.tscn`:**
 
@@ -260,7 +333,10 @@ hand_gameplay_prot/
 | `move_back` | S | Tower |
 | `move_left` | A | Tower |
 | `move_right` | D | Tower |
-| `hand_grab` | LMB | Hand |
+| `hand_grab` | LMB | Hand:PhysicalActions (захват/бросок) |
+| `hand_action` | RMB | Hand:PhysicalActions (триггер активной способности — slam/flick) |
+| `equip_slam` | 1 | Hand:PhysicalActions (экипировать хлопок) |
+| `equip_flick` | 2 | Hand:PhysicalActions (экипировать щелбан) |
 
 Курсор мыши — позиция руки. Системного захвата курсора нет, он движется свободно.
 
@@ -298,6 +374,34 @@ hand_gameplay_prot/
 
 13. **Подсветка кандидата на захват.** У `Item` появился публичный метод `set_highlighted(bool)` — переключает emission на собственном материале. Hand каждый кадр в `_update_candidate_highlight` ищет ближайший `Item` в `GrabArea` (с учётом `max_lift_mass`), сравнивает с `_current_candidate` и на фронте дёргает `set_highlighted` у старого/нового. Пока `_held` не пустой — кандидата нет. Контракт ровно один метод, никакого autoload-хайлайтера или сигнала-шины: Hand знает только тип `Item`, а Item не знает про Hand вообще.
 
+14. **Категории действий руки.** Hand разрезана на координатора и два подузла-категории:
+    - `Hand` (Node3D, `class_name Hand`) — позиционирование, сглаженная скорость, raycast поверхности, лог смены поверхности. Сама ничего не делает, кроме как раздаёт API подмодулям.
+    - `PhysicalActions` (Node, `hand_physical.gd`) — категория «физика»: захват, бросок, магнит, подсветка кандидата. Привязка ЛКМ. Бывшая логика грабинга переехала сюда целиком, состояние (`_held`, `_is_grabbing`, `_current_candidate`) ушло вместе с ней.
+    - `SpellActions` (Node, `hand_spell.gd`) — категория «заклинания», заглушка под будущую систему.
+
+    Hand re-emit'ит `grabbed/released` от `PhysicalActions` для обратной совместимости. Подмодули зависят только от родителя Hand (через `get_parent() as Hand`), друг про друга ничего не знают. Добавление новой категории = новый Node-ребёнок со своим скриптом, без правок в Hand.
+
+15. **Хлопок по земле (Slam, RMB).** Первое физическое действие сверх захвата. Реализован в `Hand:PhysicalActions`:
+    - `Item` получил поле `hp` и метод `take_damage(amount)` + сигналы `damaged/destroyed` — общий «damageable»-контракт, под который потом подключатся враги.
+    - `_perform_slam` через `PhysicsShapeQueryParameters3D` (сфера `slam_radius`) ищет всё в зоне на маске `Items + Actors`. Удерживаемые (`freeze=true`) пропускаются.
+    - Falloff считается по **горизонтальной** дистанции: рука летит на `hand_height`, и 3D-метрика в `slam_radius` учитывала бы вертикаль и резко гасила силу даже у близких ящиков.
+    - Кулдаун через `_slam_cooldown_remaining`. Визуал — расширяющаяся прозрачная сфера с emission, спавнится в `current_scene` и `queue_free` через 0.3s.
+    - Сигнал `slammed(position, radius)` — для будущих звука/анимации/UI без правок руки.
+
+16. **Щелбан (Flick) и equip-система.** Введены экипируемые активные способности на ПКМ:
+    - `equipped: String` (`slam` / `flick`) меняется клавишами `1` / `2`. Дефолт `slam` — старое поведение сохраняется, пока не нажмёшь `2`.
+    - `_handle_input` стал диспатчером: ПКМ press → `_dispatch_action_press` (выбирает по `equipped`), release → `_dispatch_action_release`. Slam — one-shot. Flick требует hold/release-цикла, поэтому держит `_action_active = "flick"` между ними.
+    - На время flick LMB-грабинг отключён — иначе случайно схватили бы свою же цель щелбана.
+    - На Hand добавлен публичный `lock_position(bool)`: пока залочено, `global_position` не пересаживается под курсор. Flick дёргает `lock_position(true)` на старте и `false` на release.
+    - Защита: если цель уничтожилась во время прицеливания — `is_instance_valid(_flick_target)` ловит, рука разлокается, состояние сбрасывается.
+
+17. **Курсор-управляемая орбита щелбана.** Первая итерация щелбана крутила руку автоматически (`_flick_orbit_angle += speed × delta`). Игрок не контролировал направление — нужно было «ловить тайминг». Нелогично: вся прочая система собрана вокруг «рука = курсор».
+    - **Что переделано:** `Hand` теперь каждый кадр считает позицию-под-курсором в `_last_cursor_world` и хранит её, **даже когда `_position_locked = true`**. Раньше при lock'е `_follow_cursor` целиком пропускался, и cursor world-position не обновлялся.
+    - Появился публичный `Hand.cursor_world_position()` — возвращает последнее значение. Подмодули могут читать «куда сейчас тычет мышь» независимо от того, перехватили ли они позицию руки.
+    - `_update_flick` вместо инкремента угла читает `cursor_world_position()`, считает горизонтальную разницу `(cursor − target)`, нормирует и ставит руку на `target + dir × flick_orbit_radius`. Куда курсор — туда рука. На release предмет летит в противоположную руке сторону, как и раньше.
+    - Если курсор «попадает» прямо на цель (XZ почти совпадают) — держим прошлое направление вместо нулевой нормали. Без рывков и NaN'ов.
+    - `flick_orbit_speed` удалён за ненадобностью.
+
 ### 7.3 Решённые ошибки
 
 | # | Ошибка | Причина | Исправление |
@@ -323,9 +427,11 @@ hand_gameplay_prot/
 | Модуль | Что экспортирует наружу | Что слушает |
 |---|---|---|
 | Tower | — (поведение замкнуто) | Input actions WASD; читает `Item.mass`, `Item.freeze`; пушит `Item` через `apply_central_impulse` |
-| Hand | сигналы `grabbed(item)`, `released(item, velocity)` | Input action `hand_grab`, активная камера |
+| Hand | сигналы `grabbed/released` (re-emit из PhysicalActions), публичный API для подмодулей (`global_position`, `smoothed_velocity()`, `grab_area`, `magnet_area`) | активная камера; тип `Item` |
+| Hand:PhysicalActions | сигналы `grabbed/released/slammed/flicked`, методы `get_held_item()/is_holding()`, экспорт `equipped` | Input `hand_grab`/`hand_action`/`equip_slam`/`equip_flick`, родитель Hand (включая `lock_position`), тип `Item` (включая `take_damage`) |
+| Hand:SpellActions | сигнал `spell_cast(name, position)` (черновик) | родитель Hand (план) |
 | CameraRig | — | `@export target_path` |
-| Item | `@export item_color/item_size/highlight_*`, наследует `mass`, метод `set_highlighted(bool)` | физика, телепорт от руки в `freeze` |
+| Item | `@export item_color/item_size/highlight_*/hp`, наследует `mass`, методы `set_highlighted(bool)` / `take_damage(float)`, сигналы `damaged(amount)` / `destroyed` | физика, телепорт от руки в `freeze` |
 | Ground | — | — |
 
 Каждая стрелка сверху проходит **только через имя класса, сигнал или `@export`**. Никаких `get_node("../Tower")` внутри скриптов.

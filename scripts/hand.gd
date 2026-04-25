@@ -1,20 +1,19 @@
+class_name Hand
 extends Node3D
-## Гигантская рука. Курсор мыши = позиция руки в мире.
-## ЛКМ зажать → поднять ближайший Item в GrabArea.
-##   Если Item только в MagnetArea — рука его притягивает, пока не дотянется.
-## ЛКМ отпустить → бросить с инерцией движения руки.
+## Гигантская рука — координатор. Курсор мыши = позиция руки в мире.
+## Действия делятся на две категории, каждая в собственном подузле:
+##   - PhysicalActions (Node, hand_physical.gd) — физика: захват, бросок, магнит, подсветка.
+##   - SpellActions (Node, hand_spell.gd) — заклинания (заглушка).
 ##
-## Внешний интерфейс — только сигналы. Слушатели подключаются без правок руки.
+## Сама Hand отвечает только за:
+##   - позиционирование под курсором с учётом высоты поверхности (raycast по физике),
+##   - сглаженный трекинг скорости,
+##   - проксирование сигналов категорий наружу для совместимости.
 
 signal grabbed(item: Item)
 signal released(item: Item, velocity: Vector3)
 
 @export var hand_height: float = 2.5
-@export var max_lift_mass: float = 10.0
-@export var throw_strength: float = 1.2
-@export var max_throw_speed: float = 30.0
-@export var hold_offset: Vector3 = Vector3(0, -1.0, 0)
-@export var magnet_force: float = 30.0
 ## По каким слоям raycast поднимает руку (Terrain + Items по умолчанию).
 ## Actors и Projectiles исключены — иначе рука прыгала бы на врагов и снаряды.
 @export_flags_3d_physics var terrain_mask: int = 3
@@ -24,43 +23,64 @@ const VELOCITY_HISTORY_FRAMES := 6
 
 @onready var grab_area: Area3D = $GrabArea
 @onready var magnet_area: Area3D = $MagnetArea
+@onready var physical_actions: Node = $PhysicalActions
+@onready var spell_actions: Node = $SpellActions
 
-var _held: Item = null
-var _is_grabbing: bool = false
 var _velocity_history: Array[Vector3] = []
 var _previous_pos: Vector3
 var _initialized: bool = false
-# Текущий кандидат на захват (ближайший Item в GrabArea, проходящий по массе).
-# Обновляется каждый кадр, на нём подсвечивается emission.
-var _current_candidate: Item = null
-
-# Состояние для лога: фронт-триггеры
 var _last_surface_label: String = ""
-var _was_magnetizing: bool = false
-var _magnet_target_name: String = ""
+# Если true — Hand не перетаскивает позицию под курсор. Используется
+# подмодулями, когда им нужно временно держать руку в собственном месте
+# (например, PhysicalActions при щелбане крутит руку вокруг цели).
+# Cursor world-position продолжает обновляться независимо от lock'а,
+# чтобы подмодуль мог им рулить (например, читать угол через cursor_world_position()).
+var _position_locked: bool = false
+var _last_cursor_world: Vector3 = Vector3.ZERO
+
+
+func _ready() -> void:
+	_last_cursor_world = global_position
+	# Прокидываем сигналы физического подмодуля наверх — внешние слушатели
+	# могут подключаться к hand.grabbed / hand.released как раньше.
+	if physical_actions and physical_actions.has_signal("grabbed"):
+		physical_actions.grabbed.connect(grabbed.emit)
+	if physical_actions and physical_actions.has_signal("released"):
+		physical_actions.released.connect(released.emit)
 
 
 func _process(delta: float) -> void:
-	_follow_cursor()
+	_update_cursor_world()
+	if not _position_locked:
+		global_position = _last_cursor_world
 	_track_velocity(delta)
-	_handle_grab_input()
-	_update_held_position()
-	_update_candidate_highlight()
 
 
-func _physics_process(_delta: float) -> void:
-	# Магнит и попытка захвата — в физик-кадре, чтобы силы суммировались стабильно
-	if _is_grabbing and not _held:
-		_try_grab()
-		if not _held:
-			_apply_magnet()
-		elif debug_log and _was_magnetizing:
-			# Магнит дотянул, рука схватила — закрываем магнит-фазу в логе
-			_was_magnetizing = false
-			_magnet_target_name = ""
+# --- Публичный API для подмодулей ---
+
+func lock_position(locked: bool) -> void:
+	_position_locked = locked
 
 
-func _follow_cursor() -> void:
+func cursor_world_position() -> Vector3:
+	return _last_cursor_world
+
+
+func smoothed_velocity() -> Vector3:
+	if _velocity_history.is_empty():
+		return Vector3.ZERO
+	var sum := Vector3.ZERO
+	for v in _velocity_history:
+		sum += v
+	return sum / _velocity_history.size()
+
+
+# --- Реализация позиционирования ---
+
+func _update_cursor_world() -> void:
+	# Считается каждый кадр, ВКЛЮЧАЯ моменты, когда _position_locked = true.
+	# Подмодули (PhysicalActions при щелбане) читают результат через
+	# cursor_world_position() — например, чтобы крутить руку вокруг цели по курсору.
 	var camera := get_viewport().get_camera_3d()
 	if not camera:
 		return
@@ -69,20 +89,19 @@ func _follow_cursor() -> void:
 	var ray_dir := camera.project_ray_normal(mouse_pos)
 
 	# Этап 1: raycast'ом узнаём Y поверхности под курсором.
-	# Если луч ни во что не попал (курсор за краем карты) — считаем y=0.
-	# Удерживаемый предмет исключаем — иначе рука бесконечно «уезжает» от него вверх.
+	# Удерживаемый предмет (если PhysicalActions что-то держит) исключаем —
+	# иначе рука бесконечно «уезжает» от собственного захваченного ящика.
 	var result := _raycast_terrain(ray_origin, ray_dir)
 	var surface_y: float = 0.0
 	if not result.is_empty():
 		surface_y = (result.position as Vector3).y
 
-	# Этап 2: рука лежит на луче камеры (строго под пиксельным курсором),
-	# на высоте surface_y + hand_height. В изометрии нельзя просто прибавить UP к
-	# точке попадания — результат уйдёт с луча, и на экране возникнет сдвиг.
+	# Этап 2: точка на луче камеры на высоте surface_y + hand_height.
+	# Только это даёт визуальное соответствие пиксельного курсора и руки.
 	var plane := Plane(Vector3.UP, surface_y + hand_height)
 	var plane_hit: Variant = plane.intersects_ray(ray_origin, ray_dir)
 	if plane_hit != null:
-		global_position = plane_hit
+		_last_cursor_world = plane_hit
 
 	if debug_log:
 		_log_surface(result, surface_y)
@@ -92,8 +111,11 @@ func _raycast_terrain(origin: Vector3, dir: Vector3) -> Dictionary:
 	var space := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * 1000.0)
 	query.collision_mask = terrain_mask
-	if _held:
-		query.exclude = [_held.get_rid()]
+	var held: Item = null
+	if physical_actions and physical_actions.has_method("get_held_item"):
+		held = physical_actions.get_held_item()
+	if held:
+		query.exclude = [held.get_rid()]
 	return space.intersect_ray(query)
 
 
@@ -109,115 +131,6 @@ func _track_velocity(delta: float) -> void:
 	if _velocity_history.size() > VELOCITY_HISTORY_FRAMES:
 		_velocity_history.pop_front()
 	_previous_pos = global_position
-
-
-func _handle_grab_input() -> void:
-	if Input.is_action_just_pressed("hand_grab"):
-		_is_grabbing = true
-		_try_grab()
-	elif Input.is_action_just_released("hand_grab"):
-		_is_grabbing = false
-		_release()
-
-
-func _try_grab() -> void:
-	if _held:
-		return
-	var closest := _find_closest_item(grab_area.get_overlapping_bodies())
-	if closest:
-		_attach(closest)
-
-
-func _apply_magnet() -> void:
-	var closest := _find_closest_item(magnet_area.get_overlapping_bodies())
-	if not closest:
-		if debug_log and _was_magnetizing:
-			print("[Hand] магнит: цели нет")
-			_was_magnetizing = false
-			_magnet_target_name = ""
-		return
-	var to_hand: Vector3 = global_position - closest.global_position
-	if to_hand.length_squared() < 0.0001:
-		return
-	closest.apply_central_force(to_hand.normalized() * magnet_force)
-	if debug_log and (not _was_magnetizing or _magnet_target_name != str(closest.name)):
-		print("[Hand] магнит тянет %s (mass=%.1f, dist=%.2f)" % [closest.name, closest.mass, to_hand.length()])
-		_was_magnetizing = true
-		_magnet_target_name = str(closest.name)
-
-
-func _find_closest_item(bodies: Array[Node3D]) -> Item:
-	var closest: Item = null
-	var closest_dist := INF
-	for body in bodies:
-		if body is Item:
-			var item := body as Item
-			if item.mass >= max_lift_mass:
-				continue
-			var d := global_position.distance_to(item.global_position)
-			if d < closest_dist:
-				closest_dist = d
-				closest = item
-	return closest
-
-
-func _attach(item: Item) -> void:
-	_held = item
-	_held.linear_velocity = Vector3.ZERO
-	_held.angular_velocity = Vector3.ZERO
-	_held.freeze = true
-	if debug_log:
-		print("[Hand] схвачен %s (mass=%.1f, layer=[%s])" % [item.name, item.mass, _layer_name(item.collision_layer)])
-	grabbed.emit(_held)
-
-
-func _release() -> void:
-	if not _held:
-		return
-	var item_name := str(_held.name)
-	_held.freeze = false
-	var v := _smoothed_velocity() * throw_strength
-	if v.length() > max_throw_speed:
-		v = v.normalized() * max_throw_speed
-	_held.linear_velocity = v
-	if debug_log:
-		print("[Hand] отпущен %s, v=(%.2f, %.2f, %.2f), |v|=%.2f" % [item_name, v.x, v.y, v.z, v.length()])
-	released.emit(_held, v)
-	_held = null
-
-
-func _update_held_position() -> void:
-	if _held:
-		_held.global_position = global_position + hold_offset
-
-
-func _update_candidate_highlight() -> void:
-	# Кандидат — ближайший Item в GrabArea, проходящий по массе.
-	# Пока что-то держим — кандидата нет (всё равно не сможем поднять второй).
-	var candidate: Item = null
-	if not _held:
-		candidate = _find_closest_item(grab_area.get_overlapping_bodies())
-	if candidate == _current_candidate:
-		return
-	if _current_candidate and is_instance_valid(_current_candidate):
-		_current_candidate.set_highlighted(false)
-	if candidate:
-		candidate.set_highlighted(true)
-	if debug_log:
-		if candidate:
-			print("[Hand] кандидат: %s" % candidate.name)
-		elif _current_candidate:
-			print("[Hand] кандидат: —")
-	_current_candidate = candidate
-
-
-func _smoothed_velocity() -> Vector3:
-	if _velocity_history.is_empty():
-		return Vector3.ZERO
-	var sum := Vector3.ZERO
-	for v in _velocity_history:
-		sum += v
-	return sum / _velocity_history.size()
 
 
 # --- Логирование ---

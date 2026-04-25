@@ -8,13 +8,19 @@ extends RigidBody3D
 ## Публичный API:
 ## - set_highlighted(value: bool) — включает/выключает emission на материале
 ##   (рука дёргает этот метод, когда предмет становится текущим кандидатом захвата).
+## - take_damage(amount: float) — наносит урон, эмитит damaged/destroyed.
+
+signal damaged(amount: float)
+signal destroyed
 
 @export var item_color: Color = Color(0.7, 0.7, 0.7)
 @export var item_size: Vector3 = Vector3(1, 1, 1)
 @export var highlight_color: Color = Color(1.0, 0.95, 0.4, 1.0)
 @export_range(0.0, 5.0) var highlight_intensity: float = 0.6
+@export var hp: float = 100.0
 
 var _material: StandardMaterial3D
+var _destroyed: bool = false
 
 
 func _ready() -> void:
@@ -52,3 +58,14 @@ func set_highlighted(value: bool) -> void:
 		_material.emission_energy_multiplier = highlight_intensity
 	else:
 		_material.emission_enabled = false
+
+
+func take_damage(amount: float) -> void:
+	if _destroyed or amount <= 0.0:
+		return
+	hp -= amount
+	damaged.emit(amount)
+	if hp <= 0.0:
+		_destroyed = true
+		destroyed.emit()
+		queue_free()
