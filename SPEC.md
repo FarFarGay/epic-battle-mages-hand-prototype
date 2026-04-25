@@ -77,10 +77,11 @@ hand_gameplay_prot/
 | 3 | Actors | Tower (player-side) | Items, Enemies |
 | 4 | Projectiles | (заготовка под магию) | Terrain, Actors, Enemies |
 | 5 | Enemies | `Skeleton` и будущие враги | Tower (Actors), Slam |
+| 6 | CampObstacle | палатки `Camp` (CaravanPart*) — статически на этом слое в обоих режимах | Skeleton (мутуально-исключающе с Tower — башня НЕ сканирует слой 6) |
 
 **Маски в текущей итерации:**
-- `Tower`, `Item`, `Ground`: `mask = 31` (все 5 слоёв) — взаимодействуют с чем угодно.
-- `Skeleton`: `mask = 23` (Terrain + Items + Actors + Enemies) — включает свой же слой, поэтому скелеты блокируют друг друга. Так как оба кинематика, не «пушат» — просто скользят вдоль; визуально это даёт плотную толкучку у цели.
+- `Tower`, `Item`, `Ground`: `mask = 31` (Terrain + Items + Actors + Projectiles + Enemies) — взаимодействуют со всем «обычным», но **не с CampObstacle**: палатки намеренно не блокируют башню/предметы — иначе развёрнутый лагерь стал бы тюрьмой для самой башни.
+- `Skeleton`: `mask = 55` (Terrain + Items + Actors + Enemies + CampObstacle) — включает свой же слой (мутуальная блокировка) и слой палаток (упирается в них и в каравне, и в развёрнутом лагере).
 
 **Маски запросов (не тел):**
 - `Hand.GrabArea`: `collision_mask = 18` (Items + Enemies) — flick должен видеть скелетов как цели. LMB-grab и подсветка кандидата по-прежнему фильтруют через `body is Item`, поэтому скелета случайно не схватить.
@@ -396,7 +397,7 @@ hand_gameplay_prot/
 
 **Override в инстансе:** `move_speed = 2.7` (медленнее общего дефолта Enemy=4.0, для теста).
 
-**Слой/маска:** `collision_layer = 16` (Enemies), `collision_mask = 23` (Terrain + Items + Actors + Enemies). Скелеты мутуально видят друг друга; CharacterBody3D-vs-CharacterBody3D просто блокирует движение (без «push»), и у цели образуется плотная толкучка.
+**Слой/маска:** `collision_layer = 16` (Enemies), `collision_mask = 55` (Terrain + Items + Actors + Enemies + CampObstacle). Скелеты мутуально видят друг друга; CharacterBody3D-vs-CharacterBody3D просто блокирует движение (без «push»), и у цели образуется плотная толкучка. Бит CampObstacle (32) включён в маску, чтобы скелеты упирались в палатки лагеря — и в каравне, и в развёрнутом виде.
 
 **Жизненный цикл:** APPROACH → WINDUP → STRIKE → (LUNGE-knockback) → COOLDOWN → APPROACH.
 - **APPROACH:** `dist > attack_range` → `velocity.xz = (target − pos).xz.normalized() × move_speed`.
@@ -458,7 +459,7 @@ hand_gameplay_prot/
   - `CollisionShape3D` — `BoxShape3D` 2.0×1.5×1.5.
   - `MeshInstance3D` — `BoxMesh` того же размера, коричневый `StandardMaterial3D`.
 - Стартовые позиции — линия позади origin'а Camp (например, `x = 0, −3, −6, −9`).
-- `collision_layer` управляется рантайм-кодом (см. ниже), `collision_mask = 0` — палатки сами ничего не сканируют.
+- `collision_layer = 32` (`CampObstacle`, бит 5) **в обоих состояниях** — статически в `.tscn`, рантайм его не меняет. `collision_mask = 0` — палатки сами ничего не сканируют. Башня `mask=31` слой 6 не сканирует → палатки не мешают её ходить ни в каравне, ни в развёрнутом виде. Skeleton `mask=55` сканирует слой 6 → упирается в палатки в обоих режимах.
 
 **Экспорты:**
 - `target_path: NodePath` (`@export_node_path("Node3D")`) — за кем следует караван. Обычно Tower.
@@ -476,8 +477,10 @@ hand_gameplay_prot/
 - `packed` — на переходе `DEPLOYED → CARAVAN_FOLLOWING`.
 
 **Состояния (внутреннее enum):**
-- `CARAVAN_FOLLOWING` — базовое. Палатки следуют цепочкой за башней. `collision_layer = 0`, не блокируют движение башни.
-- `DEPLOYED` — палатки в кольце вокруг `_deploy_anchor`, статически. `collision_layer = 4` (Actors), блокируют башню физически.
+- `CARAVAN_FOLLOWING` — базовое. Палатки следуют цепочкой за башней.
+- `DEPLOYED` — палатки в кольце вокруг `_deploy_anchor`, статически.
+
+Оба состояния имеют одинаковую коллизионную семантику (палатки на `CampObstacle`, башня проходит, скелеты упираются) — переключения слоя в рантайме нет.
 
 **Логика follow (`_update_caravan_follow`):**
 - Distance gate: если `parts[0].distance_to(tower) > follow_max_distance`, ведущая стоит.
@@ -488,23 +491,21 @@ hand_gameplay_prot/
 - Когда `_hold_progress >= deploy_duration` → `_start_deploy()`:
   - `_deploy_anchor = tower.global_position`.
   - `_deployed_targets[i] = anchor + (cos(i × TAU / 4), 0, sin(i × TAU / 4)) × deploy_radius` (Y берём как у палаток).
-  - Каждой палатке `collision_layer = 4`.
-  - Переход в `DEPLOYED`, `deployed.emit(anchor)`.
+  - Переход в `DEPLOYED`, `deployed.emit(anchor)`. Слой палаток не трогаем — он постоянно `CampObstacle`.
 
 **Логика DEPLOYED (`_update_deployed`):** каждая палатка lerp'ит к своей `_deployed_targets[i]` с тем же `follow_speed` — это даёт плавный «приезд» в кольцо после развёртки, после чего палатки практически неподвижны.
 
 **Логика свёртки (`_handle_input` в `DEPLOYED`):**
 - Пока зажата `R` — `_hold_progress += delta` (без stationary-чека). Если отпущена — сброс.
 - Когда `_hold_progress >= pack_duration` → `_start_pack()`:
-  - Каждой палатке `collision_layer = 0`.
-  - Переход в `CARAVAN_FOLLOWING`, `packed.emit()`. Палатки возобновляют follow с текущих позиций (без teleport'а).
+  - Переход в `CARAVAN_FOLLOWING`, `packed.emit()`. Палатки возобновляют follow с текущих позиций (без teleport'а). Слой не меняем.
 
 **Логирование (`debug_log=true`):**
 - `[Camp] лагерь развёрнут @ (x, y, z)`.
 - `[Camp] лагерь свёрнут`.
 - Опционально — фронт выхода/возврата башни в зону видимости.
 
-**Внешние зависимости:** только Tower через `target_path` (читается `velocity` для проверки неподвижности и `global_position` для follow). Hand модуль их не видит — `GrabArea` / `MagnetArea` / `slam_mask` не включают слой Actors. В `CARAVAN_FOLLOWING` палатки на `collision_layer = 0`, башня их не блокирует — это намеренно, чтобы караван не мешал движению.
+**Внешние зависимости:** только Tower через `target_path` (читается `velocity` для проверки неподвижности и `global_position` для follow). Hand модуль их не видит — `GrabArea` / `MagnetArea` / `slam_mask` не включают слой `CampObstacle`. Башня их тоже не видит (`mask=31` без бита 6), что намеренно: палатки никогда не блокируют движение героя — ни в каравне (где иначе они врезались бы в башню при манёврах), ни в развёрнутом лагере (где иначе игрок оказался бы в тюрьме внутри собственного лагеря).
 
 ---
 
@@ -644,6 +645,11 @@ hand_gameplay_prot/
     **Stationary-чек через `_tower.velocity` (CharacterBody3D field).** Для развёртки нужно «башня стоит». Велосипед типа position-delta-за-кадр считать не стал — `CharacterBody3D` уже держит `velocity`, читаем горизонтальную составляющую и сравниваем с `stationary_speed_threshold`. Для прототипа этого достаточно, никаких допфакторов.
 
     **Развёртка не требует движения палаток в нужные позиции синхронно.** При входе в `DEPLOYED` каждой палатке вычисляется свой `_deployed_targets[i]` = точка кольца на `cos/sin(i × TAU / 4) × deploy_radius` от anchor'а; дальше каждая независимо `lerp`'ит к своей цели тем же `follow_speed`. Эстетически выходит «съезжаются в кольцо» — каждая палатка идёт по своей траектории, без чёткой хореографии. Кода меньше, выглядит живее.
+
+26. **Палатки на отдельном слое `CampObstacle` вместо toggle коллизии.** Первая итерация (этап 25) переключала `collision_layer` палаток между `0` (караван) и `4 / Actors` (развёрнут). Это давало два побочных эффекта: (а) в развёрнутом лагере башня упиралась в собственные палатки и не могла зайти/выйти; (б) в каравне скелеты свободно проходили сквозь палатки — лагерь не служил препятствием для врагов на марше. Оба пожелания пользователь явно сформулировал: «развёрнутые палатки не должны мешать башне; в каравне палатки не должны пропускать скелетов».
+    - **Решение через семантический слой.** Заведён новый слой `6: CampObstacle` (см. §4.1). Палатки **всегда** на `collision_layer = 32`, независимо от состояния. `Tower.mask = 31` бит 6 не включает → башня проходит сквозь палатки в любом режиме. `Skeleton.mask: 23 → 55` (добавлен бит 32) → скелеты упираются в палатки и в каравне, и в развёрнутом лагере.
+    - **State-toggle коллизии удалён** из `_start_deploy` и `_start_pack`. State-машина теперь чисто про логику движения и таймеры; коллизии — статически в `.tscn`. Меньше связности, легче рассуждать.
+    - **Альтернатива «палатки на Actors»**, рассмотренная: можно было бы убрать Actors из Tower.mask и оставить палатки на 4. Отверг — Actors несёт другую семантику (player-controlled cohort), а палатки концептуально — препятствие, не «игровая сторона». Отдельный слой делает namespace честным и не мешает будущим NPC-попутчикам, если такие появятся.
 
 ### 7.3 Решённые ошибки
 

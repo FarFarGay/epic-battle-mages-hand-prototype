@@ -6,12 +6,16 @@ extends Node3D
 ## твёрдые препятствия для самой башни.
 ##
 ## Состояния:
-## - CARAVAN_FOLLOWING — палатки тянутся «змейкой» за башней; collision_layer=0,
-##   ничего не блокируют. Hold R с условием «башня стоит» ≥ deploy_duration
-##   разворачивает лагерь.
+## - CARAVAN_FOLLOWING — палатки тянутся «змейкой» за башней. Hold R с условием
+##   «башня стоит» ≥ deploy_duration разворачивает лагерь.
 ## - DEPLOYED — палатки lerp'ом смещаются на точки кольца радиуса deploy_radius
-##   вокруг _deploy_anchor; collision_layer=Actors, теперь это стены.
-##   Hold R ≥ pack_duration сворачивает (без stationary-проверки).
+##   вокруг _deploy_anchor. Hold R ≥ pack_duration сворачивает (без
+##   stationary-проверки).
+##
+## Коллизии: палатки всегда на слое CampObstacle (6, бит 5). Tower.mask=31
+## не включает этот бит → башня проходит сквозь палатки в любом состоянии.
+## Skeleton.mask=55 включает его → скелеты упираются в палатки и в каравне,
+## и в развёрнутом лагере. Никакого рантайм-toggle коллизии нет.
 ##
 ## Зависит только от Tower через target_path. Локальные сигналы deployed/packed
 ## ре-эмитятся в EventBus для UI / звука / статистики.
@@ -134,8 +138,6 @@ func _start_deploy() -> void:
 			_deploy_anchor.z + sin(angle) * deploy_radius,
 		)
 		_deployed_targets.append(target)
-		# Actors (бит 4) — теперь палатки блокируют башню/врагов.
-		_parts[i].collision_layer = 4
 	_hold_progress = 0.0
 	_was_holding_stationary = false
 	if debug_log and LogConfig.master_enabled:
@@ -145,8 +147,6 @@ func _start_deploy() -> void:
 
 func _start_pack() -> void:
 	_state = State.CARAVAN_FOLLOWING
-	for part in _parts:
-		part.collision_layer = 0
 	_hold_progress = 0.0
 	_was_holding_stationary = false
 	if debug_log and LogConfig.master_enabled:
