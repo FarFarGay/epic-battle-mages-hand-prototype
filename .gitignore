@@ -1,5 +1,2 @@
-.DS_Store
-*.numbers
-*.pages
-node_modules/
-.claude/
+# Godot 4 — per-machine cache, регенерируется при открытии
+.godot/
