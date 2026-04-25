@@ -101,7 +101,7 @@ hand_gameplay_prot/
 - `move_speed: float = 8.0` — горизонтальная скорость.
 - `gravity: float = 20.0` — ускорение свободного падения.
 - `mass: float = 10.0` — эффективная масса башни (для сравнения с `Item.mass`).
-- `hp: float = 1000.0` — здоровье. На 0 → `died.emit()` (без queue_free — game-over UI отдельно).
+- `hp: float = 1000.0` — здоровье. На 0 → `destroyed.emit()` (без queue_free — game-over UI отдельно).
 - `push_strength: float = 1.0` — множитель импульса при толкании предметов (группа `Push Items`).
 - `enemy_push_speed_factor: float = 1.5` — множитель скорости knockback'а, который башня сообщает врагу при контакте (группа `Push Enemies`).
 - `enemy_push_duration: float = 0.2` — длительность knockback'а врагу. Refresh'ится каждый физкадр контакта.
@@ -109,10 +109,10 @@ hand_gameplay_prot/
 
 **Сигналы:**
 - `damaged(amount: float)` — каждый раз при `take_damage`.
-- `died` — в момент перехода `hp ≤ 0`.
+- `destroyed` — в момент перехода `hp ≤ 0`.
 
 **Публичный API:**
-- `take_damage(amount: float)` — общий «damageable»-контракт. Враги бьют через него.
+- `take_damage(amount: float)` — общий «damageable»-контракт (см. `scripts/damageable.gd`). Враги бьют через него.
 
 **Логика движения:**
 - `velocity.y -= gravity * delta`, обнуляется при `is_on_floor()`.
@@ -310,7 +310,7 @@ hand_gameplay_prot/
 
 **Публичный API:**
 - `set_highlighted(value: bool)` — включает/выключает emission на материале. Дёргается рукой, когда предмет становится текущим кандидатом захвата.
-- `take_damage(amount: float)` — наносит урон, эмитит сигналы, при `hp ≤ 0` уничтожает узел. Заготовка под общий «damageable»-контракт, который потом разделят с будущими врагами.
+- `take_damage(amount: float)` — наносит урон, эмитит сигналы, при `hp ≤ 0` уничтожает узел. Реализация общего «damageable»-контракта (см. `scripts/damageable.gd`).
 
 **Тестовый набор предметов в `main.tscn`:**
 
@@ -347,10 +347,10 @@ hand_gameplay_prot/
   - `neighbor_push_factor: float = 0.5` — доля собственной скорости, передаваемая соседу-Enemy при контакте в knockback'е.
   - `neighbor_push_duration: float = 0.15` — длительность knockback'а на соседа.
 
-**Сигналы:** `damaged(amount: float)`, `died`.
+**Сигналы:** `damaged(amount: float)`, `destroyed`.
 
 **Публичный API:**
-- `take_damage(amount)` — общий damageable-контракт. На `hp ≤ 0` → `died.emit()` + `queue_free()`.
+- `take_damage(amount)` — общий damageable-контракт (см. `scripts/damageable.gd`). На `hp ≤ 0` → `destroyed.emit()` + `queue_free()`.
 - `apply_knockback(impulse: Vector3, duration: float)` — внешний толчок. На время `duration` AI отключён, скорость подменяется на `impulse` и плавно затухает к нулю по `knockback_friction`. После применения зовётся виртуальный `_on_knockback()` — подклассы могут сбросить локальное состояние.
 - `set_target(target: Node3D)` — кого преследовать. Подклассы используют `_target` в своём AI.
 
@@ -526,7 +526,7 @@ hand_gameplay_prot/
     - `class_name Enemy extends CharacterBody3D` — общая база с `hp`, `take_damage`, `apply_knockback`, гравитацией, кулдаунами и виртуальным `_ai_step`. Состояние knockback'а отдельно от AI: `_knockback_timer` блокирует `_ai_step`, velocity лерпится к нулю.
     - `class_name Skeleton extends Enemy` — простой AI «иди и бей». Цель ставится извне через `set_target(Node3D)`, и Skeleton не знает, что это именно башня — duck-typed `target.has_method("take_damage")`.
     - `EnemySpawner` (Node3D со скриптом, в `main.tscn`) — spawnit'ит скелетов кольцом вокруг target по `Input.spawn_enemies` (P). Параметры: `spawn_radius`, `spawn_count`, `spawn_radius_jitter`. Зависит только от `PackedScene` и `NodePath`.
-    - `Tower` обзавёлся `hp` + `take_damage` + сигналы `damaged/died` — иначе скелетам некуда «бить». На `hp ≤ 0` сигнал есть, а `queue_free` нет: это игровой стейт, обработается отдельным UI-узлом, когда дойдём до game-over.
+    - `Tower` обзавёлся `hp` + `take_damage` + сигналы `damaged/destroyed` — иначе скелетам некуда «бить». На `hp ≤ 0` сигнал есть, а `queue_free` нет: это игровой стейт, обработается отдельным UI-узлом, когда дойдём до game-over.
     - Slam расширен: `slam_mask = 18` (Items + Enemies), цикл результатов разбит на `_apply_slam_to_item` (через `apply_central_impulse`) и `_apply_slam_to_enemy` (через `apply_knockback` — у CharacterBody3D нет импульса). Расчёт falloff/направления вынесен в `_slam_direction_and_falloff`, общий для обоих.
 
 19. **Телеграф атаки скелета + само-коллизии + замедление.** После первой партии тестов:
@@ -575,8 +575,8 @@ hand_gameplay_prot/
 
 | Модуль | Что экспортирует наружу | Что слушает |
 |---|---|---|
-| Tower | сигналы `damaged/died`, метод `take_damage(float)` | Input actions WASD; читает `Item.mass`, `Item.freeze`; пушит `Item` через `apply_central_impulse` |
-| Enemy (база) | сигналы `damaged/died`, методы `take_damage(float)` / `apply_knockback(Vector3, float)` / `set_target(Node3D)`; виртуальный `_ai_step(delta)` | физика, наследники |
+| Tower | сигналы `damaged/destroyed`, метод `take_damage(float)` (damageable-контракт, см. `scripts/damageable.gd`) | Input actions WASD; читает `Item.mass`, `Item.freeze`; пушит `Item` через `apply_central_impulse` |
+| Enemy (база) | сигналы `damaged/destroyed`, методы `take_damage(float)` / `apply_knockback(Vector3, float)` / `set_target(Node3D)`; виртуальный `_ai_step(delta)` (damageable-контракт, см. `scripts/damageable.gd`) | физика, наследники |
 | Skeleton | (наследует Enemy) | `_target.take_damage(...)` (duck-typed) |
 | EnemySpawner | — | `Input "spawn_enemies"`, PackedScene + NodePath из main.tscn |
 | Hand | сигналы `grabbed/released` (re-emit из PhysicalActions), публичный API для подмодулей (`global_position`, `smoothed_velocity()`, `grab_area`, `magnet_area`) | активная камера; тип `Item` |
@@ -590,7 +590,59 @@ hand_gameplay_prot/
 
 ---
 
-## 9. Незакрытые вопросы и направления
+## 9. EventBus (autoload)
+
+**Файл:** `scripts/event_bus.gd`. **Регистрация:** `project.godot → [autoload] → EventBus="*res://scripts/event_bus.gd"`. Глобально доступен как `EventBus` в любом скрипте.
+
+**Назначение.** Глобальный канал событий. Каждая damageable / interactive сущность по-прежнему держит **локальные** сигналы (`damaged`, `destroyed`, `grabbed`, …) — это контракт для тесно-связанных слушателей. Параллельно она перенаправляет их на bus, чтобы UI / счёт / звук подписывались **один раз** на нужный глобальный сигнал, не зная про конкретные инстансы и не переподключаясь при каждом spawn'е.
+
+**Конвенция именования:** `<entity>_<event>(args)`. Первый аргумент — сама сущность (для тех типов, где нужно отличить инстанс; Tower одна на сцене, поэтому без `self`).
+
+**Список сигналов:**
+
+| Сигнал | Аргументы | Источник |
+|---|---|---|
+| `item_damaged` | `(item: Item, amount: float)` | `Item._ready` re-emit |
+| `item_destroyed` | `(item: Item)` | `Item._ready` re-emit |
+| `enemy_damaged` | `(enemy: Enemy, amount: float)` | `Enemy._ready` re-emit (Skeleton наследует через `super._ready()`) |
+| `enemy_destroyed` | `(enemy: Enemy)` | `Enemy._ready` re-emit |
+| `tower_damaged` | `(amount: float)` | `Tower._ready` re-emit |
+| `tower_destroyed` | — | `Tower._ready` re-emit |
+| `hand_grabbed` | `(item: Item)` | `Hand._ready` re-emit |
+| `hand_released` | `(item: Item, velocity: Vector3)` | `Hand._ready` re-emit |
+| `hand_slammed` | `(position: Vector3, radius: float)` | `HandPhysical._ready` re-emit |
+| `hand_flicked` | `(target: Item, velocity: Vector3)` | `HandPhysical._ready` re-emit |
+
+**Паттерн re-emit'а в сущности:**
+```gdscript
+func _ready() -> void:
+    # ... базовая инициализация ...
+    damaged.connect(func(amount: float) -> void: EventBus.item_damaged.emit(self, amount))
+    destroyed.connect(func() -> void: EventBus.item_destroyed.emit(self))
+```
+
+**Как подписаться (cross-cutting слушатель):**
+```gdscript
+func _ready() -> void:
+    EventBus.enemy_destroyed.connect(_on_enemy_destroyed)
+
+func _on_enemy_destroyed(enemy: Enemy) -> void:
+    score += 10
+```
+
+**Принципы:**
+1. Bus — **дополнительный** канал, не замена локальным сигналам. Hand:PhysicalActions слушает `Item.destroyed` локально (если ему это нужно для своей логики); UI слушает `EventBus.item_destroyed` — оба источника эмитятся параллельно.
+2. Bus **только эмитит**. Никакой логики, фильтрации, состояния — иначе становится god-object'ом.
+3. Подключение re-emit'а делается в `_ready` сущности **один раз**. Подклассы с собственным `_ready` обязаны звать `super._ready()`, иначе теряется подключение базы (см. Skeleton).
+4. Тип-сигнатуры в сигналах bus'а служат документацией; рантайм Godot не валидирует их строго (динамический emit), но статический анализатор и автокомплит ловят опечатки.
+
+### 9.1. LogConfig (autoload)
+
+**Файл:** `scripts/log_config.gd`. **Регистрация:** `project.godot → [autoload] → LogConfig="*res://scripts/log_config.gd"`. Поле `master_enabled: bool` — глобальный мастер-выключатель debug-логов. Каждый entity-скрипт с per-entity `debug_log: bool` гейтит print'ы как `if debug_log and LogConfig.master_enabled:` — per-entity флаги остаются для тонкого мута одного шумного модуля, а `master_enabled = false` глушит всё разом (удобно при сборе/демо). На `printerr` (предупреждения) не распространяется.
+
+---
+
+## 10. Незакрытые вопросы и направления
 
 Не реализовано в текущей итерации (на будущее):
 

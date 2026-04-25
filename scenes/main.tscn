@@ -82,7 +82,7 @@ mass = 20.0
 
 [node name="EnemySpawner" type="Node3D" parent="."]
 script = ExtResource("6")
-skeleton_scene = ExtResource("7")
+enemy_scenes = Array[PackedScene]([ExtResource("7")])
+enemy_counts = Array[int]([50])
 target_path = NodePath("../Tower")
 spawn_radius = 25.0
-spawn_count = 50

@@ -37,6 +37,10 @@ var _last_surface_label: String = ""
 # чтобы подмодуль мог им рулить (например, читать угол через cursor_world_position()).
 var _position_locked: bool = false
 var _last_cursor_world: Vector3 = Vector3.ZERO
+# Подмодули регистрируют здесь Callable, которые возвращают Array[RID] —
+# объекты, исключаемые из террейн-raycast'а. Так Hand не лезет в кишки
+# подмодулей через has_method/duck-typing.
+var _raycast_excluders: Array[Callable] = []
 
 
 func _ready() -> void:
@@ -47,6 +51,10 @@ func _ready() -> void:
 		physical_actions.grabbed.connect(grabbed.emit)
 	if physical_actions and physical_actions.has_signal("released"):
 		physical_actions.released.connect(released.emit)
+	# Re-emit на глобальный EventBus — для UI / звука / статистики.
+	# Локальные сигналы остаются для тесно-связанных слушателей.
+	grabbed.connect(func(item: Item) -> void: EventBus.hand_grabbed.emit(item))
+	released.connect(func(item: Item, velocity: Vector3) -> void: EventBus.hand_released.emit(item, velocity))
 
 
 func _process(delta: float) -> void:
@@ -64,6 +72,11 @@ func lock_position(locked: bool) -> void:
 
 func cursor_world_position() -> Vector3:
 	return _last_cursor_world
+
+
+func register_raycast_excluder(provider: Callable) -> void:
+	## provider должен возвращать Array[RID] — кого ИСКЛЮЧИТЬ из raycast террейна.
+	_raycast_excluders.append(provider)
 
 
 func smoothed_velocity() -> Vector3:
@@ -103,7 +116,7 @@ func _update_cursor_world() -> void:
 	if plane_hit != null:
 		_last_cursor_world = plane_hit
 
-	if debug_log:
+	if debug_log and LogConfig.master_enabled:
 		_log_surface(result, surface_y)
 
 
@@ -111,11 +124,14 @@ func _raycast_terrain(origin: Vector3, dir: Vector3) -> Dictionary:
 	var space := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * 1000.0)
 	query.collision_mask = terrain_mask
-	var held: Item = null
-	if physical_actions and physical_actions.has_method("get_held_item"):
-		held = physical_actions.get_held_item()
-	if held:
-		query.exclude = [held.get_rid()]
+	var excluded: Array[RID] = []
+	for provider in _raycast_excluders:
+		var rids = provider.call()
+		if rids is Array:
+			for rid in rids:
+				excluded.append(rid)
+	if not excluded.is_empty():
+		query.exclude = excluded
 	return space.intersect_ray(query)
 
 

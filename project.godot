@@ -19,6 +19,11 @@ config/features=PackedStringArray("4.6")
 window/size/viewport_width=1280
 window/size/viewport_height=720
 
+[autoload]
+
+EventBus="*res://scripts/event_bus.gd"
+LogConfig="*res://scripts/log_config.gd"
+
 [layer_names]
 
 3d_physics/layer_1="Terrain"

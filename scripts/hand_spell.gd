@@ -19,6 +19,8 @@ func _ready() -> void:
 	_hand = get_parent() as Hand
 	if not _hand:
 		push_error("HandSpell: родитель не Hand")
+		set_process(false)
+		set_physics_process(false)
 	# TODO: загрузить реестр заклинаний (имя → cost / cooldown / scene / эффект).
 
 

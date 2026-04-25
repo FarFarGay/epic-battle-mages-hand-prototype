@@ -26,6 +26,10 @@ var _destroyed: bool = false
 func _ready() -> void:
 	_apply_visual()
 	_apply_shape()
+	# Re-emit на глобальный EventBus — для UI / звука / статистики.
+	# Локальные сигналы остаются для тесно-связанных слушателей.
+	damaged.connect(func(amount: float) -> void: EventBus.item_damaged.emit(self, amount))
+	destroyed.connect(func() -> void: EventBus.item_destroyed.emit(self))
 
 
 func _apply_visual() -> void:

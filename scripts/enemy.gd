@@ -2,21 +2,29 @@ class_name Enemy
 extends CharacterBody3D
 ## Базовый класс врага. Подклассы реализуют конкретное поведение в _ai_step(delta).
 ##
+## Базовые константы вынесены ниже:
+## - MIN_NEIGHBOR_PUSH_SPEED — порог скорости, ниже которого
+##   knockback не передаётся соседу (контакт «соскользнул», а не «врезался»).
+##
 ## Контракт:
 ## - take_damage(amount) — общий «damageable»-интерфейс (как у Item).
 ## - apply_knockback(impulse, duration) — внешний толчок, на время отключает AI.
 ##   Подклассы могут реагировать через _on_knockback().
-## - set_target(node) — кого преследовать; используется AI в подклассах.
+## - set_target(node) / set_targets(array) — цель → набор целей; AI выбирает
+##   ближайшую валидную через get_active_target() (мёртвые автоматически
+##   пропускаются, ручная чистка не нужна).
 ##
 ## Сигналы:
-## - damaged(amount), died — для UI / эффектов / счётчиков.
+## - damaged(amount), destroyed — для UI / эффектов / счётчиков.
 ##
 ## Knockback-контакты (_resolve_knockback_contacts):
-## - Если в knockback'е и врезались в _target — bounce-off (elastic).
+## - Если в knockback'е и врезались в активную цель — bounce-off (elastic).
 ## - Если в knockback'е и задели другого Enemy — толкаем его пропорциональным mini-knockback'ом.
 
 signal damaged(amount: float)
-signal died
+signal destroyed
+
+const MIN_NEIGHBOR_PUSH_SPEED := 0.5
 
 @export var hp: float = 30.0
 @export var move_speed: float = 4.0
@@ -28,7 +36,7 @@ signal died
 @export var knockback_friction: float = 5.0
 
 @export_group("Knockback contacts")
-## Коэффициент отскока от _target при ударе в knockback'е (0 — без отскока, 1 — полный возврат).
+## Коэффициент отскока от активной цели при ударе в knockback'е (0 — без отскока, 1 — полный возврат).
 @export_range(0.0, 1.5) var bounce_restitution: float = 0.6
 ## Доля собственной скорости, передаваемая соседу-Enemy при контакте в knockback'е.
 @export_range(0.0, 1.0) var neighbor_push_factor: float = 0.5
@@ -36,16 +44,45 @@ signal died
 
 @export_group("")
 
-var _target: Node3D = null
+var _targets: Array[Node3D] = []
 var _attack_cooldown_remaining: float = 0.0
 var _knockback_timer: float = 0.0
 var _dying: bool = false
 
 
+func _ready() -> void:
+	# Re-emit на глобальный EventBus — для UI / звука / статистики.
+	# Локальные сигналы остаются для тесно-связанных слушателей.
+	# Подклассы (Skeleton) ОБЯЗАНЫ звать super._ready(), чтобы не потерять подключение.
+	damaged.connect(func(amount: float) -> void: EventBus.enemy_damaged.emit(self, amount))
+	destroyed.connect(func() -> void: EventBus.enemy_destroyed.emit(self))
+
+
 # --- Публичный API ---
 
+## Назначить набор кандидатов в цели. Самая близкая из живых выбирается каждый кадр.
+func set_targets(targets: Array[Node3D]) -> void:
+	_targets = targets
+
+
+## Удобная обёртка для случая «одна цель» — оборачивает в массив.
 func set_target(target: Node3D) -> void:
-	_target = target
+	_targets = [target] if target else []
+
+
+## Возвращает ближайшую валидную цель, либо null. Невалидные (queue_free)
+## пропускаются, поэтому ручная чистка списка не нужна.
+func get_active_target() -> Node3D:
+	var nearest: Node3D = null
+	var nearest_dist_sq := INF
+	for t in _targets:
+		if not is_instance_valid(t):
+			continue
+		var d_sq: float = (t.global_position - global_position).length_squared()
+		if d_sq < nearest_dist_sq:
+			nearest_dist_sq = d_sq
+			nearest = t
+	return nearest
 
 
 func take_damage(amount: float) -> void:
@@ -55,7 +92,7 @@ func take_damage(amount: float) -> void:
 	damaged.emit(amount)
 	if hp <= 0.0:
 		_dying = true
-		died.emit()
+		destroyed.emit()
 		queue_free()
 
 
@@ -113,15 +150,17 @@ func _on_knockback() -> void:
 # --- Knockback-контакты ---
 
 func _resolve_knockback_contacts(pre_slide_velocity: Vector3) -> void:
-	var bounced_off_target := false
+	var active := get_active_target()
+	var target_normal_sum := Vector3.ZERO
 	for i in range(get_slide_collision_count()):
 		var col := get_slide_collision(i)
 		var collider := col.get_collider()
-		if not bounced_off_target and _target and collider == _target:
-			_bounce_off_target(col.get_normal(), pre_slide_velocity)
-			bounced_off_target = true
+		if active and collider == active:
+			target_normal_sum += col.get_normal()
 		elif collider is Enemy and collider != self:
 			_push_neighbor(collider as Enemy, col, pre_slide_velocity)
+	if target_normal_sum.length_squared() > 0.0:
+		_bounce_off_target(target_normal_sum.normalized(), pre_slide_velocity)
 
 
 func _bounce_off_target(normal: Vector3, pre_slide_velocity: Vector3) -> void:
@@ -129,8 +168,8 @@ func _bounce_off_target(normal: Vector3, pre_slide_velocity: Vector3) -> void:
 	# (−normal), то есть «в цель», и есть скорость удара. После move_and_slide эта
 	# компонента уже занулена, поэтому ДОБАВЛЯЕМ обратный импульс величины
 	# pre_into * restitution — это и даёт упругий отскок.
-	var into_dir := Vector3(-normal.x, 0.0, -normal.z)
-	if into_dir.length_squared() < 0.0001:
+	var into_dir := VecUtil.horizontal(-normal)
+	if into_dir.length_squared() < VecUtil.EPSILON_SQ:
 		return
 	into_dir = into_dir.normalized()
 	var pre_into := pre_slide_velocity.dot(into_dir)
@@ -141,10 +180,10 @@ func _bounce_off_target(normal: Vector3, pre_slide_velocity: Vector3) -> void:
 
 func _push_neighbor(other: Enemy, col: KinematicCollision3D, pre_slide_velocity: Vector3) -> void:
 	var pre_horizontal_speed := Vector2(pre_slide_velocity.x, pre_slide_velocity.z).length()
-	if pre_horizontal_speed < 0.5:
+	if pre_horizontal_speed < MIN_NEIGHBOR_PUSH_SPEED:
 		return
-	var push_dir := Vector3(-col.get_normal().x, 0.0, -col.get_normal().z)
-	if push_dir.length_squared() < 0.0001:
+	var push_dir := VecUtil.horizontal(-col.get_normal())
+	if push_dir.length_squared() < VecUtil.EPSILON_SQ:
 		return
 	push_dir = push_dir.normalized()
 	other.apply_knockback(push_dir * pre_horizontal_speed * neighbor_push_factor, neighbor_push_duration)

@@ -3,8 +3,15 @@ extends CharacterBody3D
 ## Если башня тяжелее, чем встретившийся Item, она толкает его телом при движении.
 ## Имеет HP — враги наносят урон через take_damage(amount).
 
+## Порог Y-компоненты нормали коллизии: всё, что выше, считается «полом»
+## (отфильтровывается в логе стен).
+const FLOOR_NORMAL_THRESHOLD := 0.7
+## Минимальная компонента intended_velocity в направлении врага, ниже которой
+## считаем, что башня в эту сторону не едет — knockback не применяем.
+const MIN_PUSH_VELOCITY := 0.1
+
 signal damaged(amount: float)
-signal died
+signal destroyed
 
 @export var move_speed: float = 8.0
 @export var gravity: float = 20.0
@@ -34,6 +41,13 @@ var _contacts_last: Dictionary = {}
 var _dying: bool = false
 
 
+func _ready() -> void:
+	# Re-emit на глобальный EventBus — для UI / звука / статистики.
+	# Локальные сигналы остаются для тесно-связанных слушателей.
+	damaged.connect(func(amount: float) -> void: EventBus.tower_damaged.emit(amount))
+	destroyed.connect(func() -> void: EventBus.tower_destroyed.emit())
+
+
 # --- Публичный API ---
 
 func take_damage(amount: float) -> void:
@@ -41,12 +55,18 @@ func take_damage(amount: float) -> void:
 		return
 	hp -= amount
 	damaged.emit(amount)
-	if debug_log:
+	if debug_log and LogConfig.master_enabled:
 		print("[Tower] получил %.1f урона, hp=%.1f" % [amount, hp])
 	if hp <= 0.0:
 		_dying = true
-		died.emit()
-		if debug_log:
+		# Замораживаем ввод/физику: WASD больше не двигает тело, slide-коллизии
+		# не пересчитываются. Тело остаётся на месте с активной коллизией —
+		# скелеты упираются в "стену", но дальнейшие take_damage становятся
+		# no-op'ом через ранний return по _dying в начале функции.
+		set_physics_process(false)
+		velocity = Vector3.ZERO
+		destroyed.emit()
+		if debug_log and LogConfig.master_enabled:
 			print("[Tower] DEAD")
 		# Не queue_free — game-over UI будет в следующих итерациях.
 
@@ -73,7 +93,7 @@ func _physics_process(delta: float) -> void:
 
 	_resolve_contacts(intended_velocity)
 
-	if debug_log:
+	if debug_log and LogConfig.master_enabled:
 		_debug_log(input_dir)
 
 
@@ -92,7 +112,7 @@ func _resolve_contacts(intended_velocity: Vector3) -> void:
 			_push_enemy(collider as Enemy, col, intended_velocity)
 			# В contacts_now врагов не записываем — для 50+ скелетов получится спам логов.
 
-	if debug_log:
+	if debug_log and LogConfig.master_enabled:
 		_log_contact_transitions(contacts_now)
 	_contacts_last = contacts_now
 
@@ -118,12 +138,12 @@ func _push_item(item: Item, col: KinematicCollision3D, intended_velocity: Vector
 
 func _push_enemy(enemy: Enemy, col: KinematicCollision3D, intended_velocity: Vector3) -> void:
 	var push_dir: Vector3 = -col.get_normal()
-	var push_dir_h := Vector3(push_dir.x, 0.0, push_dir.z)
-	if push_dir_h.length_squared() < 0.0001:
+	var push_dir_h := VecUtil.horizontal(push_dir)
+	if push_dir_h.length_squared() < VecUtil.EPSILON_SQ:
 		return
 	push_dir_h = push_dir_h.normalized()
 	var v_into := intended_velocity.dot(push_dir_h)
-	if v_into <= 0.1:
+	if v_into <= MIN_PUSH_VELOCITY:
 		return  # башня не движется в эту сторону — нечего толкать
 	enemy.apply_knockback(push_dir_h * v_into * enemy_push_speed_factor, enemy_push_duration)
 
@@ -131,6 +151,8 @@ func _push_enemy(enemy: Enemy, col: KinematicCollision3D, intended_velocity: Vec
 func _log_contact_transitions(contacts_now: Dictionary) -> void:
 	# Новые или изменившиеся контакты
 	for item in contacts_now:
+		if not is_instance_valid(item):
+			continue
 		var status: String = contacts_now[item]
 		var prev: String = _contacts_last.get(item, "")
 		if prev == status:
@@ -178,7 +200,7 @@ func _debug_log(input_dir: Vector2) -> void:
 	for i in range(get_slide_collision_count()):
 		var col := get_slide_collision(i)
 		var n := col.get_normal()
-		if n.y > 0.7:
+		if n.y > FLOOR_NORMAL_THRESHOLD:
 			continue
 		var collider := col.get_collider()
 		if collider is Item:

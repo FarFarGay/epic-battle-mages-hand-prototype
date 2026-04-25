@@ -1,8 +1,10 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/hand.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hand_physical.gd" id="2"]
 [ext_resource type="Script" path="res://scripts/hand_spell.gd" id="3"]
+[ext_resource type="Script" path="res://scripts/hand_physical_slam.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/hand_physical_flick.gd" id="5"]
 
 [sub_resource type="SphereMesh" id="SphereMesh_hand"]
 radius = 0.5
@@ -40,6 +42,12 @@ shape = SubResource("SphereShape3D_magnet")
 
 [node name="PhysicalActions" type="Node" parent="."]
 script = ExtResource("2")
+
+[node name="Slam" type="Node" parent="PhysicalActions"]
+script = ExtResource("4")
+
+[node name="Flick" type="Node" parent="PhysicalActions"]
+script = ExtResource("5")
 
 [node name="SpellActions" type="Node" parent="."]
 script = ExtResource("3")
