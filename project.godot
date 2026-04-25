@@ -19,6 +19,13 @@ config/features=PackedStringArray("4.6")
 window/size/viewport_width=1280
 window/size/viewport_height=720
 
+[layer_names]
+
+3d_physics/layer_1="Terrain"
+3d_physics/layer_2="Items"
+3d_physics/layer_3="Actors"
+3d_physics/layer_4="Projectiles"
+
 [input]
 
 move_forward={
