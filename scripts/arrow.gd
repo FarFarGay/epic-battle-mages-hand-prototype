@@ -29,15 +29,24 @@ var _consumed: bool = false
 
 ## Вызывается стрелком сразу после instantiate + add_child. Задаёт направление
 ## и стартовую позицию. Поворачиваем меш по направлению полёта через look_at.
+##
+## Направление — полное 3D, не горизонтальное: турель на верхушке башни
+## (y≈6.85) бьёт по скелету на земле (y≈1) — без вертикальной составляющей
+## стрела пролетала бы над головой.
 func setup(source_position: Vector3, target_position: Vector3) -> void:
 	global_position = source_position
 	var to_target := target_position - source_position
-	to_target.y = 0.0
 	if to_target.length_squared() < 0.0001:
 		to_target = Vector3.FORWARD
 	_direction = to_target.normalized()
-	# look_at смотрит -Z. Цель — куда лететь.
-	look_at(global_position + _direction, Vector3.UP)
+	# look_at смотрит -Z. Up = world Y, кроме случая, когда стреляем строго
+	# вертикально (тогда forward параллелен up — look_at падает с ассертом).
+	# Для этой игры цель всегда на земле, значит forward не вертикален; но
+	# гард на всякий случай.
+	var up := Vector3.UP
+	if absf(_direction.dot(up)) > 0.99:
+		up = Vector3.FORWARD
+	look_at(global_position + _direction, up)
 
 
 func _ready() -> void:

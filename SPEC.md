@@ -962,7 +962,7 @@ func take_one() -> bool:
 **Слой/маска:** Area3D `collision_layer=0`, `collision_mask=Layers.MASK_FRIENDLY_PROJECTILE = 17` (`TERRAIN | ENEMIES`). Стрелы пролетают сквозь Items, башню, гномов, палатки — не задевают своих.
 
 **Цикл:**
-- `setup(source_pos, target_pos)` от стрелка → стрела ставится в source, вычисляется направление к target, `look_at` поворачивает меш.
+- `setup(source_pos, target_pos)` от стрелка → стрела ставится в source, вычисляется **полное 3D-направление** к target (не зануляем Y!), `look_at` поворачивает меш. Это критично для турели на верхушке башни (y≈6.85 vs скелет на y≈1) — без вертикальной составляющей стрелы пролетали бы над головой.
 - `_physics_process(delta)`: `global_position += direction × speed × delta`. На `_life ≥ lifetime=4с` queue_free (если ничего не поймала).
 - `Area3D.body_entered`: идемпотентный `_consumed`-флаг защищает от двойного срабатывания. Если тело — Damageable, наносим урон через `Damageable.try_damage`. Затем queue_free независимо (стрела втыкается / разлетается).
 
