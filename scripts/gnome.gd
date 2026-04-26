@@ -25,6 +25,16 @@ extends CharacterBody3D
 ## Связь с лагерем: setup(camp, home_tent). Гном не сканирует tower/спавнер —
 ## всё через camp. Кучи между гномами не делятся через broadcast: гном видит
 ## только свою vision-зону и сам решает, куда бежать.
+##
+## Цель скелетов: пока гном НЕ IN_TENT, он зарегистрирован в группе
+## skeleton_target — скелеты находят его глазами в их vision_radius.
+## При переходе в IN_TENT/RETURNING_TO_TENT он из группы выходит. На смерти —
+## destroyed signal, Camp вычищает себя из массива _gnomes по сигналу.
+
+signal damaged(amount: float)
+signal destroyed
+
+const SKELETON_TARGET_GROUP := &"skeleton_target"
 
 enum State {
 	IN_TENT,
@@ -34,6 +44,12 @@ enum State {
 	IDLE_NEAR_BASE,
 	RETURNING_TO_TENT,
 }
+
+@export_group("Stats")
+@export var hp: float = 20.0
+## Замедление knockback-скорости в секунду — пока knockback_timer > 0,
+## AI не управляет скоростью, она затухает к нулю.
+@export var knockback_friction: float = 6.0
 
 @export_group("Movement")
 @export var move_speed: float = 1.6
@@ -71,6 +87,8 @@ var _state: State = State.IN_TENT
 var _assigned_pile: ResourcePile = null
 var _wander_target: Vector3 = Vector3.INF
 var _carry_visual: MeshInstance3D = null
+var _knockback_timer: float = 0.0
+var _dying: bool = false
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 
@@ -86,6 +104,11 @@ func setup(camp: Camp, home_tent: Node3D) -> void:
 func _ready() -> void:
 	# До setup просто стоим. Без камп-ссылки FSM не имеет смысла.
 	visible = false
+	Damageable.register(self)
+	Pushable.register(self)
+	# Re-emit на глобальный EventBus — для UI / звука / статистики.
+	damaged.connect(func(amount: float) -> void: EventBus.gnome_damaged.emit(self, amount))
+	destroyed.connect(func() -> void: EventBus.gnome_destroyed.emit(self))
 
 
 func _apply_visual() -> void:
@@ -104,6 +127,8 @@ func enter_deployed() -> void:
 	_assigned_pile = null
 	_wander_target = Vector3.INF
 	_state = State.SEARCHING
+	# Снаружи и виден → цель скелетов.
+	add_to_group(SKELETON_TARGET_GROUP)
 	if debug_log and LogConfig.master_enabled:
 		print("[Gnome:%s] вышел из палатки" % name)
 
@@ -115,6 +140,8 @@ func request_return() -> void:
 	_drop_carry()
 	_assigned_pile = null
 	_state = State.RETURNING_TO_TENT
+	# Идёт домой — больше не цель скелетов (логически отступает).
+	remove_from_group(SKELETON_TARGET_GROUP)
 	if debug_log and LogConfig.master_enabled:
 		print("[Gnome:%s] возвращается в палатку" % name)
 
@@ -131,6 +158,35 @@ func get_assigned_pile() -> ResourcePile:
 	if not is_instance_valid(_assigned_pile):
 		return null
 	return _assigned_pile
+
+
+# --- Damageable / Pushable ---
+
+func take_damage(amount: float) -> void:
+	if _dying or amount <= 0.0:
+		return
+	hp -= amount
+	damaged.emit(amount)
+	if hp <= 0.0:
+		_dying = true
+		# Снимаем флаг цели заранее: queue_free отрабатывает только в конце кадра,
+		# и без этого скелет ещё успел бы взять умирающего гнома в целеуказание
+		# в текущем тике (get_nodes_in_group видит queued-инстансы до фактической смерти).
+		remove_from_group(SKELETON_TARGET_GROUP)
+		destroyed.emit()
+		queue_free()
+
+
+## Pushable-контракт: knockback, на длительность которого AI отключён,
+## и горизонтальная скорость затухает к нулю по knockback_friction.
+func apply_push(velocity_change: Vector3, duration: float) -> void:
+	if _state == State.IN_TENT:
+		# В палатке — позиция приклеена, импульс не имеет смысла.
+		return
+	velocity.x = velocity_change.x
+	velocity.z = velocity_change.z
+	velocity.y = max(velocity.y, velocity_change.y)
+	_knockback_timer = duration
 
 
 # --- Цикл ---
@@ -150,17 +206,23 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.y = 0.0
 
-	match _state:
-		State.SEARCHING:
-			_tick_searching()
-		State.COMMUTING_TO_PILE:
-			_tick_commuting_to_pile()
-		State.COMMUTING_TO_BASE:
-			_tick_commuting_to_base()
-		State.IDLE_NEAR_BASE:
-			_tick_idle_near_base()
-		State.RETURNING_TO_TENT:
-			_tick_returning()
+	if _knockback_timer > 0.0:
+		# Под knockback'ом — AI заглушен, скорость затухает по trение-coeff.
+		_knockback_timer = maxf(_knockback_timer - delta, 0.0)
+		velocity.x = lerpf(velocity.x, 0.0, knockback_friction * delta)
+		velocity.z = lerpf(velocity.z, 0.0, knockback_friction * delta)
+	else:
+		match _state:
+			State.SEARCHING:
+				_tick_searching()
+			State.COMMUTING_TO_PILE:
+				_tick_commuting_to_pile()
+			State.COMMUTING_TO_BASE:
+				_tick_commuting_to_base()
+			State.IDLE_NEAR_BASE:
+				_tick_idle_near_base()
+			State.RETURNING_TO_TENT:
+				_tick_returning()
 
 	move_and_slide()
 
@@ -245,6 +307,8 @@ func _enter_in_tent() -> void:
 	_drop_carry()
 	visible = false
 	velocity = Vector3.ZERO
+	# Скрыт в палатке — снимаем «целеустойчивость» для скелетов.
+	remove_from_group(SKELETON_TARGET_GROUP)
 
 
 ## Куча, которую мы вели, исчезла или опустела. Просто перевод в SEARCHING —

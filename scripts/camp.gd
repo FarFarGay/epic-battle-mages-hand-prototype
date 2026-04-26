@@ -98,6 +98,12 @@ func _ready() -> void:
 			if child is StaticBody3D and child.name.begins_with("CaravanPart"):
 				_parts.append(child as StaticBody3D)
 
+	# Скелеты могут уничтожить палатку — слушаем destroyed, чтобы вычистить _parts
+	# (иначе _update_*-циклы поймают invalid-инстанс).
+	for p in _parts:
+		if p is CampPart:
+			(p as CampPart).destroyed.connect(_on_part_destroyed.bind(p))
+
 	_spawn_gnomes()
 
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
@@ -119,7 +125,22 @@ func _spawn_gnomes() -> void:
 			add_child(gnome)
 			gnome.global_position = tent.global_position
 			gnome.setup(self, tent)
+			# Скелет может убить гнома — выкидываем из _gnomes, иначе claim-чек
+			# и _all_gnomes_home будут спотыкаться об invalid-инстансы.
+			gnome.destroyed.connect(_on_gnome_destroyed.bind(gnome))
 			_gnomes.append(gnome)
+
+
+func _on_part_destroyed(part: StaticBody3D) -> void:
+	_parts.erase(part)
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] палатка %s уничтожена (осталось: %d)" % [part.name, _parts.size()])
+
+
+func _on_gnome_destroyed(gnome: Gnome) -> void:
+	_gnomes.erase(gnome)
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] гном %s убит (осталось: %d)" % [gnome.name, _gnomes.size()])
 
 
 func _process(delta: float) -> void:

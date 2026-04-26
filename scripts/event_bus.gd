@@ -33,3 +33,9 @@ signal hand_flicked(target: Node3D, velocity: Vector3)
 # --- Camp ---
 signal camp_deployed(anchor: Vector3)
 signal camp_packed
+signal camp_part_damaged(part: Node3D, amount: float)
+signal camp_part_destroyed(part: Node3D)
+
+# --- Gnome ---
+signal gnome_damaged(gnome: Node3D, amount: float)
+signal gnome_destroyed(gnome: Node3D)

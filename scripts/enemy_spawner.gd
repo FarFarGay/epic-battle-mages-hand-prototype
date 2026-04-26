@@ -1,23 +1,28 @@
 extends Node3D
 ## Спавнер врагов. По input action `spawn_enemies` порождает партию врагов
-## кольцом вокруг target.
+## равномерно по всей карте — позиция выбирается uniform из квадрата
+## ±map_half_extent от центра (0,0).
 ##
 ## Не зависит ни от Skeleton, ни от Tower напрямую: всё через PackedScene и NodePath.
 ## Поддерживает несколько типов врагов через параллельные массивы enemy_scenes/enemy_counts.
 ## TODO: заменить на Array[WaveEntry: Resource] когда волн будет >2.
 ## Спавн распределяется по нескольким физкадрам, чтобы не было фрейм-спайка.
+##
+## target_path всё ещё нужен: базовый Enemy.set_target вызывается на спавне,
+## чтобы будущие враги без vision-override (Skeleton override'ит и игнорирует
+## _targets) могли таргетить башню по-старому.
 
 @export var enemy_scenes: Array[PackedScene]
 @export var enemy_counts: Array[int]
 @export_node_path("Node3D") var target_path: NodePath
 @export_node_path("Node") var spawn_root_path: NodePath
-@export var spawn_radius: float = 25.0
-@export var spawn_radius_jitter: float = 0.3
-@export var spawn_height_offset: float = 1.0
+## Полу-длина квадратной карты от центра (0,0). Спавн uniform в [-extent, extent].
+@export var map_half_extent: float = 95.0
+## Y-координата спавна врагов (над уровнем земли).
+@export var spawn_y: float = 1.0
 @export var debug_log: bool = true
 
 const _SPAWNS_PER_FRAME: int = 6
-const _CENTER_INVALID := Vector3.INF
 
 var _target: Node3D
 var _spawn_root: Node
@@ -43,14 +48,10 @@ func spawn_wave() -> void:
 	if enemy_scenes.size() != enemy_counts.size():
 		push_error("EnemySpawner: размеры enemy_scenes (%d) и enemy_counts (%d) не совпадают" % [enemy_scenes.size(), enemy_counts.size()])
 		return
-	if not is_instance_valid(_target):
-		push_error("EnemySpawner: target не найден")
-		return
 	if not is_instance_valid(_spawn_root):
 		push_error("EnemySpawner: spawn_root не найден")
 		return
 
-	var center: Vector3 = _target.global_position
 	var spawned := 0
 	var overall := 0
 
@@ -70,41 +71,33 @@ func spawn_wave() -> void:
 					instance.queue_free()
 				overall += 1
 				if overall % _SPAWNS_PER_FRAME == 0:
-					var fresh := await _yield_frame_and_recenter()
-					if fresh == _CENTER_INVALID:
+					if not await _yield_and_validate():
 						return
-					center = fresh
 				continue
 
-			var angle := randf() * TAU
-			var dist := spawn_radius * (1.0 + (randf() - 0.5) * spawn_radius_jitter)
 			var pos := Vector3(
-				center.x + cos(angle) * dist,
-				_target.global_position.y + spawn_height_offset,
-				center.z + sin(angle) * dist
+				randf_range(-map_half_extent, map_half_extent),
+				spawn_y,
+				randf_range(-map_half_extent, map_half_extent),
 			)
 			_spawn_root.add_child(enemy)
 			enemy.global_position = pos
-			enemy.set_target(_target)
+			# Базовая Enemy._targets — фолбэк для будущих врагов без vision-override.
+			# Skeleton override'ит get_active_target и эту цель игнорирует.
+			if is_instance_valid(_target):
+				enemy.set_target(_target)
 			spawned += 1
 			overall += 1
 
 			if overall % _SPAWNS_PER_FRAME == 0:
-				var fresh := await _yield_frame_and_recenter()
-				if fresh == _CENTER_INVALID:
+				if not await _yield_and_validate():
 					return
-				center = fresh
 
 	if debug_log and LogConfig.master_enabled:
-		print("[EnemySpawner] спавн волны: %d врагов вокруг %s" % [spawned, _target.name])
+		print("[EnemySpawner] спавн волны: %d врагов uniform по карте (±%.0f)" % [spawned, map_half_extent])
 
 
-# Один await + проверка валидности target и спавнера. Возвращает свежий center
-# либо _CENTER_INVALID, если что-то протухло — caller прерывается.
-func _yield_frame_and_recenter() -> Vector3:
+# Yield + проверка, что спавнер ещё в дереве. Возвращает false → caller прерывается.
+func _yield_and_validate() -> bool:
 	await get_tree().physics_frame
-	if not is_inside_tree():
-		return _CENTER_INVALID
-	if not is_instance_valid(_target):
-		return _CENTER_INVALID
-	return _target.global_position
+	return is_inside_tree() and is_instance_valid(_spawn_root)
