@@ -1,22 +1,20 @@
 class_name Gnome
 extends CharacterBody3D
 ## Гном — обитатель лагеря. По 2 на палатку. Сам ищет ресурсы патрулём,
-## фиксирует найденные кучи в общей памяти лагеря и носит ресурс челноком.
-## По сигналу кампа → возвращается в свою палатку.
+## находит глазами и сам носит ресурс челноком. По сигналу кампа →
+## возвращается в свою палатку.
 ##
 ## Двухфазная FSM сбора:
-##   ФАЗА 1 (поиск): SEARCHING — каждый кадр гном проверяет в порядке:
-##     1) Camp.get_known_piles() — кучи, которые УЖЕ открыты (любым гномом).
-##        Если есть валидная — идём к ней, без всяких глаз и патруля.
-##     2) Глаза: сканируем кучи в vision_radius от себя. Нашёл — регистрирует
-##        в Camp.add_known_pile (чтобы все знали) и идёт к ней.
-##     3) Если в мире вообще нет куч (анти-livelock-чек на пустой group) —
+##   ФАЗА 1 (поиск): SEARCHING — каждый кадр гном:
+##     1) Глазами сканирует кучи в vision_radius от себя. Учитывает только
+##        кучи, которые ещё никем не нацелены (Camp.is_pile_claimed) — каждый
+##        ищет «своё», нашедший один не созывает остальных.
+##     2) Если в мире вообще нет куч (анти-livelock-чек на пустой group) —
 ##        переход в IDLE_NEAR_BASE.
-##     4) Иначе патрулируем: случайные точки в search_radius от anchor'а.
+##     3) Иначе патрулируем: случайные точки в search_radius от anchor'а.
 ##        Глаза ловят кучи, мимо которых проходим.
 ##   ФАЗА 2 (челнок): COMMUTING_TO_PILE → COMMUTING_TO_BASE → ... пока
-##     закреплённая куча валидна. На опустошении → SEARCHING (на след. кадре
-##     решит куда: known / vision / patrol / idle).
+##     закреплённая куча валидна. На опустошении → SEARCHING (ищет дальше).
 ##
 ## Прочие состояния:
 ##   IN_TENT — приклеен к палатке, скрыт. Состояние по умолчанию (караван).
@@ -25,8 +23,8 @@ extends CharacterBody3D
 ##   IDLE_NEAR_BASE — куч на карте нет вообще, гном ошивается возле anchor'а.
 ##
 ## Связь с лагерем: setup(camp, home_tent). Гном не сканирует tower/спавнер —
-## всё через camp как «знающую сторону». Память про найденные кучи — на Camp,
-## расшарена между всеми гномами.
+## всё через camp. Кучи между гномами не делятся через broadcast: гном видит
+## только свою vision-зону и сам решает, куда бежать.
 
 enum State {
 	IN_TENT,
@@ -47,7 +45,7 @@ enum State {
 @export var search_radius: float = 300.0
 ## Дальность зрения гнома: куча в этом радиусе считается «увиденной».
 ## Маленький радиус → дольше искать; большой → почти всезнайство.
-@export var vision_radius: float = 6.0
+@export var vision_radius: float = 10.0
 ## Радиус «ошивания» возле anchor'а, когда на карте не осталось куч.
 @export var idle_radius: float = 4.0
 ## Дистанция до кучи, на которой считаем «дошёл — можно брать».
@@ -158,30 +156,21 @@ func _physics_process(delta: float) -> void:
 
 
 func _tick_searching() -> void:
-	# Шаг 1: используем общую память лагеря — кучи, найденные кем-то ранее.
-	var known := _find_nearest_known_pile()
-	if known:
-		_assigned_pile = known
-		_wander_target = Vector3.INF
-		_state = State.COMMUTING_TO_PILE
-		return
-
-	# Шаг 2: глаза — кучи в vision_radius от нашей текущей позиции.
+	# Шаг 1: глаза — ближайшая НЕ занятая другим гномом куча в vision_radius.
 	var spotted := _scan_vision()
 	if spotted:
-		_camp.add_known_pile(spotted)
 		_assigned_pile = spotted
 		_wander_target = Vector3.INF
 		_state = State.COMMUTING_TO_PILE
 		return
 
-	# Шаг 3: в мире вообще куч нет → ошиваемся возле базы.
+	# Шаг 2: в мире куч нет → ошиваемся возле базы.
 	if not _world_has_any_pile():
 		_wander_target = Vector3.INF
 		_state = State.IDLE_NEAR_BASE
 		return
 
-	# Шаг 4: патруль — случайная точка в search_radius от anchor'а.
+	# Шаг 3: патруль — случайная точка в search_radius от anchor'а.
 	var anchor := _camp.deploy_anchor
 	if _wander_target == Vector3.INF or _horizontal_distance(_wander_target) < wander_arrival:
 		_wander_target = _random_point_around(anchor, search_radius)
@@ -273,23 +262,8 @@ func _horizontal_distance(target: Vector3) -> float:
 	return d.length()
 
 
-## Ближайшая известная (зарегистрированная в Camp) куча с units > 0.
-## Дистанция считается от позиции гнома — чтобы каждый шёл к своей.
-func _find_nearest_known_pile() -> ResourcePile:
-	var nearest: ResourcePile = null
-	var nearest_dist := INF
-	for pile in _camp.get_known_piles():
-		var rp := pile as ResourcePile
-		if rp == null:
-			continue
-		var d := global_position.distance_to(rp.global_position)
-		if d < nearest_dist:
-			nearest_dist = d
-			nearest = rp
-	return nearest
-
-
-## «Глаза» гнома — куча в vision_radius от текущей позиции.
+## «Глаза» гнома — ближайшая куча в vision_radius от текущей позиции.
+## Пропускает кучи, уже нацеленные другими гномами (claim-чек на Camp).
 func _scan_vision() -> ResourcePile:
 	var nearest: ResourcePile = null
 	var nearest_dist := INF
@@ -298,6 +272,8 @@ func _scan_vision() -> ResourcePile:
 			continue
 		var rp := pile as ResourcePile
 		if rp == null or rp.units <= 0:
+			continue
+		if _camp.is_pile_claimed(rp, self):
 			continue
 		var d := global_position.distance_to(rp.global_position)
 		if d > vision_radius:

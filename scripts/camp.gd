@@ -72,10 +72,6 @@ var _deployed_targets: Array[Vector3] = []
 var _last_target_pos: Vector3 = Vector3.INF
 ## Гномы лагеря — gnomes_per_tent × количество палаток. Создаются в _ready.
 var _gnomes: Array[Gnome] = []
-## Общая память лагеря: ResourcePile → true. Гномы регистрируют сюда кучи,
-## которые увидели глазами (vision_radius), и все остальные могут к ней идти
-## без рескана. tree_exited на куче подписан на _on_known_pile_freed.
-var _known_piles: Dictionary = {}
 
 ## Публичный геттер anchor'а — гномы читают, чтобы знать, куда нести ресурс.
 var deploy_anchor: Vector3:
@@ -152,32 +148,21 @@ func _all_gnomes_home() -> bool:
 	return true
 
 
-# --- Общая память про известные кучи ---
+# --- Дележ куч между гномами ---
 
-## Гном вызывает, когда увидел кучу глазами. Регистрируем + чистим при queue_free.
-func add_known_pile(pile: ResourcePile) -> void:
+## True, если кучу уже нацелил какой-то гном (≠ exclude_gnome). Гном-сканер
+## пропускает claimed-кучи, чтобы каждый нашёл «своё».
+func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool:
 	if not is_instance_valid(pile):
-		return
-	if _known_piles.has(pile):
-		return
-	_known_piles[pile] = true
-	pile.tree_exited.connect(_on_known_pile_freed.bind(pile))
-
-
-## Возвращает массив только валидных и непустых известных куч.
-func get_known_piles() -> Array:
-	var result: Array = []
-	for pile in _known_piles.keys():
-		if not is_instance_valid(pile):
+		return false
+	for g in _gnomes:
+		if not is_instance_valid(g):
 			continue
-		var rp := pile as ResourcePile
-		if rp and rp.units > 0:
-			result.append(rp)
-	return result
-
-
-func _on_known_pile_freed(pile: ResourcePile) -> void:
-	_known_piles.erase(pile)
+		if g == exclude_gnome:
+			continue
+		if g.get_assigned_pile() == pile:
+			return true
+	return false
 
 
 # --- Ввод / переходы состояний ---
