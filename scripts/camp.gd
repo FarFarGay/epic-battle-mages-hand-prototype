@@ -251,6 +251,10 @@ func _start_deploy() -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] лагерь развёрнут @ (%.1f, %.1f, %.1f)" % [_deploy_anchor.x, _deploy_anchor.y, _deploy_anchor.z])
 	deployed.emit(_deploy_anchor)
+	# Палатки становятся уязвимы к атакам скелетов только в развёрнутом виде.
+	for p in _parts:
+		if p is CampPart:
+			(p as CampPart).set_vulnerable(true)
 	# Гномы выходят бродить.
 	for g in _gnomes:
 		if is_instance_valid(g):
@@ -263,6 +267,12 @@ func _start_pack() -> void:
 	_deploy_hold = 0.0
 	_pack_hold = 0.0
 	_was_holding_stationary = false
+	# Палатки сразу неуязвимы — игрок начал свёртку, тент бронируется.
+	# Гномы остаются целью, пока не дойдут до своих палаток (они сами выходят
+	# из skeleton_target в _enter_in_tent).
+	for p in _parts:
+		if p is CampPart:
+			(p as CampPart).set_vulnerable(false)
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] свёртка инициирована — ждём гномов")
 	for g in _gnomes:

@@ -78,6 +78,14 @@ enum State {
 @export var carry_color: Color = Color(0.4, 0.75, 0.3)
 @export var carry_visual_size: Vector3 = Vector3(0.3, 0.3, 0.3)
 
+@export_group("Shatter (рассыпание на смерти)")
+@export var shatter_fragment_count: int = 6
+@export var shatter_lifetime: float = 1.5
+## Куда складывать фрагменты. Пусто → fallback на current_scene. Лагерь как
+## parent НЕ подходит: при свёртке/смерти кампа дети-фрагменты были бы
+## уничтожены вместе с ним; current_scene их переживает.
+@export_node_path("Node") var effects_root_path: NodePath
+
 @export_group("")
 @export var debug_log: bool = false
 
@@ -89,6 +97,7 @@ var _wander_target: Vector3 = Vector3.INF
 var _carry_visual: MeshInstance3D = null
 var _knockback_timer: float = 0.0
 var _dying: bool = false
+var _effects_root: Node = null
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 
@@ -106,6 +115,13 @@ func _ready() -> void:
 	visible = false
 	Damageable.register(self)
 	Pushable.register(self)
+	# _effects_root: явный path → ноду; пустой/неразрешённый → fallback на
+	# current_scene. Камп родитель нам НЕ подходит — он мог бы освободиться
+	# до окончания shatter-таймера, и фрагменты испарились бы.
+	if not effects_root_path.is_empty():
+		_effects_root = get_node_or_null(effects_root_path)
+	if _effects_root == null:
+		_effects_root = get_tree().current_scene
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	damaged.connect(func(amount: float) -> void: EventBus.gnome_damaged.emit(self, amount))
 	destroyed.connect(func() -> void: EventBus.gnome_destroyed.emit(self))
@@ -167,12 +183,20 @@ func take_damage(amount: float) -> void:
 		return
 	hp -= amount
 	damaged.emit(amount)
+	HitFlash.flash(_mesh)
 	if hp <= 0.0:
 		_dying = true
 		# Снимаем флаг цели заранее: queue_free отрабатывает только в конце кадра,
 		# и без этого скелет ещё успел бы взять умирающего гнома в целеуказание
 		# в текущем тике (get_nodes_in_group видит queued-инстансы до фактической смерти).
 		remove_from_group(SKELETON_TARGET_GROUP)
+		# Прячем тело и спавним фрагменты — те живут в _effects_root, переживают
+		# queue_free самого гнома (queue_free ниже прибьёт его в конце кадра).
+		if _mesh:
+			_mesh.visible = false
+		if _effects_root:
+			ShatterEffect.spawn(_effects_root, global_position, gnome_color,
+				shatter_fragment_count, shatter_lifetime)
 		destroyed.emit()
 		queue_free()
 

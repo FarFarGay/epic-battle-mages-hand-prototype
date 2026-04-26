@@ -41,6 +41,7 @@ var _contacts_last: Dictionary = {}
 var _dying: bool = false
 
 @onready var _floor_normal_threshold: float = cos(get_floor_max_angle())
+@onready var _mesh: MeshInstance3D = $MeshInstance3D
 
 
 func _ready() -> void:
@@ -58,6 +59,7 @@ func take_damage(amount: float) -> void:
 		return
 	hp -= amount
 	damaged.emit(amount)
+	HitFlash.flash(_mesh)
 	if debug_log and LogConfig.master_enabled:
 		print("[Tower] получил %.1f урона, hp=%.1f" % [amount, hp])
 	if hp <= 0.0:
