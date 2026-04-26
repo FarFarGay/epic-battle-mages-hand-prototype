@@ -70,6 +70,9 @@ func take_damage(amount: float) -> void:
 		# no-op'ом через ранний return по _dying в начале функции.
 		set_physics_process(false)
 		velocity = Vector3.ZERO
+		# Снимаем флаг damageable: AOE-эффекты (Slam, будущие spells) больше
+		# не считают мёртвую башню целью. Сама стенка-коллизия остаётся.
+		remove_from_group(Damageable.GROUP)
 		destroyed.emit()
 		if debug_log and LogConfig.master_enabled:
 			print("[Tower] DEAD")

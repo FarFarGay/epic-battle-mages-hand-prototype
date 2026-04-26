@@ -95,7 +95,7 @@ var _state: State = State.IN_TENT
 var _assigned_pile: ResourcePile = null
 var _wander_target: Vector3 = Vector3.INF
 var _carry_visual: MeshInstance3D = null
-var _knockback_timer: float = 0.0
+var _knockback := KnockbackState.new()
 var _dying: bool = false
 var _effects_root: Node = null
 
@@ -115,6 +115,7 @@ func _ready() -> void:
 	visible = false
 	Damageable.register(self)
 	Pushable.register(self)
+	_knockback.friction = knockback_friction
 	# _effects_root: явный path → ноду; пустой/неразрешённый → fallback на
 	# current_scene. Камп родитель нам НЕ подходит — он мог бы освободиться
 	# до окончания shatter-таймера, и фрагменты испарились бы.
@@ -207,10 +208,8 @@ func apply_push(velocity_change: Vector3, duration: float) -> void:
 	if _state == State.IN_TENT:
 		# В палатке — позиция приклеена, импульс не имеет смысла.
 		return
-	velocity.x = velocity_change.x
-	velocity.z = velocity_change.z
-	velocity.y = max(velocity.y, velocity_change.y)
-	_knockback_timer = duration
+	velocity = KnockbackState.compose(velocity, velocity_change)
+	_knockback.start(duration)
 
 
 # --- Цикл ---
@@ -230,11 +229,10 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.y = 0.0
 
-	if _knockback_timer > 0.0:
+	_knockback.tick(delta)
+	if _knockback.is_active():
 		# Под knockback'ом — AI заглушен, скорость затухает по trение-coeff.
-		_knockback_timer = maxf(_knockback_timer - delta, 0.0)
-		velocity.x = lerpf(velocity.x, 0.0, knockback_friction * delta)
-		velocity.z = lerpf(velocity.z, 0.0, knockback_friction * delta)
+		velocity = _knockback.apply_friction(velocity, delta)
 	else:
 		match _state:
 			State.SEARCHING:

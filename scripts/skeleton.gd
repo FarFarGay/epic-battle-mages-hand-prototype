@@ -46,6 +46,15 @@ enum WanderPhase { RESTING, WANDERING }
 @export var vision_radius: float = 12.0
 @export_group("")
 
+@export_group("Vision scan throttle")
+## Период между ре-сканами целей (с). Цель кэшируется и читается всеми вызовами
+## get_active_target внутри одного физкадра — раньше скан group'ы проходил
+## 2-3 раза за тик на каждом скелете (50 врагов × 3 скана × 60fps).
+## С throttle'ом и кэшем — ~1/interval сканов в секунду на скелета.
+## Если кэшированная цель умерла или вышла из группы — рескан принудительно.
+@export var vision_scan_interval: float = 0.15
+@export_group("")
+
 @export_group("Wander (без цели)")
 ## Скорость патруля без цели — заметно медленнее боевой move_speed.
 @export var wander_speed: float = 1.2
@@ -79,6 +88,8 @@ static var _shared_windup_material: StandardMaterial3D
 var _wander_phase: int = WanderPhase.RESTING
 var _wander_target: Vector3 = Vector3.INF
 var _rest_timer: float = 0.0
+var _cached_target: Node3D = null
+var _vision_scan_timer: float = 0.0
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 
@@ -96,6 +107,8 @@ func _ready() -> void:
 	# всех в WANDERING одновременно, движение лагеря-вне-цели выглядит живым.
 	_rest_timer = randf_range(0.0, wander_rest_max)
 	_wander_phase = WanderPhase.RESTING
+	# Фазовый сдвиг скана: 50 скелетов не должны рескан'ить группу в один кадр.
+	_vision_scan_timer = randf() * vision_scan_interval
 
 
 static func _ensure_shared_materials() -> void:
@@ -164,10 +177,37 @@ func _pick_wander_target() -> Vector3:
 	return target
 
 
-## Override базы Enemy.get_active_target: вместо статического _targets'а сканируем
-## группу skeleton_target и выбираем ближайшую цель в vision_radius. Невалидные
-## (queue_freed) автоматически пропускаются.
+## Кэш + throttle сканера. _physics_process тикает таймер и при истечении
+## (или порче кэша) запускает _scan_target. Все обращения get_active_target в
+## пределах одного физкадра берут из кэша — даже base Enemy._ai_step и
+## _resolve_knockback_contacts.
+func _physics_process(delta: float) -> void:
+	_vision_scan_timer -= delta
+	var stale := _cached_target == null \
+		or not is_instance_valid(_cached_target) \
+		or not _cached_target.is_in_group(TARGET_GROUP)
+	if _vision_scan_timer <= 0.0 or stale:
+		_cached_target = _scan_target()
+		_vision_scan_timer = vision_scan_interval
+	super._physics_process(delta)
+
+
+## Override базы Enemy.get_active_target: возвращаем кэшированную цель, если она
+## ещё валидна и в группе skeleton_target. Иначе nil — _physics_process на
+## следующем тике рескан'ит. Урон / wander сами отработают пустой target.
 func get_active_target() -> Node3D:
+	if _cached_target == null:
+		return null
+	if not is_instance_valid(_cached_target):
+		return null
+	if not _cached_target.is_in_group(TARGET_GROUP):
+		return null
+	return _cached_target
+
+
+## Сам скан — ближайшая в vision_radius из группы skeleton_target. Раньше был
+## бодиком get_active_target.
+func _scan_target() -> Node3D:
 	var nearest: Node3D = null
 	var nearest_dist_sq := vision_radius * vision_radius
 	for n in get_tree().get_nodes_in_group(TARGET_GROUP):

@@ -60,7 +60,7 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 var _targets: Array[Node3D] = []
 var _state: int = AttackState.APPROACH
 var _state_timer: float = 0.0
-var _knockback_timer: float = 0.0
+var _knockback := KnockbackState.new()
 var _dying: bool = false
 
 var _effects_root: Node = null
@@ -69,11 +69,15 @@ var _effects_root: Node = null
 func _ready() -> void:
 	# Подклассы, override'ящие _ready, ОБЯЗАНЫ звать super._ready(), иначе
 	# damageable/pushable-регистрация и re-emit на EventBus не подключатся.
-	# Silent-failure ловим assert'ом в первом _physics_process (см. ниже).
 	# Self-доку по слоям: layer=Layers.ENEMIES, mask=Layers.MASK_SKELETON
 	# (значения литералами в .tscn — Godot хранит маски как ints).
 	Damageable.register(self)
 	Pushable.register(self)
+	# Группы выставлены прямо выше — assert один раз в _ready, а не каждый
+	# физкадр на каждом враге (был spam в editor-сборке при 50 скелетах).
+	assert(is_in_group(Damageable.GROUP), "Enemy: Damageable не зарегистрирован")
+	assert(is_in_group(Pushable.GROUP), "Enemy: Pushable не зарегистрирован")
+	_knockback.friction = knockback_friction
 	# _effects_root: явный path → ноду; пустой/неразрешённый → fallback на
 	# current_scene с warning'ом, чтобы tihaja поломка эффектов смерти не пряталась.
 	if not effects_root_path.is_empty():
@@ -146,19 +150,13 @@ func apply_push(velocity_change: Vector3, duration: float) -> void:
 ## Используется подклассами для self-knockback (lunge), чтобы свой же удар
 ## не сбивал собственное FSM-состояние через хук.
 func _apply_velocity_change(impulse: Vector3, duration: float) -> void:
-	velocity.x = impulse.x
-	velocity.z = impulse.z
-	velocity.y = max(velocity.y, impulse.y)
-	_knockback_timer = duration
+	velocity = KnockbackState.compose(velocity, impulse)
+	_knockback.start(duration)
 
 
 # --- Цикл ---
 
 func _physics_process(delta: float) -> void:
-	# Подкласс забыл super._ready() → не зарегистрирован как Damageable/Pushable
-	# → удары/толчки тихо игнорировались бы. Ловим раз и сразу.
-	assert(is_in_group(Damageable.GROUP), "Enemy: подкласс не вызвал super._ready() — Damageable не зарегистрирован")
-	assert(is_in_group(Pushable.GROUP), "Enemy: подкласс не вызвал super._ready() — Pushable не зарегистрирован")
 	if not is_on_floor():
 		velocity.y -= gravity * delta
 	else:
@@ -169,11 +167,10 @@ func _physics_process(delta: float) -> void:
 	if _state == AttackState.COOLDOWN and _state_timer > 0.0:
 		_state_timer = maxf(_state_timer - delta, 0.0)
 
-	if _knockback_timer > 0.0:
-		_knockback_timer = maxf(_knockback_timer - delta, 0.0)
-		# AI заглушен; сглаживаем горизонталь к нулю — knockback затухает.
-		velocity.x = lerpf(velocity.x, 0.0, knockback_friction * delta)
-		velocity.z = lerpf(velocity.z, 0.0, knockback_friction * delta)
+	_knockback.tick(delta)
+	if _knockback.is_active():
+		# AI заглушен; horizon decays к нулю — knockback затухает.
+		velocity = _knockback.apply_friction(velocity, delta)
 	else:
 		_ai_step(delta)
 
@@ -183,7 +180,7 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 	# Пост-slide: пока в knockback'е, разруливаем удары о цель и соседей.
-	if _knockback_timer > 0.0:
+	if _knockback.is_active():
 		_resolve_knockback_contacts(pre_slide_velocity)
 
 

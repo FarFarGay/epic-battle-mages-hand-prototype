@@ -55,6 +55,7 @@ hand_gameplay_prot/
     ├── damageable.gd          — class_name Damageable (group-контракт + try_damage)
     ├── pushable.gd            — class_name Pushable (group-контракт + try_push)
     ├── grabbable.gd           — class_name Grabbable (group-контракт для LMB-grab)
+    ├── knockback_state.gd     — class_name KnockbackState (RefCounted helper, общий kinematic-knockback)
     ├── shatter_effect.gd      — class_name ShatterEffect (визуал смерти, общий для врагов и т.п.)
     ├── vec_util.gd            — class_name VecUtil (горизонтальные хелперы Vector3)
     ├── event_bus.gd           — autoload EventBus
@@ -148,7 +149,7 @@ hand_gameplay_prot/
 
 **Сигналы:** `damaged(amount: float)`, `destroyed`. Re-emit на `EventBus.tower_damaged/_destroyed`.
 
-**Публичный API:** `take_damage(amount: float)` — общий damageable-контракт. На `hp ≤ 0` → `_dying = true`, `set_physics_process(false)`, `velocity = ZERO`, `destroyed.emit()`. Дальнейшие вызовы — no-op через ранний return по `_dying`. Тело остаётся коллидирующим (скелеты упираются как в стену).
+**Публичный API:** `take_damage(amount: float)` — общий damageable-контракт. На `hp ≤ 0` → `_dying = true`, `set_physics_process(false)`, `velocity = ZERO`, `remove_from_group(Damageable.GROUP)`, `destroyed.emit()`. Дальнейшие вызовы — no-op через ранний return по `_dying`. Снятие из группы Damageable нужно, чтобы AOE-эффекты (Slam и будущие spell-аое) больше не считали труп целью; стенка-коллизия остаётся (скелеты упираются как в стену).
 
 **Логика движения:**
 - `velocity.y -= gravity * delta`, обнуляется при `is_on_floor()`.
@@ -262,7 +263,11 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 - `throw_strength: float = 1.2` — множитель импульса при броске.
 - `max_throw_speed: float = 30.0` — потолок скорости броска.
 - `hold_offset: Vector3 = (0, −1, 0)` — где предмет висит относительно руки.
-- `magnet_force: float = 30.0` — сила притяжения из `MagnetArea`.
+
+**Подгруппа `Magnet` (с насыщением):**
+- `magnet_force: float = 30.0` — базовая сила притяжения из `MagnetArea`. Реально прикладывается `min(magnet_force, mass × magnet_max_accel)`.
+- `magnet_dead_zone: float = 0.6` — внутри этого радиуса вокруг руки магнит силу не прикладывает. На нулевой дистанции направление дрожит, и константная сила колебала бы предмет туда-сюда. Грэб всё равно подхватит на следующем кадре — `GrabArea` (r=2) ≫ `magnet_dead_zone`.
+- `magnet_max_accel: float = 25.0` — saturation: верхний предел ускорения от магнита (m/c²). Без него лёгкий предмет (`mass=0.5`) при `magnet_force=30` получал бы 60 m/c² и пролетал руку насквозь. С cap'ом для `mass=0.5` сила = 12.5 N, для `mass≥1.2` — полные 30 N.
 
 **Экспорты (группа `Equipment`):**
 - `equipped: AbilityType` (`enum {NONE = -1, SLAM, FLICK}`) — текущая активная способность. Дефолт `SLAM`. Сеттер логирует смену.
@@ -468,15 +473,19 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 **Публичный API:**
 - `take_damage(amount)` — общий damageable-контракт. На `hp ≤ 0` → `destroyed.emit()` → `_on_destroyed()` → `queue_free()`. Защищён от повторного входа флагом `_dying`.
 - `apply_push(velocity_change, duration)` — Pushable-контракт. Реализован как тонкий делегат к `apply_knockback`: «push» и «knockback» для врага семантически одно и то же.
-- `apply_knockback(impulse, duration)` — внешний толчок. Заменяет горизонтальную velocity, накладывает вертикаль через `max`, взводит `_knockback_timer`, затем зовёт виртуальный `_on_knockback()` (хук подкласса для «сбить замах» и т.п.).
+- `apply_knockback(impulse, duration)` — внешний толчок. Через `KnockbackState.compose(velocity, impulse)` (x/z заменяются, y берётся как `max`) сливает impulse в текущую velocity, взводит таймер через `_knockback.start(duration)`, затем зовёт виртуальный `_on_knockback()` (хук подкласса для «сбить замах» и т.п.).
 - `_apply_velocity_change(impulse, duration)` — низкоуровневая запись velocity + взвод таймера, **без** хука `_on_knockback`. Используется самим базовым классом (внутри `apply_knockback`) и подклассами для self-knockback (Skeleton lunge): свой же удар не должен дёргать хук «отмены состояний» и сбивать собственное FSM.
+
+**Состояние knockback'а:**
+- `_knockback: KnockbackState = KnockbackState.new()` — общий helper для всех kinematic-knockback'ов (Enemy, Gnome). Раньше код таймера и lerp-затухания дублировался; вынесен в один RefCounted-объект. Поля: `friction` (выставляется в `_ready` из `knockback_friction`), внутренний `_timer`. Методы: `is_active()`, `start(duration)`, `tick(delta)`, `apply_friction(velocity, delta)`, статический `compose(current_v, impulse)`.
 - `set_target(target)` / `set_targets(array)` — назначить кандидата(ов) в цели. Поле `_targets: Array[Node3D]`, AI каждый кадр через `get_active_target()` выбирает ближайшую живую (мёртвые `is_instance_valid → false` пропускаются автоматически, ручная чистка не нужна).
 - `get_active_target() -> Node3D` — ближайшая валидная цель или `null`.
 
 **`_ready` и обязательная регистрация контрактов:**
 - В базовом `_ready` вызываются `Damageable.register(self)` и `Pushable.register(self)`, плюс re-emit'ы `damaged`/`destroyed` на `EventBus`.
 - Подклассы, переопределяющие `_ready`, **обязаны** звать `super._ready()`. Иначе регистрация контрактов и подключение к EventBus тихо потеряются.
-- Защита: первый `_physics_process` инстанса делает `assert(is_in_group(Damageable.GROUP))` и аналог для Pushable — забытый `super._ready()` падает с ассертом сразу.
+- Защита: сразу после регистраций в `_ready` стоят `assert(is_in_group(Damageable.GROUP))` и аналог для Pushable — забытый `super._ready()` падает с ассертом сразу. Раньше asserts стояли в `_physics_process` (выполнялись каждый физкадр на каждом враге — на 50 скелетов это лишняя работа в editor-сборке); перенос в `_ready` ничего не теряет, поскольку группы расставлены прямо в той же функции.
+- В `_ready` также `_knockback.friction = knockback_friction` — связка export'а с helper'ом.
 
 **Виртуальные хуки:**
 - `_perform_strike(target: Node3D)` — конкретный удар. Подкласс наносит урон и/или делает физический выпад. Вызывается базой ровно один раз в момент `WINDUP → STRIKE`, сразу после которого база сама переводит FSM в `COOLDOWN`.
@@ -485,13 +494,12 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 - `_on_destroyed()` — вызывается ровно перед `queue_free` на смерти, после `destroyed.emit`. Подклассы спавнят визуал смерти — он добавляется в `_effects_root` и переживает сам труп.
 
 **Цикл (`_physics_process`):**
-1. Ассерты Damageable/Pushable групп (поймать забытый `super._ready()`).
-2. Гравитация → `velocity.y` (если не на полу), иначе обнуляется.
-3. Декремент `_state_timer` для COOLDOWN — тикает всегда.
-4. Если `_knockback_timer > 0` — AI заглушен, горизонтальная velocity лерпится к нулю по `knockback_friction × delta`, таймер декрементируется.
-5. Иначе — зовётся `_ai_step(delta)` (в базе: APPROACH → WINDUP таймер → STRIKE через `_perform_strike` → COOLDOWN таймер).
-6. Запоминается `pre_slide_velocity := velocity`, далее `move_and_slide()`.
-7. Если в knockback'е — `_resolve_knockback_contacts(pre_slide_velocity)`:
+1. Гравитация → `velocity.y` (если не на полу), иначе обнуляется.
+2. Декремент `_state_timer` для COOLDOWN — тикает всегда.
+3. `_knockback.tick(delta)`. Если `_knockback.is_active()` — AI заглушен, горизонтальная velocity сглаживается через `_knockback.apply_friction(velocity, delta)` (lerp к нулю по `friction × delta`).
+4. Иначе — зовётся `_ai_step(delta)` (в базе: APPROACH → WINDUP таймер → STRIKE через `_perform_strike` → COOLDOWN таймер).
+5. Запоминается `pre_slide_velocity := velocity`, далее `move_and_slide()`.
+6. Если `_knockback.is_active()` — `_resolve_knockback_contacts(pre_slide_velocity)`:
    - Контакт с активной целью → нормали суммируются, после цикла применяется `_bounce_off_target` (elastic-отскок с `bounce_restitution`, считается через **pre-slide** velocity).
    - Контакт с другим `Enemy` → `_push_neighbor`: соседу применяется push **через `Pushable.try_push`**. Минимальный порог `MIN_NEIGHBOR_PUSH_SPEED = 0.5` отсеивает «соскользили вдоль» от «врезались».
    - Self-bounce от цели **не** идёт через Pushable: это собственная реакция инстанса на коллизию, не внешний толчок, и `_on_knockback` дёргать незачем.
@@ -512,7 +520,30 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 
 **Override на инстансе:** `move_speed = 2.7` (медленнее общего дефолта Enemy=4.0).
 
+**Vision-таргетинг (override базового `_targets`):**
+
+Skeleton не использует `Enemy._targets` — вместо этого **сканирует группу `skeleton_target`** в радиусе `vision_radius` и выбирает ближайшую цель. В группу входят: палатки лагеря (только в DEPLOYED-фазе через `CampPart.set_vulnerable(true)`) и активные гномы (через `Gnome.enter_deployed`/`request_return`). Tower в `skeleton_target` **не входит** — скелеты охотятся на лагерь, не на башню напрямую.
+
+Скан кэшируется и троттлится:
+- Поле `_cached_target: Node3D` — последняя найденная цель.
+- Поле `_vision_scan_timer: float`, период `vision_scan_interval = 0.15с`.
+- Override `_physics_process(delta)`: тикает таймер; если истёк или кэш устарел (null / `is_instance_valid=false` / уже не в группе `skeleton_target`) — `_cached_target = _scan_target()`, таймер сбрасывается.
+- Override `get_active_target()`: возвращает кэш, провалидировав группу/валидность; если устарел — `null` (следующий тик пере-сканирует).
+- В `_ready` → `_vision_scan_timer = randf() * vision_scan_interval` — фазовый сдвиг, чтобы 50 скелетов не сканировали группу в один кадр.
+
+Раньше скан проходил по группе 2-3 раза за тик (через `_ai_step → super → get_active_target`, `_resolve_knockback_contacts`, `_perform_strike`). С кэшем — один скан на физкадр; с throttle'ом — ~1/0.15 ≈ 7 сканов в секунду на скелета вместо 60×3 = 180.
+
 **Экспорты:**
+- Группа **Vision:**
+  - `vision_radius: float = 12.0` — дальность зрения. Цель в этом радиусе считается «увиденной».
+- Группа **Vision scan throttle:**
+  - `vision_scan_interval: float = 0.15` — период между ре-сканами целей (с).
+- Группа **Wander (без цели):**
+  - `wander_speed: float = 1.2` — скорость патруля без цели.
+  - `wander_distance_min/max: 5.0/15.0` — диапазон следующей wander-точки.
+  - `wander_rest_min/max: 1.0/3.0` — длительность RESTING-фазы.
+  - `wander_map_half_extent: 95.0` — клампа wander-точки в пределах карты.
+  - `wander_arrival: 0.8` — порог «дошёл».
 - Группа **Strike (физический выпад):**
   - `lunge_speed: float = 8.0` — m/s в момент удара (выше `move_speed`).
   - `lunge_duration: float = 0.2` — длительность knockback'а на сам выпад.
@@ -760,7 +791,7 @@ enum State {
 - `IDLE_NEAR_BASE` — куч на карте нет, ошивается возле anchor'а в `idle_radius`.
 - `RETURNING_TO_TENT` — лагерь свёртывается, идёт к своей палатке. Carry-визуал дропается сразу.
 
-**Поля:** `_camp: Camp`, `_home_tent: Node3D`, `_state: State`, `_assigned_pile: ResourcePile`, `_wander_target: Vector3`, `_carry_visual: MeshInstance3D`.
+**Поля:** `_camp: Camp`, `_home_tent: Node3D`, `_state: State`, `_assigned_pile: ResourcePile`, `_wander_target: Vector3`, `_carry_visual: MeshInstance3D`, `_knockback: KnockbackState` (общий helper, тот же что у Enemy — единая реализация kinematic-knockback'а: timer + lerp-затухание горизонтали).
 
 **API для Camp:**
 - `setup(camp, home_tent)` — кэширует ссылки, входит в `IN_TENT`.
@@ -1128,7 +1159,7 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 - **Поворот башни** (мышью или клавишами).
 - **Препятствия / стены.** Сейчас только плоский пол.
 - **HUD** (мана, кулдауны, инвентарь).
-- **Контролируемое сглаживание захвата.** Магнит сейчас тянет постоянной силой; возможно, стоит сделать пружину (target velocity → force) для более стабильного «подлёта».
+- **Контролируемое сглаживание захвата.** Магнит уже имеет дед-зону у руки и saturation по массе (`min(force, mass × max_accel)`); как следующий шаг — пружина (target velocity → force) могла бы сделать «подлёт» ещё стабильнее, особенно при движении руки.
 - **Звук.** Полностью отсутствует.
 - **Системный курсор.** Видим одновременно с рукой; имеет смысл скрыть/заменить на собственный.
 - **Editor preview цвета Item.** Без `@tool` все ящики в редакторе серые до запуска.

@@ -349,4 +349,4 @@ func _ground_y_at(part: StaticBody3D, target_pos: Vector3) -> float:
 	var hit := space.intersect_ray(query)
 	if hit.is_empty():
 		return part.global_position.y
-	return (hit["position"] as Vector3).y
+	return (hit.position as Vector3).y

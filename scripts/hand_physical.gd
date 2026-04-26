@@ -29,7 +29,22 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 @export var throw_strength: float = 1.2
 @export var max_throw_speed: float = 30.0
 @export var hold_offset: Vector3 = Vector3(0, -1.0, 0)
+
+@export_subgroup("Magnet")
+## Базовая сила магнита. Фактически прикладывается min(magnet_force, mass*max_accel).
 @export var magnet_force: float = 30.0
+## Внутри этого радиуса вокруг руки магнит силу не прикладывает. На нулевой
+## дистанции направление дрожит, и константная сила колебала бы предмет
+## туда-сюда. В дед-зоне грэб подхватит на следующем кадре — это именно та
+## дистанция, на которой LMB и так сработает.
+@export var magnet_dead_zone: float = 0.6
+## Saturation: верхний предел ускорения от магнита (m/c²). Без него лёгкий
+## предмет (mass=0.5) при magnet_force=30 получал бы 60 m/c² и пролетал руку
+## насквозь, тяжёлый — еле трогался. С cap'ом фактическая сила =
+## min(magnet_force, mass*max_accel): для mass=0.5 → 12.5 N (a=25), для mass≥1.2
+## → 30 N (стандартный force).
+@export var magnet_max_accel: float = 25.0
+@export_subgroup("")
 
 @export_group("Equipment")
 ## Текущая активная способность. Меняется клавишами 1 / 2 в рантайме.
@@ -128,13 +143,21 @@ func find_flick_target() -> Node3D:
 	for body in _hand.get_grabbable_bodies():
 		if not Damageable.is_damageable(body):
 			continue
-		if body is RigidBody3D and (body as RigidBody3D).mass >= max_lift_mass:
+		if not _is_within_lift_mass(body):
 			continue
 		var d := _hand.global_position.distance_to(body.global_position)
 		if d < closest_dist:
 			closest_dist = d
 			closest = body
 	return closest
+
+
+## Проходит ли тело mass-фильтр (mass < max_lift_mass). Не-RigidBody всегда
+## true. Дедуп между find_flick_target и _find_closest_grabbable.
+func _is_within_lift_mass(body: Node3D) -> bool:
+	if body is RigidBody3D:
+		return (body as RigidBody3D).mass < max_lift_mass
+	return true
 
 
 # --- Raycast excluder ---
@@ -219,11 +242,21 @@ func _apply_magnet() -> void:
 			_magnet_target_name = ""
 		return
 	var to_hand: Vector3 = _hand.global_position - closest.global_position
-	if to_hand.length_squared() < VecUtil.EPSILON_SQ:
+	var dist_sq := to_hand.length_squared()
+	# Дед-зона: внутри неё магнит не работает. Без неё на нулевой дистанции
+	# направление дрожит и сила колеблет предмет. Грэб всё равно подхватит в
+	# следующем кадре, GrabArea (r=2) >> magnet_dead_zone (~0.6).
+	if dist_sq < magnet_dead_zone * magnet_dead_zone:
 		return
-	closest.apply_central_force(to_hand.normalized() * magnet_force)
+	var dist := sqrt(dist_sq)
+	# Saturation: реальная сила = min(magnet_force, mass * max_accel).
+	# Лёгкие предметы получают force, лимитированный по ускорению; тяжёлые —
+	# полный magnet_force. Без этого mass=0.5 пролетал бы руку насквозь.
+	var force_mag: float = minf(magnet_force, magnet_max_accel * closest.mass)
+	var dir := to_hand / dist
+	closest.apply_central_force(dir * force_mag)
 	if debug_log and LogConfig.master_enabled and (not _was_magnetizing or _magnet_target_name != str(closest.name)):
-		print("[Hand:Physical] магнит тянет %s (mass=%.1f, dist=%.2f)" % [closest.name, closest.mass, to_hand.length()])
+		print("[Hand:Physical] магнит тянет %s (mass=%.1f, dist=%.2f, F=%.1f)" % [closest.name, closest.mass, dist, force_mag])
 		_was_magnetizing = true
 		_magnet_target_name = str(closest.name)
 
@@ -238,9 +271,9 @@ func _find_closest_grabbable(bodies: Array[Node3D]) -> RigidBody3D:
 			continue
 		if not (body is RigidBody3D):
 			continue
-		var rb := body as RigidBody3D
-		if rb.mass >= max_lift_mass:
+		if not _is_within_lift_mass(body):
 			continue
+		var rb := body as RigidBody3D
 		var d := _hand.global_position.distance_to(rb.global_position)
 		if d < closest_dist:
 			closest_dist = d
