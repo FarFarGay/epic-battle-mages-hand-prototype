@@ -1,2 +1,5 @@
 # Godot 4 — per-machine cache, регенерируется при открытии
 .godot/
+
+# Claude Code — личные локальные настройки (не уезжают в публичный репо)
+.claude/settings.local.json
