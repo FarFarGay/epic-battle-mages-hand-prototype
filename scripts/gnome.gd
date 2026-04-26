@@ -188,7 +188,8 @@ func _tick_searching() -> void:
 
 
 func _tick_commuting_to_pile() -> void:
-	if not is_instance_valid(_assigned_pile) or _assigned_pile.units <= 0:
+	# freeze=true → кучу схватила рука, take_one провалится; не топчем зря.
+	if not is_instance_valid(_assigned_pile) or _assigned_pile.units <= 0 or _assigned_pile.freeze:
 		_on_pile_lost()
 		return
 	var pile_pos := _assigned_pile.global_position
@@ -273,7 +274,7 @@ func _horizontal_distance(target: Vector3) -> float:
 
 
 ## «Глаза» гнома — ближайшая куча в vision_radius от текущей позиции.
-## Пропускает кучи, уже нацеленные другими гномами (claim-чек на Camp).
+## Пропускает: пустые кучи, кучи в чужой клейм, замороженные (рука держит).
 func _scan_vision() -> ResourcePile:
 	var nearest: ResourcePile = null
 	var nearest_dist := INF
@@ -281,7 +282,7 @@ func _scan_vision() -> ResourcePile:
 		if not is_instance_valid(pile):
 			continue
 		var rp := pile as ResourcePile
-		if rp == null or rp.units <= 0:
+		if rp == null or rp.units <= 0 or rp.freeze:
 			continue
 		if _camp.is_pile_claimed(rp, self):
 			continue

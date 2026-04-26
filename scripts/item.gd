@@ -30,6 +30,7 @@ func _ready() -> void:
 	_apply_shape()
 	Damageable.register(self)
 	Pushable.register(self)
+	Grabbable.register(self)
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
 	damaged.connect(func(amount: float) -> void: EventBus.item_damaged.emit(self, amount))

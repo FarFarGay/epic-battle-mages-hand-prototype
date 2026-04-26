@@ -45,9 +45,11 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 @export var debug_log: bool = true
 
 var _hand: Hand
-var _held: Item = null
+## Текущий захваченный объект — любой Grabbable RigidBody3D (Item, ResourcePile,
+## ...). Класс не привязан, лишь бы был в группе Grabbable.GROUP.
+var _held: RigidBody3D = null
 var _is_grabbing: bool = false
-var _current_candidate: Item = null
+var _current_candidate: RigidBody3D = null
 
 # Логирование (фронт-триггеры)
 var _was_magnetizing: bool = false
@@ -105,7 +107,7 @@ func _physics_process(_delta: float) -> void:
 
 # --- Публичный API ---
 
-func get_held_item() -> Item:
+func get_held_item() -> RigidBody3D:
 	return _held
 
 
@@ -113,9 +115,9 @@ func is_holding() -> bool:
 	return _held != null
 
 
-## Возвращает ближайший допустимый Item внутри GrabArea (или null).
-func find_grab_candidate() -> Item:
-	return _find_closest_item(_hand.get_grabbable_bodies())
+## Возвращает ближайший допустимый Grabbable RigidBody3D в GrabArea (или null).
+func find_grab_candidate() -> RigidBody3D:
+	return _find_closest_grabbable(_hand.get_grabbable_bodies())
 
 
 ## Возвращает ближайшую damageable-цель в зоне захвата (с фильтром массы для RigidBody).
@@ -203,13 +205,13 @@ func _dispatch_action_release() -> void:
 func _try_grab() -> void:
 	if _held:
 		return
-	var closest := _find_closest_item(_hand.get_grabbable_bodies())
+	var closest := _find_closest_grabbable(_hand.get_grabbable_bodies())
 	if closest:
 		_attach(closest)
 
 
 func _apply_magnet() -> void:
-	var closest := _find_closest_item(_hand.get_magnet_bodies())
+	var closest := _find_closest_grabbable(_hand.get_magnet_bodies())
 	if not closest:
 		if debug_log and LogConfig.master_enabled and _was_magnetizing:
 			print("[Hand:Physical] магнит: цели нет")
@@ -226,28 +228,33 @@ func _apply_magnet() -> void:
 		_magnet_target_name = str(closest.name)
 
 
-func _find_closest_item(bodies: Array[Node3D]) -> Item:
-	var closest: Item = null
+## Ближайший Grabbable RigidBody3D с массой < max_lift_mass.
+## Класс цели не важен — Item, ResourcePile, любой будущий тип.
+func _find_closest_grabbable(bodies: Array[Node3D]) -> RigidBody3D:
+	var closest: RigidBody3D = null
 	var closest_dist := INF
 	for body in bodies:
-		if body is Item:
-			var item := body as Item
-			if item.mass >= max_lift_mass:
-				continue
-			var d := _hand.global_position.distance_to(item.global_position)
-			if d < closest_dist:
-				closest_dist = d
-				closest = item
+		if not Grabbable.is_grabbable(body):
+			continue
+		if not (body is RigidBody3D):
+			continue
+		var rb := body as RigidBody3D
+		if rb.mass >= max_lift_mass:
+			continue
+		var d := _hand.global_position.distance_to(rb.global_position)
+		if d < closest_dist:
+			closest_dist = d
+			closest = rb
 	return closest
 
 
-func _attach(item: Item) -> void:
-	_held = item
+func _attach(body: RigidBody3D) -> void:
+	_held = body
 	_held.linear_velocity = Vector3.ZERO
 	_held.angular_velocity = Vector3.ZERO
 	_held.freeze = true
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:Physical] схвачен %s (mass=%.1f)" % [item.name, item.mass])
+		print("[Hand:Physical] схвачен %s (mass=%.1f)" % [body.name, body.mass])
 	grabbed.emit(_held)
 
 
@@ -274,14 +281,16 @@ func _update_held_position() -> void:
 # --- Подсветка кандидата ---
 
 func _update_candidate_highlight() -> void:
-	var candidate: Item = null
+	var candidate: RigidBody3D = null
 	if not _held:
-		candidate = _find_closest_item(_hand.get_grabbable_bodies())
+		candidate = _find_closest_grabbable(_hand.get_grabbable_bodies())
 	if candidate == _current_candidate:
 		return
-	if _current_candidate and is_instance_valid(_current_candidate):
+	# set_highlighted — часть Grabbable-контракта; has_method защищает от
+	## будущих Grabbable, у которых вдруг рамки нет.
+	if _current_candidate and is_instance_valid(_current_candidate) and _current_candidate.has_method("set_highlighted"):
 		_current_candidate.set_highlighted(false)
-	if candidate:
+	if candidate and candidate.has_method("set_highlighted"):
 		candidate.set_highlighted(true)
 	if debug_log and LogConfig.master_enabled:
 		if candidate:
