@@ -298,6 +298,7 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 - Вызывает координатор: `can_trigger() / on_press() / on_release() / tick(delta) / is_active() (=false для one-shot)`.
 - Кулдаун-гейт через `_slam_cooldown_remaining`.
 - `PhysicsShapeQueryParameters3D` со сферой `slam_radius` в `_hand.global_position`, `collision_mask = slam_mask` (`@export_flags_3d_physics`, дефолт `18`).
+- **Балансные параметры:** `slam_damage: float = 80.0`, `slam_radius: float = 5.0`, `slam_force: float = 30.0`, `slam_cooldown: float = 0.5`. На скелете `hp=30` это даёт ваншот при прицельном попадании (d ≤ 3.13м, 62% радиуса) и редкие 2-шоты на риме (3.13 < d ≤ 3.75м); за 3.75м цель «едва задело», тогда 3+ удара. Подробная разбивка в комментарии у `slam_damage` в `hand_physical_slam.gd`.
 - Для каждого результата (Damageable, не равного `_coord.get_held_item()`):
   - Falloff = `clamp(1 − horizontal_dist / slam_radius, 0, 1)` — горизонтальная, не 3D, иначе `hand_height` съел бы силу у близких целей.
   - Direction = `(horizontal + UP × slam_lift_factor).normalized()` (`_slam_direction_and_falloff`).

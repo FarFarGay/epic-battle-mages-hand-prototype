@@ -28,7 +28,13 @@ class SlamHit:
 @export var slam_radius: float = 5.0
 @export var slam_force: float = 30.0
 @export var slam_lift_factor: float = 0.4
-@export var slam_damage: float = 20.0
+## Базовый урон в эпицентре. С линейным falloff'ом fall(d) = 1 − d/radius
+## фактический урон = slam_damage × fall. На skeleton hp=30:
+##   - d ≤ 3.13м (62% радиуса) → ≥30 dmg, ваншот при прицельном попадании;
+##   - 3.13 < d ≤ 3.75 → 2 удара (рим AOE, редкий случай — скелета задело
+##     краем визуала);
+##   - d > 3.75 → 3+ удара (на самом краю, считаем «не попал толком»).
+@export var slam_damage: float = 80.0
 @export var slam_cooldown: float = 0.5
 ## По каким слоям бьёт хлопок: Items + Enemies по умолчанию (Layers.MASK_HAND_TARGETS = 18).
 @export_flags_3d_physics var slam_mask: int = 18
