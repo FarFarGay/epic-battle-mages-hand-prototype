@@ -1,38 +1,57 @@
 class_name Gnome
 extends CharacterBody3D
-## Гном — обитатель лагеря. По 2 на палатку. Самостоятельно собирает ресурсы
-## в области вокруг лагеря и носит в anchor лагеря. По сигналу камп → возвращается
-## в свою палатку.
+## Гном — обитатель лагеря. По 2 на палатку. Самостоятельно ищет ресурсы по
+## всей карте и носит их в anchor лагеря челночным маршрутом. По сигналу
+## кампа → возвращается в свою палатку.
 ##
-## FSM:
+## Двухфазная FSM сбора:
+##   ФАЗА 1 (поиск): SEARCHING — гном бродит по случайным точкам в большом
+##     радиусе search_radius (~пол карты) от anchor'а лагеря и каждый кадр
+##     сканирует ВСЕ ResourcePile в группе. Найдя валидную (units > 0) —
+##     фиксирует ссылку и переходит в COMMUTING_TO_PILE.
+##   ФАЗА 2 (челнок): COMMUTING_TO_PILE → COMMUTING_TO_BASE → ... пока
+##     закреплённая куча валидна. Если кучу выбили (другой гном/queue_free) —
+##     _on_pile_lost решает: SEARCHING (есть ещё кучи на карте) или
+##     IDLE_NEAR_BASE (на карте куч больше нет).
+##
+## Прочие состояния:
 ##   IN_TENT — приклеен к палатке, скрыт. Состояние по умолчанию (караван).
-##   WANDERING — лагерь развёрнут, ищет ближайшую кучу ресурсов в gather_radius
-##               от anchor'а. Если ничего нет — гуляет к случайной точке внутри.
-##   COLLECTING — идёт к выбранной куче.
-##   CARRYING — взял 1 ед., несёт в _camp.deploy_anchor.
 ##   RETURNING_TO_TENT — лагерь сворачивается, гном идёт к своей палатке.
 ##                       Несомый ресурс роняется по дороге (queue_free).
+##   IDLE_NEAR_BASE — куч на карте нет вообще, гном ошивается возле anchor'а.
 ##
 ## Связь с лагерем: setup(camp, home_tent). Гном не сканирует tower/спавнер —
 ## всё через camp как «знающую сторону».
+##
+## TODO: визуализация тропинки на террейне между anchor'ом и закреплённой кучей —
+## отдельная задача, здесь не реализуется.
 
-enum State { IN_TENT, WANDERING, COLLECTING, CARRYING, RETURNING_TO_TENT }
+enum State {
+	IN_TENT,
+	SEARCHING,
+	COMMUTING_TO_PILE,
+	COMMUTING_TO_BASE,
+	IDLE_NEAR_BASE,
+	RETURNING_TO_TENT,
+}
 
 @export_group("Movement")
 @export var move_speed: float = 1.6
 @export var gravity: float = 20.0
 
 @export_group("Behaviour")
-## Радиус сбора вокруг deploy_anchor лагеря — за пределами не интересны кучи.
-@export var gather_radius: float = 12.0
+## Радиус поиска куч от deploy_anchor лагеря. Должен покрывать всю карту с
+## любой точки развёртки — иначе гном бесконечно блуждает за недоступной кучей.
+## Карта 200×200, диагональ ~283; берём с запасом.
+@export var search_radius: float = 300.0
+## Радиус «ошивания» возле anchor'а, когда на карте не осталось куч.
+@export var idle_radius: float = 4.0
 ## Дистанция до кучи, на которой считаем «дошёл — можно брать».
 @export var pickup_distance: float = 0.8
 ## Дистанция до anchor'а лагеря для сдачи ресурса.
 @export var deposit_distance: float = 1.2
 ## Дистанция до палатки, на которой гном «дома».
 @export var home_distance: float = 0.8
-## Случайная точка для блужданий выбирается в этом радиусе от anchor'а.
-@export var wander_radius: float = 8.0
 ## Дистанция до wander-точки, чтобы выбрать новую (или после прибытия).
 @export var wander_arrival: float = 0.6
 
@@ -47,7 +66,7 @@ enum State { IN_TENT, WANDERING, COLLECTING, CARRYING, RETURNING_TO_TENT }
 var _camp: Camp
 var _home_tent: Node3D
 var _state: State = State.IN_TENT
-var _target_resource: Node3D = null
+var _assigned_pile: ResourcePile = null
 var _wander_target: Vector3 = Vector3.INF
 var _carry_visual: MeshInstance3D = null
 
@@ -77,12 +96,12 @@ func _apply_visual() -> void:
 
 # --- API для Camp ---
 
-## Лагерь развернулся — выходим бродить.
+## Лагерь развернулся — выходим в фазу поиска.
 func enter_deployed() -> void:
 	visible = true
-	_target_resource = null
+	_assigned_pile = null
 	_wander_target = Vector3.INF
-	_state = State.WANDERING
+	_state = State.SEARCHING
 	if debug_log and LogConfig.master_enabled:
 		print("[Gnome:%s] вышел из палатки" % name)
 
@@ -92,6 +111,7 @@ func request_return() -> void:
 	if _state == State.IN_TENT:
 		return
 	_drop_carry()
+	_assigned_pile = null
 	_state = State.RETURNING_TO_TENT
 	if debug_log and LogConfig.master_enabled:
 		print("[Gnome:%s] возвращается в палатку" % name)
@@ -119,62 +139,74 @@ func _physics_process(delta: float) -> void:
 		velocity.y = 0.0
 
 	match _state:
-		State.WANDERING:
-			_tick_wandering()
-		State.COLLECTING:
-			_tick_collecting()
-		State.CARRYING:
-			_tick_carrying()
+		State.SEARCHING:
+			_tick_searching()
+		State.COMMUTING_TO_PILE:
+			_tick_commuting_to_pile()
+		State.COMMUTING_TO_BASE:
+			_tick_commuting_to_base()
+		State.IDLE_NEAR_BASE:
+			_tick_idle_near_base()
 		State.RETURNING_TO_TENT:
 			_tick_returning()
 
 	move_and_slide()
 
 
-func _tick_wandering() -> void:
-	# Сначала пытаемся найти кучу в зоне сбора лагеря.
+func _tick_searching() -> void:
+	# search_radius покрывает всю карту с любой точки → если nearest=null,
+	# значит куч в мире нет вообще. Топтаться по карте бесполезно — в idle.
 	var nearest := _find_nearest_pile()
 	if nearest:
-		_target_resource = nearest
-		_state = State.COLLECTING
+		_assigned_pile = nearest
+		_wander_target = Vector3.INF
+		_state = State.COMMUTING_TO_PILE
 		return
-	# Иначе — шевелимся в случайной точке вокруг anchor'а.
-	var anchor := _camp.deploy_anchor
-	if _wander_target == Vector3.INF or _horizontal_distance(_wander_target) < wander_arrival:
-		_wander_target = _random_point_around(anchor, wander_radius)
-	_move_toward_xz(_wander_target)
+	_wander_target = Vector3.INF
+	_state = State.IDLE_NEAR_BASE
 
 
-func _tick_collecting() -> void:
-	if not is_instance_valid(_target_resource):
-		_target_resource = null
-		_state = State.WANDERING
+func _tick_commuting_to_pile() -> void:
+	if not is_instance_valid(_assigned_pile) or _assigned_pile.units <= 0:
+		_on_pile_lost()
 		return
-	var pile := _target_resource as ResourcePile
-	if pile and pile.units <= 0:
-		_target_resource = null
-		_state = State.WANDERING
-		return
-	_move_toward_xz(_target_resource.global_position)
-	if _horizontal_distance(_target_resource.global_position) <= pickup_distance:
-		if pile and pile.take_one():
+	var pile_pos := _assigned_pile.global_position
+	_move_toward_xz(pile_pos)
+	if _horizontal_distance(pile_pos) <= pickup_distance:
+		if _assigned_pile.take_one():
 			_pickup_carry()
-		_target_resource = null
-		_state = State.CARRYING
+			_state = State.COMMUTING_TO_BASE
+		else:
+			# take_one() провалился — кучу выбили в этом же кадре.
+			_on_pile_lost()
 
 
-func _tick_carrying() -> void:
+func _tick_commuting_to_base() -> void:
 	var anchor := _camp.deploy_anchor
 	_move_toward_xz(anchor)
 	if _horizontal_distance(anchor) <= deposit_distance:
 		_drop_carry()
-		_state = State.WANDERING
+		# Челнок: если pile ещё валиден — снова к нему. Иначе — решаем по миру.
+		if is_instance_valid(_assigned_pile) and _assigned_pile.units > 0:
+			_state = State.COMMUTING_TO_PILE
+		else:
+			_on_pile_lost()
+
+
+func _tick_idle_near_base() -> void:
+	# Пока в idle — не сканируем кучи. Камп вернёт нас в SEARCHING при следующей
+	# развёртке, либо появление куч нас не разбудит до этого момента — это ок,
+	# на текущей итерации куч на карте больше не появляется.
+	var anchor := _camp.deploy_anchor
+	if _wander_target == Vector3.INF or _horizontal_distance(_wander_target) < wander_arrival:
+		_wander_target = _random_point_around(anchor, idle_radius)
+	_move_toward_xz(_wander_target)
 
 
 func _tick_returning() -> void:
 	if not is_instance_valid(_home_tent):
-		_state = State.IN_TENT
-		visible = false
+		# Палатка пропала — фиксируем дома там, где стоим, чистим состояние.
+		_enter_in_tent()
 		return
 	var tent_pos := _home_tent.global_position
 	_move_toward_xz(tent_pos)
@@ -186,11 +218,24 @@ func _tick_returning() -> void:
 
 func _enter_in_tent() -> void:
 	_state = State.IN_TENT
-	_target_resource = null
+	_assigned_pile = null
 	_wander_target = Vector3.INF
 	_drop_carry()
 	visible = false
 	velocity = Vector3.ZERO
+
+
+## Куча, которую мы вели, исчезла или опустела. Решаем: ещё искать или idle.
+## Single source of truth — _find_nearest_pile сразу даёт ответ «есть/нет».
+func _on_pile_lost() -> void:
+	_assigned_pile = null
+	_wander_target = Vector3.INF
+	var nearest := _find_nearest_pile()
+	if nearest:
+		_assigned_pile = nearest
+		_state = State.COMMUTING_TO_PILE
+	else:
+		_state = State.IDLE_NEAR_BASE
 
 
 func _move_toward_xz(target: Vector3) -> void:
@@ -211,9 +256,11 @@ func _horizontal_distance(target: Vector3) -> float:
 	return d.length()
 
 
-func _find_nearest_pile() -> Node3D:
+## Ближайшая к anchor'у лагеря куча с units > 0 в пределах search_radius.
+## Центр поиска — anchor (а не гном), чтобы стая не «уезжала» от лагеря.
+func _find_nearest_pile() -> ResourcePile:
 	var anchor := _camp.deploy_anchor
-	var nearest: Node3D = null
+	var nearest: ResourcePile = null
 	var nearest_dist := INF
 	for pile in get_tree().get_nodes_in_group(ResourcePile.GROUP):
 		if not is_instance_valid(pile):
@@ -221,13 +268,12 @@ func _find_nearest_pile() -> Node3D:
 		var rp := pile as ResourcePile
 		if rp == null or rp.units <= 0:
 			continue
-		# Только в зоне сбора лагеря — за пределами не лезем.
-		if pile.global_position.distance_to(anchor) > gather_radius:
+		var d := rp.global_position.distance_to(anchor)
+		if d > search_radius:
 			continue
-		var d := global_position.distance_to(pile.global_position)
 		if d < nearest_dist:
 			nearest_dist = d
-			nearest = pile
+			nearest = rp
 	return nearest
 
 
