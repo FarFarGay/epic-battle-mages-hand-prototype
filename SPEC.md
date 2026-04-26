@@ -33,9 +33,11 @@ hand_gameplay_prot/
 │   ├── camera_rig.tscn        — модуль "камера"
 │   ├── item.tscn              — модуль "предмет" (шаблон)
 │   ├── skeleton.tscn          — конкретный враг (Skeleton extends Enemy)
-│   ├── camp.tscn              — лагерь (4 палатки + спавн гномов)
+│   ├── camp.tscn              — лагерь (4 палатки + спавн гномов + центральный mount-slot)
 │   ├── gnome.tscn             — обитатель лагеря (CharacterBody3D)
-│   └── resource_pile.tscn     — куча ресурсов на полу
+│   ├── resource_pile.tscn     — куча ресурсов на полу
+│   ├── octagon_turret.tscn    — защитный модуль (CampModule), стреляет стрелами
+│   └── arrow.tscn             — снаряд защитного модуля
 └── scripts/
     ├── tower.gd               — class_name Tower
     ├── hand.gd                — class_name Hand (координатор)
@@ -55,6 +57,10 @@ hand_gameplay_prot/
     ├── damageable.gd          — class_name Damageable (group-контракт + try_damage)
     ├── pushable.gd            — class_name Pushable (group-контракт + try_push)
     ├── grabbable.gd           — class_name Grabbable (group-контракт для LMB-grab)
+    ├── camp_module.gd         — class_name CampModule (база для апгрейдов лагеря/башни)
+    ├── mount_slot.gd          — class_name MountSlot (точка монтажа модулей)
+    ├── octagon_turret.gd      — class_name OctagonTurret extends CampModule
+    ├── arrow.gd               — class_name Arrow (снаряд защитного модуля)
     ├── knockback_state.gd     — class_name KnockbackState (RefCounted helper, общий kinematic-knockback)
     ├── shatter_effect.gd      — class_name ShatterEffect (визуал смерти, общий для врагов и т.п.)
     ├── vec_util.gd            — class_name VecUtil (горизонтальные хелперы Vector3)
@@ -884,6 +890,93 @@ func take_one() -> bool:
 **Размещение в `main.tscn`:** в группе `Resources` (Node3D-контейнер) **20 ResourcePile-инстансов** в трёх кольцах от origin: радиусы ~30, 50, 70.
 
 **Зависимости:** `Damageable`, `Pushable`, `Grabbable`, `EventBus`, `Layers`. Не знает Gnome/Camp напрямую — связь через группу и публичные поля.
+
+---
+
+### 5.10 Модули (Camp/Tower upgrades) — `camp_module.gd`, `mount_slot.gd`
+
+Слот-модульная подсистема апгрейдов: модули (`CampModule extends RigidBody3D`) переносятся рукой и ставятся в слоты (`MountSlot extends Node3D`). Слот живёт на башне (наверху меша) или в центре развёрнутого лагеря. Подсистема нужна, чтобы добавлять защитные/утилитарные модули (турель, алтарь, кузница, …) без правок Hand/Tower/Camp — каждый новый тип модуля просто наследует `CampModule` и переопределяет `_on_mounted/_on_unmounted/_physics_process`.
+
+#### CampModule — `scripts/camp_module.gd`
+
+**Тип корня:** `RigidBody3D`. Регистрируется в `Grabbable` группе → рука хватает по тому же контракту, что и Item/ResourcePile.
+
+**Состояния:**
+1. **Свободный** (`_slot=null`, `freeze=false`) — лежит на земле как обычный RigidBody.
+2. **В руке** (`_slot=null`, `freeze=true`) — Hand задаёт freeze и позицию через `_update_held_position`.
+3. **Mounted** (`_slot=Slot`, `freeze=true`) — Slot задаёт позицию каждый физкадр, вызывает виртуал `_module_tick`/работу модуля.
+
+**Публичный API:**
+- `is_mounted() -> bool`, `get_slot() -> Node`.
+- `attach_to_slot(slot)` / `detach_from_slot()` — вызываются **только** Slot'ом, не вручную. `attach` ставит `freeze=true`, обнуляет velocities, эмитит `mounted`. `detach` снимает ссылку и эмитит `unmounted`. **Freeze сама не сбрасывает** — это решает Slot (см. ниже).
+
+**Виртуальные хуки:**
+- `_on_mounted(slot)` — подкласс начинает свою работу (стрельба, аура, …).
+- `_on_unmounted(old_slot)` — подкласс останавливает.
+- `set_highlighted(value)` — стандартный Grabbable-контракт; базовая реализация работает с `_material` (StandardMaterial3D), подкласс должен установить ссылку.
+
+#### MountSlot — `scripts/mount_slot.gd`
+
+**Тип корня:** `Node3D`. Кладётся как ребёнок Tower/Camp. Принимает только модули, упавшие из руки в его `snap_radius`.
+
+**Экспорты:**
+- `module_offset: Vector3 = (0, 0, 0)` — куда конкретно ставится центр модуля относительно слота. На башне `(0, 0.35, 0)`, чтобы цилиндр турели сидел на верхушке башни. Каждый слот настраивает оффсет под высоту своего модуля.
+- `snap_radius: float = 1.5` — горизонтальный радиус, в котором релиз модуля рукой засчитывается как монтаж.
+- `enabled: bool = true` (с сеттером) — выключение слота с занятым модулем вызывает `_drop_mounted()` → модуль падает с гравитацией. Camp использует это в фазе CARAVAN_FOLLOWING.
+
+**Связь с Hand — через EventBus:**
+- На `EventBus.hand_grabbed(item)` слот проверяет: если `item == _mounted` → `_release_to_hand()` (отдаём руке, freeze не трогаем).
+- На `EventBus.hand_released(item, velocity)` слот проверяет: если `enabled && _mounted=null && item is CampModule && distance ≤ snap_radius` → `_mount(module)`.
+
+**Два пути размонтажа:**
+1. `_release_to_hand()` — игрок схватил. Hand уже владеет freeze (выставил true в `_attach`); слот только освобождает свою ссылку.
+2. `_drop_mounted()` — слот выключен (Camp свёрнут). Сам сбрасывает `freeze=false`, чтобы модуль упал.
+
+**Каждый физкадр:** если `_mounted ≠ null` — пишем `_mounted.global_position = global_position + module_offset`. Так модуль автоматически следует за двигающимся слотом (на башне) или фиксируется на anchor'е лагеря.
+
+**Re-emit на EventBus:** `module_mounted(module, slot)` / `module_unmounted(module, slot)` — для UI/звука/будущих апгрейдов кампа.
+
+#### OctagonTurret — `scenes/octagon_turret.tscn`, `scripts/octagon_turret.gd`
+
+Первый конкретный модуль. **Тип корня:** `RigidBody3D` через `CampModule`. Восьмигранный цилиндр (`CylinderMesh radial_segments=8`, r=0.45, h=0.7), масса 3.0, на слое `ITEMS=2` — рука ловит как обычный Grabbable.
+
+**Поведение:**
+- Когда mounted в слоте — каждый физкадр тикает `_fire_timer`. Когда истёк, `_find_target()` через `PhysicsShapeQueryParameters3D` (sphere `attack_radius=12м`, mask `ENEMIES=16`) ищет ближайшего Damageable на слое врагов и `_fire_at(target)`.
+- Стрельба круговая (omnidirectional) — нет фронта, нет «поворачивания дула», цель выбирается просто по близости.
+- Между выстрелами — случайная пауза `randf_range(fire_interval_min=0.4, fire_interval_max=0.9)`. Несколько турелей не залпуют синхронно.
+- Когда не mounted (свободный или в руке) — `_physics_process` сразу возвращается, стрельбы нет.
+
+**Балансные параметры:**
+- `arrow_damage: float = 35.0` — `≥ skeleton.hp=30` → ваншот по требованию задачи.
+- `arrow_speed: float = 22.0` — на 12м долетает за ~0.55с, обгоняет скелета (`move_speed=4`).
+- `attack_radius: float = 12.0` — больше типичной дистанции скелета до лагеря.
+
+**Цели:** маска `ENEMIES` (бит 4 = 16). Гномы (ACTORS=4) и башня (ACTORS=4) **не попадают** под огонь, дружественный fire исключён.
+
+#### Arrow — `scenes/arrow.tscn`, `scripts/arrow.gd`
+
+Простой проджектайл. **Тип корня:** `Node3D` (не RigidBody — летим по прямой с фиксированной скоростью, дешевле). Дочерний `Area3D` с `CollisionShape3D` детектит попадания.
+
+**Слой/маска:** Area3D `collision_layer=0`, `collision_mask=Layers.MASK_FRIENDLY_PROJECTILE = 17` (`TERRAIN | ENEMIES`). Стрелы пролетают сквозь Items, башню, гномов, палатки — не задевают своих.
+
+**Цикл:**
+- `setup(source_pos, target_pos)` от стрелка → стрела ставится в source, вычисляется направление к target, `look_at` поворачивает меш.
+- `_physics_process(delta)`: `global_position += direction × speed × delta`. На `_life ≥ lifetime=4с` queue_free (если ничего не поймала).
+- `Area3D.body_entered`: идемпотентный `_consumed`-флаг защищает от двойного срабатывания. Если тело — Damageable, наносим урон через `Damageable.try_damage`. Затем queue_free независимо (стрела втыкается / разлетается).
+
+#### Слоты в проекте
+
+- **Tower** — `MountSlot` под именем `MountSlot` в [tower.tscn](scenes/tower.tscn), transform y=3 (верх box'а), `module_offset=(0, 0.35, 0)`, `snap_radius=2.0`, `enabled=true`.
+- **Camp** — `MountSlot` под именем `CenterMountSlot` в [camp.tscn](scenes/camp.tscn), стартует `enabled=false`. Camp.gd при `_start_deploy` вычисляет `ground_y = _ground_y_at(_parts[0], _deploy_anchor)`, ставит slot в `(anchor.x, ground_y, anchor.z)` и `enabled=true`. При `_finalize_pack` — `enabled=false` (модуль автоматически дропается).
+
+#### Расширение
+
+Добавить новый модуль (магический алтарь, ремонтная кузница, …):
+1. Скрипт `scripts/altar.gd`: `class_name Altar extends CampModule`, override `_on_mounted/_on_unmounted/_physics_process`.
+2. Сцена `scenes/altar.tscn`: RigidBody3D с этим скриптом, mass < 10, layer ITEMS, своя визуализация.
+3. Никаких правок Hand/MountSlot/Tower/Camp не нужно — слоты примут любого CampModule по тому же контракту.
+
+Если новому модулю нужна другая высота — настроить `module_offset` на слотах под него (можно сделать слот-специфичный или ввести `placement_offset` на самом модуле).
 
 ---
 

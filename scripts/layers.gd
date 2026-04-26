@@ -36,6 +36,11 @@ const MASK_SKELETON := TERRAIN | ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE     # 
 ## Shatter-фрагменты: видят только пол.
 const MASK_TERRAIN_ONLY := TERRAIN                              # 1
 
+## Стрела защитного модуля (OctagonTurret): пол + враги. Item'ы пропускает
+## (стрелы дружественны и не должны застревать в ящиках); Tower на ACTORS
+## (бит 2) тоже пропускает — друг.
+const MASK_FRIENDLY_PROJECTILE := TERRAIN | ENEMIES             # 17
+
 
 ## Возвращает true, если в маске установлен бит указанного слоя.
 static func has_layer(mask: int, layer_bit: int) -> bool:

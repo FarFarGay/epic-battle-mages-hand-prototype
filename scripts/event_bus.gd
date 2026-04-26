@@ -39,3 +39,7 @@ signal camp_part_destroyed(part: Node3D)
 # --- Gnome ---
 signal gnome_damaged(gnome: Node3D, amount: float)
 signal gnome_destroyed(gnome: Node3D)
+
+# --- Modules / mount slots ---
+signal module_mounted(module: Node, slot: Node)
+signal module_unmounted(module: Node, slot: Node)

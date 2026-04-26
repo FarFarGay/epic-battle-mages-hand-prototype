@@ -1,8 +1,9 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/camp.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/gnome.tscn" id="2"]
 [ext_resource type="Script" path="res://scripts/camp_part.gd" id="3"]
+[ext_resource type="Script" path="res://scripts/mount_slot.gd" id="4"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_part"]
 size = Vector3(2, 1.5, 1.5)
@@ -68,3 +69,9 @@ shape = SubResource("BoxShape3D_part")
 [node name="MeshInstance3D" type="MeshInstance3D" parent="CaravanPart4"]
 mesh = SubResource("BoxMesh_part")
 material_override = SubResource("Material_part")
+
+[node name="CenterMountSlot" type="Node3D" parent="."]
+script = ExtResource("4")
+module_offset = Vector3(0, 0.35, 0)
+snap_radius = 2.5
+enabled = false

@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="PackedScene" path="res://scenes/tower.tscn" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/hand.tscn" id="2"]
@@ -9,6 +9,7 @@
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="7"]
 [ext_resource type="PackedScene" path="res://scenes/camp.tscn" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/resource_pile.tscn" id="9"]
+[ext_resource type="PackedScene" path="res://scenes/octagon_turret.tscn" id="10"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(200, 1, 200)
@@ -90,6 +91,11 @@ script = ExtResource("6")
 enemy_scenes = Array[PackedScene]([ExtResource("7")])
 enemy_counts = Array[int]([50])
 target_path = NodePath("../Tower")
+
+[node name="Modules" type="Node3D" parent="."]
+
+[node name="OctagonTurret1" parent="Modules" instance=ExtResource("10")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0.35, 4)
 
 [node name="Resources" type="Node3D" parent="."]
 

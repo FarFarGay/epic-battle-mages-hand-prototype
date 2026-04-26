@@ -1,6 +1,7 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/tower.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/mount_slot.gd" id="2"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_tower"]
 size = Vector3(2, 6, 2)
@@ -22,3 +23,9 @@ shape = SubResource("BoxShape3D_tower")
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 mesh = SubResource("BoxMesh_tower")
 material_override = SubResource("Material_tower")
+
+[node name="MountSlot" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
+script = ExtResource("2")
+module_offset = Vector3(0, 0.35, 0)
+snap_radius = 2.0

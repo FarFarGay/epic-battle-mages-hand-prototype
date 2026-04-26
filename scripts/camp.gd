@@ -72,6 +72,11 @@ var _deployed_targets: Array[Vector3] = []
 var _last_target_pos: Vector3 = Vector3.INF
 ## Гномы лагеря — gnomes_per_tent × количество палаток. Создаются в _ready.
 var _gnomes: Array[Gnome] = []
+## Центральный mount-slot для модулей (turret и т. д.). В фазе CARAVAN он
+## выключен и невидим — «центра лагеря» не существует. На развёртке слот
+## переезжает в anchor и активируется; на свёртке — выключается, что
+## размонтирует всё что на нём стояло (модуль остаётся лежать на земле).
+@onready var _center_slot: MountSlot = $CenterMountSlot if has_node("CenterMountSlot") else null
 
 ## Публичный геттер anchor'а — гномы читают, чтобы знать, куда нести ресурс.
 var deploy_anchor: Vector3:
@@ -259,6 +264,15 @@ func _start_deploy() -> void:
 	for g in _gnomes:
 		if is_instance_valid(g):
 			g.enter_deployed()
+	# Центральный слот для модулей переезжает в anchor и активируется.
+	# Y берём с пола, а не с anchor'а: anchor — позиция башни (y≈3, центр меша),
+	# а модуль должен стоять на земле, а не висеть в воздухе.
+	if _center_slot:
+		var ground_y: float = 0.0
+		if not _parts.is_empty():
+			ground_y = _ground_y_at(_parts[0], _deploy_anchor)
+		_center_slot.global_position = Vector3(_deploy_anchor.x, ground_y, _deploy_anchor.z)
+		_center_slot.enabled = true
 
 
 func _start_pack() -> void:
@@ -284,6 +298,10 @@ func _finalize_pack() -> void:
 	_state = State.CARAVAN_FOLLOWING
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] лагерь свёрнут (все гномы дома)")
+	# Слот выключается → модуль с него отпадает (остаётся стоять на земле,
+	# где был лагерь — игрок может подобрать рукой и поставить заново).
+	if _center_slot:
+		_center_slot.enabled = false
 	packed.emit()
 
 
