@@ -22,21 +22,43 @@
 
 ```
 hand_gameplay_prot/
-├── project.godot              — конфиг движка, input map
+├── project.godot              — конфиг движка, input map, layer_names, autoloads
 ├── SPEC.md                    — этот документ
 ├── resources/
 │   └── grid.gdshader          — спатиальный шейдер сетки на полу
 ├── scenes/
 │   ├── main.tscn              — корневая сцена (композиция уровня)
 │   ├── tower.tscn             — модуль "башня"
-│   ├── hand.tscn              — модуль "рука"
+│   ├── hand.tscn              — модуль "рука" + два под-узла-категории
 │   ├── camera_rig.tscn        — модуль "камера"
-│   └── item.tscn              — модуль "предмет" (шаблон)
+│   ├── item.tscn              — модуль "предмет" (шаблон)
+│   ├── skeleton.tscn          — конкретный враг (Skeleton extends Enemy)
+│   ├── camp.tscn              — лагерь (4 палатки + спавн гномов)
+│   ├── gnome.tscn             — обитатель лагеря (CharacterBody3D)
+│   └── resource_pile.tscn     — куча ресурсов на полу
 └── scripts/
-    ├── tower.gd
-    ├── hand.gd
+    ├── tower.gd               — class_name Tower
+    ├── hand.gd                — class_name Hand (координатор)
+    ├── hand_physical.gd       — class_name HandPhysicalActions (LMB-grab + диспатч RMB)
+    ├── hand_physical_slam.gd  — class_name HandPhysicalSlam
+    ├── hand_physical_flick.gd — class_name HandPhysicalFlick
+    ├── hand_spell.gd          — class_name HandSpell (заглушка)
     ├── camera_rig.gd
-    └── item.gd                — class_name Item
+    ├── item.gd                — class_name Item
+    ├── enemy.gd               — class_name Enemy (база с FSM APPROACH/WINDUP/STRIKE/COOLDOWN)
+    ├── skeleton.gd            — class_name Skeleton extends Enemy
+    ├── enemy_spawner.gd       — спавнер волн (Node3D)
+    ├── camp.gd                — class_name Camp
+    ├── gnome.gd               — class_name Gnome
+    ├── resource_pile.gd       — class_name ResourcePile
+    ├── layers.gd              — class_name Layers (именованные физические слои + маски)
+    ├── damageable.gd          — class_name Damageable (group-контракт + try_damage)
+    ├── pushable.gd            — class_name Pushable (group-контракт + try_push)
+    ├── grabbable.gd           — class_name Grabbable (group-контракт для LMB-grab)
+    ├── shatter_effect.gd      — class_name ShatterEffect (визуал смерти, общий для врагов и т.п.)
+    ├── vec_util.gd            — class_name VecUtil (горизонтальные хелперы Vector3)
+    ├── event_bus.gd           — autoload EventBus
+    └── log_config.gd          — autoload LogConfig
 ```
 
 ---
@@ -44,12 +66,15 @@ hand_gameplay_prot/
 ## 3. Архитектурные принципы
 
 1. **Каждая сущность — самодостаточный пакет** (`.tscn` + `.gd`). Все внутренние узлы и под-ресурсы инкапсулированы в собственной сцене.
-2. **Контракты через типы и сигналы:**
-   - Тип `Item` (`class_name`) — рука принимает «всё, что наследует Item», а не «любой RigidBody3D».
-   - Сигналы `Hand.grabbed/released` — внешние слушатели подключаются без правок руки.
-3. **Связи между модулями — через `@export`**, а не через хардкоженные `NodePath` внутри скриптов. Подмена цели камеры с башни на руку — одно поле в инспекторе.
-4. **`main.tscn` — только композиция:** инстансы модулей + ландшафт + свет. Никакой собственной логики.
-5. **`scripts/` — только поведение, `scenes/` — только структура.** Сцены не содержат скриптов в чужих папках, скрипты не делают `preload` чужих сцен (кроме рантайм-спавна, которого пока нет).
+2. **Контракты через группы и сигналы, а не через жёсткие типы.** Раньше код писал `if body is Item` — это привязывало руку к одному классу. Сейчас три cross-cutting контракта живут в `scripts/{damageable,pushable,grabbable}.gd` (каждый — `RefCounted` со static-API):
+   - `Damageable` — `register(node) → group "damageable"`, `is_damageable(target)`, `try_damage(target, amount)`. Цели: `Item`, `Tower`, `Enemy` (Skeleton), `ResourcePile`.
+   - `Pushable` — `register/is_pushable/try_push(target, Δv, duration)`. RigidBody-цели реализуют `apply_push` через `apply_central_impulse(Δv * mass)`, kinematic-цели (Enemy) — через свой `apply_knockback`. Снаружи всё едино — `Tower._push_kinematic` не знает, какой класс перед ним.
+   - `Grabbable` — `register/is_grabbable`. Hand сейчас грабит «любой `RigidBody3D` в группе grabbable, у которого есть `set_highlighted` и `mass < max_lift_mass`» вместо `body is Item`. `ResourcePile` подключился без правок руки — только через `Grabbable.register` в своём `_ready`.
+3. **Именованные физические слои.** `scripts/layers.gd` (`class_name Layers`) — единая точка правды: `Layers.TERRAIN/ITEMS/ACTORS/PROJECTILES/ENEMIES/CAMP_OBSTACLE` плюс композитные `MASK_HAND_CURSOR / MASK_HAND_TARGETS / MASK_ALL_GAMEPLAY / MASK_SKELETON / MASK_TERRAIN_ONLY`. В коде GDScript маски берутся через `Layers.X`. В `.tscn` Godot хранит маски как ints — там литералы; пересчитываются от констант (комментарий рядом).
+4. **Связи между модулями — через `@export` и `setup(...)` инъекцию.** Подмодули руки (`HandPhysicalSlam/Flick/Spell`) получают ссылки на `Hand` и координатор через явный `setup(hand, coord)`, а не лезут вверх по дереву через `get_parent().get_parent()`. Камера, лагерь, спавнер — всё на `@export NodePath`.
+5. **`main.tscn` — только композиция:** инстансы модулей + ландшафт + свет. Никакой собственной логики.
+6. **`scripts/` — только поведение, `scenes/` — только структура.** Сцены не содержат скриптов в чужих папках, скрипты не делают `preload` чужих сцен (кроме рантайм-спавна — гномы, скелеты, фрагменты-осколки).
+7. **Эффекты-без-владельца.** Визуалы вроде «осколки на смерти» (`scripts/shatter_effect.gd`, `class_name ShatterEffect`) — `RefCounted` со static `spawn(parent, position, color, count, lifetime)`. Скелет, ResourcePile или будущий разрушаемый объект зовёт его без наследования и без хранения собственных Tween'ов; общий `SceneTreeTimer` чистит пачку фрагментов разом.
 
 ---
 
@@ -57,7 +82,7 @@ hand_gameplay_prot/
 
 - **Мировая ось Y — вверх**, X — вправо, Z — на зрителя.
 - **Уровень пола — y = 0** (верхняя грань узла `Ground`).
-- **Камера — ортогональная**, изометрический угол: позиция `(12, 12, 12)` от цели, `look_at(target)`. Смещение и базис в `Camera3D.transform` посчитаны вручную.
+- **Камера — перспективная** (`Camera3D.projection = 0`), `fov = 40°` (узкая, чтобы перспективные искажения не «перетряхивали» изометрический look). Изометрический угол: позиция `(18, 36.4, 18)` от цели, pitch ~55° вниз, yaw 45°. Смещение и базис в `Camera3D.transform` посчитаны вручную (см. §5.3). Раньше была orthographic с `size=30` из `(12, 12, 12)`; перевели на perspective в `cc82894`, после чего pitch и fov прошли несколько итераций тюнинга.
 - **Размеры и позиции:**
   | Узел | Размер | Стартовая позиция | Высота центра |
   |---|---|---|---|
@@ -68,26 +93,29 @@ hand_gameplay_prot/
 
 ### 4.1 Коллизионные слои
 
-Имена слоёв заданы в [project.godot → layer_names](project.godot). Слой определяет «что это семантически», маска — «с чем взаимодействует».
+Имена слоёв заданы в [project.godot → layer_names](project.godot) и продублированы константами в `scripts/layers.gd`. Слой определяет «что это семантически», маска — «с чем взаимодействует».
 
 | Слой | Имя | Кто на нём | Кто его сканирует |
 |---|---|---|---|
-| 1 | Terrain | Ground (в будущем — холмы, стены) | все динамические тела + Hand-raycast |
-| 2 | Items | все `Item` (поднимаемые ящики) | все динамические тела + Hand-raycast + GrabArea/MagnetArea + Slam |
+| 1 | Terrain | Ground (в будущем — холмы, стены) | все динамические тела + Hand-cursor-raycast + shatter-фрагменты |
+| 2 | Items | `Item`, `ResourcePile` | все динамические тела + Hand-cursor-raycast + GrabArea/MagnetArea + Slam |
 | 3 | Actors | Tower (player-side) | Items, Enemies |
 | 4 | Projectiles | (заготовка под магию) | Terrain, Actors, Enemies |
-| 5 | Enemies | `Skeleton` и будущие враги | Tower (Actors), Slam |
+| 5 | Enemies | `Skeleton` и будущие враги | Tower (Actors), Slam, Flick |
 | 6 | CampObstacle | палатки `Camp` (CaravanPart*) — статически на этом слое в обоих режимах | Skeleton (мутуально-исключающе с Tower — башня НЕ сканирует слой 6) |
 
-**Маски в текущей итерации:**
-- `Tower`, `Item`, `Ground`: `mask = 31` (Terrain + Items + Actors + Projectiles + Enemies) — взаимодействуют со всем «обычным», но **не с CampObstacle**: палатки намеренно не блокируют башню/предметы — иначе развёрнутый лагерь стал бы тюрьмой для самой башни.
-- `Skeleton`: `mask = 55` (Terrain + Items + Actors + Enemies + CampObstacle) — включает свой же слой (мутуальная блокировка) и слой палаток (упирается в них и в каравне, и в развёрнутом лагере).
+В коде GDScript маски берутся именованными константами из `Layers`; в `.tscn` Godot хранит ints, поэтому там — литералы (значения должны соответствовать `Layers.MASK_*`).
+
+**Маски тел (актуальные значения):**
+- `Tower`, `Item`, `Ground`, `ResourcePile`: `Layers.MASK_ALL_GAMEPLAY = 31` (Terrain + Items + Actors + Projectiles + Enemies) — взаимодействуют со всем «обычным», но **не с CampObstacle**: палатки намеренно не блокируют башню/предметы.
+- `Skeleton`: `Layers.MASK_SKELETON = 55` (Terrain + Items + Actors + Enemies + CampObstacle) — включает свой же слой (мутуальная блокировка) и слой палаток (упирается в них и в каравне, и в развёрнутом лагере).
+- Shatter-фрагменты: `Layers.MASK_TERRAIN_ONLY = 1` — падают на пол, проходят сквозь тела и друг друга.
 
 **Маски запросов (не тел):**
-- `Hand.GrabArea`: `collision_mask = 18` (Items + Enemies) — flick должен видеть скелетов как цели. LMB-grab и подсветка кандидата по-прежнему фильтруют через `body is Item`, поэтому скелета случайно не схватить.
-- `Hand.MagnetArea`: `collision_mask = 2` (только Items) — магнит тянет только ящики.
-- `Hand.terrain_mask`: `3` (Terrain + Items) — рука поднимается над полом и ящиками, но не лезет на башню/врагов/снаряды.
-- `Hand:PhysicalActions.slam_mask`: `18` (Items + Enemies) — slam задевает только то, что должно «разлетаться».
+- `Hand.cursor_raycast_mask`: `Layers.MASK_HAND_CURSOR = 3` (Terrain + Items) — рука поднимается над полом и ящиками/кучами, но не лезет на башню/врагов/снаряды.
+- `Hand.GrabArea`: `Layers.MASK_HAND_TARGETS = 18` (Items + Enemies) — flick видит и Items (с mass-фильтром), и Enemies. LMB-grab фильтрует через `Grabbable.is_grabbable` + mass, поэтому скелета случайно не схватить.
+- `Hand.MagnetArea`: `Layers.ITEMS = 2` — магнит тянет только то, что на слое Items (Items, ResourcePile).
+- `Hand:PhysicalSlam.slam_mask`: `Layers.MASK_HAND_TARGETS = 18` (Items + Enemies).
 
 ---
 
@@ -95,53 +123,63 @@ hand_gameplay_prot/
 
 ### 5.1 Tower — `scenes/tower.tscn`, `scripts/tower.gd`
 
-**Тип корня:** `CharacterBody3D`.
+**Тип корня:** `CharacterBody3D` с `class_name Tower`.
 
-**Назначение:** управляемая башня-герой. Передвигается по миру через WASD, прижимается гравитацией к полу. Если встречает на пути `Item`, который легче неё, — толкает его телом по направлению движения.
+**Назначение:** управляемая башня-герой. Передвигается по миру через WASD, прижимается гравитацией к полу. Если встречает на пути `Item`, который легче неё, — толкает его телом по направлению движения. Контактирующих kinematic-целей (скелетов и любых будущих врагов) расталкивает через универсальный `Pushable`-контракт.
+
+**Регистрации в `_ready`:**
+- `Damageable.register(self)` — башня принимает урон. `Pushable` НЕ регистрируется: башня не должна толкаться чужими импульсами (это игровая стена-герой).
 
 **Экспорты:**
 - `move_speed: float = 8.0` — горизонтальная скорость.
 - `gravity: float = 20.0` — ускорение свободного падения.
 - `mass: float = 10.0` — эффективная масса башни (для сравнения с `Item.mass`).
 - `hp: float = 1000.0` — здоровье. На 0 → `destroyed.emit()` (без queue_free — game-over UI отдельно).
-- `push_strength: float = 1.0` — множитель импульса при толкании предметов (группа `Push Items`).
-- `enemy_push_speed_factor: float = 1.5` — множитель скорости knockback'а, который башня сообщает врагу при контакте (группа `Push Enemies`).
-- `enemy_push_duration: float = 0.2` — длительность knockback'а врагу. Refresh'ится каждый физкадр контакта.
-- `debug_log: bool = true` — включить событийные логи.
+- Группа `Push Items`: `push_strength: float = 1.0` — множитель импульса при толкании предметов.
+- Группа `Push Enemies`:
+  - `enemy_push_speed_factor: float = 1.5` — множитель скорости knockback'а, который башня сообщает kinematic-цели при контакте.
+  - `enemy_push_duration: float = 0.2` — длительность knockback'а. Refresh'ится каждый физкадр контакта.
+- `fall_threshold: float = -10.0` — Y, ниже которого «провалились» (используется только в дебаг-логе).
+- `debug_log: bool = true` — событийные логи.
 
-**Сигналы:**
-- `damaged(amount: float)` — каждый раз при `take_damage`.
-- `destroyed` — в момент перехода `hp ≤ 0`.
+**Константы и `@onready`:**
+- `MIN_PUSH_VELOCITY := 0.1` — порог компоненты `intended_velocity` в направлении kinematic-цели.
+- `_floor_normal_threshold := cos(get_floor_max_angle())` — `@onready`. Раньше был хардкод `FLOOR_NORMAL_THRESHOLD`; теперь один источник правды — `floor_max_angle` самого `CharacterBody3D`.
 
-**Публичный API:**
-- `take_damage(amount: float)` — общий «damageable»-контракт (см. `scripts/damageable.gd`). Враги бьют через него.
+**Сигналы:** `damaged(amount: float)`, `destroyed`. Re-emit на `EventBus.tower_damaged/_destroyed`.
+
+**Публичный API:** `take_damage(amount: float)` — общий damageable-контракт. На `hp ≤ 0` → `_dying = true`, `set_physics_process(false)`, `velocity = ZERO`, `destroyed.emit()`. Дальнейшие вызовы — no-op через ранний return по `_dying`. Тело остаётся коллидирующим (скелеты упираются как в стену).
 
 **Логика движения:**
 - `velocity.y -= gravity * delta`, обнуляется при `is_on_floor()`.
-- `velocity.x/z = input_dir * move_speed`, где `input_dir` — нормализованный вектор от `Input.get_axis`.
-- `move_and_slide()` — стандартный кинематический шаг.
+- `velocity.x/z = input_dir * move_speed`, где `input_dir` нормализован.
+- `intended_velocity := velocity` запоминается **до** `move_and_slide` (после слайда компонент в сторону препятствия зануляется и без него нельзя понять, что туда шли).
+- `move_and_slide()`, далее `_resolve_contacts(intended_velocity)`.
 
-**Логика разрешения контактов (`_resolve_contacts`, после `move_and_slide`):**
-- Скорость **до** `move_and_slide` запоминается в `intended_velocity` (после слайда компонент в сторону препятствия обнуляется, и без этого нельзя понять, что туда шли).
-- Для каждой слайд-коллизии диспатч по типу:
-  - **`Item` (`_push_item`)**, при условиях не-freeze и `tower.mass > item.mass`:
-    - `push_dir = -col.get_normal()` — направление от башни в предмет.
-    - `v_into = intended_velocity.dot(push_dir)`, `v_diff = v_into − item.linear_velocity.dot(push_dir)`.
-    - Импульс: `push_dir × v_diff × item.mass × ratio × push_strength`, где `ratio = (mass − item.mass) / mass` ∈ [0, 1).
-  - **`Enemy` (`_push_enemy`)**:
-    - Горизонтальный `push_dir_h = -col.get_normal().horizontal.normalized()`.
-    - Если `intended_velocity.dot(push_dir_h) ≤ 0.1` — башня не едет в эту сторону, скип.
-    - `enemy.apply_knockback(push_dir_h × v_into × enemy_push_speed_factor, enemy_push_duration)`.
-    - В `_contacts_last` врагов не пишем — слишком много, спам логов.
-    - Эффект: пока башня едет в скелетов, knockback каждый физкадр обновляется → они летят в сторону движения и тут же выводятся из-под башни. После того как тоwer проедет, AI скелетов снова включается, они разворачиваются и идут обратно.
+**Логика разрешения контактов (`_resolve_contacts`):**
+Для каждой слайд-коллизии диспатч по типу:
+- **`is Item` → `_push_item`** (mass-mediation вшит, единый `Pushable.try_push` не дал бы условный mass-check):
+  - При `freeze` — пропуск.
+  - Подписка `item.tree_exited → _on_contact_item_exited` (через мета-флаг `&"_tower_contact_hooked"`, чтобы при повторных контактах не подключать сигнал второй раз — `Callable.bind(item)` делает экземпляр несравнимым через `is_connected`).
+  - При `mass ≤ item.mass` → `contacts_now[item] = "block"` (упёрлись, но не толкаем).
+  - Иначе `push_dir = -col.get_normal()`, `v_into = intended.dot(push_dir)`, `v_diff = v_into − item_v_into`. Импульс: `push_dir × v_diff × item.mass × ratio × push_strength`, где `ratio = clamp((mass − item.mass) / mass, 0, 1)`.
+- **`Pushable.is_pushable(collider)` И `collider is CharacterBody3D` → `_push_kinematic`**:
+  - Горизонтальное направление `push_dir_h = horizontal(-col.get_normal()).normalized()`.
+  - Если `intended.dot(push_dir_h) ≤ MIN_PUSH_VELOCITY` — скип (башня в эту сторону не едет).
+  - `Pushable.try_push(target, push_dir_h × v_into × enemy_push_speed_factor, enemy_push_duration)`.
+  - В `_contacts_last` НЕ записываем — для 50+ скелетов получился бы спам логов.
+  - Зависимости от `class_name Enemy` нет: всё через `Pushable`-контракт.
 
-**Логирование (когда `debug_log=true`):**
-- `print` на: контакт с полом ↔ воздух, любое изменение `input_dir` (старт/стоп/смена направления).
-- `printerr` на: «застряли» (есть ввод, скорость < 10% от move_speed), «провалились» (y < −10), коллизия со стеной (нормаль с y ≤ 0.7, отфильтровывает пол).
+**Очистка `_contacts_last`:** через `item.tree_exited` — без неё в словаре оставались бы zombie-ключи на удалённые предметы. Идемпотентность подключения — через мета-флаг.
 
-**Внешние зависимости:** только `Input` actions и физика. Ни одной ссылки на другие модули.
+**Логирование (`debug_log = true and LogConfig.master_enabled`):**
+- Контакт с полом (фронт), любое изменение `input_dir` (старт/стоп/смена направления), фронт-переходы статусов в `_contacts_last` (push / block / прекращение).
+- `printerr` на: «застряли» (есть ввод, скорость < 10% от move_speed), «провалились ниже карты» (`y < fall_threshold`).
+- Коллизия со «стеной» (нормаль с `y ≤ _floor_normal_threshold`) — пропускает Item (он залогирован в `_push_item`) И kinematic-pushable-CharacterBody3D (50+ скелетов = спам).
 
-### 5.2 Hand — `scenes/hand.tscn`
+**Внешние зависимости:** `Input` actions, физика, контракты `Damageable` / `Pushable`, autoloads `EventBus` / `LogConfig`. Ни одной ссылки на конкретные модули (`Item`, `Enemy`, `Skeleton`).
+
+### 5.2 Hand — `scenes/hand.tscn`, `scripts/hand.gd`
 
 **Тип корня:** `Node3D` с `class_name Hand`.
 
@@ -149,45 +187,77 @@ hand_gameplay_prot/
 
 **Дочерние узлы:**
 - `HandMesh` — `MeshInstance3D` со сферой r=0.5 (визуал).
-- `GrabArea` — `Area3D` со сферой r=2 на оффсете `(0, −1.5, 0)`, `collision_mask=18` (Items + Enemies). Зона мгновенного захвата (Items) и поиска цели для щелбана (Items/Enemies).
-- `MagnetArea` — `Area3D` со сферой r=4 на том же оффсете, `collision_mask=2`. Зона притяжения.
+- `GrabArea` — `Area3D` со сферой r=2 на оффсете `(0, −1.5, 0)`, `collision_mask=18` (Items + Enemies). Зона захвата (LMB) и поиска цели для Flick. Доступ снаружи — только через `get_grabbable_bodies()`.
+- `MagnetArea` — `Area3D` со сферой r=4 на том же оффсете, `collision_mask=2` (только Items). Доступ — через `get_magnet_bodies()`.
 - `PhysicalActions` — `Node` со скриптом `hand_physical.gd` (см. §5.2.1).
 - `SpellActions` — `Node` со скриптом `hand_spell.gd` (см. §5.2.2).
 
 **Экспорты на самой Hand (`scripts/hand.gd`):**
 - `hand_height: float = 2.5` — просвет между рукой и поверхностью под курсором.
-- `terrain_mask: int = 3` (`@export_flags_3d_physics`) — слои для raycast'а высоты. Terrain + Items.
-- `debug_log: bool = true` — лог только смены поверхности (всё остальное логируется в подмодулях).
+- `cursor_raycast_mask: int = 3` (`@export_flags_3d_physics`) — слои для raycast'а высоты под курсором (Terrain + Items). Имя точное: маска именно курсорного raycast'а, не «всех terrain-операций». Раньше называлось `terrain_mask`.
+- `debug_log: bool = true` — лог только смены поверхности.
+
+**Внутреннее состояние:**
+- `_grab_area`, `_magnet_area` — приватные `Area3D`, доступ снаружи закрыт. Подмодули получают тела через `get_grabbable_bodies()` / `get_magnet_bodies()` — Hand не отдаёт ссылку на сами Area, чтобы они не превратились в публичную поверхность.
+- `_position_locked: bool` — пока true, Hand не пересаживает себя под курсор. Cursor world-position при этом продолжает обновляться.
+- `_last_cursor_world: Vector3` — текущая «точка под курсором», читается подмодулями через `cursor_world_position()`.
+- `_raycast_excluders: Array[Callable]` — провайдеры RID'ов для exclude в курсорном raycast'е. Подмодули регистрируются через `register_raycast_excluder(callable)` (PhysicalActions исключает удерживаемый предмет).
 
 **Публичный API для подмодулей:**
 - `hand.global_position` — мировая позиция (на луче камеры, на высоте `surface_y + hand_height`).
-- `hand.smoothed_velocity()` — сглаженная скорость движения за 6 кадров (для «силы» броска и пр.).
-- `hand.grab_area: Area3D`, `hand.magnet_area: Area3D` — Area-зоны.
-- `hand.physical_actions`, `hand.spell_actions` — ссылки на подмодули.
-- `hand.lock_position(bool)` — пока залочено, Hand перестаёт перетаскивать руку под курсор. Подмодуль может временно ставить руку куда хочет (используется щелбаном для орбиты вокруг цели).
-- `hand.cursor_world_position()` — точка-под-курсором в мире. Обновляется каждый кадр **независимо** от lock'а. Подмодуль может читать её, чтобы реагировать на мышь, даже когда сам перехватил позицию руки.
+- `hand.smoothed_velocity()` — сглажено за `VELOCITY_HISTORY_FRAMES = 6` кадров.
+- `get_grabbable_bodies() -> Array[Node3D]`, `get_magnet_bodies() -> Array[Node3D]` — зонные тела как Node3D.
+- `hand.physical_actions: HandPhysicalActions`, `hand.spell_actions: HandSpell` — типизированные ссылки на подмодули.
+- `hand.lock_position(bool)` — включить/выключить «залипание» под курсор.
+- `hand.set_locked_position(pos: Vector3)` — прямой сеттер, требует `_position_locked = true` (assert). Используется Flick'ом — рука перетаскивается без обхода lock-контракта (раньше Flick писал в `global_position` напрямую, что путало `_track_velocity`).
+- `hand.cursor_world_position() -> Vector3` — последняя точка-под-курсором. Обновляется каждый кадр **независимо** от lock'а.
+- `hand.register_raycast_excluder(provider: Callable)` — provider возвращает `Array[RID]` для исключения из курсорного raycast'а.
 
 **Сигналы (re-emit из PhysicalActions, для совместимости):**
-- `grabbed(item: Item)`, `released(item: Item, velocity: Vector3)`.
+- `grabbed(item: Node3D)`, `released(item: Node3D, velocity: Vector3)`. Тип ослаблен до `Node3D` — захватывается любой Grabbable, не обязательно `Item`.
+- Re-emit на `EventBus.hand_grabbed` / `EventBus.hand_released`.
 
-**Логика позиционирования (`_follow_cursor`):**
-1. `intersect_ray` от камеры через `mouse_pos` по `terrain_mask` → `surface_y`. Удерживаемый предмет (если PhysicalActions сейчас что-то держит) исключается из запроса. Промах → `surface_y = 0`.
-2. Пересечение **того же** луча камеры с горизонтальной плоскостью на `surface_y + hand_height` → позиция руки. Так рука и на луче (под пиксельным курсором), и над поверхностью на нужный просвет.
+**Связь с подмодулями:** `_ready` устанавливает связи явно — `physical_actions.grabbed/released.connect(self.<sig>.emit)`, `spell_actions.setup(self)`. Spells не лезут к родителю через `get_parent()` — Hand передаёт ссылку на себя.
 
-**Логирование Hand (`debug_log=true`):**
-- `[Hand] поверхность: <имя> [<слой>], y=...` — на фронте смены поверхности.
+**Логика позиционирования (`_update_cursor_world` + `_process`):**
+1. `intersect_ray` от камеры через `mouse_pos` по `cursor_raycast_mask` → `surface_y`. Удерживаемые подмодулями объекты (через `_raycast_excluders`) исключаются.
+2. Пересечение того же луча камеры с горизонтальной плоскостью на `surface_y + hand_height` → `_last_cursor_world`. Так рука и на луче (под пиксельным курсором), и над поверхностью на нужный просвет.
+3. Если `_position_locked == false` → `global_position = _last_cursor_world`. Иначе позицию рулит подмодуль через `set_locked_position`.
 
-**Внешние зависимости:** активная камера сцены, тип `Item` (для сигналов).
+**Трекинг скорости (`_track_velocity`):**
+- Накапливает `(global_position − _previous_pos) / delta` в кольцевой буфер `VELOCITY_HISTORY_FRAMES = 6`.
+- При `_position_locked = true` — кадр пропускается (только обновляется `_previous_pos`). Без этого Flick, перетаскивая руку через `set_locked_position`, копил бы ложные скорости в истории, и при отпускании предмета `released.velocity = smoothed × throw_strength` была бы безумной.
+
+**Логирование Hand:** `[Hand] поверхность: <имя> [<слой>], y=...` на фронте смены поверхности.
+
+**Внешние зависимости:** активная камера сцены, autoloads `Layers` / `LogConfig` / `EventBus`, тип `HandPhysicalActions` / `HandSpell` (через `@onready` типизированные ссылки).
 
 #### 5.2.1 PhysicalActions — `scripts/hand_physical.gd`
 
+**Тип:** `Node` с `class_name HandPhysicalActions`.
+
 **Категория:** физика. Содержит:
-- **Постоянное действие** — захват / бросок / магнит (ЛКМ).
-- **Активная способность** на ПКМ — диспатчится по `equipped`. Сейчас две: `slam` (хлопок) и `flick` (щелбан). Смена клавишами `1` / `2`.
+- **Постоянное действие** — захват / бросок / магнит (LMB).
+- **Активная способность** на RMB — диспатчится по `equipped`. Сейчас две, в подузлах:
+  - `Slam` (`HandPhysicalSlam`, `hand_physical_slam.gd`) — хлопок.
+  - `Flick` (`HandPhysicalFlick`, `hand_physical_flick.gd`) — щелбан с орбитой.
+  Смена клавишами `1` / `2` (action `equip_slam` / `equip_flick`).
 
-**Архитектурно:** `_handle_input` обрабатывает три набора триггеров — `equip_*` (смена экипировки), `hand_action` (press/release с диспатчем по `equipped` через `_dispatch_action_press/_release`), `hand_grab` (захват — отключён, пока активен `flick`, иначе схватили бы цель щелбана). Состояние текущего ПКМ-действия — в `_action_active` (`""`/`"flick"`; для `slam` остаётся `""`, потому что hold-state ему не нужен).
+**Связь с Hand и подмодулями:**
+- `_hand = get_parent() as Hand` в `_ready` — родитель ровно одного уровня выше. Если не Hand — `push_error` и `set_process/physics_process(false)`.
+- `_hand.register_raycast_excluder(_get_excluded_rids)` — рука исключает удерживаемый объект из курсорного raycast'а.
+- Подмодули получают связь через явный `_slam.setup(_hand, self)` / `_flick.setup(_hand, self)`. Ни один подмодуль не зовёт `get_parent().get_parent()` — все ссылки переданы аргументами.
+- Сигналы подмодулей: `_slam.slammed.connect(slammed.emit)`, `_flick.flicked.connect(flicked.emit)`.
 
-**Экспорты (захват/бросок/магнит):**
+**Действия как `StringName`-константы:**
+```gdscript
+const ACTION_GRAB := &"hand_grab"
+const ACTION_ACTION := &"hand_action"
+const ACTION_EQUIP_SLAM := &"equip_slam"
+const ACTION_EQUIP_FLICK := &"equip_flick"
+```
+
+**Экспорты (группа `Balance`, захват/бросок/магнит):**
 - `max_lift_mass: float = 10.0` — порог массы для подъёма (и магнита).
 - `throw_strength: float = 1.2` — множитель импульса при броске.
 - `max_throw_speed: float = 30.0` — потолок скорости броска.
@@ -195,98 +265,111 @@ hand_gameplay_prot/
 - `magnet_force: float = 30.0` — сила притяжения из `MagnetArea`.
 
 **Экспорты (группа `Equipment`):**
-- `equipped: String` (`@export_enum("slam", "flick")`) — текущая активная способность. Дефолт `slam`. Меняется клавишами `1` / `2` или из инспектора. Сеттер логирует смену.
+- `equipped: AbilityType` (`enum {NONE = -1, SLAM, FLICK}`) — текущая активная способность. Дефолт `SLAM`. Сеттер логирует смену.
 
-**Экспорты (группа `Slam (RMB)`):**
-- `slam_radius: float = 5.0` — радиус AOE.
-- `slam_force: float = 30.0` — базовая сила импульса в эпицентре.
-- `slam_lift_factor: float = 0.4` — вертикальная компонента толчка.
-- `slam_damage: float = 20.0` — базовый урон в эпицентре.
-- `slam_cooldown: float = 0.5` — секунды между хлопками.
-- `slam_mask: int = 18` (`@export_flags_3d_physics`) — Items + Enemies.
-- `slam_visual_color: Color` — цвет вспышки.
-- `slam_knockback_duration: float = 0.4` — на сколько секунд враги «оглушены» knockback'ом (их AI не работает в это время).
-
-**Экспорты (группа `Flick (RMB hold-release)`):**
-- `flick_orbit_radius: float = 1.5` — расстояние, на которое рука «отъезжает» от цели по направлению курсора.
-- `flick_force: float = 25.0` — импульс/скорость knockback'а при отпускании ПКМ.
-- `flick_damage_min: float = 15.0`, `flick_damage_max: float = 35.0` — диапазон урона. На каждый щелбан выбирается `randf_range(min, max)`. Подобраны под скелета hp=30: минимум 15 (два удара минимума ровно добивают), максимум 35 (есть шанс one-shot'а), средний 25 (~2 удара).
-- `flick_knockback_duration: float = 0.3` — длительность knockback'а на враге (его AI отключён это время).
+**Состояние:**
+- `_held: RigidBody3D = null` — текущий захваченный объект. **Любой Grabbable RigidBody3D**, не обязательно `Item` (раньше тип был `Item`). Контракт: член группы `Grabbable.GROUP`. Класс целевого объекта Physical больше не знает.
+- `_current_candidate: RigidBody3D = null` — то же для подсветки кандидата.
+- `_is_grabbing: bool` — текущее состояние LMB через **polling** (`Input.is_action_pressed(ACTION_GRAB)`), не через `just_pressed/released`. Edge-events во время Flick'а пропускались бы и `_is_grabbing` залипало (магнит после Flick'а тянул бы предметы постоянно).
 
 **Сигналы:**
-- `grabbed(item)`, `released(item, velocity)` — Hand их re-emit'ит наружу.
-- `slammed(position: Vector3, radius: float)` — в момент хлопка.
-- `flicked(target: Node3D, velocity: Vector3)` — в момент отпускания щелбана. Цель — `Item` или `Enemy`.
+- `grabbed(item: Node3D)`, `released(item: Node3D, velocity: Vector3)` — Hand их re-emit'ит наружу.
+- `slammed(position, radius)` (re-emit из Slam-подмодуля).
+- `flicked(target: Node3D, velocity: Vector3)` (re-emit из Flick-подмодуля).
+- Re-emit на `EventBus.hand_slammed/_flicked`.
 
-**Публичный API:** `get_held_item() -> Item`, `is_holding() -> bool`.
+**Публичный API:**
+- `get_held_item() -> RigidBody3D`, `is_holding() -> bool`.
+- `find_grab_candidate() -> RigidBody3D` — ближайший Grabbable RigidBody3D в `GrabArea` через `_find_closest_grabbable`.
+- `find_flick_target() -> Node3D` — ближайшая damageable-цель в `GrabArea` через `Damageable.is_damageable`. Для RigidBody3D дополнительно фильтр по `mass < max_lift_mass`. Класс-чек по `is Item`/`is Enemy` отсутствует — щелбан работает по контракту `Damageable`.
 
-**Зависимости:** только родитель Hand. Через него `_hand.global_position`, `_hand.smoothed_velocity()`, `_hand.grab_area`, `_hand.magnet_area`, `_hand.get_world_3d()` (для шейп-каста хлопка), `_hand.lock_position(bool)` (для удержания позиции при щелбане). Тип `Item` (для фильтра, `set_highlighted`, `take_damage`).
+**Поиск кандидатов (`_find_closest_grabbable`):**
+- Проходит по `bodies: Array[Node3D]`.
+- Фильтры (в порядке): `Grabbable.is_grabbable(body)`, `body is RigidBody3D`, `rb.mass < max_lift_mass`.
+- Возвращает ближайший по `_hand.global_position.distance_to`.
+- Class-чек `is Item` удалён — через `Grabbable`-группу можно регистрировать любые подбираемые типы.
 
-**Логика хлопка (`_perform_slam`):**
-1. Кулдаун-гейт через `_slam_cooldown_remaining`.
-2. `PhysicsShapeQueryParameters3D` со сферой `slam_radius` в `_hand.global_position`, маска = `slam_mask`. `intersect_shape` возвращает все тела в зоне.
-3. Falloff = `1 − horizontal_dist / slam_radius` (горизонтальная, не 3D — иначе `hand_height` съел бы всю силу). Направление = `(horizontal + UP × slam_lift_factor).normalized()`. Считаются вспомогательной `_slam_direction_and_falloff`, общей для всех типов целей.
-4. Для каждого `Item` (не `freeze`): `apply_central_impulse(dir × slam_force × falloff)` + `take_damage(slam_damage × falloff)`.
-5. Для каждого `Enemy`: `enemy.apply_knockback(dir × slam_force × falloff, slam_knockback_duration)` + `take_damage(slam_damage × falloff)`. У `CharacterBody3D` нет `apply_central_impulse`, поэтому через метод `apply_knockback`, который подменяет velocity и временно отключает AI.
-6. Спавним полупрозрачную сферу с emission в эпицентре; `Tween` масштабирует до `slam_radius` и фейдит альфу за 0.3s, потом `queue_free`.
-7. `slammed.emit(origin, slam_radius)`.
+**Slam-подмодуль (`HandPhysicalSlam`):**
+- Вызывает координатор: `can_trigger() / on_press() / on_release() / tick(delta) / is_active() (=false для one-shot)`.
+- Кулдаун-гейт через `_slam_cooldown_remaining`.
+- `PhysicsShapeQueryParameters3D` со сферой `slam_radius` в `_hand.global_position`, `collision_mask = slam_mask` (`@export_flags_3d_physics`, дефолт `18`).
+- Для каждого результата (Damageable, не равного `_coord.get_held_item()`):
+  - Falloff = `clamp(1 − horizontal_dist / slam_radius, 0, 1)` — горизонтальная, не 3D, иначе `hand_height` съел бы силу у близких целей.
+  - Direction = `(horizontal + UP × slam_lift_factor).normalized()` (`_slam_direction_and_falloff`).
+  - `Pushable.try_push(collider, dir × slam_force × falloff, slam_knockback_duration)`.
+  - `Damageable.try_damage(collider, slam_damage × falloff)`.
+- Визуал спавнится в `effects_root_path` (NodePath); если пуст или не резолвится — фолбэк на `_hand.get_tree().current_scene`. Главное — НЕ в `_hand`: иначе расширяющаяся сфера таскалась бы за рукой, эпицентр уезжал бы. Пул `_slam_visual_pool` (cap 3) переиспользует MeshInstance3D.
+- `slammed.emit(origin, slam_radius)`.
 
-**Логика щелбана (flick):**
-1. **Press (`_flick_pressed`):** Если рука уже что-то держит — отказ. Иначе ищем `find_flick_target` в `GrabArea` — ближайший Item (с mass-фильтром) или Enemy; если пусто — отказ. При успехе:
-   - `_flick_target = target`.
-   - Стартовое `_flick_orbit_dir` = горизонтальная разница `(hand − target)`, или дефолтный `+X` если рука прямо над целью.
-   - `_hand.lock_position(true)` — Hand перестаёт перетаскивать руку под курсор. **При этом `cursor_world_position()` продолжает обновляться** — flick читает её каждый кадр.
-   - `_action_active = "flick"`.
-2. **Hold (`_update_flick`, в `_process`):** Направление орбиты берётся из курсора:
-   - `to_cursor_h = (cursor − target)` в плоскости XZ.
-   - Если ненулевое → `_flick_orbit_dir = to_cursor_h.normalized()`. Если курсор слишком близко к цели — держим прошлое направление (без дёрганий).
-   - `hand.global_position = target + _flick_orbit_dir × flick_orbit_radius`. Куда курсор — туда рука.
-   - Если цель уничтожилась посреди прицеливания — отмена и разлок руки.
-3. **Release (`_flick_released`):** `_hand.lock_position(false)`. Направление = `(target − hand).normalized()` = `−_flick_orbit_dir` (цель летит **противоположно** руке). Урон каждый раз ролится: `damage = randf_range(flick_damage_min, flick_damage_max)`. Диспатч по типу:
-   - `Item`: `apply_central_impulse(dir × flick_force)` + `take_damage(damage)`.
-   - `Enemy`: `apply_knockback(dir × flick_force, flick_knockback_duration)` + `take_damage(damage)` (CharacterBody3D без `apply_central_impulse`, толкаем через knockback-канал, как в slam).
-   `flicked.emit(target, velocity)`.
+**Flick-подмодуль (`HandPhysicalFlick`):**
+- `is_active()` возвращает `_active`. Координатор по нему понимает, что hold-state удерживается.
+- **Press (`on_press`):** если `_coord.is_holding()` — отказ. Иначе `_coord.find_flick_target()`. При успехе:
+  - Стартовое `_flick_orbit_dir` = горизонтальная разница `(hand − target)`, или дефолт `+X` если рука прямо над целью.
+  - `_hand.lock_position(true)`, `_active = true`. Cursor world-position продолжает обновляться.
+- **Tick (`tick(delta)`, в `_process` координатора):** Если цель `is_instance_valid` ложно → отмена (`lock_position(false)`, сброс). Иначе:
+  - `to_cursor_h = horizontal(cursor − target)`. Если ненулевое → `_flick_orbit_dir = to_cursor_h.normalized()`. Если курсор прямо на цели — держим прошлое направление.
+  - `_hand.set_locked_position(target + _flick_orbit_dir × flick_orbit_radius)`.
+- **Release (`on_release`):** `_hand.lock_position(false)`, `_active = false`. Если цель валидна:
+  - `dir = horizontal(target − hand).normalized()` (цель летит противоположно руке).
+  - `velocity = dir × flick_force`, `damage = randf_range(flick_damage_min, flick_damage_max)`.
+  - `Pushable.try_push(target, velocity, flick_knockback_duration)` + `Damageable.try_damage(target, damage)`.
+  - `flicked.emit(target, velocity)`.
 
-**Подсветка кандидата:**
-Каждый кадр `_update_candidate_highlight` ищет ближайший `Item` в `GrabArea` (проходящий по массе). На фронте смены — `set_highlighted` у старого/нового. Пока `_held != null` — кандидата нет. Во время орбиты щелбана подсветка остаётся на цели — она самая близкая к руке.
+**Логика ввода (`_handle_input`):**
+- `ACTION_EQUIP_*` — всегда доступны.
+- RMB (`ACTION_ACTION`): если ни одна способность не активна — `_dispatch_action_press()` (по `equipped` зовёт `_slam.on_press()` или `_flick.on_press()`); иначе на `just_released` — `_dispatch_action_release()`.
+- LMB (`ACTION_GRAB`) — polling. Во время Flick (`_flick.is_active()`) — early return (рука прицеплена к орбите). Иначе фронт `was_grabbing != _is_grabbing` дёргает `_try_grab` / `_release`.
 
-**Логи (`[Hand:Physical] ...`):**
-- Экипировка: `экипировано: X` (на фронте).
-- Захват: `схвачен X (mass=)`. Бросок: `отпущен X, |v|=...`.
-- Магнит: `магнит тянет X (mass=, dist=)` / `магнит: цели нет` — на фронте.
-- Кандидат: `кандидат: X` / `кандидат: —` — на фронте.
-- Хлопок: `хлопок @ (x, y, z), задело: N` / `хлопок на кулдауне (Xs)`.
-- Щелбан: `щелбан: захват цели X` / `щелбан: цели под рукой нет` / `щелбан: рука занята...` / `щелбан: X полетел в (...), |v|=...`.
+**Подсветка кандидата (`_update_candidate_highlight`):**
+- Каждый кадр ищет `_find_closest_grabbable(_hand.get_grabbable_bodies())`, пока `_held == null`.
+- На фронте — `_current_candidate.set_highlighted(false)` / `candidate.set_highlighted(true)` (через `has_method` — защита от Grabbable без подсветки).
+
+**`_exit_tree`:** если `_held != null` — `_release()`. Без этого предмет остался бы `freeze=true` в мире после уничтожения руки.
+
+**Логи (`[Hand:Physical] ...`):** экипировка, захват/бросок, магнит-фронт, кандидат-фронт. Slam/Flick логируют под `[Hand:Physical:Slam]` / `[Hand:Physical:Flick]`.
+
+**Зависимости:** только Hand-родитель (через `get_parent()`), контракты `Damageable` / `Pushable` / `Grabbable`, autoloads. Конкретных классов `Item` / `Enemy` не упоминает.
 
 #### 5.2.2 SpellActions — `scripts/hand_spell.gd`
 
+**Тип:** `Node` с `class_name HandSpell extends Node`.
+
 **Категория:** заклинания. **ЗАГЛУШКА** на текущей итерации.
+
+**Жизненный цикл:**
+- В `_ready` отключает `set_process(false)` / `set_physics_process(false)` — без активной логики не тикаем.
+- `setup(hand: Hand)` вызывается из `Hand._ready` после собственной инициализации. Хранит `_hand` для будущего доступа к позиции/скорости. Получение ссылки идёт явно от координатора, не через `get_parent()`.
 
 **План (TBD):**
 - Привязка ввода: ПКМ или клавиши 1..N.
 - Реестр заклинаний (`name → cost / cooldown / scene-effect`).
-- Сигнал `spell_cast(spell_name: String, position: Vector3)` для слушателей (UI, звук, анимация башни).
+- `cast(spell_name: String)` с проверкой кулдауна/маны.
+
+**Сигналы:**
+- `spell_cast(spell_name: String, position: Vector3)` — черновик, под будущих слушателей (UI/звук/анимация башни).
 
 **Экспорты сейчас:** `debug_log: bool = true`.
 
-**Зависимости (проектируемые):** только родитель Hand. Через него позиция (для исхода заклинания) и скорость (если каст должен учитывать движение руки).
+**Зависимости:** только родитель Hand (через `setup`). Через него — позиция и скорость для исхода заклинания.
 
 ### 5.3 CameraRig — `scenes/camera_rig.tscn`, `scripts/camera_rig.gd`
 
 **Тип корня:** `Node3D`.
 
-**Назначение:** контейнер, следящий за указанной целью. Камера-ребёнок наследует движение, но сохраняет свой локальный изометрический угол.
+**Назначение:** контейнер, плавно следящий за указанной целью. Камера-ребёнок наследует движение и сохраняет свой локальный угол.
 
 **Дочерние узлы:**
-- `Camera3D` — ортогональная камера. Локальный transform: `(12, 12, 12)` со look-at в локальный (0, 0, 0); ортогональный размер 30.
+- `Camera3D` — **перспективная** (раньше была orthogonal). Параметры:
+  - `fov = 40°` — узкий угол, чтобы перспективные искажения не «перетряхивали» изометрический look.
+  - Локальная позиция `(18, 36.4, 18)` — поднята выше по Y, чтобы pitch ~55° вниз при тех же XZ-осях.
+  - Pitch ~55° вниз, yaw 45° (классическая «изометрия» с осью Y вверх).
+  - Базис задан явно в `transform = Transform3D(...)` в `.tscn` — не через `look_at`, чтобы матрица не зависела от стартовой позиции рига.
 
-**Экспорты:**
-- `target_path: NodePath` — `@export_node_path("Node3D")`. Кого следить.
-- `follow_speed: float = 8.0` — коэффициент `lerp` за кадр.
-
-**Логика:**
-- В `_ready` снимает цель из `target_path`, мгновенно прыгает на её позицию (нет «въезда» с (0,0,0)).
-- В `_process`: `global_position.lerp(target.global_position, follow_speed * delta)`.
+**Скрипт `camera_rig.gd`:** без изменений. Простой Node3D-фолловер:
+- `@export_node_path("Node3D") target_path: NodePath`.
+- `@export follow_speed: float = 8.0`.
+- В `_ready` снимает цель, мгновенно прыгает на её позицию (нет «въезда» с (0, 0, 0)).
+- В `_process`: `global_position = global_position.lerp(target.global_position, follow_speed * delta)`.
 
 **Внешние зависимости:** ничего. `target_path` устанавливается из главной сцены, скрипт не знает имени цели.
 
@@ -294,11 +377,13 @@ hand_gameplay_prot/
 
 **Тип корня:** `RigidBody3D` с `class_name Item`.
 
-**Назначение:** базовый подбираемый предмет. Все варианты (дерево/камень/железо) — это инстансы одной сцены с разным `item_color` и `mass`.
+**Назначение:** базовый подбираемый предмет. Все варианты (дерево/камень/железо) — это инстансы одной сцены с разным `item_color`, `item_size` и `mass`.
 
 **Дочерние узлы:**
-- `CollisionShape3D` — `BoxShape3D` 1×1×1.
+- `CollisionShape3D` — `BoxShape3D` 1×1×1 (заглушка, перезаписывается в `_ready`).
 - `MeshInstance3D` — `BoxMesh` 1×1×1 без материала-по-умолчанию.
+
+Кешируются как `@onready var _mesh: MeshInstance3D = $MeshInstance3D` / `_shape: CollisionShape3D = $CollisionShape3D`. `_apply_visual` / `_apply_shape` пишут в них напрямую — раньше каждый метод заново звал `$MeshInstance3D` / `$CollisionShape3D`.
 
 **Экспорты:**
 - `item_color: Color` — базовый цвет.
@@ -308,15 +393,26 @@ hand_gameplay_prot/
 - `hp: float = 100.0` — здоровье. На 0 → `destroyed.emit()` + `queue_free()`.
 - Унаследованный `mass: float` — стандартное свойство `RigidBody3D`, переопределяется на инстансе.
 
-В `_ready` скрипт создаёт уникальные `BoxMesh`, `BoxShape3D` и `StandardMaterial3D` с заданными параметрами. Ссылка на материал кэшируется в `_material` для последующего управления emission'ом. Ресурсы из `item.tscn` остаются только для превью пустой заготовки в редакторе.
+**Регистрации в `_ready`:**
+- `Damageable.register(self)` — принимает урон через `take_damage`.
+- `Pushable.register(self)` — принимает push через `apply_push`.
+- `Grabbable.register(self)` — рука может схватить.
+- Re-emit `damaged` / `destroyed` на `EventBus.item_damaged/_destroyed`.
+- Создание уникальных `BoxMesh` / `BoxShape3D` / `StandardMaterial3D` (`_apply_visual` / `_apply_shape`). Ссылка на материал кэшируется в `_material` для управления emission'ом. Ресурсы из `item.tscn` остаются только для превью пустой заготовки в редакторе.
 
 **Сигналы:**
 - `damaged(amount: float)` — каждый раз при `take_damage`.
 - `destroyed` — когда `hp` ушло в 0 (один раз, перед `queue_free`).
 
 **Публичный API:**
-- `set_highlighted(value: bool)` — включает/выключает emission на материале. Дёргается рукой, когда предмет становится текущим кандидатом захвата.
-- `take_damage(amount: float)` — наносит урон, эмитит сигналы, при `hp ≤ 0` уничтожает узел. Реализация общего «damageable»-контракта (см. `scripts/damageable.gd`).
+- `set_highlighted(value: bool)` — включает/выключает emission. Без изменений: рука дёргает на смене кандидата.
+- `take_damage(amount: float)` — общий damageable-контракт.
+  - Идемпотентность через `is_queued_for_deletion()` (отдельное поле `_destroyed` удалено — `RigidBody3D` уже знает, что он на пути в небытие).
+  - На `hp ≤ 0` → `destroyed.emit()` + `queue_free()`.
+- `apply_push(velocity_change: Vector3, _duration: float)` — реализация Pushable-контракта.
+  - При `freeze` (предмет в руке, RigidBody-интегратор отключён) — ранний return: импульс ушёл бы в никуда.
+  - Иначе `apply_central_impulse(velocity_change * mass)` — Pushable-контракт обещает «изменение скорости», поэтому масштабируем по массе сами (RigidBody импульс делит на mass).
+  - `_duration` игнорируется — у RigidBody knockback-таймер не нужен, всё уже в физике.
 
 **Тестовый набор предметов в `main.tscn`:**
 
@@ -328,109 +424,197 @@ hand_gameplay_prot/
 | IronBox | 1.5³ | 8 | да, тяжело (ratio=0.2) | да |
 | GiantCrate | 2.5³ | 20 | нет — башня упирается, скользит вокруг | нет — рука игнорирует |
 
-**Внешние зависимости:** ничего.
+**Внешние зависимости:** контракты `Damageable` / `Pushable` / `Grabbable`, autoload `EventBus`.
 
 ### 5.5 Enemies — категория врагов
 
-Иерархия: `Enemy` (база) → `Skeleton` (конкретный тип). Спавн делает отдельный узел `EnemySpawner` в `main.tscn`.
+Иерархия: `Enemy` (база) → `Skeleton` (конкретный тип). Вспомогательный модуль смерти — `ShatterEffect` (общий, не привязан к одному врагу). Спавн делает отдельный узел `EnemySpawner` в `main.tscn`.
 
 #### 5.5.1 Enemy — `scripts/enemy.gd`
 
 **Тип корня:** `CharacterBody3D` с `class_name Enemy`. **Базовый класс**, не используется напрямую — только через подклассы (Skeleton и будущие).
 
-**Назначение:** общая инфраструктура врагов — HP/урон, knockback, гравитация, цикл `_physics_process`. Поведение оставляется подклассам в виртуальном `_ai_step(delta)`.
+**Назначение:** общая инфраструктура врагов — HP/урон, knockback, гравитация, цикл `_physics_process`, **базовый FSM атаки** и набор виртуальных хуков, через которые подкласс описывает «свою» атаку. Без подкласса не запускается осмысленно.
+
+**FSM (общий, в базе):**
+
+```gdscript
+enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
+```
+
+- `_state: int` — текущее состояние, по умолчанию `APPROACH`.
+- `_state_timer: float` — обратный отсчёт текущей фазы (windup/cooldown). Тикается внутри `_ai_step` (для WINDUP) и в `_physics_process` (для COOLDOWN — иначе самонанесённый lunge-knockback искусственно удлинял бы атак-цикл).
+- Переходы централизованы в `_enter_state(new_state)`: дёргает `_on_state_exit(old)` → меняет `_state` → выставляет `_state_timer` (windup→`attack_windup`, cooldown→`attack_cooldown`, иначе 0) → дёргает `_on_state_enter(new)`.
+- `_ai_step` (тоже в базе) рулит переходами APPROACH↔WINDUP по дистанции и WINDUP→STRIKE→COOLDOWN→APPROACH по таймерам. Подклассу обычно `_ai_step` переопределять не надо — достаточно `_perform_strike` и хуков состояний.
 
 **Экспорты:**
 - `hp: float = 30.0` — здоровье.
-- `move_speed: float = 4.0` — горизонтальная скорость передвижения (используется подклассами через `velocity`).
+- `move_speed: float = 4.0` — горизонтальная скорость передвижения.
 - `gravity: float = 20.0` — ускорение свободного падения.
 - `attack_range: float = 1.5` — на каком расстоянии до цели начинается атака.
 - `attack_damage: float = 5.0` — урон цели при атаке.
-- `attack_cooldown: float = 1.0` — секунды между атаками. Тикает всегда (в т.ч. в knockback'е), иначе lunge-knockback растягивал бы реальный кулдаун.
-- `knockback_friction: float = 5.0` — насколько быстро затухает knockback-velocity (lerp coefficient).
+- `attack_cooldown: float = 1.0` — секунды между атаками. Тикает всегда (в т.ч. в knockback'е).
+- `attack_windup: float = 0.4` — длительность фазы WINDUP до удара.
+- `knockback_friction: float = 5.0` — насколько быстро затухает knockback-velocity (lerp-коэф).
 - Группа **Knockback contacts:**
-  - `bounce_restitution: float = 0.6` — коэффициент отскока от `_target` при ударе во время knockback'а.
+  - `bounce_restitution: float = 0.6` — коэффициент отскока от активной цели при ударе во время knockback'а.
   - `neighbor_push_factor: float = 0.5` — доля собственной скорости, передаваемая соседу-Enemy при контакте в knockback'е.
   - `neighbor_push_duration: float = 0.15` — длительность knockback'а на соседа.
+- Группа **Effects:**
+  - `effects_root_path: NodePath` (`@export_node_path("Node")`) — куда складывать эффекты смерти (осколки и т.п.). В `_ready` резолвится: при пустом пути или если узел не нашёлся — фолбэк на `get_tree().current_scene` плюс `push_warning`. Используется подклассами через поле `_effects_root`.
 
 **Сигналы:** `damaged(amount: float)`, `destroyed`.
 
 **Публичный API:**
-- `take_damage(amount)` — общий damageable-контракт (см. `scripts/damageable.gd`). На `hp ≤ 0` → `destroyed.emit()` + `queue_free()`.
-- `apply_knockback(impulse: Vector3, duration: float)` — внешний толчок. На время `duration` AI отключён, скорость подменяется на `impulse` и плавно затухает к нулю по `knockback_friction`. После применения зовётся виртуальный `_on_knockback()` — подклассы могут сбросить локальное состояние.
-- `set_target(target: Node3D)` — кого преследовать. Подклассы используют `_target` в своём AI.
+- `take_damage(amount)` — общий damageable-контракт. На `hp ≤ 0` → `destroyed.emit()` → `_on_destroyed()` → `queue_free()`. Защищён от повторного входа флагом `_dying`.
+- `apply_push(velocity_change, duration)` — Pushable-контракт. Реализован как тонкий делегат к `apply_knockback`: «push» и «knockback» для врага семантически одно и то же.
+- `apply_knockback(impulse, duration)` — внешний толчок. Заменяет горизонтальную velocity, накладывает вертикаль через `max`, взводит `_knockback_timer`, затем зовёт виртуальный `_on_knockback()` (хук подкласса для «сбить замах» и т.п.).
+- `_apply_velocity_change(impulse, duration)` — низкоуровневая запись velocity + взвод таймера, **без** хука `_on_knockback`. Используется самим базовым классом (внутри `apply_knockback`) и подклассами для self-knockback (Skeleton lunge): свой же удар не должен дёргать хук «отмены состояний» и сбивать собственное FSM.
+- `set_target(target)` / `set_targets(array)` — назначить кандидата(ов) в цели. Поле `_targets: Array[Node3D]`, AI каждый кадр через `get_active_target()` выбирает ближайшую живую (мёртвые `is_instance_valid → false` пропускаются автоматически, ручная чистка не нужна).
+- `get_active_target() -> Node3D` — ближайшая валидная цель или `null`.
+
+**`_ready` и обязательная регистрация контрактов:**
+- В базовом `_ready` вызываются `Damageable.register(self)` и `Pushable.register(self)`, плюс re-emit'ы `damaged`/`destroyed` на `EventBus`.
+- Подклассы, переопределяющие `_ready`, **обязаны** звать `super._ready()`. Иначе регистрация контрактов и подключение к EventBus тихо потеряются.
+- Защита: первый `_physics_process` инстанса делает `assert(is_in_group(Damageable.GROUP))` и аналог для Pushable — забытый `super._ready()` падает с ассертом сразу.
 
 **Виртуальные хуки:**
-- `_ai_step(delta)` — поведение в активной фазе.
-- `_on_knockback()` — реакция на внешний толчок (например, отменить начатый замах атаки).
-- `_on_destroyed()` — вызывается ровно перед `queue_free` на смерти, после `destroyed.emit`. Подклассы спавнят визуал смерти (осколки, частицы) — он добавляется в `current_scene` и переживает сам труп.
+- `_perform_strike(target: Node3D)` — конкретный удар. Подкласс наносит урон и/или делает физический выпад. Вызывается базой ровно один раз в момент `WINDUP → STRIKE`, сразу после которого база сама переводит FSM в `COOLDOWN`.
+- `_on_state_enter(new_state)` / `_on_state_exit(old_state)` — реакция на смену фазы FSM. Типичный кейс — телеграф замаха (Skeleton: подсветка вкл. на enter `WINDUP`, выкл. на exit).
+- `_on_knockback()` — реакция на **внешний** толчок. Базовая реализация: только `WINDUP` сбрасывается в `APPROACH`. `COOLDOWN` намеренно **не** сбрасывается — кулдаун продолжает тикать в `_physics_process` независимо от knockback'а.
+- `_on_destroyed()` — вызывается ровно перед `queue_free` на смерти, после `destroyed.emit`. Подклассы спавнят визуал смерти — он добавляется в `_effects_root` и переживает сам труп.
 
 **Цикл (`_physics_process`):**
-- Применяется гравитация → `velocity.y`.
-- `_attack_cooldown_remaining` декрементируется (всегда).
-- Если `_knockback_timer > 0` — AI заглушен, горизонтальная velocity лерпится к нулю.
-- Иначе — зовётся `_ai_step(delta)`.
-- `move_and_slide`.
-- **Если в knockback'е** — `_resolve_knockback_contacts()`:
-  - Если задели `_target` — `_bounce_off_target(normal)`: компонент скорости в нормаль инвертируется по правилу elastic с `bounce_restitution`.
-  - Если задели другого Enemy — `_push_neighbor(other, col)`: соседу применяется `apply_knockback(push_dir × my_speed × neighbor_push_factor, neighbor_push_duration)`. Лунж пробивает толпу, отбрасывая ближних.
+1. Ассерты Damageable/Pushable групп (поймать забытый `super._ready()`).
+2. Гравитация → `velocity.y` (если не на полу), иначе обнуляется.
+3. Декремент `_state_timer` для COOLDOWN — тикает всегда.
+4. Если `_knockback_timer > 0` — AI заглушен, горизонтальная velocity лерпится к нулю по `knockback_friction × delta`, таймер декрементируется.
+5. Иначе — зовётся `_ai_step(delta)` (в базе: APPROACH → WINDUP таймер → STRIKE через `_perform_strike` → COOLDOWN таймер).
+6. Запоминается `pre_slide_velocity := velocity`, далее `move_and_slide()`.
+7. Если в knockback'е — `_resolve_knockback_contacts(pre_slide_velocity)`:
+   - Контакт с активной целью → нормали суммируются, после цикла применяется `_bounce_off_target` (elastic-отскок с `bounce_restitution`, считается через **pre-slide** velocity).
+   - Контакт с другим `Enemy` → `_push_neighbor`: соседу применяется push **через `Pushable.try_push`**. Минимальный порог `MIN_NEIGHBOR_PUSH_SPEED = 0.5` отсеивает «соскользили вдоль» от «врезались».
+   - Self-bounce от цели **не** идёт через Pushable: это собственная реакция инстанса на коллизию, не внешний толчок, и `_on_knockback` дёргать незачем.
 
-**Зависимости:** ничего, кроме физики и Input. Не знает про Tower, Hand, Item.
+**Зависимости:** только физика, `Damageable`/`Pushable`/`Layers`/`VecUtil` и наследники. Не знает про Tower, Hand, Item.
 
-#### 5.5.2 Skeleton — `scenes/skeleton.tscn`, `scripts/skeleton.gd`
+#### 5.5.2 Skeleton + ShatterEffect — `scenes/skeleton.tscn`, `scripts/skeleton.gd`, `scripts/shatter_effect.gd`
 
 **Тип корня:** `CharacterBody3D` с `class_name Skeleton extends Enemy`.
 
-**Назначение:** простейший враг. Идёт к `_target`, в `attack_range` выполняет **телеграфированный замах**, затем бьёт.
+**Назначение:** простейший враг — конкретизация базы. Идёт к ближайшей живой цели, в `attack_range` входит в `WINDUP` (телеграф), на завершении замаха выполняет физический выпад с уроном. Большая часть логики унаследована от `Enemy`; подкласс заполняет три слота: визуал замаха (через хуки состояний), сам удар (`_perform_strike`) и эффект смерти (`_on_destroyed`).
 
 **Дочерние узлы:**
 - `CollisionShape3D` — `CapsuleShape3D` r=0.4, h=2.
-- `MeshInstance3D` — `CapsuleMesh` того же размера, тёплый бело-серый цвет.
+- `MeshInstance3D` — `CapsuleMesh` того же размера.
 
-**Экспорты (поверх Enemy):**
-- `windup_color: Color` — цвет emission'а во время замаха (по умолчанию красный).
-- `windup_intensity: float` (0..5) — `emission_energy_multiplier` во время замаха.
-- `attack_windup: float = 0.4` — секунды от начала замаха до удара. У игрока ровно столько, чтобы среагировать (slam'ом отбросить).
+**Слой/маска (в `.tscn`):** `collision_layer = 16` (Enemies), `collision_mask = 55` (Terrain + Items + Actors + Enemies + CampObstacle).
+
+**Override на инстансе:** `move_speed = 2.7` (медленнее общего дефолта Enemy=4.0).
+
+**Экспорты:**
 - Группа **Strike (физический выпад):**
-  - `lunge_speed: float = 8.0` — m/s в момент удара (выше `move_speed`, чтобы выпад был резким).
+  - `lunge_speed: float = 8.0` — m/s в момент удара (выше `move_speed`).
   - `lunge_duration: float = 0.2` — длительность knockback'а на сам выпад.
+- Группа **Shatter (рассыпание на смерти):**
+  - `shatter_fragment_count: int = 7`.
+  - `shatter_lifetime: float = 2.0` (секунды).
+  - `shatter_color: Color` — цвет осколков (дефолт = цвет тела).
 
-**Override в инстансе:** `move_speed = 2.7` (медленнее общего дефолта Enemy=4.0, для теста).
+**Константы:** `BODY_ALBEDO_COLOR`, `WINDUP_EMISSION_COLOR`, `WINDUP_EMISSION_INTENSITY`. Per-instance тонкая настройка цвета не предусмотрена.
 
-**Слой/маска:** `collision_layer = 16` (Enemies), `collision_mask = 55` (Terrain + Items + Actors + Enemies + CampObstacle). Скелеты мутуально видят друг друга; CharacterBody3D-vs-CharacterBody3D просто блокирует движение (без «push»), и у цели образуется плотная толкучка. Бит CampObstacle (32) включён в маску, чтобы скелеты упирались в палатки лагеря — и в каравне, и в развёрнутом виде.
+**Static shared materials (батчинг GPU):**
 
-**Жизненный цикл:** APPROACH → WINDUP → STRIKE → (LUNGE-knockback) → COOLDOWN → APPROACH.
-- **APPROACH:** `dist > attack_range` → `velocity.xz = (target − pos).xz.normalized() × move_speed`.
-- **WINDUP:** в `attack_range` и `_attack_cooldown_remaining ≤ 0` → `_in_windup = true`, `_windup_remaining = attack_windup`, `_set_glow(true)`. Скелет стоит, светится красным.
-- **STRIKE:** `_windup_remaining ≤ 0` → `_set_glow(false)`, взвести `_attack_cooldown_remaining`, `target.take_damage(...)`, **`_do_lunge()`**.
-- **LUNGE-knockback:** `_do_lunge` зовёт `apply_knockback(dir × lunge_speed, lunge_duration)` сам себе — фактически self-induced knockback. На `lunge_duration` AI выключен, скелет физически летит в цель через `move_and_slide`. Удар о башню → `Enemy._bounce_off_target` инвертирует скорость с `bounce_restitution`. Контакт с соседним скелетом → `Enemy._push_neighbor` отбрасывает соседа на `my_speed × neighbor_push_factor`. Лунж буквально «врезается и расталкивает».
-- **COOLDOWN:** AI в обычной фазе, кулдаун декрементируется (тикает всегда, в т.ч. в knockback'е). Может сдвинуться, если цель ушла.
+```gdscript
+static var _shared_normal_material: StandardMaterial3D
+static var _shared_windup_material: StandardMaterial3D
+```
 
-**Реакция на knockback (`_on_knockback`):** если был в windup — отменяем. Должен снова подойти и зарядиться.
+Создаются **один раз на класс** через `_ensure_shared_materials()` в первом `_ready`. Все скелеты делят два материала на класс — никаких `.duplicate()` per-instance. Переключение состояния = смена ссылки в `_mesh.material_override` → GPU батчит 50 скелетов в один draw call на состояние.
 
-**Смерть (`_on_destroyed`):** прячем `MeshInstance3D` и спавним 7 кубиков-осколков (`SHATTER_FRAGMENT_*` константы) в позициях вдоль высоты капсулы. Каждый осколок — `RigidBody3D` с `collision_layer=0`, `mask=1` (падает на Terrain, проходит сквозь всё остальное и сквозь друг друга — без завалов). Импульс: радиальный наружу + вертикальный вверх с рандомным масштабом. Угловая скорость рандомная по всем осям. `material_override` — общий `_shared_normal_material`, тот же что у живых скелетов (GPU батчит вместе). Через `SHATTER_LIFETIME` (2с) Tween само-уничтожает осколок.
+**`_ready`:** `super._ready()` (обязателен), затем `_ensure_shared_materials()` и `_mesh.material_override = _shared_normal_material`.
 
-**Уникальный материал:** в `_ready` дублируем `material_override`, чтобы emission менялся только у этого инстанса. Иначе все 50 скелетов засветились бы одновременно.
+**Override'ы базы:**
+- `_on_state_enter(new_state)`: на `AttackState.WINDUP` → `_set_glow(true)`.
+- `_on_state_exit(old_state)`: на выходе из `WINDUP` → `_set_glow(false)` (включая случай отмены замаха через базовый `_on_knockback`).
+- `_perform_strike(_target)`: перевыбирает цель через `get_active_target()` (между `_ai_step` и `_perform_strike` цель могла умереть). Если живых нет — выходим. Иначе: `Damageable.try_damage(active, attack_damage)` (через контракт, **не** `has_method`/`call`), затем `_do_lunge(active)`.
+- `_do_lunge(target)`: считаем горизонтальное направление к цели; **`_apply_velocity_change(dir × lunge_speed, lunge_duration)`**, а не `apply_knockback`. Свой собственный strike через `apply_knockback` дёрнул бы `_on_knockback` хук, который сбил бы только что выставленное состояние.
 
-**Зависимости:** наследует Enemy. Не знает, что цель именно Tower — просто `Node3D`, у которого может быть `take_damage`.
+**Жизненный цикл (на уровне FSM базы):** APPROACH → WINDUP (`attack_windup` сек, красная подсветка через свап `material_override`) → STRIKE (зовётся `_perform_strike`, наносит урон + self-lunge через `_apply_velocity_change`) → COOLDOWN (`attack_cooldown` сек, тикает даже в knockback'е) → APPROACH.
+
+**Смерть (`_on_destroyed`):**
+- Прячем `MeshInstance3D` (`visible = false`) — труп визуально исчезает.
+- Если `_effects_root` есть — `ShatterEffect.spawn(_effects_root, global_position, shatter_color, shatter_fragment_count, shatter_lifetime)`.
+
+**Зависимости:** наследует Enemy. Не знает, что цель именно Tower — `get_active_target()` возвращает `Node3D`. Урон через `Damageable.try_damage` (контракт), не duck-typing.
+
+##### ShatterEffect — `scripts/shatter_effect.gd`
+
+**Тип:** `class_name ShatterEffect extends RefCounted`. Не сцена и не Node — переиспользуемый «эффект-функция», статически вызывается.
+
+**Назначение:** визуальный эффект «рассыпание»: пачка `RigidBody3D`-кубиков с импульсами, удаляются скопом одним общим `SceneTreeTimer` (а не tween-per-fragment). Не привязан к Skeleton — переиспользуем для других «рассыпающихся» сущностей.
+
+**Публичное API:**
+
+```gdscript
+static func spawn(
+    parent: Node,
+    position: Vector3,
+    color: Color,
+    fragment_count: int = 7,
+    lifetime: float = 1.5
+) -> void
+```
+
+**Логика:**
+- Создаётся один общий `StandardMaterial3D` для пачки (все фрагменты делят его).
+- `fragment_count` раз: создаётся `RigidBody3D` через `_make_fragment` с боксом `FRAGMENT_SIZE = 0.25`, массой `FRAGMENT_MASS = 0.1`, `collision_layer = 0`, `collision_mask = Layers.TERRAIN`. Никто из игровых тел осколки не видит — они просто падают на пол.
+- Каждый фрагмент стартует со случайного оффсета вокруг `position` (горизонталь ±`SPREAD_HORIZONTAL`, вертикаль 0..`SPREAD_VERTICAL`), `linear_velocity` = радиальный импульс наружу × `IMPULSE_RADIAL` + `Vector3.UP × IMPULSE_VERTICAL × randf_range(0.5, 1.0)`, `angular_velocity` — рандом по всем осям в `±ANGULAR_RANGE`.
+- В конце: один `parent.get_tree().create_timer(lifetime)`, на `timeout` — цикл `queue_free` по всем фрагментам с защитой `is_instance_valid(f) and f.is_inside_tree()` (на случай выгрузки сцены до таймаута).
+
+**Константы (внутренние, не экспортятся):** `FRAGMENT_SIZE = 0.25`, `FRAGMENT_MASS = 0.1`, `SPREAD_HORIZONTAL = 0.3`, `SPREAD_VERTICAL = 2.0`, `IMPULSE_RADIAL = 4.0`, `IMPULSE_VERTICAL = 5.0`, `ANGULAR_RANGE = 5.0`.
+
+**Зависимости:** `Layers.TERRAIN` для маски. Не зависит от Enemy/Skeleton/любых типов сцены. Принимает parent/position/color/параметры извне.
 
 #### 5.5.3 EnemySpawner — `scripts/enemy_spawner.gd` (Node3D в `main.tscn`)
 
-**Назначение:** по input action порождает партию врагов кольцом вокруг цели.
+**Назначение:** по input action порождает партию врагов кольцом вокруг цели. Распределяет спавн по нескольким физкадрам — без фрейм-спайка на старте волны.
 
 **Экспорты:**
-- `skeleton_scene: PackedScene` — какую сцену спавнить. Привязывается из `main.tscn`.
-- `target_path: NodePath` — кого ставить в `set_target` каждому врагу (через `Node3D`-цель).
+- `enemy_scenes: Array[PackedScene]` — типы врагов. Параллелен `enemy_counts`.
+- `enemy_counts: Array[int]` — сколько каждого типа породить за волну.
+- `target_path: NodePath` (`@export_node_path("Node3D")`) — кого ставить в `set_target` каждому врагу.
+- `spawn_root_path: NodePath` (`@export_node_path("Node")`) — куда добавлять врагов как детей. Пустой → фолбэк на `get_tree().current_scene`.
 - `spawn_radius: float = 25.0` — радиус кольца от цели.
 - `spawn_radius_jitter: float = 0.3` — разброс ±jitter от радиуса (1 = ±50%).
-- `spawn_count: int = 50` — сколько порождать за волну.
+- `spawn_height_offset: float = 1.0` — смещение по Y относительно цели (раньше был литералом).
 - `debug_log: bool = true`.
 
-**Логика:**
-- В `_process` ловит `Input.is_action_just_pressed("spawn_enemies")` → `spawn_skeleton_wave()`.
-- На каждую волну: цикл `spawn_count` раз — случайный угол на `TAU`, дистанция = `spawn_radius × (1 + ±jitter/2)`, добавляем инстанс `skeleton_scene` в `current_scene`, зовём `set_target(_target)`.
+**Внутренние константы:** `_SPAWNS_PER_FRAME: int = 6` — сколько спавнов в одном физкадре. `_CENTER_INVALID := Vector3.INF` — sentinel «target/spawner протухли, прерываемся».
 
-**Зависимости:** только PackedScene и Node3D через NodePath. Спавнер не знает ни Skeleton, ни Tower по имени; их имена/типы заданы из `main.tscn` на инстансе.
+**Логика:**
+- В `_ready` резолвятся `_target` (по `target_path`) и `_spawn_root` (по `spawn_root_path` или фолбэк на `current_scene`).
+- В `_process` ловит `Input.is_action_just_pressed("spawn_enemies")` → `spawn_wave()`.
+- `spawn_wave()` сначала валидирует: размеры массивов совпадают, `_target` и `_spawn_root` живы. Затем для каждого `type_index` × `count`: инстанцирует, кастует к `Enemy`, кладёт в `_spawn_root`, выставляет позицию (угол × `spawn_radius × jitter`, Y = `target.y + spawn_height_offset`), зовёт `set_target(_target)`.
+- Каждые `_SPAWNS_PER_FRAME` итераций — `await _yield_frame_and_recenter()`.
+
+**Helper `_yield_frame_and_recenter()`:**
+
+```gdscript
+func _yield_frame_and_recenter() -> Vector3:
+    await get_tree().physics_frame
+    if not is_inside_tree():
+        return _CENTER_INVALID
+    if not is_instance_valid(_target):
+        return _CENTER_INVALID
+    return _target.global_position
+```
+
+Один общий хелпер устранил копипаст блока `await physics_frame` + проверка валидности target + проверка что сам спавнер ещё в дереве.
+
+**TODO:** когда количество волн перевалит за 2 — заменить параллельные массивы `enemy_scenes` / `enemy_counts` на `Array[WaveEntry: Resource]`.
+
+**Зависимости:** только PackedScene и Node3D через NodePath. Спавнер не знает ни типа конкретного врага по имени, ни тип цели; их типы заданы из `main.tscn` на инстансе.
 
 ### 5.6 Ground — inline в `main.tscn`
 
@@ -452,60 +636,210 @@ hand_gameplay_prot/
 
 **Тип корня:** `Node3D` с `class_name Camp`.
 
-**Назначение:** модуль «лагеря» — несколько палаток, в режиме каравана следующих за башней цепочкой. По зажатию клавиши `R` (при неподвижной башне) палатки разворачиваются вокруг текущей позиции башни в кольцо палаток-блокаторов; повторное зажатие `R` сворачивает их обратно в караван. Зависит от Tower через `target_path`.
+**Назначение:** модуль «лагеря» — несколько палаток (`StaticBody3D`), в режиме каравана следующих за башней цепочкой. По зажатию `R` (при неподвижной башне) лагерь разворачивается вокруг текущей позиции башни в кольцо палаток-блокаторов. В развёрнутом состоянии лагерь спавнит **гномов** (см. §5.8) — те бродят, ищут `ResourcePile` (см. §5.9) и носят ресурсы к anchor'у. Повторное зажатие `R` инициирует свёртку: гномы возвращаются в палатки, и только после прихода всех лагерь снова становится караваном. Зависит от Tower через `target_path`.
 
 **Дочерние узлы:**
-- 4× `StaticBody3D` (`CaravanPart1`..`CaravanPart4`), каждая с:
-  - `CollisionShape3D` — `BoxShape3D` 2.0×1.5×1.5.
-  - `MeshInstance3D` — `BoxMesh` того же размера, коричневый `StandardMaterial3D`.
-- Стартовые позиции — линия позади origin'а Camp (например, `x = 0, −3, −6, −9`).
-- `collision_layer = 32` (`CampObstacle`, бит 5) **в обоих состояниях** — статически в `.tscn`, рантайм его не меняет. `collision_mask = 0` — палатки сами ничего не сканируют. Башня `mask=31` слой 6 не сканирует → палатки не мешают её ходить ни в каравне, ни в развёрнутом виде. Skeleton `mask=55` сканирует слой 6 → упирается в палатки в обоих режимах.
+- 4× `StaticBody3D` (`CaravanPart1..CaravanPart4`), каждая с `CollisionShape3D` 2×1.5×1.5 и `MeshInstance3D` (общий `Material_part` SubResource — один draw call на лагерь).
+- Стартовые позиции — линия позади origin'а Camp (`x = 0, −3, −6, −9`).
+- `collision_layer = 32` (`CampObstacle`, бит 5) **в обоих состояниях** — статически в `.tscn`, рантайм его не меняет. `collision_mask = 0` — палатки сами ничего не сканируют.
+- В `gnome_scene` экспорте сцены прокидывается `gnome.tscn`.
 
 **Экспорты:**
 - `target_path: NodePath` (`@export_node_path("Node3D")`) — за кем следует караван. Обычно Tower.
-- `follow_speed: float = 4.0` — коэффициент `lerp` для каждой палатки в follow-режиме.
-- `part_gap: float = 2.5` — целевая дистанция между соседними палатками (и между башней и `parts[0]`).
-- `follow_max_distance: float = 30.0` — «зона видимости». Если `parts[0]` дальше этого от башни, ведущая палатка стоит на месте; остальные подтягиваются к своим лидерам, и цепочка естественным образом сжимается.
+- `part_nodes: Array[StaticBody3D]` — палатки в порядке цепочки. Прокидываются вручную в инспекторе. Если массив пуст — `_ready` заполнит `_parts` через `get_children()` с фильтром по имени `CaravanPart*` (фолбэк).
+- `follow_speed: float = 4.0` — **decay-коэффициент** (log-rate) экспоненциального следования палаток. **Не зависит от dt** (см. `_exp_decay`).
+- `part_gap: float = 2.5` — целевая дистанция между соседними палатками.
+- `follow_max_distance: float = 30.0` — «зона видимости».
 - `deploy_duration: float = 3.0` — секунды зажатой `R` при неподвижной башне для развёртки.
-- `pack_duration: float = 4.0` — секунды зажатой `R` в развёрнутом состоянии для свёртки. Башня может двигаться.
+- `pack_duration: float = 4.0` — секунды зажатой `R` в развёрнутом состоянии для свёртки.
 - `deploy_radius: float = 4.0` — радиус кольца палаток вокруг anchor.
-- `stationary_speed_threshold: float = 0.5` — горизонтальная скорость башни ниже этого считается «стоит».
+- `stationary_threshold: float = 0.01` — порог смещения **позиции** цели за кадр, ниже которого считаем её неподвижной (раньше читалась `velocity` у CharacterBody3D — теперь `_tower` хранится как `Node3D`, и неподвижность определяется через эпсилон-чек delta-position).
+- Группа **Gnomes:**
+  - `gnome_scene: PackedScene` — сцена гнома (см. §5.8).
+  - `gnomes_per_tent: int = 2` — сколько гномов спавнить на каждую палатку.
 - `debug_log: bool = true`.
 
 **Сигналы:**
-- `deployed(anchor: Vector3)` — на переходе `CARAVAN_FOLLOWING → DEPLOYED`. `anchor` — позиция башни в момент развёртки.
-- `packed` — на переходе `DEPLOYED → CARAVAN_FOLLOWING`.
+- `deployed(anchor: Vector3)` — на переходе `CARAVAN_FOLLOWING → DEPLOYED`. Re-emit'ится в `EventBus.camp_deployed`.
+- `packed` — на переходе `PACKING_RETURNING → CARAVAN_FOLLOWING` (т.е. **после** прихода всех гномов домой). Re-emit'ится в `EventBus.camp_packed`.
 
 **Состояния (внутреннее enum):**
-- `CARAVAN_FOLLOWING` — базовое. Палатки следуют цепочкой за башней.
-- `DEPLOYED` — палатки в кольце вокруг `_deploy_anchor`, статически.
 
-Оба состояния имеют одинаковую коллизионную семантику (палатки на `CampObstacle`, башня проходит, скелеты упираются) — переключения слоя в рантайме нет.
+```gdscript
+enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
+```
+
+- `CARAVAN_FOLLOWING` — палатки тянутся «змейкой» за башней, гномы IN_TENT.
+- `DEPLOYED` — палатки в кольце вокруг `_deploy_anchor`, гномы бродят и собирают ресурсы.
+- `PACKING_RETURNING` — пользователь начал свёртку: гномы получили `request_return()`, идут в палатки. Сами палатки **пока не двигаются** — продолжают `_update_deployed` на местах кольца. Когда `_all_gnomes_home()` → `_finalize_pack()` → переход в `CARAVAN_FOLLOWING` и сигнал `packed`. Промежуточные состояния `DEPLOYING` / `PACKING` (из старой версии) удалены.
+
+Все три состояния имеют одинаковую коллизионную семантику (палатки на `CampObstacle`, башня проходит, скелеты упираются) — переключения слоя в рантайме нет.
+
+**Поля:**
+- `_tower: Node3D` (не `CharacterBody3D`!) — тип ослаблен, чтобы не зависеть от Tower по конкретному классу.
+- `_state: State`, `_parts: Array[StaticBody3D]`, `_deploy_anchor: Vector3`, `_deployed_targets: Array[Vector3]`.
+- `_deploy_hold: float`, `_pack_hold: float` — раздельные таймеры удержания `R`. Раньше был один `_hold_progress` на оба перехода.
+- `_last_target_pos: Vector3 = Vector3.INF` — позиция башни на прошлом кадре.
+- `_gnomes: Array[Gnome]` — гномы лагеря (создаются в `_spawn_gnomes`).
+- `deploy_anchor: Vector3` — публичное property (геттер возвращает `_deploy_anchor`). Гномы читают, чтобы знать, куда нести ресурс.
+
+**`_ready`:** резолвит `_tower` через `target_path`; собирает `_parts` из `part_nodes` (или фолбэк); `_spawn_gnomes()`; подключает re-emit на EventBus.
+
+**`_spawn_gnomes`:** для каждой палатки `gnomes_per_tent` раз инстанцирует `gnome_scene`, кастует к `Gnome`, кладёт ребёнком Camp, ставит в позицию палатки и вызывает `gnome.setup(self, tent)`.
 
 **Логика follow (`_update_caravan_follow`):**
-- Distance gate: если `parts[0].distance_to(tower) > follow_max_distance`, ведущая стоит.
-- Цепочка: `leader_pos[i] = tower.global_position if i == 0 else parts[i-1].global_position`. `target = leader_pos − dir × part_gap`, где `dir = (leader_pos − part).normalized()` (горизонтально). `part.global_position = lerp(part.global_position, target, follow_speed × delta)`. Y палатки не трогается (сохраняется стартовая высота).
+- Distance-gate: если `parts[0].distance_to(tower) > follow_max_distance` — ведущая стоит, остальные подтягиваются к своим лидерам.
+- Цепочка: `target = leader_pos − dir × part_gap`. Y цели — через `_ground_y_at(part, target_pos)`: raycast по `Layers.TERRAIN`. Палатки следуют рельефу.
+- Сглаживание — **`_exp_decay`** (статический helper): `target + (current - target) * exp(-decay * delta)`. Покадрово стабильное, в отличие от прошлого `lerp(a, b, follow_speed × delta)` (frame-зависимый).
+
+**Логика DEPLOYED (`_update_deployed`):** каждая палатка `_exp_decay` к своей `_deployed_targets[i]` (точка кольца).
+
+**Логика свёртки (двухфазная):**
+1. `_pack_hold ≥ pack_duration` → `_start_pack()`:
+   - `_state = PACKING_RETURNING`, локальный сигнал **не** эмитится (пока).
+   - Вызов `g.request_return()` для каждого гнома.
+   - Палатки продолжают `_update_deployed` (стоят на местах кольца).
+2. Каждый кадр в `_process` при `PACKING_RETURNING`: проверка `_all_gnomes_home()`. Если да — `_finalize_pack()`: `_state = CARAVAN_FOLLOWING`, эмит `packed`. Палатки возобновляют follow с текущих позиций — без teleport'а.
 
 **Логика развёртки (`_handle_input` в `CARAVAN_FOLLOWING`):**
-- Пока зажата `R` И башня неподвижна (`Vector2(tower.velocity.x, tower.velocity.z).length() < stationary_speed_threshold`) — `_hold_progress += delta`. Если башня сдвинулась — `_hold_progress = 0`. Если `R` отпущена — `_hold_progress = 0`.
-- Когда `_hold_progress >= deploy_duration` → `_start_deploy()`:
-  - `_deploy_anchor = tower.global_position`.
-  - `_deployed_targets[i] = anchor + (cos(i × TAU / 4), 0, sin(i × TAU / 4)) × deploy_radius` (Y берём как у палаток).
-  - Переход в `DEPLOYED`, `deployed.emit(anchor)`. Слой палаток не трогаем — он постоянно `CampObstacle`.
+- Пока зажата `R` И `_is_tower_stationary()` — `_deploy_hold += delta`. Любое движение башни или отпускание `R` → сброс.
+- На `_deploy_hold ≥ deploy_duration` → `_start_deploy()`: `_deploy_anchor = tower.global_position`; для каждой палатки считается своя `_deployed_targets[i]`; `_state = DEPLOYED`; эмит `deployed(anchor)`.
+- Вызов `g.enter_deployed()` для каждого гнома → выходит из палатки, `_state = SEARCHING`.
 
-**Логика DEPLOYED (`_update_deployed`):** каждая палатка lerp'ит к своей `_deployed_targets[i]` с тем же `follow_speed` — это даёт плавный «приезд» в кольцо после развёртки, после чего палатки практически неподвижны.
+**`_is_tower_stationary`:** `_tower != null` и delta-position на горизонтали `< stationary_threshold`. Не зависит от того, что цель — `CharacterBody3D`; работает с любым `Node3D`.
 
-**Логика свёртки (`_handle_input` в `DEPLOYED`):**
-- Пока зажата `R` — `_hold_progress += delta` (без stationary-чека). Если отпущена — сброс.
-- Когда `_hold_progress >= pack_duration` → `_start_pack()`:
-  - Переход в `CARAVAN_FOLLOWING`, `packed.emit()`. Палатки возобновляют follow с текущих позиций (без teleport'а). Слой не меняем.
+**Дележ куч между гномами (`is_pile_claimed`):**
 
-**Логирование (`debug_log=true`):**
-- `[Camp] лагерь развёрнут @ (x, y, z)`.
-- `[Camp] лагерь свёрнут`.
-- Опционально — фронт выхода/возврата башни в зону видимости.
+```gdscript
+func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool
+```
 
-**Внешние зависимости:** только Tower через `target_path` (читается `velocity` для проверки неподвижности и `global_position` для follow). Hand модуль их не видит — `GrabArea` / `MagnetArea` / `slam_mask` не включают слой `CampObstacle`. Башня их тоже не видит (`mask=31` без бита 6), что намеренно: палатки никогда не блокируют движение героя — ни в каравне (где иначе они врезались бы в башню при манёврах), ни в развёрнутом лагере (где иначе игрок оказался бы в тюрьме внутри собственного лагеря).
+Возвращает `true`, если кучу уже нацелил какой-то гном, отличный от `exclude_gnome`. Гном-сканер пропускает claimed-кучи — каждый ищет «своё», нашедший один не созывает остальных.
+
+**Логирование (`debug_log=true`, фронт-триггеры):** «начат отсчёт развёртки», «отсчёт прерван (отпущена R)» / «(башня поехала)», «лагерь развёрнут @ (...)», «свёртка инициирована — ждём гномов», «лагерь свёрнут (все гномы дома)».
+
+**Внешние зависимости:** Tower через `target_path` (читается только `global_position`). Тип `Gnome` (для `_gnomes` массива и API). Тип `ResourcePile` (для сигнатуры `is_pile_claimed`). `Layers.TERRAIN` для raycast'а пола под палатками.
+
+---
+
+### 5.8 Gnome — `scenes/gnome.tscn`, `scripts/gnome.gd`
+
+**Тип корня:** `CharacterBody3D` с `class_name Gnome`.
+
+**Назначение:** обитатель лагеря. Спавнится `Camp` по `gnomes_per_tent` штук на каждую палатку. Сам ищет ресурсы (двухфазная FSM: поиск глазами + патруль / челнок к найденной куче), сам носит их к anchor'у лагеря. По сигналу свёртки — возвращается в свою палатку.
+
+**Дочерние узлы:**
+- `CollisionShape3D` — `CapsuleShape3D` r=0.25, h=0.7.
+- `MeshInstance3D` — `CapsuleMesh` того же размера.
+- (рантайм) `_carry_visual: MeshInstance3D` — маленький зелёный куб над головой при подборе, `queue_free` при дропе.
+
+**Слой/маска:** `collision_layer = 0`, `collision_mask = 1` (только Terrain). Гномы проходят сквозь башню, врагов, предметы и друг друга — не толкаются и не блокируют игрока. Гравитация — единственное физическое взаимодействие.
+
+**Экспорты:**
+- Группа **Movement:** `move_speed: float = 1.6`, `gravity: float = 20.0`.
+- Группа **Behaviour:**
+  - `search_radius: float = 300.0` — радиус патруля от anchor'а (карта 200×200, радиус нарочно покрывает всю карту).
+  - `vision_radius: float = 10.0` — дальность зрения. Куча в этом радиусе считается «увиденной» во время патруля.
+  - `idle_radius: float = 4.0` — радиус ошивания возле anchor'а, когда куч на карте нет.
+  - `pickup_distance: float = 0.8`, `deposit_distance: float = 1.2`, `home_distance: float = 0.8`, `wander_arrival: float = 0.6`.
+- Группа **Visual:** `gnome_color`, `carry_color`, `carry_visual_size`.
+- `debug_log: bool = false` — по умолчанию выключен.
+
+**FSM:**
+
+```gdscript
+enum State {
+    IN_TENT, SEARCHING, COMMUTING_TO_PILE, COMMUTING_TO_BASE,
+    IDLE_NEAR_BASE, RETURNING_TO_TENT,
+}
+```
+
+- `IN_TENT` — приклеен к `_home_tent.global_position`, `visible = false`. Состояние по умолчанию (караван).
+- `SEARCHING` — фаза 1 поиска.
+- `COMMUTING_TO_PILE` / `COMMUTING_TO_BASE` — фаза 2 «челнок» с найденной кучей.
+- `IDLE_NEAR_BASE` — куч на карте нет, ошивается возле anchor'а в `idle_radius`.
+- `RETURNING_TO_TENT` — лагерь свёртывается, идёт к своей палатке. Carry-визуал дропается сразу.
+
+**Поля:** `_camp: Camp`, `_home_tent: Node3D`, `_state: State`, `_assigned_pile: ResourcePile`, `_wander_target: Vector3`, `_carry_visual: MeshInstance3D`.
+
+**API для Camp:**
+- `setup(camp, home_tent)` — кэширует ссылки, входит в `IN_TENT`.
+- `enter_deployed()` — `visible = true`, `_state = SEARCHING`.
+- `request_return()` — дропает carry, `_state = RETURNING_TO_TENT`.
+- `is_home() -> bool` — `_state == IN_TENT`.
+- `get_assigned_pile() -> ResourcePile` — возвращает `_assigned_pile` если гном сейчас в фазе челнока, иначе `null`. Camp использует в `is_pile_claimed`.
+
+**Двухфазная логика сбора:**
+
+| Шаг | Условие | Действие |
+|---|---|---|
+| 1. Поиск (SEARCHING) | каждый кадр | `_scan_vision()`: ближайшая куча в `vision_radius` от **позиции гнома**, не пустая, не `freeze`, не claimed чужим. |
+| 2. Найдено | `spotted != null` | `_assigned_pile = spotted` → `COMMUTING_TO_PILE`. |
+| 3. Не нашёл, кучи в мире нет | `_world_has_any_pile() == false` | → `IDLE_NEAR_BASE`. |
+| 4. Не нашёл, кучи где-то есть | иначе | патруль: новая `_wander_target` через `_random_point_around(anchor, search_radius)`. |
+| 5. Челнок к куче | `COMMUTING_TO_PILE` | если `_assigned_pile.units > 0` и не `freeze` — идём к ней. На `pickup_distance` зовём `take_one()`; успех → carry-визуал, `COMMUTING_TO_BASE`. Провал/потеря → `_on_pile_lost()` → SEARCHING. |
+| 6. К базе | `COMMUTING_TO_BASE` | идём к `_camp.deploy_anchor`. На `deposit_distance` дропаем carry. Если `_assigned_pile` ещё валиден и `units > 0` — снова в `COMMUTING_TO_PILE`. Иначе → SEARCHING. |
+
+**Skip frozen-куч:** во `_scan_vision` и в `_tick_commuting_to_pile` явно проверяется `pile.freeze` — рука держит кучу, гном считает её недоступной. Контракт: пока кучу схватили рукой, гномы не топчут к ней зря и переходят в SEARCHING (`_on_pile_lost`).
+
+**Зависимости:** типы `Camp` (через ссылку из `setup`, читает `deploy_anchor`, `is_pile_claimed`) и `ResourcePile`. Не знает Tower/Hand/Skeleton.
+
+---
+
+### 5.9 ResourcePile — `scenes/resource_pile.tscn`, `scripts/resource_pile.gd`
+
+**Тип корня:** `RigidBody3D` с `class_name ResourcePile`.
+
+**Назначение:** куча ресурсов на карте. Гномы забирают по 1 единице через `take_one()` в фазе сбора. Параллельно куча — полноценный физический предмет: рука может схватить её и кинуть, башня и Item могут толкнуть, slam ломает по hp. Реализует **три** контракта одновременно: `Damageable`, `Pushable`, `Grabbable`.
+
+**Дочерние узлы:**
+- `MeshInstance3D` — пустой в `.tscn`, в `_apply_visual` создаётся `BoxMesh` `pile_size`.
+- `CollisionShape3D` — пустой в `.tscn`, в `_apply_shape` создаётся `BoxShape3D` `pile_size`.
+
+**Слой/маска (в `.tscn`):** `collision_layer = Layers.ITEMS` (бит 2), `collision_mask = Layers.MASK_ALL_GAMEPLAY = 31`. Та же раскладка, что у `Item`.
+
+**Экспорты:**
+- `units: int = 5` — запас ресурсов; декрементируется при `take_one()`. На 0 — `queue_free`.
+- `hp: float = 30.0` — здоровье. Урон от руки/slam'а. На 0 — `queue_free` независимо от `units`.
+- `pile_color: Color`, `pile_size: Vector3`, `highlight_color: Color`, `highlight_intensity: float`.
+- Унаследованный `mass: float = 0.5` (в `.tscn`) — лёгкая, грабится рукой при `max_lift_mass = 10`.
+
+**Сигналы:** `damaged(amount: float)`, `destroyed`. Re-emit'ятся в `EventBus.item_damaged` / `EventBus.item_destroyed` (как у Item — UI/счёт не различает Item и ResourcePile).
+
+**Константа:** `GROUP := &"resource_pile"` — гномы сканируют через `get_tree().get_nodes_in_group(ResourcePile.GROUP)`.
+
+**`_ready`:**
+- `add_to_group(GROUP)`.
+- `Damageable.register(self)`, `Pushable.register(self)`, `Grabbable.register(self)` — три контракта подряд.
+- `_apply_visual()`, `_apply_shape()` — создают уникальные ресурсы.
+- Re-emit на EventBus.
+
+**Контракты:**
+
+| Контракт | Метод | Поведение |
+|---|---|---|
+| Damageable | `take_damage(amount)` | Декремент `hp`, эмит `damaged`. На `hp ≤ 0` — `destroyed.emit()` + `queue_free()`. Защита через `is_queued_for_deletion()`. |
+| Pushable | `apply_push(velocity_change, _duration)` | `apply_central_impulse(velocity_change × mass)`. **Return при `freeze`**. |
+| Grabbable | `set_highlighted(value)` | Toggle emission. Дёргается рукой на смене кандидата. |
+
+**Метод для гномов (`take_one`):**
+
+```gdscript
+func take_one() -> bool:
+    if freeze or units <= 0 or is_queued_for_deletion():
+        return false
+    units -= 1
+    if units == 0:
+        destroyed.emit()
+        queue_free()
+    return true
+```
+
+`freeze` (рука держит) → `false`. Гном считает кучу «занятой» и через `_on_pile_lost` уходит искать другую.
+
+**Размещение в `main.tscn`:** в группе `Resources` (Node3D-контейнер) **20 ResourcePile-инстансов** в трёх кольцах от origin: радиусы ~30, 50, 70.
+
+**Зависимости:** `Damageable`, `Pushable`, `Grabbable`, `EventBus`, `Layers`. Не знает Gnome/Camp напрямую — связь через группу и публичные поля.
 
 ---
 
@@ -651,6 +985,36 @@ hand_gameplay_prot/
     - **State-toggle коллизии удалён** из `_start_deploy` и `_start_pack`. State-машина теперь чисто про логику движения и таймеры; коллизии — статически в `.tscn`. Меньше связности, легче рассуждать.
     - **Альтернатива «палатки на Actors»**, рассмотренная: можно было бы убрать Actors из Tower.mask и оставить палатки на 4. Отверг — Actors несёт другую семантику (player-controlled cohort), а палатки концептуально — препятствие, не «игровая сторона». Отдельный слой делает namespace честным и не мешает будущим NPC-попутчикам, если такие появятся.
 
+27. **Большой рефакторинг: устранение хардкода, унификация damage/push, инъекция связей** (`c33a9d3`). Точечные «магические» числа и `body is Item`-цепочки расползлись по проекту — стало пора собрать их в контракты.
+    - **`Layers` (`scripts/layers.gd`, `class_name Layers`).** Именованные биты `TERRAIN/ITEMS/ACTORS/PROJECTILES/ENEMIES/CAMP_OBSTACLE` + композитные `MASK_HAND_CURSOR/MASK_HAND_TARGETS/MASK_ALL_GAMEPLAY/MASK_SKELETON/MASK_TERRAIN_ONLY` + `layer_name_for_bits(mask)` для логов. В коде маски берутся через `Layers.X`; в `.tscn` Godot хранит ints — там литералы, эквивалентные константам.
+    - **Damageable из marker-группы в реальный контракт.** Был просто `add_to_group("damageable")` для индикации; теперь у `Damageable` есть `try_damage(target, amount) → bool` — единая точка нанесения урона. Slam и Flick стреляют через неё, тип цели не проверяют.
+    - **Pushable — новый контракт.** `apply_push(velocity_change, duration)`. RigidBody-цели (Item, ResourcePile) преобразуют через массу: `apply_central_impulse(Δv * mass)`. Kinematic-цели (Enemy) применяют через свой `apply_knockback`. Tower и Slam/Flick зовут `Pushable.try_push(target, ...)` — без `is Item` / `is Enemy` веток.
+    - **Hand: setup-инъекция в подмодулях.** `HandPhysicalSlam/Flick/Spell` получили `class_name` и явный `setup(hand, coord)` — вместо `get_parent().get_parent()`-цепочек. `Hand.grab_area/magnet_area` спрятаны, доступ через `get_grabbable_bodies()/get_magnet_bodies()`. ACTION_X — `StringName`-константы вместо литералов. Slam'овские визуалы переехали в pool с валидацией перед reuse и кладутся в `effects_root_path` (fallback на `current_scene`). Захваченный рукой Item исключается из Slam через `_coord.get_held_item`. `Hand.lock_position(true)` теперь требует `set_locked_position` для ручного перемещения — Flick больше не пишет в `global_position` напрямую. `Hand.smoothed_velocity()` не накапливает движение во время orbit'а — иначе на release щелбана накапливалась паразитная скорость броска. `_is_grabbing` через polling вместо edge-events — фикс залипания после Flick.
+    - **Enemy: FSM в базе.** Перенёс APPROACH/WINDUP/STRIKE/COOLDOWN из Skeleton в `Enemy`. Подкласс реализует только `_perform_strike(target)` плюс хуки `_on_state_enter/_on_state_exit`. Заодно `_perform_strike` перепроверяет `get_active_target()` и тихо выходит, если цель умерла — раньше падал. Lunge у Skeleton идёт через `_apply_velocity_change`, не дёргая `_on_knockback` (иначе сам же отменял свой удар).
+    - **`ShatterEffect` (`scripts/shatter_effect.gd`, `class_name ShatterEffect`, `RefCounted` со static `spawn`).** Эффект «рассыпание на смерти» вынесен из `Skeleton` — теперь общий, с одним `SceneTreeTimer` на пачку (вместо Tween-per-fragment).
+    - **Camp.** Отвязка от `CharacterBody3D`: `target_path` теперь любой `Node3D`, stationary-чек через delta-position (а не `Tower.velocity`). `_exp_decay` вместо frame-зависимого `lerp`. Раздельные `_deploy_hold/_pack_hold` таймеры. `_ground_y_at` через terrain-raycast по `Layers.TERRAIN` — палатки идут по рельефу. `part_nodes` — явный `@export Array[StaticBody3D]` с fallback'ом на имена `CaravanPart*`. 4 материала палаток свёрнуты в один общий `Material_part`.
+    - **Tower.** `class_name Tower`. `_push_kinematic` — через `Pushable.try_push`, без `is Enemy`. Контакт-трекер `_contacts_last` чистится по `tree_exited` — больше нет zombie-ключей. `fall_threshold` вынесен в `@export`. `_floor_normal_threshold` считается через `cos(get_floor_max_angle())` вместо хардкода 0.7. Debug-лог стен скипает kinematic-pushable (50 скелетов больше не спамят «коллизия со стеной»).
+    - **Item.** `class_name Item`, регистрируется в Damageable + Pushable + Grabbable. `apply_push` ранний return при `freeze=true` — контракт Pushable обещает, что пуш применён, либо явный no-op.
+    - **EventBus.** Аргументы сигналов ослаблены до `Node3D / Node` — autoload больше не зависит от `Item/Enemy`. Слушатели сами кастуют, когда нужно.
+
+28. **Камера: orthographic → perspective + наклон/fov-tuning** (`cc82894 → a1dcc1f`).
+    - `cc82894` — вернули перспективу. `Camera3D` была orthographic с `size=30` из `(12, 12, 12)`, теперь обычная проекция из той же точки с `fov=60` — фрейминг визуально близкий, но появилась глубина.
+    - `f3de28d` — наклон сильнее сверху (~60° вниз вместо ~35°), типичный top-down ARPG-вид.
+    - `a77d9b0` — фикс: первая попытка наклонить Transform3D перепутала строки/столбцы базиса (та же ошибка, что в §7.3.№1). Перепаковано корректно.
+    - `64983c2` — `fov: 60° → 40°`, позиция отодвинута × 1.6. Широкий 60° давал fisheye-эффект на близкой дистанции; узкий fov + отступ дают плоский «телефото»-look.
+    - `40815c0 → a1dcc1f` — pitch финально подкручен `60° → 57° → 55°`. ~5% менее top-down, чем сразу после `f3de28d`.
+    - **Итог:** `Camera3D` локальный transform = `Transform3D(0.7071, -0.58, 0.405, 0, 0.572, 0.82, -0.7071, -0.58, 0.405, 18, 36.4, 18)`, `fov = 40°`. Параметры в §5.3 актуализированы.
+
+29. **Гномы и кучи ресурсов** (`ac7d52a → 97a4873`). Лагерь перестал быть просто декорацией: при развёртке палатки выпускают обитателей, которые сами ищут кучи ресурсов на карте и носят их в anchor.
+    - **`ResourcePile` (`scenes/resource_pile.tscn`, `scripts/resource_pile.gd`, `class_name ResourcePile extends RigidBody3D`).** Куча ресурсов на полу. Поля: `units: int` (запас, декрементируется через `take_one()`) и `hp: float` (урон от руки/slam'а, независим от units). Полностью participating в тех же контрактах, что и Item: `Damageable.register` + `Pushable.register` + `Grabbable.register` в `_ready`. Это потребовало нового `Grabbable`-контракта (этап ниже) — иначе пришлось бы делать `class_name ResourcePile extends Item`, что ломает декомпозицию (куча — не «предмет», у неё своя семантика). Сейчас Hand хватает её ровно тем же кодом, без правок руки.
+    - **`Gnome` (`scenes/gnome.tscn`, `scripts/gnome.gd`, `class_name Gnome extends CharacterBody3D`).** По 2 гнома на палатку, спавнятся `Camp._spawn_gnomes()` в `_ready`. FSM из 6 состояний: `IN_TENT` (приклеены к палатке, скрыты, дефолт в каравне) → `SEARCHING` (vision-сканирование куч + патруль случайными точками в `search_radius`) → `COMMUTING_TO_PILE` → `COMMUTING_TO_BASE` → `RETURNING_TO_TENT` (на свёртку лагеря, по дороге роняют что несли) + `IDLE_NEAR_BASE` (анти-livelock-чек: если в мире нет ни одной кучи с `units > 0`, гном не патрулирует впустую, а ходит вокруг anchor'а в `idle_radius`). Связь с лагерем — `setup(camp, home_tent)`, гном не сканирует Tower/EnemySpawner.
+    - **Vision-based discovery вместо broadcast'а** (`550dd1c`, `2951fb1`, `6ab8cf1`). Первая итерация делилась найденными кучами через общий список Camp'а — нашёл один, остальные сразу побежали. Получалось «коллективное всезнайство», нет геймплея поиска. Переделано: каждый гном сам сканирует кучи в радиусе `vision_radius=10` от своей позиции каждый кадр (через `get_tree().get_nodes_in_group(ResourcePile.GROUP)`); маленький радиус → дольше искать, большой → почти всезнайство. Вместо broadcast — claim-чек: гном пропускает кучи, на которые другой гном уже идёт (`Camp.is_pile_claimed(pile, exclude=self)`), чтобы каждый «нашёл своё». Гном видит кучу только если `units > 0` и `freeze=false` (рука не держит).
+    - **Двухфазная FSM сбора** (`fe949b1`). Разделил ФАЗА 1 (поиск) и ФАЗА 2 (челнок). Поиск — патруль до vision-hit'а; челнок — ходка туда-обратно, пока куча не пуста или не пропадёт. На опустошении/потере — обратно в SEARCHING (без отдельного «возврата к базе порожним», иначе анимации кишели бы переходами). После закрытия рукой/уничтожения куча роняет несомое (`_on_pile_lost`).
+    - **Контент: 20 куч в трёх кольцах** (`38d15a2`). Было 8 ровным кольцом, стало 20 в трёх концентрических кольцах вокруг центра — даёт ощутимую разницу между гномами с разным `vision_radius` и нагружает path-finding (когда добавим).
+    - **Camp перешёл с 2-state на 3-state** для свёртки. Был `CARAVAN_FOLLOWING / DEPLOYED`, стал плюс `PACKING_RETURNING`: при нажатии R на свёртку сразу не сворачиваемся — гномам надо дойти до своих палаток. `request_return()` рассылается всем гномам, состояние держится пока `_all_gnomes_home()` не вернёт true, и только потом `_finalize_pack` → `CARAVAN_FOLLOWING`. Палатки в это время стоят на местах развёртки (используется `_update_deployed`).
+    - **Новый контракт `Grabbable`** (`97a4873`). До куч `Hand:PhysicalActions._find_closest_item` и подсветка кандидата работали через `body is Item`. Это исключило бы ResourcePile из захвата, не наследуя её от Item. Решение — третий контракт: `scripts/grabbable.gd`, `class_name Grabbable`, `RefCounted` со static `register/is_grabbable`. Фильтр в Hand сменился на `Grabbable.is_grabbable(body) and body is RigidBody3D and rb.mass < max_lift_mass`. Item, ResourcePile (и любой будущий «можно схватить» RigidBody3D) попадают в захват без правок руки. `set_highlighted` объявлен частью контракта; Hand зовёт его через `has_method` для defensive-coding.
+    - **Семантика в EventBus.** Через bus гномы и кучи ничего нового не эмитят. ResourcePile использует уже существующие `EventBus.item_damaged/item_destroyed` — куча по контракту неотличима от Item для cross-cutting слушателей (UI/счёт ресурсов разнесёт их при необходимости через `target is ResourcePile`).
+
 ### 7.3 Решённые ошибки
 
 | # | Ошибка | Причина | Исправление |
@@ -676,19 +1040,24 @@ hand_gameplay_prot/
 
 | Модуль | Что экспортирует наружу | Что слушает |
 |---|---|---|
-| Tower | сигналы `damaged/destroyed`, метод `take_damage(float)` (damageable-контракт, см. `scripts/damageable.gd`) | Input actions WASD; читает `Item.mass`, `Item.freeze`; пушит `Item` через `apply_central_impulse` |
-| Enemy (база) | сигналы `damaged/destroyed`, методы `take_damage(float)` / `apply_knockback(Vector3, float)` / `set_target(Node3D)`; виртуальный `_ai_step(delta)` (damageable-контракт, см. `scripts/damageable.gd`) | физика, наследники |
-| Skeleton | (наследует Enemy) | `_target.take_damage(...)` (duck-typed) |
-| EnemySpawner | — | `Input "spawn_enemies"`, PackedScene + NodePath из main.tscn |
-| Hand | сигналы `grabbed/released` (re-emit из PhysicalActions), публичный API для подмодулей (`global_position`, `smoothed_velocity()`, `grab_area`, `magnet_area`) | активная камера; тип `Item` |
-| Hand:PhysicalActions | сигналы `grabbed/released/slammed`, `flicked(target: Node3D, velocity)`, методы `get_held_item()/is_holding()/find_flick_target()`, экспорт `equipped` | Input `hand_grab`/`hand_action`/`equip_slam`/`equip_flick`, родитель Hand (включая `lock_position`), типы `Item` и `Enemy` (включая `take_damage`/`apply_knockback`) |
-| Hand:SpellActions | сигнал `spell_cast(name, position)` (черновик) | родитель Hand (план) |
-| Camp | сигналы `deployed(anchor: Vector3)` / `packed`, экспорт `target_path` | Input `camp_toggle`, читает `Tower.velocity` (для проверки неподвижности) и `Tower.global_position` (для follow) |
+| Tower | сигналы `damaged/destroyed`, метод `take_damage(float)` (через `Damageable.register`) | Input actions WASD; `Pushable.try_push` для kinematic-целей; `_push_item` ветка для Item (mass-mediation) |
+| Enemy (база) | сигналы `damaged/destroyed`, методы `take_damage(float)`/`apply_push(Vector3, float)` (Pushable)/`apply_knockback(Vector3, float)`/`set_target(Node3D)`/`set_targets(Array[Node3D])`; виртуальные `_perform_strike(target)`, `_on_state_enter/_on_state_exit`, `_on_knockback`, `_on_destroyed`. Регистрируется в `Damageable` и `Pushable` группах в `_ready` | физика, наследники |
+| Skeleton | (наследует Enemy) | `_target.take_damage(...)` через `Damageable.try_damage`; `ShatterEffect.spawn` на смерть |
+| EnemySpawner | — | `Input "spawn_enemies"`, `Array[PackedScene]` + `target_path` + `spawn_root_path` из `main.tscn` |
+| Hand | сигналы `grabbed(item: Node3D)/released(item: Node3D, velocity)` (re-emit из PhysicalActions); публичный API: `lock_position(bool)`, `set_locked_position(pos)`, `cursor_world_position()`, `smoothed_velocity()`, `get_grabbable_bodies()/get_magnet_bodies()`, `register_raycast_excluder(Callable)` | активная камера; никаких конкретных game-классов |
+| Hand:PhysicalActions | сигналы `grabbed/released/slammed/flicked(target: Node3D, velocity)`, методы `get_held_item()/is_holding()/find_grab_candidate()/find_flick_target()`, `@export equipped: AbilityType` | Input `hand_grab/hand_action/equip_slam/equip_flick`; Hand через `setup` цепочку. Цели — через `Damageable.is_damageable / Grabbable.is_grabbable / Pushable.try_push`, а не через `is Item / is Enemy` |
+| Hand:SpellActions | сигнал `spell_cast(name, position)` (черновик) | родитель Hand через `setup(hand)` |
+| Camp | сигналы `deployed(anchor: Vector3)/packed`, экспорт `target_path/part_nodes/gnome_scene`, публичные `deploy_anchor: Vector3` (свойство) и `is_pile_claimed(pile, exclude_gnome)` | Input `camp_toggle`, читает `Tower.global_position` (delta-position для stationary-чека); зовёт `Gnome.enter_deployed/request_return/is_home/get_assigned_pile` |
+| Gnome | методы `setup(camp, home_tent)/enter_deployed()/request_return()/is_home()/get_assigned_pile()` | Camp через ссылку из `setup`; мир — через `get_tree().get_nodes_in_group(ResourcePile.GROUP)`; `ResourcePile.take_one()` |
+| ResourcePile | сигналы `damaged/destroyed`, методы `take_damage(float)/apply_push(Vector3, float)/set_highlighted(bool)/take_one() -> bool`. Регистрируется в `Damageable` + `Pushable` + `Grabbable` группах + собственная `ResourcePile.GROUP = "resource_pile"` | физика, рука (через Grabbable/Damageable/Pushable), гномы (через `take_one`) |
 | CameraRig | — | `@export target_path` |
-| Item | `@export item_color/item_size/highlight_*/hp`, наследует `mass`, методы `set_highlighted(bool)` / `take_damage(float)`, сигналы `damaged(amount)` / `destroyed` | физика, телепорт от руки в `freeze` |
+| Item | `@export item_color/item_size/highlight_*/hp`, наследует `mass`, методы `set_highlighted(bool)/take_damage(float)/apply_push(Vector3, float)`, сигналы `damaged/destroyed`. Регистрируется в `Damageable` + `Pushable` + `Grabbable` | физика; рука держит через `freeze` |
 | Ground | — | — |
+| `Layers` (RefCounted) | `TERRAIN/ITEMS/ACTORS/PROJECTILES/ENEMIES/CAMP_OBSTACLE` + `MASK_*` константы; static `has_layer/compose/layer_name_for_bits` | — |
+| `Damageable/Pushable/Grabbable` (RefCounted) | static `register(node)`, `is_*(target)`, `try_*(target, ...)`. Контракты, через которые модули знакомятся не зная типов друг друга | — |
+| `ShatterEffect` (RefCounted) | static `spawn(parent, position, color, count, lifetime)` | — |
 
-Каждая стрелка сверху проходит **только через имя класса, сигнал или `@export`**. Никаких `get_node("../Tower")` внутри скриптов.
+Каждая стрелка сверху проходит **только через имя класса, сигнал, `@export` или group-контракт**. Никаких `get_node("../Tower")` внутри скриптов; никаких `body is Item` для cross-cutting проверок (только там, где Item-специфика реально нужна, например push с mass-ratio в Tower).
 
 ---
 
@@ -700,27 +1069,32 @@ hand_gameplay_prot/
 
 **Конвенция именования:** `<entity>_<event>(args)`. Первый аргумент — сама сущность (для тех типов, где нужно отличить инстанс; Tower одна на сцене, поэтому без `self`).
 
+Аргументы типизированы как `Node3D` / `Node` (а не как `Item/Enemy/...`) — autoload не должен зависеть от конкретных геймплейных классов. Слушатели сами кастуют по необходимости (или работают на уровне Node3D). После рефакторинга `c33a9d3` это стало правилом: добавление новых типов целей (например, `ResourcePile`) не требует расширения сигнатур шины.
+
 **Список сигналов:**
 
 | Сигнал | Аргументы | Источник |
 |---|---|---|
-| `item_damaged` | `(item: Item, amount: float)` | `Item._ready` re-emit |
-| `item_destroyed` | `(item: Item)` | `Item._ready` re-emit |
-| `enemy_damaged` | `(enemy: Enemy, amount: float)` | `Enemy._ready` re-emit (Skeleton наследует через `super._ready()`) |
-| `enemy_destroyed` | `(enemy: Enemy)` | `Enemy._ready` re-emit |
+| `item_damaged` | `(item: Node3D, amount: float)` | `Item._ready` re-emit, **`ResourcePile._ready` re-emit** (куча неотличима от Item для cross-cutting слушателей) |
+| `item_destroyed` | `(item: Node3D)` | `Item._ready` re-emit, `ResourcePile._ready` re-emit |
+| `enemy_damaged` | `(enemy: Node3D, amount: float)` | `Enemy._ready` re-emit (Skeleton наследует через `super._ready()`) |
+| `enemy_destroyed` | `(enemy: Node3D)` | `Enemy._ready` re-emit |
 | `tower_damaged` | `(amount: float)` | `Tower._ready` re-emit |
 | `tower_destroyed` | — | `Tower._ready` re-emit |
-| `hand_grabbed` | `(item: Item)` | `Hand._ready` re-emit |
-| `hand_released` | `(item: Item, velocity: Vector3)` | `Hand._ready` re-emit |
-| `hand_slammed` | `(position: Vector3, radius: float)` | `HandPhysical._ready` re-emit |
-| `hand_flicked` | `(target: Node3D, velocity: Vector3)` | `HandPhysical._ready` re-emit |
+| `hand_grabbed` | `(item: Node3D)` | `Hand._ready` re-emit |
+| `hand_released` | `(item: Node3D, velocity: Vector3)` | `Hand._ready` re-emit |
+| `hand_slammed` | `(position: Vector3, radius: float)` | `HandPhysicalActions._ready` re-emit |
+| `hand_flicked` | `(target: Node3D, velocity: Vector3)` | `HandPhysicalActions._ready` re-emit |
 | `camp_deployed` | `(anchor: Vector3)` | `Camp._ready` re-emit |
 | `camp_packed` | — | `Camp._ready` re-emit |
+
+`Gnome` и `ResourcePile.take_one` через шину **не эмитят**. Гномы — внутренняя механика лагеря, спавнятся в Camp напрямую; декремент `units` куч пока не нужен наружу (счётчика ресурсов ещё нет). При появлении HUD-счётчика добавится отдельный сигнал — типизированный как `Node3D`, как и остальные.
 
 **Паттерн re-emit'а в сущности:**
 ```gdscript
 func _ready() -> void:
     # ... базовая инициализация ...
+    Damageable.register(self)
     damaged.connect(func(amount: float) -> void: EventBus.item_damaged.emit(self, amount))
     destroyed.connect(func() -> void: EventBus.item_destroyed.emit(self))
 ```
@@ -730,14 +1104,14 @@ func _ready() -> void:
 func _ready() -> void:
     EventBus.enemy_destroyed.connect(_on_enemy_destroyed)
 
-func _on_enemy_destroyed(enemy: Enemy) -> void:
+func _on_enemy_destroyed(enemy: Node3D) -> void:
     score += 10
 ```
 
 **Принципы:**
 1. Bus — **дополнительный** канал, не замена локальным сигналам. Hand:PhysicalActions слушает `Item.destroyed` локально (если ему это нужно для своей логики); UI слушает `EventBus.item_destroyed` — оба источника эмитятся параллельно.
 2. Bus **только эмитит**. Никакой логики, фильтрации, состояния — иначе становится god-object'ом.
-3. Подключение re-emit'а делается в `_ready` сущности **один раз**. Подклассы с собственным `_ready` обязаны звать `super._ready()`, иначе теряется подключение базы (см. Skeleton).
+3. Подключение re-emit'а делается в `_ready` сущности **один раз**. Подклассы с собственным `_ready` обязаны звать `super._ready()`, иначе теряется подключение базы и регистрация в Damageable/Pushable группах. У `Enemy` есть assert в первом `_physics_process`, ловящий забытый `super._ready()`.
 4. Тип-сигнатуры в сигналах bus'а служат документацией; рантайм Godot не валидирует их строго (динамический emit), но статический анализатор и автокомплит ловят опечатки.
 
 ### 9.1. LogConfig (autoload)
