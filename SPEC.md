@@ -110,6 +110,7 @@ hand_gameplay_prot/
 | 4 | Projectiles | (заготовка под магию) | Terrain, Actors, Enemies |
 | 5 | Enemies | `Skeleton` и будущие враги | Tower (Actors), Slam, Flick |
 | 6 | CampObstacle | палатки `Camp` (CaravanPart*) — статически на этом слое в обоих режимах | Skeleton (мутуально-исключающе с Tower — башня НЕ сканирует слой 6) |
+| 7 | MountedModule | `CampModule` в момент монтажа в слот (динамически переключается с ITEMS) | Hand.GrabArea, Hand.cursor_raycast — иначе игрок не сможет снять модуль с башни обратно. Tower **не** сканирует — иначе touching-контакт «башня снизу, модуль на ней» давал бы ложные wall-collision'ы |
 
 В коде GDScript маски берутся именованными константами из `Layers`; в `.tscn` Godot хранит ints, поэтому там — литералы (значения должны соответствовать `Layers.MASK_*`).
 
@@ -119,7 +120,8 @@ hand_gameplay_prot/
 - Shatter-фрагменты: `Layers.MASK_TERRAIN_ONLY = 1` — падают на пол, проходят сквозь тела и друг друга.
 
 **Маски запросов (не тел):**
-- `Hand.cursor_raycast_mask`: `Layers.MASK_HAND_CURSOR = 3` (Terrain + Items) — рука поднимается над полом и ящиками/кучами, но не лезет на башню/врагов/снаряды.
+- `Hand.cursor_raycast_mask`: `Layers.MASK_HAND_CURSOR = 67` (Terrain + Items + MountedModule) — рука поднимается над полом, ящиками/кучами и смонтированными модулями (иначе курсор не «ловил» бы турель на верху башни и снять рукой не получалось бы). На лету в `Hand._raycast_terrain` к маске прибавляется `ACTORS`, если в руке `CampModule` — чтобы при переноске модуля курсор «находил» верхушку башни и hand поднимался к слоту, а не упирался в стену тауэра.
+- `Hand.GrabArea`: `Layers.MASK_HAND_TARGETS = 82` (Items + Enemies + MountedModule) — рука цепляет любую цель, включая модуль уже стоящий в слоте.
 - `Hand.GrabArea`: `Layers.MASK_HAND_TARGETS = 18` (Items + Enemies) — flick видит и Items (с mass-фильтром), и Enemies. LMB-grab фильтрует через `Grabbable.is_grabbable` + mass, поэтому скелета случайно не схватить.
 - `Hand.MagnetArea`: `Layers.ITEMS = 2` — магнит тянет только то, что на слое Items (Items, ResourcePile).
 - `Hand:PhysicalSlam.slam_mask`: `Layers.MASK_HAND_TARGETS = 18` (Items + Enemies).
@@ -902,9 +904,9 @@ func take_one() -> bool:
 **Тип корня:** `RigidBody3D`. Регистрируется в `Grabbable` группе → рука хватает по тому же контракту, что и Item/ResourcePile.
 
 **Состояния:**
-1. **Свободный** (`_slot=null`, `freeze=false`) — лежит на земле как обычный RigidBody.
-2. **В руке** (`_slot=null`, `freeze=true`) — Hand задаёт freeze и позицию через `_update_held_position`.
-3. **Mounted** (`_slot=Slot`, `freeze=true`) — Slot задаёт позицию каждый физкадр, вызывает виртуал `_module_tick`/работу модуля.
+1. **Свободный** (`_slot=null`, `freeze=false`, `collision_layer=ITEMS`) — лежит на земле как обычный RigidBody.
+2. **В руке** (`_slot=null`, `freeze=true`, `collision_layer=ITEMS`) — Hand задаёт freeze и позицию через `_update_held_position`.
+3. **Mounted** (`_slot=Slot`, `freeze=true`, `collision_layer=MOUNTED_MODULE`) — Slot задаёт позицию каждый физкадр, вызывает виртуал `_module_tick`/работу модуля. Слой переключается на `MOUNTED_MODULE` (бит 6 = 64), чтобы тауэр (mask=31) не видел смонтированный модуль как стену — иначе touching-контакт «башня сверху, турель сидит на ней» спамил бы wall-collision-логи. Hand.GrabArea (mask=82 = ITEMS|ENEMIES|MOUNTED_MODULE) всё равно ловит, так что снять модуль с башни рукой можно.
 
 **Публичный API:**
 - `is_mounted() -> bool`, `get_slot() -> Node`.

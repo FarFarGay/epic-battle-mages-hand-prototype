@@ -18,14 +18,23 @@ const ACTORS := 1 << 2           # 4  — bit 2 = layer 3
 const PROJECTILES := 1 << 3      # 8  — bit 3 = layer 4 (зарезервирован под магию)
 const ENEMIES := 1 << 4          # 16 — bit 4 = layer 5
 const CAMP_OBSTACLE := 1 << 5    # 32 — bit 5 = layer 6
+## Слой только для CampModule в момент монтажа в слот. Башня его не сканирует
+## (mask=31 без бита 6) — иначе touching-контакт «башня сверху, турель сидит»
+## давал бы ложные wall-collision'ы. Hand.GrabArea его сканирует, чтобы рука
+## могла снять модуль обратно.
+const MOUNTED_MODULE := 1 << 6   # 64 — bit 6 = layer 7
 
 # Композитные маски — собирай через OR из именованных битов.
 
-## Hand cursor raycast: «что под рукой как поверхность» — пол и предметы.
-const MASK_HAND_CURSOR := TERRAIN | ITEMS                       # 3
+## Hand cursor raycast: пол + предметы + смонтированные модули. Под цели
+## "поверхностей под рукой" попадает турель на верхушке башни — иначе
+## курсор пролетал бы сквозь неё (тауэр на ACTORS, не в маске).
+const MASK_HAND_CURSOR := TERRAIN | ITEMS | MOUNTED_MODULE      # 67
 
 ## Hand grab / slam / flick: предметы и враги (то, во что бьём/подсвечиваем).
-const MASK_HAND_TARGETS := ITEMS | ENEMIES                      # 18
+## MOUNTED_MODULE — чтобы рука могла снять смонтированный модуль обратно
+## с башни / центра лагеря.
+const MASK_HAND_TARGETS := ITEMS | ENEMIES | MOUNTED_MODULE     # 82
 
 ## «Всё обычное» (без палаток лагеря). Tower / Item / Ground / shatter.
 const MASK_ALL_GAMEPLAY := TERRAIN | ITEMS | ACTORS | PROJECTILES | ENEMIES   # 31

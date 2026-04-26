@@ -85,3 +85,4 @@ camp_toggle={
 3d_physics/layer_4="Projectiles"
 3d_physics/layer_5="Enemies"
 3d_physics/layer_6="CampObstacle"
+3d_physics/layer_7="MountedModule"

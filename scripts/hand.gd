@@ -17,9 +17,14 @@ const VELOCITY_HISTORY_FRAMES := 6
 const RAY_DISTANCE := 1000.0
 
 @export var hand_height: float = 2.5
-## По каким слоям raycast поднимает руку (Terrain + Items по умолчанию).
-## Actors и Projectiles исключены — иначе рука прыгала бы на врагов и снаряды.
-@export_flags_3d_physics var cursor_raycast_mask: int = 3  # Layers.MASK_HAND_CURSOR
+## По каким слоям raycast поднимает руку. По умолчанию — Layers.MASK_HAND_CURSOR
+## (Terrain + Items + MountedModule = 67). Actors/Enemies/Projectiles исключены —
+## иначе рука прыгала бы на врагов и снаряды.
+##
+## Динамика: пока в руке держится CampModule (несём турель ставить на башню),
+## в маску добавляется ACTORS на лету — иначе курсор не «ловит» верх башни,
+## hand остаётся на полу, и поставить модуль на слот нечем.
+@export_flags_3d_physics var cursor_raycast_mask: int = 67  # Layers.MASK_HAND_CURSOR
 @export var debug_log: bool = true
 
 @onready var _grab_area: Area3D = $GrabArea
@@ -149,7 +154,12 @@ func _update_cursor_world() -> void:
 func _raycast_terrain(origin: Vector3, dir: Vector3) -> Dictionary:
 	var space := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * RAY_DISTANCE)
-	query.collision_mask = cursor_raycast_mask
+	# Базовая маска + временный ACTORS, если несём CampModule — чтобы курсор
+	# над башней позиционировал руку на её верхушку, а не сквозь неё на пол.
+	var mask := cursor_raycast_mask
+	if _is_carrying_module():
+		mask |= Layers.ACTORS
+	query.collision_mask = mask
 	var excluded: Array[RID] = []
 	for provider in _raycast_excluders:
 		var rids = provider.call()
@@ -159,6 +169,15 @@ func _raycast_terrain(origin: Vector3, dir: Vector3) -> Dictionary:
 	if not excluded.is_empty():
 		query.exclude = excluded
 	return space.intersect_ray(query)
+
+
+## True если рука сейчас держит CampModule (для динамической раскладки маски
+## курсора). Не зависит от наличия PhysicalActions — null-safe.
+func _is_carrying_module() -> bool:
+	if physical_actions == null:
+		return false
+	var held := physical_actions.get_held_item()
+	return held != null and held is CampModule
 
 
 func _track_velocity(delta: float) -> void:

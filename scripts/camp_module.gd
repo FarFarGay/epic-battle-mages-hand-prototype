@@ -31,12 +31,19 @@ const HIGHLIGHT_INTENSITY := 0.6
 var _slot: Node = null
 ## Кэш материала для подсветки. Подкласс может использовать или игнорировать.
 var _material: StandardMaterial3D = null
+## Запоминаем стартовый collision_layer (обычно ITEMS=2). На время монтажа
+## переключаемся на MOUNTED_MODULE (64): тауэр на ACTORS с mask=31 не видит
+## этот бит — touching-контакт «башня снизу, турель сверху» больше не
+## триггерит wall-collision. Hand.GrabArea (mask включает MOUNTED_MODULE)
+## всё равно ловит модуль для повторного захвата.
+var _layer_when_free: int = 0
 
 
 func _ready() -> void:
 	# Базовая регистрация — рука может захватить любой CampModule.
 	# Конкретные модули могут добавить Damageable.register, если их можно бить.
 	Grabbable.register(self)
+	_layer_when_free = collision_layer
 
 
 func is_mounted() -> bool:
@@ -61,6 +68,8 @@ func attach_to_slot(slot: Node) -> void:
 	freeze = true
 	linear_velocity = Vector3.ZERO
 	angular_velocity = Vector3.ZERO
+	# Переключаемся на «mounted»-слой, чтобы тауэр перестал видеть нас как стену.
+	collision_layer = Layers.MOUNTED_MODULE
 	mounted.emit(slot)
 	_on_mounted(slot)
 
@@ -72,6 +81,9 @@ func detach_from_slot() -> void:
 		return
 	var old := _slot
 	_slot = null
+	# Возвращаем стартовый collision_layer (обычно ITEMS): свободный модуль или
+	# модуль в руке — обычный Grabbable RigidBody, по нему все физсканы пройдут.
+	collision_layer = _layer_when_free
 	unmounted.emit(old)
 	_on_unmounted(old)
 
