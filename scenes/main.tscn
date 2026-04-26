@@ -1,11 +1,11 @@
-[gd_scene load_steps=14 format=3]
+[gd_scene format=3 uid="uid://rc0fdfhw2v15"]
 
 [ext_resource type="PackedScene" path="res://scenes/tower.tscn" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/hand.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/camera_rig.tscn" id="3"]
 [ext_resource type="PackedScene" path="res://scenes/item.tscn" id="4"]
-[ext_resource type="Shader" path="res://resources/grid.gdshader" id="5"]
-[ext_resource type="Script" path="res://scripts/enemy_spawner.gd" id="6"]
+[ext_resource type="Shader" uid="uid://ufuibij83crl" path="res://resources/grid.gdshader" id="5"]
+[ext_resource type="Script" uid="uid://g47nmagw0cfh" path="res://scripts/enemy_spawner.gd" id="6"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="7"]
 [ext_resource type="PackedScene" path="res://scenes/camp.tscn" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/resource_pile.tscn" id="9"]
@@ -14,147 +14,146 @@
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(200, 1, 200)
 
-[sub_resource type="BoxMesh" id="BoxMesh_ground"]
-size = Vector3(200, 1, 200)
-
 [sub_resource type="ShaderMaterial" id="Material_ground"]
+render_priority = 0
 shader = ExtResource("5")
 shader_parameter/base_color = Color(0.3, 0.5, 0.25, 1)
 shader_parameter/grid_color = Color(0.1, 0.2, 0.1, 1)
 shader_parameter/grid_size = 2.0
 shader_parameter/line_width = 0.04
 
-[node name="Main" type="Node3D"]
+[sub_resource type="BoxMesh" id="BoxMesh_ground"]
+size = Vector3(200, 1, 200)
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+[node name="Main" type="Node3D" unique_id=462266493]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1155419915]
 transform = Transform3D(1, 0, 0, 0, 0.707, 0.707, 0, -0.707, 0.707, 0, 20, 0)
 shadow_enabled = true
 
-[node name="Ground" type="StaticBody3D" parent="."]
+[node name="Ground" type="StaticBody3D" parent="." unique_id=1330979093]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
-collision_layer = 1
 collision_mask = 31
 
-[node name="GroundCollision" type="CollisionShape3D" parent="Ground"]
+[node name="GroundCollision" type="CollisionShape3D" parent="Ground" unique_id=228490940]
 shape = SubResource("BoxShape3D_ground")
 
-[node name="GroundMesh" type="MeshInstance3D" parent="Ground"]
-mesh = SubResource("BoxMesh_ground")
+[node name="GroundMesh" type="MeshInstance3D" parent="Ground" unique_id=721012902]
 material_override = SubResource("Material_ground")
+mesh = SubResource("BoxMesh_ground")
 
-[node name="Tower" parent="." instance=ExtResource("1")]
+[node name="Tower" parent="." unique_id=1433079522 instance=ExtResource("1")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
 
-[node name="CameraRig" parent="." instance=ExtResource("3")]
+[node name="CameraRig" parent="." unique_id=1120422055 instance=ExtResource("3")]
 target_path = NodePath("../Tower")
 
-[node name="Hand" parent="." instance=ExtResource("2")]
+[node name="Hand" parent="." unique_id=1987763939 instance=ExtResource("2")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.5, 0)
 
-[node name="Camp" parent="." instance=ExtResource("8")]
+[node name="Camp" parent="." unique_id=120382194 instance=ExtResource("8")]
 target_path = NodePath("../Tower")
 
-[node name="Items" type="Node3D" parent="."]
+[node name="Items" type="Node3D" parent="." unique_id=1061461628]
 
-[node name="SmallBox" parent="Items" instance=ExtResource("4")]
+[node name="SmallBox" parent="Items" unique_id=96737990 instance=ExtResource("4")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0.25, 4)
+mass = 0.5
 item_color = Color(0.85, 0.75, 0.25, 1)
 item_size = Vector3(0.5, 0.5, 0.5)
-mass = 0.5
 
-[node name="WoodBox" parent="Items" instance=ExtResource("4")]
+[node name="WoodBox" parent="Items" unique_id=2101817969 instance=ExtResource("4")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.5, 0)
 item_color = Color(0.55, 0.35, 0.2, 1)
-item_size = Vector3(1, 1, 1)
-mass = 1.0
 
-[node name="StoneBox" parent="Items" instance=ExtResource("4")]
+[node name="StoneBox" parent="Items" unique_id=580438415 instance=ExtResource("4")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0.5, 5)
-item_color = Color(0.55, 0.55, 0.55, 1)
-item_size = Vector3(1, 1, 1)
 mass = 5.0
+item_color = Color(0.55, 0.55, 0.55, 1)
 
-[node name="IronBox" parent="Items" instance=ExtResource("4")]
+[node name="IronBox" parent="Items" unique_id=1071209190 instance=ExtResource("4")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, -7)
+mass = 8.0
 item_color = Color(0.3, 0.3, 0.4, 1)
 item_size = Vector3(1.5, 1.5, 1.5)
-mass = 8.0
 
-[node name="GiantCrate" parent="Items" instance=ExtResource("4")]
+[node name="GiantCrate" parent="Items" unique_id=83059476 instance=ExtResource("4")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 1.25, -3)
+mass = 20.0
 item_color = Color(0.4, 0.25, 0.15, 1)
 item_size = Vector3(2.5, 2.5, 2.5)
-mass = 20.0
 
-[node name="EnemySpawner" type="Node3D" parent="."]
+[node name="EnemySpawner" type="Node3D" parent="." unique_id=1441766688]
 script = ExtResource("6")
 enemy_scenes = Array[PackedScene]([ExtResource("7")])
 enemy_counts = Array[int]([50])
 target_path = NodePath("../Tower")
 
-[node name="Modules" type="Node3D" parent="."]
+[node name="Modules" type="Node3D" parent="." unique_id=1539843594]
 
-[node name="OctagonTurret1" parent="Modules" instance=ExtResource("10")]
+[node name="OctagonTurret1" parent="Modules" unique_id=1489570836 instance=ExtResource("10")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0.35, 4)
+attack_radius = 22.0
+arrow_speed = 30.5
 
-[node name="Resources" type="Node3D" parent="."]
+[node name="Resources" type="Node3D" parent="." unique_id=1592984209]
 
-[node name="Pile1" parent="Resources" instance=ExtResource("9")]
+[node name="Pile1" parent="Resources" unique_id=1767329662 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 0.3, 0)
 
-[node name="Pile2" parent="Resources" instance=ExtResource("9")]
+[node name="Pile2" parent="Resources" unique_id=1732693510 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 0.3, 26)
 
-[node name="Pile3" parent="Resources" instance=ExtResource("9")]
+[node name="Pile3" parent="Resources" unique_id=1520249959 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0.3, 26)
 
-[node name="Pile4" parent="Resources" instance=ExtResource("9")]
+[node name="Pile4" parent="Resources" unique_id=2141671792 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 0.3, 0)
 
-[node name="Pile5" parent="Resources" instance=ExtResource("9")]
+[node name="Pile5" parent="Resources" unique_id=114654822 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0.3, -26)
 
-[node name="Pile6" parent="Resources" instance=ExtResource("9")]
+[node name="Pile6" parent="Resources" unique_id=1796652518 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 0.3, -26)
 
-[node name="Pile7" parent="Resources" instance=ExtResource("9")]
+[node name="Pile7" parent="Resources" unique_id=1510064761 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 46, 0.3, 19)
 
-[node name="Pile8" parent="Resources" instance=ExtResource("9")]
+[node name="Pile8" parent="Resources" unique_id=1757686618 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 0.3, 46)
 
-[node name="Pile9" parent="Resources" instance=ExtResource("9")]
+[node name="Pile9" parent="Resources" unique_id=253427987 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -19, 0.3, 46)
 
-[node name="Pile10" parent="Resources" instance=ExtResource("9")]
+[node name="Pile10" parent="Resources" unique_id=112238437 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -46, 0.3, 19)
 
-[node name="Pile11" parent="Resources" instance=ExtResource("9")]
+[node name="Pile11" parent="Resources" unique_id=1602611805 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -46, 0.3, -19)
 
-[node name="Pile12" parent="Resources" instance=ExtResource("9")]
+[node name="Pile12" parent="Resources" unique_id=1925123106 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -19, 0.3, -46)
 
-[node name="Pile13" parent="Resources" instance=ExtResource("9")]
+[node name="Pile13" parent="Resources" unique_id=1107980584 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 0.3, -46)
 
-[node name="Pile14" parent="Resources" instance=ExtResource("9")]
+[node name="Pile14" parent="Resources" unique_id=532074597 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 46, 0.3, -19)
 
-[node name="Pile15" parent="Resources" instance=ExtResource("9")]
+[node name="Pile15" parent="Resources" unique_id=344252832 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 61, 0.3, 35)
 
-[node name="Pile16" parent="Resources" instance=ExtResource("9")]
+[node name="Pile16" parent="Resources" unique_id=280166399 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 70)
 
-[node name="Pile17" parent="Resources" instance=ExtResource("9")]
+[node name="Pile17" parent="Resources" unique_id=1031489225 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -61, 0.3, 35)
 
-[node name="Pile18" parent="Resources" instance=ExtResource("9")]
+[node name="Pile18" parent="Resources" unique_id=852288606 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -61, 0.3, -35)
 
-[node name="Pile19" parent="Resources" instance=ExtResource("9")]
+[node name="Pile19" parent="Resources" unique_id=1456343685 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, -70)
 
-[node name="Pile20" parent="Resources" instance=ExtResource("9")]
+[node name="Pile20" parent="Resources" unique_id=1684163816 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 61, 0.3, -35)
