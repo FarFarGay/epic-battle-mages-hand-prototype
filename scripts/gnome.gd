@@ -123,6 +123,16 @@ func is_home() -> bool:
 	return _state == State.IN_TENT
 
 
+## Камп использует, чтобы понять «занята ли куча» — другие гномы её пропустят.
+## Возвращает null, если гном не «привязан» к куче сейчас.
+func get_assigned_pile() -> ResourcePile:
+	if _state != State.COMMUTING_TO_PILE and _state != State.COMMUTING_TO_BASE:
+		return null
+	if not is_instance_valid(_assigned_pile):
+		return null
+	return _assigned_pile
+
+
 # --- Цикл ---
 
 func _physics_process(delta: float) -> void:
