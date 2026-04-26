@@ -1,6 +1,7 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/camp.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/gnome.tscn" id="2"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_part"]
 size = Vector3(2, 1.5, 1.5)
@@ -13,6 +14,7 @@ albedo_color = Color(0.45, 0.3, 0.18, 1)
 
 [node name="Camp" type="Node3D"]
 script = ExtResource("1")
+gnome_scene = ExtResource("2")
 
 [node name="CaravanPart1" type="StaticBody3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)

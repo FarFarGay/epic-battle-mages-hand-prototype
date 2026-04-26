@@ -23,7 +23,12 @@ extends Node3D
 signal deployed(anchor: Vector3)
 signal packed
 
-enum State { CARAVAN_FOLLOWING, DEPLOYED }
+## CARAVAN_FOLLOWING — палатки тянутся за башней, гномы IN_TENT.
+## DEPLOYED — палатки в кольце вокруг anchor'а, гномы бродят и собирают ресурсы.
+## PACKING_RETURNING — пользователь начал свёртку, гномы возвращаются в палатки;
+##                     сами палатки пока не двигаются — ждут гномов. Когда все
+##                     гномы IN_TENT — переход в CARAVAN_FOLLOWING.
+enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 
 @export_node_path("Node3D") var target_path: NodePath
 ## Палатки лагеря в порядке цепочки. Прокидываются вручную в инспекторе.
@@ -44,6 +49,14 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED }
 @export var deploy_radius: float = 4.0
 ## Порог смещения цели за кадр, ниже которого считаем её неподвижной.
 @export var stationary_threshold: float = 0.01
+
+@export_group("Gnomes")
+## Сцена гнома — спавнится по gnomes_per_tent на каждую палатку.
+@export var gnome_scene: PackedScene
+## Сколько гномов живёт в каждой палатке.
+@export var gnomes_per_tent: int = 2
+
+@export_group("")
 @export var debug_log: bool = true
 
 var _tower: Node3D
@@ -57,6 +70,13 @@ var _deploy_anchor: Vector3 = Vector3.ZERO
 var _deployed_targets: Array[Vector3] = []
 ## Позиция башни на прошлом кадре — для эпсилон-чека неподвижности.
 var _last_target_pos: Vector3 = Vector3.INF
+## Гномы лагеря — gnomes_per_tent × количество палаток. Создаются в _ready.
+var _gnomes: Array[Gnome] = []
+
+## Публичный геттер anchor'а — гномы читают, чтобы знать, куда нести ресурс.
+var deploy_anchor: Vector3:
+	get:
+		return _deploy_anchor
 
 # Логирование (фронт-триггеры, чтобы не спамить каждый кадр).
 var _was_holding_stationary: bool = false
@@ -78,9 +98,28 @@ func _ready() -> void:
 			if child is StaticBody3D and child.name.begins_with("CaravanPart"):
 				_parts.append(child as StaticBody3D)
 
+	_spawn_gnomes()
+
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	deployed.connect(func(anchor: Vector3) -> void: EventBus.camp_deployed.emit(anchor))
 	packed.connect(func() -> void: EventBus.camp_packed.emit())
+
+
+func _spawn_gnomes() -> void:
+	if gnome_scene == null:
+		if debug_log and LogConfig.master_enabled:
+			print("[Camp] gnome_scene не задан — гномы не спавнятся")
+		return
+	for tent in _parts:
+		for i in range(gnomes_per_tent):
+			var gnome := gnome_scene.instantiate() as Gnome
+			if gnome == null:
+				push_warning("Camp: gnome_scene не инстанцируется как Gnome")
+				continue
+			add_child(gnome)
+			gnome.global_position = tent.global_position
+			gnome.setup(self, tent)
+			_gnomes.append(gnome)
 
 
 func _process(delta: float) -> void:
@@ -90,8 +129,23 @@ func _process(delta: float) -> void:
 			_update_caravan_follow(delta)
 		State.DEPLOYED:
 			_update_deployed(delta)
+		State.PACKING_RETURNING:
+			# Палатки стоят на местах развёртки, гномы возвращаются.
+			# Когда все дома — финализируем pack.
+			_update_deployed(delta)
+			if _all_gnomes_home():
+				_finalize_pack()
 	if _tower != null:
 		_last_target_pos = _tower.global_position
+
+
+func _all_gnomes_home() -> bool:
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		if not g.is_home():
+			return false
+	return true
 
 
 # --- Ввод / переходы состояний ---
@@ -124,6 +178,9 @@ func _handle_input(delta: float) -> void:
 			_pack_hold += delta
 			if _pack_hold >= pack_duration:
 				_start_pack()
+		State.PACKING_RETURNING:
+			# Во время сбора отсчёт не накапливается — гномам нужно дойти.
+			pass
 
 
 func _is_tower_stationary() -> bool:
@@ -156,15 +213,29 @@ func _start_deploy() -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] лагерь развёрнут @ (%.1f, %.1f, %.1f)" % [_deploy_anchor.x, _deploy_anchor.y, _deploy_anchor.z])
 	deployed.emit(_deploy_anchor)
+	# Гномы выходят бродить.
+	for g in _gnomes:
+		if is_instance_valid(g):
+			g.enter_deployed()
 
 
 func _start_pack() -> void:
-	_state = State.CARAVAN_FOLLOWING
+	# Сначала зовём гномов домой; финальный переход в CARAVAN — после прихода всех.
+	_state = State.PACKING_RETURNING
 	_deploy_hold = 0.0
 	_pack_hold = 0.0
 	_was_holding_stationary = false
 	if debug_log and LogConfig.master_enabled:
-		print("[Camp] лагерь свёрнут")
+		print("[Camp] свёртка инициирована — ждём гномов")
+	for g in _gnomes:
+		if is_instance_valid(g):
+			g.request_return()
+
+
+func _finalize_pack() -> void:
+	_state = State.CARAVAN_FOLLOWING
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] лагерь свёрнут (все гномы дома)")
 	packed.emit()
 
 
