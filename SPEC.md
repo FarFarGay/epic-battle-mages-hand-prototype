@@ -370,11 +370,23 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
   - Pitch ~55° вниз, yaw 45° (классическая «изометрия» с осью Y вверх).
   - Базис задан явно в `transform = Transform3D(...)` в `.tscn` — не через `look_at`, чтобы матрица не зависела от стартовой позиции рига.
 
-**Скрипт `camera_rig.gd`:** без изменений. Простой Node3D-фолловер:
+**Скрипт `camera_rig.gd`:** Node3D-фолловер + zoom колесом мыши.
 - `@export_node_path("Node3D") target_path: NodePath`.
 - `@export follow_speed: float = 8.0`.
-- В `_ready` снимает цель, мгновенно прыгает на её позицию (нет «въезда» с (0, 0, 0)).
-- В `_process`: `global_position = global_position.lerp(target.global_position, follow_speed * delta)`.
+- В `_ready` снимает цель, мгновенно прыгает на её позицию (нет «въезда» с (0, 0, 0)). Также сохраняет `_base_offset := _camera.position` — оффсет Camera3D из `.tscn`. Зум масштабирует именно его, не накапливая ошибки от предыдущих кадров.
+- В `_process`: `global_position = global_position.lerp(target.global_position, follow_speed * delta)` + `_update_zoom(delta)`.
+
+**Zoom колесом мыши:**
+- `_unhandled_input`: ловит `InputEventMouseButton` с `button_index = MOUSE_BUTTON_WHEEL_UP / WHEEL_DOWN`. WHEEL_UP → `_zoom_target *= zoom_step` (приближение), WHEEL_DOWN → `/= zoom_step` (отдаление). После клампа в `[zoom_min, zoom_max]`.
+- `_update_zoom(delta)` лерпит `_zoom → _zoom_target` по `zoom_speed × delta` (snap к target при `Δ < 0.001`, иначе asymp-tic-tail). На каждом тике пишет `_camera.position = _base_offset * _zoom` — направление и угол сохраняются, меняется только дистанция (Camera3D's basis из .tscn неизменен).
+- Mouse wheel — единственный геймплейный инпут, который **не** идёт через project.godot input actions: пересмотр-зум — UI-уровень и не нуждается в рекастомизации.
+
+**Экспорты группы `Zoom`:**
+- `zoom_step: float = 0.9` — множитель оффсета за один щелчок колеса (10% приближения; обратный 1/0.9 ≈ 1.11 для отдаления).
+- `zoom_min: float = 0.4`, `zoom_max: float = 2.5` — границы относительно базового оффсета. 1.0 = «как в .tscn».
+- `zoom_speed: float = 10.0` — скорость экспоненциального доезда к целевому зуму.
+
+**Поля состояния:** `_base_offset: Vector3` (стартовый оффсет камеры), `_zoom: float = 1.0` (текущий, плавный), `_zoom_target: float = 1.0` (куда едем).
 
 **Внешние зависимости:** ничего. `target_path` устанавливается из главной сцены, скрипт не знает имени цели.
 
@@ -892,6 +904,8 @@ func take_one() -> bool:
 | `camp_toggle` | R | Camp (зажать для развёртки/свёртки) |
 
 Курсор мыши — позиция руки. Системного захвата курсора нет, он движется свободно.
+
+**Колесо мыши** (без input action — read raw в `CameraRig._unhandled_input`): WHEEL_UP — приблизить камеру, WHEEL_DOWN — отдалить. Зум плавный, ограничен `zoom_min/max` относительно базового оффсета из `.tscn`.
 
 ---
 
