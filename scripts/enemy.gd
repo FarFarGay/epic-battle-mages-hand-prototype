@@ -1,13 +1,19 @@
 class_name Enemy
 extends CharacterBody3D
-## Базовый класс врага. Подклассы реализуют конкретное поведение в _ai_step(delta).
+## Базовый класс врага. Подклассы реализуют конкретный strike в _perform_strike(target).
+##
+## FSM (минимальный): APPROACH → WINDUP → STRIKE → COOLDOWN → APPROACH.
+## Базовая реализация в _ai_step рулит переходами и таймером _state_timer.
+## Подкласс override'ит _perform_strike(target) — там и удар, и любые телеграфы
+## (через _on_state_enter/_on_state_exit, если нужно).
 ##
 ## Базовые константы вынесены ниже:
 ## - MIN_NEIGHBOR_PUSH_SPEED — порог скорости, ниже которого
 ##   knockback не передаётся соседу (контакт «соскользнул», а не «врезался»).
 ##
 ## Контракт:
-## - take_damage(amount) — общий «damageable»-интерфейс (как у Item).
+## - take_damage(amount) — общий «damageable»-интерфейс (через Damageable.register).
+## - apply_push(velocity_change, duration) — общий «pushable»-интерфейс.
 ## - apply_knockback(impulse, duration) — внешний толчок, на время отключает AI.
 ##   Подклассы могут реагировать через _on_knockback().
 ## - set_target(node) / set_targets(array) — цель → набор целей; AI выбирает
@@ -26,12 +32,15 @@ signal destroyed
 
 const MIN_NEIGHBOR_PUSH_SPEED := 0.5
 
+enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
+
 @export var hp: float = 30.0
 @export var move_speed: float = 4.0
 @export var gravity: float = 20.0
 @export var attack_range: float = 1.5
 @export var attack_damage: float = 5.0
 @export var attack_cooldown: float = 1.0
+@export var attack_windup: float = 0.4
 ## Замедление knockback-скорости в секунду (lerp coefficient × delta).
 @export var knockback_friction: float = 5.0
 
@@ -42,18 +51,39 @@ const MIN_NEIGHBOR_PUSH_SPEED := 0.5
 @export_range(0.0, 1.0) var neighbor_push_factor: float = 0.5
 @export var neighbor_push_duration: float = 0.15
 
+@export_group("Effects")
+## Куда складывать визуальные эффекты смерти (осколки и т.п.). Пусто → current_scene.
+@export_node_path("Node") var effects_root_path: NodePath
+
 @export_group("")
 
 var _targets: Array[Node3D] = []
-var _attack_cooldown_remaining: float = 0.0
+var _state: int = AttackState.APPROACH
+var _state_timer: float = 0.0
 var _knockback_timer: float = 0.0
 var _dying: bool = false
 
+var _effects_root: Node = null
+
 
 func _ready() -> void:
+	# Подклассы, override'ящие _ready, ОБЯЗАНЫ звать super._ready(), иначе
+	# damageable/pushable-регистрация и re-emit на EventBus не подключатся.
+	# Silent-failure ловим assert'ом в первом _physics_process (см. ниже).
+	# Self-доку по слоям: layer=Layers.ENEMIES, mask=Layers.MASK_SKELETON
+	# (значения литералами в .tscn — Godot хранит маски как ints).
+	Damageable.register(self)
+	Pushable.register(self)
+	# _effects_root: явный path → ноду; пустой/неразрешённый → fallback на
+	# current_scene с warning'ом, чтобы tihaja поломка эффектов смерти не пряталась.
+	if not effects_root_path.is_empty():
+		_effects_root = get_node_or_null(effects_root_path)
+		if _effects_root == null:
+			push_warning("Enemy: effects_root_path не разрешился, fallback на current_scene")
+	if _effects_root == null:
+		_effects_root = get_tree().current_scene
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
-	# Подклассы (Skeleton) ОБЯЗАНЫ звать super._ready(), чтобы не потерять подключение.
 	damaged.connect(func(amount: float) -> void: EventBus.enemy_damaged.emit(self, amount))
 	destroyed.connect(func() -> void: EventBus.enemy_destroyed.emit(self))
 
@@ -101,25 +131,43 @@ func take_damage(amount: float) -> void:
 
 
 func apply_knockback(impulse: Vector3, duration: float) -> void:
-	# Заменяем горизонтальную скорость, вертикаль накладываем поверх.
+	# Внешний knockback: заменяем горизонтальную скорость, вертикаль накладываем
+	# поверх, и дёргаем _on_knockback хук (подкласс может сбить замах и т.п.).
+	_apply_velocity_change(impulse, duration)
+	_on_knockback()
+
+
+## Pushable-контракт: делегат к apply_knockback.
+func apply_push(velocity_change: Vector3, duration: float) -> void:
+	apply_knockback(velocity_change, duration)
+
+
+## Низкоуровневая запись velocity + knockback-таймера БЕЗ хука _on_knockback.
+## Используется подклассами для self-knockback (lunge), чтобы свой же удар
+## не сбивал собственное FSM-состояние через хук.
+func _apply_velocity_change(impulse: Vector3, duration: float) -> void:
 	velocity.x = impulse.x
 	velocity.z = impulse.z
 	velocity.y = max(velocity.y, impulse.y)
 	_knockback_timer = duration
-	_on_knockback()
 
 
 # --- Цикл ---
 
 func _physics_process(delta: float) -> void:
+	# Подкласс забыл super._ready() → не зарегистрирован как Damageable/Pushable
+	# → удары/толчки тихо игнорировались бы. Ловим раз и сразу.
+	assert(is_in_group(Damageable.GROUP), "Enemy: подкласс не вызвал super._ready() — Damageable не зарегистрирован")
+	assert(is_in_group(Pushable.GROUP), "Enemy: подкласс не вызвал super._ready() — Pushable не зарегистрирован")
 	if not is_on_floor():
 		velocity.y -= gravity * delta
 	else:
 		velocity.y = 0.0
 
-	# Кулдаун аттаки тикает всегда (в т.ч. в knockback'е), иначе бэксайд цикла растёт.
-	if _attack_cooldown_remaining > 0.0:
-		_attack_cooldown_remaining = maxf(_attack_cooldown_remaining - delta, 0.0)
+	# Кулдаун-таймер (после удара) тикает всегда, даже в knockback'е, иначе
+	# самонанесённый lunge-knockback искусственно удлинял бы атак-цикл.
+	if _state == AttackState.COOLDOWN and _state_timer > 0.0:
+		_state_timer = maxf(_state_timer - delta, 0.0)
 
 	if _knockback_timer > 0.0:
 		_knockback_timer = maxf(_knockback_timer - delta, 0.0)
@@ -139,21 +187,94 @@ func _physics_process(delta: float) -> void:
 		_resolve_knockback_contacts(pre_slide_velocity)
 
 
-# Override в подклассах. Должен задать velocity.x/z; вертикалью занимается база.
-func _ai_step(_delta: float) -> void:
-	velocity.x = 0.0
-	velocity.z = 0.0
+# Базовый FSM: APPROACH → WINDUP → STRIKE → COOLDOWN → APPROACH.
+# Подклассы override'ят _perform_strike; обычно _ai_step переопределять не надо.
+func _ai_step(delta: float) -> void:
+	var target := get_active_target()
+	if not target:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		return
+
+	# Кулдаун тикается выше (даже в knockback'е); WINDUP — только тут.
+	if _state == AttackState.WINDUP and _state_timer > 0.0:
+		_state_timer = maxf(_state_timer - delta, 0.0)
+
+	match _state:
+		AttackState.APPROACH:
+			_approach_target(target)
+		AttackState.WINDUP:
+			velocity.x = 0.0
+			velocity.z = 0.0
+			if _state_timer <= 0.0:
+				_enter_state(AttackState.STRIKE)
+				_perform_strike(target)
+				_enter_state(AttackState.COOLDOWN)
+		AttackState.STRIKE:
+			# Транзитное состояние; обычно сразу переключается в COOLDOWN
+			# в той же ветке выше. Если подкласс задержался — едем по инерции.
+			pass
+		AttackState.COOLDOWN:
+			velocity.x = 0.0
+			velocity.z = 0.0
+			if _state_timer <= 0.0:
+				_enter_state(AttackState.APPROACH)
+
+
+func _approach_target(target: Node3D) -> void:
+	var to_target: Vector3 = target.global_position - global_position
+	to_target.y = 0.0
+	var dist := to_target.length()
+	if dist > attack_range:
+		var dir := to_target.normalized()
+		velocity.x = dir.x * move_speed
+		velocity.z = dir.z * move_speed
+	else:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		_enter_state(AttackState.WINDUP)
+
+
+func _enter_state(new_state: int) -> void:
+	_on_state_exit(_state)
+	_state = new_state
+	match new_state:
+		AttackState.WINDUP:
+			_state_timer = attack_windup
+		AttackState.COOLDOWN:
+			_state_timer = attack_cooldown
+		_:
+			_state_timer = 0.0
+	_on_state_enter(new_state)
+
+
+# Виртуальный: конкретный удар. Урон цели + любые физические выпады.
+func _perform_strike(_target: Node3D) -> void:
+	pass
+
+
+# Виртуальные хуки для телеграфа замаха и т.п.
+func _on_state_enter(_new_state: int) -> void:
+	pass
+
+
+func _on_state_exit(_old_state: int) -> void:
+	pass
 
 
 # Виртуальный хук: вызывается, когда кто-то снаружи нанёс knockback.
-# Подклассы могут сбросить локальное состояние (например, отменить замах атаки).
+# В WINDUP сбиваем замах → APPROACH. В COOLDOWN таймер кулдауна сохраняется
+# (тикает в _physics_process), не сбрасываем. STRIKE транзитное.
 func _on_knockback() -> void:
-	pass
+	if _state == AttackState.WINDUP:
+		_on_state_exit(_state)
+		_state = AttackState.APPROACH
+		_state_timer = 0.0
 
 
 # Виртуальный хук: вызывается ровно перед queue_free на смерти, после destroyed.emit.
 # Подклассы могут спавнить визуальные эффекты смерти (осколки, частицы) — они
-# добавляются в current_scene и переживают самого врага.
+# добавляются в _effects_root и переживают самого врага.
 func _on_destroyed() -> void:
 	pass
 
@@ -197,4 +318,4 @@ func _push_neighbor(other: Enemy, col: KinematicCollision3D, pre_slide_velocity:
 	if push_dir.length_squared() < VecUtil.EPSILON_SQ:
 		return
 	push_dir = push_dir.normalized()
-	other.apply_knockback(push_dir * pre_horizontal_speed * neighbor_push_factor, neighbor_push_duration)
+	Pushable.try_push(other, push_dir * pre_horizontal_speed * neighbor_push_factor, neighbor_push_duration)

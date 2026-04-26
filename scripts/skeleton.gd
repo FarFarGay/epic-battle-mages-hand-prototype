@@ -1,15 +1,17 @@
 class_name Skeleton
 extends Enemy
 ## Простой враг.
-## Жизненный цикл: APPROACH → (в attack_range) WINDUP → STRIKE → COOLDOWN → APPROACH.
+## Жизненный цикл базового FSM Enemy: APPROACH → WINDUP → STRIKE → COOLDOWN → APPROACH.
+## Skeleton override'ит только конкретику: телеграф замаха (свечение) и сам strike (lunge + damage).
 ##
 ## Замах телеграфируется красной подсветкой через смену material_override.
-## Удар (`_strike`) — это **физический выпад через apply_knockback самому себе**:
+## Удар (`_perform_strike`) — это **физический выпад через apply_knockback самому себе**:
 ## скелет реально летит в сторону цели, врезается в неё (тело CharacterBody3D
 ## блокируется тем же CharacterBody3D башни), отскакивает (через
-## Enemy._bounke_off_target), и по пути отбрасывает соседей-скелетов
+## Enemy._bounce_off_target), и по пути отбрасывает соседей-скелетов
 ## (через Enemy._push_neighbor).
-## Если получает knockback во время замаха — замах отменяется.
+## Если получает knockback во время замаха — замах отменяется (Enemy._on_knockback
+## сбрасывает FSM в APPROACH).
 ##
 ## Визуал — общеклассовый: два разделяемых StandardMaterial3D (normal/windup)
 ## создаются один раз на класс и переиспользуются всеми инстансами скелетов.
@@ -26,38 +28,32 @@ const BODY_ALBEDO_COLOR := Color(0.88, 0.85, 0.78, 1.0)
 const WINDUP_EMISSION_COLOR := Color(1.0, 0.2, 0.2, 1.0)
 const WINDUP_EMISSION_INTENSITY := 1.5
 
-# --- Shatter (рассыпание на смерти) ---
-const SHATTER_FRAGMENT_COUNT := 7
-const SHATTER_FRAGMENT_SIZE := 0.25
-const SHATTER_IMPULSE_RADIAL := 4.0
-const SHATTER_IMPULSE_VERTICAL := 5.0
-const SHATTER_LIFETIME := 2.0
-
-@export var attack_windup: float = 0.4  # секунды от «замаха» до удара
-
 @export_group("Strike (физический выпад)")
 @export var lunge_speed: float = 8.0  # m/s в момент удара
 @export var lunge_duration: float = 0.2  # секунды knockback'а на сам выпад
 @export_group("")
 
+@export_group("Shatter (рассыпание на смерти)")
+@export var shatter_fragment_count: int = 7
+@export var shatter_lifetime: float = 2.0
+@export var shatter_color: Color = BODY_ALBEDO_COLOR
+@export_group("")
+
 static var _shared_normal_material: StandardMaterial3D
 static var _shared_windup_material: StandardMaterial3D
 
-var _in_windup: bool = false
-var _windup_remaining: float = 0.0
+@onready var _mesh: MeshInstance3D = $MeshInstance3D
 
 
 func _ready() -> void:
-	# Унаследованный _ready подключает damaged/destroyed к EventBus.
-	# Без super._ready() подключение потерялось бы только для скелетов.
+	# Унаследованный _ready регистрирует Damageable/Pushable и подключает EventBus.
+	# Без super._ready() всё это потерялось бы только для скелетов.
 	super._ready()
 	_ensure_shared_materials()
-	var mesh := $MeshInstance3D as MeshInstance3D
-	if not mesh:
-		return
-	# Все скелеты делят два материала на класс — никаких .duplicate() per-instance.
-	# Переключение состояния = смена ссылки в material_override → GPU батчит.
-	mesh.material_override = _shared_normal_material
+	if _mesh:
+		# Все скелеты делят два материала на класс — никаких .duplicate() per-instance.
+		# Переключение состояния = смена ссылки в material_override → GPU батчит.
+		_mesh.material_override = _shared_normal_material
 
 
 static func _ensure_shared_materials() -> void:
@@ -74,130 +70,54 @@ static func _ensure_shared_materials() -> void:
 		_shared_windup_material = windup
 
 
-func _ai_step(delta: float) -> void:
-	var target := get_active_target()
-	if not target:
-		velocity.x = 0.0
-		velocity.z = 0.0
+func _on_state_enter(new_state: int) -> void:
+	if new_state == AttackState.WINDUP:
+		_set_glow(true)
+
+
+func _on_state_exit(old_state: int) -> void:
+	if old_state == AttackState.WINDUP:
+		_set_glow(false)
+
+
+func _perform_strike(_target: Node3D) -> void:
+	# Перевыбираем цель — между _ai_step и _perform_strike та могла умереть.
+	# Параметр _target тут не используем: он мог стать невалидным, и проверять
+	# его freed-инстансом небезопасно. get_active_target сам пропускает мёртвых.
+	var active := get_active_target()
+	if not active:
 		return
-
-	if _in_windup:
-		velocity.x = 0.0
-		velocity.z = 0.0
-		_windup_remaining = maxf(_windup_remaining - delta, 0.0)
-		if _windup_remaining <= 0.0:
-			_strike()
-		return
-
-	var to_target: Vector3 = target.global_position - global_position
-	to_target.y = 0.0
-	var dist := to_target.length()
-
-	if dist > attack_range:
-		var dir := to_target.normalized()
-		velocity.x = dir.x * move_speed
-		velocity.z = dir.z * move_speed
-	else:
-		velocity.x = 0.0
-		velocity.z = 0.0
-		if _attack_cooldown_remaining <= 0.0:
-			_start_windup()
+	# Урон — до выпада, чтобы логически «удар попал», даже если bounce-off
+	# отбросит скелета на следующем кадре.
+	Damageable.try_damage(active, attack_damage)
+	_do_lunge(active)
 
 
-func _start_windup() -> void:
-	_in_windup = true
-	_windup_remaining = attack_windup
-	_set_glow(true)
-
-
-func _strike() -> void:
-	_in_windup = false
-	_set_glow(false)
-	_attack_cooldown_remaining = attack_cooldown
-	# Перевыбираем цель — между _ai_step и _strike могла умереть и/или появиться ближе другая.
-	var target := get_active_target()
-	# Урон — до выпада, потому что после apply_knockback velocity скелета
-	# уйдёт в сторону цели и порядок не важен, но логически «удар попал».
-	if target and target.has_method("take_damage"):
-		target.take_damage(attack_damage)
-	_do_lunge()
-
-
-func _do_lunge() -> void:
-	var target := get_active_target()
-	if not target:
-		return
+func _do_lunge(target: Node3D) -> void:
 	var to_target: Vector3 = target.global_position - global_position
 	to_target.y = 0.0
 	if to_target.length_squared() < VecUtil.EPSILON_SQ:
 		return
 	var dir := to_target.normalized()
-	# Самостоятельный knockback в сторону цели. Дальше move_and_slide толкает
-	# скелета вперёд → коллизия с башней → bounce-off в Enemy._resolve_knockback_contacts.
-	apply_knockback(dir * lunge_speed, lunge_duration)
-
-
-func _on_knockback() -> void:
-	# Сбили в замахе — отмена. Скелет должен снова подойти и зарядиться.
-	if _in_windup:
-		_in_windup = false
-		_windup_remaining = 0.0
-		_set_glow(false)
+	# Self-knockback ВНЕ публичного apply_knockback — иначе наш собственный
+	# выпад вызвал бы _on_knockback хук, и подклассы, навешивающие на него
+	# логику отмены состояний, словили бы свой же lunge.
+	_apply_velocity_change(dir * lunge_speed, lunge_duration)
 
 
 func _on_destroyed() -> void:
-	# Прячем тело и спавним осколки. Осколки живут в current_scene — переживают
+	# Прячем тело и спавним осколки. Осколки живут в _effects_root — переживают
 	# queue_free самого скелета, который произойдёт в Enemy.take_damage сразу после.
-	var mesh := $MeshInstance3D as MeshInstance3D
-	if mesh:
-		mesh.visible = false
-	var scene_root := get_tree().current_scene
-	if not scene_root:
-		return
-	var body_pos := global_position
-	for i in range(SHATTER_FRAGMENT_COUNT):
-		_spawn_shatter_fragment(scene_root, body_pos)
-
-
-func _spawn_shatter_fragment(scene_root: Node, body_pos: Vector3) -> void:
-	var body := RigidBody3D.new()
-	# Layer=0: ничего не сканирует осколки. Mask=1: осколки падают на Terrain,
-	# но проходят сквозь всё остальное (включая друг друга) — без завалов.
-	body.collision_layer = 0
-	body.collision_mask = 1
-	body.mass = 0.1
-	var shape := BoxShape3D.new()
-	shape.size = Vector3.ONE * SHATTER_FRAGMENT_SIZE
-	var coll := CollisionShape3D.new()
-	coll.shape = shape
-	body.add_child(coll)
-	var mesh := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = Vector3.ONE * SHATTER_FRAGMENT_SIZE
-	mesh.mesh = box
-	# Тот же общий material — GPU батчит вместе с живыми скелетами.
-	mesh.material_override = _shared_normal_material
-	body.add_child(mesh)
-	scene_root.add_child(body)
-	body.global_position = body_pos + Vector3(
-		randf_range(-0.3, 0.3),
-		randf_range(0.0, 2.0),
-		randf_range(-0.3, 0.3)
-	)
-	var radial := Vector3(randf_range(-1.0, 1.0), 0.0, randf_range(-1.0, 1.0))
-	if radial.length_squared() > 0.0:
-		radial = radial.normalized()
-	body.linear_velocity = radial * SHATTER_IMPULSE_RADIAL + Vector3.UP * SHATTER_IMPULSE_VERTICAL * randf_range(0.5, 1.0)
-	body.angular_velocity = Vector3(randf_range(-5.0, 5.0), randf_range(-5.0, 5.0), randf_range(-5.0, 5.0))
-	var tween := body.create_tween()
-	tween.tween_interval(SHATTER_LIFETIME)
-	tween.tween_callback(body.queue_free)
+	if _mesh:
+		_mesh.visible = false
+	if _effects_root:
+		ShatterEffect.spawn(_effects_root, global_position, shatter_color,
+			shatter_fragment_count, shatter_lifetime)
 
 
 func _set_glow(active: bool) -> void:
-	var mesh := $MeshInstance3D as MeshInstance3D
-	if not mesh:
+	if not _mesh:
 		return
 	# Свап ссылки — никаких чтений/записей свойств материала. Материалы общие,
 	# мутировать их per-state нельзя (поломались бы все остальные скелеты).
-	mesh.material_override = _shared_windup_material if active else _shared_normal_material
+	_mesh.material_override = _shared_windup_material if active else _shared_normal_material

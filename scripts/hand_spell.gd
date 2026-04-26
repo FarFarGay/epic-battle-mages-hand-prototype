@@ -1,3 +1,4 @@
+class_name HandSpell
 extends Node
 ## Категория "Заклинания" руки.
 ##
@@ -16,12 +17,16 @@ var _hand: Hand
 
 
 func _ready() -> void:
-	_hand = get_parent() as Hand
-	if not _hand:
-		push_error("HandSpell: родитель не Hand")
-		set_process(false)
-		set_physics_process(false)
+	# Заглушка — без активной логики не тикаем.
+	set_process(false)
+	set_physics_process(false)
 	# TODO: загрузить реестр заклинаний (имя → cost / cooldown / scene / эффект).
+
+
+## Координатор Hand вызывает этот метод после собственного _ready, передавая
+## ссылку на руку. До setup активной логики нет (ловить ввод нечем).
+func setup(hand: Hand) -> void:
+	_hand = hand
 
 
 # TODO: _process — обработка ввода для заклинаний (ПКМ / клавиши).

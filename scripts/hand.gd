@@ -10,21 +10,22 @@ extends Node3D
 ##   - сглаженный трекинг скорости,
 ##   - проксирование сигналов категорий наружу для совместимости.
 
-signal grabbed(item: Item)
-signal released(item: Item, velocity: Vector3)
+signal grabbed(item: Node3D)
+signal released(item: Node3D, velocity: Vector3)
+
+const VELOCITY_HISTORY_FRAMES := 6
+const RAY_DISTANCE := 1000.0
 
 @export var hand_height: float = 2.5
 ## По каким слоям raycast поднимает руку (Terrain + Items по умолчанию).
 ## Actors и Projectiles исключены — иначе рука прыгала бы на врагов и снаряды.
-@export_flags_3d_physics var terrain_mask: int = 3
+@export_flags_3d_physics var cursor_raycast_mask: int = 3  # Layers.MASK_HAND_CURSOR
 @export var debug_log: bool = true
 
-const VELOCITY_HISTORY_FRAMES := 6
-
-@onready var grab_area: Area3D = $GrabArea
-@onready var magnet_area: Area3D = $MagnetArea
-@onready var physical_actions: Node = $PhysicalActions
-@onready var spell_actions: Node = $SpellActions
+@onready var _grab_area: Area3D = $GrabArea
+@onready var _magnet_area: Area3D = $MagnetArea
+@onready var physical_actions: HandPhysicalActions = $PhysicalActions
+@onready var spell_actions: HandSpell = $SpellActions
 
 var _velocity_history: Array[Vector3] = []
 var _previous_pos: Vector3
@@ -47,14 +48,14 @@ func _ready() -> void:
 	_last_cursor_world = global_position
 	# Прокидываем сигналы физического подмодуля наверх — внешние слушатели
 	# могут подключаться к hand.grabbed / hand.released как раньше.
-	if physical_actions and physical_actions.has_signal("grabbed"):
-		physical_actions.grabbed.connect(grabbed.emit)
-	if physical_actions and physical_actions.has_signal("released"):
-		physical_actions.released.connect(released.emit)
+	physical_actions.grabbed.connect(grabbed.emit)
+	physical_actions.released.connect(released.emit)
+	# Заглушка spells: разрешаем ей работать через явный setup, не через get_parent.
+	spell_actions.setup(self)
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
-	grabbed.connect(func(item: Item) -> void: EventBus.hand_grabbed.emit(item))
-	released.connect(func(item: Item, velocity: Vector3) -> void: EventBus.hand_released.emit(item, velocity))
+	grabbed.connect(func(item: Node3D) -> void: EventBus.hand_grabbed.emit(item))
+	released.connect(func(item: Node3D, velocity: Vector3) -> void: EventBus.hand_released.emit(item, velocity))
 
 
 func _process(delta: float) -> void:
@@ -74,6 +75,13 @@ func cursor_world_position() -> Vector3:
 	return _last_cursor_world
 
 
+## Прямой сеттер позиции при locked-режиме. Используется подмодулями (Flick),
+## которым нужно крутить руку вокруг цели, не разлочивая позицию.
+func set_locked_position(pos: Vector3) -> void:
+	assert(_position_locked, "set_locked_position требует _position_locked=true")
+	global_position = pos
+
+
 func register_raycast_excluder(provider: Callable) -> void:
 	## provider должен возвращать Array[RID] — кого ИСКЛЮЧИТЬ из raycast террейна.
 	_raycast_excluders.append(provider)
@@ -86,6 +94,24 @@ func smoothed_velocity() -> Vector3:
 	for v in _velocity_history:
 		sum += v
 	return sum / _velocity_history.size()
+
+
+## Все тела сейчас в зоне захвата (для подмодулей-кандидатов).
+func get_grabbable_bodies() -> Array[Node3D]:
+	var out: Array[Node3D] = []
+	for body in _grab_area.get_overlapping_bodies():
+		if body is Node3D:
+			out.append(body as Node3D)
+	return out
+
+
+## Все тела сейчас в магнит-зоне.
+func get_magnet_bodies() -> Array[Node3D]:
+	var out: Array[Node3D] = []
+	for body in _magnet_area.get_overlapping_bodies():
+		if body is Node3D:
+			out.append(body as Node3D)
+	return out
 
 
 # --- Реализация позиционирования ---
@@ -122,8 +148,8 @@ func _update_cursor_world() -> void:
 
 func _raycast_terrain(origin: Vector3, dir: Vector3) -> Dictionary:
 	var space := get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * 1000.0)
-	query.collision_mask = terrain_mask
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * RAY_DISTANCE)
+	query.collision_mask = cursor_raycast_mask
 	var excluded: Array[RID] = []
 	for provider in _raycast_excluders:
 		var rids = provider.call()
@@ -141,6 +167,12 @@ func _track_velocity(delta: float) -> void:
 		_initialized = true
 		return
 	if delta <= 0.0:
+		return
+	# Пока позиция залочена, подмодули могут двигать руку напрямую (Flick) —
+	# эти движения не должны попасть в smoothed_velocity, иначе при отпускании
+	# щелбана накопится бредовая скорость броска.
+	if _position_locked:
+		_previous_pos = global_position
 		return
 	var instant_v: Vector3 = (global_position - _previous_pos) / delta
 	_velocity_history.append(instant_v)
@@ -161,22 +193,7 @@ func _log_surface(result: Dictionary, surface_y: float) -> void:
 		var layer_bits: int = 0
 		if collider and "collision_layer" in collider:
 			layer_bits = collider.collision_layer
-		label = "%s [%s]" % [n, _layer_name(layer_bits)]
+		label = "%s [%s]" % [n, Layers.layer_name_for_bits(layer_bits)]
 	if label != _last_surface_label:
 		print("[Hand] поверхность: %s, y=%.2f" % [label, surface_y])
 		_last_surface_label = label
-
-
-func _layer_name(bits: int) -> String:
-	if bits == 0:
-		return "—"
-	var names: Array[String] = []
-	for i in range(32):
-		if (bits & (1 << i)) != 0:
-			var key := "layer_names/3d_physics/layer_%d" % (i + 1)
-			var raw = ProjectSettings.get_setting(key, "")
-			var n: String = str(raw) if raw else ""
-			if n.is_empty():
-				n = "layer_%d" % (i + 1)
-			names.append(n)
-	return ",".join(names)

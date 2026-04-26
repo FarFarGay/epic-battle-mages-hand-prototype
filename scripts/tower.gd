@@ -1,11 +1,9 @@
+class_name Tower
 extends CharacterBody3D
 ## Башня — управляется WASD.
 ## Если башня тяжелее, чем встретившийся Item, она толкает его телом при движении.
 ## Имеет HP — враги наносят урон через take_damage(amount).
 
-## Порог Y-компоненты нормали коллизии: всё, что выше, считается «полом»
-## (отфильтровывается в логе стен).
-const FLOOR_NORMAL_THRESHOLD := 0.7
 ## Минимальная компонента intended_velocity в направлении врага, ниже которой
 ## считаем, что башня в эту сторону не едет — knockback не применяем.
 const MIN_PUSH_VELOCITY := 0.1
@@ -30,6 +28,8 @@ signal destroyed
 @export var enemy_push_duration: float = 0.2
 
 @export_group("")
+## Высота, ниже которой считаем что башня провалилась под карту.
+@export var fall_threshold: float = -10.0
 @export var debug_log: bool = true
 
 var _was_on_floor: bool = true
@@ -40,8 +40,11 @@ var _was_stuck: bool = false
 var _contacts_last: Dictionary = {}
 var _dying: bool = false
 
+@onready var _floor_normal_threshold: float = cos(get_floor_max_angle())
+
 
 func _ready() -> void:
+	Damageable.register(self)
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
 	damaged.connect(func(amount: float) -> void: EventBus.tower_damaged.emit(amount))
@@ -98,9 +101,9 @@ func _physics_process(delta: float) -> void:
 
 
 func _resolve_contacts(intended_velocity: Vector3) -> void:
-	# Items — push с массовым ratio (бывшая логика).
-	# Enemies — knockback в направлении движения, чтобы башня могла плавно
-	# рассекать толпу скелетов вместо того, чтобы упираться в стену.
+	# Items — push с массовым ratio (mass-mediation вшита, единый Pushable
+	# не даст условный mass-check). Kinematic-цели (враги) — простой Δv-push
+	# через Pushable, без знания конкретного класса.
 	var contacts_now: Dictionary = {}
 
 	for i in range(get_slide_collision_count()):
@@ -108,9 +111,9 @@ func _resolve_contacts(intended_velocity: Vector3) -> void:
 		var collider := col.get_collider()
 		if collider is Item:
 			_push_item(collider as Item, col, intended_velocity, contacts_now)
-		elif collider is Enemy:
-			_push_enemy(collider as Enemy, col, intended_velocity)
-			# В contacts_now врагов не записываем — для 50+ скелетов получится спам логов.
+		elif Pushable.is_pushable(collider) and collider is CharacterBody3D:
+			_push_kinematic(collider as Node, col, intended_velocity)
+			# В contacts_now kinematic'ов не записываем — для 50+ скелетов получится спам логов.
 
 	if debug_log and LogConfig.master_enabled:
 		_log_contact_transitions(contacts_now)
@@ -120,6 +123,11 @@ func _resolve_contacts(intended_velocity: Vector3) -> void:
 func _push_item(item: Item, col: KinematicCollision3D, intended_velocity: Vector3, contacts_now: Dictionary) -> void:
 	if item.freeze:
 		return
+	# Подписка на tree_exited, чтобы не оставлять zombie-ключи в _contacts_last.
+	# Используем флаг в meta — bind(item) делает Callable не-сравнимым через is_connected.
+	if not item.has_meta(&"_tower_contact_hooked"):
+		item.set_meta(&"_tower_contact_hooked", true)
+		item.tree_exited.connect(_on_contact_item_exited.bind(item))
 	if mass <= item.mass:
 		contacts_now[item] = "block"
 		return
@@ -136,7 +144,7 @@ func _push_item(item: Item, col: KinematicCollision3D, intended_velocity: Vector
 	item.apply_central_impulse(push_dir * v_diff * item.mass * ratio * push_strength)
 
 
-func _push_enemy(enemy: Enemy, col: KinematicCollision3D, intended_velocity: Vector3) -> void:
+func _push_kinematic(target: Node, col: KinematicCollision3D, intended_velocity: Vector3) -> void:
 	var push_dir: Vector3 = -col.get_normal()
 	var push_dir_h := VecUtil.horizontal(push_dir)
 	if push_dir_h.length_squared() < VecUtil.EPSILON_SQ:
@@ -145,7 +153,11 @@ func _push_enemy(enemy: Enemy, col: KinematicCollision3D, intended_velocity: Vec
 	var v_into := intended_velocity.dot(push_dir_h)
 	if v_into <= MIN_PUSH_VELOCITY:
 		return  # башня не движется в эту сторону — нечего толкать
-	enemy.apply_knockback(push_dir_h * v_into * enemy_push_speed_factor, enemy_push_duration)
+	Pushable.try_push(target, push_dir_h * v_into * enemy_push_speed_factor, enemy_push_duration)
+
+
+func _on_contact_item_exited(item: Item) -> void:
+	_contacts_last.erase(item)
 
 
 func _log_contact_transitions(contacts_now: Dictionary) -> void:
@@ -196,20 +208,23 @@ func _debug_log(input_dir: Vector2) -> void:
 	if is_stuck and not _was_stuck:
 		printerr("[Tower] застряли: input=%s, h_speed=%.2f" % [input_dir, horizontal_speed])
 
-	# Коллизии со стенами (не пол, не Item — Item уже залогирован в _push_items)
+	# Коллизии со стенами (не пол, не Item, не kinematic-pushable —
+	# Item уже залогирован в _push_item, kinematic'и (враги) спамили бы при толпе).
 	for i in range(get_slide_collision_count()):
 		var col := get_slide_collision(i)
 		var n := col.get_normal()
-		if n.y > FLOOR_NORMAL_THRESHOLD:
+		if n.y > _floor_normal_threshold:
 			continue
 		var collider := col.get_collider()
 		if collider is Item:
+			continue
+		if Pushable.is_pushable(collider) and collider is CharacterBody3D:
 			continue
 		var collider_name := str(collider.name) if collider else "?"
 		print("[Tower] коллизия со стеной: %s, normal=(%.2f, %.2f, %.2f)" % [collider_name, n.x, n.y, n.z])
 
 	# Провалились ниже карты
-	if global_position.y < -10.0:
+	if global_position.y < fall_threshold:
 		printerr("[Tower] провалились ниже карты: y=%.2f" % global_position.y)
 
 	_was_on_floor = on_floor

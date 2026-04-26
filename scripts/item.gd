@@ -20,12 +20,16 @@ signal destroyed
 @export var hp: float = 100.0
 
 var _material: StandardMaterial3D
-var _destroyed: bool = false
+
+@onready var _mesh: MeshInstance3D = $MeshInstance3D
+@onready var _shape: CollisionShape3D = $CollisionShape3D
 
 
 func _ready() -> void:
 	_apply_visual()
 	_apply_shape()
+	Damageable.register(self)
+	Pushable.register(self)
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
 	damaged.connect(func(amount: float) -> void: EventBus.item_damaged.emit(self, amount))
@@ -33,24 +37,18 @@ func _ready() -> void:
 
 
 func _apply_visual() -> void:
-	var mesh_node := $MeshInstance3D as MeshInstance3D
-	if not mesh_node:
-		return
 	var box_mesh := BoxMesh.new()
 	box_mesh.size = item_size
-	mesh_node.mesh = box_mesh
+	_mesh.mesh = box_mesh
 	_material = StandardMaterial3D.new()
 	_material.albedo_color = item_color
-	mesh_node.material_override = _material
+	_mesh.material_override = _material
 
 
 func _apply_shape() -> void:
-	var col_node := $CollisionShape3D as CollisionShape3D
-	if not col_node:
-		return
 	var box_shape := BoxShape3D.new()
 	box_shape.size = item_size
-	col_node.shape = box_shape
+	_shape.shape = box_shape
 
 
 func set_highlighted(value: bool) -> void:
@@ -65,11 +63,19 @@ func set_highlighted(value: bool) -> void:
 
 
 func take_damage(amount: float) -> void:
-	if _destroyed or amount <= 0.0:
+	if is_queued_for_deletion() or amount <= 0.0:
 		return
 	hp -= amount
 	damaged.emit(amount)
 	if hp <= 0.0:
-		_destroyed = true
 		destroyed.emit()
 		queue_free()
+
+
+func apply_push(velocity_change: Vector3, _duration: float) -> void:
+	# freeze=true: интегратор RigidBody отключён, импульс уходил бы в никуда —
+	# контракт Pushable обещает применённый push, поэтому ранний выход.
+	# Самый частый случай: предмет в руке игрока (Hand держит через freeze).
+	if freeze:
+		return
+	apply_central_impulse(velocity_change * mass)

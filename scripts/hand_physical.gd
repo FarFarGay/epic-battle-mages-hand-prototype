@@ -4,21 +4,27 @@ extends Node
 ## (LMB) и диспатчит активные способности (Slam / Flick) на ПКМ через подузлы.
 ##
 ## Дочерние узлы:
-##   - Slam (hand_physical_slam.gd): хлопок по земле.
-##   - Flick (hand_physical_flick.gd): щелбан с орбитой.
+##   - Slam (HandPhysicalSlam): хлопок по земле.
+##   - Flick (HandPhysicalFlick): щелбан с орбитой.
 ## Какая из них активна — определяется `equipped`, переключается клавишами 1 / 2.
 ##
-## Зависит только от родителя — типа Hand. Через него получает позицию,
-## сглаженную скорость, доступ к Area-зонам и lock_position() для щелбана.
+## Зависит только от родителя — типа Hand. Hand передан в _ready через get_parent;
+## дальше связь с подмодулями устанавливается через явный setup().
 
-signal grabbed(item: Item)
-signal released(item: Item, velocity: Vector3)
+signal grabbed(item: Node3D)
+signal released(item: Node3D, velocity: Vector3)
 signal slammed(position: Vector3, radius: float)
 signal flicked(target: Node3D, velocity: Vector3)
 
 enum AbilityType { NONE = -1, SLAM, FLICK }
 
+const ACTION_GRAB := &"hand_grab"
+const ACTION_ACTION := &"hand_action"
+const ACTION_EQUIP_SLAM := &"equip_slam"
+const ACTION_EQUIP_FLICK := &"equip_flick"
 
+
+@export_group("Balance")
 @export var max_lift_mass: float = 10.0
 @export var throw_strength: float = 1.2
 @export var max_throw_speed: float = 30.0
@@ -42,16 +48,13 @@ var _hand: Hand
 var _held: Item = null
 var _is_grabbing: bool = false
 var _current_candidate: Item = null
-# Текущее активное действие на ПКМ (NONE если нет, FLICK если рука сейчас в орбите).
-# Slam — one-shot, hold-state не сохраняет.
-var _action_active: AbilityType = AbilityType.NONE
 
 # Логирование (фронт-триггеры)
 var _was_magnetizing: bool = false
 var _magnet_target_name: String = ""
 
-@onready var _slam: Node = $Slam
-@onready var _flick: Node = $Flick
+@onready var _slam: HandPhysicalSlam = $Slam
+@onready var _flick: HandPhysicalFlick = $Flick
 
 
 func _ready() -> void:
@@ -62,25 +65,28 @@ func _ready() -> void:
 		set_physics_process(false)
 		return
 	_hand.register_raycast_excluder(_get_excluded_rids)
-	# Сабузлы эмитят свои сигналы локально — пробрасываем их наверх через
-	# собственные сигналы PhysicalActions (внешний контракт сохраняется).
-	if _slam and _slam.has_signal("slammed"):
-		_slam.slammed.connect(slammed.emit)
-	if _flick and _flick.has_signal("flicked"):
-		_flick.flicked.connect(flicked.emit)
-	# Re-emit на глобальный EventBus — для UI / звука / статистики.
-	# grabbed/released пробрасывает Hand (он re-emit'ит из подмодуля); здесь
-	# отправляем напрямую только slammed/flicked, у Hand их нет.
+	# Передаём подмодулям ссылку на Hand и на координатор — чтобы они не лезли
+	# к дереву через get_parent()-цепочки.
+	_slam.setup(_hand, self)
+	_flick.setup(_hand, self)
+	_slam.slammed.connect(slammed.emit)
+	_flick.flicked.connect(flicked.emit)
+	# Re-emit на глобальный EventBus.
 	slammed.connect(func(position: Vector3, radius: float) -> void: EventBus.hand_slammed.emit(position, radius))
 	flicked.connect(func(target: Node3D, velocity: Vector3) -> void: EventBus.hand_flicked.emit(target, velocity))
 
 
+func _exit_tree() -> void:
+	# Если рука выгружается с захваченным предметом — освобождаем, чтобы Item
+	# не остался freeze=true в мире.
+	if _held:
+		_release()
+
+
 func _process(delta: float) -> void:
 	# Тикаем суб-способности (кулдауны, орбита и т.п.).
-	if _slam:
-		_slam.tick(delta)
-	if _flick:
-		_flick.tick(delta)
+	_slam.tick(delta)
+	_flick.tick(delta)
 	_handle_input()
 	_update_held_position()
 	_update_candidate_highlight()
@@ -108,22 +114,19 @@ func is_holding() -> bool:
 
 
 ## Возвращает ближайший допустимый Item внутри GrabArea (или null).
-## Используется суб-способностями (Flick) — единственный источник правды
-## для логики «кто сейчас под рукой».
 func find_grab_candidate() -> Item:
-	return _find_closest_item(_hand.grab_area.get_overlapping_bodies())
+	return _find_closest_item(_hand.get_grabbable_bodies())
 
 
-## Возвращает ближайшую цель для щелбана: Item (с mass-фильтром) или Enemy.
-## Враги в GrabArea видны благодаря collision_mask=18 (Items+Enemies).
+## Возвращает ближайшую damageable-цель в зоне захвата (с фильтром массы для RigidBody).
+## Используется Flick'ом — он бьёт всё damageable, не только Items/Enemies по имени.
 func find_flick_target() -> Node3D:
 	var closest: Node3D = null
 	var closest_dist := INF
-	for body in _hand.grab_area.get_overlapping_bodies():
-		if body is Item:
-			if (body as Item).mass >= max_lift_mass:
-				continue
-		elif not (body is Enemy):
+	for body in _hand.get_grabbable_bodies():
+		if not Damageable.is_damageable(body):
+			continue
+		if body is RigidBody3D and (body as RigidBody3D).mass >= max_lift_mass:
 			continue
 		var d := _hand.global_position.distance_to(body.global_position)
 		if d < closest_dist:
@@ -144,29 +147,39 @@ func _get_excluded_rids() -> Array[RID]:
 
 func _handle_input() -> void:
 	# Смена экипировки доступна всегда.
-	if Input.is_action_just_pressed("equip_slam"):
+	if Input.is_action_just_pressed(ACTION_EQUIP_SLAM):
 		equipped = AbilityType.SLAM
-	elif Input.is_action_just_pressed("equip_flick"):
+	elif Input.is_action_just_pressed(ACTION_EQUIP_FLICK):
 		equipped = AbilityType.FLICK
 
-	# Триггер активной способности (ПКМ).
-	if _action_active == AbilityType.NONE:
-		if Input.is_action_just_pressed("hand_action"):
+	# Триггер активной способности (ПКМ). Источник правды о hold-state — сам подмодуль.
+	if not _any_ability_active():
+		if Input.is_action_just_pressed(ACTION_ACTION):
 			_dispatch_action_press()
 	else:
-		if Input.is_action_just_released("hand_action"):
+		if Input.is_action_just_released(ACTION_ACTION):
 			_dispatch_action_release()
-			_action_active = AbilityType.NONE
 
-	# LMB-грабинг — пока активен flick, отключён, чтобы не схватить цель щелбана.
-	if _action_active == AbilityType.FLICK:
+	# LMB-грабинг через polling, не через just_pressed/released:
+	# во время flick'а edge-события пропускались бы и _is_grabbing залипало
+	# (магнит после flick'а тянул бы предметы постоянно).
+	var grab_pressed := Input.is_action_pressed(ACTION_GRAB)
+	var was_grabbing := _is_grabbing
+	_is_grabbing = grab_pressed
+	# Во время flick'а рука прицеплена к орбите — не grab'ать и не release'ить.
+	# _is_grabbing уже синхронизирован выше, так что после окончания flick'а
+	# магнит сам прекратится при отпущенной LMB.
+	if _flick.is_active():
 		return
-	if Input.is_action_just_pressed("hand_grab"):
-		_is_grabbing = true
+	if _is_grabbing and not was_grabbing:
 		_try_grab()
-	elif Input.is_action_just_released("hand_grab"):
-		_is_grabbing = false
+	elif not _is_grabbing and was_grabbing:
 		_release()
+
+
+func _any_ability_active() -> bool:
+	# Slam — one-shot (всегда возвращает false), Flick — hold-state.
+	return _slam.is_active() or _flick.is_active()
 
 
 func _dispatch_action_press() -> void:
@@ -176,15 +189,12 @@ func _dispatch_action_press() -> void:
 				_slam.on_press()
 			elif debug_log and LogConfig.master_enabled:
 				print("[Hand:Physical] хлопок на кулдауне")
-			# Slam — one-shot, никакого hold-state не остаётся.
 		AbilityType.FLICK:
-			var started: bool = _flick.on_press()
-			if started:
-				_action_active = AbilityType.FLICK
+			_flick.on_press()
 
 
 func _dispatch_action_release() -> void:
-	if _action_active == AbilityType.FLICK:
+	if _flick.is_active():
 		_flick.on_release()
 
 
@@ -193,13 +203,13 @@ func _dispatch_action_release() -> void:
 func _try_grab() -> void:
 	if _held:
 		return
-	var closest := _find_closest_item(_hand.grab_area.get_overlapping_bodies())
+	var closest := _find_closest_item(_hand.get_grabbable_bodies())
 	if closest:
 		_attach(closest)
 
 
 func _apply_magnet() -> void:
-	var closest := _find_closest_item(_hand.magnet_area.get_overlapping_bodies())
+	var closest := _find_closest_item(_hand.get_magnet_bodies())
 	if not closest:
 		if debug_log and LogConfig.master_enabled and _was_magnetizing:
 			print("[Hand:Physical] магнит: цели нет")
@@ -266,7 +276,7 @@ func _update_held_position() -> void:
 func _update_candidate_highlight() -> void:
 	var candidate: Item = null
 	if not _held:
-		candidate = _find_closest_item(_hand.grab_area.get_overlapping_bodies())
+		candidate = _find_closest_item(_hand.get_grabbable_bodies())
 	if candidate == _current_candidate:
 		return
 	if _current_candidate and is_instance_valid(_current_candidate):

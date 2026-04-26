@@ -1,14 +1,18 @@
+class_name HandPhysicalSlam
 extends Node
 ## Slam (хлопок по земле) — physical-категория, AOE-разлёт через PhysicsShapeQueryParameters3D.
 ## Триггерится координатором PhysicalActions, когда `equipped == SLAM` и нажата ПКМ.
 ##
-## Зависит только от родителя — Hand-координатор предоставляет `global_position`,
-## `get_world_3d()`, `get_tree()`. Hand находится через `get_parent().get_parent()`
-## (PhysicalActions → Hand).
+## Связь с Hand устанавливается через setup(hand, coord) от координатора —
+## никаких get_parent()-цепочек.
 
 signal slammed(position: Vector3, radius: float)
 
 const SLAM_VISUAL_POOL_CAP: int = 3
+const SLAM_VISUAL_BASE_RADIUS: float = 0.2
+const SLAM_VISUAL_BASE_HEIGHT: float = 0.4
+const SLAM_VISUAL_TWEEN_DURATION: float = 0.3
+const SLAM_VISUAL_EMISSION_ENERGY: float = 2.0
 
 class SlamHit:
 	extends RefCounted
@@ -20,33 +24,47 @@ class SlamHit:
 		falloff = f
 
 
+@export_group("Balance")
 @export var slam_radius: float = 5.0
 @export var slam_force: float = 30.0
 @export var slam_lift_factor: float = 0.4
 @export var slam_damage: float = 20.0
 @export var slam_cooldown: float = 0.5
-## По каким слоям бьёт хлопок: Items + Enemies по умолчанию.
+## По каким слоям бьёт хлопок: Items + Enemies по умолчанию (Layers.MASK_HAND_TARGETS = 18).
 @export_flags_3d_physics var slam_mask: int = 18
 @export var slam_visual_color: Color = Color(1.0, 0.7, 0.3, 0.6)
-## Длительность knockback'а на врагах (в течение этого времени их AI отключён).
+## Длительность knockback'а на kinematic-целях (в течение этого времени AI отключён).
 @export var slam_knockback_duration: float = 0.4
 
+@export_group("")
+## Куда добавлять визуалы хлопка. Если NodePath пуст или не резолвится —
+## fallback на current_scene (визуал должен остаться в точке хлопка, а не
+## таскаться за рукой; поэтому _hand как родитель не подходит).
+@export var effects_root_path: NodePath
 @export var debug_log: bool = true
 
 var _hand: Hand
+var _coord: HandPhysicalActions
 var _slam_cooldown_remaining: float = 0.0
+var _effects_root: Node = null
 
 # Пул визуалов хлопка — переиспользуем MeshInstance3D'ы вместо create+free на каждый slam.
 var _slam_visual_pool: Array[MeshInstance3D] = []
 
 
-func _ready() -> void:
-	_hand = get_parent().get_parent() as Hand
-	if not _hand:
-		push_error("HandPhysicalSlam: ожидается Hand через PhysicalActions → Hand")
-		set_process(false)
-		set_physics_process(false)
-		return
+## Вызывается координатором HandPhysicalActions._ready после установления связи с Hand.
+func setup(hand: Hand, coord: HandPhysicalActions) -> void:
+	_hand = hand
+	_coord = coord
+	if not effects_root_path.is_empty():
+		_effects_root = get_node_or_null(effects_root_path)
+	if _effects_root == null:
+		_effects_root = _hand.get_tree().current_scene
+
+
+## Slam одноразовый, hold-state не имеет — для симметрии с Flick.
+func is_active() -> bool:
+	return false
 
 
 # --- Публичный API (вызывается координатором PhysicalActions) ---
@@ -85,18 +103,25 @@ func _perform_slam() -> void:
 	query.collide_with_bodies = true
 	var results := space.intersect_shape(query, 32)
 
+	var held: Item = _coord.get_held_item() if _coord else null
 	var affected_count := 0
 	for r in results:
 		var collider = r.collider
-		if collider is Item:
-			var item := collider as Item
-			if item.freeze:
-				continue
-			_apply_slam_to_item(item, origin)
-			affected_count += 1
-		elif collider is Enemy:
-			_apply_slam_to_enemy(collider as Enemy, origin)
-			affected_count += 1
+		if not Damageable.is_damageable(collider):
+			continue
+		# Только пойманный рукой собственный Item исключаем — чтобы хлопок не
+		# толкал свой же ящик. Прочие freeze=true RigidBody (декорации/динамика)
+		# теперь нормально получают damage; push на них всё равно будет no-op
+		# (Item.apply_push вернёт ранний return при freeze).
+		if collider == held:
+			continue
+		var hit := _slam_direction_and_falloff(collider.global_position, origin)
+		if hit.falloff <= 0.0:
+			continue
+		var velocity_change: Vector3 = hit.direction * slam_force * hit.falloff
+		Pushable.try_push(collider, velocity_change, slam_knockback_duration)
+		Damageable.try_damage(collider, slam_damage * hit.falloff)
+		affected_count += 1
 
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Physical:Slam] хлопок @ (%.1f, %.1f, %.1f), задело: %d" % [origin.x, origin.y, origin.z, affected_count])
@@ -120,65 +145,47 @@ func _slam_direction_and_falloff(target_pos: Vector3, origin: Vector3) -> SlamHi
 	return SlamHit.new(horizontal_dir, falloff)
 
 
-func _apply_slam_to_item(item: Item, origin: Vector3) -> void:
-	var hit := _slam_direction_and_falloff(item.global_position, origin)
-	if hit.falloff <= 0.0:
-		return
-	item.apply_central_impulse(hit.direction * slam_force * hit.falloff)
-	item.take_damage(slam_damage * hit.falloff)
-
-
-func _apply_slam_to_enemy(enemy: Enemy, origin: Vector3) -> void:
-	var hit := _slam_direction_and_falloff(enemy.global_position, origin)
-	if hit.falloff <= 0.0:
-		return
-	# CharacterBody3D — нет apply_central_impulse, поэтому передаём через
-	# apply_knockback: enemy подменяет velocity и затухает к нулю.
-	enemy.apply_knockback(hit.direction * slam_force * hit.falloff, slam_knockback_duration)
-	enemy.take_damage(slam_damage * hit.falloff)
-
-
 func _spawn_slam_visual(pos: Vector3) -> void:
 	var mesh: MeshInstance3D
 	var sphere: SphereMesh
 	var mat: StandardMaterial3D
 
+	# Чистим пул от freed-меш'ей до reuse — могли исчезнуть вместе со сценой.
+	while not _slam_visual_pool.is_empty() and not is_instance_valid(_slam_visual_pool.back()):
+		_slam_visual_pool.pop_back()
 	if not _slam_visual_pool.is_empty():
-		# Переиспользуем меш из пула — сбрасываем scale/alpha/visibility.
 		mesh = _slam_visual_pool.pop_back()
 		sphere = mesh.mesh as SphereMesh
 		mat = mesh.material_override as StandardMaterial3D
 		mat.albedo_color = slam_visual_color
-		mat.emission = Color(slam_visual_color.r, slam_visual_color.g, slam_visual_color.b)
+		mat.emission = _opaque(slam_visual_color)
 		mesh.scale = Vector3.ONE
 		mesh.visible = true
 		if not mesh.is_inside_tree():
-			get_tree().current_scene.add_child(mesh)
+			_effects_root.add_child(mesh)
 	else:
 		mesh = MeshInstance3D.new()
 		sphere = SphereMesh.new()
-		sphere.radius = 0.2
-		sphere.height = 0.4
+		sphere.radius = SLAM_VISUAL_BASE_RADIUS
+		sphere.height = SLAM_VISUAL_BASE_HEIGHT
 		mesh.mesh = sphere
 
 		mat = StandardMaterial3D.new()
 		mat.albedo_color = slam_visual_color
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		mat.emission_enabled = true
-		mat.emission = Color(slam_visual_color.r, slam_visual_color.g, slam_visual_color.b)
-		mat.emission_energy_multiplier = 2.0
+		mat.emission = _opaque(slam_visual_color)
+		mat.emission_energy_multiplier = SLAM_VISUAL_EMISSION_ENERGY
 		mesh.material_override = mat
-
-		var scene_root := get_tree().current_scene
-		scene_root.add_child(mesh)
+		_effects_root.add_child(mesh)
 
 	mesh.global_position = pos
 
 	var target_scale: float = slam_radius / sphere.radius
 	var tween := mesh.create_tween()
 	tween.set_parallel(true)
-	tween.tween_property(mesh, "scale", Vector3.ONE * target_scale, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.tween_property(mat, "albedo_color:a", 0.0, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_property(mesh, "scale", Vector3.ONE * target_scale, SLAM_VISUAL_TWEEN_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_property(mat, "albedo_color:a", 0.0, SLAM_VISUAL_TWEEN_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.finished.connect(_recycle_slam_visual.bind(mesh))
 
 
@@ -190,3 +197,7 @@ func _recycle_slam_visual(mesh: MeshInstance3D) -> void:
 		_slam_visual_pool.append(mesh)
 	else:
 		mesh.queue_free()
+
+
+static func _opaque(c: Color) -> Color:
+	return Color(c.r, c.g, c.b)

@@ -1,21 +1,27 @@
+class_name HandPhysicalFlick
 extends Node
 ## Flick (щелбан) — physical-категория, направленный выпад предмета по курсору.
 ## Триггерится координатором PhysicalActions, когда `equipped == FLICK` и зажата ПКМ.
 ##
 ## Hold-state: пока ПКМ зажата, рука «прилипает» к орбите вокруг цели; на release —
 ## импульс в противоположную сторону.
+##
+## Связь с Hand устанавливается через setup(hand, coord) от координатора —
+## никаких get_parent()-цепочек.
 
 signal flicked(target: Node3D, velocity: Vector3)
 
+@export_group("Balance")
 @export var flick_orbit_radius: float = 1.5
 @export var flick_force: float = 25.0
 ## Минимум диапазона урона. На скелете hp=30 минимум 15 → два удара минимума ровно убивают.
 @export var flick_damage_min: float = 15.0
 ## Максимум диапазона. ≥ skeleton hp → шанс one-shot'а.
 @export var flick_damage_max: float = 35.0
-## Длительность knockback'а на враге при щелбане (AI отключён это время).
+## Длительность knockback'а на kinematic-цели при щелбане (AI отключён это время).
 @export var flick_knockback_duration: float = 0.3
 
+@export_group("")
 @export var debug_log: bool = true
 
 var _hand: Hand
@@ -28,19 +34,10 @@ var _flick_orbit_dir: Vector3 = Vector3.RIGHT
 var _active: bool = false
 
 
-func _ready() -> void:
-	_coord = get_parent() as HandPhysicalActions
-	if not _coord:
-		push_error("HandPhysicalFlick: ожидается родитель PhysicalActions (HandPhysicalActions)")
-		set_process(false)
-		set_physics_process(false)
-		return
-	_hand = _coord.get_parent() as Hand
-	if not _hand:
-		push_error("HandPhysicalFlick: ожидается Hand через PhysicalActions → Hand")
-		set_process(false)
-		set_physics_process(false)
-		return
+## Вызывается координатором HandPhysicalActions._ready после установления связи с Hand.
+func setup(hand: Hand, coord: HandPhysicalActions) -> void:
+	_hand = hand
+	_coord = coord
 
 
 # --- Публичный API (вызывается координатором PhysicalActions) ---
@@ -90,15 +87,8 @@ func on_release() -> void:
 	dir = dir.normalized()
 	var velocity: Vector3 = dir * flick_force
 	var damage := randf_range(flick_damage_min, flick_damage_max)
-	if _flick_target is Item:
-		var item := _flick_target as Item
-		item.apply_central_impulse(velocity)
-		item.take_damage(damage)
-	elif _flick_target is Enemy:
-		# CharacterBody3D — нет apply_central_impulse, толкаем через knockback.
-		var enemy := _flick_target as Enemy
-		enemy.apply_knockback(velocity, flick_knockback_duration)
-		enemy.take_damage(damage)
+	Pushable.try_push(_flick_target, velocity, flick_knockback_duration)
+	Damageable.try_damage(_flick_target, damage)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Physical:Flick] щелбан: %s полетел в (%.2f, %.2f), |v|=%.2f, dmg=%.1f" % [_flick_target.name, dir.x, dir.z, velocity.length(), damage])
 	flicked.emit(_flick_target, velocity)
@@ -120,4 +110,5 @@ func tick(_delta: float) -> void:
 	var to_cursor_h := VecUtil.horizontal(cursor - _flick_target.global_position)
 	if to_cursor_h.length_squared() > VecUtil.EPSILON_SQ:
 		_flick_orbit_dir = to_cursor_h.normalized()
-	_hand.global_position = _flick_target.global_position + _flick_orbit_dir * flick_orbit_radius
+	# Hand сейчас locked — пишем напрямую через документированный API.
+	_hand.set_locked_position(_flick_target.global_position + _flick_orbit_dir * flick_orbit_radius)

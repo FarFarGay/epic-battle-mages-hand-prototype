@@ -20,18 +20,17 @@ extends Node3D
 ## Зависит только от Tower через target_path. Локальные сигналы deployed/packed
 ## ре-эмитятся в EventBus для UI / звука / статистики.
 ##
-## Заметка по реализации: enum формально содержит DEPLOYING/PACKING для
-## расширения, но в текущем коде используются только CARAVAN_FOLLOWING и
-## DEPLOYED — hold-таймер растёт прямо в них, отдельные «промежуточные»
-## состояния не нужны.
-
 signal deployed(anchor: Vector3)
 signal packed
 
-enum State { CARAVAN_FOLLOWING, DEPLOYING, DEPLOYED, PACKING }
+enum State { CARAVAN_FOLLOWING, DEPLOYED }
 
 @export_node_path("Node3D") var target_path: NodePath
-## Коэффициент lerp при следовании палаток за лидером (башней или предыдущей палаткой).
+## Палатки лагеря в порядке цепочки. Прокидываются вручную в инспекторе.
+## Если пусто — _ready() заполнит из get_children() с фильтром по имени `CaravanPart*`.
+@export var part_nodes: Array[StaticBody3D] = []
+## Decay-коэффициент (log-rate) экспоненциального следования палаток.
+## Чем выше — тем быстрее палатка догоняет точку-цель. Не зависит от dt.
 @export var follow_speed: float = 4.0
 ## Расстояние между палатками в цепочке и между башней и parts[0].
 @export var part_gap: float = 2.5
@@ -43,18 +42,21 @@ enum State { CARAVAN_FOLLOWING, DEPLOYING, DEPLOYED, PACKING }
 @export var pack_duration: float = 4.0
 ## Радиус кольца, на которое расставляются палатки вокруг anchor.
 @export var deploy_radius: float = 4.0
-## Порог горизонтальной скорости башни, ниже которого считаем её стоящей.
-@export var stationary_speed_threshold: float = 0.5
+## Порог смещения цели за кадр, ниже которого считаем её неподвижной.
+@export var stationary_threshold: float = 0.01
 @export var debug_log: bool = true
 
-var _tower: CharacterBody3D
+var _tower: Node3D
 var _state: State = State.CARAVAN_FOLLOWING
 var _parts: Array[StaticBody3D] = []
-## Таймер удержания R. Сбрасывается при отпускании, при потере stationary в
-## CARAVAN_FOLLOWING и на фронте начала/завершения действия.
-var _hold_progress: float = 0.0
+## Таймер удержания R в CARAVAN_FOLLOWING (для развёртки).
+var _deploy_hold: float = 0.0
+## Таймер удержания R в DEPLOYED (для свёртки).
+var _pack_hold: float = 0.0
 var _deploy_anchor: Vector3 = Vector3.ZERO
 var _deployed_targets: Array[Vector3] = []
+## Позиция башни на прошлом кадре — для эпсилон-чека неподвижности.
+var _last_target_pos: Vector3 = Vector3.INF
 
 # Логирование (фронт-триггеры, чтобы не спамить каждый кадр).
 var _was_holding_stationary: bool = false
@@ -63,13 +65,18 @@ var _was_out_of_range: bool = false
 
 func _ready() -> void:
 	if not target_path.is_empty():
-		_tower = get_node_or_null(target_path) as CharacterBody3D
+		_tower = get_node_or_null(target_path) as Node3D
 	if not _tower:
 		push_warning("Camp: target_path не разрешился, башня не задана")
 
-	for child in get_children():
-		if child is StaticBody3D:
-			_parts.append(child as StaticBody3D)
+	if not part_nodes.is_empty():
+		for p in part_nodes:
+			if p:
+				_parts.append(p)
+	else:
+		for child in get_children():
+			if child is StaticBody3D and child.name.begins_with("CaravanPart"):
+				_parts.append(child as StaticBody3D)
 
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	deployed.connect(func(anchor: Vector3) -> void: EventBus.camp_deployed.emit(anchor))
@@ -79,19 +86,22 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_handle_input(delta)
 	match _state:
-		State.CARAVAN_FOLLOWING, State.DEPLOYING, State.PACKING:
+		State.CARAVAN_FOLLOWING:
 			_update_caravan_follow(delta)
 		State.DEPLOYED:
 			_update_deployed(delta)
+	if _tower != null:
+		_last_target_pos = _tower.global_position
 
 
 # --- Ввод / переходы состояний ---
 
 func _handle_input(delta: float) -> void:
 	if not Input.is_action_pressed("camp_toggle"):
-		if _hold_progress > 0.0 and debug_log and LogConfig.master_enabled and _was_holding_stationary:
+		if _deploy_hold > 0.0 and debug_log and LogConfig.master_enabled and _was_holding_stationary:
 			print("[Camp] отсчёт прерван (отпущена R)")
-		_hold_progress = 0.0
+		_deploy_hold = 0.0
+		_pack_hold = 0.0
 		_was_holding_stationary = false
 		return
 
@@ -102,26 +112,28 @@ func _handle_input(delta: float) -> void:
 					if debug_log and LogConfig.master_enabled:
 						print("[Camp] начат отсчёт развёртки")
 					_was_holding_stationary = true
-				_hold_progress += delta
-				if _hold_progress >= deploy_duration:
+				_deploy_hold += delta
+				if _deploy_hold >= deploy_duration:
 					_start_deploy()
 			else:
 				if _was_holding_stationary and debug_log and LogConfig.master_enabled:
 					print("[Camp] отсчёт прерван (башня поехала)")
-				_hold_progress = 0.0
+				_deploy_hold = 0.0
 				_was_holding_stationary = false
 		State.DEPLOYED:
-			_hold_progress += delta
-			if _hold_progress >= pack_duration:
+			_pack_hold += delta
+			if _pack_hold >= pack_duration:
 				_start_pack()
-		_:
-			pass
 
 
 func _is_tower_stationary() -> bool:
 	if _tower == null:
 		return false
-	return Vector2(_tower.velocity.x, _tower.velocity.z).length() < stationary_speed_threshold
+	if _last_target_pos == Vector3.INF:
+		return false
+	var d := _tower.global_position - _last_target_pos
+	d.y = 0.0
+	return d.length() < stationary_threshold
 
 
 func _start_deploy() -> void:
@@ -138,7 +150,8 @@ func _start_deploy() -> void:
 			_deploy_anchor.z + sin(angle) * deploy_radius,
 		)
 		_deployed_targets.append(target)
-	_hold_progress = 0.0
+	_deploy_hold = 0.0
+	_pack_hold = 0.0
 	_was_holding_stationary = false
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] лагерь развёрнут @ (%.1f, %.1f, %.1f)" % [_deploy_anchor.x, _deploy_anchor.y, _deploy_anchor.z])
@@ -147,7 +160,8 @@ func _start_deploy() -> void:
 
 func _start_pack() -> void:
 	_state = State.CARAVAN_FOLLOWING
-	_hold_progress = 0.0
+	_deploy_hold = 0.0
+	_pack_hold = 0.0
 	_was_holding_stationary = false
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] лагерь свёрнут")
@@ -185,8 +199,8 @@ func _update_caravan_follow(delta: float) -> void:
 			continue
 		var dir := to_leader.normalized()
 		var target_pos := leader_pos - dir * part_gap
-		target_pos.y = part.global_position.y  # не дёргаем по высоте
-		part.global_position = part.global_position.lerp(target_pos, follow_speed * delta)
+		target_pos.y = _ground_y_at(part, target_pos)
+		part.global_position = _exp_decay(part.global_position, target_pos, follow_speed, delta)
 
 
 func _update_deployed(delta: float) -> void:
@@ -194,4 +208,26 @@ func _update_deployed(delta: float) -> void:
 		if i >= _deployed_targets.size():
 			break
 		var part := _parts[i]
-		part.global_position = part.global_position.lerp(_deployed_targets[i], follow_speed * delta)
+		part.global_position = _exp_decay(part.global_position, _deployed_targets[i], follow_speed, delta)
+
+
+# --- Helpers ---
+
+## Покадрово стабильное смягчение к target. decay — log-rate (чем больше, тем быстрее).
+static func _exp_decay(current: Vector3, target: Vector3, decay: float, delta: float) -> Vector3:
+	return target + (current - target) * exp(-decay * delta)
+
+
+## Y под точкой target_pos через raycast по слою TERRAIN. Если raycast пуст —
+## возвращаем текущую Y палатки (не дёргаем по высоте).
+func _ground_y_at(part: StaticBody3D, target_pos: Vector3) -> float:
+	var space := part.get_world_3d().direct_space_state
+	if space == null:
+		return part.global_position.y
+	var from := target_pos + Vector3.UP * 5.0
+	var to := target_pos + Vector3.DOWN * 50.0
+	var query := PhysicsRayQueryParameters3D.create(from, to, Layers.TERRAIN)
+	var hit := space.intersect_ray(query)
+	if hit.is_empty():
+		return part.global_position.y
+	return (hit["position"] as Vector3).y
