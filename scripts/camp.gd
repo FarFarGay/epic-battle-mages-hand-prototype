@@ -42,6 +42,12 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 ## распределится через part_gap. На развёртку угол кольца считается как
 ## TAU / tent_count, так что любое число работает.
 @export var tent_count: int = 4
+## «Уже развёрнутый» лагерь: на _ready стартуем сразу в DEPLOYED-состоянии,
+## anchor = собственная global_position (не нужна башня). Палатки сразу
+## едут в кольцо вокруг лагеря, гномы выходят бродить и собирать.
+## R-toggle отключён — такой лагерь не сворачивается. Используется для
+## статических поселений на POI (карта-локация без следования за башней).
+@export var start_deployed: bool = false
 @export_group("")
 
 ## Decay-коэффициент (log-rate) экспоненциального следования палаток.
@@ -100,7 +106,7 @@ var _was_out_of_range: bool = false
 func _ready() -> void:
 	if not target_path.is_empty():
 		_tower = get_node_or_null(target_path) as Node3D
-	if not _tower:
+	if not _tower and not start_deployed:
 		push_warning("Camp: target_path не разрешился, башня не задана")
 
 	_spawn_tents()
@@ -114,6 +120,12 @@ func _ready() -> void:
 	# (но всё ещё существующий статикой) Tower-меш. _update_caravan_follow и
 	# stationary-чек уже null-safe, ничего больше делать не нужно.
 	EventBus.tower_destroyed.connect(_on_tower_destroyed)
+
+	# Static-режим: сразу стартуем в DEPLOYED. Anchor = собственная позиция
+	# Camp (не башни, которой нет). Палатки переедут с линии (где их поставил
+	# _spawn_tents) в кольцо вокруг anchor через _exp_decay в _update_deployed.
+	if start_deployed:
+		_start_deploy()
 
 
 ## Спавнит палатки по tent_scene × tent_count. Линейная цепочка позади башни:
@@ -244,6 +256,10 @@ func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool:
 # --- Ввод / переходы состояний ---
 
 func _handle_input(delta: float) -> void:
+	# Static-camp (start_deployed=true) не реагирует на R — он не сворачивается.
+	# Поселения на POI остаются развёрнутыми всю игру.
+	if start_deployed:
+		return
 	if not Input.is_action_pressed("camp_toggle"):
 		if _deploy_hold > 0.0 and debug_log and LogConfig.master_enabled and _was_holding_stationary:
 			print("[Camp] отсчёт прерван (отпущена R)")
@@ -288,7 +304,9 @@ func _is_tower_stationary() -> bool:
 
 func _start_deploy() -> void:
 	_state = State.DEPLOYED
-	_deploy_anchor = _tower.global_position
+	# Anchor: позиция башни если есть, иначе собственная позиция Camp
+	# (для static-режима через start_deployed — см. _ready).
+	_deploy_anchor = _tower.global_position if _tower != null else global_position
 	_deployed_targets.clear()
 	var count := _parts.size()
 	for i in range(count):

@@ -51,9 +51,6 @@ target_path = NodePath("../Tower")
 [node name="Hand" parent="." unique_id=1987763939 instance=ExtResource("2")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.5, 0)
 
-[node name="Camp" parent="." unique_id=120382194 instance=ExtResource("8")]
-target_path = NodePath("../Tower")
-
 [node name="EnemySpawner" type="Node3D" parent="." unique_id=1441766688]
 script = ExtResource("6")
 enemy_scenes = Array[PackedScene]([ExtResource("7")])
@@ -72,37 +69,51 @@ arrow_speed = 30.5
 [node name="OuterE" parent="PointsOfInterest" instance=ExtResource("12")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 174, 0.3, -11)
 
-[node name="OuterNE" parent="PointsOfInterest" instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 102, 0.3, -147)
-
 [node name="OuterNW" parent="PointsOfInterest" instance=ExtResource("12")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -83, 0.3, -163)
-
-[node name="OuterW" parent="PointsOfInterest" instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -185, 0.3, 6)
 
 [node name="OuterSW" parent="PointsOfInterest" instance=ExtResource("12")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -97, 0.3, 162)
 
-[node name="OuterSE" parent="PointsOfInterest" instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 84, 0.3, 149)
-
 [node name="InnerENE" parent="PointsOfInterest" instance=ExtResource("12")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 74, 0.3, -34)
-
-[node name="InnerN" parent="PointsOfInterest" instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0.3, -76)
 
 [node name="InnerWNW" parent="PointsOfInterest" instance=ExtResource("12")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -64, 0.3, -46)
 
-[node name="InnerWSW" parent="PointsOfInterest" instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -73, 0.3, 44)
-
 [node name="InnerS" parent="PointsOfInterest" instance=ExtResource("12")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0.3, 84)
 
-[node name="InnerESE" parent="PointsOfInterest" instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65, 0.3, 37)
+[node name="GnomeCamps" type="Node3D" parent="."]
+
+[node name="CampOuterNE" parent="GnomeCamps" instance=ExtResource("8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 102, 0, -147)
+tent_count = 3
+start_deployed = true
+
+[node name="CampOuterW" parent="GnomeCamps" instance=ExtResource("8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -185, 0, 6)
+tent_count = 4
+start_deployed = true
+
+[node name="CampOuterSE" parent="GnomeCamps" instance=ExtResource("8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 84, 0, 149)
+tent_count = 2
+start_deployed = true
+
+[node name="CampInnerN" parent="GnomeCamps" instance=ExtResource("8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0, -76)
+tent_count = 4
+start_deployed = true
+
+[node name="CampInnerWSW" parent="GnomeCamps" instance=ExtResource("8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -73, 0, 44)
+tent_count = 3
+start_deployed = true
+
+[node name="CampInnerESE" parent="GnomeCamps" instance=ExtResource("8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65, 0, 37)
+tent_count = 2
+start_deployed = true
 
 [node name="PerfHud" parent="." instance=ExtResource("11")]
