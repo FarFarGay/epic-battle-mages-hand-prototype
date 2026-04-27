@@ -55,9 +55,18 @@ extends Gnome
 ## Используем литерал — `const` не может ссылаться на другой class const.
 const TARGET_MASK: int = 16 | 128
 
+## Период между сканами цели через PhysicsShapeQuery. Без throttle'а 54
+## защитника на карте делали бы 54×60 = 3240 sphere-query/сек, и на 340+
+## скелетах в радиусе 15м это убивало fps (3 FPS на стресс-тесте). С 0.25с
+## — 216 query/сек, в 15 раз меньше. Кэшированная цель используется между
+## сканами — если она валидна и в радиусе, не пересканируем.
+const TARGET_SCAN_INTERVAL: float = 0.25
+
 var _attack_timer: float = 0.0
 var _projectiles_root: Node = null
 var _patrol_target: Vector3 = Vector3.INF
+var _cached_target: Node3D = null
+var _target_scan_timer: float = 0.0
 
 
 func _ready() -> void:
@@ -70,6 +79,9 @@ func _ready() -> void:
 		_projectiles_root = get_tree().current_scene
 	# Стартовая задержка случайна — 3 защитника в палатке не выстрелят залпом.
 	_attack_timer = randf_range(attack_cooldown_min, attack_cooldown_max)
+	# Фазовый сдвиг сканера: 54 защитника на карте не должны сканировать в
+	# одном кадре — иначе кадровая нагрузка пойдёт волной каждые 0.25с.
+	_target_scan_timer = randf() * TARGET_SCAN_INTERVAL
 
 
 ## Override базы: тот же скелет _physics_process, но в активной фазе вместо
@@ -107,19 +119,29 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 
-## Скан цели каждый тик. Если есть — останавливаемся, тикаем cooldown, по
-## готовности стреляем (одиночный кадр стрельбы). Если цели нет — патрулируем
-## по внешнему контуру лагеря, cooldown тоже идёт (чтобы при появлении
-## скелета первый выстрел был сразу, без задержки).
+## Скан цели через кэш + throttle (TARGET_SCAN_INTERVAL=0.25с). Сам скан —
+## дорогой PhysicsShapeQuery; на 54 защитниках при 60fps без кэша было
+## убийство fps. Между сканами используем _cached_target, если она валидна
+## и в радиусе. Если цель есть — стоим и стреляем. Нет — охлаждаемся и
+## патрулируем по контуру.
 func _defender_combat_tick(delta: float) -> void:
-	var target := _find_skeleton_target()
-	if target != null:
+	_target_scan_timer -= delta
+	# Принудительный пересмотр кэша если цель умерла или вышла за зону —
+	# это дешёвые проверки, ради них не стоит ждать таймер.
+	var stale: bool = _cached_target == null \
+		or not is_instance_valid(_cached_target) \
+		or global_position.distance_to(_cached_target.global_position) > attack_radius
+	if _target_scan_timer <= 0.0 or stale:
+		_cached_target = _find_skeleton_target()
+		_target_scan_timer = TARGET_SCAN_INTERVAL
+
+	if _cached_target != null and is_instance_valid(_cached_target):
 		# Стой и стреляй: пока есть цель в зоне — на месте.
 		velocity.x = 0.0
 		velocity.z = 0.0
 		_attack_timer -= delta
 		if _attack_timer <= 0.0:
-			_fire_at(target)
+			_fire_at(_cached_target)
 			_attack_timer = randf_range(attack_cooldown_min, attack_cooldown_max)
 	else:
 		# Без цели — охлаждаемся и патрулируем.
