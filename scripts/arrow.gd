@@ -14,8 +14,11 @@ signal hit(target: Node, position: Vector3)
 @export var damage: float = 35.0
 @export var speed: float = 22.0
 ## Секунды до автоматического queue_free, если стрела ни во что не попала.
-## На карте 200×200 при speed=22 → пролёт 9с, ставим запас.
-@export var lifetime: float = 4.0
+## При speed=22 пролёт 2с = 44м, что больше attack_radius любого стрелка
+## (defender 15м, turret 22м). Запас минимальный, чтобы промахнувшиеся стрелы
+## не висели в воздухе и не нагружали Area3D-overlap-checks. На 54 защитниках
+## с cooldown=1.5с это держит ~70 стрел в воздухе вместо ~140 при lifetime=4.
+@export var lifetime: float = 2.0
 
 @onready var _hit_area: Area3D = $HitArea
 

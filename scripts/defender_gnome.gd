@@ -21,9 +21,13 @@ extends Gnome
 ## фантомами и защитник перестаёт реагировать.
 @export var attack_radius: float = 15.0
 ## Случайный интервал между выстрелами. Не строгий метроном — несколько
-## защитников в одной палатке не залпуют синхронно.
-@export var attack_cooldown_min: float = 0.6
-@export var attack_cooldown_max: float = 1.2
+## защитников в одной палатке не залпуют синхронно. Поднял с 0.6/1.2 до
+## 1.0/2.0: на 54 защитниках это снизило поток стрел с ~60 до ~36/сек,
+## что уменьшает overlap-чеки Area3D на стрелах (главная нагрузка на 290+
+## скелетах). Damage 25..40 всё равно даёт 1-shot kill в 66% попаданий —
+## защита продолжает работать.
+@export var attack_cooldown_min: float = 1.0
+@export var attack_cooldown_max: float = 2.0
 ## Урон рандомизирован: при skeleton.hp=30 диапазон 25..40 даёт 1-shot kill
 ## в ~66% случаев (damage > 30) и 2-shot в остальных. «Чаще за 1 выстрел».
 @export var arrow_damage_min: float = 25.0

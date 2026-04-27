@@ -67,7 +67,11 @@ enum WanderPhase { RESTING, WANDERING }
 ## 2-3 раза за тик на каждом скелете (50 врагов × 3 скана × 60fps).
 ## С throttle'ом и кэшем — ~1/interval сканов в секунду на скелета.
 ## Если кэшированная цель умерла или вышла из группы — рескан принудительно.
-@export var vision_scan_interval: float = 0.15
+##
+## Группа skeleton_target теперь содержит и палатки (18), и гномов (126) —
+## всего 144 потенциальных цели. На 290 скелетах при interval=0.15 это
+## давало ~280k distance-checks/сек. Поднял до 0.3 — экономия ×2.
+@export var vision_scan_interval: float = 0.3
 @export_group("")
 
 @export_group("Wander (без цели)")

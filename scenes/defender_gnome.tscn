@@ -23,3 +23,4 @@ shape = SubResource("CapsuleShape3D_defender")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 mesh = SubResource("CapsuleMesh_defender")
+cast_shadow = 0

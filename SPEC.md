@@ -558,7 +558,7 @@ Skeleton не использует `Enemy._targets` — вместо этого 
 - Группа **Vision:**
   - `vision_radius: float = 12.0` — дальность зрения. Цель в этом радиусе считается «увиденной».
 - Группа **Vision scan throttle:**
-  - `vision_scan_interval: float = 0.15` — период между ре-сканами целей (с).
+  - `vision_scan_interval: float = 0.3` — период между ре-сканами целей (с). Группа `skeleton_target` содержит и палатки (~18), и гномов (~126) — на 290+ скелетах при 0.15с давало ~280k distance-checks/сек.
 - Группа **Wander (без цели):**
   - `wander_speed: float = 1.2` — скорость патруля без цели.
   - `wander_distance_min/max: 5.0/15.0` — диапазон следующей wander-точки.
@@ -902,7 +902,7 @@ enum State {
 
 **Боевые экспорты:**
 - `attack_radius: float = 15.0` — радиус сканирования скелетов через `PhysicsShapeQuery`.
-- `attack_cooldown_min/max: float = 0.6 / 1.2` — рандомный интервал между выстрелами; 3 защитника в палатке не залпуют синхронно.
+- `attack_cooldown_min/max: float = 1.0 / 2.0` — рандомный интервал между выстрелами; 3 защитника в палатке не залпуют синхронно. Поднял с 0.6/1.2: на 54 защитниках это снизило поток стрел с ~60 до ~36/сек (overlap-чеки Area3D на стрелах были главной нагрузкой при 290+ скелетах).
 - `arrow_damage_min/max: float = 25.0 / 40.0` — `randf_range`. На `skeleton.hp = 30` это 1-shot kill в ~66% случаев (когда damage > 30) и 2-shot в остальных. «Чаще за 1 выстрел».
 - `arrow_speed: float = 22.0`, `arrow_spawn_offset: Vector3 = (0, 0.6, 0)` — над головой, чтобы стрела не задела свой же корпус.
 - `arrow_scene: PackedScene` — переиспользуется `arrow.tscn` от OctagonTurret.

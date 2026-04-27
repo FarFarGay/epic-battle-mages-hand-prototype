@@ -20,3 +20,4 @@ shape = SubResource("CapsuleShape3D_gnome")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 mesh = SubResource("CapsuleMesh_gnome")
+cast_shadow = 0
