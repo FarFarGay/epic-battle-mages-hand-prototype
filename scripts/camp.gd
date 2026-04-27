@@ -61,10 +61,9 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 @export var stationary_threshold: float = 0.01
 
 @export_group("Gnomes")
-## Сцена гнома — спавнится по gnomes_per_tent на каждую палатку.
+## Сцена гнома — каждая палатка декларирует свой `gnomes_per_tent`, Camp
+## читает его и инстанцирует эту сцену соответствующее число раз.
 @export var gnome_scene: PackedScene
-## Сколько гномов живёт в каждой палатке.
-@export var gnomes_per_tent: int = 2
 
 @export_group("")
 @export var debug_log: bool = true
@@ -154,7 +153,12 @@ func _spawn_gnomes() -> void:
 			print("[Camp] gnome_scene не задан — гномы не спавнятся")
 		return
 	for tent in _parts:
-		for i in range(gnomes_per_tent):
+		# Количество гномов — параметр самой палатки. Разные типы палаток
+		# могут декларировать разную вместимость без правки Camp.
+		var count := 0
+		if tent is CampPart:
+			count = (tent as CampPart).gnomes_per_tent
+		for i in range(count):
 			var gnome := gnome_scene.instantiate() as Gnome
 			if gnome == null:
 				push_warning("Camp: gnome_scene не инстанцируется как Gnome")

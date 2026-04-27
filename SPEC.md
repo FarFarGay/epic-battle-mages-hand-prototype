@@ -737,8 +737,7 @@ func _yield_frame_and_recenter() -> Vector3:
 - `deploy_radius: float = 4.0` — радиус кольца палаток вокруг anchor.
 - `stationary_threshold: float = 0.01` — порог смещения **позиции** цели за кадр, ниже которого считаем её неподвижной (раньше читалась `velocity` у CharacterBody3D — теперь `_tower` хранится как `Node3D`, и неподвижность определяется через эпсилон-чек delta-position).
 - Группа **Gnomes:**
-  - `gnome_scene: PackedScene` — сцена гнома (см. §5.8).
-  - `gnomes_per_tent: int = 2` — сколько гномов спавнить на каждую палатку.
+  - `gnome_scene: PackedScene` — сцена гнома (см. §5.8). Количество гномов на палатку Camp **не** задаёт — каждая палатка сама декларирует вместимость через `CampPart.gnomes_per_tent` (по дефолту 7). Это позволит в будущем иметь разные типы палаток с разной заселённостью без правки Camp.
 - `debug_log: bool = true`.
 
 **Сигналы:**
@@ -769,7 +768,7 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 
 **`_spawn_tents`:** инстанцирует `tent_scene` × `tent_count` раз. Стартовая позиция каждой — линия позади origin'а Camp по X (`-i × part_gap`); Y берётся из самой `tent.tscn` (там она 0.75 — низ меша на полу). Каждая палатка — самостоятельный `CampPart`-инстанс; Camp подписывается на её `destroyed`, чтобы синхронно вычистить и `_parts`, и `_deployed_targets` по индексу. Без сцены (`tent_scene = null`) или при `tent_count <= 0` — `push_warning` и пустой караван.
 
-**`_spawn_gnomes`:** для каждой палатки в `_parts` `gnomes_per_tent` раз инстанцирует `gnome_scene`, кастует к `Gnome`, кладёт ребёнком Camp, ставит в позицию палатки и вызывает `gnome.setup(self, tent)`.
+**`_spawn_gnomes`:** для каждой палатки в `_parts` читает её собственный `gnomes_per_tent` (поле `CampPart`, дефолт 7) и инстанцирует `gnome_scene` соответствующее количество раз. Кастует к `Gnome`, кладёт ребёнком Camp, ставит в позицию палатки и вызывает `gnome.setup(self, tent)`. Палатка-владелец передаётся как `home_tent` — гном привязан именно к ней (хранит в `_home_tent`, идёт туда при `request_return`, а в `IN_TENT` приклеен к её `global_position`).
 
 **Логика follow (`_update_caravan_follow`):**
 - Distance-gate: если `parts[0].distance_to(tower) > follow_max_distance` — ведущая стоит, остальные подтягиваются к своим лидерам.
@@ -1248,7 +1247,7 @@ func take_one() -> bool:
 | Hand | сигналы `grabbed(item: Node3D)/released(item: Node3D, velocity)` (re-emit из PhysicalActions); публичный API: `lock_position(bool)`, `set_locked_position(pos)`, `cursor_world_position()`, `smoothed_velocity()`, `get_grabbable_bodies()/get_magnet_bodies()`, `register_raycast_excluder(Callable)` | активная камера; никаких конкретных game-классов |
 | Hand:PhysicalActions | сигналы `grabbed/released/slammed/flicked(target: Node3D, velocity)`, методы `get_held_item()/is_holding()/find_grab_candidate()/find_flick_target()`, `@export equipped: AbilityType` | Input `hand_grab/hand_action/equip_slam/equip_flick`; Hand через `setup` цепочку. Цели — через `Damageable.is_damageable / Grabbable.is_grabbable / Pushable.try_push`, а не через `is Item / is Enemy` |
 | Hand:SpellActions | сигнал `spell_cast(name, position)` (черновик) | родитель Hand через `setup(hand)` |
-| Camp | сигналы `deployed(anchor: Vector3)/packed`, экспорт `target_path/tent_scene/tent_count/gnome_scene/gnomes_per_tent`, публичные `deploy_anchor: Vector3` (свойство) и `is_pile_claimed(pile, exclude_gnome)`. Палатки спавнит динамически в `_spawn_tents`. | Input `camp_toggle`, читает `Tower.global_position` (delta-position для stationary-чека); зовёт `Gnome.enter_deployed/request_return/is_home/get_assigned_pile`; слушает `EventBus.tower_destroyed` для остановки follow'а |
+| Camp | сигналы `deployed(anchor: Vector3)/packed`, экспорт `target_path/tent_scene/tent_count/gnome_scene`, публичные `deploy_anchor: Vector3` (свойство) и `is_pile_claimed(pile, exclude_gnome)`. Палатки спавнит динамически в `_spawn_tents`; вместимость каждой читает из её `CampPart.gnomes_per_tent`. | Input `camp_toggle`, читает `Tower.global_position` (delta-position для stationary-чека); зовёт `Gnome.enter_deployed/request_return/is_home/get_assigned_pile`; слушает `EventBus.tower_destroyed` для остановки follow'а |
 | Gnome | методы `setup(camp, home_tent)/enter_deployed()/request_return()/is_home()/get_assigned_pile()` | Camp через ссылку из `setup`; мир — через `get_tree().get_nodes_in_group(ResourcePile.GROUP)`; `ResourcePile.take_one()` |
 | ResourcePile | сигналы `damaged/destroyed`, методы `take_damage(float)/apply_push(Vector3, float)/set_highlighted(bool)/take_one() -> bool`. Регистрируется в `Damageable` + `Pushable` + `Grabbable` группах + собственная `ResourcePile.GROUP = "resource_pile"` | физика, рука (через Grabbable/Damageable/Pushable), гномы (через `take_one`) |
 | CameraRig | — | `@export target_path` |
