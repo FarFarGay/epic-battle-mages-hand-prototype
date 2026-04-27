@@ -109,7 +109,7 @@ hand_gameplay_prot/
 | 3 | Actors | Tower (player-side) | Items, Enemies |
 | 4 | Projectiles | (заготовка под магию) | Terrain, Actors, Enemies |
 | 5 | Enemies | `Skeleton` и будущие враги | Tower (Actors), Slam, Flick |
-| 6 | CampObstacle | палатки `Camp` (CaravanPart*) — статически на этом слое в обоих режимах | Skeleton (мутуально-исключающе с Tower — башня НЕ сканирует слой 6) |
+| 6 | CampObstacle | палатки `Camp` (Tent*-инстансы из `tent.tscn`) — статически на этом слое в обоих режимах | Skeleton (мутуально-исключающе с Tower — башня НЕ сканирует слой 6) |
 | 7 | MountedModule | `CampModule` в момент монтажа в слот (динамически переключается с ITEMS) | Hand.GrabArea, Hand.cursor_raycast — иначе игрок не сможет снять модуль с башни обратно. Tower **не** сканирует — иначе touching-контакт «башня снизу, модуль на ней» давал бы ложные wall-collision'ы |
 | 8 | ColdEnemy | FAR-LOD скелеты (динамически переключается с ENEMIES при выходе за `lod_far_distance`) | Hand.GrabArea, Hand:PhysicalSlam.slam_mask — рука и slam должны доставать дальние стаи независимо от LOD. Другие скелеты, башня, турель **не** сканируют — отсюда смысл «холодного» режима: снимаем broad-phase нагрузку на 1000+ врагов |
 
@@ -721,14 +721,14 @@ func _yield_frame_and_recenter() -> Vector3:
 **Назначение:** модуль «лагеря» — несколько палаток (`StaticBody3D`), в режиме каравана следующих за башней цепочкой. По зажатию `R` (при неподвижной башне) лагерь разворачивается вокруг текущей позиции башни в кольцо палаток-блокаторов. В развёрнутом состоянии лагерь спавнит **гномов** (см. §5.8) — те бродят, ищут `ResourcePile` (см. §5.9) и носят ресурсы к anchor'у. Повторное зажатие `R` инициирует свёртку: гномы возвращаются в палатки, и только после прихода всех лагерь снова становится караваном. Зависит от Tower через `target_path`.
 
 **Дочерние узлы:**
-- 4× `StaticBody3D` (`CaravanPart1..CaravanPart4`), каждая с `CollisionShape3D` 2×1.5×1.5 и `MeshInstance3D` (общий `Material_part` SubResource — один draw call на лагерь).
-- Стартовые позиции — линия позади origin'а Camp (`x = 0, −3, −6, −9`).
-- `collision_layer = 32` (`CampObstacle`, бит 5) **в обоих состояниях** — статически в `.tscn`, рантайм его не меняет. `collision_mask = 0` — палатки сами ничего не сканируют.
-- В `gnome_scene` экспорте сцены прокидывается `gnome.tscn`.
+- `CenterMountSlot` (`Node3D` со скриптом `mount_slot.gd`) — центральный слот для модулей в развёрнутом виде. Стартует `enabled=false` (вне DEPLOYED центра нет).
+- Палатки **не лежат в camp.tscn инлайном** — спавнятся динамически из `tent_scene` × `tent_count` в `_spawn_tents()` (см. ниже). Это та же декомпозиция «сцена + скрипт = пакет», что и у Item, ResourcePile, Skeleton: палатка теперь самостоятельная сущность ([scenes/tent.tscn](scenes/tent.tscn) + [scripts/camp_part.gd](scripts/camp_part.gd)), а Camp — её композитор.
 
 **Экспорты:**
 - `target_path: NodePath` (`@export_node_path("Node3D")`) — за кем следует караван. Обычно Tower.
-- `part_nodes: Array[StaticBody3D]` — палатки в порядке цепочки. Прокидываются вручную в инспекторе. Если массив пуст — `_ready` заполнит `_parts` через `get_children()` с фильтром по имени `CaravanPart*` (фолбэк).
+- Группа **Caravan composition:**
+  - `tent_scene: PackedScene` — сцена палатки. По дефолту в `camp.tscn` стоит `tent.tscn`, но можно подменить любой `StaticBody3D` со скриптом `CampPart`.
+  - `tent_count: int = 4` — сколько палаток в караване. Меняется в инспекторе. Layout цепочки автоматически распределяется через `part_gap`; на развёртку угол кольца = `TAU / tent_count` — любое разумное число работает.
 - `follow_speed: float = 4.0` — **decay-коэффициент** (log-rate) экспоненциального следования палаток. **Не зависит от dt** (см. `_exp_decay`).
 - `part_gap: float = 2.5` — целевая дистанция между соседними палатками.
 - `follow_max_distance: float = 30.0` — «зона видимости».
@@ -765,9 +765,11 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 - `_gnomes: Array[Gnome]` — гномы лагеря (создаются в `_spawn_gnomes`).
 - `deploy_anchor: Vector3` — публичное property (геттер возвращает `_deploy_anchor`). Гномы читают, чтобы знать, куда нести ресурс.
 
-**`_ready`:** резолвит `_tower` через `target_path`; собирает `_parts` из `part_nodes` (или фолбэк); `_spawn_gnomes()`; подключает re-emit на EventBus.
+**`_ready`:** резолвит `_tower` через `target_path`; вызывает `_spawn_tents()` затем `_spawn_gnomes()`; подключает re-emit на EventBus и подписку на `tower_destroyed`.
 
-**`_spawn_gnomes`:** для каждой палатки `gnomes_per_tent` раз инстанцирует `gnome_scene`, кастует к `Gnome`, кладёт ребёнком Camp, ставит в позицию палатки и вызывает `gnome.setup(self, tent)`.
+**`_spawn_tents`:** инстанцирует `tent_scene` × `tent_count` раз. Стартовая позиция каждой — линия позади origin'а Camp по X (`-i × part_gap`); Y берётся из самой `tent.tscn` (там она 0.75 — низ меша на полу). Каждая палатка — самостоятельный `CampPart`-инстанс; Camp подписывается на её `destroyed`, чтобы синхронно вычистить и `_parts`, и `_deployed_targets` по индексу. Без сцены (`tent_scene = null`) или при `tent_count <= 0` — `push_warning` и пустой караван.
+
+**`_spawn_gnomes`:** для каждой палатки в `_parts` `gnomes_per_tent` раз инстанцирует `gnome_scene`, кастует к `Gnome`, кладёт ребёнком Camp, ставит в позицию палатки и вызывает `gnome.setup(self, tent)`.
 
 **Логика follow (`_update_caravan_follow`):**
 - Distance-gate: если `parts[0].distance_to(tower) > follow_max_distance` — ведущая стоит, остальные подтягиваются к своим лидерам.
@@ -1246,7 +1248,7 @@ func take_one() -> bool:
 | Hand | сигналы `grabbed(item: Node3D)/released(item: Node3D, velocity)` (re-emit из PhysicalActions); публичный API: `lock_position(bool)`, `set_locked_position(pos)`, `cursor_world_position()`, `smoothed_velocity()`, `get_grabbable_bodies()/get_magnet_bodies()`, `register_raycast_excluder(Callable)` | активная камера; никаких конкретных game-классов |
 | Hand:PhysicalActions | сигналы `grabbed/released/slammed/flicked(target: Node3D, velocity)`, методы `get_held_item()/is_holding()/find_grab_candidate()/find_flick_target()`, `@export equipped: AbilityType` | Input `hand_grab/hand_action/equip_slam/equip_flick`; Hand через `setup` цепочку. Цели — через `Damageable.is_damageable / Grabbable.is_grabbable / Pushable.try_push`, а не через `is Item / is Enemy` |
 | Hand:SpellActions | сигнал `spell_cast(name, position)` (черновик) | родитель Hand через `setup(hand)` |
-| Camp | сигналы `deployed(anchor: Vector3)/packed`, экспорт `target_path/part_nodes/gnome_scene`, публичные `deploy_anchor: Vector3` (свойство) и `is_pile_claimed(pile, exclude_gnome)` | Input `camp_toggle`, читает `Tower.global_position` (delta-position для stationary-чека); зовёт `Gnome.enter_deployed/request_return/is_home/get_assigned_pile` |
+| Camp | сигналы `deployed(anchor: Vector3)/packed`, экспорт `target_path/tent_scene/tent_count/gnome_scene/gnomes_per_tent`, публичные `deploy_anchor: Vector3` (свойство) и `is_pile_claimed(pile, exclude_gnome)`. Палатки спавнит динамически в `_spawn_tents`. | Input `camp_toggle`, читает `Tower.global_position` (delta-position для stationary-чека); зовёт `Gnome.enter_deployed/request_return/is_home/get_assigned_pile`; слушает `EventBus.tower_destroyed` для остановки follow'а |
 | Gnome | методы `setup(camp, home_tent)/enter_deployed()/request_return()/is_home()/get_assigned_pile()` | Camp через ссылку из `setup`; мир — через `get_tree().get_nodes_in_group(ResourcePile.GROUP)`; `ResourcePile.take_one()` |
 | ResourcePile | сигналы `damaged/destroyed`, методы `take_damage(float)/apply_push(Vector3, float)/set_highlighted(bool)/take_one() -> bool`. Регистрируется в `Damageable` + `Pushable` + `Grabbable` группах + собственная `ResourcePile.GROUP = "resource_pile"` | физика, рука (через Grabbable/Damageable/Pushable), гномы (через `take_one`) |
 | CameraRig | — | `@export target_path` |

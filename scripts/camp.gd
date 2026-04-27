@@ -31,9 +31,19 @@ signal packed
 enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 
 @export_node_path("Node3D") var target_path: NodePath
-## Палатки лагеря в порядке цепочки. Прокидываются вручную в инспекторе.
-## Если пусто — _ready() заполнит из get_children() с фильтром по имени `CaravanPart*`.
-@export var part_nodes: Array[StaticBody3D] = []
+
+@export_group("Caravan composition")
+## Сцена палатки — будет инстанцироваться по tent_count раз в _ready.
+## Каждая палатка самостоятельная сущность (Tent.tscn + camp_part.gd):
+## Damageable, может быть уничтожена, имеет свой shatter-эффект на смерть.
+@export var tent_scene: PackedScene
+## Сколько палаток в караване. Меняется в инспекторе — спавнится при старте.
+## Можно ставить любое разумное количество; layout цепочки автоматически
+## распределится через part_gap. На развёртку угол кольца считается как
+## TAU / tent_count, так что любое число работает.
+@export var tent_count: int = 4
+@export_group("")
+
 ## Decay-коэффициент (log-rate) экспоненциального следования палаток.
 ## Чем выше — тем быстрее палатка догоняет точку-цель. Не зависит от dt.
 @export var follow_speed: float = 4.0
@@ -94,21 +104,7 @@ func _ready() -> void:
 	if not _tower:
 		push_warning("Camp: target_path не разрешился, башня не задана")
 
-	if not part_nodes.is_empty():
-		for p in part_nodes:
-			if p:
-				_parts.append(p)
-	else:
-		for child in get_children():
-			if child is StaticBody3D and child.name.begins_with("CaravanPart"):
-				_parts.append(child as StaticBody3D)
-
-	# Скелеты могут уничтожить палатку — слушаем destroyed, чтобы вычистить _parts
-	# (иначе _update_*-циклы поймают invalid-инстанс).
-	for p in _parts:
-		if p is CampPart:
-			(p as CampPart).destroyed.connect(_on_part_destroyed.bind(p))
-
+	_spawn_tents()
 	_spawn_gnomes()
 
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
@@ -119,6 +115,37 @@ func _ready() -> void:
 	# (но всё ещё существующий статикой) Tower-меш. _update_caravan_follow и
 	# stationary-чек уже null-safe, ничего больше делать не нужно.
 	EventBus.tower_destroyed.connect(_on_tower_destroyed)
+
+
+## Спавнит палатки по tent_scene × tent_count. Линейная цепочка позади башни:
+## первая в локальном (0,0,0), каждая следующая на part_gap метров левее по X.
+## Y берётся из самой сцены палатки (Tent.tscn ставит её на пол через свой
+## меш-размер; camp_part.set_vulnerable управляет уязвимостью).
+##
+## Каждая палатка — самостоятельный инстанс с собственным CampPart-скриптом.
+## Подписываемся на destroyed, чтобы синхронно вычищать обе структуры
+## (_parts и _deployed_targets) при гибели — иначе индексы сдвинутся
+## и оставшиеся палатки в DEPLOYED поедут к чужим точкам кольца.
+func _spawn_tents() -> void:
+	if tent_scene == null:
+		push_warning("Camp: tent_scene не задан — палатки не спавнятся")
+		return
+	if tent_count <= 0:
+		return
+	for i in range(tent_count):
+		var tent := tent_scene.instantiate() as StaticBody3D
+		if tent == null:
+			push_warning("Camp: tent_scene не инстанцируется как StaticBody3D")
+			continue
+		tent.name = "Tent%d" % (i + 1)
+		add_child(tent)
+		# Стартовая позиция: цепочка позади origin (башня обычно в (0,0,0) для
+		# каравана; реальная привязка к башне произойдёт в _update_caravan_follow
+		# на первом же кадре).
+		tent.position = Vector3(-i * part_gap, tent.position.y, 0)
+		_parts.append(tent)
+		if tent is CampPart:
+			(tent as CampPart).destroyed.connect(_on_part_destroyed.bind(tent))
 
 
 func _spawn_gnomes() -> void:
