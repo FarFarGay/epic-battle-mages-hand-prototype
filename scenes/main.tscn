@@ -3,14 +3,13 @@
 [ext_resource type="PackedScene" path="res://scenes/tower.tscn" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/hand.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/camera_rig.tscn" id="3"]
-[ext_resource type="PackedScene" path="res://scenes/item.tscn" id="4"]
 [ext_resource type="Shader" uid="uid://ufuibij83crl" path="res://resources/grid.gdshader" id="5"]
 [ext_resource type="Script" uid="uid://g47nmagw0cfh" path="res://scripts/enemy_spawner.gd" id="6"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="7"]
 [ext_resource type="PackedScene" path="res://scenes/camp.tscn" id="8"]
-[ext_resource type="PackedScene" path="res://scenes/resource_pile.tscn" id="9"]
 [ext_resource type="PackedScene" path="res://scenes/octagon_turret.tscn" id="10"]
 [ext_resource type="PackedScene" path="res://scenes/perf_hud.tscn" id="11"]
+[ext_resource type="PackedScene" path="res://scenes/poi_marker.tscn" id="12"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(400, 1, 400)
@@ -55,35 +54,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.5, 0)
 [node name="Camp" parent="." unique_id=120382194 instance=ExtResource("8")]
 target_path = NodePath("../Tower")
 
-[node name="Items" type="Node3D" parent="." unique_id=1061461628]
-
-[node name="SmallBox" parent="Items" unique_id=96737990 instance=ExtResource("4")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0.25, 4)
-mass = 0.5
-item_color = Color(0.85, 0.75, 0.25, 1)
-item_size = Vector3(0.5, 0.5, 0.5)
-
-[node name="WoodBox" parent="Items" unique_id=2101817969 instance=ExtResource("4")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.5, 0)
-item_color = Color(0.55, 0.35, 0.2, 1)
-
-[node name="StoneBox" parent="Items" unique_id=580438415 instance=ExtResource("4")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0.5, 5)
-mass = 5.0
-item_color = Color(0.55, 0.55, 0.55, 1)
-
-[node name="IronBox" parent="Items" unique_id=1071209190 instance=ExtResource("4")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, -7)
-mass = 8.0
-item_color = Color(0.3, 0.3, 0.4, 1)
-item_size = Vector3(1.5, 1.5, 1.5)
-
-[node name="GiantCrate" parent="Items" unique_id=83059476 instance=ExtResource("4")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 1.25, -3)
-mass = 20.0
-item_color = Color(0.4, 0.25, 0.15, 1)
-item_size = Vector3(2.5, 2.5, 2.5)
-
 [node name="EnemySpawner" type="Node3D" parent="." unique_id=1441766688]
 script = ExtResource("6")
 enemy_scenes = Array[PackedScene]([ExtResource("7")])
@@ -97,66 +67,42 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0.35, 4)
 attack_radius = 22.0
 arrow_speed = 30.5
 
-[node name="Resources" type="Node3D" parent="." unique_id=1592984209]
+[node name="PointsOfInterest" type="Node3D" parent="."]
 
-[node name="Pile1" parent="Resources" unique_id=1767329662 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 0.3, 0)
+[node name="OuterE" parent="PointsOfInterest" instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 55, 0.2, 0)
 
-[node name="Pile2" parent="Resources" unique_id=1732693510 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 0.3, 26)
+[node name="OuterNE" parent="PointsOfInterest" instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27.5, 0.2, -47.63)
 
-[node name="Pile3" parent="Resources" unique_id=1520249959 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0.3, 26)
+[node name="OuterNW" parent="PointsOfInterest" instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -27.5, 0.2, -47.63)
 
-[node name="Pile4" parent="Resources" unique_id=2141671792 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 0.3, 0)
+[node name="OuterW" parent="PointsOfInterest" instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -55, 0.2, 0)
 
-[node name="Pile5" parent="Resources" unique_id=114654822 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0.3, -26)
+[node name="OuterSW" parent="PointsOfInterest" instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -27.5, 0.2, 47.63)
 
-[node name="Pile6" parent="Resources" unique_id=1796652518 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 0.3, -26)
+[node name="OuterSE" parent="PointsOfInterest" instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27.5, 0.2, 47.63)
 
-[node name="Pile7" parent="Resources" unique_id=1510064761 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 46, 0.3, 19)
+[node name="InnerENE" parent="PointsOfInterest" instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21.65, 0.2, -12.5)
 
-[node name="Pile8" parent="Resources" unique_id=1757686618 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 0.3, 46)
+[node name="InnerN" parent="PointsOfInterest" instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.2, -25)
 
-[node name="Pile9" parent="Resources" unique_id=253427987 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -19, 0.3, 46)
+[node name="InnerWNW" parent="PointsOfInterest" instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -21.65, 0.2, -12.5)
 
-[node name="Pile10" parent="Resources" unique_id=112238437 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -46, 0.3, 19)
+[node name="InnerWSW" parent="PointsOfInterest" instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -21.65, 0.2, 12.5)
 
-[node name="Pile11" parent="Resources" unique_id=1602611805 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -46, 0.3, -19)
+[node name="InnerS" parent="PointsOfInterest" instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.2, 25)
 
-[node name="Pile12" parent="Resources" unique_id=1925123106 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -19, 0.3, -46)
-
-[node name="Pile13" parent="Resources" unique_id=1107980584 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 19, 0.3, -46)
-
-[node name="Pile14" parent="Resources" unique_id=532074597 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 46, 0.3, -19)
-
-[node name="Pile15" parent="Resources" unique_id=344252832 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 61, 0.3, 35)
-
-[node name="Pile16" parent="Resources" unique_id=280166399 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 70)
-
-[node name="Pile17" parent="Resources" unique_id=1031489225 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -61, 0.3, 35)
-
-[node name="Pile18" parent="Resources" unique_id=852288606 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -61, 0.3, -35)
-
-[node name="Pile19" parent="Resources" unique_id=1456343685 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, -70)
-
-[node name="Pile20" parent="Resources" unique_id=1684163816 instance=ExtResource("9")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 61, 0.3, -35)
+[node name="InnerESE" parent="PointsOfInterest" instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21.65, 0.2, 12.5)
 
 [node name="PerfHud" parent="." instance=ExtResource("11")]
