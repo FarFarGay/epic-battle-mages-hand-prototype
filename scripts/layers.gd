@@ -63,10 +63,12 @@ const MASK_SKELETON := TERRAIN | ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE     # 
 ## Shatter-фрагменты: видят только пол.
 const MASK_TERRAIN_ONLY := TERRAIN                              # 1
 
-## Стрела защитного модуля (OctagonTurret): пол + враги. Item'ы пропускает
-## (стрелы дружественны и не должны застревать в ящиках); Tower на ACTORS
-## (бит 2) тоже пропускает — друг.
-const MASK_FRIENDLY_PROJECTILE := TERRAIN | ENEMIES             # 17
+## Стрела дружественного снаряда (OctagonTurret, DefenderGnome): пол + враги.
+## Item'ы пропускает (стрелы не должны застревать в ящиках); Tower на ACTORS
+## (бит 2) тоже пропускает — друг. COLD_ENEMY включён, чтобы стрелы попадали
+## в FAR-LOD скелетов (иначе при отзумленной камере дальние стаи становятся
+## фантомами для всех снарядов).
+const MASK_FRIENDLY_PROJECTILE := TERRAIN | ENEMIES | COLD_ENEMY  # 145
 
 
 ## Возвращает true, если в маске установлен бит указанного слоя.

@@ -1,0 +1,25 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/defender_gnome.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/arrow.tscn" id="2"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_defender"]
+radius = 0.25
+height = 0.7
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_defender"]
+radius = 0.25
+height = 0.7
+
+[node name="DefenderGnome" type="CharacterBody3D"]
+collision_layer = 4
+collision_mask = 1
+script = ExtResource("1")
+gnome_color = Color(0.85, 0.2, 0.2, 1)
+arrow_scene = ExtResource("2")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("CapsuleShape3D_defender")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+mesh = SubResource("CapsuleMesh_defender")

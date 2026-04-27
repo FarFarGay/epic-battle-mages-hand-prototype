@@ -67,9 +67,14 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 @export var stationary_threshold: float = 0.01
 
 @export_group("Gnomes")
-## Сцена гнома — каждая палатка декларирует свой `gnomes_per_tent`, Camp
-## читает его и инстанцирует эту сцену соответствующее число раз.
+## Сцена обычного гнома-собирателя. Спавнится на каждую палатку
+## (gnomes_per_tent − defenders_per_tent) раз — это «жители-собиратели»,
+## ищут ResourcePile и носят к anchor лагеря.
 @export var gnome_scene: PackedScene
+## Сцена защитника-лучника (DefenderGnome). Спавнится на каждую палатку
+## defenders_per_tent раз — стоят у лагеря и стреляют в скелетов.
+## Если null — защитники не спавнятся, на их слоты подставятся обычные гномы.
+@export var defender_scene: PackedScene
 
 @export_group("")
 @export var debug_log: bool = true
@@ -160,28 +165,45 @@ func _spawn_tents() -> void:
 
 
 func _spawn_gnomes() -> void:
-	if gnome_scene == null:
+	if gnome_scene == null and defender_scene == null:
 		if debug_log and LogConfig.master_enabled:
-			print("[Camp] gnome_scene не задан — гномы не спавнятся")
+			print("[Camp] ни gnome_scene, ни defender_scene не заданы — никого не спавним")
 		return
 	for tent in _parts:
-		# Количество гномов — параметр самой палатки. Разные типы палаток
-		# могут декларировать разную вместимость без правки Camp.
-		var count := 0
-		if tent is CampPart:
-			count = (tent as CampPart).gnomes_per_tent
-		for i in range(count):
-			var gnome := gnome_scene.instantiate() as Gnome
-			if gnome == null:
-				push_warning("Camp: gnome_scene не инстанцируется как Gnome")
-				continue
-			add_child(gnome)
-			gnome.global_position = tent.global_position
-			gnome.setup(self, tent)
-			# Скелет может убить гнома — выкидываем из _gnomes, иначе claim-чек
-			# и _all_gnomes_home будут спотыкаться об invalid-инстансы.
-			gnome.destroyed.connect(_on_gnome_destroyed.bind(gnome))
-			_gnomes.append(gnome)
+		if not (tent is CampPart):
+			continue
+		var part := tent as CampPart
+		var total: int = part.gnomes_per_tent
+		# defenders_per_tent клампим до total — защитников не больше жителей.
+		var defender_count: int = clampi(part.defenders_per_tent, 0, total)
+		var gatherer_count: int = total - defender_count
+		# Сначала защитники (если их сцена задана), потом собиратели.
+		# Каждый получает позицию палатки + setup(camp, tent) — гном привязан
+		# именно к этой палатке (RETURNING_TO_TENT идёт сюда же).
+		for i in range(defender_count):
+			_spawn_one_gnome(defender_scene, tent, "defender")
+		for i in range(gatherer_count):
+			_spawn_one_gnome(gnome_scene, tent, "gatherer")
+
+
+## Инстанцирует одну сцену гнома, привязывает к палатке. Используется
+## и для защитников (defender_scene), и для собирателей (gnome_scene).
+## Если сцена null или не инстанцируется как Gnome — push_warning и пропуск.
+func _spawn_one_gnome(scene: PackedScene, tent: StaticBody3D, role: String) -> void:
+	if scene == null:
+		push_warning("Camp: сцена для роли '%s' не задана — пропуск" % role)
+		return
+	var gnome := scene.instantiate() as Gnome
+	if gnome == null:
+		push_warning("Camp: сцена для роли '%s' не инстанцируется как Gnome" % role)
+		return
+	add_child(gnome)
+	gnome.global_position = tent.global_position
+	gnome.setup(self, tent)
+	# Скелет может убить гнома — выкидываем из _gnomes, иначе claim-чек
+	# и _all_gnomes_home будут спотыкаться об invalid-инстансы.
+	gnome.destroyed.connect(_on_gnome_destroyed.bind(gnome))
+	_gnomes.append(gnome)
 
 
 func _on_part_destroyed(part: StaticBody3D) -> void:

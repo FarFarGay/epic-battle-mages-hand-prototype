@@ -23,7 +23,7 @@ material_override = SubResource("Material_arrow")
 
 [node name="HitArea" type="Area3D" parent="."]
 collision_layer = 0
-collision_mask = 17
+collision_mask = 145
 monitoring = true
 monitorable = false
 

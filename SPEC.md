@@ -816,7 +816,9 @@ func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool
 
 **Тип корня:** `CharacterBody3D` с `class_name Gnome`.
 
-**Назначение:** обитатель лагеря. Спавнится `Camp` по `gnomes_per_tent` штук на каждую палатку. Сам ищет ресурсы (двухфазная FSM: поиск глазами + патруль / челнок к найденной куче), сам носит их к anchor'у лагеря. По сигналу свёртки — возвращается в свою палатку.
+**Назначение:** обитатель лагеря. Базовый класс — гном-собиратель. Спавнится `Camp` по `(gnomes_per_tent − defenders_per_tent)` штук на каждую палатку. Сам ищет ресурсы (двухфазная FSM: поиск глазами + патруль / челнок к найденной куче), сам носит их к anchor'у лагеря. По сигналу свёртки — возвращается в свою палатку.
+
+Имеет подкласс `DefenderGnome` (см. §5.8.1) — гном-защитник, переопределяет «активный» AI на «стой и стреляй».
 
 **Дочерние узлы:**
 - `CollisionShape3D` — `CapsuleShape3D` r=0.25, h=0.7.
@@ -874,6 +876,44 @@ enum State {
 **Skip frozen-куч:** во `_scan_vision` и в `_tick_commuting_to_pile` явно проверяется `pile.freeze` — рука держит кучу, гном считает её недоступной. Контракт: пока кучу схватили рукой, гномы не топчут к ней зря и переходят в SEARCHING (`_on_pile_lost`).
 
 **Зависимости:** типы `Camp` (через ссылку из `setup`, читает `deploy_anchor`, `is_pile_claimed`) и `ResourcePile`. Не знает Tower/Hand/Skeleton.
+
+---
+
+### 5.8.1 DefenderGnome — `scenes/defender_gnome.tscn`, `scripts/defender_gnome.gd`
+
+**Тип корня:** `CharacterBody3D` с `class_name DefenderGnome extends Gnome`.
+
+**Назначение:** гном-защитник. Спавнится `Camp` по `defenders_per_tent` штук на каждую палатку (по дефолту 3 из 7 жителей; остальные 4 — обычные собиратели). Стоит у палатки (на её позиции после развёртки), сканирует группу скелетов в радиусе `attack_radius` и стреляет в ближайшего стрелами `Arrow`.
+
+**Что наследуется без изменений:**
+- Привязка к палатке через `setup(camp, home_tent)`, IN_TENT-приклейка к `_home_tent.global_position`.
+- `take_damage` / `apply_push` / `_knockback`-логика. HP тот же (20).
+- `request_return` (Camp вызывает на свёртку, у статических лагерей не вызывается, но контракт сохранён).
+- Shatter-эффект на смерть.
+- Цвет `gnome_color` через `_apply_visual` — в `defender_gnome.tscn` его override на красный (`Color(0.85, 0.2, 0.2)`).
+
+**Что переопределяется:**
+- `_physics_process` — тот же скелет (gravity → knockback → match _state → move_and_slide), но вместо `_tick_searching/_tick_commuting_*` вызывается `_defender_combat_tick` для всех «активных» состояний (SEARCHING / COMMUTING_* / IDLE_NEAR_BASE считаются эквивалентными «стой у лагеря»). RETURNING_TO_TENT идёт через `_tick_returning` базы.
+
+**Боевые экспорты:**
+- `attack_radius: float = 15.0` — радиус сканирования скелетов через `PhysicsShapeQuery`.
+- `attack_cooldown_min/max: float = 0.6 / 1.2` — рандомный интервал между выстрелами; 3 защитника в палатке не залпуют синхронно.
+- `arrow_damage_min/max: float = 25.0 / 40.0` — `randf_range`. На `skeleton.hp = 30` это 1-shot kill в ~66% случаев (когда damage > 30) и 2-shot в остальных. «Чаще за 1 выстрел».
+- `arrow_speed: float = 22.0`, `arrow_spawn_offset: Vector3 = (0, 0.6, 0)` — над головой, чтобы стрела не задела свой же корпус.
+- `arrow_scene: PackedScene` — переиспользуется `arrow.tscn` от OctagonTurret.
+- `projectiles_root_path: NodePath` — куда складывать спавн стрел (фолбэк на `current_scene`).
+
+**Маска поиска целей:** `ENEMIES | COLD_ENEMY = 144`. Включает и горячих скелетов, и LOD-холодных — иначе при отзумленной камере дальние стаи становились бы невидимыми для защиты.
+
+**Combat-цикл:**
+1. `_attack_timer` тикает в `_defender_combat_tick`.
+2. По истечении — `_find_skeleton_target()` через `PhysicsShapeQuery3D` (sphere `attack_radius`, mask `144`), фильтрует через `Damageable.is_damageable`, выбирает ближайший Damageable.
+3. Если цель найдена — `_fire_at(target)` (тот же паттерн что у `OctagonTurret._fire_at`: спавн `arrow.tscn` в `_projectiles_root`, вызов `arrow.setup(spawn, target.global_position)` с `damage = randf_range(min, max)`).
+4. Новый `_attack_timer = randf_range(cooldown_min, cooldown_max)`. Если цели нет — короткий `0.2с` cooldown, чтобы быстрее реагировать на появление.
+
+**Дублирование с Gnome._physics_process:** намеренное. Подкласс один, вынос в виртуальный hook был бы преждевременной абстракцией. Если появится третий тип гнома (целитель, инженер) — рефакторим базу с виртуальным `_active_tick(delta)`.
+
+**Зависимости:** `Arrow` (для стрельбы), физик-сервер (PhysicsShapeQuery), `Damageable.is_damageable`. Не знает про конкретные типы скелетов — только про `Damageable`-контракт.
 
 ---
 
@@ -998,7 +1038,7 @@ func take_one() -> bool:
 
 Простой проджектайл. **Тип корня:** `Node3D` (не RigidBody — летим по прямой с фиксированной скоростью, дешевле). Дочерний `Area3D` с `CollisionShape3D` детектит попадания.
 
-**Слой/маска:** Area3D `collision_layer=0`, `collision_mask=Layers.MASK_FRIENDLY_PROJECTILE = 17` (`TERRAIN | ENEMIES`). Стрелы пролетают сквозь Items, башню, гномов, палатки — не задевают своих.
+**Слой/маска:** Area3D `collision_layer=0`, `collision_mask=Layers.MASK_FRIENDLY_PROJECTILE = 145` (`TERRAIN | ENEMIES | COLD_ENEMY`). Стрелы пролетают сквозь Items, башню, гномов, палатки — не задевают своих. `COLD_ENEMY` включён, чтобы стрелы попадали в FAR-LOD скелетов (у них `collision_layer = COLD_ENEMY` вместо `ENEMIES` ради разгрузки broad-phase).
 
 **Цикл:**
 - `setup(source_pos, target_pos)` от стрелка → стрела ставится в source, вычисляется **полное 3D-направление** к target (не зануляем Y!), `look_at` поворачивает меш. Это критично для турели на верхушке башни (y≈6.85 vs скелет на y≈1) — без вертикальной составляющей стрелы пролетали бы над головой.

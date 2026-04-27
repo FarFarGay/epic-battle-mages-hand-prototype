@@ -27,6 +27,12 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 ## жилая на 7, склад на 0 и т.п.
 @export var gnomes_per_tent: int = 7
 
+## Сколько из gnomes_per_tent — защитники-лучники (DefenderGnome).
+## Остальные (gnomes_per_tent − defenders_per_tent) — собиратели (Gnome).
+## По дефолту в палатке на 7 жителей: 3 защитника + 4 собирателя.
+## Если defenders_per_tent ≥ gnomes_per_tent — все защитники, собирателей нет.
+@export var defenders_per_tent: int = 3
+
 @export_group("Shatter (рассыпание на смерти)")
 ## Палатки крупнее скелета/гнома — больше фрагментов, дольше живут.
 @export var shatter_fragment_count: int = 14
