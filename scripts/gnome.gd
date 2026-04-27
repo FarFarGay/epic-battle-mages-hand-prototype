@@ -89,6 +89,19 @@ enum State {
 ## parent НЕ подходит: при свёртке/смерти кампа дети-фрагменты были бы
 ## уничтожены вместе с ним; current_scene их переживает.
 @export_node_path("Node") var effects_root_path: NodePath
+@export_group("")
+
+@export_group("LOD (масштабирование на 100+ гномов)")
+## Дистанция до точки интереса камеры (CameraRig), дальше которой гном
+## уходит в холодный режим: skip move_and_slide и гравитации, позиция
+## обновляется через global_position += velocity * delta. AI продолжает
+## работать (дёшево). Это даёт основной win на 126+ гномах при удалённой
+## камере от поселений.
+@export var lod_far_distance: float = 50.0
+## Период переоценки LOD-уровня (с). Distance-чек 100+ гномов на каждом
+## физкадре сам по себе нагрузка.
+@export var lod_check_interval: float = 0.5
+@export_group("")
 
 @export_group("")
 @export var debug_log: bool = false
@@ -102,6 +115,8 @@ var _carry_visual: MeshInstance3D = null
 var _knockback := KnockbackState.new()
 var _dying: bool = false
 var _effects_root: Node = null
+var _lod_far: bool = false
+var _lod_check_timer: float = 0.0
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 
@@ -130,6 +145,9 @@ func _ready() -> void:
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	damaged.connect(func(amount: float) -> void: EventBus.gnome_damaged.emit(self, amount))
 	destroyed.connect(func() -> void: EventBus.gnome_destroyed.emit(self))
+	# Фазовый сдвиг LOD-чека: 126+ гномов не должны пересчитывать дистанцию
+	# до камеры одним кадром. Размазываем по 0..lod_check_interval.
+	_lod_check_timer = randf() * lod_check_interval
 
 
 func _apply_visual() -> void:
@@ -228,29 +246,70 @@ func _physics_process(delta: float) -> void:
 			global_position = _home_tent.global_position
 		return
 
-	if not is_on_floor():
-		velocity.y -= gravity * delta
-	else:
-		velocity.y = 0.0
+	# LOD-чек раз в lod_check_interval. Дальше lod_far_distance от camera-rig
+	# уходим в холодный режим: skip move_and_slide и гравитации, position
+	# обновляется напрямую. AI продолжает работать.
+	_lod_check_timer -= delta
+	if _lod_check_timer <= 0.0:
+		_update_lod()
+		_lod_check_timer = lod_check_interval
+
+	# Гравитация — только в hot mode. На FAR-mode пол плоский, Y не меняется.
+	if not _lod_far:
+		if not is_on_floor():
+			velocity.y -= gravity * delta
+		else:
+			velocity.y = 0.0
 
 	_knockback.tick(delta)
 	if _knockback.is_active():
 		# Под knockback'ом — AI заглушен, скорость затухает по trение-coeff.
 		velocity = _knockback.apply_friction(velocity, delta)
 	else:
-		match _state:
-			State.SEARCHING:
-				_tick_searching()
-			State.COMMUTING_TO_PILE:
-				_tick_commuting_to_pile()
-			State.COMMUTING_TO_BASE:
-				_tick_commuting_to_base()
-			State.IDLE_NEAR_BASE:
-				_tick_idle_near_base()
-			State.RETURNING_TO_TENT:
-				_tick_returning()
+		_active_tick(delta)
 
-	move_and_slide()
+	if _lod_far:
+		# Cold-mode: position += velocity без физики/коллизий. Гном на
+		# collision_layer=0, ни с кем не сталкивается даже в hot — поэтому
+		# визуально неотличимо от move_and_slide на плоской карте.
+		global_position.x += velocity.x * delta
+		global_position.z += velocity.z * delta
+	else:
+		move_and_slide()
+
+
+## Виртуальный hook — подклассы переопределяют свою активную AI-логику.
+## Базовая реализация — собиратель: match _state → _tick_searching/...
+## DefenderGnome переопределяет на «стой и стреляй».
+func _active_tick(_delta: float) -> void:
+	match _state:
+		State.SEARCHING:
+			_tick_searching()
+		State.COMMUTING_TO_PILE:
+			_tick_commuting_to_pile()
+		State.COMMUTING_TO_BASE:
+			_tick_commuting_to_base()
+		State.IDLE_NEAR_BASE:
+			_tick_idle_near_base()
+		State.RETURNING_TO_TENT:
+			_tick_returning()
+
+
+## Расчёт LOD-уровня по дистанции до точки интереса камеры (CameraRig).
+## CameraRig — родитель Camera3D, lerp'ом следует за Tower; зум на него не
+## влияет. Симметрично подходу у Skeleton.
+func _update_lod() -> void:
+	if not is_inside_tree():
+		_lod_far = false
+		return
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		_lod_far = false
+		return
+	var anchor: Node3D = camera.get_parent() as Node3D
+	var anchor_pos: Vector3 = anchor.global_position if anchor != null else camera.global_position
+	var d: float = global_position.distance_to(anchor_pos)
+	_lod_far = d > lod_far_distance
 
 
 func _tick_searching() -> void:

@@ -84,39 +84,20 @@ func _ready() -> void:
 	_target_scan_timer = randf() * TARGET_SCAN_INTERVAL
 
 
-## Override базы: тот же скелет _physics_process, но в активной фазе вместо
-## _tick_searching/_tick_commuting вызываем _defender_combat_tick — стой и стреляй.
-## RETURNING_TO_TENT идёт через _tick_returning базы (домой при свёртке лагеря).
-## Дублирование с Gnome._physics_process намеренное — пока подклассов один,
-## вынос «structural skeleton» в виртуальный hook был бы преждевременной
-## абстракцией; при появлении третьего типа гнома — рефакторим.
-func _physics_process(delta: float) -> void:
-	if _camp == null:
-		return
-
-	if _state == State.IN_TENT:
-		if is_instance_valid(_home_tent):
-			global_position = _home_tent.global_position
-		return
-
-	if not is_on_floor():
-		velocity.y -= gravity * delta
-	else:
-		velocity.y = 0.0
-
-	_knockback.tick(delta)
-	if _knockback.is_active():
-		velocity = _knockback.apply_friction(velocity, delta)
-	else:
-		match _state:
-			State.RETURNING_TO_TENT:
-				_tick_returning()
-			_:
-				# SEARCHING / COMMUTING_* / IDLE — для защитника всё это
-				# означает «активен у лагеря», логика одна: стрелять.
-				_defender_combat_tick(delta)
-
-	move_and_slide()
+## Override виртуального hook'а Gnome — переопределяем только активную
+## AI-логику. Базовый Gnome._physics_process сам решает: hot (move_and_slide)
+## или cold (skip физики на FAR-LOD), включает гравитацию и knockback —
+## defender автоматически получает всё это. RETURNING_TO_TENT идёт через
+## базовый _tick_returning (защитник возвращается домой при свёртке лагеря).
+func _active_tick(delta: float) -> void:
+	match _state:
+		State.RETURNING_TO_TENT:
+			_tick_returning()
+		_:
+			# SEARCHING / COMMUTING_* / IDLE — для защитника всё это
+			# означает «активен у лагеря», логика одна: стрелять или
+			# патрулировать.
+			_defender_combat_tick(delta)
 
 
 ## Скан цели через кэш + throttle (TARGET_SCAN_INTERVAL=0.25с). Сам скан —

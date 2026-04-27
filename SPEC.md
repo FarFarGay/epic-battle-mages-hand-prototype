@@ -836,6 +836,9 @@ func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool
   - `pickup_distance: float = 0.8`, `deposit_distance: float = 1.2`, `home_distance: float = 0.8`, `wander_arrival: float = 0.6`.
   - `wander_map_half_extent: float = 195.0` — половина стороны квадратной карты от центра (200) минус 5м буфер от края. Wander-точки в `_random_point_around` клампятся в эти пределы. При `search_radius=300` без clamp'а гном уходил бы за пол. Должно совпадать со `Skeleton.wander_map_half_extent`.
 - Группа **Visual:** `gnome_color`, `carry_color`, `carry_visual_size`.
+- Группа **LOD (масштабирование на 100+ гномов):**
+  - `lod_far_distance: float = 50.0` — дальше этой дистанции до точки интереса камеры (`CameraRig`) гном уходит в холодный режим: `_physics_process` пропускает `move_and_slide` и гравитацию, position обновляется через `global_position += velocity * delta` (X/Z). AI продолжает работать на полной частоте — он дёшев. Главный win: при удалённой камере 6 поселений × ~21 гном = 126 гномов без `move_and_slide`.
+  - `lod_check_interval: float = 0.5` — период переоценки.
 - `debug_log: bool = false` — по умолчанию выключен.
 
 **FSM:**
@@ -886,14 +889,16 @@ enum State {
 **Назначение:** гном-защитник. Спавнится `Camp` по `defenders_per_tent` штук на каждую палатку (по дефолту 3 из 7 жителей; остальные 4 — обычные собиратели). **Патрулирует по внешнему контуру лагеря** (окружность `patrol_radius=6м` вокруг `Camp.deploy_anchor`, за палатками которые стоят на `deploy_radius=4м`) — выбирает случайные точки на этом радиусе, ходит между ними. При обнаружении скелета в `attack_radius` — **останавливается**, целится по cooldown'у, стреляет; пока цель в зоне — стоит. Когда цель ушла или умерла — продолжает патруль.
 
 **Что наследуется без изменений:**
-- Привязка к палатке через `setup(camp, home_tent)`, IN_TENT-приклейка к `_home_tent.global_position`.
+- Весь `_physics_process`: IN_TENT-приклейка, LOD-чек, гравитация, knockback, move_and_slide vs cold-mode (LOD).
+- Привязка к палатке через `setup(camp, home_tent)`.
 - `take_damage` / `apply_push` / `_knockback`-логика. HP тот же (20).
 - `request_return` (Camp вызывает на свёртку, у статических лагерей не вызывается, но контракт сохранён).
 - Shatter-эффект на смерть.
 - Цвет `gnome_color` через `_apply_visual` — в `defender_gnome.tscn` его override на красный (`Color(0.85, 0.2, 0.2)`).
+- LOD (cold-mode при удалении от камеры) — автоматически.
 
 **Что переопределяется:**
-- `_physics_process` — тот же скелет (gravity → knockback → match _state → move_and_slide), но вместо `_tick_searching/_tick_commuting_*` вызывается `_defender_combat_tick` для всех «активных» состояний (SEARCHING / COMMUTING_* / IDLE_NEAR_BASE считаются эквивалентными «стой у лагеря»). RETURNING_TO_TENT идёт через `_tick_returning` базы.
+- `_active_tick(delta)` — виртуальный hook базового Gnome. У базы — match _state по `_tick_searching/_tick_commuting_*`. У защитника — `_defender_combat_tick(delta)` для всех «активных» состояний (SEARCHING / COMMUTING_* / IDLE_NEAR_BASE), `_tick_returning()` для RETURNING_TO_TENT.
 
 **Боевые экспорты:**
 - `attack_radius: float = 15.0` — радиус сканирования скелетов через `PhysicsShapeQuery`.
@@ -915,7 +920,7 @@ enum State {
 2. **Если кэш-цель есть** — `velocity.x/z = 0` (стоп), тикает `_attack_timer`. По истечении — `_fire_at(_cached_target)` (тот же паттерн что у `OctagonTurret._fire_at`: спавн `arrow.tscn` в `_projectiles_root`, вызов `arrow.setup(spawn, target.global_position)` с `damage = randf_range(min, max)`). Новый `_attack_timer = randf_range(cooldown_min, cooldown_max)`. Пока цель в зоне — лучник стоит и периодически стреляет.
 3. **Если цели нет** — `_attack_timer` тикает в фоне (готовность к первому выстрелу при появлении цели сразу), вызывается `_patrol_tick()`: если `_patrol_target` достигнут или ещё не выбран — `_pick_patrol_point(anchor)` ставит новую случайную точку на окружности `patrol_radius` вокруг `Camp.deploy_anchor`. Шаг к цели через `_step_toward(target, patrol_speed)` — локальный аналог `Gnome._move_toward_xz` с произвольной скоростью.
 
-**Дублирование с Gnome._physics_process:** намеренное. Подкласс один, вынос в виртуальный hook был бы преждевременной абстракцией. Если появится третий тип гнома (целитель, инженер) — рефакторим базу с виртуальным `_active_tick(delta)`.
+**Архитектура:** `Gnome` — базовый класс с виртуальным hook'ом `_active_tick(delta)`. `DefenderGnome` переопределяет только этот hook. Весь structural скелет (IN_TENT, LOD-cold/hot, gravity, knockback, move_and_slide) живёт в базе один раз. При появлении третьего типа гнома (целитель, инженер) добавляется ещё один override без правки базы.
 
 **Зависимости:** `Arrow` (для стрельбы), физик-сервер (PhysicsShapeQuery), `Damageable.is_damageable`. Не знает про конкретные типы скелетов — только про `Damageable`-контракт.
 
