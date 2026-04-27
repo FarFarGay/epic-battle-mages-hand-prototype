@@ -72,6 +72,10 @@ enum State {
 @export var home_distance: float = 0.8
 ## Дистанция до wander-точки, чтобы выбрать новую (или после прибытия).
 @export var wander_arrival: float = 0.6
+## Половина стороны квадратной карты от центра (0,0). Wander-точки клампятся
+## в этих пределах, чтобы при search_radius=300 на карте 200×200 гном не
+## уходил за пол. Должно совпадать со Skeleton.wander_map_half_extent.
+@export var wander_map_half_extent: float = 95.0
 
 @export_group("Visual")
 @export var gnome_color: Color = Color(0.7, 0.45, 0.25)
@@ -396,11 +400,16 @@ func _world_has_any_pile() -> bool:
 func _random_point_around(center: Vector3, radius: float) -> Vector3:
 	var angle := randf() * TAU
 	var dist := radius * sqrt(randf())  # uniform в круге, не в кольце
-	return Vector3(
+	var p := Vector3(
 		center.x + cos(angle) * dist,
 		center.y,
 		center.z + sin(angle) * dist
 	)
+	# При search_radius=300 и карте ±95 точка часто уходит за пол. Клампим, чтобы
+	# гном не патрулировал в пустоте (и не проваливался при будущих обрывах).
+	p.x = clampf(p.x, -wander_map_half_extent, wander_map_half_extent)
+	p.z = clampf(p.z, -wander_map_half_extent, wander_map_half_extent)
+	return p
 
 
 func _pickup_carry() -> void:
