@@ -28,7 +28,7 @@ material_override = SubResource("Material_hand")
 
 [node name="GrabArea" type="Area3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1.5, 0)
-collision_mask = 82
+collision_mask = 210
 
 [node name="GrabCollision" type="CollisionShape3D" parent="GrabArea"]
 shape = SubResource("SphereShape3D_grab")

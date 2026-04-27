@@ -24,6 +24,17 @@ const CAMP_OBSTACLE := 1 << 5    # 32 — bit 5 = layer 6
 ## могла снять модуль обратно.
 const MOUNTED_MODULE := 1 << 6   # 64 — bit 6 = layer 7
 
+## «Холодные» враги — FAR-LOD скелеты (вне камеры/далеко от центра действий).
+## Они на этом слое вместо ENEMIES, чтобы:
+##   - другие скелеты их не «видели» через broad-phase (Skeleton.mask без COLD_ENEMY);
+##   - башня их не блокировала (Tower.mask без COLD_ENEMY);
+##   - турель не тратила выстрелы (OctagonTurret.target_mask = ENEMIES без COLD_ENEMY).
+## НО — рука и slam их видят (MASK_HAND_TARGETS и MASK_HAND_SLAM включают
+## COLD_ENEMY). Иначе игрок при отзумленной камере не мог бы бить дальние стаи:
+## все скелеты становились FAR-фантомами, slam через PhysicsShapeQuery не находил
+## никого.
+const COLD_ENEMY := 1 << 7       # 128 — bit 7 = layer 8
+
 # Композитные маски — собирай через OR из именованных битов.
 
 ## Hand cursor raycast: пол + предметы + смонтированные модули. Под цели
@@ -33,13 +44,15 @@ const MASK_HAND_CURSOR := TERRAIN | ITEMS | MOUNTED_MODULE      # 67
 
 ## Hand grab / flick: предметы и враги (то, во что бьём/подсвечиваем).
 ## MOUNTED_MODULE — чтобы рука могла снять смонтированный модуль обратно
-## с башни / центра лагеря.
-const MASK_HAND_TARGETS := ITEMS | ENEMIES | MOUNTED_MODULE     # 82
+## с башни / центра лагеря. COLD_ENEMY — чтобы рука доставала FAR-LOD
+## скелетов (фантомов для всего остального broad-phase).
+const MASK_HAND_TARGETS := ITEMS | ENEMIES | MOUNTED_MODULE | COLD_ENEMY     # 210
 
 ## Slam: предметы и враги, без MOUNTED_MODULE. Хлопок не должен срывать
 ## смонтированный модуль со слота — снять модуль можно только хватом руки
 ## (через MASK_HAND_TARGETS), а Slam — это AOE по «свободному» миру.
-const MASK_HAND_SLAM := ITEMS | ENEMIES                         # 18
+## COLD_ENEMY включён по той же причине что и в MASK_HAND_TARGETS.
+const MASK_HAND_SLAM := ITEMS | ENEMIES | COLD_ENEMY                         # 146
 
 ## «Всё обычное» (без палаток лагеря). Tower / Item / Ground / shatter.
 const MASK_ALL_GAMEPLAY := TERRAIN | ITEMS | ACTORS | PROJECTILES | ENEMIES   # 31

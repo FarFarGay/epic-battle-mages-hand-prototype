@@ -234,10 +234,18 @@ func get_lod_level() -> int:
 	return _lod_level
 
 
-## Расчёт LOD-уровня по дистанции до активной камеры. Камера всегда жива (в
-## отличие от Tower, которая может queue_free), и распределение скелетов
-## вокруг камеры лучше отражает «что видит игрок» — рендер-LOD пока не делаем,
-## но вне-кадра скелеты всё равно нужны (идут к лагерю), просто реже.
+## Расчёт LOD-уровня по дистанции до **точки интереса камеры**, а не до самой
+## Camera3D. Точка интереса = `Camera3D.get_parent()` если он Node3D — это наш
+## CameraRig, который lerp'ом следует за Tower. Зум камеры (через Camera3D.position
+## × _zoom) меняет реальную позицию Camera3D в мире, но НЕ меняет CameraRig'a.
+##
+## Почему важно: при отзумленной камере (zoom=2.5, Camera3D на ~111м от Tower)
+## все скелеты возле башни оказывались FAR от Camera3D — slam терял по ним
+## цели через collision_layer. С привязкой к CameraRig границы LOD стабильны
+## независимо от зума.
+##
+## Fallback: если нет parent-Node3D (странная сцена) — берём global_position
+## самой Camera3D, лучше что-то чем пустой LOD-расчёт.
 ##
 ## При смене уровня вызывается _apply_lod_physics_mode — переключает
 ## collision_layer/mask, что сразу убирает скелета из/в broad-phase
@@ -249,7 +257,9 @@ func _update_lod_level() -> void:
 	if camera == null:
 		_set_lod_level(LodLevel.NEAR)
 		return
-	var d: float = global_position.distance_to(camera.global_position)
+	var anchor: Node3D = camera.get_parent() as Node3D
+	var anchor_pos: Vector3 = anchor.global_position if anchor != null else camera.global_position
+	var d: float = global_position.distance_to(anchor_pos)
 	if d <= lod_near_distance:
 		_set_lod_level(LodLevel.NEAR)
 	elif d <= lod_far_distance:
@@ -270,21 +280,27 @@ func _set_lod_level(new_level: int) -> void:
 
 
 ## Переключение collision и физического режима по LOD.
-## - NEAR/MID: «горячий» режим — полные коллизии (ENEMIES/MASK_SKELETON),
+## - NEAR/MID: «горячий» режим — collision_layer=ENEMIES, mask=MASK_SKELETON,
 ##   move_and_slide в _physics_process, всё как у обычного Enemy.
-## - FAR: «холодный» режим — collision_layer=0 (фантом для broad-phase),
-##   collision_mask=0 (сам никого не сканирует). Скелет не сталкивается ни с
-##   кем, не толкает соседей, не блокирует башню. Движется через простой
-##   position += velocity * delta в _far_step. Цена: сквозит палатки и других
-##   скелетов вне камеры, но игрок этого не видит. Когда подходит ближе к
-##   камере (становится MID) — collision возвращается, и физика снова работает.
+## - FAR: «холодный» режим — collision_layer=COLD_ENEMY (отдельный слой 8),
+##   collision_mask=0 (сам никого не сканирует). Через layer COLD_ENEMY скелет
+##   виден руке/сламу (MASK_HAND_TARGETS и MASK_HAND_SLAM включают этот бит),
+##   но НЕ виден другим скелетам, башне, турели — их маски не содержат
+##   COLD_ENEMY. Это чинит баг «при отзумленной камере slam не убивает
+##   скелетов»: при большом зуме все становятся FAR от камеры, и при
+##   layer=0 (предыдущая реализация) PhysicsShapeQuery slam'а никого не
+##   находил. С COLD_ENEMY — рука их видит независимо от LOD.
+##
+## Двигается FAR-скелет через global_position += velocity * delta в _far_step
+## (без move_and_slide). Когда подходит ближе к камере (MID) — collision
+## возвращается на ENEMIES, и физика снова работает.
 func _apply_lod_physics_mode() -> void:
 	match _lod_level:
 		LodLevel.NEAR, LodLevel.MID:
 			collision_layer = Layers.ENEMIES
 			collision_mask = Layers.MASK_SKELETON
 		LodLevel.FAR:
-			collision_layer = 0
+			collision_layer = Layers.COLD_ENEMY
 			collision_mask = 0
 
 

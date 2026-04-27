@@ -111,6 +111,7 @@ hand_gameplay_prot/
 | 5 | Enemies | `Skeleton` и будущие враги | Tower (Actors), Slam, Flick |
 | 6 | CampObstacle | палатки `Camp` (CaravanPart*) — статически на этом слое в обоих режимах | Skeleton (мутуально-исключающе с Tower — башня НЕ сканирует слой 6) |
 | 7 | MountedModule | `CampModule` в момент монтажа в слот (динамически переключается с ITEMS) | Hand.GrabArea, Hand.cursor_raycast — иначе игрок не сможет снять модуль с башни обратно. Tower **не** сканирует — иначе touching-контакт «башня снизу, модуль на ней» давал бы ложные wall-collision'ы |
+| 8 | ColdEnemy | FAR-LOD скелеты (динамически переключается с ENEMIES при выходе за `lod_far_distance`) | Hand.GrabArea, Hand:PhysicalSlam.slam_mask — рука и slam должны доставать дальние стаи независимо от LOD. Другие скелеты, башня, турель **не** сканируют — отсюда смысл «холодного» режима: снимаем broad-phase нагрузку на 1000+ врагов |
 
 В коде GDScript маски берутся именованными константами из `Layers`; в `.tscn` Godot хранит ints, поэтому там — литералы (значения должны соответствовать `Layers.MASK_*`).
 
@@ -121,9 +122,9 @@ hand_gameplay_prot/
 
 **Маски запросов (не тел):**
 - `Hand.cursor_raycast_mask`: `Layers.MASK_HAND_CURSOR = 67` (Terrain + Items + MountedModule) — рука поднимается над полом, ящиками/кучами и смонтированными модулями (иначе курсор не «ловил» бы турель на верху башни и снять рукой не получалось бы). На лету в `Hand._raycast_terrain` к маске прибавляется `ACTORS`, если в руке `CampModule` — чтобы при переноске модуля курсор «находил» верхушку башни и hand поднимался к слоту, а не упирался в стену тауэра.
-- `Hand.GrabArea`: `Layers.MASK_HAND_TARGETS = 82` (Items + Enemies + MountedModule) — рука цепляет любую цель, включая модуль уже стоящий в слоте. LMB-grab дополнительно фильтрует через `Grabbable.is_grabbable` + `mass < max_lift_mass`, поэтому скелета случайно не схватить. Flick читает ту же зону.
+- `Hand.GrabArea`: `Layers.MASK_HAND_TARGETS = 210` (Items + Enemies + MountedModule + ColdEnemy) — рука цепляет любую цель, включая модуль уже стоящий в слоте и FAR-LOD скелетов (на ColdEnemy). LMB-grab дополнительно фильтрует через `Grabbable.is_grabbable` + `mass < max_lift_mass`, поэтому скелета случайно не схватить. Flick читает ту же зону.
 - `Hand.MagnetArea`: `Layers.ITEMS = 2` — магнит тянет только то, что на слое Items (Items, ResourcePile).
-- `Hand:PhysicalSlam.slam_mask`: `Layers.MASK_HAND_SLAM = 18` (Items + Enemies, без MOUNTED_MODULE). Намеренно отличается от GrabArea: смонтированный модуль нельзя сбить хлопком — снять его можно только хватом руки.
+- `Hand:PhysicalSlam.slam_mask`: `Layers.MASK_HAND_SLAM = 146` (Items + Enemies + ColdEnemy, без MOUNTED_MODULE). ColdEnemy включён, чтобы slam доставал FAR-LOD скелетов — иначе при отзумленной камере вся стая становилась невидимой для AOE. Без MOUNTED_MODULE — намеренно: смонтированный модуль нельзя сбить хлопком, только хватом руки.
 
 ---
 
@@ -584,10 +585,10 @@ Skeleton не использует `Enemy._targets` — вместо этого 
 | MID | 25..50м | каждый 2-й | каждые 0.30с (×2) | Полная (как NEAR) |
 | FAR | > 50м | каждый 3-й | каждые 0.60с (×4) | **Холодная: collision_layer=0, без move_and_slide** |
 
-**Что мерится:** дистанция до **камеры** (`get_viewport().get_camera_3d().global_position`), не до Tower — Tower может умереть, камера всегда жива; и распределение «что вблизи камеры» лучше отражает то, что игрок реально видит.
+**Что мерится:** дистанция до **точки интереса камеры** — `Camera3D.get_parent()` если он Node3D (т.е. наш `CameraRig`), иначе сама `Camera3D.global_position`. Через CameraRig потому, что он lerp'ом следует за Tower, а зум камеры (через `Camera3D.position × _zoom`) меняет реальную позицию Camera3D, **не** меняя CameraRig. До этого фикса при максимальном зуме (zoom=2.5, Camera3D на ~111м от центра карты) скелеты возле башни все становились FAR, и slam терял по ним цели — теперь зум на LOD не влияет. Tower как якорь не подошёл — он может queue_free, а CameraRig живёт всегда.
 
 **Холодный режим FAR (главный win на 1000+ скелетах):**
-- `collision_layer = 0`, `collision_mask = 0` — скелет полностью выпадает из broad-phase physics-сервера. Не сталкивается с другими скелетами, не блокирует башню, не попадает в `OctagonTurret._find_target` (но FAR > 50м, attack_radius турели = 22м — он всё равно вне зоны). На 1400 скелетах это убирает квадратичную нагрузку взаимных коллизий.
+- `collision_layer = Layers.COLD_ENEMY` (бит 8 = 128), `collision_mask = 0` — скелет на отдельном «холодном» слое. Другие скелеты (`MASK_SKELETON=55`), башня (`mask=31`) и турель (`target_mask=ENEMIES=16`) НЕ сканируют ColdEnemy → broad-phase их не учитывает. **Но рука и slam (`MASK_HAND_TARGETS=210`, `MASK_HAND_SLAM=146`) этот слой включают** — иначе при отзумленной камере, когда вся стая становится FAR, slam через `PhysicsShapeQuery` не находил бы ни одного врага (это был баг до этого фикса). На 1400 скелетах это убирает квадратичную нагрузку взаимных коллизий, но удар руки/slam'а по дальним стаям продолжает работать.
 - `move_and_slide()` пропускается. Вместо неё `_far_step` делает простое `global_position.x/z += velocity * delta`. Y не трогается (пол плоский, гравитация не нужна).
 - **Что сохраняется в _far_step:** `KnockbackState.tick(delta)` (иначе lunge через `_apply_velocity_change` навечно отправил бы скелета в полёт), декремент `_state_timer` для COOLDOWN, AI-step (включая LOD-skip в APPROACH), Damageable.try_damage в `_perform_strike` (урон по палатке/гному не зависит от collision-layer'ов).
 - **Что теряется:** скелеты сквозят друг друга и палатки вне камеры (но игрок этого не видит); нет gravity (плоский пол — ок); `is_on_floor()` всегда false на FAR (AI это не читает).
@@ -1206,6 +1207,10 @@ func take_one() -> bool:
     - **`_far_step` сохраняет:** `_knockback.tick(delta)` (иначе lunge через `_apply_velocity_change` навечно бы улетал), декремент `_state_timer` для COOLDOWN, AI-step с LOD-skip, `Damageable.try_damage` через `_perform_strike` (урон не зависит от collision-layer'ов).
     - **Side-effect:** FAR-скелеты сквозят друг друга и палатки вне камеры. Игрок этого не видит. Когда подходят ближе (становятся MID) — `_apply_lod_physics_mode` восстанавливает collision, и со следующего тика снова полная физика через `super._physics_process`.
     - `_set_lod_level` идемпотентен — collision_layer write случается только при реальной смене уровня, не каждые 0.5с.
+
+    **Итерация C (фикс slam'а на FAR-скелетах):** после теста итерации B обнаружили, что при отзумленной камере slam перестаёт убивать скелетов — урон не приходит. Причина: `collision_layer = 0` делает FAR-скелета невидимым **для всего**, включая `PhysicsShapeQuery` от slam'а. При зуме=2.5 Camera3D в ~111м от центра карты, и почти все скелеты становились FAR от Camera3D — рука теряла цели. Двойной фикс:
+    - **Новый слой `Layers.COLD_ENEMY` (бит 8 = 128).** FAR-скелет теперь на этом слое вместо `0`. Другие скелеты, башня, турель НЕ сканируют COLD_ENEMY (их маски не содержат бит 8) — broad-phase не нагружается. Но `MASK_HAND_TARGETS = 210` и `MASK_HAND_SLAM = 146` включают COLD_ENEMY — рука и slam доставают FAR-скелетов. `collision_mask = 0` сохраняется — FAR сам никого не сканирует.
+    - **LOD-якорь сменён с Camera3D на CameraRig** (`camera.get_parent()`). CameraRig lerp'ится за Tower, зум на него не влияет (зум меняет только `Camera3D.position × _zoom` относительно rig'а). Границы LOD теперь стабильны независимо от зума.
 
     **Что осталось не оптимизировано:** рендер. 1400 MeshInstance3D = 1400 draw calls, frustum culling Godot отсекает невидимые, но vertex transform всё равно стоит. Дальнейший buster — MultiMesh + GPU-instanced рендер с per-instance color (windup glow через color override вместо смены material_override). Большой refactor, отложен до явной необходимости.
 
