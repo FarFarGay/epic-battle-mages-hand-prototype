@@ -883,7 +883,7 @@ enum State {
 
 **Тип корня:** `CharacterBody3D` с `class_name DefenderGnome extends Gnome`.
 
-**Назначение:** гном-защитник. Спавнится `Camp` по `defenders_per_tent` штук на каждую палатку (по дефолту 3 из 7 жителей; остальные 4 — обычные собиратели). Стоит у палатки (на её позиции после развёртки), сканирует группу скелетов в радиусе `attack_radius` и стреляет в ближайшего стрелами `Arrow`.
+**Назначение:** гном-защитник. Спавнится `Camp` по `defenders_per_tent` штук на каждую палатку (по дефолту 3 из 7 жителей; остальные 4 — обычные собиратели). **Патрулирует по внешнему контуру лагеря** (окружность `patrol_radius=6м` вокруг `Camp.deploy_anchor`, за палатками которые стоят на `deploy_radius=4м`) — выбирает случайные точки на этом радиусе, ходит между ними. При обнаружении скелета в `attack_radius` — **останавливается**, целится по cooldown'у, стреляет; пока цель в зоне — стоит. Когда цель ушла или умерла — продолжает патруль.
 
 **Что наследуется без изменений:**
 - Привязка к палатке через `setup(camp, home_tent)`, IN_TENT-приклейка к `_home_tent.global_position`.
@@ -903,13 +903,17 @@ enum State {
 - `arrow_scene: PackedScene` — переиспользуется `arrow.tscn` от OctagonTurret.
 - `projectiles_root_path: NodePath` — куда складывать спавн стрел (фолбэк на `current_scene`).
 
+**Патрульные экспорты:**
+- `patrol_radius: float = 6.0` — окружность вокруг `Camp.deploy_anchor`, по которой защитник ходит. Чуть больше `Camp.deploy_radius=4` чтобы быть **за** палатками.
+- `patrol_speed: float = 1.0` — медленный шаг стража. Меньше `Gnome.move_speed=1.6` (та используется в `_tick_returning` при возврате в палатку).
+- `patrol_arrival: float = 0.6` — порог «дошёл до точки», после которого выбирается новая случайная.
+
 **Маска поиска целей:** `ENEMIES | COLD_ENEMY = 144`. Включает и горячих скелетов, и LOD-холодных — иначе при отзумленной камере дальние стаи становились бы невидимыми для защиты.
 
 **Combat-цикл:**
-1. `_attack_timer` тикает в `_defender_combat_tick`.
-2. По истечении — `_find_skeleton_target()` через `PhysicsShapeQuery3D` (sphere `attack_radius`, mask `144`), фильтрует через `Damageable.is_damageable`, выбирает ближайший Damageable.
-3. Если цель найдена — `_fire_at(target)` (тот же паттерн что у `OctagonTurret._fire_at`: спавн `arrow.tscn` в `_projectiles_root`, вызов `arrow.setup(spawn, target.global_position)` с `damage = randf_range(min, max)`).
-4. Новый `_attack_timer = randf_range(cooldown_min, cooldown_max)`. Если цели нет — короткий `0.2с` cooldown, чтобы быстрее реагировать на появление.
+1. Каждый тик `_defender_combat_tick(delta)` вызывает `_find_skeleton_target()` через `PhysicsShapeQuery3D` (sphere `attack_radius`, mask `144`).
+2. **Если цель найдена** — `velocity.x/z = 0` (стоп), тикает `_attack_timer`. По истечении — `_fire_at(target)` (тот же паттерн что у `OctagonTurret._fire_at`: спавн `arrow.tscn` в `_projectiles_root`, вызов `arrow.setup(spawn, target.global_position)` с `damage = randf_range(min, max)`). Новый `_attack_timer = randf_range(cooldown_min, cooldown_max)`. Пока цель в зоне — лучник стоит и периодически стреляет.
+3. **Если цели нет** — `_attack_timer` тикает в фоне (готовность к первому выстрелу при появлении цели сразу), вызывается `_patrol_tick()`: если `_patrol_target` достигнут или ещё не выбран — `_pick_patrol_point(anchor)` ставит новую случайную точку на окружности `patrol_radius` вокруг `Camp.deploy_anchor`. Шаг к цели через `_step_toward(target, patrol_speed)` — локальный аналог `Gnome._move_toward_xz` с произвольной скоростью.
 
 **Дублирование с Gnome._physics_process:** намеренное. Подкласс один, вынос в виртуальный hook был бы преждевременной абстракцией. Если появится третий тип гнома (целитель, инженер) — рефакторим базу с виртуальным `_active_tick(delta)`.
 

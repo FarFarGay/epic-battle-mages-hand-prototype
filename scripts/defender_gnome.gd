@@ -38,12 +38,26 @@ extends Gnome
 @export_node_path("Node") var projectiles_root_path: NodePath
 @export_group("")
 
+@export_group("Defender patrol")
+## Радиус патруля от центра лагеря (`Camp.deploy_anchor`). Палатки стоят
+## на `Camp.deploy_radius=4`, защитник на 6 — это «вне палаток», как
+## стража на внешнем контуре. Если у Camp нет valid anchor'а, защитник
+## стоит на стартовой позиции (палатке).
+@export var patrol_radius: float = 6.0
+## Скорость шага во время патруля. Меньше move_speed=1.6 — стража движется
+## размеренно, не суетится.
+@export var patrol_speed: float = 1.0
+## Дистанция до patrol-точки, чтобы выбрать новую (или после прибытия).
+@export var patrol_arrival: float = 0.6
+@export_group("")
+
 ## ENEMIES + COLD_ENEMY = 144. Видим и горячих, и холодных скелетов.
 ## Используем литерал — `const` не может ссылаться на другой class const.
 const TARGET_MASK: int = 16 | 128
 
 var _attack_timer: float = 0.0
 var _projectiles_root: Node = null
+var _patrol_target: Vector3 = Vector3.INF
 
 
 func _ready() -> void:
@@ -93,22 +107,65 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 
-## Стой на месте (velocity.x/z = 0), тикай таймер, при его истечении ищи цель
-## и стреляй. После выстрела — новый случайный интервал.
+## Скан цели каждый тик. Если есть — останавливаемся, тикаем cooldown, по
+## готовности стреляем (одиночный кадр стрельбы). Если цели нет — патрулируем
+## по внешнему контуру лагеря, cooldown тоже идёт (чтобы при появлении
+## скелета первый выстрел был сразу, без задержки).
 func _defender_combat_tick(delta: float) -> void:
-	velocity.x = 0.0
-	velocity.z = 0.0
-	_attack_timer -= delta
-	if _attack_timer > 0.0:
-		return
 	var target := _find_skeleton_target()
 	if target != null:
-		_fire_at(target)
-		_attack_timer = randf_range(attack_cooldown_min, attack_cooldown_max)
+		# Стой и стреляй: пока есть цель в зоне — на месте.
+		velocity.x = 0.0
+		velocity.z = 0.0
+		_attack_timer -= delta
+		if _attack_timer <= 0.0:
+			_fire_at(target)
+			_attack_timer = randf_range(attack_cooldown_min, attack_cooldown_max)
 	else:
-		# Цели нет — проверяем чаще, чтобы реагировать на появившегося скелета
-		# быстрее минимального cooldown'а.
-		_attack_timer = 0.2
+		# Без цели — охлаждаемся и патрулируем.
+		_attack_timer = maxf(_attack_timer - delta, 0.0)
+		_patrol_tick()
+
+
+## Патруль по окружности patrol_radius вокруг Camp.deploy_anchor (центра
+## лагеря). При достижении точки выбирается новая случайная — лучник ходит
+## по внешнему периметру, как стража. Если anchor невалиден (Camp ещё не
+## развёрнут или пропал) — стоим на месте.
+func _patrol_tick() -> void:
+	if _camp == null:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		return
+	var anchor: Vector3 = _camp.deploy_anchor
+	if _patrol_target == Vector3.INF or _horizontal_distance(_patrol_target) < patrol_arrival:
+		_patrol_target = _pick_patrol_point(anchor)
+	_step_toward(_patrol_target, patrol_speed)
+
+
+## Случайная точка на окружности patrol_radius вокруг центра лагеря.
+## Y берём с anchor'а — палатки стоят на полу, патруль на той же высоте.
+func _pick_patrol_point(anchor: Vector3) -> Vector3:
+	var angle := randf() * TAU
+	return Vector3(
+		anchor.x + cos(angle) * patrol_radius,
+		anchor.y,
+		anchor.z + sin(angle) * patrol_radius,
+	)
+
+
+## Локальный аналог Gnome._move_toward_xz, но с произвольной скоростью:
+## защитник патрулирует медленнее (patrol_speed), а Gnome.move_speed
+## остаётся для возврата в палатку (через унаследованный _tick_returning).
+func _step_toward(target: Vector3, speed: float) -> void:
+	var to_target: Vector3 = target - global_position
+	to_target.y = 0.0
+	if to_target.length_squared() < VecUtil.EPSILON_SQ:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		return
+	var dir := to_target.normalized()
+	velocity.x = dir.x * speed
+	velocity.z = dir.z * speed
 
 
 ## PhysicsShapeQuery со сферой attack_radius. Mask ловит и активных (ENEMIES),
