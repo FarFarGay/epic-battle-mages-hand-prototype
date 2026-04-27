@@ -24,7 +24,7 @@ const RAY_DISTANCE := 1000.0
 ## Динамика: пока в руке держится CampModule (несём турель ставить на башню),
 ## в маску добавляется ACTORS на лету — иначе курсор не «ловит» верх башни,
 ## hand остаётся на полу, и поставить модуль на слот нечем.
-@export_flags_3d_physics var cursor_raycast_mask: int = 67  # Layers.MASK_HAND_CURSOR
+@export_flags_3d_physics var cursor_raycast_mask: int = Layers.MASK_HAND_CURSOR  # 67
 @export var debug_log: bool = true
 
 @onready var _grab_area: Area3D = $GrabArea

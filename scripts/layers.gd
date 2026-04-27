@@ -31,10 +31,15 @@ const MOUNTED_MODULE := 1 << 6   # 64 — bit 6 = layer 7
 ## курсор пролетал бы сквозь неё (тауэр на ACTORS, не в маске).
 const MASK_HAND_CURSOR := TERRAIN | ITEMS | MOUNTED_MODULE      # 67
 
-## Hand grab / slam / flick: предметы и враги (то, во что бьём/подсвечиваем).
+## Hand grab / flick: предметы и враги (то, во что бьём/подсвечиваем).
 ## MOUNTED_MODULE — чтобы рука могла снять смонтированный модуль обратно
 ## с башни / центра лагеря.
 const MASK_HAND_TARGETS := ITEMS | ENEMIES | MOUNTED_MODULE     # 82
+
+## Slam: предметы и враги, без MOUNTED_MODULE. Хлопок не должен срывать
+## смонтированный модуль со слота — снять модуль можно только хватом руки
+## (через MASK_HAND_TARGETS), а Slam — это AOE по «свободному» миру.
+const MASK_HAND_SLAM := ITEMS | ENEMIES                         # 18
 
 ## «Всё обычное» (без палаток лагеря). Tower / Item / Ground / shatter.
 const MASK_ALL_GAMEPLAY := TERRAIN | ITEMS | ACTORS | PROJECTILES | ENEMIES   # 31

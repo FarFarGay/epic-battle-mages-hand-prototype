@@ -38,8 +38,10 @@ class SlamHit:
 ## 2-шот почти не возникал (аиминг обычно близко к эпицентру).
 @export var slam_damage: float = 60.0
 @export var slam_cooldown: float = 0.5
-## По каким слоям бьёт хлопок: Items + Enemies по умолчанию (Layers.MASK_HAND_TARGETS = 18).
-@export_flags_3d_physics var slam_mask: int = 18
+## По каким слоям бьёт хлопок: Items + Enemies (Layers.MASK_HAND_SLAM = 18).
+## MOUNTED_MODULE сюда НЕ входит — снять модуль со слота можно только хватом
+## руки, не AOE-хлопком.
+@export_flags_3d_physics var slam_mask: int = Layers.MASK_HAND_SLAM
 @export var slam_visual_color: Color = Color(1.0, 0.7, 0.3, 0.6)
 ## Длительность knockback'а на kinematic-целях (в течение этого времени AI отключён).
 @export var slam_knockback_duration: float = 0.4

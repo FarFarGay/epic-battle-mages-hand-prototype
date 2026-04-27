@@ -30,7 +30,7 @@ extends CampModule
 ## чтобы не задеть сам корпус коллизией стрелы).
 @export var arrow_spawn_offset: Vector3 = Vector3(0, 0.5, 0)
 ## Маска поиска целей. ENEMIES (бит 4 = 16). Гномы и башня не зацепляются.
-@export_flags_3d_physics var target_mask: int = 16
+@export_flags_3d_physics var target_mask: int = Layers.ENEMIES
 
 @export_group("Refs")
 @export var arrow_scene: PackedScene
