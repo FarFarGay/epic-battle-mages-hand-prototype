@@ -77,7 +77,7 @@ hand_gameplay_prot/
    - `Damageable` — `register(node) → group "damageable"`, `is_damageable(target)`, `try_damage(target, amount)`. Цели: `Item`, `Tower`, `Enemy` (Skeleton), `ResourcePile`.
    - `Pushable` — `register/is_pushable/try_push(target, Δv, duration)`. RigidBody-цели реализуют `apply_push` через `apply_central_impulse(Δv * mass)`, kinematic-цели (Enemy) — через свой `apply_knockback`. Снаружи всё едино — `Tower._push_kinematic` не знает, какой класс перед ним.
    - `Grabbable` — `register/is_grabbable`. Hand сейчас грабит «любой `RigidBody3D` в группе grabbable, у которого есть `set_highlighted` и `mass < max_lift_mass`» вместо `body is Item`. `ResourcePile` подключился без правок руки — только через `Grabbable.register` в своём `_ready`.
-3. **Именованные физические слои.** `scripts/layers.gd` (`class_name Layers`) — единая точка правды: `Layers.TERRAIN/ITEMS/ACTORS/PROJECTILES/ENEMIES/CAMP_OBSTACLE` плюс композитные `MASK_HAND_CURSOR / MASK_HAND_TARGETS / MASK_ALL_GAMEPLAY / MASK_SKELETON / MASK_TERRAIN_ONLY`. В коде GDScript маски берутся через `Layers.X`. В `.tscn` Godot хранит маски как ints — там литералы; пересчитываются от констант (комментарий рядом).
+3. **Именованные физические слои.** `scripts/layers.gd` (`class_name Layers`) — единая точка правды: `Layers.TERRAIN/ITEMS/ACTORS/PROJECTILES/ENEMIES/CAMP_OBSTACLE/MOUNTED_MODULE` плюс композитные `MASK_HAND_CURSOR / MASK_HAND_TARGETS / MASK_HAND_SLAM / MASK_ALL_GAMEPLAY / MASK_SKELETON / MASK_TERRAIN_ONLY / MASK_FRIENDLY_PROJECTILE`. В коде GDScript маски берутся через `Layers.X`. В `.tscn` Godot хранит маски как ints — там литералы; пересчитываются от констант (комментарий рядом).
 4. **Связи между модулями — через `@export` и `setup(...)` инъекцию.** Подмодули руки (`HandPhysicalSlam/Flick/Spell`) получают ссылки на `Hand` и координатор через явный `setup(hand, coord)`, а не лезут вверх по дереву через `get_parent().get_parent()`. Камера, лагерь, спавнер — всё на `@export NodePath`.
 5. **`main.tscn` — только композиция:** инстансы модулей + ландшафт + свет. Никакой собственной логики.
 6. **`scripts/` — только поведение, `scenes/` — только структура.** Сцены не содержат скриптов в чужих папках, скрипты не делают `preload` чужих сцен (кроме рантайм-спавна — гномы, скелеты, фрагменты-осколки).
@@ -121,10 +121,9 @@ hand_gameplay_prot/
 
 **Маски запросов (не тел):**
 - `Hand.cursor_raycast_mask`: `Layers.MASK_HAND_CURSOR = 67` (Terrain + Items + MountedModule) — рука поднимается над полом, ящиками/кучами и смонтированными модулями (иначе курсор не «ловил» бы турель на верху башни и снять рукой не получалось бы). На лету в `Hand._raycast_terrain` к маске прибавляется `ACTORS`, если в руке `CampModule` — чтобы при переноске модуля курсор «находил» верхушку башни и hand поднимался к слоту, а не упирался в стену тауэра.
-- `Hand.GrabArea`: `Layers.MASK_HAND_TARGETS = 82` (Items + Enemies + MountedModule) — рука цепляет любую цель, включая модуль уже стоящий в слоте.
-- `Hand.GrabArea`: `Layers.MASK_HAND_TARGETS = 18` (Items + Enemies) — flick видит и Items (с mass-фильтром), и Enemies. LMB-grab фильтрует через `Grabbable.is_grabbable` + mass, поэтому скелета случайно не схватить.
+- `Hand.GrabArea`: `Layers.MASK_HAND_TARGETS = 82` (Items + Enemies + MountedModule) — рука цепляет любую цель, включая модуль уже стоящий в слоте. LMB-grab дополнительно фильтрует через `Grabbable.is_grabbable` + `mass < max_lift_mass`, поэтому скелета случайно не схватить. Flick читает ту же зону.
 - `Hand.MagnetArea`: `Layers.ITEMS = 2` — магнит тянет только то, что на слое Items (Items, ResourcePile).
-- `Hand:PhysicalSlam.slam_mask`: `Layers.MASK_HAND_TARGETS = 18` (Items + Enemies).
+- `Hand:PhysicalSlam.slam_mask`: `Layers.MASK_HAND_SLAM = 18` (Items + Enemies, без MOUNTED_MODULE). Намеренно отличается от GrabArea: смонтированный модуль нельзя сбить хлопком — снять его можно только хватом руки.
 
 ---
 
@@ -196,14 +195,14 @@ hand_gameplay_prot/
 
 **Дочерние узлы:**
 - `HandMesh` — `MeshInstance3D` со сферой r=0.5 (визуал).
-- `GrabArea` — `Area3D` со сферой r=2 на оффсете `(0, −1.5, 0)`, `collision_mask=18` (Items + Enemies). Зона захвата (LMB) и поиска цели для Flick. Доступ снаружи — только через `get_grabbable_bodies()`.
+- `GrabArea` — `Area3D` со сферой r=2 на оффсете `(0, −1.5, 0)`, `collision_mask=82` (Items + Enemies + MountedModule, == `Layers.MASK_HAND_TARGETS`). Зона захвата (LMB) и поиска цели для Flick. Доступ снаружи — только через `get_grabbable_bodies()`.
 - `MagnetArea` — `Area3D` со сферой r=4 на том же оффсете, `collision_mask=2` (только Items). Доступ — через `get_magnet_bodies()`.
 - `PhysicalActions` — `Node` со скриптом `hand_physical.gd` (см. §5.2.1).
 - `SpellActions` — `Node` со скриптом `hand_spell.gd` (см. §5.2.2).
 
 **Экспорты на самой Hand (`scripts/hand.gd`):**
 - `hand_height: float = 2.5` — просвет между рукой и поверхностью под курсором.
-- `cursor_raycast_mask: int = 3` (`@export_flags_3d_physics`) — слои для raycast'а высоты под курсором (Terrain + Items). Имя точное: маска именно курсорного raycast'а, не «всех terrain-операций». Раньше называлось `terrain_mask`.
+- `cursor_raycast_mask: int = Layers.MASK_HAND_CURSOR` (`@export_flags_3d_physics`, числовое значение 67 = Terrain + Items + MountedModule) — слои для raycast'а высоты под курсором. На лету в `Hand._raycast_terrain` к маске прибавляется `ACTORS`, если в руке `CampModule` (см. §4.1). Имя точное: маска именно курсорного raycast'а, не «всех terrain-операций». Раньше называлось `terrain_mask`.
 - `debug_log: bool = true` — лог только смены поверхности.
 
 **Внутреннее состояние:**
@@ -305,7 +304,7 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 **Slam-подмодуль (`HandPhysicalSlam`):**
 - Вызывает координатор: `can_trigger() / on_press() / on_release() / tick(delta) / is_active() (=false для one-shot)`.
 - Кулдаун-гейт через `_slam_cooldown_remaining`.
-- `PhysicsShapeQueryParameters3D` со сферой `slam_radius` в `_hand.global_position`, `collision_mask = slam_mask` (`@export_flags_3d_physics`, дефолт `18`).
+- `PhysicsShapeQueryParameters3D` со сферой `slam_radius` в `_hand.global_position`, `collision_mask = slam_mask` (`@export_flags_3d_physics`, дефолт `Layers.MASK_HAND_SLAM = 18`, Items + Enemies без MOUNTED_MODULE).
 - **Балансные параметры:** `slam_damage: float = 60.0`, `slam_radius: float = 5.0`, `slam_force: float = 30.0`, `slam_cooldown: float = 0.5`. На скелете `hp=30` это даёт ваншот при прицельном попадании (d ≤ 2.5м, 50% радиуса) и стабильный 2-шот в среднем поясе (2.5 < d ≤ 3.75м, туда попадают коллатеральные скелеты при slam'е по основной цели); за 3.75м рим-хит, 3+ удара. Подробная разбивка в комментарии у `slam_damage` в `hand_physical_slam.gd`.
 - Для каждого результата (Damageable, не равного `_coord.get_held_item()`):
   - Falloff = `clamp(1 − horizontal_dist / slam_radius, 0, 1)` — горизонтальная, не 3D, иначе `hand_height` съел бы силу у близких целей.
@@ -794,6 +793,7 @@ func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool
   - `vision_radius: float = 10.0` — дальность зрения. Куча в этом радиусе считается «увиденной» во время патруля.
   - `idle_radius: float = 4.0` — радиус ошивания возле anchor'а, когда куч на карте нет.
   - `pickup_distance: float = 0.8`, `deposit_distance: float = 1.2`, `home_distance: float = 0.8`, `wander_arrival: float = 0.6`.
+  - `wander_map_half_extent: float = 95.0` — половина стороны квадратной карты от центра. Wander-точки в `_random_point_around` клампятся в эти пределы. При `search_radius=300` без clamp'а гном уходил бы за пол. Должно совпадать со `Skeleton.wander_map_half_extent`.
 - Группа **Visual:** `gnome_color`, `carry_color`, `carry_visual_size`.
 - `debug_log: bool = false` — по умолчанию выключен.
 
@@ -943,7 +943,7 @@ func take_one() -> bool:
 Первый конкретный модуль. **Тип корня:** `RigidBody3D` через `CampModule`. Восьмигранный цилиндр (`CylinderMesh radial_segments=8`, r=0.45, h=0.7), масса 3.0, на слое `ITEMS=2` — рука ловит как обычный Grabbable.
 
 **Поведение:**
-- Когда mounted в слоте — каждый физкадр тикает `_fire_timer`. Когда истёк, `_find_target()` через `PhysicsShapeQueryParameters3D` (sphere `attack_radius=12м`, mask `ENEMIES=16`) ищет ближайшего Damageable на слое врагов и `_fire_at(target)`.
+- Когда mounted в слоте — каждый физкадр тикает `_fire_timer`. Когда истёк, `_find_target()` через `PhysicsShapeQueryParameters3D` (sphere `attack_radius=12м`, `target_mask = Layers.ENEMIES = 16`) ищет ближайшего Damageable на слое врагов и `_fire_at(target)`.
 - Стрельба круговая (omnidirectional) — нет фронта, нет «поворачивания дула», цель выбирается просто по близости.
 - Между выстрелами — случайная пауза `randf_range(fire_interval_min=0.4, fire_interval_max=0.9)`. Несколько турелей не залпуют синхронно.
 - Когда не mounted (свободный или в руке) — `_physics_process` сразу возвращается, стрельбы нет.
@@ -1154,7 +1154,14 @@ func take_one() -> bool:
     - **Контент: 20 куч в трёх кольцах** (`38d15a2`). Было 8 ровным кольцом, стало 20 в трёх концентрических кольцах вокруг центра — даёт ощутимую разницу между гномами с разным `vision_radius` и нагружает path-finding (когда добавим).
     - **Camp перешёл с 2-state на 3-state** для свёртки. Был `CARAVAN_FOLLOWING / DEPLOYED`, стал плюс `PACKING_RETURNING`: при нажатии R на свёртку сразу не сворачиваемся — гномам надо дойти до своих палаток. `request_return()` рассылается всем гномам, состояние держится пока `_all_gnomes_home()` не вернёт true, и только потом `_finalize_pack` → `CARAVAN_FOLLOWING`. Палатки в это время стоят на местах развёртки (используется `_update_deployed`).
     - **Новый контракт `Grabbable`** (`97a4873`). До куч `Hand:PhysicalActions._find_closest_item` и подсветка кандидата работали через `body is Item`. Это исключило бы ResourcePile из захвата, не наследуя её от Item. Решение — третий контракт: `scripts/grabbable.gd`, `class_name Grabbable`, `RefCounted` со static `register/is_grabbable`. Фильтр в Hand сменился на `Grabbable.is_grabbable(body) and body is RigidBody3D and rb.mass < max_lift_mass`. Item, ResourcePile (и любой будущий «можно схватить» RigidBody3D) попадают в захват без правок руки. `set_highlighted` объявлен частью контракта; Hand зовёт его через `has_method` для defensive-coding.
-    - **Семантика в EventBus.** Через bus гномы и кучи ничего нового не эмитят. ResourcePile использует уже существующие `EventBus.item_damaged/item_destroyed` — куча по контракту неотличима от Item для cross-cutting слушателей (UI/счёт ресурсов разнесёт их при необходимости через `target is ResourcePile`).
+    - **Семантика в EventBus.** ResourcePile использует уже существующие `EventBus.item_damaged/item_destroyed` — куча по контракту неотличима от Item для cross-cutting слушателей (UI/счёт ресурсов разнесёт их при необходимости через `target is ResourcePile`). Гномы получили собственные `gnome_damaged/destroyed` (нужно UI-счётчику погибших), палатки — `camp_part_damaged/destroyed` (телеграф разрушения лагеря).
+
+30. **Аудит и синхронизация спеки с кодом.** После накопления изменений (этапы 25–29) спека и код разошлись. Прошёлся аудитом: маски, сигналы шины, FSM-состояния, edge-cases.
+    - **Camp `_deployed_targets` sync с `_parts`.** Раньше `_on_part_destroyed` делал только `_parts.erase(part)`, не трогая `_deployed_targets`. Если палатка `_parts[i]` погибала в DEPLOYED, индексы съезжали — оставшиеся палатки `_update_deployed` поедут к чужим точкам кольца. Теперь удаляется по индексу из обоих массивов синхронно.
+    - **Camp реакция на `tower_destroyed`.** Camp подписывается на `EventBus.tower_destroyed` и обнуляет `_tower`. До этого караван продолжал follow'ить мёртвую (физически ещё существующую) Tower-ноду — `_update_caravan_follow` тянул палатки за статичной целью. Теперь null-чек прерывает follow.
+    - **Gnome wander clamp.** `_random_point_around` при `search_radius=300` на карте ±95 уходил за пол. Добавлен `wander_map_half_extent: float = 95.0` и clamp в итог — симметрично `Skeleton.wander_map_half_extent`.
+    - **Магические маски через `Layers`.** Литералы `slam_mask=18` / `target_mask=16` / `cursor_raycast_mask=67` заменены на `Layers.MASK_HAND_SLAM` / `Layers.ENEMIES` / `Layers.MASK_HAND_CURSOR`. Введена новая константа `MASK_HAND_SLAM = ITEMS | ENEMIES = 18` — Slam намеренно отличается от `MASK_HAND_TARGETS = 82` (без MOUNTED_MODULE: смонтированный модуль нельзя сбить хлопком, только хватом руки). Раньше спека сама себе противоречила: в одном месте slam_mask назван как `MASK_HAND_TARGETS = 18`, в другом — `MASK_HAND_TARGETS = 82`.
+    - **EventBus сигналы доведены до фактического состояния.** В список добавлены `gnome_damaged/destroyed`, `camp_part_damaged/destroyed`, `module_mounted/unmounted` — они эмитятся в коде с этапов 26–29, но в спеке таблицу обновить забыли.
 
 ### 7.3 Решённые ошибки
 
@@ -1228,8 +1235,16 @@ func take_one() -> bool:
 | `hand_flicked` | `(target: Node3D, velocity: Vector3)` | `HandPhysicalActions._ready` re-emit |
 | `camp_deployed` | `(anchor: Vector3)` | `Camp._ready` re-emit |
 | `camp_packed` | — | `Camp._ready` re-emit |
+| `camp_part_damaged` | `(part: Node3D, amount: float)` | `CampPart._ready` re-emit |
+| `camp_part_destroyed` | `(part: Node3D)` | `CampPart._ready` re-emit (Camp же подписывается через локальный `destroyed.bind(p)` для синхронизации `_parts`/`_deployed_targets`) |
+| `gnome_damaged` | `(gnome: Node3D, amount: float)` | `Gnome._ready` re-emit |
+| `gnome_destroyed` | `(gnome: Node3D)` | `Gnome._ready` re-emit |
+| `module_mounted` | `(module: Node, slot: Node)` | `MountSlot._mount` |
+| `module_unmounted` | `(module: Node, slot: Node)` | `MountSlot._release_to_hand` / `_drop_mounted` |
 
-`Gnome` и `ResourcePile.take_one` через шину **не эмитят**. Гномы — внутренняя механика лагеря, спавнятся в Camp напрямую; декремент `units` куч пока не нужен наружу (счётчика ресурсов ещё нет). При появлении HUD-счётчика добавится отдельный сигнал — типизированный как `Node3D`, как и остальные.
+`ResourcePile.take_one` через шину **не эмитит** (декремент `units` пока не нужен наружу — счётчика ресурсов ещё нет). При появлении HUD-счётчика добавится отдельный сигнал — типизированный как `Node3D`, как и остальные.
+
+**Подписки самого Camp на шину:** помимо re-emit'а собственных `deployed/packed`, Camp слушает `EventBus.tower_destroyed` — обнуляет ссылку на башню, чтобы `_update_caravan_follow` и stationary-чек прекратили follow'ить мёртвую (но физически ещё существующую) Tower. Дополнительно через локальный `CampPart.destroyed.connect(_on_part_destroyed.bind(p))` Camp вычищает погибшую палатку из `_parts` И `_deployed_targets` (синхронно — иначе оставшиеся палатки уехали бы к чужим точкам кольца).
 
 **Паттерн re-emit'а в сущности:**
 ```gdscript
