@@ -13,7 +13,7 @@
 [ext_resource type="PackedScene" path="res://scenes/perf_hud.tscn" id="11"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
-size = Vector3(200, 1, 200)
+size = Vector3(400, 1, 400)
 
 [sub_resource type="ShaderMaterial" id="Material_ground"]
 render_priority = 0
@@ -24,7 +24,7 @@ shader_parameter/grid_size = 2.0
 shader_parameter/line_width = 0.04
 
 [sub_resource type="BoxMesh" id="BoxMesh_ground"]
-size = Vector3(200, 1, 200)
+size = Vector3(400, 1, 400)
 
 [node name="Main" type="Node3D" unique_id=462266493]
 

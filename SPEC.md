@@ -93,7 +93,7 @@ hand_gameplay_prot/
 - **Размеры и позиции:**
   | Узел | Размер | Стартовая позиция | Высота центра |
   |---|---|---|---|
-  | Ground | 200×1×200 | (0, −0.5, 0) | y=−0.5 (верх y=0) |
+  | Ground | 400×1×400 | (0, −0.5, 0) | y=−0.5 (верх y=0) |
   | Tower | 2×6×2 | (0, 3, 0) | y=3 (низ y=0) |
   | Hand | сфера r=0.5 | следует курсору | `surface_y + hand_height` |
   | Item (бокс) | переменный (`item_size`) | произвольно | `size.y / 2` (низ на y=0) |
@@ -563,7 +563,7 @@ Skeleton не использует `Enemy._targets` — вместо этого 
   - `wander_speed: float = 1.2` — скорость патруля без цели.
   - `wander_distance_min/max: 5.0/15.0` — диапазон следующей wander-точки.
   - `wander_rest_min/max: 1.0/3.0` — длительность RESTING-фазы.
-  - `wander_map_half_extent: 95.0` — клампа wander-точки в пределах карты.
+  - `wander_map_half_extent: 195.0` — клампа wander-точки в пределах карты 400×400.
   - `wander_arrival: 0.8` — порог «дошёл».
 - Группа **Strike (физический выпад):**
   - `lunge_speed: float = 8.0` — m/s в момент удара (выше `move_speed`).
@@ -705,7 +705,7 @@ func _yield_frame_and_recenter() -> Vector3:
 **Назначение:** пол с отрисованной сеткой 2×2 м.
 
 **Состав:**
-- `GroundCollision` — `CollisionShape3D` с `BoxShape3D` 200×1×200.
+- `GroundCollision` — `CollisionShape3D` с `BoxShape3D` 400×1×400.
 - `GroundMesh` — `MeshInstance3D` с тем же боксом и `ShaderMaterial`, использующим `resources/grid.gdshader`.
 
 **Шейдер (`grid.gdshader`):**
@@ -820,11 +820,11 @@ func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool
 **Экспорты:**
 - Группа **Movement:** `move_speed: float = 1.6`, `gravity: float = 20.0`.
 - Группа **Behaviour:**
-  - `search_radius: float = 300.0` — радиус патруля от anchor'а (карта 200×200, радиус нарочно покрывает всю карту).
+  - `search_radius: float = 300.0` — радиус патруля от anchor'а (карта 400×400, диагональ ~566; радиус нарочно покрывает большую часть карты — clamp `wander_map_half_extent` отсекает выход за пол).
   - `vision_radius: float = 10.0` — дальность зрения. Куча в этом радиусе считается «увиденной» во время патруля.
   - `idle_radius: float = 4.0` — радиус ошивания возле anchor'а, когда куч на карте нет.
   - `pickup_distance: float = 0.8`, `deposit_distance: float = 1.2`, `home_distance: float = 0.8`, `wander_arrival: float = 0.6`.
-  - `wander_map_half_extent: float = 95.0` — половина стороны квадратной карты от центра. Wander-точки в `_random_point_around` клампятся в эти пределы. При `search_radius=300` без clamp'а гном уходил бы за пол. Должно совпадать со `Skeleton.wander_map_half_extent`.
+  - `wander_map_half_extent: float = 195.0` — половина стороны квадратной карты от центра (200) минус 5м буфер от края. Wander-точки в `_random_point_around` клампятся в эти пределы. При `search_radius=300` без clamp'а гном уходил бы за пол. Должно совпадать со `Skeleton.wander_map_half_extent`.
 - Группа **Visual:** `gnome_color`, `carry_color`, `carry_visual_size`.
 - `debug_log: bool = false` — по умолчанию выключен.
 

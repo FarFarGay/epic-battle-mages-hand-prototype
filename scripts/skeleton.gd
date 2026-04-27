@@ -80,8 +80,9 @@ enum WanderPhase { RESTING, WANDERING }
 @export var wander_rest_min: float = 1.0
 @export var wander_rest_max: float = 3.0
 ## Половина стороны квадратной карты от центра (0,0). Wander-точка клампится
-## в этих пределах, чтобы скелет не уходил за пределы пола.
-@export var wander_map_half_extent: float = 95.0
+## в этих пределах, чтобы скелет не уходил за пределы пола. Для карты
+## 400×400 — 195 (200 − 5м буфер от края). Должно совпадать с Gnome.
+@export var wander_map_half_extent: float = 195.0
 ## Дистанция до wander-точки, на которой считаем «дошёл» и начинаем отдыхать.
 @export var wander_arrival: float = 0.8
 @export_group("")

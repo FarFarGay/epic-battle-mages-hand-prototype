@@ -73,9 +73,9 @@ enum State {
 ## Дистанция до wander-точки, чтобы выбрать новую (или после прибытия).
 @export var wander_arrival: float = 0.6
 ## Половина стороны квадратной карты от центра (0,0). Wander-точки клампятся
-## в этих пределах, чтобы при search_radius=300 на карте 200×200 гном не
+## в этих пределах, чтобы при search_radius=300 на карте 400×400 гном не
 ## уходил за пол. Должно совпадать со Skeleton.wander_map_half_extent.
-@export var wander_map_half_extent: float = 95.0
+@export var wander_map_half_extent: float = 195.0
 
 @export_group("Visual")
 @export var gnome_color: Color = Color(0.7, 0.45, 0.25)
