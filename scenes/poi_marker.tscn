@@ -1,9 +1,9 @@
 [gd_scene load_steps=3 format=3]
 
 [sub_resource type="CylinderMesh" id="CylinderMesh_poi"]
-top_radius = 1.0
-bottom_radius = 1.0
-height = 0.4
+top_radius = 2.5
+bottom_radius = 2.5
+height = 0.6
 
 [sub_resource type="StandardMaterial3D" id="Material_poi"]
 albedo_color = Color(0.95, 0.7, 0.15, 1)
