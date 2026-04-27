@@ -578,22 +578,29 @@ Skeleton не использует `Enemy._targets` — вместо этого 
 
 **LOD-поведение** (см. enum `LodLevel { NEAR, MID, FAR }`):
 
-| Уровень | Дистанция от камеры | AI-tick | vision_scan |
-|---|---|---|---|
-| NEAR | ≤ 25м | каждый кадр | каждые 0.15с |
-| MID | 25..50м | каждый 2-й | каждые 0.30с (×2) |
-| FAR | > 50м | каждый 3-й | каждые 0.60с (×4) |
+| Уровень | Дистанция от камеры | AI-tick | vision_scan | Физика |
+|---|---|---|---|---|
+| NEAR | ≤ 25м | каждый кадр | каждые 0.15с | Полная (collision_layer=ENEMIES, move_and_slide) |
+| MID | 25..50м | каждый 2-й | каждые 0.30с (×2) | Полная (как NEAR) |
+| FAR | > 50м | каждый 3-й | каждые 0.60с (×4) | **Холодная: collision_layer=0, без move_and_slide** |
 
 **Что мерится:** дистанция до **камеры** (`get_viewport().get_camera_3d().global_position`), не до Tower — Tower может умереть, камера всегда жива; и распределение «что вблизи камеры» лучше отражает то, что игрок реально видит.
 
-**Что скипается, что нет:**
-- Скип AI — **только в `AttackState.APPROACH`**. В `WINDUP` не скипаем (там декрементится таймер замаха, скип заморозил бы скелета); в `STRIKE` транзитно; в `COOLDOWN` теоретически можно, но консервативно — нет, чтобы поведение в бою было идентично near-скелетам.
-- Knockback (`KnockbackState.tick`), гравитация и `move_and_slide` работают на полной частоте всегда — иначе хлопок и отскоки сломаются на дальних врагах.
+**Холодный режим FAR (главный win на 1000+ скелетах):**
+- `collision_layer = 0`, `collision_mask = 0` — скелет полностью выпадает из broad-phase physics-сервера. Не сталкивается с другими скелетами, не блокирует башню, не попадает в `OctagonTurret._find_target` (но FAR > 50м, attack_radius турели = 22м — он всё равно вне зоны). На 1400 скелетах это убирает квадратичную нагрузку взаимных коллизий.
+- `move_and_slide()` пропускается. Вместо неё `_far_step` делает простое `global_position.x/z += velocity * delta`. Y не трогается (пол плоский, гравитация не нужна).
+- **Что сохраняется в _far_step:** `KnockbackState.tick(delta)` (иначе lunge через `_apply_velocity_change` навечно отправил бы скелета в полёт), декремент `_state_timer` для COOLDOWN, AI-step (включая LOD-skip в APPROACH), Damageable.try_damage в `_perform_strike` (урон по палатке/гному не зависит от collision-layer'ов).
+- **Что теряется:** скелеты сквозят друг друга и палатки вне камеры (но игрок этого не видит); нет gravity (плоский пол — ок); `is_on_floor()` всегда false на FAR (AI это не читает).
+- **При возврате FAR→MID** (скелет приблизился к камере): `_apply_lod_physics_mode` восстанавливает `collision_layer = Layers.ENEMIES` / `collision_mask = MASK_SKELETON`, и со следующего тика снова работает полный `super._physics_process` — physics возвращается без проблем.
+
+**Что скипается, что нет на NEAR/MID:**
+- Скип AI-tick — **только в `AttackState.APPROACH`**. В `WINDUP` не скипаем (там декрементится таймер замаха, скип заморозил бы скелета); в `STRIKE` транзитно; в `COOLDOWN` таймер тикает в базе независимо.
+- Knockback, гравитация и `move_and_slide` работают на полной частоте всегда (только на NEAR/MID; FAR — холодный режим выше).
 - При скипе AI velocity сохраняется — скелет едет по инерции до следующего полного тика.
 
-**Anti-«волна»:** `_lod_check_timer = randf() * lod_check_interval` и `_lod_ai_tick_counter = randi() % 6` в `_ready` — distance-чеки и skip-тики разнесены по фазе, чтобы 100 mid-LOD скелетов не пропускали один и тот же кадр одновременно.
+**Anti-«волна»:** `_lod_check_timer = randf() * lod_check_interval` и `_lod_ai_tick_counter = randi() % 6` в `_ready` — distance-чеки и skip-тики разнесены по фазе. Также `_set_lod_level` идемпотентен — `_apply_lod_physics_mode` вызывается только при реальной смене уровня (write на collision_layer = мутация broad-phase), не каждые 0.5с.
 
-**Что игрок не заметит:** реакция дальних врагов на появление цели хуже на 0.15..0.45с (один LOD-цикл), но они всегда вне камеры — визуальной задержки не видно. На 50 скелетах при равномерном распределении 25 NEAR + 15 MID + 10 FAR vision-сканы дают ~25×6.7 + 15×3.3 + 10×1.7 = ~233 scan/sec вместо чистых 50×6.7 = 333 (~30% экономия). На 200 — ~50% экономия.
+**Что игрок не заметит:** скелеты вне камеры всё равно вне камеры; реакция дальних на цель хуже на 0.15..0.45с (один LOD-цикл, меньше windup'а 0.4с). На 1400 скелетах при равномерном распределении (~50 NEAR + 200 MID + 1150 FAR) physics-сервер обрабатывает только 250 тел вместо 1400 — что даёт основной перфоманс-буст. Дальнейший buster требует MultiMesh + GPU-instanced рендера (1400 draw calls сейчас уходят в рендер, не в физику).
 
 **Константы:** `BODY_ALBEDO_COLOR`, `WINDUP_EMISSION_COLOR`, `WINDUP_EMISSION_INTENSITY`. Per-instance тонкая настройка цвета не предусмотрена.
 
@@ -1186,13 +1193,21 @@ func take_one() -> bool:
     - **Магические маски через `Layers`.** Литералы `slam_mask=18` / `target_mask=16` / `cursor_raycast_mask=67` заменены на `Layers.MASK_HAND_SLAM` / `Layers.ENEMIES` / `Layers.MASK_HAND_CURSOR`. Введена новая константа `MASK_HAND_SLAM = ITEMS | ENEMIES = 18` — Slam намеренно отличается от `MASK_HAND_TARGETS = 82` (без MOUNTED_MODULE: смонтированный модуль нельзя сбить хлопком, только хватом руки). Раньше спека сама себе противоречила: в одном месте slam_mask назван как `MASK_HAND_TARGETS = 18`, в другом — `MASK_HAND_TARGETS = 82`.
     - **EventBus сигналы доведены до фактического состояния.** В список добавлены `gnome_damaged/destroyed`, `camp_part_damaged/destroyed`, `module_mounted/unmounted` — они эмитятся в коде с этапов 26–29, но в спеке таблицу обновить забыли.
 
-31. **LOD для скелетов** (под масштаб 100+ врагов). До этого этапа все скелеты работали на полной частоте: distance-чек до цели + vision-скан группы каждый физкадр + полный AI-tick. На 50 это норм, на 200+ просадка fps от чисто per-instance overhead'а (даже без рендера и анимаций).
-    - **Distance-based LOD по 3 уровням** (`enum LodLevel { NEAR, MID, FAR }`). Граница задаётся экспортами `lod_near_distance=25` / `lod_far_distance=50`. Дистанция меряется до **активной камеры**, не до Tower (Tower может queue_free, камера живёт всегда; распределение «вокруг камеры» точнее отражает «что видит игрок»).
-    - **Что скейлится:** `vision_scan_interval` (×1 / ×2 / ×4) и AI-tick (каждый 1-й / 2-й / 3-й кадр).
-    - **Что НЕ скейлится:** knockback (`KnockbackState.tick`), гравитация, `move_and_slide`. Иначе хлопок и отскоки сломаются на дальних — а они должны ощущаться идентично.
-    - **AI-skip только в `AttackState.APPROACH`**. В `WINDUP` пропуск заморозил бы скелета (там декрементится `_state_timer` замаха, см. `enemy.gd:197-198`). В `COOLDOWN` теоретически безопасно, но консервативно полная частота — чтобы поведение в бою было идентично near-скелетам.
-    - **Anti-«волна»:** `_lod_check_timer` и `_lod_ai_tick_counter` рандомизируются в `_ready`. Иначе 100 mid-LOD скелетов пропускают один и тот же физкадр и кадровая нагрузка идёт волнами.
-    - **Период LOD-чека = 0.5с** — переоценивать дистанцию каждый кадр на 100 врагов само по себе нагрузка. За 0.5с скелет на `move_speed=2.7` пройдёт 1.35м, граница LOD сдвинется незаметно.
+31. **LOD для скелетов** (под масштаб 100+ врагов). До этого этапа все скелеты работали на полной частоте: distance-чек до цели + vision-скан группы каждый физкадр + полный AI-tick. На 50 это норм, на 200+ просадка fps от per-instance overhead'а; на 1400 — стресс-тест показал ~5fps (главные виновники — broad-phase коллизий между 1400 CharacterBody3D и 1400 `move_and_slide` каждый тик). Решение в две итерации:
+
+    **Итерация A (мягкий LOD):**
+    - **Distance-based LOD по 3 уровням** (`enum LodLevel { NEAR, MID, FAR }`). Граница задаётся экспортами `lod_near_distance=25` / `lod_far_distance=50`. Дистанция меряется до **активной камеры**, не до Tower (Tower может queue_free, камера живёт всегда).
+    - **`vision_scan_interval` × (1/2/4)** и AI-tick каждый 1-й / 2-й / 3-й кадр. Skip AI — **только в `APPROACH`** (в `WINDUP` декрементится `_state_timer` замаха, см. `enemy.gd:197-198`; пропуск заморозил бы скелета).
+    - **Anti-«волна»:** `_lod_check_timer` и `_lod_ai_tick_counter` рандомизируются в `_ready`. Период LOD-чека `0.5с`.
+
+    **Итерация B (холодный режим FAR — после стресс-теста на 1400 скелетов):** мягкий LOD не справился — `move_and_slide` и broad-phase 1400 тел оставались главной нагрузкой. Для FAR ушли в радикальный режим:
+    - **`collision_layer = 0`, `collision_mask = 0`** — FAR-скелет невидим для broad-phase. Никаких взаимных коллизий, никаких блокировок башни. На 1000+ это убирает квадратичную нагрузку.
+    - **Skip `move_and_slide` целиком.** Вместо неё `_far_step(delta)` делает простое `global_position.x/z += velocity * delta`. Y не считается (плоский пол).
+    - **`_far_step` сохраняет:** `_knockback.tick(delta)` (иначе lunge через `_apply_velocity_change` навечно бы улетал), декремент `_state_timer` для COOLDOWN, AI-step с LOD-skip, `Damageable.try_damage` через `_perform_strike` (урон не зависит от collision-layer'ов).
+    - **Side-effect:** FAR-скелеты сквозят друг друга и палатки вне камеры. Игрок этого не видит. Когда подходят ближе (становятся MID) — `_apply_lod_physics_mode` восстанавливает collision, и со следующего тика снова полная физика через `super._physics_process`.
+    - `_set_lod_level` идемпотентен — collision_layer write случается только при реальной смене уровня, не каждые 0.5с.
+
+    **Что осталось не оптимизировано:** рендер. 1400 MeshInstance3D = 1400 draw calls, frustum culling Godot отсекает невидимые, но vertex transform всё равно стоит. Дальнейший buster — MultiMesh + GPU-instanced рендер с per-instance color (windup glow через color override вместо смены material_override). Большой refactor, отложен до явной необходимости.
 
 ### 7.3 Решённые ошибки
 

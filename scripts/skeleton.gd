@@ -238,20 +238,54 @@ func get_lod_level() -> int:
 ## отличие от Tower, которая может queue_free), и распределение скелетов
 ## вокруг камеры лучше отражает «что видит игрок» — рендер-LOD пока не делаем,
 ## но вне-кадра скелеты всё равно нужны (идут к лагерю), просто реже.
+##
+## При смене уровня вызывается _apply_lod_physics_mode — переключает
+## collision_layer/mask, что сразу убирает скелета из/в broad-phase
+## physics-сервера. На 1000+ скелетах это главный win по перфомансу.
 func _update_lod_level() -> void:
 	if not is_inside_tree():
 		return
 	var camera := get_viewport().get_camera_3d()
 	if camera == null:
-		_lod_level = LodLevel.NEAR
+		_set_lod_level(LodLevel.NEAR)
 		return
 	var d: float = global_position.distance_to(camera.global_position)
 	if d <= lod_near_distance:
-		_lod_level = LodLevel.NEAR
+		_set_lod_level(LodLevel.NEAR)
 	elif d <= lod_far_distance:
-		_lod_level = LodLevel.MID
+		_set_lod_level(LodLevel.MID)
 	else:
-		_lod_level = LodLevel.FAR
+		_set_lod_level(LodLevel.FAR)
+
+
+## Атомарная смена LOD-уровня + переключение физического режима. Вынесено,
+## чтобы _apply_lod_physics_mode не дёргалось каждые 0.5с впустую если
+## уровень не изменился (collision_layer write — мутация, broad-phase
+## потенциально перестраивается).
+func _set_lod_level(new_level: int) -> void:
+	if new_level == _lod_level:
+		return
+	_lod_level = new_level
+	_apply_lod_physics_mode()
+
+
+## Переключение collision и физического режима по LOD.
+## - NEAR/MID: «горячий» режим — полные коллизии (ENEMIES/MASK_SKELETON),
+##   move_and_slide в _physics_process, всё как у обычного Enemy.
+## - FAR: «холодный» режим — collision_layer=0 (фантом для broad-phase),
+##   collision_mask=0 (сам никого не сканирует). Скелет не сталкивается ни с
+##   кем, не толкает соседей, не блокирует башню. Движется через простой
+##   position += velocity * delta в _far_step. Цена: сквозит палатки и других
+##   скелетов вне камеры, но игрок этого не видит. Когда подходит ближе к
+##   камере (становится MID) — collision возвращается, и физика снова работает.
+func _apply_lod_physics_mode() -> void:
+	match _lod_level:
+		LodLevel.NEAR, LodLevel.MID:
+			collision_layer = Layers.ENEMIES
+			collision_mask = Layers.MASK_SKELETON
+		LodLevel.FAR:
+			collision_layer = 0
+			collision_mask = 0
 
 
 func _wander_tick(delta: float) -> void:
@@ -295,6 +329,11 @@ func _pick_wander_target() -> Vector3:
 ## LOD: каждые lod_check_interval секунд переоцениваем дистанцию до камеры и
 ## выставляем _lod_level. Множитель частоты сканирования и skip AI-тиков
 ## применяются дальше в _ai_step / vision-блоке.
+##
+## Для FAR-скелетов вместо super._physics_process (CharacterBody3D + физика)
+## вызываем _far_step — это «холодный» режим без move_and_slide и без
+## коллизий. Главный win по перфомансу на 1000+ скелетах: physics-сервер
+## не считает collision detection между ними.
 func _physics_process(delta: float) -> void:
 	_lod_check_timer -= delta
 	if _lod_check_timer <= 0.0:
@@ -308,7 +347,56 @@ func _physics_process(delta: float) -> void:
 	if _vision_scan_timer <= 0.0 or stale:
 		_cached_target = _scan_target()
 		_vision_scan_timer = vision_scan_interval * _lod_vision_multiplier()
+
+	if _lod_level == LodLevel.FAR:
+		_far_step(delta)
+		return
 	super._physics_process(delta)
+
+
+## «Холодный» физический шаг для FAR-скелетов: AI считает velocity (через те
+## же _ai_step / _wander_tick), но позиция обновляется напрямую через
+## global_position += velocity * delta, без move_and_slide. Никаких
+## broad-phase коллизий через physics-сервер.
+##
+## Что теряем:
+## - Скелеты сквозят друг друга и палатки вне камеры — но игрок этого не видит.
+## - Гравитация не считается. На текущей плоской карте (y=0) это ок: скелет
+##   уже стоит на полу с момента спавна, Y не меняется. Если появятся холмы
+##   или ямы — FAR-скелеты будут «парить» — нужно будет добавить grounding.
+## - `is_on_floor()` всегда false (move_and_slide не вызывался) — но AI на FAR
+##   эту инфу не читает.
+##
+## Что сохраняем:
+## - AI-логика (включая LOD-skip в APPROACH).
+## - Vision-скан (с LOD-throttle'ом частоты).
+## - Knockback-таймер — иначе lunge через `_apply_velocity_change` (Skeleton
+##   стартует knockback сам себе как импульс выпада) никогда не затухнет, и
+##   FAR-скелет улетит навечно. `_knockback.tick(delta)` обязателен.
+## - COOLDOWN-таймер — в base _physics_process он декрементится явно для тика
+##   во время knockback'а; здесь повторяем тот же блок.
+## - Strike: при наличии цели super._ai_step запустит полный FSM, включая
+##   _perform_strike → Damageable.try_damage(target) + _do_lunge — урон по
+##   палатке/гному пройдёт независимо от collision-layer'ов.
+func _far_step(delta: float) -> void:
+	# COOLDOWN-таймер тикает всегда (как в Enemy._physics_process).
+	if _state == AttackState.COOLDOWN and _state_timer > 0.0:
+		_state_timer = maxf(_state_timer - delta, 0.0)
+
+	_knockback.tick(delta)
+	if _knockback.is_active():
+		# Под knockback'ом AI заглушен; скорость затухает trение-coeff'ом.
+		velocity = _knockback.apply_friction(velocity, delta)
+	else:
+		if not (_state == AttackState.APPROACH and _lod_should_skip_ai_tick()):
+			if get_active_target():
+				super._ai_step(delta)
+			else:
+				_wander_tick(delta)
+
+	# No move_and_slide → position update напрямую. Y не трогаем — пол плоский.
+	global_position.x += velocity.x * delta
+	global_position.z += velocity.z * delta
 
 
 ## Override базы Enemy.get_active_target: возвращаем кэшированную цель, если она
