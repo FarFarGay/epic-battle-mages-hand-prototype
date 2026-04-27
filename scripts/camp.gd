@@ -115,6 +115,11 @@ func _ready() -> void:
 	deployed.connect(func(anchor: Vector3) -> void: EventBus.camp_deployed.emit(anchor))
 	packed.connect(func() -> void: EventBus.camp_packed.emit())
 
+	# Башня может погибнуть — обнуляем ссылку, чтобы караван не follow'ил мёртвый
+	# (но всё ещё существующий статикой) Tower-меш. _update_caravan_follow и
+	# stationary-чек уже null-safe, ничего больше делать не нужно.
+	EventBus.tower_destroyed.connect(_on_tower_destroyed)
+
 
 func _spawn_gnomes() -> void:
 	if gnome_scene == null:
@@ -137,7 +142,15 @@ func _spawn_gnomes() -> void:
 
 
 func _on_part_destroyed(part: StaticBody3D) -> void:
-	_parts.erase(part)
+	# Удаляем по индексу, чтобы синхронно обрезать _deployed_targets — иначе
+	# после смерти палатки [i] оставшиеся палатки поедут к чужим точкам кольца
+	# (каждая палатка читает _deployed_targets[i] по своему индексу в _parts).
+	var idx := _parts.find(part)
+	if idx == -1:
+		return
+	_parts.remove_at(idx)
+	if idx < _deployed_targets.size():
+		_deployed_targets.remove_at(idx)
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] палатка %s уничтожена (осталось: %d)" % [part.name, _parts.size()])
 
@@ -146,6 +159,12 @@ func _on_gnome_destroyed(gnome: Gnome) -> void:
 	_gnomes.erase(gnome)
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] гном %s убит (осталось: %d)" % [gnome.name, _gnomes.size()])
+
+
+func _on_tower_destroyed() -> void:
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] башня уничтожена — караван останавливается")
+	_tower = null
 
 
 func _process(delta: float) -> void:
