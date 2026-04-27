@@ -49,6 +49,9 @@ const WINDUP_EMISSION_COLOR := Color(1.0, 0.2, 0.2, 1.0)
 const WINDUP_EMISSION_INTENSITY := 1.5
 ## Группа целей: палатки лагеря и активные гномы. Скелет находит «глазами».
 const TARGET_GROUP := &"skeleton_target"
+## Группа всех живых скелетов — для перфоманс-HUD (счётчик + LOD-распределение).
+## Отдельная от Damageable.GROUP, чтобы HUD не фильтровал по `is Skeleton`.
+const SKELETON_GROUP := &"skeleton"
 
 enum WanderPhase { RESTING, WANDERING }
 
@@ -129,6 +132,7 @@ func _ready() -> void:
 	# Унаследованный _ready регистрирует Damageable/Pushable и подключает EventBus.
 	# Без super._ready() всё это потерялось бы только для скелетов.
 	super._ready()
+	add_to_group(SKELETON_GROUP)
 	_ensure_shared_materials()
 	if _mesh:
 		# Все скелеты делят два материала на класс — никаких .duplicate() per-instance.
@@ -222,6 +226,12 @@ func _lod_vision_multiplier() -> float:
 		LodLevel.FAR:
 			return 4.0
 	return 1.0
+
+
+## Публичный геттер LOD-уровня — читает PerfHUD для отображения распределения
+## NEAR/MID/FAR. Обращаться напрямую к `_lod_level` снаружи нельзя (приватка).
+func get_lod_level() -> int:
+	return _lod_level
 
 
 ## Расчёт LOD-уровня по дистанции до активной камеры. Камера всегда жива (в

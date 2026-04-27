@@ -1305,6 +1305,25 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 
 **Файл:** `scripts/log_config.gd`. **Регистрация:** `project.godot → [autoload] → LogConfig="*res://scripts/log_config.gd"`. Поле `master_enabled: bool` — глобальный мастер-выключатель debug-логов. Каждый entity-скрипт с per-entity `debug_log: bool` гейтит print'ы как `if debug_log and LogConfig.master_enabled:` — per-entity флаги остаются для тонкого мута одного шумного модуля, а `master_enabled = false` глушит всё разом (удобно при сборе/демо). На `printerr` (предупреждения) не распространяется.
 
+### 9.2. PerfHud — `scenes/perf_hud.tscn`, `scripts/perf_hud.gd`
+
+**Тип корня:** `CanvasLayer`, `class_name PerfHud`. Debug-оверлей для тестирования больших волн врагов и работы LOD-системы скелетов.
+
+**Что показывает:** `FPS` (сглаженный по последним 8 значениям, чтобы не дёргался) и счётчик скелетов с разбивкой по LOD-уровням `NEAR / MID / FAR`. Распределение даёт визуальное подтверждение, что LOD реально классифицирует врагов по дистанции (не «все NEAR» из-за бага).
+
+**Структура:** `CanvasLayer → PanelContainer (полупрозрачный фон) → Label`. Position top-left, offset `(10, 10)`. Готово принимать клавишу `F3` через `_unhandled_input` (toggle visibility) — не зарегистрировано в InputMap, потому что debug-инструмент не должен засорять конфиг проекта.
+
+**Цикл:** в `_process` тикает `_update_timer`; при истечении (`UPDATE_INTERVAL = 0.25с`) — `_update_label()`. Внутри: `Engine.get_frames_per_second()` для FPS + проход по `Skeleton.SKELETON_GROUP` (группа `&"skeleton"`) с подсчётом по `sk.get_lod_level()`.
+
+**Источник данных:**
+- FPS — `Engine.get_frames_per_second()`, кольцевой буфер 8 значений → среднее.
+- Список скелетов — `get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP)`. Skeleton добавляется в эту группу в `_ready` (рядом с `add_to_group(SKELETON_GROUP)` после `super._ready()`). Группа ОТДЕЛЬНАЯ от `Damageable.GROUP`/`skeleton_target` — чтобы HUD не фильтровал по `is Skeleton` через type-check на каждом тике.
+- LOD-уровень — публичный геттер `Skeleton.get_lod_level() -> int`. Приватное `_lod_level` снаружи не читается.
+
+**Где живёт:** инстанс в `main.tscn` как ребёнок Main. Видим по умолчанию.
+
+**Стоимость:** один проход по группе скелетов раз в 0.25с + один `Label.text` setter. На 200 врагов — пренебрежимо. Сам HUD не учтён в FPS-сглаживании специально — погрешность одного кадра поглощается буфером.
+
 ---
 
 ## 10. Незакрытые вопросы и направления

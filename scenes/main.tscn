@@ -10,6 +10,7 @@
 [ext_resource type="PackedScene" path="res://scenes/camp.tscn" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/resource_pile.tscn" id="9"]
 [ext_resource type="PackedScene" path="res://scenes/octagon_turret.tscn" id="10"]
+[ext_resource type="PackedScene" path="res://scenes/perf_hud.tscn" id="11"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(200, 1, 200)
@@ -157,3 +158,5 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, -70)
 
 [node name="Pile20" parent="Resources" unique_id=1684163816 instance=ExtResource("9")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 61, 0.3, -35)
+
+[node name="PerfHud" parent="." instance=ExtResource("11")]
