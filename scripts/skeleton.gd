@@ -31,6 +31,18 @@ extends Enemy
 ## таймер RESTING стартует с randf_range(0, wander_rest_max) — желания
 ## идти разносятся во времени. Появилась цель → wander заглушается, FSM
 ## (super._ai_step) возобновляет APPROACH → WINDUP → STRIKE.
+##
+## LOD: на больших стаях (100+) каждый скелет на каждом физкадре делает
+## distance-чек и потенциально vision-скан группы — это нагрузка O(N²) в
+## худшем случае. Вместо честного «считаем всё» на дальних врагах:
+##   - LOD NEAR (≤25м от камеры): полная частота AI и vision (как было).
+##   - LOD MID (25..50м): AI каждый 2-й тик, vision_scan каждые 0.3с.
+##   - LOD FAR (>50м): AI каждый 3-й тик, vision_scan каждые 0.6с.
+## Уровень переоценивается раз в 0.5с (lod_check_interval), фазы рандомизированы
+## между инстансами. Скип AI — только в APPROACH/wander (в WINDUP/STRIKE/COOLDOWN
+## — всегда полный тик, чтобы FSM-таймеры не зависли в середине замаха).
+## Knockback и гравитация работают на полной частоте всегда — иначе хлопок и
+## отскоки сломаются.
 
 const BODY_ALBEDO_COLOR := Color(0.88, 0.85, 0.78, 1.0)
 const WINDUP_EMISSION_COLOR := Color(1.0, 0.2, 0.2, 1.0)
@@ -82,14 +94,33 @@ enum WanderPhase { RESTING, WANDERING }
 @export var shatter_color: Color = BODY_ALBEDO_COLOR
 @export_group("")
 
+@export_group("LOD (масштабирование на 100+ скелетов)")
+## Дистанция до камеры, ближе которой скелет работает на полной частоте.
+## За пределами — снижаем нагрузку: реже сканируем цели и пропускаем AI-тики
+## в спокойных состояниях. Значения зависят от размера карты и FOV камеры.
+@export var lod_near_distance: float = 25.0
+## Дистанция до камеры, дальше которой минимальная частота AI/vision.
+## Между near и far — промежуточный уровень (~50% частоты).
+@export var lod_far_distance: float = 50.0
+## Период переоценки LOD-уровня (с). Дистанция меряется не каждый кадр —
+## per-skeleton distance-чек на 100 врагов сам по себе нагрузка.
+@export var lod_check_interval: float = 0.5
+@export_group("")
+
 static var _shared_normal_material: StandardMaterial3D
 static var _shared_windup_material: StandardMaterial3D
+
+enum LodLevel { NEAR, MID, FAR }
 
 var _wander_phase: int = WanderPhase.RESTING
 var _wander_target: Vector3 = Vector3.INF
 var _rest_timer: float = 0.0
 var _cached_target: Node3D = null
 var _vision_scan_timer: float = 0.0
+var _lod_level: int = LodLevel.NEAR
+var _lod_check_timer: float = 0.0
+## Счётчик AI-тиков для skip-логики (mid: каждый 2-й, far: каждый 3-й).
+var _lod_ai_tick_counter: int = 0
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 
@@ -109,6 +140,12 @@ func _ready() -> void:
 	_wander_phase = WanderPhase.RESTING
 	# Фазовый сдвиг скана: 50 скелетов не должны рескан'ить группу в один кадр.
 	_vision_scan_timer = randf() * vision_scan_interval
+	# Фазовый сдвиг LOD-чека по той же причине: 100 distance.distance_to() в
+	# одном кадре — само по себе нагрузка, размазываем по 0..lod_check_interval.
+	_lod_check_timer = randf() * lod_check_interval
+	# Стартовый AI-counter тоже рандомный — иначе все mid-LOD скелеты пропустят
+	# один и тот же кадр, и в нём кадровая нагрузка просядет «волной».
+	_lod_ai_tick_counter = randi() % 6
 
 
 static func _ensure_shared_materials() -> void:
@@ -137,11 +174,74 @@ func _on_state_exit(old_state: int) -> void:
 
 ## Override _ai_step: при наличии цели — обычный FSM (super), без цели — wander.
 ## Базовый _ai_step при null target обнуляет скорость и выходит — нам это не нужно.
+##
+## LOD-skip применяем ТОЛЬКО в APPROACH (и в wander, который тоже approach-фаза):
+##   - WINDUP — таймер замаха декрементируется здесь же (enemy.gd:197), скип
+##     заморозил бы скелета в анимации замаха;
+##   - STRIKE — транзитное, один тик;
+##   - COOLDOWN — таймер тикает в base _physics_process независимо, а сам
+##     _ai_step здесь только зануляет velocity — пропуск ничего не меняет
+##     (velocity всё равно близка к нулю после windup → strike), так что в
+##     COOLDOWN тоже допустимо скипать. Но проще консервативно — скип только
+##     в APPROACH, чтобы поведение в бою было идентично near-скелетам.
 func _ai_step(delta: float) -> void:
+	if _state == AttackState.APPROACH and _lod_should_skip_ai_tick():
+		# Velocity сохраняется — скелет едет по инерции до следующего полного
+		# тика. move_and_slide отработает коллизии нормально.
+		return
 	if get_active_target():
 		super._ai_step(delta)
 	else:
 		_wander_tick(delta)
+
+
+## Skip-предикат для текущего LOD. Близкие — каждый кадр (false). Средние —
+## каждый 2-й (true в кадрах !% 2). Далёкие — каждый 3-й. Считаем по
+## per-instance counter, увеличиваем здесь же.
+func _lod_should_skip_ai_tick() -> bool:
+	_lod_ai_tick_counter += 1
+	match _lod_level:
+		LodLevel.NEAR:
+			return false
+		LodLevel.MID:
+			return (_lod_ai_tick_counter % 2) != 0
+		LodLevel.FAR:
+			return (_lod_ai_tick_counter % 3) != 0
+	return false
+
+
+## Множитель vision_scan_interval по LOD. Близкие сканируют каждые 0.15с,
+## средние — 0.3с, далёкие — 0.6с. Reaction-time дальних чуть хуже, но они
+## вне камеры и игрок этого не видит.
+func _lod_vision_multiplier() -> float:
+	match _lod_level:
+		LodLevel.NEAR:
+			return 1.0
+		LodLevel.MID:
+			return 2.0
+		LodLevel.FAR:
+			return 4.0
+	return 1.0
+
+
+## Расчёт LOD-уровня по дистанции до активной камеры. Камера всегда жива (в
+## отличие от Tower, которая может queue_free), и распределение скелетов
+## вокруг камеры лучше отражает «что видит игрок» — рендер-LOD пока не делаем,
+## но вне-кадра скелеты всё равно нужны (идут к лагерю), просто реже.
+func _update_lod_level() -> void:
+	if not is_inside_tree():
+		return
+	var camera := get_viewport().get_camera_3d()
+	if camera == null:
+		_lod_level = LodLevel.NEAR
+		return
+	var d: float = global_position.distance_to(camera.global_position)
+	if d <= lod_near_distance:
+		_lod_level = LodLevel.NEAR
+	elif d <= lod_far_distance:
+		_lod_level = LodLevel.MID
+	else:
+		_lod_level = LodLevel.FAR
 
 
 func _wander_tick(delta: float) -> void:
@@ -181,14 +281,23 @@ func _pick_wander_target() -> Vector3:
 ## (или порче кэша) запускает _scan_target. Все обращения get_active_target в
 ## пределах одного физкадра берут из кэша — даже base Enemy._ai_step и
 ## _resolve_knockback_contacts.
+##
+## LOD: каждые lod_check_interval секунд переоцениваем дистанцию до камеры и
+## выставляем _lod_level. Множитель частоты сканирования и skip AI-тиков
+## применяются дальше в _ai_step / vision-блоке.
 func _physics_process(delta: float) -> void:
+	_lod_check_timer -= delta
+	if _lod_check_timer <= 0.0:
+		_update_lod_level()
+		_lod_check_timer = lod_check_interval
+
 	_vision_scan_timer -= delta
 	var stale := _cached_target == null \
 		or not is_instance_valid(_cached_target) \
 		or not _cached_target.is_in_group(TARGET_GROUP)
 	if _vision_scan_timer <= 0.0 or stale:
 		_cached_target = _scan_target()
-		_vision_scan_timer = vision_scan_interval
+		_vision_scan_timer = vision_scan_interval * _lod_vision_multiplier()
 	super._physics_process(delta)
 
 
