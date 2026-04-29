@@ -19,7 +19,7 @@ extends Gnome
 ## Радиус сканирования скелетов через PhysicsShapeQuery. Маска включает
 ## ColdEnemy — иначе при отзумленной камере все скелеты (LOD=FAR) становятся
 ## фантомами и защитник перестаёт реагировать.
-@export var attack_radius: float = 15.0
+@export var attack_radius: float = 22.5
 ## Случайный интервал между выстрелами. Не строгий метроном — несколько
 ## защитников в одной палатке не залпуют синхронно. Поднял с 0.6/1.2 до
 ## 1.0/2.0: на 54 защитниках это снизило поток стрел с ~60 до ~36/сек,
@@ -36,6 +36,24 @@ extends Gnome
 ## Откуда вылетает стрела относительно центра гнома (поднимаем над головой,
 ## чтобы не задеть собственный корпус коллизией стрелы при выстреле).
 @export var arrow_spawn_offset: Vector3 = Vector3(0, 0.6, 0)
+## Стартовый горизонтальный разброс прицела (в метрах). Применяется к
+## новеньким защитникам (без опыта). С каждым выстрелом точность растёт —
+## фактический радиус разброса считается через current_inaccuracy_radius()
+## по логарифмической кривой от _shots_fired. Только горизонталь —
+## вертикальный разброс ломал бы баллистику (стрела в небо или в траву).
+##
+## Прокачка через бой: чем дольше защитник стреляет, тем точнее. Смерть
+## обнуляет опыт (новый инстанс через Camp.reset_population стартует с 0).
+## Игроку выгодно держать защитников живыми и/или брать «ветеранов» в путь.
+@export var base_inaccuracy_radius: float = 1.5
+## Сколько выстрелов нужно сделать чтобы разброс упал вдвое от базового.
+## Формула: inaccuracy = base / (1 + shots/half_shots). На interval=1.5с
+## между выстрелами это ~150с боя (2.5 мин) — комфортная «середина опыта».
+##  - 0 выстрелов: 1.5м (новичок)
+##  - 100: 0.75м (середина — capsule_radius=0.4 уже стабильно цепляет)
+##  - 500: 0.25м (ветеран)
+##  - 1000: 0.14м (снайпер)
+@export var experience_half_shots: int = 100
 @export var arrow_scene: PackedScene
 ## Куда складывать спавн стрел (чтобы они пережили смерть/уход самого гнома).
 ## Пусто → fallback на current_scene.
@@ -44,10 +62,10 @@ extends Gnome
 
 @export_group("Defender patrol")
 ## Радиус патруля от центра лагеря (`Camp.deploy_anchor`). Палатки стоят
-## на `Camp.deploy_radius=4`, защитник на 6 — это «вне палаток», как
-## стража на внешнем контуре. Если у Camp нет valid anchor'а, защитник
-## стоит на стартовой позиции (палатке).
-@export var patrol_radius: float = 6.0
+## на `Camp.deploy_radius=8`, защитник на 12 — внешнее кольцо обороны,
+## за палатками. Если у Camp нет valid anchor'а, защитник стоит на
+## стартовой позиции (палатке).
+@export var patrol_radius: float = 12.0
 ## Скорость шага во время патруля. Меньше move_speed=1.6 — стража движется
 ## размеренно, не суетится.
 @export var patrol_speed: float = 1.0
@@ -71,6 +89,10 @@ var _projectiles_root: Node = null
 var _patrol_target: Vector3 = Vector3.INF
 var _cached_target: Node3D = null
 var _target_scan_timer: float = 0.0
+## Опыт стрельбы — сколько выстрелов сделал этот защитник за свою жизнь.
+## Per-инстанс, не разделяется и не сохраняется. Используется в
+## current_inaccuracy_radius() для постепенного повышения точности.
+var _shots_fired: int = 0
 
 
 func _ready() -> void:
@@ -117,8 +139,17 @@ func _defender_combat_tick(delta: float) -> void:
 		or not is_instance_valid(_cached_target) \
 		or global_position.distance_to(_cached_target.global_position) > attack_radius
 	if _target_scan_timer <= 0.0 or stale:
+		var prev := _cached_target
 		_cached_target = _find_skeleton_target()
 		_target_scan_timer = TARGET_SCAN_INTERVAL
+		# Фронт-триггеры: логируем только смену состояния «вижу/не вижу»,
+		# не каждый скан (на 12 защитниках по 4/сек это был бы спам).
+		if debug_log and LogConfig.master_enabled:
+			if prev == null and _cached_target != null:
+				var d: float = global_position.distance_to(_cached_target.global_position)
+				print("[DefenderGnome:%s] цель появилась: %s (dist=%.1fм)" % [name, _cached_target.name, d])
+			elif prev != null and _cached_target == null:
+				print("[DefenderGnome:%s] цель потеряна" % name)
 
 	if _cached_target != null and is_instance_valid(_cached_target):
 		# Стой и стреляй: пока есть цель в зоне — на месте.
@@ -200,10 +231,30 @@ func _find_skeleton_target() -> Node3D:
 			continue
 		var node := collider as Node3D
 		var d: float = global_position.distance_to(node.global_position)
+		# Explicit radius check: PhysicsShapeQuery в Godot 4.6 иногда возвращает
+		# тела вне sphere radius (broadphase AABB подмешивается в результаты).
+		# Лог показывал цели на 50м+ при attack_radius=22.5 — без этого чека
+		# защитники стреляли через всю карту. Фильтруем вручную по centroid.
+		if d > attack_radius:
+			continue
 		if d < nearest_dist:
 			nearest_dist = d
 			nearest = node
 	return nearest
+
+
+## Текущий радиус разброса с учётом опыта. Логарифмическая кривая:
+## новичок имеет base, ветеран — асимптотически 0. После experience_half_shots
+## разброс падает вдвое, после 2× — на 2/3, после 9× — на 90%.
+func current_inaccuracy_radius() -> float:
+	if base_inaccuracy_radius <= 0.0 or experience_half_shots <= 0:
+		return base_inaccuracy_radius
+	return base_inaccuracy_radius / (1.0 + float(_shots_fired) / float(experience_half_shots))
+
+
+## Сколько выстрелов сделал этот защитник — для HUD'а / прокачки / дебага.
+func get_shots_fired() -> int:
+	return _shots_fired
 
 
 func _fire_at(target: Node3D) -> void:
@@ -219,6 +270,24 @@ func _fire_at(target: Node3D) -> void:
 	_projectiles_root.add_child(arrow)
 	var damage: float = randf_range(arrow_damage_min, arrow_damage_max)
 	var spawn := global_position + arrow_spawn_offset
+	# Прицеливание со случайным смещением в круге текущего разброса. sqrt
+	# для uniform-в-круге (иначе плотность к центру выше — «магнетизм»
+	# к точному выстрелу, чего не хочется).
+	var inaccuracy := current_inaccuracy_radius()
+	var aim_pos := target.global_position
+	if inaccuracy > 0.0:
+		var angle := randf() * TAU
+		var r := sqrt(randf()) * inaccuracy
+		aim_pos.x += cos(angle) * r
+		aim_pos.z += sin(angle) * r
 	arrow.damage = damage
 	arrow.speed = arrow_speed
-	arrow.setup(spawn, target.global_position)
+	arrow.setup(spawn, aim_pos)
+	_shots_fired += 1
+	if debug_log and LogConfig.master_enabled:
+		var d: float = global_position.distance_to(target.global_position)
+		var aim_offset: float = target.global_position.distance_to(aim_pos)
+		print("[DefenderGnome:%s] выстрел в %s (dist=%.1fм, dmg=%.1f, aim_off=%.2fм)" % [name, target.name, d, damage, aim_offset])
+		# Milestone-лог каждые 25 выстрелов — видно прогресс ветеранов.
+		if _shots_fired % 25 == 0:
+			print("[DefenderGnome:%s] опыт: %d выстрелов, точность=%.2fм" % [name, _shots_fired, current_inaccuracy_radius()])

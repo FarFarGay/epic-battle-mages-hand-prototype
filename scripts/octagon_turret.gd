@@ -123,6 +123,10 @@ func _find_target() -> Node3D:
 		if not Damageable.is_damageable(node):
 			continue
 		var d: float = global_position.distance_to(node.global_position)
+		# Explicit radius check — см. комментарий в defender_gnome.gd
+		# (PhysicsShapeQuery подмешивает AABB-broadphase результаты вне sphere).
+		if d > attack_radius:
+			continue
 		if d < nearest_dist:
 			nearest_dist = d
 			nearest = node
