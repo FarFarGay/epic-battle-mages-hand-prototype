@@ -35,9 +35,12 @@ hand_gameplay_prot/
 │   ├── skeleton.tscn          — конкретный враг (Skeleton extends Enemy)
 │   ├── camp.tscn              — лагерь (4 палатки + спавн гномов + центральный mount-slot)
 │   ├── gnome.tscn             — обитатель лагеря (CharacterBody3D)
+│   ├── defender_gnome.tscn    — защитник-лучник (Gnome extends, красный, стреляет стрелами)
 │   ├── resource_pile.tscn     — куча ресурсов на полу
 │   ├── octagon_turret.tscn    — защитный модуль (CampModule), стреляет стрелами
-│   └── arrow.tscn             — снаряд защитного модуля
+│   ├── arrow.tscn             — снаряд защитного модуля
+│   ├── perf_hud.tscn          — оверлей FPS / счётчик скелетов / LOD
+│   └── gameplay_hud.tscn      — игровой HUD (способности слева, статус лагеря справа)
 └── scripts/
     ├── tower.gd               — class_name Tower
     ├── hand.gd                — class_name Hand (координатор)
@@ -49,9 +52,11 @@ hand_gameplay_prot/
     ├── item.gd                — class_name Item
     ├── enemy.gd               — class_name Enemy (база с FSM APPROACH/WINDUP/STRIKE/COOLDOWN)
     ├── skeleton.gd            — class_name Skeleton extends Enemy
-    ├── enemy_spawner.gd       — спавнер волн (Node3D)
+    ├── enemy_spawner.gd       — class_name EnemySpawner — низкоуровневый спавн (spawn_at/uniform/ring/group)
+    ├── wave_director.gd       — class_name WaveDirector — режиссёр фаз кампании врагов
     ├── camp.gd                — class_name Camp
     ├── gnome.gd               — class_name Gnome
+    ├── defender_gnome.gd      — class_name DefenderGnome extends Gnome (лучник с прокачкой точности)
     ├── resource_pile.gd       — class_name ResourcePile
     ├── layers.gd              — class_name Layers (именованные физические слои + маски)
     ├── damageable.gd          — class_name Damageable (group-контракт + try_damage)
@@ -64,6 +69,8 @@ hand_gameplay_prot/
     ├── knockback_state.gd     — class_name KnockbackState (RefCounted helper, общий kinematic-knockback)
     ├── shatter_effect.gd      — class_name ShatterEffect (визуал смерти, общий для врагов и т.п.)
     ├── vec_util.gd            — class_name VecUtil (горизонтальные хелперы Vector3)
+    ├── perf_hud.gd            — class_name PerfHud (оверлей FPS/скелеты/LOD, F3 toggle)
+    ├── gameplay_hud.gd        — игровой HUD (способности + статус лагеря)
     ├── event_bus.gd           — autoload EventBus
     └── log_config.gd          — autoload LogConfig
 ```
@@ -392,7 +399,7 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 
 **Экспорты группы `Zoom`:**
 - `zoom_step: float = 0.9` — множитель оффсета за один щелчок колеса (10% приближения; обратный 1/0.9 ≈ 1.11 для отдаления).
-- `zoom_min: float = 0.4`, `zoom_max: float = 2.5` — границы относительно базового оффсета. 1.0 = «как в .tscn».
+- `zoom_min: float = 0.4`, `zoom_max: float = 5.0` — границы относительно базового оффсета. 1.0 = «как в .tscn». zoom_max повышен с 2.5 → 5.0 — двойной зумаут для обзора крупных волн (на отдалении 5× все скелеты вне `lod_far_distance=50` уходят в FAR-LOD; рука/слам всё равно достают через `Layers.COLD_ENEMY`).
 - `zoom_speed: float = 10.0` — скорость экспоненциального доезда к целевому зуму.
 
 **Поля состояния:** `_base_offset: Vector3` (стартовый оффсет камеры), `_zoom: float = 1.0` (текущий, плавный), `_zoom_target: float = 1.0` (куда едем).
@@ -543,7 +550,11 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 
 **Vision-таргетинг (override базового `_targets`):**
 
-Skeleton не использует `Enemy._targets` — вместо этого **сканирует группу `skeleton_target`** в радиусе `vision_radius` и выбирает ближайшую цель. В группу входят: палатки лагеря (только в DEPLOYED-фазе через `CampPart.set_vulnerable(true)`) и активные гномы (через `Gnome.enter_deployed`/`request_return`). Tower в `skeleton_target` **не входит** — скелеты охотятся на лагерь, не на башню напрямую.
+Skeleton не использует `Enemy._targets` — вместо этого **сканирует группу `skeleton_target`** в радиусе `vision_radius` и выбирает цель с приоритетом. В группу входят: палатки лагеря (только в DEPLOYED-фазе через `CampPart.set_vulnerable(true)`) и активные гномы (через `Gnome.enter_deployed`/`request_return`). Tower в `skeleton_target` **не входит** — скелеты охотятся на лагерь, не на башню напрямую.
+
+**Приоритет: гномы > палатки.** Скелеты «голодные», охотятся на существ. Если в радиусе хоть один живой гном (любого типа — собиратель или защитник), идём к ближайшему гному, палатки игнорируются. Палатка берётся целью только когда гномов в зоне нет (например, на свёртке лагеря все попрятались). Защитники-лучники у периметра лагеря «перехватывают агро» — wave-скелеты переключаются на них как только подходят на 12м к лагерю, прежде чем добежать до палаток.
+
+**`forced_target: Node3D` — fallback aggro-точка для wave-скелетов.** WaveDirector назначает её через `set_forced_target(palatка)` сразу после `spawn_group`. В `_scan_target` используется только если весь vision пуст — это «направление движения» для скелетов, заспавненных в 50м+ от лагеря (vision только 12м, без forced они wander бесцельно). Когда волна доходит до 12м зоны — vision захватывает гномов на периметре, и приоритет переключает скелета на ближайшего гнома.
 
 Скан кэшируется и троттлится:
 - Поле `_cached_target: Node3D` — последняя найденная цель.
@@ -660,43 +671,56 @@ static func spawn(
 
 #### 5.5.3 EnemySpawner — `scripts/enemy_spawner.gd` (Node3D в `main.tscn`)
 
-**Назначение:** по input action порождает партию врагов кольцом вокруг цели. Распределяет спавн по нескольким физкадрам — без фрейм-спайка на старте волны.
+**Назначение:** низкоуровневый «как» — порождает врагов в заданных паттернах. Не имеет таймеров и фаз кампании (это уезжает в `WaveDirector` 5.5.4). Распределяет крупные спавны по нескольким физкадрам — без фрейм-спайка на старте волны.
 
 **Экспорты:**
-- `enemy_scenes: Array[PackedScene]` — типы врагов. Параллелен `enemy_counts`.
-- `enemy_counts: Array[int]` — сколько каждого типа породить за волну.
-- `target_path: NodePath` (`@export_node_path("Node3D")`) — кого ставить в `set_target` каждому врагу.
+- `enemy_scenes: Array[PackedScene]` — типы врагов для legacy `spawn_wave()`.
+- `enemy_counts: Array[int]` — параллельный массив для `spawn_wave()`.
+- `target_path: NodePath` (`@export_node_path("Node3D")`) — кого ставить в `set_target` базовому Enemy. Skeleton override'ит и `_targets` игнорирует, но для будущих врагов фолбэк остаётся.
 - `spawn_root_path: NodePath` (`@export_node_path("Node")`) — куда добавлять врагов как детей. Пустой → фолбэк на `get_tree().current_scene`.
-- `spawn_radius: float = 25.0` — радиус кольца от цели.
-- `spawn_radius_jitter: float = 0.3` — разброс ±jitter от радиуса (1 = ±50%).
-- `spawn_height_offset: float = 1.0` — смещение по Y относительно цели (раньше был литералом).
+- `map_half_extent: float = 195.0` — полу-длина карты от центра (карта 400×400). `spawn_uniform` пакует точки в `[−extent, extent]` по X/Z; `spawn_ring` клампит к этой границе если центр близко к краю.
+- `spawn_y: float = 1.0` — Y-координата спавна.
 - `debug_log: bool = true`.
 
-**Внутренние константы:** `_SPAWNS_PER_FRAME: int = 6` — сколько спавнов в одном физкадре. `_CENTER_INVALID := Vector3.INF` — sentinel «target/spawner протухли, прерываемся».
+**Внутренние константы:** `_SPAWNS_PER_FRAME: int = 6` — сколько спавнов в одном физкадре в async-методах.
 
-**Логика:**
-- В `_ready` резолвятся `_target` (по `target_path`) и `_spawn_root` (по `spawn_root_path` или фолбэк на `current_scene`).
-- В `_process` ловит `Input.is_action_just_pressed("spawn_enemies")` → `spawn_wave()`.
-- `spawn_wave()` сначала валидирует: размеры массивов совпадают, `_target` и `_spawn_root` живы. Затем для каждого `type_index` × `count`: инстанцирует, кастует к `Enemy`, кладёт в `_spawn_root`, выставляет позицию (угол × `spawn_radius × jitter`, Y = `target.y + spawn_height_offset`), зовёт `set_target(_target)`.
-- Каждые `_SPAWNS_PER_FRAME` итераций — `await _yield_frame_and_recenter()`.
+**Публичный API (вызывается WaveDirector'ом):**
+- `spawn_at(scene, pos) -> Enemy` — синхронный, один спавн в точке. Ставит `set_target(_target)` базовому Enemy. Возвращает инстанс для постобработки (например `WaveDirector` ставит `forced_target`).
+- `spawn_uniform(scene, count) -> void` — async. Спавн uniform по квадрату `[−extent, extent]²`, по `_SPAWNS_PER_FRAME` в кадр.
+- `spawn_ring(scene, count, center, radius, angle_jitter_deg = 15.0, radius_jitter = 3.0) -> void` — async. Спавн на кольце вокруг `center` с jitter углов и радиуса.
+- `spawn_group(scene, count, center, group_radius) -> Array[Enemy]` — синхронный, спавн `count` врагов в круге радиуса `group_radius`. Точки uniform-в-круге через `sqrt(randf())` (без концентрации в центре). Возвращает массив для назначения `forced_target` каждому.
+- `kill_all_skeletons() -> int` — `queue_free` для всех в группе `&"skeleton"`. Используется при P-рестарте кампании. Без `shatter` — это «обнуление», не смерть.
 
-**Helper `_yield_frame_and_recenter()`:**
-
-```gdscript
-func _yield_frame_and_recenter() -> Vector3:
-    await get_tree().physics_frame
-    if not is_inside_tree():
-        return _CENTER_INVALID
-    if not is_instance_valid(_target):
-        return _CENTER_INVALID
-    return _target.global_position
-```
-
-Один общий хелпер устранил копипаст блока `await physics_frame` + проверка валидности target + проверка что сам спавнер ещё в дереве.
-
-**TODO:** когда количество волн перевалит за 2 — заменить параллельные массивы `enemy_scenes` / `enemy_counts` на `Array[WaveEntry: Resource]`.
+**Legacy:** `spawn_wave()` со списками `enemy_scenes`/`enemy_counts` сохранён как debug helper для ручных смешанных волн без режиссёра. Не привязан к input action — только из консоли/теста.
 
 **Зависимости:** только PackedScene и Node3D через NodePath. Спавнер не знает ни типа конкретного врага по имени, ни тип цели; их типы заданы из `main.tscn` на инстансе.
+
+#### 5.5.4 WaveDirector — `scripts/wave_director.gd` (Node в `main.tscn`)
+
+**Назначение:** высокоуровневый «когда и сколько» — режиссёр кампании врагов. Управляет фазами, таймерами, целевой популяцией и волнами. Зовёт публичные методы `EnemySpawner` для самих спавнов.
+
+**Фазы:**
+- `IDLE` — до первого нажатия P. Ничего не делается.
+- `RAMP` — первичный набор. На старт `initial_count=20` uniform по карте (вне safe-радиуса), затем доспавн по 1 шт каждые `ramp_duration / (target − initial)` секунд до `ramp_target_count=50`. Длится `ramp_duration=30с`.
+- `MAINTAIN` — параллельно:
+  - **Replenish** с гистерезисом: если живых ≤ `target − replenish_threshold` (= 30 при threshold=20), доспавнивает по 1 шт каждые `replenish_interval=2с` до возврата к target. Гистерезис даёт игроку «передышку» — после убийств не торопится восстанавливать.
+  - **Waves**: каждые `wave_interval=60с` — `spawn_group` 10 скелетов в случайной точке вне `wave_safe_radius=35м` от лагеря. Каждому ставится `forced_target = nearest_part_to(origin)` ближайшего лагеря.
+
+**Выбор точки волны (`_pick_safe_pos`):** `wave_position_attempts=30` попыток uniform по карте; берётся первая точка с `min_dist_sq_to_camps ≥ wave_safe_radius²`. Fallback: точка с максимумом min-distance до лагерей (наиболее изолированная). Используется и для волн, и для initial/ramp/replenish — фон тоже не появляется в зоне огня.
+
+**P-рестарт:** в фазах RAMP/MAINTAIN P снова → `kill_all_skeletons` + `Camp.reset_population()` для каждого camp в `camp_paths` + новый initial spawn → RAMP с нуля. В фазе IDLE первый P — это «старт», не «рестарт»: гномов и скелетов не трогает (их ещё нет на старте), только initial spawn.
+
+**Force_wave:** `Input.is_action_just_pressed("force_wave")` (клавиша O) → немедленный `_spawn_wave()` + `_wave_cd = wave_interval` (сбрасывает таймер до плановой). Доступно в RAMP/MAINTAIN; в IDLE логирует подсказку «нажми P».
+
+**Safe-zone monitor:** раз в 1с считает скелетов в `wave_safe_radius` от каждого `current_center()` лагеря. Лог по фронту изменения count — видно сколько фоновых wander-скелетов проникает в зону.
+
+**Экспорты (в инспекторе):**
+- Refs: `spawner_path`, `camp_paths: Array[NodePath]`, `skeleton_scene: PackedScene`.
+- Initial ramp: `initial_count=20`, `ramp_target_count=50`, `ramp_duration=30.0`.
+- Maintain replenish: `replenish_threshold=20`, `replenish_interval=2.0`.
+- Maintain waves: `wave_interval=60.0`, `wave_count=10`, `wave_group_radius=4.0`, `wave_safe_radius=35.0`, `wave_position_attempts=30`.
+
+**Зависимости:** держит ссылку на `EnemySpawner` и список `Camp`'ов. Использует `Camp.current_center / has_alive_parts / nearest_part_to / reset_population`.
 
 ### 5.6 Ground — inline в `main.tscn`
 
@@ -741,11 +765,19 @@ func _yield_frame_and_recenter() -> Vector3:
 - `follow_max_distance: float = 30.0` — «зона видимости».
 - `deploy_duration: float = 3.0` — секунды зажатой `R` при неподвижной башне для развёртки.
 - `pack_duration: float = 4.0` — секунды зажатой `R` в развёрнутом состоянии для свёртки.
-- `deploy_radius: float = 4.0` — радиус кольца палаток вокруг anchor.
+- `deploy_radius: float = 8.0` — радиус кольца палаток вокруг anchor (×2 от исходного 4 в коммите про геометрию лагеря).
 - `stationary_threshold: float = 0.01` — порог смещения **позиции** цели за кадр, ниже которого считаем её неподвижной (раньше читалась `velocity` у CharacterBody3D — теперь `_tower` хранится как `Node3D`, и неподвижность определяется через эпсилон-чек delta-position).
 - Группа **Gnomes:**
-  - `gnome_scene: PackedScene` — сцена гнома (см. §5.8). Количество гномов на палатку Camp **не** задаёт — каждая палатка сама декларирует вместимость через `CampPart.gnomes_per_tent` (по дефолту 7). Это позволит в будущем иметь разные типы палаток с разной заселённостью без правки Camp.
+  - `gnome_scene: PackedScene` — сцена обычного гнома-собирателя.
+  - `defender_scene: PackedScene` — сцена защитника-лучника (DefenderGnome). Camp читает `CampPart.defenders_per_tent` и `gnomes_per_tent`, спавнит `defenders_per_tent` защитников и `(gnomes_per_tent − defenders_per_tent)` собирателей на каждую палатку. Дефолт 7 жителей: 3 защитника + 4 собирателя.
 - `debug_log: bool = true`.
+
+**Публичный API (используется WaveDirector'ом и HUD'ом):**
+- `current_center() -> Vector3` — реальный центр лагеря: среднее живых палаток (в caravan-mode узел Camp статичен, двигаются только дочерние палатки). Fallback: позиция Tower → собственная позиция узла. WaveDirector использует для расчёта safe-зоны.
+- `nearest_part_to(pos) -> StaticBody3D` — ближайшая живая палатка. Для назначения `forced_target` волне.
+- `has_alive_parts() -> bool` — есть ли хоть одна живая палатка. Лагерь-без-палаток не валидная цель волны.
+- `reset_population() -> void` — `queue_free` всех живых гномов и `_spawn_gnomes` снова. Палатки не восстанавливаются. Используется при P-рестарте кампании WaveDirector'ом. После reset в `DEPLOYED`-режиме новые гномы сразу `enter_deployed()` — выходят бродить.
+- `gatherer_count() / defender_count() / tent_count_alive() -> int` — счётчики для GameplayHud. Defender'ы фильтруются через `is DefenderGnome`.
 
 **Сигналы:**
 - `deployed(anchor: Vector3)` — на переходе `CARAVAN_FOLLOWING → DEPLOYED`. Re-emit'ится в `EventBus.camp_deployed`.
@@ -901,19 +933,33 @@ enum State {
 - `_active_tick(delta)` — виртуальный hook базового Gnome. У базы — match _state по `_tick_searching/_tick_commuting_*`. У защитника — `_defender_combat_tick(delta)` для всех «активных» состояний (SEARCHING / COMMUTING_* / IDLE_NEAR_BASE), `_tick_returning()` для RETURNING_TO_TENT.
 
 **Боевые экспорты:**
-- `attack_radius: float = 15.0` — радиус сканирования скелетов через `PhysicsShapeQuery`.
-- `attack_cooldown_min/max: float = 1.0 / 2.0` — рандомный интервал между выстрелами; 3 защитника в палатке не залпуют синхронно. Поднял с 0.6/1.2: на 54 защитниках это снизило поток стрел с ~60 до ~36/сек (overlap-чеки Area3D на стрелах были главной нагрузкой при 290+ скелетах).
-- `arrow_damage_min/max: float = 25.0 / 40.0` — `randf_range`. На `skeleton.hp = 30` это 1-shot kill в ~66% случаев (когда damage > 30) и 2-shot в остальных. «Чаще за 1 выстрел».
+- `attack_radius: float = 22.5` — радиус сканирования скелетов через `PhysicsShapeQuery` со сферой. ×1.5 от исходного 15м.
+- `attack_cooldown_min/max: float = 1.0 / 2.0` — рандомный интервал между выстрелами.
+- `arrow_damage_min/max: float = 25.0 / 40.0` — `randf_range`. На `skeleton.hp = 30` это 1-shot kill в ~66% случаев (когда damage > 30) и 2-shot в остальных.
 - `arrow_speed: float = 22.0`, `arrow_spawn_offset: Vector3 = (0, 0.6, 0)` — над головой, чтобы стрела не задела свой же корпус.
 - `arrow_scene: PackedScene` — переиспользуется `arrow.tscn` от OctagonTurret.
 - `projectiles_root_path: NodePath` — куда складывать спавн стрел (фолбэк на `current_scene`).
 
+**Точность и прокачка:**
+- `base_inaccuracy_radius: float = 1.5` — стартовый горизонтальный разброс прицела (метры). Стрела целится в круг этого радиуса вокруг центра цели — uniform по площади через `sqrt(randf())`. На `skeleton.capsule_radius=0.4` шанс попасть в тело новичка ~7%.
+- `experience_half_shots: int = 100` — после стольких выстрелов фактический разброс падает вдвое от базового. Логарифмическая кривая `current = base / (1 + shots/half)`:
+  - 0 выстрелов: 1.50м (новичок, ~7% точности)
+  - 100: 0.75м (середина, ~28%)
+  - 500: 0.25м (ветеран, стабильно цепляет тело)
+  - 1000: 0.14м (снайпер, почти всегда)
+- `_shots_fired: int` — per-инстанс счётчик опыта. Не сохраняется между сессиями. На P-рестарт через `Camp.reset_population()` все защитники пересоздаются с нуля — ветераны теряются.
+- Публичный API: `current_inaccuracy_radius() -> float`, `get_shots_fired() -> int` — для будущего HUD-индикатора уровня и прокачки.
+
+**Геймплей-стимулы:** игроку выгодно держать защитников живыми — старики стреляют 9/10, новички 1/10. После убийств (волной разрушили) новые с нуля. В будущем при возврате каравана-режима ветераны путешествуют со своим опытом (он per-instance, без привязки к Camp).
+
 **Патрульные экспорты:**
-- `patrol_radius: float = 6.0` — окружность вокруг `Camp.deploy_anchor`, по которой защитник ходит. Чуть больше `Camp.deploy_radius=4` чтобы быть **за** палатками.
+- `patrol_radius: float = 12.0` — окружность вокруг `Camp.deploy_anchor`, по которой защитник ходит. Чуть больше `Camp.deploy_radius=8` чтобы быть **за** палатками.
 - `patrol_speed: float = 1.0` — медленный шаг стража. Меньше `Gnome.move_speed=1.6` (та используется в `_tick_returning` при возврате в палатку).
 - `patrol_arrival: float = 0.6` — порог «дошёл до точки», после которого выбирается новая случайная.
 
 **Маска поиска целей:** `ENEMIES | COLD_ENEMY = 144`. Включает и горячих скелетов, и LOD-холодных — иначе при отзумленной камере дальние стаи становились бы невидимыми для защиты.
+
+**Explicit radius-фильтр:** после `intersect_shape` ручной чек `if d > attack_radius: continue` — Godot 4.6 PhysicsShapeQuery подмешивает результаты AABB-broadphase (тела вне sphere). Без этого фильтра защитники видели цели на 50м+ при `attack_radius=22.5` (наблюдалось в логе). Тот же фикс в `OctagonTurret._find_target`.
 
 **Combat-цикл:**
 1. Каждый тик `_defender_combat_tick(delta)` сначала **проверяет кэш цели** (`_cached_target`). PhysicsShapeQuery дорогой; на 54 защитниках при 60fps был бы убийцей fps (на стресс-тесте с 340 скелетами получали 3fps — фикс). Используется кэш + throttle `TARGET_SCAN_INTERVAL=0.25с`. Принудительный пересмотр если цель умерла, ушла за `attack_radius` или таймер истёк. Старт `_target_scan_timer` рандомизирован в `_ready` — 54 защитника не сканируют в одном кадре.
@@ -1038,21 +1084,32 @@ func take_one() -> bool:
 
 **Балансные параметры:**
 - `arrow_damage: float = 35.0` — `≥ skeleton.hp=30` → ваншот по требованию задачи.
-- `arrow_speed: float = 22.0` — на 12м долетает за ~0.55с, обгоняет скелета (`move_speed=4`).
-- `attack_radius: float = 12.0` — больше типичной дистанции скелета до лагеря.
+- `arrow_speed: float = 22.0` — стрелы баллистические (см. Arrow), угол выбирается автоматически.
+- `attack_radius: float = 12.0` (default; в `main.tscn` override на 22.0). После `intersect_shape` тот же explicit radius-фильтр что и в DefenderGnome — Godot подмешивает AABB-результаты вне sphere.
 
 **Цели:** маска `ENEMIES` (бит 4 = 16). Гномы (ACTORS=4) и башня (ACTORS=4) **не попадают** под огонь, дружественный fire исключён.
 
 #### Arrow — `scenes/arrow.tscn`, `scripts/arrow.gd`
 
-Простой проджектайл. **Тип корня:** `Node3D` (не RigidBody — летим по прямой с фиксированной скоростью, дешевле). Дочерний `Area3D` с `CollisionShape3D` детектит попадания.
+Баллистический проджектайл. **Тип корня:** `Node3D` (не RigidBody — ручное интегрирование velocity по гравитации, дешевле). Дочерний `Area3D` с `CollisionShape3D` детектит попадания.
 
-**Слой/маска:** Area3D `collision_layer=0`, `collision_mask=Layers.MASK_FRIENDLY_PROJECTILE = 145` (`TERRAIN | ENEMIES | COLD_ENEMY`). Стрелы пролетают сквозь Items, башню, гномов, палатки — не задевают своих. `COLD_ENEMY` включён, чтобы стрелы попадали в FAR-LOD скелетов (у них `collision_layer = COLD_ENEMY` вместо `ENEMIES` ради разгрузки broad-phase).
+**Слой/маска:** Area3D `collision_layer=0`, `collision_mask=Layers.MASK_FRIENDLY_PROJECTILE = 145` (`TERRAIN | ENEMIES | COLD_ENEMY`). Стрелы пролетают сквозь Items, башню, гномов, палатки — не задевают своих.
+
+**Параметры (экспорты):**
+- `damage: float`, `speed: float = 22.0`.
+- `gravity: float = 6.0` — настильнее мирового 9.8. На v=22 максимальная горизонтальная дальность `v²/g ≈ 80м`.
+- `lifetime: float = 4.0` — до queue_free, если ничего не поймала.
+
+**Баллистика (`_compute_launch_velocity`):**
+
+Решение задачи о броске с фиксированным `|v| = speed` и гравитацией по −Y. Формула низкой дуги: `tan(α) = (v² − √disc) / (g·d)` где `disc = v⁴ − g·(g·d² + 2·dy·v²)`. Из двух решений (низкая/высокая дуга) берётся низкая — короткое время полёта, более «настильный» визуал.
+
+Если `disc < 0` — цель вне досягаемости с заданной speed; фоллбэк: прямой выстрел в направлении цели (стрела упадёт по дороге, в логе будет видна как промах в землю).
 
 **Цикл:**
-- `setup(source_pos, target_pos)` от стрелка → стрела ставится в source, вычисляется **полное 3D-направление** к target (не зануляем Y!), `look_at` поворачивает меш. Это критично для турели на верхушке башни (y≈6.85 vs скелет на y≈1) — без вертикальной составляющей стрелы пролетали бы над головой.
-- `_physics_process(delta)`: `global_position += direction × speed × delta`. На `_life ≥ lifetime=4с` queue_free (если ничего не поймала).
-- `Area3D.body_entered`: идемпотентный `_consumed`-флаг защищает от двойного срабатывания. Если тело — Damageable, наносим урон через `Damageable.try_damage`. Затем queue_free независимо (стрела втыкается / разлетается).
+- `setup(source_pos, target_pos)` от стрелка → стрела ставится в source, `_compute_launch_velocity` решает баллистику, `look_at` ориентирует меш носом вдоль `_velocity`.
+- `_physics_process(delta)`: `_velocity.y -= gravity * delta; global_position += _velocity * delta`. Каждый кадр `_orient_along_velocity` пересчитывает поворот меша — стрела сначала смотрит вверх, потом носом вниз. На `_life ≥ lifetime` queue_free.
+- `Area3D.body_entered`: идемпотентный `_consumed`-флаг защищает от двойного срабатывания. Если тело — Damageable, наносим урон через `Damageable.try_damage`. Затем queue_free независимо.
 
 #### Слоты в проекте
 
@@ -1084,7 +1141,8 @@ func take_one() -> bool:
 | `hand_action` | RMB | Hand:PhysicalActions (триггер активной способности — slam/flick) |
 | `equip_slam` | 1 | Hand:PhysicalActions (экипировать хлопок) |
 | `equip_flick` | 2 | Hand:PhysicalActions (экипировать щелбан) |
-| `spawn_enemies` | P | EnemySpawner (волна скелетов) |
+| `spawn_enemies` | P | WaveDirector (старт/рестарт кампании) |
+| `force_wave` | O | WaveDirector (немедленная волна, сбрасывает таймер) |
 | `camp_toggle` | R | Camp (зажать для развёртки/свёртки) |
 
 Курсор мыши — позиция руки. Системного захвата курсора нет, он движется свободно.
@@ -1271,6 +1329,22 @@ func take_one() -> bool:
 
     **Что осталось не оптимизировано:** рендер. 1400 MeshInstance3D = 1400 draw calls, frustum culling Godot отсекает невидимые, но vertex transform всё равно стоит. Дальнейший buster — MultiMesh + GPU-instanced рендер с per-instance color (windup glow через color override вместо смены material_override). Большой refactor, отложен до явной необходимости.
 
+32. **Волновая система с режиссёром фаз** (`df7cdb0`). EnemySpawner раньше был «P → партия по кольцу вокруг target». Этого мало для игрового цикла — нужен ramp-up, поддержание популяции, периодические волны на лагерь. Решение в два слоя:
+    - **EnemySpawner** остался низкоуровневым «как»: публичный API `spawn_at / spawn_uniform / spawn_ring / spawn_group / kill_all_skeletons`. Старый `spawn_wave()` оставлен как debug helper. P-биндинг убран отсюда.
+    - **WaveDirector** (новый, см. §5.5.4) — высокоуровневый «когда и сколько». Фазы IDLE → RAMP (20→50 за 30с) → MAINTAIN (replenish с гистерезисом 20 + волны каждые 60с группой по 10 на ближайший лагерь). P — старт/рестарт кампании. O — немедленная волна.
+    - **Skeleton.forced_target** — aggro-fallback. Wave-скелет, заспавненный в 50м+ от лагеря (за пределами vision_radius=12), идёт на назначенную палатку. Когда подходит на 12м, vision захватывает гномов на периметре, и приоритет переключает агро на ближайшего гнома (защитники-лучники «перехватывают» волну).
+    - **Скелеты охотятся на существ, не на строения** (`_scan_target` приоритет: гном > палатка). Палатка берётся целью только когда гномов в зоне нет.
+    - **Camp.current_center** — реальный центр лагеря через среднее живых палаток. Узел Camp в caravan-mode статичен, двигаются только дочерние палатки — раньше WaveDirector считал safe-радиус от `(0,0,0)` после перемещения Tower и спавнил волны прямо в зоне огня.
+    - **Возврат к одному Camp у Tower** — 6 POI-поселений (этап 27) убраны для упрощения теста: один караван tent_count=4 (caravan-mode, R разворачивает). Конструкция масштабируется обратно при необходимости — `WaveDirector.camp_paths` принимает массив.
+
+33. **Баллистика стрел и прокачка точности защитников** (`956b7dc`).
+    - **Arrow.gd переписан на баллистику.** Был прямой выстрел с фиксированной скоростью; стало — `_compute_launch_velocity` решает задачу о броске (низкая дуга через discriminant), `_velocity` интегрируется по гравитации в `_physics_process`, меш ориентируется носом вдоль скорости каждый кадр. Параметры: `gravity=6` (настильнее мирового 9.8), `lifetime=4с`. На v=22 максимальная дальность ~80м.
+    - **DefenderGnome.attack_radius 15→22.5** (×1.5).
+    - **Прокачка через выстрелы.** Каждый выстрел инкрементирует `_shots_fired`, фактический разброс `current_inaccuracy_radius()` считается по логарифмической кривой `base / (1 + shots/half)` от стартового `base_inaccuracy_radius=1.5м` с `experience_half_shots=100`. Ветеран после 500 выстрелов имеет разброс 0.25м (~стабильно цепляет тело скелета capsule_radius=0.4); новичок — 1.5м (~7% точность). Опыт per-инстанс, на смерти теряется (P-рестарт через `Camp.reset_population` обнуляет всех). Геймплей-стимул: беречь защитников, не рестартить кампанию.
+    - **Explicit radius-фильтр** для PhysicsShapeQuery в DefenderGnome и OctagonTurret. Godot 4.6 подмешивает результаты AABB-broadphase (тела вне sphere). Без фильтра защитники видели цели на 50м+ при `attack_radius=22.5` (наблюдалось в логе).
+
+34. **GameplayHud — игровой HUD** (`df7cdb0`). Левая панель: индикаторы способностей (1=хлоп, 2=щелк) под PerfHud. Правая панель: статус лагеря (гномы/лучники/уровень=число палаток) с цветными иконками-плашками. Считывает три публичных геттера Camp каждые 0.25с. Раздел 9.3.
+
 ### 7.3 Решённые ошибки
 
 | # | Ошибка | Причина | Исправление |
@@ -1400,6 +1474,30 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 **Где живёт:** инстанс в `main.tscn` как ребёнок Main. Видим по умолчанию.
 
 **Стоимость:** один проход по группе скелетов раз в 0.25с + один `Label.text` setter. На 200 врагов — пренебрежимо. Сам HUD не учтён в FPS-сглаживании специально — погрешность одного кадра поглощается буфером.
+
+### 9.3. GameplayHud — `scenes/gameplay_hud.tscn`, `scripts/gameplay_hud.gd`
+
+**Тип корня:** `CanvasLayer`. Не debug-оверлей, а игровой UI с двумя зонами.
+
+**Левая панель (под PerfHud):** два «окошка» способностей с цифрой клавиши и подписью:
+- `[1]` хлоп
+- `[2]` щелк
+
+Цифра жёлтая (font_size=22) — как hotkey-индикатор. Подпись подписью маленькая. Используется панель с рамкой (StyleBoxFlat с border 2px, тёмным фоном). Сейчас статичная — будет основой для индикаторов кулдауна / зарядов в будущем.
+
+**Правая панель (top-right):** статус лагеря — три строки с цветной иконкой (ColorRect 20×20) + подписью + 3-значным счётчиком:
+- 🟫 гном (`Color(0.7, 0.45, 0.25)` = `gnome_color` собирателя) — `Camp.gatherer_count()`
+- 🟥 лучник (`Color(0.85, 0.2, 0.2)` = override DefenderGnome) — `Camp.defender_count()`
+- 🟫 уровень (`Color(0.45, 0.3, 0.18)` = `shatter_color` палатки) — `Camp.tent_count_alive()`
+
+«Уровень лагеря = число живых палаток» — потеря палатки понижает «уровень». В будущем апгрейды могут добавлять/восстанавливать палатки.
+
+**Экспорты:**
+- `camp_path: NodePath` (`@export_node_path("Camp")`) — лагерь, у которого читаются счётчики. Сейчас единственный Camp в сцене.
+
+**Цикл:** `_process` тикает `_update_timer`; при истечении (`UPDATE_INTERVAL=0.25с`) `_update_counts()` читает три геттера Camp'а и пишет в Label'ы. Если `_camp == null` — все счётчики `—`.
+
+**Стоимость:** один проход по `Camp._gnomes` (типа `is DefenderGnome` фильтр, итерация ≤30 элементов) + проход по `_parts` (≤4) раз в 0.25с. Pernebrezhimo.
 
 ---
 
