@@ -104,11 +104,21 @@ enum State {
 @export_group("")
 
 @export_group("")
-@export var debug_log: bool = false
+@export var debug_log: bool = true
 
 var _camp: Camp
 var _home_tent: Node3D
-var _state: State = State.IN_TENT
+## Логирование переходов через сеттер — все присваивания `_state = X`
+## внутри файла попадают сюда автоматически, не нужно искать каждое место.
+## Фронт-триггер: лог только при реальной смене значения, чтобы избежать
+## спама при многократном `_state = current_state` подряд.
+var _state: State = State.IN_TENT:
+	set(value):
+		if _state == value:
+			return
+		if debug_log and LogConfig.master_enabled:
+			print("[Gnome:%s] state %s → %s" % [name, State.keys()[_state], State.keys()[value]])
+		_state = value
 var _assigned_pile: ResourcePile = null
 var _wander_target: Vector3 = Vector3.INF
 var _carry_visual: MeshInstance3D = null

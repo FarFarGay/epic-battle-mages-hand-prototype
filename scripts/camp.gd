@@ -62,7 +62,7 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 ## Секунды зажатой R для свёртки (stationary не требуется).
 @export var pack_duration: float = 4.0
 ## Радиус кольца, на которое расставляются палатки вокруг anchor.
-@export var deploy_radius: float = 4.0
+@export var deploy_radius: float = 8.0
 ## Порог смещения цели за кадр, ниже которого считаем её неподвижной.
 @export var stationary_threshold: float = 0.01
 
@@ -204,6 +204,107 @@ func _spawn_one_gnome(scene: PackedScene, tent: StaticBody3D, role: String) -> v
 	# и _all_gnomes_home будут спотыкаться об invalid-инстансы.
 	gnome.destroyed.connect(_on_gnome_destroyed.bind(gnome))
 	_gnomes.append(gnome)
+
+
+## Считает живых гномов-собирателей (исключая защитников). Используется HUD'ом.
+func gatherer_count() -> int:
+	var n := 0
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		if g is DefenderGnome:
+			continue
+		n += 1
+	return n
+
+
+## Считает живых гномов-защитников (DefenderGnome).
+func defender_count() -> int:
+	var n := 0
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		if g is DefenderGnome:
+			n += 1
+	return n
+
+
+## Считает живые палатки. «Уровень лагеря» в HUD = это число.
+func tent_count_alive() -> int:
+	var n := 0
+	for p in _parts:
+		if is_instance_valid(p):
+			n += 1
+	return n
+
+
+## Реальный центр лагеря для расчётов на стороне (например WaveDirector
+## смотрит безопасную зону вокруг лагеря). global_position самого узла Camp
+## **не двигается** когда игрок ведёт Tower — двигаются только дочерние
+## палатки. Поэтому центр считаем как среднее живых палаток. Если палаток
+## не осталось — fallback на tower.global_position (caravan следует за
+## башней) или собственную позицию узла.
+func current_center() -> Vector3:
+	var sum := Vector3.ZERO
+	var n := 0
+	for part in _parts:
+		if not is_instance_valid(part):
+			continue
+		sum += part.global_position
+		n += 1
+	if n > 0:
+		return sum / float(n)
+	if _tower != null:
+		return _tower.global_position
+	return global_position
+
+
+## Ближайшая живая палатка к точке. WaveDirector использует для назначения
+## aggro-цели волне: 10 скелетов получают forced_target = эту палатку.
+## Возвращает null если все палатки разрушены — лагерь больше не валидная
+## цель, и вся волна идёт мимо.
+func nearest_part_to(pos: Vector3) -> StaticBody3D:
+	var nearest: StaticBody3D = null
+	var nearest_dist_sq := INF
+	for part in _parts:
+		if not is_instance_valid(part):
+			continue
+		var d_sq: float = (part.global_position - pos).length_squared()
+		if d_sq < nearest_dist_sq:
+			nearest_dist_sq = d_sq
+			nearest = part
+	return nearest
+
+
+## True если у лагеря есть хотя бы одна живая палатка — иначе он больше не
+## валидная цель (все палатки разрушены).
+func has_alive_parts() -> bool:
+	for part in _parts:
+		if is_instance_valid(part):
+			return true
+	return false
+
+
+## Воскрешает гномов лагеря: вычищает оставшихся, заспавнивает новых на
+## уцелевших палатках. Палатки не восстанавливаются — пользователь явно
+## просил «воскресить гномов» (rebalance после волн); если палатка уже
+## уничтожена, её жители безвозвратно потеряны вместе с ней. Используется
+## WaveDirector'ом при рестарте кампании (P).
+func reset_population() -> void:
+	# Копия — _gnomes мутируется через _on_gnome_destroyed на queue_free.
+	for gnome in _gnomes.duplicate():
+		if is_instance_valid(gnome):
+			gnome.queue_free()
+	_gnomes.clear()
+	_spawn_gnomes()
+	# Если лагерь уже DEPLOYED — новые гномы должны выйти бродить, иначе
+	# останутся IN_TENT и не будут собирать ресурсы / отстреливать скелетов.
+	if _state == State.DEPLOYED:
+		for g in _gnomes:
+			if is_instance_valid(g):
+				g.enter_deployed()
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] популяция сброшена (гномов: %d)" % _gnomes.size())
 
 
 func _on_part_destroyed(part: StaticBody3D) -> void:

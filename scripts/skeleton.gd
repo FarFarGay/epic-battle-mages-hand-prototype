@@ -125,6 +125,12 @@ var _wander_target: Vector3 = Vector3.INF
 var _rest_timer: float = 0.0
 var _cached_target: Node3D = null
 var _vision_scan_timer: float = 0.0
+## Принудительная цель — wave-скелеты получают её на спавне и идут к ней
+## независимо от vision_radius (палатка лагеря в 100м от спавн-точки тоже
+## считается видимой). Если умирает или выходит из skeleton_target — fallback
+## на обычный vision-scan: скелет к этому моменту уже подошёл к лагерю и
+## найдёт другие цели в радиусе.
+var _forced_target: Node3D = null
 var _lod_level: int = LodLevel.NEAR
 var _lod_check_timer: float = 0.0
 ## Счётчик AI-тиков для skip-логики (mid: каждый 2-й, far: каждый 3-й).
@@ -433,11 +439,24 @@ func get_active_target() -> Node3D:
 	return _cached_target
 
 
-## Сам скан — ближайшая в vision_radius из группы skeleton_target. Раньше был
-## бодиком get_active_target.
+## Сам скан — ближайшая в vision_radius из группы skeleton_target.
+##
+## Приоритет: гномы > палатки. Скелеты «голодные», охотятся на существа, а не
+## на строения — если в радиусе хоть один живой гном (любого типа), идём к
+## ближайшему гному, палатки игнорируются. Палатки берутся целью только когда
+## гномов в зоне нет (например, все попрятались в палатки на свёртке лагеря).
+##
+## forced_target теперь — fallback, не приоритет: используется только если
+## весь vision пуст. Wave-скелет, заспавненный в 50м от лагеря, идёт по
+## forced_target (назначенной палатке) пока никого не видит. Когда подходит
+## ближе чем 12м к лагерю — vision захватывает гномов на периметре, и
+## приоритет переключает скелета на ближайшего гнома (агро-перехват
+## защитниками — естественное поведение).
 func _scan_target() -> Node3D:
-	var nearest: Node3D = null
-	var nearest_dist_sq := vision_radius * vision_radius
+	var nearest_gnome: Node3D = null
+	var nearest_gnome_dist_sq := vision_radius * vision_radius
+	var nearest_other: Node3D = null
+	var nearest_other_dist_sq := vision_radius * vision_radius
 	for n in get_tree().get_nodes_in_group(TARGET_GROUP):
 		if not is_instance_valid(n):
 			continue
@@ -445,10 +464,31 @@ func _scan_target() -> Node3D:
 		if node == null:
 			continue
 		var d_sq: float = (node.global_position - global_position).length_squared()
-		if d_sq < nearest_dist_sq:
-			nearest_dist_sq = d_sq
-			nearest = node
-	return nearest
+		if d_sq >= vision_radius * vision_radius:
+			continue
+		if node is Gnome:
+			if d_sq < nearest_gnome_dist_sq:
+				nearest_gnome_dist_sq = d_sq
+				nearest_gnome = node
+		else:
+			if d_sq < nearest_other_dist_sq:
+				nearest_other_dist_sq = d_sq
+				nearest_other = node
+	if nearest_gnome != null:
+		return nearest_gnome
+	if nearest_other != null:
+		return nearest_other
+	# Vision пуст — на forced_target (палатка-якорь для wave-скелетов вне
+	# vision_radius). Гномы в 12м зоне всегда отбирают приоритет.
+	if is_instance_valid(_forced_target) and _forced_target.is_in_group(TARGET_GROUP):
+		return _forced_target
+	return null
+
+
+## Назначает форсированную цель (палатку лагеря). Используется WaveDirector'ом
+## на спавне волны: ставит ближайшую к точке спавна палатку как aggro-точку.
+func set_forced_target(target: Node3D) -> void:
+	_forced_target = target
 
 
 func _perform_strike(_target: Node3D) -> void:
