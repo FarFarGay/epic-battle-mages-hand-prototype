@@ -43,3 +43,8 @@ signal gnome_destroyed(gnome: Node3D)
 # --- Modules / mount slots ---
 signal module_mounted(module: Node, slot: Node)
 signal module_unmounted(module: Node, slot: Node)
+
+# --- Quests ---
+## Прогресс сюжета продвинулся: new_index = новый QuestProgress.current_index.
+## Слушают QuestActor (для перекраса) и потенциально HUD.
+signal quest_advanced(new_index: int)

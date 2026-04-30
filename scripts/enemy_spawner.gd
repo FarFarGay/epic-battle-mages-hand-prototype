@@ -17,7 +17,14 @@ extends Node3D
 @export var enemy_counts: Array[int]
 @export_node_path("Node3D") var target_path: NodePath
 @export_node_path("Node") var spawn_root_path: NodePath
-## Полу-длина квадратной карты от центра (0,0). Спавн uniform в [-extent, extent].
+## Корневой узел SpawnZone-ов. Если задан и под ним есть SpawnZone-дети —
+## `pick_random_pos()` выбирает точку внутри объединения этих дисков (вес по
+## площади). Если не задан или пуст — фоллбэк на uniform по всему квадрату
+## ±map_half_extent (старое поведение).
+@export_node_path("Node3D") var zone_root_path: NodePath
+## Полу-длина квадратной карты от центра (0,0). Используется для фоллбэка
+## `pick_random_pos()` при отсутствии SpawnZone-ов и для clamp'а в spawn_group/
+## spawn_ring.
 @export var map_half_extent: float = 95.0
 ## Y-координата спавна врагов (над уровнем земли).
 @export var spawn_y: float = 1.0
@@ -27,6 +34,7 @@ const _SPAWNS_PER_FRAME: int = 6
 
 var _target: Node3D
 var _spawn_root: Node
+var _zones: Array[SpawnZone] = []
 
 
 func _ready() -> void:
@@ -38,9 +46,82 @@ func _ready() -> void:
 		_spawn_root = get_node_or_null(spawn_root_path)
 	if not _spawn_root:
 		_spawn_root = get_tree().current_scene
+	if not zone_root_path.is_empty():
+		var zone_root := get_node_or_null(zone_root_path) as Node3D
+		if zone_root != null:
+			for child in zone_root.get_children():
+				if child is SpawnZone:
+					_zones.append(child as SpawnZone)
+		else:
+			push_warning("EnemySpawner: zone_root_path %s не Node3D" % zone_root_path)
+	if debug_log and LogConfig.master_enabled and not _zones.is_empty():
+		print("[EnemySpawner] зон спавна: %d (фоллбэк map_half_extent=%.0f)" % [_zones.size(), map_half_extent])
 
 
 # --- Публичный API для WaveDirector ---
+
+## Кандидат-точка для спавна. Если есть SpawnZone-ы — выбирает рандомную
+## (вес по πr²) и возвращает uniform-точку внутри её диска. Иначе — uniform
+## по квадрату ±map_half_extent. Y = 0; caller обычно перезаписывает на spawn_y.
+##
+## Используется WaveDirector'ом как генератор кандидатов внутри 30-попыточного
+## цикла safe-фильтра (Camp/POI safe-зоны). Не отвечает за safe-фильтр сам —
+## это позитивный фильтр зон, негативный фильтр safe-зон висит на caller'е.
+func pick_random_pos() -> Vector3:
+	var total_area := 0.0
+	for z in _zones:
+		if not is_instance_valid(z) or z.radius <= 0.0:
+			continue
+		total_area += z.radius * z.radius
+	if total_area <= 0.0:
+		return Vector3(
+			randf_range(-map_half_extent, map_half_extent),
+			0.0,
+			randf_range(-map_half_extent, map_half_extent),
+		)
+	var pick := randf() * total_area
+	var acc := 0.0
+	for z in _zones:
+		if not is_instance_valid(z) or z.radius <= 0.0:
+			continue
+		acc += z.radius * z.radius
+		if pick <= acc:
+			# Uniform внутри диска: sqrt по r чтобы плотность не кучковалась к центру.
+			var angle := randf() * TAU
+			var r := sqrt(randf()) * z.radius
+			return Vector3(
+				z.global_position.x + cos(angle) * r,
+				0.0,
+				z.global_position.z + sin(angle) * r,
+			)
+	# Числовая страховка: если из-за округления pick == total_area прошло мимо
+	# всех веток — берём последнюю валидную зону.
+	for z in _zones:
+		if is_instance_valid(z) and z.radius > 0.0:
+			return Vector3(z.global_position.x, 0.0, z.global_position.z)
+	return Vector3.ZERO
+
+
+## Список SpawnZone-ов, собранных в _ready. Внешним кодом читается через
+## `get_zones()` — например, WaveDirector фильтрует по `waves_left() > 0`.
+func get_zones() -> Array[SpawnZone]:
+	return _zones
+
+
+## Uniform-точка внутри **одной конкретной** зоны (Y=0). Используется
+## WaveDirector'ом для wave-спавна — там зона уже выбрана через budget-логику,
+## не надо площадно-взвешивать по всем зонам как `pick_random_pos`.
+func random_point_in_zone(zone: SpawnZone) -> Vector3:
+	if not is_instance_valid(zone) or zone.radius <= 0.0:
+		return Vector3.ZERO
+	var angle := randf() * TAU
+	var r := sqrt(randf()) * zone.radius
+	return Vector3(
+		zone.global_position.x + cos(angle) * r,
+		0.0,
+		zone.global_position.z + sin(angle) * r,
+	)
+
 
 ## Спавн одного врага в указанной точке. Синхронный, без yield —
 ## вызывается из режиссёрских таймеров (по 1 скелету раз в N сек).

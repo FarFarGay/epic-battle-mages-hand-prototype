@@ -39,6 +39,9 @@ hand_gameplay_prot/
 │   ├── resource_pile.tscn     — куча ресурсов на полу
 │   ├── octagon_turret.tscn    — защитный модуль (CampModule), стреляет стрелами
 │   ├── arrow.tscn             — снаряд защитного модуля
+│   ├── poi_marker.tscn        — маркер точки интереса (жёлтый плоский диск)
+│   ├── quest_actor.tscn       — актор-выдатчик квеста (капсула с цветом по состоянию)
+│   ├── spawn_zone.tscn        — зона спавна врагов (плоский красный диск-индикатор)
 │   ├── perf_hud.tscn          — оверлей FPS / счётчик скелетов / LOD
 │   └── gameplay_hud.tscn      — игровой HUD (способности слева, статус лагеря справа)
 └── scripts/
@@ -52,12 +55,16 @@ hand_gameplay_prot/
     ├── item.gd                — class_name Item
     ├── enemy.gd               — class_name Enemy (база с FSM APPROACH/WINDUP/STRIKE/COOLDOWN)
     ├── skeleton.gd            — class_name Skeleton extends Enemy
-    ├── enemy_spawner.gd       — class_name EnemySpawner — низкоуровневый спавн (spawn_at/uniform/ring/group)
+    ├── enemy_spawner.gd       — class_name EnemySpawner — низкоуровневый спавн (spawn_at/uniform/ring/group + zones)
     ├── wave_director.gd       — class_name WaveDirector — режиссёр фаз кампании врагов
+    ├── spawn_zone.gd          — class_name SpawnZone (@tool, диск с budget'ом волн)
     ├── camp.gd                — class_name Camp
     ├── gnome.gd               — class_name Gnome
     ├── defender_gnome.gd      — class_name DefenderGnome extends Gnome (лучник с прокачкой точности)
     ├── resource_pile.gd       — class_name ResourcePile
+    ├── quest_progress.gd      — autoload QuestProgress (линейный прогресс сюжета + Q-debug)
+    ├── quest_actor.gd         — class_name QuestActor (выдатчик квеста на POI)
+    ├── roads.gd               — генератор-меш дорог между POI (orphan, не подключён в main.tscn)
     ├── layers.gd              — class_name Layers (именованные физические слои + маски)
     ├── damageable.gd          — class_name Damageable (group-контракт + try_damage)
     ├── pushable.gd            — class_name Pushable (group-контракт + try_push)
@@ -678,13 +685,17 @@ static func spawn(
 - `enemy_counts: Array[int]` — параллельный массив для `spawn_wave()`.
 - `target_path: NodePath` (`@export_node_path("Node3D")`) — кого ставить в `set_target` базовому Enemy. Skeleton override'ит и `_targets` игнорирует, но для будущих врагов фолбэк остаётся.
 - `spawn_root_path: NodePath` (`@export_node_path("Node")`) — куда добавлять врагов как детей. Пустой → фолбэк на `get_tree().current_scene`.
-- `map_half_extent: float = 195.0` — полу-длина карты от центра (карта 400×400). `spawn_uniform` пакует точки в `[−extent, extent]` по X/Z; `spawn_ring` клампит к этой границе если центр близко к краю.
+- `zone_root_path: NodePath` (`@export_node_path("Node3D")`) — корень узлов `SpawnZone` (см. §5.5.5). Все прямые дети этого узла собираются в `_zones` на _ready и формируют **позитивный фильтр спавна**: `pick_random_pos()` возвращает точку только внутри объединения этих дисков (площадно-взвешенно). Если корень не задан или пуст — фоллбэк на uniform по `±map_half_extent`.
+- `map_half_extent: float = 195.0` — полу-длина карты от центра (карта 400×400). Используется как фоллбэк `pick_random_pos()` при отсутствии зон, и для clamp в `spawn_group/spawn_ring`.
 - `spawn_y: float = 1.0` — Y-координата спавна.
 - `debug_log: bool = true`.
 
 **Внутренние константы:** `_SPAWNS_PER_FRAME: int = 6` — сколько спавнов в одном физкадре в async-методах.
 
 **Публичный API (вызывается WaveDirector'ом):**
+- `pick_random_pos() -> Vector3` — кандидат-точка (Y=0). Если есть `SpawnZone`-ы — выбирает зону площадно-взвешенно (πr²), затем uniform-точку внутри её диска (`sqrt(randf())*r` — без концентрации в центре). Иначе — uniform по `±map_half_extent`. Используется WaveDirector'ом как генератор кандидатов для neutral-спавна (initial/ramp/replenish/[-debug-100); safe-фильтр Camp/POI накладывается caller'ом отдельно.
+- `random_point_in_zone(zone) -> Vector3` — uniform-точка внутри **одной конкретной** зоны. Используется для wave-спавна, где зона уже выбрана через budget-логику в WaveDirector.
+- `get_zones() -> Array[SpawnZone]` — отдаёт собранный список зон. WaveDirector фильтрует по `waves_left() > 0`.
 - `spawn_at(scene, pos) -> Enemy` — синхронный, один спавн в точке. Ставит `set_target(_target)` базовому Enemy. Возвращает инстанс для постобработки (например `WaveDirector` ставит `forced_target`).
 - `spawn_uniform(scene, count) -> void` — async. Спавн uniform по квадрату `[−extent, extent]²`, по `_SPAWNS_PER_FRAME` в кадр.
 - `spawn_ring(scene, count, center, radius, angle_jitter_deg = 15.0, radius_jitter = 3.0) -> void` — async. Спавн на кольце вокруг `center` с jitter углов и радиуса.
@@ -701,26 +712,63 @@ static func spawn(
 
 **Фазы:**
 - `IDLE` — до первого нажатия P. Ничего не делается.
-- `RAMP` — первичный набор. На старт `initial_count=20` uniform по карте (вне safe-радиуса), затем доспавн по 1 шт каждые `ramp_duration / (target − initial)` секунд до `ramp_target_count=50`. Длится `ramp_duration=30с`.
+- `RAMP` — первичный набор. На старт `initial_count=20` через `_spawn_safe_uniform` (точки внутри SpawnZone-ов площадно-взвешенно, отфильтрованные safe-зонами), затем доспавн по 1 шт каждые `ramp_duration / (target − initial)` секунд до `ramp_target_count=50`. Длится `ramp_duration=30с`.
 - `MAINTAIN` — параллельно:
   - **Replenish** с гистерезисом: если живых ≤ `target − replenish_threshold` (= 30 при threshold=20), доспавнивает по 1 шт каждые `replenish_interval=2с` до возврата к target. Гистерезис даёт игроку «передышку» — после убийств не торопится восстанавливать.
-  - **Waves**: каждые `wave_interval=60с` — `spawn_group` 10 скелетов в случайной точке вне `wave_safe_radius=35м` от лагеря. Каждому ставится `forced_target = nearest_part_to(origin)` ближайшего лагеря.
+  - **Waves**: каждые `wave_interval=60с` дирижёр выбирает SpawnZone с остатком budget'а волн (uniform random — это и есть «директор сам решает порядок») и спавнит из неё группу из `zone.skeletons_per_wave` скелетов. После выстрела `zone.consume_wave()` декрементит budget; по исчерпанию (0) зона перестаёт участвовать в волнах (но остаётся в neutral-спавне). Каждому скелету ставится `forced_target = nearest_part_to(origin)` ближайшего лагеря.
 
-**Выбор точки волны (`_pick_safe_pos`):** `wave_position_attempts=30` попыток uniform по карте; берётся первая точка с `min_dist_sq_to_camps ≥ wave_safe_radius²`. Fallback: точка с максимумом min-distance до лагерей (наиболее изолированная). Используется и для волн, и для initial/ramp/replenish — фон тоже не появляется в зоне огня.
+**Два потока спавна — neutral и waves:**
+- **Neutral** (initial/ramp/replenish + debug `[`-100): `_spawn_safe_uniform` через `_pick_safe_pos`. Кандидат — `_spawner.pick_random_pos()` (площадно-взвешенно по всем зонам, включая исчерпанные). Safe-фильтр (Camp `wave_safe_radius=45м` + POI `poi_safe_radius=45м`) накладывается поверх; до `wave_position_attempts=30` попыток + фоллбэк на «наименее плохую» точку.
+- **Waves**: зональный budget. Кандидат сразу из конкретной зоны через `random_point_in_zone(zone)` без safe-фильтра — дизайнер отвечает что зона стоит снаружи safe-зон.
 
-**P-рестарт:** в фазах RAMP/MAINTAIN P снова → `kill_all_skeletons` + `Camp.reset_population()` для каждого camp в `camp_paths` + новый initial spawn → RAMP с нуля. В фазе IDLE первый P — это «старт», не «рестарт»: гномов и скелетов не трогает (их ещё нет на старте), только initial spawn.
+**Safe-фильтр (`_safe_score`):** возвращает «избыток» (distance − safe_radius) до ближайшей запретной зоны: живой Camp (radius=`wave_safe_radius`) или POI (radius=`poi_safe_radius`). >=0 → принимаем точку, <0 → запоминаем как фоллбэк-кандидата с максимальным score.
+
+**P-рестарт:** в фазах RAMP/MAINTAIN P снова → `kill_all_skeletons` + `Camp.reset_population()` для каждого camp в `camp_paths` + новый initial spawn → RAMP с нуля. В фазе IDLE первый P — это «старт», не «рестарт»: гномов и скелетов не трогает (их ещё нет на старте), только initial spawn. **Бюджет волн SpawnZone-ов рестарт не трогает** — это design-time состояние плюс рантайм-API ниже.
 
 **Force_wave:** `Input.is_action_just_pressed("force_wave")` (клавиша O) → немедленный `_spawn_wave()` + `_wave_cd = wave_interval` (сбрасывает таймер до плановой). Доступно в RAMP/MAINTAIN; в IDLE логирует подсказку «нажми P».
 
+**Debug spawn (`[`):** `Input.is_action_just_pressed("debug_spawn_100")` → `_spawn_safe_uniform(100)` (neutral по зонам). Не трогает фазу/таймеры кампании, можно жать в любой фазе включая IDLE.
+
 **Safe-zone monitor:** раз в 1с считает скелетов в `wave_safe_radius` от каждого `current_center()` лагеря. Лог по фронту изменения count — видно сколько фоновых wander-скелетов проникает в зону.
 
+**Public API — рантайм-управление зонами (для эвентов типа «приход Короля Ночи»):**
+- `set_waves_in_all_zones(n)` — перезаписывает остаток budget'а всем зонам разом.
+- `add_waves_to_all_zones(n)` — накопительное пополнение.
+
 **Экспорты (в инспекторе):**
-- Refs: `spawner_path`, `camp_paths: Array[NodePath]`, `skeleton_scene: PackedScene`.
+- Refs: `spawner_path`, `camp_paths: Array[NodePath]`, `poi_root_path: NodePath`, `skeleton_scene: PackedScene`.
 - Initial ramp: `initial_count=20`, `ramp_target_count=50`, `ramp_duration=30.0`.
 - Maintain replenish: `replenish_threshold=20`, `replenish_interval=2.0`.
-- Maintain waves: `wave_interval=60.0`, `wave_count=10`, `wave_group_radius=4.0`, `wave_safe_radius=35.0`, `wave_position_attempts=30`.
+- Maintain waves: `wave_interval=60.0`, `wave_group_radius=4.0`, `wave_safe_radius=45.0`, `poi_safe_radius=45.0`, `wave_position_attempts=30`. Размер группы (`skeletons_per_wave`) ушёл per-zone в `SpawnZone`.
 
-**Зависимости:** держит ссылку на `EnemySpawner` и список `Camp`'ов. Использует `Camp.current_center / has_alive_parts / nearest_part_to / reset_population`.
+**Зависимости:** держит ссылку на `EnemySpawner`, список `Camp`'ов, список POI-нод (Node3D-дети `poi_root_path`). Использует `Camp.current_center / has_alive_parts / nearest_part_to / reset_population` и `EnemySpawner.get_zones / random_point_in_zone / pick_random_pos`.
+
+#### 5.5.5 SpawnZone — `scenes/spawn_zone.tscn`, `scripts/spawn_zone.gd` (`@tool`)
+
+**Тип корня:** `Node3D` с `class_name SpawnZone`.
+
+**Назначение:** диск радиуса `radius` вокруг собственной `global_position`. Два аспекта:
+
+1. **Neutral-спавн.** `EnemySpawner.pick_random_pos` выбирает рандомную точку в объединении всех SpawnZone-ов площадно-взвешенно (πr²). Wave-budget здесь не учитывается — даже исчерпанная зона остаётся фоновой «локацией».
+
+2. **Волны.** `WaveDirector._spawn_wave` ищет SpawnZone-ы с `waves_left() > 0`, выбирает одну (uniform random) и фейерит группу `skeletons_per_wave` штук внутри её диска. После выстрела зовётся `consume_wave()` — `_waves_left` декрементится. По исчерпанию зона больше не выбирается для волн.
+
+**Экспорты:**
+- `radius: float = 30.0` — радиус диска. Сеттер `@tool` мгновенно масштабирует визуальный индикатор (плоский цилиндр под собой) — в редакторе видно размер сразу.
+- Группа **Waves**:
+  - `target_poi: NodePath` — метаданные привязки к POI (для дизайна и потенциальных будущих политик дирижёра вроде «бить по POI с ближайшим Tower»). В текущей реализации не запрещает другим POI «получить» волну отсюда — только справочно.
+  - `wave_count: int = 5` — стартовый budget волн. На `_ready` копируется в `_waves_left`.
+  - `skeletons_per_wave: int = 10` — размер группы при выстреле этой зоны.
+
+**Public API:**
+- `waves_left() -> int` — остаток budget'а.
+- `consume_wave() -> bool` — декремент на 1; false если зона уже исчерпана.
+- `add_waves(n: int) -> void` — накопительно прибавить к `_waves_left`.
+- `set_waves(n: int) -> void` — жёсткая перезапись (для Король Ночи: сразу всем по 100 волн).
+
+**Сборка зон в дереве:** `EnemySpawner` собирает зоны один раз в `_ready` из прямых детей `zone_root_path`. Рантайм-добавление новых SpawnZone-нод после старта сцены не подхватывается; пополнение `_waves_left` существующих зон — работает.
+
+**Визуал:** плоский CylinderMesh (h=0.04) на y=0.05, полупрозрачный красный с эмишеном. Скрыть в игре можно `MeshInstance3D.visible=false` или удалить ребёнка `Mesh`.
 
 ### 5.6 Ground — inline в `main.tscn`
 
@@ -805,7 +853,7 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 
 **`_ready`:** резолвит `_tower` через `target_path`; вызывает `_spawn_tents()` затем `_spawn_gnomes()`; подключает re-emit на EventBus и подписку на `tower_destroyed`.
 
-**`_spawn_tents`:** инстанцирует `tent_scene` × `tent_count` раз. Стартовая позиция каждой — линия позади origin'а Camp по X (`-i × part_gap`); Y берётся из самой `tent.tscn` (там она 0.75 — низ меша на полу). Каждая палатка — самостоятельный `CampPart`-инстанс; Camp подписывается на её `destroyed`, чтобы синхронно вычистить и `_parts`, и `_deployed_targets` по индексу. Без сцены (`tent_scene = null`) или при `tent_count <= 0` — `push_warning` и пустой караван.
+**`_spawn_tents`:** инстанцирует `tent_scene` × `tent_count` раз. Стартовая XZ — цепочка **позади башни** (`leader = _tower.global_position` если есть, иначе `global_position` Camp): `tent[i].x = leader.x − (i+1) × part_gap`, `z = leader.z`. Y берётся из самой `tent.tscn` (там 0.75 — низ меша на полу). Раньше `tent[0]` ставился в Camp local (0,0,0) и подтягивался к башне через exp_decay — на разнесённых Camp/Tower палатки на первом кадре сидели в центре и потом «уезжали»; сейчас сразу строится конечная цепочка. Каждая палатка — самостоятельный `CampPart`-инстанс; Camp подписывается на её `destroyed`, чтобы синхронно вычистить и `_parts`, и `_deployed_targets` по индексу. Без сцены (`tent_scene = null`) или при `tent_count <= 0` — `push_warning` и пустой караван.
 
 **`_spawn_gnomes`:** для каждой палатки в `_parts` читает её собственный `gnomes_per_tent` (поле `CampPart`, дефолт 7) и инстанцирует `gnome_scene` соответствующее количество раз. Кастует к `Gnome`, кладёт ребёнком Camp, ставит в позицию палатки и вызывает `gnome.setup(self, tent)`. Палатка-владелец передаётся как `home_tent` — гном привязан именно к ней (хранит в `_home_tent`, идёт туда при `request_return`, а в `IN_TENT` приклеен к её `global_position`).
 
@@ -1125,6 +1173,51 @@ func take_one() -> bool:
 
 Если новому модулю нужна другая высота — настроить `module_offset` на слотах под него (можно сделать слот-специфичный или ввести `placement_offset` на самом модуле).
 
+### 5.11 Quest system — POI markers, QuestActor, QuestProgress
+
+Линейная цепочка сюжетных заданий: 3 POI на карте, на каждой стоит «актор» (NPC-выдатчик квеста). Прогресс продвигается клавишей `Q` (debug-заглушка до настоящих триггеров завершения).
+
+#### POI markers — `scenes/poi_marker.tscn`
+
+**Тип корня:** `Node3D` (без скрипта).
+
+**Назначение:** статический визуальный маркер точки интереса — плоский жёлтый цилиндр (top/bottom_radius=2.5, height=0.6) с emission. Используется для двух разных целей:
+
+1. **Quest-точка.** В `main.tscn` под `PointsOfInterest/` лежат три POI: `Poi_ESE`, `Poi_Heart`, `Poi_SW`. У каждого ребёнок `Actor` (см. ниже), на нём сидит `quest_order`.
+2. **Safe-зона спавна.** `WaveDirector` собирает прямых детей `poi_root_path` в `_pois` и применяет `poi_safe_radius=45м` как негативный фильтр для спавна скелетов (см. §5.5.4).
+
+#### QuestActor — `scenes/quest_actor.tscn`, `scripts/quest_actor.gd`
+
+**Тип корня:** `Node3D` с `class_name QuestActor`.
+
+**Назначение:** «актор» квестов на POI. Капсула высотой 2.5м с цветом по состоянию: **locked** (тусклый серый), **active** (яркий жёлтый с emission), **completed** (зелёный). Состояние читается из `QuestProgress`, перекрас — по сигналу `EventBus.quest_advanced`.
+
+**Экспорты:**
+- `actor_id: StringName` — уникальный идентификатор для будущих скриптовых триггеров (диалог, выдача награды, ивенты в EventBus). Сейчас не используется кроме логов.
+- `quest_order: int = 0` — порядковый номер в линейной цепочке (0=первый, 1=второй, …).
+
+**Логика `_refresh_visual`:** в `_ready` создаётся свежий `StandardMaterial3D` через `MeshInstance3D.material_override` (без `resource_local_to_scene` на сцене — каждая инстанс получает свой материал в коде). Дальше — switch по `QuestProgress.is_completed/is_active` и подмена `albedo_color` + `emission`.
+
+**Подписка:** `EventBus.quest_advanced.connect(_on_quest_advanced)` — все 3 актора слушают, перекрашиваются одновременно при продвижении прогресса.
+
+**Использование в `main.tscn`:** под каждым `Poi_*` инстанс `quest_actor.tscn` с уникальным `actor_id` (`"ese"`, `"heart"`, `"sw"`) и `quest_order = 0/1/2` соответственно.
+
+#### QuestProgress — `scripts/quest_progress.gd` (autoload)
+
+**Тип корня:** `Node`, autoload с именем `QuestProgress`.
+
+**Назначение:** глобальное состояние линейного прогресса сюжета. `current_index` указывает на активного актора:
+- акторы с `quest_order < current_index` — **completed**;
+- с `quest_order == current_index` — **active**;
+- с `quest_order > current_index` — **locked**.
+
+**API:**
+- `current_index: int = 0` — публичная переменная, рантайм-чтение/запись.
+- `is_active(order)`, `is_completed(order)`, `is_locked(order)` — предикаты для QuestActor.
+- `advance() -> void` — `current_index += 1`, эмит `EventBus.quest_advanced(current_index)`.
+
+**Debug-вход:** `_unhandled_input` ловит `complete_quest` action (Q) → `advance()`. Заглушка до появления настоящих геймплейных триггеров (диалог завершён / предмет принесён / монстр убит).
+
 ---
 
 ## 6. Управление и инпуты
@@ -1144,6 +1237,8 @@ func take_one() -> bool:
 | `spawn_enemies` | P | WaveDirector (старт/рестарт кампании) |
 | `force_wave` | O | WaveDirector (немедленная волна, сбрасывает таймер) |
 | `camp_toggle` | R | Camp (зажать для развёртки/свёртки) |
+| `complete_quest` | Q | QuestProgress (debug-продвижение прогресса сюжета на 1 шаг) |
+| `debug_spawn_100` | `[` | WaveDirector (debug-спавн 100 скелетов neutral по зонам, не трогает фазу/таймеры) |
 
 Курсор мыши — позиция руки. Системного захвата курсора нет, он движется свободно.
 
@@ -1423,6 +1518,7 @@ func take_one() -> bool:
 | `gnome_destroyed` | `(gnome: Node3D)` | `Gnome._ready` re-emit |
 | `module_mounted` | `(module: Node, slot: Node)` | `MountSlot._mount` |
 | `module_unmounted` | `(module: Node, slot: Node)` | `MountSlot._release_to_hand` / `_drop_mounted` |
+| `quest_advanced` | `(new_index: int)` | `QuestProgress.advance` (autoload) — эмит на каждое продвижение прогресса. Слушают QuestActor (перекрас) и потенциально HUD. |
 
 `ResourcePile.take_one` через шину **не эмитит** (декремент `units` пока не нужен наружу — счётчика ресурсов ещё нет). При появлении HUD-счётчика добавится отдельный сигнал — типизированный как `Node3D`, как и остальные.
 

@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/quest_actor.gd" id="1"]
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_actor"]
+radius = 0.5
+height = 2.5
+
+[node name="QuestActor" type="Node3D"]
+script = ExtResource("1")
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.25, 0)
+mesh = SubResource("CapsuleMesh_actor")

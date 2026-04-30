@@ -10,8 +10,10 @@
 [ext_resource type="PackedScene" path="res://scenes/octagon_turret.tscn" id="10"]
 [ext_resource type="PackedScene" path="res://scenes/perf_hud.tscn" id="11"]
 [ext_resource type="PackedScene" path="res://scenes/poi_marker.tscn" id="12"]
-[ext_resource type="Script" path="res://scripts/wave_director.gd" id="13"]
+[ext_resource type="Script" uid="uid://b8arph4ob7p8l" path="res://scripts/wave_director.gd" id="13"]
 [ext_resource type="PackedScene" path="res://scenes/gameplay_hud.tscn" id="14"]
+[ext_resource type="PackedScene" path="res://scenes/quest_actor.tscn" id="16"]
+[ext_resource type="PackedScene" path="res://scenes/spawn_zone.tscn" id="17"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(400, 1, 400)
@@ -34,7 +36,7 @@ transform = Transform3D(1, 0, 0, 0, 0.707, 0.707, 0, -0.707, 0.707, 0, 20, 0)
 shadow_enabled = true
 
 [node name="Ground" type="StaticBody3D" parent="." unique_id=1330979093]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 0.43936372, 0, -0.5, 0)
 collision_mask = 31
 
 [node name="GroundCollision" type="CollisionShape3D" parent="Ground" unique_id=228490940]
@@ -45,25 +47,27 @@ material_override = SubResource("Material_ground")
 mesh = SubResource("BoxMesh_ground")
 
 [node name="Tower" parent="." unique_id=1433079522 instance=ExtResource("1")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 159.14594, 3, 0)
 
 [node name="CameraRig" parent="." unique_id=1120422055 instance=ExtResource("3")]
 target_path = NodePath("../Tower")
 
 [node name="Hand" parent="." unique_id=1987763939 instance=ExtResource("2")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.5, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 164.49461, 2.5, 0)
 
 [node name="EnemySpawner" type="Node3D" parent="." unique_id=1441766688]
 script = ExtResource("6")
 enemy_scenes = Array[PackedScene]([ExtResource("7")])
 enemy_counts = Array[int]([50])
 target_path = NodePath("../Tower")
+zone_root_path = NodePath("../SpawnZones")
 map_half_extent = 195.0
 
-[node name="WaveDirector" type="Node" parent="."]
+[node name="WaveDirector" type="Node" parent="." unique_id=1809479795]
 script = ExtResource("13")
 spawner_path = NodePath("../EnemySpawner")
-camp_paths = [NodePath("../Camp")]
+camp_paths = Array[NodePath]([NodePath("../Camp")])
+poi_root_path = NodePath("../PointsOfInterest")
 skeleton_scene = ExtResource("7")
 
 [node name="Modules" type="Node3D" parent="." unique_id=1539843594]
@@ -73,31 +77,77 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0.35, 4)
 attack_radius = 22.0
 arrow_speed = 30.5
 
-[node name="PointsOfInterest" type="Node3D" parent="."]
+[node name="SpawnZones" type="Node3D" parent="." unique_id=1926494768]
 
-[node name="OuterE" parent="PointsOfInterest" instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 174, 0.3, -11)
+[node name="SpawnZone1" parent="SpawnZones" unique_id=2016128478 instance=ExtResource("17")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 63.300056, 0, -0.7195587)
+target_poi = null
+wave_count = null
+skeletons_per_wave = null
 
-[node name="OuterNW" parent="PointsOfInterest" instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -83, 0.3, -163)
+[node name="SpawnZone2" parent="SpawnZones" unique_id=1710553257 instance=ExtResource("17")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -52.08081, 0, -0.7195587)
+target_poi = null
+wave_count = null
+skeletons_per_wave = null
 
-[node name="OuterSW" parent="PointsOfInterest" instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -97, 0.3, 162)
+[node name="SpawnZone3" parent="SpawnZones" unique_id=1858690687 instance=ExtResource("17")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -169.56966, 0, -0.7195587)
+target_poi = null
+wave_count = null
+skeletons_per_wave = null
 
-[node name="InnerENE" parent="PointsOfInterest" instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 74, 0.3, -34)
+[node name="SpawnZone4" parent="SpawnZones" unique_id=587815178 instance=ExtResource("17")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 121.71933, 0, 49.298645)
+target_poi = NodePath("../../PointsOfInterest/Poi_ESE")
+wave_count = 2
+skeletons_per_wave = 100
 
-[node name="InnerWNW" parent="PointsOfInterest" instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -64, 0.3, -46)
+[node name="SpawnZone5" parent="SpawnZones" unique_id=1502663284 instance=ExtResource("17")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.4518433, 0, -52.331177)
+target_poi = null
+wave_count = null
+skeletons_per_wave = null
 
-[node name="InnerS" parent="PointsOfInterest" instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0.3, 84)
+[node name="SpawnZone6" parent="SpawnZones" unique_id=232139588 instance=ExtResource("17")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -110.021835, 0, -52.331177)
+target_poi = null
+wave_count = null
+skeletons_per_wave = null
 
-[node name="Camp" parent="." instance=ExtResource("8")]
+[node name="SpawnZone7" parent="SpawnZones" unique_id=1591271457 instance=ExtResource("17")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -110.021835, 0, 48.52439)
+target_poi = null
+wave_count = null
+skeletons_per_wave = null
+
+[node name="PointsOfInterest" type="Node3D" parent="." unique_id=1906900233]
+
+[node name="Poi_ESE" parent="PointsOfInterest" unique_id=1479745084 instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 123.8483, 0.3, -0.2122345)
+
+[node name="Actor" parent="PointsOfInterest/Poi_ESE" unique_id=1894827127 instance=ExtResource("16")]
+actor_id = &"ese"
+quest_order = 0
+
+[node name="Poi_SW" parent="PointsOfInterest" unique_id=1039385320 instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -110, 0.3, -0.9144745)
+
+[node name="Actor" parent="PointsOfInterest/Poi_SW" unique_id=830153592 instance=ExtResource("16")]
+actor_id = &"sw"
+quest_order = 2
+
+[node name="Poi_Heart" parent="PointsOfInterest" unique_id=1859626028 instance=ExtResource("12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.14587402, 0.3, -0.4829769)
+
+[node name="Actor" parent="PointsOfInterest/Poi_Heart" unique_id=1218000003 instance=ExtResource("16")]
+actor_id = &"heart"
+quest_order = 1
+
+[node name="Camp" parent="." unique_id=745402752 instance=ExtResource("8")]
 target_path = NodePath("../Tower")
-tent_count = 4
 
-[node name="PerfHud" parent="." instance=ExtResource("11")]
+[node name="PerfHud" parent="." unique_id=2138312601 instance=ExtResource("11")]
 
-[node name="GameplayHud" parent="." instance=ExtResource("14")]
+[node name="GameplayHud" parent="." unique_id=2130476976 instance=ExtResource("14")]
 camp_path = NodePath("../Camp")

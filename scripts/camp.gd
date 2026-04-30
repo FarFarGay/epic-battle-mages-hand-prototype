@@ -148,6 +148,11 @@ func _spawn_tents() -> void:
 		return
 	if tent_count <= 0:
 		return
+	# Стартовая привязка цепочки: за башней (если есть), иначе у самого Camp.
+	# Раньше tent[0] ставился в локальном (0,0,0) и подтягивался к башне через
+	# exp_decay — на разнесённых Camp/Tower палатки на первом кадре сидели в
+	# центре и потом «уезжали» к башне. Сразу строим конечную цепочку.
+	var leader_xz: Vector3 = _tower.global_position if _tower != null else global_position
 	for i in range(tent_count):
 		var tent := tent_scene.instantiate() as StaticBody3D
 		if tent == null:
@@ -155,10 +160,14 @@ func _spawn_tents() -> void:
 			continue
 		tent.name = "Tent%d" % (i + 1)
 		add_child(tent)
-		# Стартовая позиция: цепочка позади origin (башня обычно в (0,0,0) для
-		# каравана; реальная привязка к башне произойдёт в _update_caravan_follow
-		# на первом же кадре).
-		tent.position = Vector3(-i * part_gap, tent.position.y, 0)
+		# Цепочка позади башни вдоль -X: tent[0] на part_gap позади башни,
+		# каждая следующая ещё на part_gap дальше. Y оставляем тот, что задал
+		# tent.tscn (там transform.y=0.75 — половина высоты, чтобы стояла на полу).
+		tent.global_position = Vector3(
+			leader_xz.x - float(i + 1) * part_gap,
+			tent.global_position.y,
+			leader_xz.z,
+		)
 		_parts.append(tent)
 		if tent is CampPart:
 			(tent as CampPart).destroyed.connect(_on_part_destroyed.bind(tent))

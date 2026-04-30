@@ -16,10 +16,13 @@ extends Node
 ##     доспавнивает по 1 шт каждые replenish_interval до возврата к target.
 ##     Hysteresis (threshold=20): после убийств не торопимся восстанавливать —
 ##     даём игроку «передышку», ramp возвращается только при значимой просадке.
-##   * waves: каждые wave_interval с спавнит wave_count скелетов **группой** в
-##     случайной точке карты вне зоны видимости лагерей (radius ≥ wave_safe_radius
-##     до любого Camp). Группа целеустремлённо идёт на ближайший лагерь —
-##     каждому скелету ставится forced_target = ближайшая палатка лагеря.
+##   * waves: каждые wave_interval с дирижёр выбирает SpawnZone с остатком
+##     budget'а волн (uniform random) и спавнит из неё группу из
+##     `zone.skeletons_per_wave` штук. Цель — ближайший живой лагерь от точки
+##     спавна (когда Tower стоит на POI, Camp деплоится туда → wave с соседней
+##     зоны идёт на этот POI). После выстрела `zone.consume_wave()` декрементит
+##     budget; по исчерпанию зона перестаёт участвовать в волнах (но остаётся
+##     в neutral-спавне).
 ##
 ## Рестарт по P (в любой фазе): kill_all_skeletons + reset_population на всех
 ## camp_paths + новый initial spawn → RAMP с нуля. «Воскрешение убитых гномов»
@@ -33,6 +36,11 @@ enum Phase { IDLE, RAMP, MAINTAIN }
 ## Лагеря: цели атаки (для каждой волны выбирается ближайший к точке спавна)
 ## и адресаты reset_population при P-рестарте.
 @export var camp_paths: Array[NodePath] = []
+## Корневой узел POI — все его прямые дети считаются точками интереса со
+## своими safe-зонами (poi_safe_radius). POI на спавн скелетов влияют только
+## геометрически (волны и фоновый wander к ним не прилетают), сам Quest-прогресс
+## с этой логикой не связан.
+@export_node_path("Node3D") var poi_root_path: NodePath
 @export var skeleton_scene: PackedScene
 @export_group("")
 
@@ -58,7 +66,6 @@ enum Phase { IDLE, RAMP, MAINTAIN }
 @export_group("Maintain — waves")
 ## Каждые сколько секунд идёт волна на ближайший лагерь.
 @export var wave_interval: float = 60.0
-@export var wave_count: int = 10
 ## Радиус разброса группы вокруг точки спавна. Группа должна выглядеть
 ## плотной (не одиночные скелеты по всей карте), но не накладываться телами.
 ## 10 скелетов в круге r=4 — плотность ~0.2 м² на скелет, без штабеля.
@@ -69,6 +76,11 @@ enum Phase { IDLE, RAMP, MAINTAIN }
 ## 45м = за пределами patrol_radius=12 + attack_radius=22.5 защитника
 ## (зона огня = 34.5м) + 10.5м буфер.
 @export var wave_safe_radius: float = 45.0
+## Минимальная дистанция от точки спавна до любой POI. POI — сюжетные
+## точки, спавн скелетов рядом ломает «безопасный подход» к актору. Зона
+## та же по порядку что и у лагеря (40-50м), отдельный параметр чтобы
+## крутить независимо.
+@export var poi_safe_radius: float = 45.0
 ## Сколько раз пробуем рандомную точку до фоллбэка. На карте 400×400 с
 ## 6 лагерями вероятность попасть в safe-зону высокая — 30 попыток с большим
 ## запасом. Фоллбэк: берём точку с максимумом min-distance до лагерей.
@@ -79,6 +91,7 @@ enum Phase { IDLE, RAMP, MAINTAIN }
 
 var _spawner: EnemySpawner
 var _camps: Array[Camp] = []
+var _pois: Array[Node3D] = []
 
 var _phase: int = Phase.IDLE
 ## Время в RAMP-фазе. По достижении ramp_duration — переход в MAINTAIN.
@@ -113,6 +126,15 @@ func _ready() -> void:
 		else:
 			push_warning("WaveDirector: camp_path %s не Camp" % path)
 
+	if not poi_root_path.is_empty():
+		var poi_root := get_node_or_null(poi_root_path) as Node3D
+		if poi_root != null:
+			for child in poi_root.get_children():
+				if child is Node3D:
+					_pois.append(child as Node3D)
+		else:
+			push_warning("WaveDirector: poi_root_path %s не Node3D" % poi_root_path)
+
 
 func _process(delta: float) -> void:
 	if Input.is_action_just_pressed("spawn_enemies"):
@@ -130,6 +152,15 @@ func _process(delta: float) -> void:
 		else:
 			_spawn_wave()
 			_wave_cd = wave_interval
+
+	# [ — debug: моментальный спавн 100 скелетов uniform по safe-зонам.
+	# Не трогает фазу/таймеры кампании, может зваться и в IDLE — это просто
+	# «накидать массовку для теста». Учитывает Camp/POI safe-зоны как обычный
+	# spawn_safe_uniform (через _pick_safe_pos).
+	if Input.is_action_just_pressed("debug_spawn_100"):
+		_spawn_safe_uniform(100)
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] [-debug: спавн 100 скелетов (живых после: %d)" % _live_skeleton_count())
 
 	match _phase:
 		Phase.IDLE:
@@ -234,28 +265,73 @@ func _tick_maintain(delta: float) -> void:
 # --- Wave: точка спавна + ближайший лагерь + forced_target ---
 
 func _spawn_wave() -> void:
-	# 1. Выбрать точку спавна вне зоны видимости лагерей.
-	var origin := _pick_safe_pos()
-	# 2. Ближайший живой лагерь к этой точке.
+	# 1. Найти SpawnZone-ы с остатком budget'а волн. Дирижёр здесь и есть
+	#    «решает в каком порядке атакуют» — uniform random pick из живых
+	#    зон. Если все исчерпаны — тишина (волна пропущена).
+	if _spawner == null:
+		return
+	var live_zones: Array[SpawnZone] = []
+	for z in _spawner.get_zones():
+		if is_instance_valid(z) and z.waves_left() > 0:
+			live_zones.append(z)
+	if live_zones.is_empty():
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] волна пропущена — нет SpawnZone-ов с остатком волн")
+		return
+	var zone: SpawnZone = live_zones[randi() % live_zones.size()]
+
+	# 2. Origin — uniform-точка внутри выбранной зоны. Safe-фильтр Camp/POI
+	#    не накладывается: дизайнер сам отвечает что зона стоит снаружи safe-зон
+	#    (визуальный контроль через poi-маркер делать не стали — пока трастуем).
+	var origin := _spawner.random_point_in_zone(zone)
+	origin.y = _spawner.spawn_y
+
+	# 3. Цель — ближайший живой лагерь от origin. Когда Tower стоит на POI,
+	#    Camp деплоится туда же → волна из соседней зоны идёт на этот POI.
 	var target_camp := _nearest_alive_camp(origin)
 	if target_camp == null:
 		if debug_log and LogConfig.master_enabled:
 			print("[WaveDirector] волна пропущена — нет живых лагерей")
 		return
-	# 3. Ближайшая палатка этого лагеря — она и будет aggro-целью группы.
 	var target_part := target_camp.nearest_part_to(origin)
 	if target_part == null:
 		if debug_log and LogConfig.master_enabled:
 			print("[WaveDirector] волна пропущена — у лагеря %s нет живых палаток" % target_camp.name)
 		return
-	# 4. Спавн группы и назначение forced_target каждому скелету.
-	var skeletons := _spawner.spawn_group(skeleton_scene, wave_count, origin, wave_group_radius)
+
+	# 4. Спавн группы из `zone.skeletons_per_wave` штук и назначение forced_target.
+	var skeletons := _spawner.spawn_group(skeleton_scene, zone.skeletons_per_wave, origin, wave_group_radius)
 	for enemy in skeletons:
 		if enemy is Skeleton:
 			(enemy as Skeleton).set_forced_target(target_part)
+	zone.consume_wave()
 	if debug_log and LogConfig.master_enabled:
 		var dist := origin.distance_to(target_part.global_position)
-		print("[WaveDirector] волна %d скелетов в (%.0f, %.0f) → %s/%s (dist=%.0fм)" % [skeletons.size(), origin.x, origin.z, target_camp.name, target_part.name, dist])
+		print("[WaveDirector] волна %d скелетов из зоны %s (%.0f, %.0f) → %s/%s (dist=%.0fм, осталось волн в зоне: %d)" % [skeletons.size(), zone.name, origin.x, origin.z, target_camp.name, target_part.name, dist, zone.waves_left()])
+
+
+# --- Public API: рантайм-управление budget'ом зон ---
+
+## Перезаписывает остаток волн всем зонам (Король Ночи: «всем разом по N»).
+func set_waves_in_all_zones(n: int) -> void:
+	if _spawner == null:
+		return
+	for z in _spawner.get_zones():
+		if is_instance_valid(z):
+			z.set_waves(n)
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] всем зонам выставлено %d волн" % n)
+
+
+## Прибавляет N волн ко всем зонам (накопительное пополнение).
+func add_waves_to_all_zones(n: int) -> void:
+	if _spawner == null:
+		return
+	for z in _spawner.get_zones():
+		if is_instance_valid(z):
+			z.add_waves(n)
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] всем зонам добавлено +%d волн" % n)
 
 
 ## Спавнит count скелетов uniform по карте, но каждая точка — вне safe-радиуса
@@ -271,47 +347,55 @@ func _spawn_safe_uniform(count: int) -> void:
 		_spawner.spawn_at(skeleton_scene, pos)
 
 
-## Рандомная точка на карте, удалённая от всех лагерей минимум на wave_safe_radius.
-## Делает wave_position_attempts попыток; если ни одна не прошла фильтр —
-## возвращает точку с максимумом min-distance до лагерей (наиболее изолированную
-## из попыток). Это деградация, не failure: спавн всё равно произойдёт.
+## Рандомная точка на карте, удалённая от всех safe-источников (живых лагерей
+## и POI) минимум на их радиус. Делает wave_position_attempts попыток; если ни
+## одна не прошла фильтр — возвращает точку с максимальным `_safe_score`
+## (наименее плохую). Это деградация, не failure: спавн всё равно произойдёт.
 func _pick_safe_pos() -> Vector3:
-	var extent := _spawner.map_half_extent
-	var safe_sq := wave_safe_radius * wave_safe_radius
 	var best_pos := Vector3.ZERO
-	var best_min_dist_sq := -1.0
+	var best_score := -INF
 
 	for i in range(wave_position_attempts):
-		var candidate := Vector3(
-			randf_range(-extent, extent),
-			0.0,
-			randf_range(-extent, extent),
-		)
-		var min_dist_sq := _min_dist_sq_to_camps(candidate)
-		if min_dist_sq >= safe_sq:
+		# Кандидат — изнутри объединения SpawnZone-ов спавнера (или uniform по
+		# карте, если зон нет). Фильтр safe-зон Camp/POI применяется поверх.
+		var candidate := _spawner.pick_random_pos()
+		var score := _safe_score(candidate)
+		if score >= 0.0:
 			return candidate
-		# Запоминаем лучшую (наиболее изолированную) на случай фоллбэка.
-		if min_dist_sq > best_min_dist_sq:
-			best_min_dist_sq = min_dist_sq
+		if score > best_score:
+			best_score = score
 			best_pos = candidate
 
 	if debug_log and LogConfig.master_enabled:
-		var actual_dist := sqrt(best_min_dist_sq) if best_min_dist_sq > 0.0 else 0.0
-		print("[WaveDirector] safe-точка не найдена за %d попыток — фоллбэк на dist=%.1f" % [wave_position_attempts, actual_dist])
+		print("[WaveDirector] safe-точка не найдена за %d попыток — фоллбэк (excess=%.1fм)" % [wave_position_attempts, best_score])
 	return best_pos
 
 
-func _min_dist_sq_to_camps(pos: Vector3) -> float:
-	var min_sq := INF
+## Score точки = минимальный «избыток» (distance − safe_radius) до ближайшей
+## запретной зоны: живой Camp (radius=wave_safe_radius) или POI (radius=
+## poi_safe_radius). >=0 → точка снаружи всех зон.
+## <0 → внутри какой-то зоны на |score| метров. Используется и для accept
+## (≥0), и для фоллбэка (max). Если ни лагерей, ни POI нет — возвращает 0
+## (любая точка ок).
+func _safe_score(pos: Vector3) -> float:
+	var min_excess := INF
 	for camp in _camps:
 		if not is_instance_valid(camp) or not camp.has_alive_parts():
 			continue
-		var d_sq: float = (camp.current_center() - pos).length_squared()
-		if d_sq < min_sq:
-			min_sq = d_sq
-	# Если живых лагерей нет — возвращаем INF (любая точка «безопасна», но
-	# волна потом всё равно скипнется в _spawn_wave из-за target_camp == null).
-	return min_sq
+		var d: float = camp.current_center().distance_to(pos)
+		var excess := d - wave_safe_radius
+		if excess < min_excess:
+			min_excess = excess
+	for poi in _pois:
+		if not is_instance_valid(poi):
+			continue
+		var d: float = poi.global_position.distance_to(pos)
+		var excess := d - poi_safe_radius
+		if excess < min_excess:
+			min_excess = excess
+	if min_excess == INF:
+		return 0.0
+	return min_excess
 
 
 func _nearest_alive_camp(pos: Vector3) -> Camp:
