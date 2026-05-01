@@ -18,9 +18,9 @@ extends Node3D
 @export_node_path("Node3D") var target_path: NodePath
 @export_node_path("Node") var spawn_root_path: NodePath
 ## Корневой узел SpawnZone-ов. Если задан и под ним есть SpawnZone-дети —
-## `pick_random_pos()` выбирает точку внутри объединения этих дисков (вес по
-## площади). Если не задан или пуст — фоллбэк на uniform по всему квадрату
-## ±map_half_extent (старое поведение).
+## `pick_random_pos()` выбирает точку внутри объединения этих прямоугольников
+## (вес по площади). Если не задан или пуст — фоллбэк на uniform по всему
+## квадрату ±map_half_extent (старое поведение).
 @export_node_path("Node3D") var zone_root_path: NodePath
 ## Полу-длина квадратной карты от центра (0,0). Используется для фоллбэка
 ## `pick_random_pos()` при отсутствии SpawnZone-ов и для clamp'а в spawn_group/
@@ -61,8 +61,9 @@ func _ready() -> void:
 # --- Публичный API для WaveDirector ---
 
 ## Кандидат-точка для спавна. Если есть SpawnZone-ы — выбирает рандомную
-## (вес по πr²) и возвращает uniform-точку внутри её диска. Иначе — uniform
-## по квадрату ±map_half_extent. Y = 0; caller обычно перезаписывает на spawn_y.
+## (вес по area = size.x*size.y) и возвращает uniform-точку внутри её
+## прямоугольника. Иначе — uniform по квадрату ±map_half_extent. Y = 0;
+## caller обычно перезаписывает на spawn_y.
 ##
 ## Используется WaveDirector'ом как генератор кандидатов внутри 30-попыточного
 ## цикла safe-фильтра (Camp/POI safe-зоны). Не отвечает за safe-фильтр сам —
@@ -70,9 +71,9 @@ func _ready() -> void:
 func pick_random_pos() -> Vector3:
 	var total_area := 0.0
 	for z in _zones:
-		if not is_instance_valid(z) or z.radius <= 0.0:
+		if not is_instance_valid(z):
 			continue
-		total_area += z.radius * z.radius
+		total_area += z.area()
 	if total_area <= 0.0:
 		return Vector3(
 			randf_range(-map_half_extent, map_half_extent),
@@ -82,22 +83,18 @@ func pick_random_pos() -> Vector3:
 	var pick := randf() * total_area
 	var acc := 0.0
 	for z in _zones:
-		if not is_instance_valid(z) or z.radius <= 0.0:
+		if not is_instance_valid(z):
 			continue
-		acc += z.radius * z.radius
+		var a := z.area()
+		if a <= 0.0:
+			continue
+		acc += a
 		if pick <= acc:
-			# Uniform внутри диска: sqrt по r чтобы плотность не кучковалась к центру.
-			var angle := randf() * TAU
-			var r := sqrt(randf()) * z.radius
-			return Vector3(
-				z.global_position.x + cos(angle) * r,
-				0.0,
-				z.global_position.z + sin(angle) * r,
-			)
+			return random_point_in_zone(z)
 	# Числовая страховка: если из-за округления pick == total_area прошло мимо
 	# всех веток — берём последнюю валидную зону.
 	for z in _zones:
-		if is_instance_valid(z) and z.radius > 0.0:
+		if is_instance_valid(z) and z.area() > 0.0:
 			return Vector3(z.global_position.x, 0.0, z.global_position.z)
 	return Vector3.ZERO
 
@@ -111,16 +108,19 @@ func get_zones() -> Array[SpawnZone]:
 ## Uniform-точка внутри **одной конкретной** зоны (Y=0). Используется
 ## WaveDirector'ом для wave-спавна — там зона уже выбрана через budget-логику,
 ## не надо площадно-взвешивать по всем зонам как `pick_random_pos`.
+##
+## Локальный X∈[-size.x/2, size.x/2], Z∈[-size.y/2, size.y/2] прогоняется через
+## `zone.global_transform` — поворот зоны вокруг Y учитывается корректно.
 func random_point_in_zone(zone: SpawnZone) -> Vector3:
-	if not is_instance_valid(zone) or zone.radius <= 0.0:
+	if not is_instance_valid(zone) or zone.area() <= 0.0:
 		return Vector3.ZERO
-	var angle := randf() * TAU
-	var r := sqrt(randf()) * zone.radius
-	return Vector3(
-		zone.global_position.x + cos(angle) * r,
+	var local := Vector3(
+		randf_range(-zone.size.x * 0.5, zone.size.x * 0.5),
 		0.0,
-		zone.global_position.z + sin(angle) * r,
+		randf_range(-zone.size.y * 0.5, zone.size.y * 0.5),
 	)
+	var world := zone.global_transform * local
+	return Vector3(world.x, 0.0, world.z)
 
 
 ## Спавн одного врага в указанной точке. Синхронный, без yield —

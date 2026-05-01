@@ -162,6 +162,19 @@ func _process(delta: float) -> void:
 		if debug_log and LogConfig.master_enabled:
 			print("[WaveDirector] [-debug: спавн 100 скелетов (живых после: %d)" % _live_skeleton_count())
 
+	# ] — stress-test: спавн 2000 скелетов uniform по всему квадрату карты
+	# через async EnemySpawner.spawn_uniform (батчами по _SPAWNS_PER_FRAME=6).
+	# Цель — упереться в перфоманс и измерить через PerfHud (F3): где боттлнек
+	# — process_ms (CPU AI), physics_ms (CharacterBody3D-коллизии),
+	# draw_calls (GPU/uniqueness MeshInstance), память. Игнорирует safe-зоны
+	# и SpawnZone-границы — для перф-замера распределение неважно.
+	# Fire-and-forget: сама spawn_uniform — coroutine, _process не ждёт.
+	if Input.is_action_just_pressed("debug_stress_2000"):
+		if _spawner != null and skeleton_scene != null:
+			_spawner.spawn_uniform(skeleton_scene, 2000)
+			if debug_log and LogConfig.master_enabled:
+				print("[WaveDirector] ]-stress: запущен async-спавн 2000 скелетов")
+
 	match _phase:
 		Phase.IDLE:
 			pass

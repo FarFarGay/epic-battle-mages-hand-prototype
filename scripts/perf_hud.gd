@@ -1,15 +1,18 @@
 class_name PerfHud
 extends CanvasLayer
-## Перфоманс-оверлей: FPS, число скелетов, распределение по LOD-уровням
-## NEAR/MID/FAR. Используется при тестировании больших волн врагов и работы
-## LOD-системы. Toggle на F3.
+## Перфоманс-оверлей: FPS, время кадра по подсистемам (process/physics ms),
+## render-нагрузка (draw calls + objects), число скелетов с разбивкой по LOD,
+## память и общее количество нод. Используется при стресс-тестах больших волн
+## (2000+ скелетов) — позволяет быстро локализовать узкое место: CPU-AI
+## (process_ms растёт), CPU-physics (physics_ms растёт), GPU/draw calls
+## (RENDER_TOTAL_DRAW_CALLS_IN_FRAME растёт). Toggle на F3.
 ##
 ## Содержимое и layout — самодостаточно: один Label, который перерисовывает
 ## строку по таймеру 0.25с. Не подписан ни на чьи сигналы — только пуллит
-## состояние группы `Skeleton.SKELETON_GROUP` через `get_nodes_in_group`.
+## состояние группы `Skeleton.SKELETON_GROUP` и `Performance.get_monitor(...)`.
 ##
-## Стоимость HUD'а сама по себе: один проход по группе скелетов раз в 0.25с
-## + один Label.text setter. На 200 врагов — пренебрежимо мало.
+## Стоимость HUD'а сама по себе: один проход по группе скелетов + 6 monitor
+## reads раз в 0.25с + один Label.text setter. На 2000 врагов — < 0.1мс/обновление.
 
 const UPDATE_INTERVAL: float = 0.25
 
@@ -69,8 +72,24 @@ func _update_label() -> void:
 			Skeleton.LodLevel.FAR:
 				far_count += 1
 	var total := near_count + mid_count + far_count
-	_label.text = "FPS: %.0f\nSkeletons: %d (NEAR: %d  MID: %d  FAR: %d)" % [
-		fps, total, near_count, mid_count, far_count
+	# Performance-мониторы: TIME_PROCESS / TIME_PHYSICS_PROCESS возвращают секунды
+	# (за последний кадр), поэтому ×1000 → миллисекунды. На 60fps бюджет кадра
+	# ~16.6мс — process+physics суммарно должны в него влезать.
+	var process_ms: float = Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
+	var physics_ms: float = Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
+	# Render-нагрузка: на 2000 уникальных MeshInstance3D ожидаем ~2000 draw calls.
+	# Если упрёмся — сигнал к MultiMesh (1 draw call на пачку).
+	var draw_calls: int = int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
+	var render_objects: int = int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME))
+	# MEMORY_STATIC — байты выделенные движком (без GPU-памяти). Для контекста.
+	var mem_mb: float = Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0
+	# OBJECT_NODE_COUNT — все ноды в SceneTree. На стрессе видно, сколько
+	# реально живёт скелетов+эффектов+гномов+палаток вместе.
+	var nodes: int = int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT))
+	_label.text = "FPS: %.0f   Process: %.2fms   Physics: %.2fms\nDraw calls: %d   Objects: %d   Mem: %.0f MB   Nodes: %d\nSkeletons: %d (NEAR: %d  MID: %d  FAR: %d)" % [
+		fps, process_ms, physics_ms,
+		draw_calls, render_objects, mem_mb, nodes,
+		total, near_count, mid_count, far_count,
 	]
 
 

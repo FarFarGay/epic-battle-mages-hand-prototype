@@ -101,6 +101,13 @@ enum State {
 ## Период переоценки LOD-уровня (с). Distance-чек 100+ гномов на каждом
 ## физкадре сам по себе нагрузка.
 @export var lod_check_interval: float = 0.5
+## Угол полу-cone'а «впереди камеры». Гном вне cone'а (за камерой или
+## сильно сбоку) форсируется в FAR-режим независимо от расстояния — игрок
+## его не видит, симулировать его дёшево (cold-mode без move_and_slide).
+## Симметрично frustum-override Skeleton'а. 60° = 120° cone, покрывает
+## горизонтальный FOV ~95° (FOV=70 + 16:9) с запасом. До 90° — override
+## выключен (всё в полусфере перед камерой считается «видимым»).
+@export_range(30.0, 90.0) var lod_offscreen_half_angle_deg: float = 60.0
 @export_group("")
 
 @export_group("")
@@ -127,6 +134,9 @@ var _dying: bool = false
 var _effects_root: Node = null
 var _lod_far: bool = false
 var _lod_check_timer: float = 0.0
+## Прекомпьют cos(half-angle) для frustum-override. Дешевле, чем deg_to_rad+cos
+## на каждом LOD-чеке (раз в 0.5с × 126 гномов).
+var _lod_offscreen_cos: float = 0.5
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 
@@ -158,6 +168,8 @@ func _ready() -> void:
 	# Фазовый сдвиг LOD-чека: 126+ гномов не должны пересчитывать дистанцию
 	# до камеры одним кадром. Размазываем по 0..lod_check_interval.
 	_lod_check_timer = randf() * lod_check_interval
+	# Прекомпьют cos(half-angle) для frustum-override.
+	_lod_offscreen_cos = cos(deg_to_rad(lod_offscreen_half_angle_deg))
 
 
 func _apply_visual() -> void:
@@ -308,6 +320,14 @@ func _active_tick(_delta: float) -> void:
 ## Расчёт LOD-уровня по дистанции до точки интереса камеры (CameraRig).
 ## CameraRig — родитель Camera3D, lerp'ом следует за Tower; зум на него не
 ## влияет. Симметрично подходу у Skeleton.
+##
+## **Frustum-override:** если гном вне cone'а вокруг forward-направления
+## Camera3D (угол > lod_offscreen_half_angle_deg), форсируем FAR-режим
+## независимо от расстояния. Игрок не видит — нет смысла гонять
+## move_and_slide и гравитацию. Симметрично Skeleton._update_lod_level.
+## Cone от позиции **Camera3D** (реальная точка наблюдения), forward
+## из basis Camera3D. AI продолжает работать в FAR-mode (гном идёт к
+## своей цели), но дёшево.
 func _update_lod() -> void:
 	if not is_inside_tree():
 		_lod_far = false
@@ -316,6 +336,17 @@ func _update_lod() -> void:
 	if camera == null:
 		_lod_far = false
 		return
+
+	# Frustum-cone override: если гном вне обзора, FAR без оглядки на distance.
+	var to_self: Vector3 = global_position - camera.global_position
+	var dist_to_camera: float = to_self.length()
+	if dist_to_camera > 0.001:
+		var forward: Vector3 = -camera.global_transform.basis.z
+		var cos_angle: float = forward.dot(to_self) / dist_to_camera
+		if cos_angle < _lod_offscreen_cos:
+			_lod_far = true
+			return
+
 	var anchor: Node3D = camera.get_parent() as Node3D
 	var anchor_pos: Vector3 = anchor.global_position if anchor != null else camera.global_position
 	var d: float = global_position.distance_to(anchor_pos)

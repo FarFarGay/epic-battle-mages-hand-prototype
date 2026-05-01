@@ -42,7 +42,7 @@ hand_gameplay_prot/
 │   ├── poi_marker.tscn        — маркер точки интереса (жёлтый плоский диск)
 │   ├── quest_actor.tscn       — актор-выдатчик квеста (капсула с цветом по состоянию)
 │   ├── spawn_zone.tscn        — зона спавна врагов (плоский красный диск-индикатор)
-│   ├── perf_hud.tscn          — оверлей FPS / счётчик скелетов / LOD
+│   ├── perf_hud.tscn          — оверлей FPS / process+physics ms / draw calls / скелеты+LOD
 │   └── gameplay_hud.tscn      — игровой HUD (способности слева, статус лагеря справа)
 └── scripts/
     ├── tower.gd               — class_name Tower
@@ -57,7 +57,7 @@ hand_gameplay_prot/
     ├── skeleton.gd            — class_name Skeleton extends Enemy
     ├── enemy_spawner.gd       — class_name EnemySpawner — низкоуровневый спавн (spawn_at/uniform/ring/group + zones)
     ├── wave_director.gd       — class_name WaveDirector — режиссёр фаз кампании врагов
-    ├── spawn_zone.gd          — class_name SpawnZone (@tool, диск с budget'ом волн)
+    ├── spawn_zone.gd          — class_name SpawnZone (@tool, прямоугольник с budget'ом волн)
     ├── camp.gd                — class_name Camp
     ├── gnome.gd               — class_name Gnome
     ├── defender_gnome.gd      — class_name DefenderGnome extends Gnome (лучник с прокачкой точности)
@@ -76,7 +76,7 @@ hand_gameplay_prot/
     ├── knockback_state.gd     — class_name KnockbackState (RefCounted helper, общий kinematic-knockback)
     ├── shatter_effect.gd      — class_name ShatterEffect (визуал смерти, общий для врагов и т.п.)
     ├── vec_util.gd            — class_name VecUtil (горизонтальные хелперы Vector3)
-    ├── perf_hud.gd            — class_name PerfHud (оверлей FPS/скелеты/LOD, F3 toggle)
+    ├── perf_hud.gd            — class_name PerfHud (оверлей FPS/ms/draw calls/скелеты/LOD, F3 toggle)
     ├── gameplay_hud.gd        — игровой HUD (способности + статус лагеря)
     ├── event_bus.gd           — autoload EventBus
     └── log_config.gd          — autoload LogConfig
@@ -406,7 +406,7 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 
 **Экспорты группы `Zoom`:**
 - `zoom_step: float = 0.9` — множитель оффсета за один щелчок колеса (10% приближения; обратный 1/0.9 ≈ 1.11 для отдаления).
-- `zoom_min: float = 0.4`, `zoom_max: float = 5.0` — границы относительно базового оффсета. 1.0 = «как в .tscn». zoom_max повышен с 2.5 → 5.0 — двойной зумаут для обзора крупных волн (на отдалении 5× все скелеты вне `lod_far_distance=50` уходят в FAR-LOD; рука/слам всё равно достают через `Layers.COLD_ENEMY`).
+- `zoom_min: float = 0.4`, `zoom_max: float = 5.0` — границы относительно базового оффсета. 1.0 = «как в .tscn». zoom_max повышен с 2.5 → 5.0 — двойной зумаут для обзора крупных волн (на отдалении 5× все скелеты вне `lod_far_distance=50` уходят в FAR-LOD). Slam достаёт FAR-скелетов через group-fallback (`HandPhysicalSlam._perform_slam` второй проход); hand grab — через основной Area3D, FAR-скелеты ему недоступны (collision_shape disabled).
 - `zoom_speed: float = 10.0` — скорость экспоненциального доезда к целевому зуму.
 
 **Поля состояния:** `_base_offset: Vector3` (стартовый оффсет камеры), `_zoom: float = 1.0` (текущий, плавный), `_zoom_target: float = 1.0` (куда едем).
@@ -729,6 +729,8 @@ static func spawn(
 
 **Debug spawn (`[`):** `Input.is_action_just_pressed("debug_spawn_100")` → `_spawn_safe_uniform(100)` (neutral по зонам). Не трогает фазу/таймеры кампании, можно жать в любой фазе включая IDLE.
 
+**Stress test (`]`):** `Input.is_action_just_pressed("debug_stress_2000")` → fire-and-forget `EnemySpawner.spawn_uniform(skeleton_scene, 2000)` (батчи по 6/кадр, ≈5.5с до полного спавна). Игнорирует safe-зоны и SpawnZone-границы — для замера перфоманса распределение не важно. Используется в паре с PerfHud (F3) для локализации боттлнека на 2000 скелетов: высокий `Process` — CPU AI/vision, высокий `Physics` — CharacterBody3D коллизии, высокий `Draw calls` — упор в GPU/уникальные MeshInstance.
+
 **Safe-zone monitor:** раз в 1с считает скелетов в `wave_safe_radius` от каждого `current_center()` лагеря. Лог по фронту изменения count — видно сколько фоновых wander-скелетов проникает в зону.
 
 **Public API — рантайм-управление зонами (для эвентов типа «приход Короля Ночи»):**
@@ -747,20 +749,21 @@ static func spawn(
 
 **Тип корня:** `Node3D` с `class_name SpawnZone`.
 
-**Назначение:** диск радиуса `radius` вокруг собственной `global_position`. Два аспекта:
+**Назначение:** прямоугольник `size` (X×Z, в метрах) с центром в собственной `global_position` и поворотом из transform узла. Два аспекта:
 
-1. **Neutral-спавн.** `EnemySpawner.pick_random_pos` выбирает рандомную точку в объединении всех SpawnZone-ов площадно-взвешенно (πr²). Wave-budget здесь не учитывается — даже исчерпанная зона остаётся фоновой «локацией».
+1. **Neutral-спавн.** `EnemySpawner.pick_random_pos` выбирает рандомную точку в объединении всех SpawnZone-ов площадно-взвешенно (size.x·size.y). Wave-budget здесь не учитывается — даже исчерпанная зона остаётся фоновой «локацией».
 
-2. **Волны.** `WaveDirector._spawn_wave` ищет SpawnZone-ы с `waves_left() > 0`, выбирает одну (uniform random) и фейерит группу `skeletons_per_wave` штук внутри её диска. После выстрела зовётся `consume_wave()` — `_waves_left` декрементится. По исчерпанию зона больше не выбирается для волн.
+2. **Волны.** `WaveDirector._spawn_wave` ищет SpawnZone-ы с `waves_left() > 0`, выбирает одну (uniform random) и фейерит группу `skeletons_per_wave` штук внутри её прямоугольника. После выстрела зовётся `consume_wave()` — `_waves_left` декрементится. По исчерпанию зона больше не выбирается для волн.
 
 **Экспорты:**
-- `radius: float = 30.0` — радиус диска. Сеттер `@tool` мгновенно масштабирует визуальный индикатор (плоский цилиндр под собой) — в редакторе видно размер сразу.
+- `size: Vector2 = Vector2(60, 60)` — полные размеры по локальным X (size.x) и Z (size.y). Сеттер `@tool` мгновенно масштабирует визуальный индикатор (плоский box под собой) — в редакторе видно размер сразу. Поворот вокруг Y берётся из transform узла; сэмплирование (`random_point_in_zone`) учитывает basis.
 - Группа **Waves**:
   - `target_poi: NodePath` — метаданные привязки к POI (для дизайна и потенциальных будущих политик дирижёра вроде «бить по POI с ближайшим Tower»). В текущей реализации не запрещает другим POI «получить» волну отсюда — только справочно.
   - `wave_count: int = 5` — стартовый budget волн. На `_ready` копируется в `_waves_left`.
   - `skeletons_per_wave: int = 10` — размер группы при выстреле этой зоны.
 
 **Public API:**
+- `area() -> float` — площадь (size.x·size.y). Используется EnemySpawner'ом для взвешивания выбора зоны.
 - `waves_left() -> int` — остаток budget'а.
 - `consume_wave() -> bool` — декремент на 1; false если зона уже исчерпана.
 - `add_waves(n: int) -> void` — накопительно прибавить к `_waves_left`.
@@ -768,7 +771,7 @@ static func spawn(
 
 **Сборка зон в дереве:** `EnemySpawner` собирает зоны один раз в `_ready` из прямых детей `zone_root_path`. Рантайм-добавление новых SpawnZone-нод после старта сцены не подхватывается; пополнение `_waves_left` существующих зон — работает.
 
-**Визуал:** плоский CylinderMesh (h=0.04) на y=0.05, полупрозрачный красный с эмишеном. Скрыть в игре можно `MeshInstance3D.visible=false` или удалить ребёнка `Mesh`.
+**Визуал:** плоский BoxMesh (1×0.04×1) на y=0.05, масштабируемый сеттером `size` до `size.x×0.04×size.y`, полупрозрачный красный с эмишеном. Видим **только в редакторе** — `_refresh_visual` ставит `mesh.visible = Engine.is_editor_hint()`, поэтому в рантайме (Play и билд) зоны игроку не видны.
 
 ### 5.6 Ground — inline в `main.tscn`
 
@@ -1005,7 +1008,7 @@ enum State {
 - `patrol_speed: float = 1.0` — медленный шаг стража. Меньше `Gnome.move_speed=1.6` (та используется в `_tick_returning` при возврате в палатку).
 - `patrol_arrival: float = 0.6` — порог «дошёл до точки», после которого выбирается новая случайная.
 
-**Маска поиска целей:** `ENEMIES | COLD_ENEMY = 144`. Включает и горячих скелетов, и LOD-холодных — иначе при отзумленной камере дальние стаи становились бы невидимыми для защиты.
+**Маска поиска целей:** `ENEMIES | COLD_ENEMY = 144`. Исторически — чтобы защитники видели и горячих, и cold-mode скелетов; в текущей реализации FAR-скелеты имеют `collision_layer=0` (исключены из broad-phase для перфоманса), бит COLD_ENEMY в маске избыточен. Но это OK на практике: `attack_radius=22.5м` ≪ `lod_near_distance=25м`, все цели защитника — NEAR/MID, FAR-скелетов в зоне обстрела не бывает.
 
 **Explicit radius-фильтр:** после `intersect_shape` ручной чек `if d > attack_radius: continue` — Godot 4.6 PhysicsShapeQuery подмешивает результаты AABB-broadphase (тела вне sphere). Без этого фильтра защитники видели цели на 50м+ при `attack_radius=22.5` (наблюдалось в логе). Тот же фикс в `OctagonTurret._find_target`.
 
@@ -1141,7 +1144,7 @@ func take_one() -> bool:
 
 Баллистический проджектайл. **Тип корня:** `Node3D` (не RigidBody — ручное интегрирование velocity по гравитации, дешевле). Дочерний `Area3D` с `CollisionShape3D` детектит попадания.
 
-**Слой/маска:** Area3D `collision_layer=0`, `collision_mask=Layers.MASK_FRIENDLY_PROJECTILE = 145` (`TERRAIN | ENEMIES | COLD_ENEMY`). Стрелы пролетают сквозь Items, башню, гномов, палатки — не задевают своих.
+**Слой/маска:** Area3D `collision_layer=0`, `collision_mask=Layers.MASK_FRIENDLY_PROJECTILE = 145` (`TERRAIN | ENEMIES | COLD_ENEMY`). Стрелы пролетают сквозь Items, башню, гномов, палатки — не задевают своих. COLD_ENEMY в маске сейчас избыточен (FAR-скелеты исключены из broad-phase, см. Skeleton._apply_lod_physics_mode), но на практике стрелы летят на ≤22м от Camp = всегда NEAR/MID область, FAR-скелетов в полётной траектории не бывает.
 
 **Параметры (экспорты):**
 - `damage: float`, `speed: float = 22.0`.
@@ -1239,6 +1242,7 @@ func take_one() -> bool:
 | `camp_toggle` | R | Camp (зажать для развёртки/свёртки) |
 | `complete_quest` | Q | QuestProgress (debug-продвижение прогресса сюжета на 1 шаг) |
 | `debug_spawn_100` | `[` | WaveDirector (debug-спавн 100 скелетов neutral по зонам, не трогает фазу/таймеры) |
+| `debug_stress_2000` | `]` | WaveDirector (stress-test: спавн 2000 скелетов uniform по карте через async-batched spawn_uniform, для замеров перфоманса в PerfHud) |
 
 Курсор мыши — позиция руки. Системного захвата курсора нет, он движется свободно.
 
@@ -1556,7 +1560,17 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 
 **Тип корня:** `CanvasLayer`, `class_name PerfHud`. Debug-оверлей для тестирования больших волн врагов и работы LOD-системы скелетов.
 
-**Что показывает:** `FPS` (сглаженный по последним 8 значениям, чтобы не дёргался) и счётчик скелетов с разбивкой по LOD-уровням `NEAR / MID / FAR`. Распределение даёт визуальное подтверждение, что LOD реально классифицирует врагов по дистанции (не «все NEAR» из-за бага).
+**Что показывает:**
+- `FPS` (сглаженный по последним 8 значениям, чтобы не дёргался).
+- `Process` (мс) — `Performance.TIME_PROCESS × 1000`. Время idle-кадра (AI, vision-сканы, скрипты-_process). На 60fps бюджет ~16мс на process+physics суммарно.
+- `Physics` (мс) — `Performance.TIME_PHYSICS_PROCESS × 1000`. Время физкадра (CharacterBody3D.move_and_slide, broad-phase коллизии, knockback).
+- `Draw calls` — `Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME`. Если ~= числу MeshInstance3D на сцене → батчинга нет, надо MultiMesh.
+- `Objects` — `Performance.RENDER_TOTAL_OBJECTS_IN_FRAME`. Объекты в фрустуме камеры (то, что реально рисуется).
+- `Mem` (МБ) — `Performance.MEMORY_STATIC / 1MiB`. Engine-память (без GPU).
+- `Nodes` — `Performance.OBJECT_NODE_COUNT`. Все ноды в SceneTree.
+- `Skeletons` — счётчик с разбивкой по LOD-уровням `NEAR / MID / FAR`. Распределение даёт визуальное подтверждение, что LOD реально классифицирует врагов по дистанции (не «все NEAR» из-за бага).
+
+Используется в паре с stress-кнопкой `]` (`debug_stress_2000`): спавн 2000 скелетов async-батчами и измерение, во что упирается.
 
 **Структура:** `CanvasLayer → PanelContainer (полупрозрачный фон) → Label`. Position top-left, offset `(10, 10)`. Готово принимать клавишу `F3` через `_unhandled_input` (toggle visibility) — не зарегистрировано в InputMap, потому что debug-инструмент не должен засорять конфиг проекта.
 
@@ -1569,7 +1583,7 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 
 **Где живёт:** инстанс в `main.tscn` как ребёнок Main. Видим по умолчанию.
 
-**Стоимость:** один проход по группе скелетов раз в 0.25с + один `Label.text` setter. На 200 врагов — пренебрежимо. Сам HUD не учтён в FPS-сглаживании специально — погрешность одного кадра поглощается буфером.
+**Стоимость:** один проход по группе скелетов + 6 `Performance.get_monitor` reads раз в 0.25с + один `Label.text` setter. На 2000 врагов — < 0.1мс/обновление. Сам HUD не учтён в FPS-сглаживании специально — погрешность одного кадра поглощается буфером.
 
 ### 9.3. GameplayHud — `scenes/gameplay_hud.tscn`, `scripts/gameplay_hud.gd`
 

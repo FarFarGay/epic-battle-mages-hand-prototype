@@ -2,10 +2,8 @@
 
 [ext_resource type="Script" path="res://scripts/spawn_zone.gd" id="1"]
 
-[sub_resource type="CylinderMesh" id="CylinderMesh_zone"]
-top_radius = 1.0
-bottom_radius = 1.0
-height = 0.04
+[sub_resource type="BoxMesh" id="BoxMesh_zone"]
+size = Vector3(1, 0.04, 1)
 
 [sub_resource type="StandardMaterial3D" id="Material_zone"]
 transparency = 1
@@ -18,6 +16,6 @@ emission_energy_multiplier = 0.35
 script = ExtResource("1")
 
 [node name="Mesh" type="MeshInstance3D" parent="."]
-transform = Transform3D(30, 0, 0, 0, 1, 0, 0, 0, 30, 0, 0.05, 0)
-mesh = SubResource("CylinderMesh_zone")
+transform = Transform3D(60, 0, 0, 0, 1, 0, 0, 0, 60, 0, 0.05, 0)
+mesh = SubResource("BoxMesh_zone")
 material_override = SubResource("Material_zone")

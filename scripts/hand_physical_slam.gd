@@ -133,8 +133,34 @@ func _perform_slam() -> void:
 		Damageable.try_damage(collider, slam_damage * hit.falloff)
 		affected_count += 1
 
+	# FAR-LOD скелеты отключены от broad-phase (CollisionShape3D.disabled=true,
+	# нужно для перфоманса на 2000+ скелетах) и не попадают в `results` выше.
+	# Догоняем их отдельным проходом по группе SKELETON_GROUP с дистанционным
+	# фильтром. NEAR/MID-скелетов в группе тоже много, но они уже обработаны
+	# через PhysicsShapeQuery — пропускаем по `_lod_level`. На 2000 скелетах
+	# проход — 2000 distance_squared-операций, ~0.05мс, на фоне slam-cooldown 0.5с.
+	var slam_radius_sq: float = slam_radius * slam_radius
+	var far_hits := 0
+	for n in _hand.get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		var skel := n as Skeleton
+		if skel == null:
+			continue
+		if skel.get_lod_level() != Skeleton.LodLevel.FAR:
+			continue
+		var d_sq: float = (skel.global_position - origin).length_squared()
+		if d_sq > slam_radius_sq:
+			continue
+		var hit := _slam_direction_and_falloff(skel.global_position, origin)
+		if hit.falloff <= 0.0:
+			continue
+		var vc: Vector3 = hit.direction * slam_force * hit.falloff
+		Pushable.try_push(skel, vc, slam_knockback_duration)
+		Damageable.try_damage(skel, slam_damage * hit.falloff)
+		far_hits += 1
+	affected_count += far_hits
+
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:Physical:Slam] хлопок @ (%.1f, %.1f, %.1f), задело: %d" % [origin.x, origin.y, origin.z, affected_count])
+		print("[Hand:Physical:Slam] хлопок @ (%.1f, %.1f, %.1f), задело: %d (из них FAR: %d)" % [origin.x, origin.y, origin.z, affected_count, far_hits])
 
 	_spawn_slam_visual(origin)
 	slammed.emit(origin, slam_radius)

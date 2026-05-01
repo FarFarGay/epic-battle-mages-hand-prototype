@@ -8,8 +8,10 @@ extends Enemy
 ## Удар (`_perform_strike`) — это **физический выпад через apply_knockback самому себе**:
 ## скелет реально летит в сторону цели, врезается в неё (тело CharacterBody3D
 ## блокируется тем же CharacterBody3D башни), отскакивает (через
-## Enemy._bounce_off_target), и по пути отбрасывает соседей-скелетов
-## (через Enemy._push_neighbor).
+## Enemy._bounce_off_target). Lunge-domino через `Enemy._push_neighbor`
+## не работает: skel-skel коллизии отключены через `MASK_SKELETON` без
+## бита ENEMIES (см. layers.gd), get_slide_collision не регистрирует
+## другого скелета как collider. Сделано для перфоманса в плотных кластерах.
 ## Если получает knockback во время замаха — замах отменяется (Enemy._on_knockback
 ## сбрасывает FSM в APPROACH).
 ##
@@ -113,10 +115,84 @@ enum WanderPhase { RESTING, WANDERING }
 ## Период переоценки LOD-уровня (с). Дистанция меряется не каждый кадр —
 ## per-skeleton distance-чек на 100 врагов сам по себе нагрузка.
 @export var lod_check_interval: float = 0.5
+## Кратность пропуска физтика для FAR-скелетов. 1 = каждый физкадр,
+## 3 = каждый 3-й (60→20Гц). На 1900 FAR-скелетах _far_step (knockback.tick,
+## vision-валидность, AI, position-write) — основной пожиратель physics_ms
+## после того как broad-phase отключён через CollisionShape3D.disabled.
+## Кратность 3 даёт пропорциональное падение нагрузки. Визуально незаметно
+## (FAR > 50м от камеры). Slam-knockback по FAR задерживается максимум на
+## divisor × 16.6мс = 50мс — игрок не успевает заметить, отзумленная камера
+## смазывает движение.
+@export_range(1, 6) var lod_far_tick_divisor: int = 3
+## Кратность пропуска физтика для MID-скелетов (между lod_near_distance и
+## lod_far_distance). 3 = каждый 3-й физкадр (60→20Гц). MID — это «средняя»
+## зона, видна игроку, но менее детально. На 300+ MID скелетах в кластере
+## вокруг башни move_and_slide со slide-iterations об палатки/башню — ещё
+## один пожиратель physics_ms. Скорость движения сохраняется компенсацией
+## `velocity *= divisor` в _ai_step (один move_and_slide на N тиков
+## переносит N-кратное движение). Tunneling-риск: skel.move_speed=2.7 × 3 ×
+## 0.0167 = 0.135м/тик при радиусе 0.4м — запас ×3, безопасно.
+@export_range(1, 4) var lod_mid_tick_divisor: int = 3
+## Угол полу-cone'а «впереди камеры». Скелет вне этого конуса (то есть строго
+## позади камеры или сильно сбоку) форсируется в FAR независимо от расстояния:
+## его не видно игроку, симулировать его дешёво безопасно. 60° = 120° полный
+## cone, что с запасом покрывает горизонтальный FOV ~95° (FOV=70 + 16:9).
+## Если задрать до 90° — frustum-override выключится (всё что в полуcфере перед
+## камерой считается «видимым»).
+@export_range(30.0, 90.0) var lod_offscreen_half_angle_deg: float = 60.0
 @export_group("")
 
 static var _shared_normal_material: StandardMaterial3D
 static var _shared_windup_material: StandardMaterial3D
+
+## Размер cell'а в spatial-grid'е целей. Оптимально ~vision_radius=12м,
+## округлено до 12 для совпадения по решётке. Скелет на vision-скане
+## смотрит только 9 cell'ов (3×3 вокруг себя), не всю группу из 144 целей.
+const TARGET_GRID_CELL_SIZE: float = 12.0
+## Период обновления spatial-grid'а целей (с). Все скелеты смотрят один
+## глобальный snapshot. Stale-границы: гнома двигается ≤1.6м/с × 0.4с = 0.64м,
+## палатки и большинство гномов в зоне атаки стоят на месте — тоже
+## неотличимо. На быстро-движущихся целях (защитники-патрулеры на 1.0м/с)
+## позиция в snapshot'е может отставать на полметра — ок для вижн-фильтра.
+const TARGET_GRID_REFRESH_INTERVAL: float = 0.4
+
+## Spatial grid: { Vector2i(cell_x, cell_z) -> Array of [Vector3 pos, Node3D node] }.
+## Глобальный для всех скелетов, обновляется лениво при первом скане после
+## TARGET_GRID_REFRESH_INTERVAL. Заменяет полный обход group skeleton_target
+## (144 элементов × 5000 сканов/сек = 720k distance-checks/сек) на 9-cell
+## lookup (~10-50 элементов на скан в зоне Camp, 0 в пустой зоне).
+static var _target_grid: Dictionary = {}
+static var _target_grid_time: float = -1000.0
+
+
+## Возвращает координаты cell'а для произвольной мировой позиции по плоскости XZ.
+static func _grid_cell(pos: Vector3) -> Vector2i:
+	return Vector2i(
+		int(floor(pos.x / TARGET_GRID_CELL_SIZE)),
+		int(floor(pos.z / TARGET_GRID_CELL_SIZE)),
+	)
+
+
+## Лениво пересоздаёт _target_grid из group skeleton_target. Зовётся в
+## начале _scan_target. Один pass по группе раз в TARGET_GRID_REFRESH_INTERVAL
+## секунд глобально (вместо одного pass'а на каждый скан каждого скелета).
+static func _maybe_refresh_target_grid(tree: SceneTree) -> void:
+	var now: float = float(Time.get_ticks_msec()) / 1000.0
+	if now - _target_grid_time < TARGET_GRID_REFRESH_INTERVAL:
+		return
+	_target_grid_time = now
+	_target_grid.clear()
+	for n in tree.get_nodes_in_group(TARGET_GROUP):
+		if not is_instance_valid(n):
+			continue
+		var node := n as Node3D
+		if node == null:
+			continue
+		var cell := _grid_cell(node.global_position)
+		if not _target_grid.has(cell):
+			_target_grid[cell] = []
+		var entries: Array = _target_grid[cell]
+		entries.append([node.global_position, node])
 
 enum LodLevel { NEAR, MID, FAR }
 
@@ -135,8 +211,26 @@ var _lod_level: int = LodLevel.NEAR
 var _lod_check_timer: float = 0.0
 ## Счётчик AI-тиков для skip-логики (mid: каждый 2-й, far: каждый 3-й).
 var _lod_ai_tick_counter: int = 0
+## Счётчик физкадров для FAR-divisor: пропускаем _far_step для всех тиков,
+## кроме каждого N-го (N = lod_far_tick_divisor). На пропускаемых тиках
+## возврат сразу — никаких таймеров, vision'а, position-write'ов.
+var _far_phys_tick_counter: int = 0
+## Аналогичный счётчик для MID-divisor: пропускаем super._physics_process для
+## всех тиков, кроме каждого N-го (N = lod_mid_tick_divisor). На пропускаемых
+## тиках возврат до vision-таймера — никаких m_a_s/AI/scan'ов.
+var _mid_phys_tick_counter: int = 0
+## Кэшированный cos(half-angle) для frustum-override в _update_lod_level —
+## пересчитывается в _ready после применения экспорта. Дешевле, чем гонять
+## deg_to_rad+cos на каждом LOD-чеке (раз в 0.5с × 2000 скелетов).
+var _lod_offscreen_cos: float = 0.5
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
+## Ссылка на коллайдер — нужна, чтобы в FAR-режиме отключать его через
+## `disabled = true`. Это убирает скелета из broad-phase BVH целиком, а не
+## просто из active-pair тестов (как делал раньше mask=0). На 2000 скелетах
+## broad-phase индексировал 2000 движущихся AABB каждый кадр — давало 25+мс
+## TIME_PHYSICS_PROCESS, при том что собственно move_and_slide почти не вызывался.
+@onready var _collision_shape: CollisionShape3D = $CollisionShape3D
 
 
 func _ready() -> void:
@@ -161,6 +255,14 @@ func _ready() -> void:
 	# Стартовый AI-counter тоже рандомный — иначе все mid-LOD скелеты пропустят
 	# один и тот же кадр, и в нём кадровая нагрузка просядет «волной».
 	_lod_ai_tick_counter = randi() % 6
+	# Фазовый сдвиг FAR-divisor counter'а — иначе все FAR-скелеты бегут _far_step
+	# в одном и том же физкадре каждые divisor тиков (волна нагрузки).
+	_far_phys_tick_counter = randi() % 6
+	# То же для MID-divisor — иначе 300 MID-скелетов одновременно делают
+	# super._physics_process в одном кадре, кадровая нагрузка всплеском.
+	_mid_phys_tick_counter = randi() % 4
+	# Прекомпьют cos(half-angle) для frustum-override LOD'а.
+	_lod_offscreen_cos = cos(deg_to_rad(lod_offscreen_half_angle_deg))
 
 
 static func _ensure_shared_materials() -> void:
@@ -208,6 +310,16 @@ func _ai_step(delta: float) -> void:
 		super._ai_step(delta)
 	else:
 		_wander_tick(delta)
+	# MID-divisor компенсация: super._physics_process вызывает нас раз в N
+	# физкадров (на пропускаемых _physics_process делает early return). Один
+	# move_and_slide() в этом тике должен покрыть N кадров пути → множим
+	# velocity на divisor. Knockback не трогаем — _ai_step сюда не попадает,
+	# когда _knockback.is_active (super._physics_process в base Enemy.gd
+	# делит ветку: knockback → friction, иначе → _ai_step).
+	if _lod_level == LodLevel.MID and lod_mid_tick_divisor > 1:
+		var mult := float(lod_mid_tick_divisor)
+		velocity.x *= mult
+		velocity.z *= mult
 
 
 ## Skip-предикат для текущего LOD. Близкие — каждый кадр (false). Средние —
@@ -255,12 +367,21 @@ func get_lod_level() -> int:
 ## цели через collision_layer. С привязкой к CameraRig границы LOD стабильны
 ## независимо от зума.
 ##
+## **Frustum-override:** если скелет вне cone'а вокруг forward-направления
+## Camera3D (угол > lod_offscreen_half_angle_deg), он форсируется в FAR
+## независимо от расстояния. Это съедает 50-65% NEAR/MID-скелетов в плотных
+## кластерах: те, что строго позади камеры или сильно сбоку, не нужны для
+## визуальной точности. Cone проверяется от позиции **Camera3D** (а не
+## CameraRig'a) — это реальная точка наблюдения; вектор-вперёд берётся из
+## basis Camera3D. Симуляция продолжается дёшево (через FAR-режим), волна
+## не «замерзает» когда отвернёшься — но physics-нагрузка падает резко.
+##
 ## Fallback: если нет parent-Node3D (странная сцена) — берём global_position
 ## самой Camera3D, лучше что-то чем пустой LOD-расчёт.
 ##
 ## При смене уровня вызывается _apply_lod_physics_mode — переключает
-## collision_layer/mask, что сразу убирает скелета из/в broad-phase
-## physics-сервера. На 1000+ скелетах это главный win по перфомансу.
+## collision_layer/mask и CollisionShape3D.disabled, что убирает скелета из
+## broad-phase BVH в FAR. На 1000+ скелетах это главный win по перфомансу.
 func _update_lod_level() -> void:
 	if not is_inside_tree():
 		return
@@ -268,6 +389,20 @@ func _update_lod_level() -> void:
 	if camera == null:
 		_set_lod_level(LodLevel.NEAR)
 		return
+
+	# Frustum-cone override: если скелет вне обзора (угол к forward камеры
+	# больше half-angle), форсируем FAR. Делаем ДО distance-проверки, чтобы
+	# скелеты «строго за камерой» сразу шли в FAR-режим — без lavish NEAR/MID
+	# физики. Маленький epsilon на dist чтоб избежать NaN от division.
+	var to_skel: Vector3 = global_position - camera.global_position
+	var dist_to_camera: float = to_skel.length()
+	if dist_to_camera > 0.001:
+		var forward: Vector3 = -camera.global_transform.basis.z
+		var cos_angle: float = forward.dot(to_skel) / dist_to_camera
+		if cos_angle < _lod_offscreen_cos:
+			_set_lod_level(LodLevel.FAR)
+			return
+
 	var anchor: Node3D = camera.get_parent() as Node3D
 	var anchor_pos: Vector3 = anchor.global_position if anchor != null else camera.global_position
 	var d: float = global_position.distance_to(anchor_pos)
@@ -292,27 +427,32 @@ func _set_lod_level(new_level: int) -> void:
 
 ## Переключение collision и физического режима по LOD.
 ## - NEAR/MID: «горячий» режим — collision_layer=ENEMIES, mask=MASK_SKELETON,
-##   move_and_slide в _physics_process, всё как у обычного Enemy.
-## - FAR: «холодный» режим — collision_layer=COLD_ENEMY (отдельный слой 8),
-##   collision_mask=0 (сам никого не сканирует). Через layer COLD_ENEMY скелет
-##   виден руке/сламу (MASK_HAND_TARGETS и MASK_HAND_SLAM включают этот бит),
-##   но НЕ виден другим скелетам, башне, турели — их маски не содержат
-##   COLD_ENEMY. Это чинит баг «при отзумленной камере slam не убивает
-##   скелетов»: при большом зуме все становятся FAR от камеры, и при
-##   layer=0 (предыдущая реализация) PhysicsShapeQuery slam'а никого не
-##   находил. С COLD_ENEMY — рука их видит независимо от LOD.
+##   CollisionShape3D.disabled=false, move_and_slide в _physics_process.
+## - FAR: «полностью холодный» режим — collision_layer/mask=0 И
+##   CollisionShape3D.disabled=true. Это убирает скелета из broad-phase BVH
+##   физсервера полностью: 2000 движущихся FAR-скелетов больше не индексируются
+##   и не ребилдят BVH каждый кадр.
+##
+## Slam доставал FAR-скелетов раньше через layer=COLD_ENEMY +
+## MASK_HAND_SLAM-включение. Теперь форма отключена, PhysicsShapeQuery их не
+## найдёт — поэтому HandPhysicalSlam._perform_slam делает второй проход по
+## группе SKELETON_GROUP с distance²-фильтром, отдельно для FAR-уровня.
 ##
 ## Двигается FAR-скелет через global_position += velocity * delta в _far_step
-## (без move_and_slide). Когда подходит ближе к камере (MID) — collision
-## возвращается на ENEMIES, и физика снова работает.
+## (без move_and_slide). Когда подходит ближе к камере (MID) — shape включается
+## обратно, broad-phase снова видит скелета, и физика работает как обычно.
 func _apply_lod_physics_mode() -> void:
 	match _lod_level:
 		LodLevel.NEAR, LodLevel.MID:
 			collision_layer = Layers.ENEMIES
 			collision_mask = Layers.MASK_SKELETON
+			if _collision_shape:
+				_collision_shape.disabled = false
 		LodLevel.FAR:
-			collision_layer = Layers.COLD_ENEMY
+			collision_layer = 0
 			collision_mask = 0
+			if _collision_shape:
+				_collision_shape.disabled = true
 
 
 func _wander_tick(delta: float) -> void:
@@ -358,16 +498,40 @@ func _pick_wander_target() -> Vector3:
 ## применяются дальше в _ai_step / vision-блоке.
 ##
 ## Для FAR-скелетов вместо super._physics_process (CharacterBody3D + физика)
-## вызываем _far_step — это «холодный» режим без move_and_slide и без
-## коллизий. Главный win по перфомансу на 1000+ скелетах: physics-сервер
-## не считает collision detection между ними.
+## вызываем _far_step — «холодный» режим без move_and_slide и без коллизий.
+## Дополнительно для FAR применяется divisor: _far_step тикает раз в
+## lod_far_tick_divisor физкадров. Это срезает CPU-стоимость 1900 FAR ×
+## 60Гц = 114k _far_step вызовов/сек до ~38k при divisor=3. lod_check_timer
+## тикает каждый физкадр в wall-clock — иначе FAR-скелеты «застревали» бы
+## в FAR на divisor× дольше после того как камера приблизилась.
 func _physics_process(delta: float) -> void:
 	_lod_check_timer -= delta
 	if _lod_check_timer <= 0.0:
 		_update_lod_level()
 		_lod_check_timer = lod_check_interval
 
-	_vision_scan_timer -= delta
+	# Per-LOD divisor: пропускаем основную работу на N-1 из N физкадров.
+	# delta на пропускаемых тиках теряется — на «полном» тике компенсируется:
+	# - vision-таймер работает в work_delta (×divisor), сохраняя wall-clock частоту;
+	# - FAR: _far_step(work_delta) умножает движение/таймеры на divisor;
+	# - MID: super._physics_process(delta) тикает обычно, а _ai_step (override
+	#   ниже) множит velocity на divisor — один move_and_slide на N тиков
+	#   переносит N-кратное движение.
+	# NEAR — без divisor'а (полная частота).
+	var work_delta: float = delta
+	match _lod_level:
+		LodLevel.FAR:
+			_far_phys_tick_counter += 1
+			if (_far_phys_tick_counter % lod_far_tick_divisor) != 0:
+				return
+			work_delta = delta * float(lod_far_tick_divisor)
+		LodLevel.MID:
+			_mid_phys_tick_counter += 1
+			if (_mid_phys_tick_counter % lod_mid_tick_divisor) != 0:
+				return
+			work_delta = delta * float(lod_mid_tick_divisor)
+
+	_vision_scan_timer -= work_delta
 	var stale := _cached_target == null \
 		or not is_instance_valid(_cached_target) \
 		or not _cached_target.is_in_group(TARGET_GROUP)
@@ -376,8 +540,10 @@ func _physics_process(delta: float) -> void:
 		_vision_scan_timer = vision_scan_interval * _lod_vision_multiplier()
 
 	if _lod_level == LodLevel.FAR:
-		_far_step(delta)
+		_far_step(work_delta)
 		return
+	# NEAR/MID: super тикает с обычным delta. Внутри super → _ai_step (наш
+	# override), который для MID множит velocity на divisor.
 	super._physics_process(delta)
 
 
@@ -441,6 +607,13 @@ func get_active_target() -> Node3D:
 
 ## Сам скан — ближайшая в vision_radius из группы skeleton_target.
 ##
+## **Spatial grid** ([Skeleton._target_grid]): вместо полного обхода группы
+## (144 целей × 5000 сканов/сек = 720k distance-checks) скелет смотрит только
+## 9 cell'ов (3×3 вокруг себя). На карте 400×400 при vision_radius=12 и
+## cell_size=12 в 9 cell'ах суммарно ~10-50 целей в плотной Camp-зоне и 0 в
+## пустой. Снижение в ~5-15× при тех же vision-семантиках. Grid обновляется
+## раз в 0.4с глобально — все скелеты читают один snapshot.
+##
 ## Приоритет: гномы > палатки. Скелеты «голодные», охотятся на существа, а не
 ## на строения — если в радиусе хоть один живой гном (любого типа), идём к
 ## ближайшему гному, палатки игнорируются. Палатки берутся целью только когда
@@ -453,27 +626,51 @@ func get_active_target() -> Node3D:
 ## приоритет переключает скелета на ближайшего гнома (агро-перехват
 ## защитниками — естественное поведение).
 func _scan_target() -> Node3D:
+	Skeleton._maybe_refresh_target_grid(get_tree())
+	var skel_pos := global_position
+	var skel_cell := Skeleton._grid_cell(skel_pos)
+	var vr_sq: float = vision_radius * vision_radius
 	var nearest_gnome: Node3D = null
-	var nearest_gnome_dist_sq := vision_radius * vision_radius
+	var nearest_gnome_dist_sq := vr_sq
 	var nearest_other: Node3D = null
-	var nearest_other_dist_sq := vision_radius * vision_radius
-	for n in get_tree().get_nodes_in_group(TARGET_GROUP):
-		if not is_instance_valid(n):
-			continue
-		var node := n as Node3D
-		if node == null:
-			continue
-		var d_sq: float = (node.global_position - global_position).length_squared()
-		if d_sq >= vision_radius * vision_radius:
-			continue
-		if node is Gnome:
-			if d_sq < nearest_gnome_dist_sq:
-				nearest_gnome_dist_sq = d_sq
-				nearest_gnome = node
-		else:
-			if d_sq < nearest_other_dist_sq:
-				nearest_other_dist_sq = d_sq
-				nearest_other = node
+	var nearest_other_dist_sq := vr_sq
+
+	# 3×3 cell'ов вокруг текущей позиции скелета. cell_size=12 = vision_radius,
+	# поэтому 3×3 cell'ов гарантированно покрывает диск vision_radius. Тонкость:
+	# если скелет на углу cell'а, цель в углу противоположного cell'а (3 cell'а
+	# по диагонали) может быть за пределами vision_radius — отсекается dist²-чеком.
+	for dx in [-1, 0, 1]:
+		for dz in [-1, 0, 1]:
+			var cell := Vector2i(skel_cell.x + dx, skel_cell.y + dz)
+			if not Skeleton._target_grid.has(cell):
+				continue
+			var entries: Array = Skeleton._target_grid[cell]
+			for entry in entries:
+				var pos: Vector3 = entry[0]
+				var d_sq: float = skel_pos.distance_squared_to(pos)
+				if d_sq >= vr_sq:
+					continue
+				# ВАЖНО: читаем через Variant и проверяем is_instance_valid ДО typed-cast.
+				# Если цель умерла между refresh'ами grid'а (гномы дохнут от скелов
+				# в секунду), entry[1] указывает на freed-инстанс. Typed-assignment
+				# `var node: Node3D = entry[1]` вылетает с "Trying to assign invalid
+				# previously freed instance" — нужен untyped read.
+				var raw = entry[1]
+				if not is_instance_valid(raw):
+					continue
+				var node := raw as Node3D
+				if node == null:
+					continue
+				if not node.is_in_group(TARGET_GROUP):
+					continue
+				if node is Gnome:
+					if d_sq < nearest_gnome_dist_sq:
+						nearest_gnome_dist_sq = d_sq
+						nearest_gnome = node
+				else:
+					if d_sq < nearest_other_dist_sq:
+						nearest_other_dist_sq = d_sq
+						nearest_other = node
 	if nearest_gnome != null:
 		return nearest_gnome
 	if nearest_other != null:

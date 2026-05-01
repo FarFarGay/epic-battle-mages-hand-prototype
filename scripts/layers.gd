@@ -24,16 +24,29 @@ const CAMP_OBSTACLE := 1 << 5    # 32 — bit 5 = layer 6
 ## могла снять модуль обратно.
 const MOUNTED_MODULE := 1 << 6   # 64 — bit 6 = layer 7
 
-## «Холодные» враги — FAR-LOD скелеты (вне камеры/далеко от центра действий).
-## Они на этом слое вместо ENEMIES, чтобы:
-##   - другие скелеты их не «видели» через broad-phase (Skeleton.mask без COLD_ENEMY);
-##   - башня их не блокировала (Tower.mask без COLD_ENEMY);
-##   - турель не тратила выстрелы (OctagonTurret.target_mask = ENEMIES без COLD_ENEMY).
-## НО — рука и slam их видят (MASK_HAND_TARGETS и MASK_HAND_SLAM включают
-## COLD_ENEMY). Иначе игрок при отзумленной камере не мог бы бить дальние стаи:
-## все скелеты становились FAR-фантомами, slam через PhysicsShapeQuery не находил
-## никого.
+## «Холодные» враги — зарезервированный слой. Раньше использовался для
+## FAR-LOD скелетов (collision_layer=COLD_ENEMY, mask=0): они оставались
+## видимы руке/сламу через MASK_HAND_TARGETS/MASK_HAND_SLAM, но не для других
+## систем. На 2000 скелетах это давало 25+мс на physics broad-phase —
+## BVH всё равно индексировал 2000 движущихся AABB. Теперь FAR-скелеты
+## полностью исключаются из broad-phase (CollisionShape3D.disabled=true,
+## collision_layer/mask=0), а слам ловит их вторым проходом по
+## SKELETON_GROUP с distance²-фильтром (HandPhysicalSlam._perform_slam).
+## Слой оставлен в layer_names на случай, если понадобится для других
+## «исключаемых из обычного broad-phase, но видимых отдельным системам»
+## сущностей в будущем.
 const COLD_ENEMY := 1 << 7       # 128 — bit 7 = layer 8
+
+## Дружественные NPC (гномы — collectors и defenders). Отдельный слой от
+## ACTORS (=Tower), чтобы скелеты могли блокироваться об башню (ACTORS в
+## MASK_SKELETON) и при этом проходить сквозь гномов (FRIENDLY_UNIT не
+## в MASK_SKELETON). На 126 гномах в плотной толпе скелетов skel-gnome
+## broad-phase пары были одной из главных нагрузок: каждая move_and_slide
+## скелета процессила контакты с каждым гномом в досягаемости. Урон по
+## гномам идёт через `Damageable.try_damage` на STRIKE-фазе скелета — не
+## зависит от physical-collision'а, поэтому смена слоя не сломает геймплей,
+## только визуально скелет проходит сквозь гнома (а не упирается).
+const FRIENDLY_UNIT := 1 << 8    # 256 — bit 8 = layer 9
 
 # Композитные маски — собирай через OR из именованных битов.
 
@@ -44,30 +57,48 @@ const MASK_HAND_CURSOR := TERRAIN | ITEMS | MOUNTED_MODULE      # 67
 
 ## Hand grab / flick: предметы и враги (то, во что бьём/подсвечиваем).
 ## MOUNTED_MODULE — чтобы рука могла снять смонтированный модуль обратно
-## с башни / центра лагеря. COLD_ENEMY — чтобы рука доставала FAR-LOD
-## скелетов (фантомов для всего остального broad-phase).
+## с башни / центра лагеря. COLD_ENEMY оставлен в маске на случай ручной
+## пометки сущностей этим слоем; сами FAR-скелеты теперь имеют
+## collision_layer=0 и в broad-phase не попадают (см. Skeleton._apply_lod_physics_mode).
+## Если понадобится грабить FAR-скелетов — нужен group-fallback в Hand,
+## по аналогии со Slam.
 const MASK_HAND_TARGETS := ITEMS | ENEMIES | MOUNTED_MODULE | COLD_ENEMY     # 210
 
 ## Slam: предметы и враги, без MOUNTED_MODULE. Хлопок не должен срывать
 ## смонтированный модуль со слота — снять модуль можно только хватом руки
 ## (через MASK_HAND_TARGETS), а Slam — это AOE по «свободному» миру.
-## COLD_ENEMY включён по той же причине что и в MASK_HAND_TARGETS.
+## COLD_ENEMY оставлен исторически; FAR-скелеты теперь не на нём — slam ловит
+## их отдельным проходом по SKELETON_GROUP с distance²-фильтром в _perform_slam.
 const MASK_HAND_SLAM := ITEMS | ENEMIES | COLD_ENEMY                         # 146
 
 ## «Всё обычное» (без палаток лагеря). Tower / Item / Ground / shatter.
 const MASK_ALL_GAMEPLAY := TERRAIN | ITEMS | ACTORS | PROJECTILES | ENEMIES   # 31
 
-## Skeleton scan: всё обычное + палатки (упирается в них в обоих режимах).
-const MASK_SKELETON := TERRAIN | ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE     # 55
+## Skeleton scan: пол, предметы, башня, палатки. **Без `ENEMIES`** —
+## намеренно: скелеты не сталкиваются друг с другом физически, проходят
+## сквозь. На 400+ скелетах в плотном кластере вокруг башни skel-skel
+## broad-phase пары становились главным пожирателем physics_ms (после того
+## как FAR-LOD убрали из broad-phase): каждый AABB пересекается с 5-15
+## соседями, move_and_slide делает collision-iterations об них. Также
+## визуально кучи рассасываются: скелеты не утыкаются друг в друга
+## по инерции, продолжают идти к цели.
+##
+## Цена: `Enemy._push_neighbor` (lunge-domino — выпад одного скелета
+## физически отбрасывает соседа через get_slide_collision) не работает,
+## так как slide-collision между скелетами не регистрируется. Если
+## понадобится восстановить — paттерн group+dist push, как Slam-fallback.
+const MASK_SKELETON := TERRAIN | ITEMS | ACTORS | CAMP_OBSTACLE     # 39
 
 ## Shatter-фрагменты: видят только пол.
 const MASK_TERRAIN_ONLY := TERRAIN                              # 1
 
 ## Стрела дружественного снаряда (OctagonTurret, DefenderGnome): пол + враги.
 ## Item'ы пропускает (стрелы не должны застревать в ящиках); Tower на ACTORS
-## (бит 2) тоже пропускает — друг. COLD_ENEMY включён, чтобы стрелы попадали
-## в FAR-LOD скелетов (иначе при отзумленной камере дальние стаи становятся
-## фантомами для всех снарядов).
+## (бит 2) тоже пропускает — друг. COLD_ENEMY оставлен исторически; FAR-скелеты
+## теперь имеют collision_layer=0 и стрелами не пробиваются. Это OK на практике:
+## attack_radius защитников ~22м, всегда в LOD NEAR/MID. Если в будущем
+## стрела «улетит» далеко и должна задеть FAR-скелета — нужен group-fallback
+## в стрелах, по аналогии со Slam.
 const MASK_FRIENDLY_PROJECTILE := TERRAIN | ENEMIES | COLD_ENEMY  # 145
 
 

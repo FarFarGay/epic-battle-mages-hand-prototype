@@ -80,65 +80,25 @@ arrow_speed = 30.5
 [node name="SpawnZones" type="Node3D" parent="." unique_id=1926494768]
 
 [node name="SpawnZone1" parent="SpawnZones" unique_id=2016128478 instance=ExtResource("17")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 63.300056, 0, -0.7195587)
-target_poi = null
-wave_count = null
-skeletons_per_wave = null
-
-[node name="SpawnZone2" parent="SpawnZones" unique_id=1710553257 instance=ExtResource("17")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -52.08081, 0, -0.7195587)
-target_poi = null
-wave_count = null
-skeletons_per_wave = null
-
-[node name="SpawnZone3" parent="SpawnZones" unique_id=1858690687 instance=ExtResource("17")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -169.56966, 0, -0.7195587)
-target_poi = null
-wave_count = null
-skeletons_per_wave = null
-
-[node name="SpawnZone4" parent="SpawnZones" unique_id=587815178 instance=ExtResource("17")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 121.71933, 0, 49.298645)
-target_poi = NodePath("../../PointsOfInterest/Poi_ESE")
-wave_count = 2
-skeletons_per_wave = 100
-
-[node name="SpawnZone5" parent="SpawnZones" unique_id=1502663284 instance=ExtResource("17")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.4518433, 0, -52.331177)
-target_poi = null
-wave_count = null
-skeletons_per_wave = null
-
-[node name="SpawnZone6" parent="SpawnZones" unique_id=232139588 instance=ExtResource("17")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -110.021835, 0, -52.331177)
-target_poi = null
-wave_count = null
-skeletons_per_wave = null
-
-[node name="SpawnZone7" parent="SpawnZones" unique_id=1591271457 instance=ExtResource("17")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -110.021835, 0, 48.52439)
-target_poi = null
-wave_count = null
-skeletons_per_wave = null
+transform = Transform3D(6.5315933, 0, 0, 0, 1, 0, 0, 0, 1.6575847, -0.8849716, 0, -17.393837)
 
 [node name="PointsOfInterest" type="Node3D" parent="." unique_id=1906900233]
 
 [node name="Poi_ESE" parent="PointsOfInterest" unique_id=1479745084 instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 123.8483, 0.3, -0.2122345)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 147.60913, 0.3, -0.2122345)
 
 [node name="Actor" parent="PointsOfInterest/Poi_ESE" unique_id=1894827127 instance=ExtResource("16")]
 actor_id = &"ese"
-quest_order = 0
 
 [node name="Poi_SW" parent="PointsOfInterest" unique_id=1039385320 instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -110, 0.3, -0.9144745)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -152.51938, 0.3, 23.263208)
 
 [node name="Actor" parent="PointsOfInterest/Poi_SW" unique_id=830153592 instance=ExtResource("16")]
 actor_id = &"sw"
 quest_order = 2
 
 [node name="Poi_Heart" parent="PointsOfInterest" unique_id=1859626028 instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.14587402, 0.3, -0.4829769)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.3615112, 0.3, -59.676636)
 
 [node name="Actor" parent="PointsOfInterest/Poi_Heart" unique_id=1218000003 instance=ExtResource("16")]
 actor_id = &"heart"

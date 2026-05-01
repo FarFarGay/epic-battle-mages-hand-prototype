@@ -13,6 +13,201 @@
 
 # Заметки по работе с проектом (накапливаются)
 
+## Сессия 2026-05-01 (вечер-3) — FAR-скелеты вне broad-phase: 29мс физики → ?
+
+### Контекст / диагноз
+Стресс-тест 2000 скелетов через `]` показал: FPS 7, Process 6мс, **Physics 29мс**, Draw calls 25. Узкое — physics. Не `move_and_slide` (NEAR/MID ~100 шт, ~6k вызовов/сек), а **broad-phase BVH на 2060 движущихся CharacterBody3D**. В прежнем «cold-mode» FAR-скелет имел `collision_layer=COLD_ENEMY, mask=0`, но CollisionShape оставался активным — physics-сервер всё равно индексировал AABB и ребилдил BVH каждый раз когда `_far_step` двигал `global_position`.
+
+### Главные изменения
+- **`Skeleton._apply_lod_physics_mode()`** ([skeleton.gd](scripts/skeleton.gd)): для FAR теперь `collision_layer=0, collision_mask=0` И `CollisionShape3D.disabled = true`. Это полностью убирает FAR-скелетов из broad-phase BVH. Для NEAR/MID — `disabled = false` обратно. Добавил `@onready var _collision_shape: CollisionShape3D = $CollisionShape3D`.
+- **`HandPhysicalSlam._perform_slam()`** ([hand_physical_slam.gd](scripts/hand_physical_slam.gd)): после основного `PhysicsShapeQuery` — второй проход по `Skeleton.SKELETON_GROUP` с distance²-фильтром, фильтрует только `_lod_level == FAR`. Применяет тот же `Pushable.try_push` + `Damageable.try_damage`. Обходим 2000 элементов группы в _perform_slam (раз в slam_cooldown=0.5с) — пара 0.05мс, копейки.
+- **Документация в [layers.gd](scripts/layers.gd)**: COLD_ENEMY теперь зарезервированный слой, FAR-скелеты на нём больше не лежат. Маски MASK_HAND_TARGETS / MASK_HAND_SLAM / MASK_FRIENDLY_PROJECTILE формально включают COLD_ENEMY, но в текущей логике это no-op (FAR-скелеты на layer=0). Оставлено на случай повторного использования слоя для других «исключаемых» сущностей.
+
+### Главное архитектурно
+- **Главный пожиратель physics_ms на 2000+ движущихся тел — это broad-phase index**, а не `move_and_slide` или active-pair тесты. `collision_mask=0` НЕ убирает тело из broad-phase BVH — только `CollisionShape3D.disabled = true` или `collision_layer=0` это делает. Запомнить для будущих перф-кризисов.
+- **Group-fallback паттерн для AOE**: когда нужно «дотянуться» до объектов вне broad-phase, делаем второй проход по тематической группе с distance² (не distance — корень дороже). Применимо для slam, future spell-AOE, future shockwave башни. На 2000 элементах группы — 0.05мс.
+- **Узкие места в архитектуре после фикса**: hand grab/magnet (Area3D `_grab_area`, `_magnet_area`) теперь не видят FAR-скелетов. На практике игрок крайне редко грабит скелета зумаут-камерой, поэтому пока live-with-it. Если потребуется — копировать паттерн group-fallback в Hand.get_grabbable_bodies/get_magnet_bodies.
+- **Стрелы защитников и турели тоже теряют FAR-скелетов**, но `attack_radius=22.5м < lod_near_distance=25м` — стрелы летят только в NEAR/MID область, FAR-скелетов в полётной траектории не бывает. Потому ничего не правил.
+
+### Что измерять после
+- **Physics_ms должен упасть** с 29мс до ~5-10мс (BVH больше не индексирует ~1950 FAR-скелетов).
+- **FPS должен подскочить** с 7 до 30-60 (зависит от того, что станет следующим узким).
+- **Slam при зумаут-камере должен работать** — лог `[Hand:Physical:Slam]` теперь печатает «задело: N (из них FAR: M)»; если M>0 — group-fallback сработал.
+- **LOD-распределение** в PerfHud должно остаться прежним (NEAR ~25, MID ~75, FAR ~1900 при 2000 скелетов uniform).
+
+### Что отложено
+- **Hand grab/magnet для FAR-скелетов** — добавить group-fallback, если игроку потребуется хватать скелетов на зумауте.
+- **Стрелы и FAR** — добавить group-fallback в `arrow.gd`, если когда-то аркада будет стрелять дальше lod_near_distance (сейчас не нужно).
+- **MultiMesh для FAR (вариант 3)** — если physics опустилась, но FPS всё ещё ниже 30, следующий боттлнек — рендер 1900 уникальных MeshInstance3D. ~250 строк, 2-3 часа работы.
+
+### Дополнение 7 — Tower mask без ENEMIES + MID divisor 2→3
+После spatial grid'а Process упал с ~12мс до **3мс** (vision больше не узкое), но physics остался **20мс**, FPS 15-20. Все ~20мс ушли в чистый m_a_s + broad-phase.
+
+**Скрытый пожиратель**: Tower сам делает `move_and_slide` каждый тик (он CharacterBody3D, движется по миру, см. tower.gd:100). Его `collision_mask = 31` включал бит ENEMIES (16) → Tower процессил контакты с КАЖДЫМ NEAR/MID скелетом в зоне. В кластере из 100+ skel'ов — это десятки контактов в каждом m_a_s Tower'а × 60Гц. Легко 3-5мс физики.
+
+**Решение**: Tower.collision_mask 31→15 в [scenes/tower.tscn](scenes/tower.tscn). Убрал бит ENEMIES (16). Tower теперь не видит скелетов в своих коллизиях → m_a_s проходит без contact processing с ними.
+
+**Что сохранили**: pair всё ещё формируется (skel.mask=39 включает ACTORS=4 = Tower.layer), скелет всё ещё обнаруживает Tower как препятствие → bounce-off на lunge работает. Только Tower сам не «видит» скелетов в своих контактах. Геймплейно: Tower теперь физически едет сквозь толпу скелетов, не тормозясь о них (разумно — он тяжёлая башня, скелеты лёгкие).
+
+**Дополнительно**: MID-divisor дефолт 2→3 в [skeleton.gd](scripts/skeleton.gd). MID скелеты тикают на 20Гц вместо 30. На 25-50м от камеры визуально незаметно. Tunneling-проверка: 2.7×3×0.0167 = 0.135м/тик при радиусе 0.4 — запас ×3.
+
+**Ожидание**: physics 20мс → ~12-14мс. FPS 15-20 → 35-50.
+
+### Дополнение 6 — Spatial grid для skeleton_target: 720k → ~50k distance-checks/сек
+Layer split + frustum-override на гномов не помогли (physics 20мс, FPS 7) — мы оптимизировали collision-pairs, но узкое сместилось в **vision-сканы**.
+
+**Анализ**: Гномы в `skeleton_target` group растят размер с ~18 (палатки) до ~144 (палатки + 126 гномов). Каждый скелет в `_scan_target` итерировал ВСЮ группу с `get_nodes_in_group()` + distance-check. Считал: 487 NEAR/MID + 1500 FAR ≈ 5000 vision-сканов/сек × 144 = **720k distance-checks/сек, или ~12-15мс из 20мс physics_ms** (поскольку `_scan_target` зовётся внутри `_physics_process`). Это именно тот класс боттлнека, что был у DefenderGnome (3fps на 340 скелетах) — лечится spatial grid.
+
+**Решение**: spatial grid в [skeleton.gd](scripts/skeleton.gd) как static class state (не autoload — пользует только Skeleton).
+- `_target_grid: Dictionary = {}` — `Vector2i(cell_x, cell_z) → Array of [Vector3 pos, Node3D node]`.
+- `TARGET_GRID_CELL_SIZE = 12.0` (= vision_radius). 3×3 cell'ов вокруг скелета гарантированно покрывают vision-диск.
+- `TARGET_GRID_REFRESH_INTERVAL = 0.4с`. Все скелеты читают один глобальный snapshot. Stale-границы: гном двигается ≤0.64м за 0.4с (move_speed=1.6 × 0.4) — для vision_radius=12 неотличимо.
+- `_maybe_refresh_target_grid(tree)` — ленивый pass по группе раз в 0.4с globally вместо одного pass'а на каждый скан каждого скелета.
+- `_scan_target` теперь смотрит 9 cell'ов (3×3) вокруг своей cell-позиции. Каждый cell — Array из ~5-15 элементов в плотной Camp-зоне, 0 в пустой. dist²-чек первым (cheap), затем validity/group (expensive).
+
+**Ожидание**: 5000 сканов/сек × ~50 элементов в окрестности (вместо 144) = 250k checks/сек (вместо 720k). ~3× редукция. Physics_ms: **20мс → ~10-12мс**. FPS должен подскочить до 30+.
+
+**Cache-валидность**: skel'ы могут таргетить уже мёртвую цель в окне 0.4с stale snapshot'а — `is_instance_valid` + `is_in_group` чек в loop'е отсекает. Grid не отслеживает unregister в реальном времени — refreshing раз в 0.4с — компромисс простоты vs точности.
+
+**Gotcha (зафиксил)**: `var node: Node3D = entry[1]` — typed assignment ИЗ Array — вылетает с `Trying to assign invalid previously freed instance` если объект уже освобождён. is_instance_valid сработал бы, но НЕ ДОТЯГИВАЕТ — runtime бьёт ошибку до проверки. Правильный паттерн с грид-снэпшотами:
+```
+var raw = entry[1]              # untyped Variant
+if not is_instance_valid(raw):
+    continue
+var node := raw as Node3D       # `as` cast freed-объекта возвращает null без ошибки
+if node == null:
+    continue
+```
+В loops через `for n in get_nodes_in_group(...)` тот же паттерн (`n` заимствуется как Variant, `as` возвращает null для freed) — безопасно. Опасно именно при typed `var x: Type = arr[i]`.
+
+**Альтернатива spatial grid'у** для будущего: TargetGrid autoload с `register/unregister`-хуками в Gnome._ready/_destroyed и CampPart._ready/_destroyed — нулевая задержка, но сложнее. Пока хватает snapshot'а.
+
+### Дополнение 5 — Гномы в свой layer FRIENDLY_UNIT, frustum-override на гномов
+**Симптом**: «если вызвать гномов в толпе скелетов — жесть просадка ФПС». В толпе из 126 гномов + 487 NEAR/MID скелетов вокруг Camp каждый скелет в move_and_slide процессит контакты с каждым близким гномом. Сотни skel-gnome пар в кадре.
+
+**Решение**:
+1. Новый layer `FRIENDLY_UNIT = 1 << 8 = 256` (layer 9 = bit 8). Зарегистрирован в [project.godot](project.godot) и [layers.gd](scripts/layers.gd).
+2. Гнома и DefenderGnome перенёс с layer=ACTORS(4) на layer=FRIENDLY_UNIT(256). Файлы: [scenes/gnome.tscn](scenes/gnome.tscn), [scenes/defender_gnome.tscn](scenes/defender_gnome.tscn).
+3. `MASK_SKELETON` (39) FRIENDLY_UNIT не включает → скелет в broad-phase гнома не видит → пар нет → m_a_s проходит сквозь гнома без collision-iteration. Tower остался на ACTORS (4), MASK_SKELETON ACTORS включает → башня по-прежнему блокирует скелетов и даёт bounce-off на lunge.
+
+**Что сохранили**: Damageable.try_damage(gnome) на STRIKE-фазе скелета — это отдельный код-путь, не зависит от physics-collision. Скелет всё ещё ловит цель глазами (vision_radius=12м), бьёт STRIKE'ом, наносит damage. Только физически проходит сквозь гнома (а не упирается).
+
+**Что потеряли**: visual «скелет упирается в гнома» — теперь он лунжит сквозь. И bounce-off от гнома (если был) не сработает — но bounce у скелета настроен только на active-target, а если гном не active_target скелета (когда target — палатка), такого bounce и не было.
+
+**Hand/arrow проверка**: GrabArea (mask=210), MagnetArea (mask=2), Arrow (mask=145) FRIENDLY_UNIT не включают — гномов и не видели раньше (через ACTORS не сканировали), не видят и теперь.
+
+**Frustum-override на гномах** (в [gnome.gd:_update_lod()](scripts/gnome.gd)). Симметрично Skeleton._update_lod_level: если гном вне cone'а вокруг forward-направления Camera3D → форсируем `_lod_far = true` (cold-mode без move_and_slide и гравитации). На 126 гномах в кластере вокруг Tower при стандартной FOV это перенесёт ~50% в холодный режим. Новый export `lod_offscreen_half_angle_deg: float = 60.0`, прекомпьют cos в _ready.
+
+**Ожидание**: physics должна резко упасть. На сцене с гномами в толпе скелетов раньше получали жёсткие просадки ФПС — после обнуления skel-gnome пар + cold-mode половины гномов нагрузка на NEAR/MID скелетов сократится в разы (меньше slide-iterations об гномов).
+
+### Дополнение 4 — MID-divisor (60→30Гц для средней зоны) с компенсацией velocity
+После снятия skel-skel коллизий physics 16→18мс — изменений по сути нет. Геймдизайнер уточнил наблюдение: «лагает когда скелеты в палатках застревают или между ними». Главная нагрузка — `move_and_slide` с slide-iterations об палатки и башню для 100 NEAR + 301 MID скелетов в кластере.
+
+**Решение**: MID-divisor по аналогии с FAR-divisor. MID-скелеты тикают на 30Гц вместо 60Гц. Скорость движения сохраняется через **компенсацию velocity** в `_ai_step`: на полном тике `velocity.x/z *= divisor` → один `move_and_slide` переносит N кадров пути.
+
+- Новый export `lod_mid_tick_divisor: int = 2` (range 1-4).
+- Новый счётчик `_mid_phys_tick_counter` с фазовым сдвигом `randi() % 4`.
+- В `_physics_process`: `match _lod_level` ветвится на FAR/MID/NEAR, MID early-return на N-1 из N тиков.
+- В `_ai_step` (после super._ai_step или _wander_tick): `if _lod_level == MID and lod_mid_tick_divisor > 1: velocity.x *= mult; velocity.z *= mult`. Knockback ветка (super._physics_process в base Enemy ветвится по `_knockback.is_active`) сюда не попадает — компенсация только для нормального AI-движения.
+
+**Tunneling-проверка**: skel.move_speed=2.7 × divisor=2 × 0.0167 = 0.09м/тик при радиусе 0.4м → запас ×4. Lunge_speed=8 — но это knockback, в обход _ai_step, не множится.
+
+**Ожидание**: 301 MID × 60 = 18060 m_a_s/сек → 9030 m_a_s/сек. Total m_a_s в кадре с 100 NEAR (60Гц) + 301 MID (30Гц) = ~250 m_a_s/тик вместо ~400. Physics ~10мс. FPS должен подскочить до 30-40.
+
+NEAR (100 скелетов в фокусе игрока) трогать не стал — фризы заметны при близкой камере. Если 10мс окажется недостаточно — добавим NEAR-divisor=2 или сделаем «auto-anchor» (скелет в attack-режиме у палатки → set_physics_process(false), таймер атак в _process).
+
+### Дополнение 3 — skel-skel коллизии отключены: `MASK_SKELETON` без ENEMIES
+После frustum override физика 16мс → ожидали 8-10мс. Цифры показали 100 NEAR + 301 MID = 401 в обзоре (frustum снял только 86 шт периметра, не центральный кластер вокруг Tower'а — он-то в кадре). Геймдизайнер диагностировал верно: **скелеты сбиваются в кучи, не обтекают друг друга, физика грузит broad-phase пары и move_and_slide.collision_iterations**.
+
+**Решение**: в [layers.gd](scripts/layers.gd) убрал бит `ENEMIES` из `MASK_SKELETON`: `TERRAIN | ITEMS | ACTORS | CAMP_OBSTACLE = 39` (было 55). Поскольку И A и B — оба скелеты, пара в broad-phase не формируется (Godot pair = `(A.mask & B.layer) || (B.mask & A.layer)`; обе стороны вычеркнули ENEMIES → ни одна не видит другую). Также обновил `collision_mask = 39` в [scenes/skeleton.tscn](scenes/skeleton.tscn) — это initial value до первого LOD-перехода.
+
+**Цена**: `Enemy._push_neighbor` lunge-domino перестаёт работать. Реализован через `get_slide_collision()` после `move_and_slide` в `_resolve_knockback_contacts` ([enemy.gd](scripts/enemy.gd)) — без skel-skel slide-collision'ов туда никто не попадает. Документировал в [skeleton.gd](scripts/skeleton.gd) docstring и в комменте к константе `MASK_SKELETON` в [layers.gd](scripts/layers.gd). Если потребуется восстановить (визуальная фишка «удар → волна по соседям») — paттерн group+dist push, аналогичный Slam group-fallback.
+
+**Что сохранили**: skel-tower bounce (Tower.layer=ACTORS, в маске), skel-tent блок (CAMP_OBSTACLE в маске), skel-ground (TERRAIN), skel-item push (ITEMS). Только взаимодействие skel-skel вычеркнуто.
+
+**Ожидание**: physics 16мс → 5-8мс. На 400 NEAR/MID kostьм пары между ними — главная нагрузка; их больше нет. FPS должен вернуться в 30+ при башне в кластере.
+
+### Дополнение 2 — frustum-aware LOD: NEAR/MID кластер вокруг башни
+После 19мс физики (uniform 2000) Tower заехал в кластер NEAR/MID 487 шт (157 NEAR + 330 MID), physics опять 20мс — узким стало уже не FAR-`_far_step`, а **`super._physics_process` + `move_and_slide` для 487 NEAR/MID** (≈29k вызовов/сек) и broad-phase пары между ними в плотной куче.
+
+Альтернативы рассмотрел:
+1. MID-divisor (тикать MID на 30Гц вместо 60). Простой, режет ~33%. Без учёта видимости.
+2. **Frustum-aware LOD**: скелет вне обзора → форсируем FAR. Учитывает то что игрок реально видит.
+
+Выбрал #2. Сильнее эффект (50-65% NEAR/MID уходят в FAR при FOV ~70°), проще код (~15 строк), геймплейно правильнее: видимое — детально, невидимое — дёшево. Без эксплойтов «отвернись и не получишь удар»: симуляция продолжает работать в FAR-режиме (с divisor=3), просто дёшево.
+
+**Реализация** в [skeleton.gd:_update_lod_level()](scripts/skeleton.gd):
+- Новый export `lod_offscreen_half_angle_deg: float = 60.0` (полу-cone «впереди камеры»). 60° = 120° полный cone, покрывает горизонтальный FOV ~95° (FOV=70 + aspect 16:9) с запасом.
+- В `_ready` прекомпьютим `_lod_offscreen_cos = cos(deg_to_rad(60.0))` чтобы не гонять трига на каждом LOD-чеке (раз в 0.5с × 2000 скелетов).
+- В `_update_lod_level` ДО distance-classification: `to_skel = pos - camera.global_position`, `forward = -camera.global_transform.basis.z`, `cos_angle = forward.dot(to_skel) / dist`. Если `cos_angle < _lod_offscreen_cos` → FAR, return.
+- Frustum-чек от Camera3D (реальная точка наблюдения), а не от CameraRig'a (он только distance-anchor).
+
+**Ожидаю:** при том же кластере NEAR/MID должно упасть с 487 до ~200, physics с 20мс до 7-10мс. FPS подскочит до 50-60 при тех же 2000 скелетов и башне в гуще.
+
+### Дополнение (после первого замера: 29мс → 19мс)
+Отключение CollisionShape убрало broad-phase, но physics_ms осталось 19мс. Анализ — 1900 FAR × 60Гц = 114k вызовов `_far_step`/сек: knockback.tick, vision-валидность, position-write, wander/AI. Это GDScript-нагрузка, выполняется в физкадре → засчитывается в physics_ms.
+
+**Добавлен FAR-divisor:** новый export `lod_far_tick_divisor: int = 3` в Skeleton. В `_physics_process` для FAR-скелетов теперь:
+- Каждый физкадр: декремент `_lod_check_timer` (для своевременных LOD-переходов).
+- Только каждый N-й физкадр (N=divisor): `_far_step(delta * N)`. Остальные тики — early return.
+- На «полном» тике `work_delta = delta × divisor`, чтобы movement, knockback friction, vision_scan_timer корректно покрывали пропущенные кадры в wall-clock.
+- Фазовый сдвиг `_far_phys_tick_counter = randi() % 6` в `_ready` — иначе все FAR-скелеты бегают _far_step в одном физкадре, нагрузка идёт волной.
+
+**Ожидание:** physics_ms должен ещё упасть пропорционально divisor'у. При divisor=3 — теоретически до ~7-9мс. Slam по FAR задерживается на ≤50мс — не видно. Inner `_lod_should_skip_ai_tick` (для FAR — каждый 3-й AI-тик) остался — суммарная AI-частота FAR ≈ 60/3/3 ≈ 6.7Гц, для боя с целью без скипа 60/3 = 20Гц. На практике норм.
+
+## Сессия 2026-05-01 (вечер-2) — Перф-измерения для 2000 скелетов: PerfHud + stress-кнопка
+
+### Главные изменения
+- **PerfHud расширен** ([perf_hud.gd](scripts/perf_hud.gd)): к FPS+LOD-счётчику добавлены `Process` ms, `Physics` ms (через `Performance.TIME_PROCESS × 1000` и `TIME_PHYSICS_PROCESS × 1000`), `Draw calls` и `Objects` (`RENDER_TOTAL_DRAW_CALLS_IN_FRAME` / `RENDER_TOTAL_OBJECTS_IN_FRAME`), `Mem` MB (`MEMORY_STATIC / 1MiB`), `Nodes` (`OBJECT_NODE_COUNT`). Layout панели расширен до 540×100, шрифт 14, 3 строки.
+- **Stress-кнопка `]`** (action `debug_stress_2000`, keycode 93): fire-and-forget вызов `EnemySpawner.spawn_uniform(skeleton_scene, 2000)`. Без safe-фильтра, без SpawnZone-фильтра — uniform по всему квадрату ±map_half_extent. Async-батч по 6/кадр (≈5.5с до полного спавна на 60fps). Висит рядом с `[`-debug в `wave_director.gd:_process`.
+
+### Главное архитектурно — методология следующих оптимизаций
+- **Не оптимизируй вслепую.** На 290 скелетах главным win'ом был LOD + collision_mask=0 на FAR. На 2000 узким местом может быть совсем другое — vision-сканы группой `skeleton_target` (O(N×M) на каждом скане), draw calls (если LOD-FAR не схлопнут в MultiMesh), память (~2000 Node3D + ScatterEffect-резервы).
+- **PerfHud теперь главный диагностический инструмент.** Сценарий: P → стартовать кампанию → ] → спавн 2000 → подождать пока async закончит → читать Process/Physics/Draw calls.
+  - **Process растёт** → CPU AI/vision узкое. Кандидаты: spatial grid для `_scan_target` (главный win), уменьшить `lod_far_distance`, snapshotить группу `skeleton_target` раз в 0.5с в Array вместо `get_nodes_in_group` каждый скан.
+  - **Physics растёт** → broad-phase или move_and_slide. Кандидаты: уменьшить `lod_far_distance` чтобы быстрее уходило в FAR (move_and_slide там не вызывается), вынести replenish-таймеры из физтика в idle.
+  - **Draw calls ≈ числу MeshInstance3D** → GPU/уникальность мешей. Кандидат: MultiMesh для FAR-скелетов (1 draw call на пачку).
+  - **Mem растёт линейно с N** → Node-aллокация. Кандидат: pool скелетов вместо queue_free/instantiate.
+- **`Performance.get_monitor(id)`** возвращает float; `TIME_PROCESS / TIME_PHYSICS_PROCESS` в секундах (нужно ×1000 для мс), всё остальное — ints в float-обёртке. Документация: [Godot Performance class](https://docs.godotengine.org/en/4.6/classes/class_performance.html).
+- **Fire-and-forget coroutine pattern**: `_spawner.spawn_uniform(skeleton_scene, 2000)` без `await` запускает coroutine, `_process` продолжается. Это легитимный паттерн в GDScript — coroutine работает до первого `await get_tree().physics_frame` и резюмится по физкадрам автономно. Используем где не нужен возврат значения и не нужно ждать конца.
+
+### Что отложено / план оптимизации по приоритету
+1. **Прогнать stress-test 2000** — какой из счётчиков PerfHud вылетел? Это определит порядок следующих шагов.
+2. **Spatial grid для skeleton_target** (если Process высокий): autoload `TargetGrid` с cell ~10м, `register_target/unregister_target` хуки в `Gnome._ready/_destroyed` и `CampPart._ready/_destroyed`, `query(pos, radius)` возвращает массив целей в 9 соседних cell'ах. `Skeleton._scan_target` использует grid вместо `get_nodes_in_group` + полный обход.
+3. **MultiMesh для FAR-скелетов** (если Draw calls высокий): один `MultiMeshInstance3D` рядом с CameraRig'ом, FAR-скелет регистрирует свой transform-слот при переходе в FAR, освобождает при возврате в MID. Mesh скелета (`MeshInstance3D`) при FAR делается невидимым; все FAR рисуются как пачка.
+4. **Снизить `lod_far_distance` 50→35** (если Physics высокий): константа в Skeleton, бесплатно.
+5. **Pool скелетов** (если Mem растёт): EnemyPool autoload с pre-allocated скелетами, при `queue_free` возвращаем в пул вместо удаления.
+
+### Ключевые числа
+- Stress-test: 2000 скелетов uniform по карте ±195м.
+- Spawn rate: 6/кадр × 60fps = 360/сек → 5.6с до полного спавна.
+
+## Сессия 2026-05-01 (вечер) — SpawnZone: диск → прямоугольник
+
+### Главные изменения
+- **`SpawnZone.radius: float` → `SpawnZone.size: Vector2`** (полные размеры по локальным X (size.x) и Z (size.y), в метрах). Дефолт `Vector2(60, 60)` — квадрат, грубо соответствующий прежнему диску r=30 по площади. Поворот вокруг Y живёт в transform узла; сэмплирование точки прогоняет локальный `(rand_x, 0, rand_z)` через `zone.global_transform`, поэтому повёрнутые зоны работают корректно.
+- **Визуал**: `CylinderMesh` (h=0.04, top/bottom_radius=1) → `BoxMesh` (size=`Vector3(1, 0.04, 1)`). Mesh-нода масштабируется сеттером `size` до `(size.x, 1, size.y)`. По умолчанию `transform.scale = (60, 1, 60)` в `scenes/spawn_zone.tscn`.
+- **Public API SpawnZone**: добавлен `area() -> float` (`size.x * size.y`). EnemySpawner использует его для взвешивания выбора зоны и для проверки «зона валидна» (вместо прежней проверки `radius > 0`).
+- **EnemySpawner.pick_random_pos**: вес выбора зоны теперь `area()` вместо `r²`. Сэмплирование внутри выбранной зоны делегировано `random_point_in_zone(zone)` — общий код, не дублируется.
+- **EnemySpawner.random_point_in_zone**: вместо `(angle, sqrt(rand)*r)` теперь `randf_range(±size.x/2)` и `randf_range(±size.y/2)` в локали, потом `zone.global_transform * local`.
+- **Видимость только в редакторе**: `_refresh_visual()` ставит `mesh.visible = Engine.is_editor_hint()`. В Play/билде красные коврики не отрисовываются — игрок их не видит. В редакторе остаются для дизайнера.
+
+### Главное архитектурно
+- **`global_transform * Vector3.local`** — корректный путь для сэмплирования внутри ориентированного прямоугольника. Не требует matrix-разбора, basis уже включён.
+- **Дефолт `Vector2(60, 60)` ≈ старому диску r=30**. Площадь: 3600 vs π·900≈2827. Близко, чтобы на первом запуске после миграции спавн-плотность не упала. Если делать совсем эквивалентно — `Vector2(53, 53)` (площадь ~2809).
+- **Существующие 7 зон в `main.tscn`** не имели override'ов `radius` (использовали дефолт). Теперь у них `size` тоже дефолтный → вживую станут квадратами 60×60. Дизайнеру нужно будет пройти по сцене и задать осмысленные ширины/длины руками (или повернуть зоны — это теперь поддерживается).
+- **`RoadSpawnZone` теперь не нужен как отдельный класс** — обычный SpawnZone с длинным узким size и поворотом по углу дороги делает то же самое. Заметку из «Что отложено» предыдущей сессии можно вычеркнуть в этой части.
+
+### Ключевые числа (актуальные после сессии)
+- SpawnZone дефолт: `size=Vector2(60, 60)`, `wave_count=5`, `skeletons_per_wave=10`.
+- POI safe radius: 45м, Camp safe radius: 45м (без изменений).
+
+### Что отложено / на следующую сессию
+- **Передизайн расстановки SpawnZone в main.tscn**: после миграции все 7 зон стали квадратами 60×60 на старых позициях. Дизайнеру стоит прокатиться по сцене и подобрать осмысленные размеры/повороты под коридоры между POI (особенно для логики «волны идут по дороге»).
+- **Стрелы не втыкаются в землю** (хвост).
+- **HUD-индикатор уровня защитника** (хвост).
+- **Quest-завершение по триггерам** вместо клавиши Q (хвост).
+
 ## Сессия 2026-05-01
 
 ### Главные изменения
