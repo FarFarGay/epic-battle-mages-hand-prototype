@@ -40,6 +40,40 @@
 - **Стрелы и FAR** — добавить group-fallback в `arrow.gd`, если когда-то аркада будет стрелять дальше lod_near_distance (сейчас не нужно).
 - **MultiMesh для FAR (вариант 3)** — если physics опустилась, но FPS всё ещё ниже 30, следующий боттлнек — рендер 1900 уникальных MeshInstance3D. ~250 строк, 2-3 часа работы.
 
+### Дополнение 9 — Resource-система: типы ресурсов + ResourceZone-расставлятель
+**Запрос геймдизайнера**: 4 типа ресурсов (дерево, камень, железо, еда) с разными визуалами; быстро расставлять зоны по карте.
+
+**Архитектура (Этап А — простые pile'ы + зона-спавнер)**:
+- В [resource_pile.gd](scripts/resource_pile.gd) добавлен enum `ResourceType` (GENERIC/WOOD/STONE/IRON/FOOD) и `PileShape` (AUTO/BOX/CYLINDER/SPHERE). Дефолтные визуалы по типу — wood: коричневый цилиндр-«бревно» (0.5×1.4×0.5), stone: серый куб (0.9×0.7×0.9), iron: тёмно-стальной приплюснутый бокс (0.8×0.4×0.8), food: красно-оранжевая сфера (0.7×0.7×0.7), generic: старый зелёный бокс. Если `pile_color/pile_size/pile_shape` оставлены дефолтными (BLACK/ZERO/AUTO) — берётся пресет; иначе экспорты переопределяют. CollisionShape пересоздаётся под форму (Box/Cylinder/Sphere). Logical поведение `take_one()` / hp / freeze не изменилось.
+- Новый класс [resource_zone.gd](scripts/resource_zone.gd) (`@tool`, `class_name ResourceZone`) — нода-спавнер по аналогии с SpawnZone. Поля: `size: Vector2`, `resource_type: int (export_enum)`, `count`, `units_per_pile`, `min_spacing`, `pile_scene: PackedScene`, `spawn_root_path: NodePath`. На `_ready` (вне editor_hint): спавнит `count` инстансов pile'а в случайных точках внутри прямоугольника (с rejection sampling по `min_spacing`), назначает `resource_type` и `units` ДО `add_child`, рандомизирует Y-rotation. Визуал-индикатор скрывается в рантайме.
+- Сцена [resource_zone.tscn](scenes/resource_zone.tscn) — Node3D + MeshInstance3D ребёнком, `pile_scene` уже привязан к resource_pile.tscn.
+
+**UX**: дизайнер бросает ResourceZone в сцену, в инспекторе ставит type/count/size, всё. В редакторе видит цветной плоский индикатор зоны (цвет по типу для отличия — wood коричневый, stone серый, etc). При запуске сцены зона разбрасывает pile'ы и индикатор исчезает.
+
+**Что НЕ сделали (Этапы Б/В на потом)**:
+- Многоэтапное дерево (стоит → trunk → 3 logs). Сейчас wood-pile = «бревно» с units=3, гном забирает по 1 — функционально работает, визуально упрощено.
+- `interaction_time` на pile'е (гном «рубит/копает» N секунд перед take_one). Сейчас take_one мгновенный.
+
+### Дополнение 8 — Boids-style avoidance: визуальное расступание без physics-пар
+**Симптом**: после убирания skel-skel пар (Дополнение 3) на волнах визуально некрасиво — скелеты сходятся в одну кучу и проходят друг через друга. Геймдизайнер: «не нравится».
+
+**Решение** — boids-style avoidance через spatial-grid скелетов.
+- Static `_skel_grid: Dictionary` (по аналогии с `_target_grid`), cell_size=4м, refresh раз в 0.3с.
+- В `_ai_step` после super._ai_step / _wander_tick вызывается `_apply_neighbor_avoidance()`. Скелет суммирует векторы отталкивания от соседей в radius=1.5м (linear falloff), кап по магнитуде `move_speed × strength`, прибавка к velocity.
+- Применяется только в APPROACH (включая wander) и НЕ-FAR — engaged скелеты (WINDUP/STRIKE/COOLDOWN) и FAR не отвлекаются.
+- Avoidance прибавляется до MID-компенсации velocity*N, чтобы масштабироваться синхронно.
+
+**Параметры (export'ы)**:
+- `neighbor_avoidance_radius: float = 1.5` — personal space.
+- `neighbor_avoidance_strength: float = 0.5` — доля move_speed (max 0.5×2.7 = 1.35м/с avoidance).
+- `0` — выключить (вернётся «толпа фантомов»).
+
+**Цена**: 9-cell scan × ~5 entries × ~10 ops = ~200 ops/вызов. ~12k вызовов/сек × 200 ops = ~12мс CPU/сек = 0.2мс/кадр. Незначительно.
+
+**Эмерджентное поведение**: скелеты, идущие к одной палатке, формируют не плотный «клин», а арку/полукольцо вокруг неё (avoidance = тяга наружу, target = тяга внутрь, equilibrium на ring'е). Выглядит естественно как RTS-flocking. Engaged-скелеты (атакующие) avoidance НЕ применяют — на них не давят соседи, они стоят на своих позициях.
+
+**Что не сделали**: avoidance для FAR — невидимы, незаметно. Если камера панится на FAR-кластер — frustum-override переводит ближайшие в NEAR/MID, avoidance включается, кластер расходится за ~1-2с (время refresh + tick).
+
 ### Дополнение 7 — Tower mask без ENEMIES + MID divisor 2→3
 После spatial grid'а Process упал с ~12мс до **3мс** (vision больше не узкое), но physics остался **20мс**, FPS 15-20. Все ~20мс ушли в чистый m_a_s + broad-phase.
 

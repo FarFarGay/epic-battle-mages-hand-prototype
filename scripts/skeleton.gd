@@ -142,6 +142,19 @@ enum WanderPhase { RESTING, WANDERING }
 @export_range(30.0, 90.0) var lod_offscreen_half_angle_deg: float = 60.0
 @export_group("")
 
+@export_group("Neighbor avoidance (boids-style)")
+## Радиус «personal space» — на этом расстоянии скелеты начинают мягко
+## отталкиваться. Должно быть ≥ capsule_radius × 2 = 0.8м с запасом для
+## визуально-комфортного зазора между скелетами в плотной толпе.
+## Замена physics-парам (skel-skel коллизии отключены ради перфоманса).
+@export var neighbor_avoidance_radius: float = 1.5
+## Сила отталкивания, выраженная как доля от move_speed. 0.5 = avoidance
+## может прибавить к velocity до 0.5 × move_speed = 1.35 м/с (при move_speed
+## 2.7). Меньше — толпа собирается плотнее, больше — скелеты сильнее
+## расступаются. 0 — avoidance выключен (вернётся «толпа фантомов»).
+@export_range(0.0, 2.0) var neighbor_avoidance_strength: float = 0.5
+@export_group("")
+
 static var _shared_normal_material: StandardMaterial3D
 static var _shared_windup_material: StandardMaterial3D
 
@@ -192,6 +205,48 @@ static func _maybe_refresh_target_grid(tree: SceneTree) -> void:
 		if not _target_grid.has(cell):
 			_target_grid[cell] = []
 		var entries: Array = _target_grid[cell]
+		entries.append([node.global_position, node])
+
+## Размер cell'а в spatial-grid'е скелетов для boids-avoidance. 4м — компромисс
+## между плотностью cell'ов и cost'ом запросов. 3×3 cell'ов = 12м, что больше
+## чем typical neighbor_avoidance_radius=1.5м с запасом.
+const SKEL_GRID_CELL_SIZE: float = 4.0
+## Период обновления skel-grid'а (с). Скелет двигается ≤2.7м/с × 0.3с = 0.81м,
+## drift в snapshot'е меньше cell-size'а — позиция в grid'е достаточно свежая
+## для avoidance (мягкое отталкивание не требует pixel-perfect позиций).
+const SKEL_GRID_REFRESH_INTERVAL: float = 0.3
+
+## Spatial grid позиций скелетов: { Vector2i(cell_x, cell_z) → Array of
+## [Vector3 pos, Node3D node] }. Аналогично _target_grid, но с группой
+## SKELETON_GROUP. Используется в _apply_neighbor_avoidance для boids-style
+## раздвигания — заменяет physics-пары skel-skel (отключены через
+## MASK_SKELETON без бита ENEMIES, см. layers.gd).
+static var _skel_grid: Dictionary = {}
+static var _skel_grid_time: float = -1000.0
+
+
+## Лениво пересоздаёт _skel_grid из группы skeleton. Зовётся в начале
+## _apply_neighbor_avoidance. Так же как target-grid: ленивая refresh'ка
+## раз в SKEL_GRID_REFRESH_INTERVAL глобально, все скелеты читают snapshot.
+static func _maybe_refresh_skel_grid(tree: SceneTree) -> void:
+	var now: float = float(Time.get_ticks_msec()) / 1000.0
+	if now - _skel_grid_time < SKEL_GRID_REFRESH_INTERVAL:
+		return
+	_skel_grid_time = now
+	_skel_grid.clear()
+	for n in tree.get_nodes_in_group(SKELETON_GROUP):
+		if not is_instance_valid(n):
+			continue
+		var node := n as Node3D
+		if node == null:
+			continue
+		var cell := Vector2i(
+			int(floor(node.global_position.x / SKEL_GRID_CELL_SIZE)),
+			int(floor(node.global_position.z / SKEL_GRID_CELL_SIZE)),
+		)
+		if not _skel_grid.has(cell):
+			_skel_grid[cell] = []
+		var entries: Array = _skel_grid[cell]
 		entries.append([node.global_position, node])
 
 enum LodLevel { NEAR, MID, FAR }
@@ -310,6 +365,12 @@ func _ai_step(delta: float) -> void:
 		super._ai_step(delta)
 	else:
 		_wander_tick(delta)
+	# Boids-style avoidance: только в APPROACH/wander (state == APPROACH ловит
+	# обе фазы — wander не меняет _state). FAR не применяется — невидимы.
+	# Avoidance прибавляется к velocity до MID-компенсации, чтобы тоже
+	# масштабировалось вместе с движением (corrupted-frequency коррекция).
+	if _lod_level != LodLevel.FAR and _state == AttackState.APPROACH:
+		_apply_neighbor_avoidance()
 	# MID-divisor компенсация: super._physics_process вызывает нас раз в N
 	# физкадров (на пропускаемых _physics_process делает early return). Один
 	# move_and_slide() в этом тике должен покрыть N кадров пути → множим
@@ -320,6 +381,64 @@ func _ai_step(delta: float) -> void:
 		var mult := float(lod_mid_tick_divisor)
 		velocity.x *= mult
 		velocity.z *= mult
+
+
+## Boids-style раздвигание соседей через _skel_grid. Заменяет физическое
+## skel-skel столкновение (отключено через MASK_SKELETON без ENEMIES).
+##
+## Алгоритм: суммируем векторы от каждого соседа в neighbor_avoidance_radius,
+## взвешенные linear-falloff (1 в эпицентре, 0 на границе радиуса). Каждый
+## вектор — нормированное направление от соседа × falloff. Итоговый push
+## ограничивается max_avoid = move_speed × neighbor_avoidance_strength,
+## чтобы avoidance не доминировал над тягой к цели.
+##
+## Цена: 9-cell scan × ~3-5 entries/cell × ~10 ops = ~200 ops/scan. На
+## 100 NEAR + 300 MID скелетов с разной частотой тиков = ~12k вызовов/сек ×
+## 200 ops × 5ns = ~12мс/сек ~ 0.2мс/кадр.
+func _apply_neighbor_avoidance() -> void:
+	if neighbor_avoidance_strength <= 0.0:
+		return
+	Skeleton._maybe_refresh_skel_grid(get_tree())
+	var skel_pos := global_position
+	var skel_cell := Vector2i(
+		int(floor(skel_pos.x / SKEL_GRID_CELL_SIZE)),
+		int(floor(skel_pos.z / SKEL_GRID_CELL_SIZE)),
+	)
+	var r: float = neighbor_avoidance_radius
+	var r_sq: float = r * r
+	var push_x := 0.0
+	var push_z := 0.0
+	for dx in [-1, 0, 1]:
+		for dz in [-1, 0, 1]:
+			var cell := Vector2i(skel_cell.x + dx, skel_cell.y + dz)
+			if not Skeleton._skel_grid.has(cell):
+				continue
+			var entries: Array = Skeleton._skel_grid[cell]
+			for entry in entries:
+				var npos: Vector3 = entry[0]
+				var dx_l := skel_pos.x - npos.x
+				var dz_l := skel_pos.z - npos.z
+				var d_sq := dx_l * dx_l + dz_l * dz_l
+				# d_sq < epsilon — это сам себя в snapshot'е (его позиция в grid'е).
+				if d_sq < 0.0001:
+					continue
+				if d_sq > r_sq:
+					continue
+				var d := sqrt(d_sq)
+				var falloff: float = 1.0 - d / r
+				push_x += (dx_l / d) * falloff
+				push_z += (dz_l / d) * falloff
+	if push_x == 0.0 and push_z == 0.0:
+		return
+	# Кап по магнитуде — avoidance не должен доминировать. max = move_speed × strength.
+	var max_avoid: float = move_speed * neighbor_avoidance_strength
+	var mag: float = sqrt(push_x * push_x + push_z * push_z)
+	if mag > max_avoid:
+		var scale: float = max_avoid / mag
+		push_x *= scale
+		push_z *= scale
+	velocity.x += push_x
+	velocity.z += push_z
 
 
 ## Skip-предикат для текущего LOD. Близкие — каждый кадр (false). Средние —

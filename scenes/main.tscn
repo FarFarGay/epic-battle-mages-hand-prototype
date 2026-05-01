@@ -8,6 +8,7 @@
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="7"]
 [ext_resource type="PackedScene" path="res://scenes/camp.tscn" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/octagon_turret.tscn" id="10"]
+[ext_resource type="PackedScene" path="res://scenes/resource_zone.tscn" id="10_jkv2x"]
 [ext_resource type="PackedScene" path="res://scenes/perf_hud.tscn" id="11"]
 [ext_resource type="PackedScene" path="res://scenes/poi_marker.tscn" id="12"]
 [ext_resource type="Script" uid="uid://b8arph4ob7p8l" path="res://scripts/wave_director.gd" id="13"]
@@ -81,6 +82,12 @@ arrow_speed = 30.5
 
 [node name="SpawnZone1" parent="SpawnZones" unique_id=2016128478 instance=ExtResource("17")]
 transform = Transform3D(6.5315933, 0, 0, 0, 1, 0, 0, 0, 1.6575847, -0.8849716, 0, -17.393837)
+wave_count = 20
+skeletons_per_wave = 100
+
+[node name="ResourceZone" parent="SpawnZones" unique_id=108173736 instance=ExtResource("10_jkv2x")]
+transform = Transform3D(2.4152563, 0, 0, 0, 1, 0, 0, 0, 2.5479345, 147.63553, 0, -0.3363285)
+count = 100
 
 [node name="PointsOfInterest" type="Node3D" parent="." unique_id=1906900233]
 
