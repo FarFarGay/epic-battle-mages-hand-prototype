@@ -100,11 +100,13 @@ func _refresh_visual() -> void:
 ## где возможно (rejection sampling, до 10 попыток на pile; если не находит —
 ## всё равно ставит в случайную точку, но это редкость при разумных параметрах).
 ##
-## Дополнительно: если на сцене есть WaveDirector (группа `wave_director`) —
-## точки внутри safe-зон лагерей и POI отбрасываются. Кучи в зоне огня
-## защитников или вокруг сюжетного POI — не появятся. Если зона целиком
-## накрыта safe-радиусами (10 попыток подряд unsafe) — pile пропускается,
-## фактический count может оказаться меньше заявленного.
+## Safe-фильтр (только для WOOD-зон): если на сцене есть WaveDirector (группа
+## `wave_director`) и `resource_type == WOOD` — точки внутри safe-зон лагерей
+## и POI отбрасываются. Логика геймдизайнера: лес — это «глушь», вокруг
+## поселений вырубленный; деревья ближе к лагерю не растут. Камень/железо/еда
+## фильтр не проходят: каменоломня может стоять под защитой лучников, ферма —
+## вокруг лагеря, склад железа — на POI. Только дерево намеренно «загнано»
+## за периметр.
 func _spawn_instances() -> void:
 	if pile_scene == null:
 		push_warning("ResourceZone (%s): pile_scene не задан — пропускаю спавн" % name)
@@ -114,7 +116,11 @@ func _spawn_instances() -> void:
 		root = get_node_or_null(spawn_root_path)
 	if root == null:
 		root = get_tree().current_scene
-	var wave_director: Node = get_tree().get_first_node_in_group(&"wave_director")
+	# Safe-фильтр включается только для WOOD. Остальные типы — как раньше:
+	# rejection sampling только по min_spacing, точка где угодно в зоне.
+	var wave_director: Node = null
+	if resource_type == ResourcePile.ResourceType.WOOD:
+		wave_director = get_tree().get_first_node_in_group(&"wave_director")
 	var placed_positions: Array[Vector3] = []
 	var spacing_sq := min_spacing * min_spacing
 	var skipped := 0
@@ -136,15 +142,16 @@ func _spawn_instances() -> void:
 		(pile as Node3D).rotation.y = randf() * TAU
 		placed_positions.append(pos)
 	if skipped > 0:
-		push_warning("ResourceZone (%s): %d из %d куч не размещены — кандидаты внутри safe-зон Camp/POI" % [name, skipped, count])
+		push_warning("ResourceZone (%s, WOOD): %d из %d куч не размещены — кандидаты внутри safe-зон Camp/POI" % [name, skipped, count])
 
 
 ## Случайная точка внутри прямоугольника зоны (с учётом поворота через
-## global_transform) и вне safe-зон (если задан wave_director). До 10 попыток
-## найти точку, удовлетворяющую обоим условиям (min_spacing + safe). Возвращает
-## null если ни одна попытка не прошла safe-фильтр — caller считает это
-## пропуском pile'а. Если spacing-фильтр не сработал, но safe-фильтр прошёл —
-## ставим внахлёст (визуальный нахлёст лучше пропуска).
+## global_transform) и вне safe-зон (если задан wave_director — только для
+## WOOD-зон, см. _spawn_instances). До 10 попыток найти точку, удовлетворяющую
+## обоим условиям (min_spacing + safe). Возвращает null если ни одна попытка
+## не прошла safe-фильтр — caller считает это пропуском pile'а. Если spacing-
+## фильтр не сработал, но safe-фильтр прошёл — ставим внахлёст (визуальный
+## нахлёст лучше пропуска).
 func _pick_position(placed: Array[Vector3], spacing_sq: float, wave_director: Node) -> Variant:
 	var last_safe_world: Variant = null
 	for attempt in range(10):
@@ -155,7 +162,8 @@ func _pick_position(placed: Array[Vector3], spacing_sq: float, wave_director: No
 		)
 		var world := global_transform * local
 		world.y = global_position.y
-		# Safe-фильтр: точка не должна попадать в safe-зону Camp/POI.
+		# Safe-фильтр (только если caller передал wave_director): точка не
+		# должна попадать в safe-зону Camp/POI.
 		if wave_director != null and not wave_director.is_safe_pos(world):
 			continue
 		last_safe_world = world
@@ -170,4 +178,6 @@ func _pick_position(placed: Array[Vector3], spacing_sq: float, wave_director: No
 			return world
 	# Все 10 попыток либо все unsafe → null (пропуск), либо safe но плотно стоят —
 	# берём последнюю safe (нахлёст ок, safe-нарушение нет).
+	# Для не-WOOD зон wave_director=null, safe-чек не работает, last_safe_world
+	# заполняется на каждой итерации — вернётся последняя случайная точка.
 	return last_safe_world
