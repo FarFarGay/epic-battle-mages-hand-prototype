@@ -7,8 +7,8 @@
 script = ExtResource("1_script")
 world_size = 400.0
 chunk_count_xz = 8
-density = 0.5
-visibility_distance = 80.0
-blade_scale = 0.1
-blade_scale_variance = 0.3
+density = 5.0
+visibility_distance = 60.0
+blade_scale = 0.12
+blade_scale_variance = 0.2
 chunk_scene = ExtResource("2_chunk")
