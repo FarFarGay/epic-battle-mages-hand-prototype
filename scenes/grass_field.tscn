@@ -6,9 +6,9 @@
 [node name="GrassField" type="Node3D"]
 script = ExtResource("1_script")
 world_size = 400.0
-chunk_count_xz = 8
-density = 5.0
-visibility_distance = 60.0
-blade_scale = 0.12
+chunk_count_xz = 16
+density = 4.0
+visibility_distance = 120.0
+blade_scale = 0.15
 blade_scale_variance = 0.2
 chunk_scene = ExtResource("2_chunk")
