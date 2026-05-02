@@ -50,6 +50,13 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 @export var start_deployed: bool = false
 @export_group("")
 
+## Группа целей для скелетов (см. Skeleton.TARGET_GROUP). Camp ставит/убирает
+## tower в эту группу в зависимости от состояния: в каравне tower уязвим
+## для агро, в развёрнутом лагере — нет (скелеты переключаются на палатки
+## и гномов вокруг костра).
+const SKELETON_TARGET_GROUP := &"skeleton_target"
+
+
 @export_group("POI deploy gate")
 ## Если true — деплой возможен ТОЛЬКО когда башня в радиусе safe_radius
 ## хотя бы одной POI-зоны (см. [QuestActor.safe_radius] и группу `poi_zone`).
@@ -157,6 +164,12 @@ func _ready() -> void:
 	# _spawn_tents) в кольцо вокруг anchor через _exp_decay в _update_deployed.
 	if start_deployed:
 		_start_deploy()
+	else:
+		# В каравне tower сам по себе является целью для скелетов: фоновые
+		# wander-скелеты, увидев караван глазами, идут к башне и атакуют её.
+		# Когда лагерь развернётся — _start_deploy уберёт tower из группы
+		# (агро переключится на палатки), а на _finalize_pack — вернёт.
+		_set_tower_aggro(true)
 
 
 ## Спавнит палатки по tent_scene × tent_count. Линейная цепочка позади башни:
@@ -410,7 +423,33 @@ func _on_gnome_destroyed(gnome: Gnome) -> void:
 func _on_tower_destroyed() -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] башня уничтожена — караван останавливается")
+	# Башня умирает → больше не цель ни для кого. group-membership чистить
+	# не обязательно (нода freed → вышла из всех групп автоматически), но
+	# делаем явно на случай если EventBus.tower_destroyed эмитится перед
+	# фактическим queue_free.
+	_set_tower_aggro(false)
 	_tower = null
+
+
+## Управление tower-aggro для скелетов: tower уязвим (в группе skeleton_target)
+## только в каравне. В DEPLOYED осада идёт на палатки/гномов вокруг костра,
+## tower сам по себе не цель. После _finalize_pack возвращаем — караван снова
+## в движении, фоновые скелеты могут аггриться через vision.
+##
+## Tower может быть null (target_path не задан, или _on_tower_destroyed уже
+## обнулил) — тогда no-op. is_inside_tree-чек защищает от попытки добавить
+## в группу ноду, которую только что freed (group API падает на freed-инстансе).
+func _set_tower_aggro(active: bool) -> void:
+	if _tower == null or not is_instance_valid(_tower):
+		return
+	if not _tower.is_inside_tree():
+		return
+	if active:
+		if not _tower.is_in_group(SKELETON_TARGET_GROUP):
+			_tower.add_to_group(SKELETON_TARGET_GROUP)
+	else:
+		if _tower.is_in_group(SKELETON_TARGET_GROUP):
+			_tower.remove_from_group(SKELETON_TARGET_GROUP)
 
 
 func _process(delta: float) -> void:
@@ -599,6 +638,9 @@ func _start_deploy() -> void:
 	for p in _parts:
 		if p is CampPart:
 			(p as CampPart).set_vulnerable(true)
+	# Tower уходит из аггро-цели — скелеты переключаются на палатки/гномов.
+	# Если игрок свернёт лагерь, _finalize_pack вернёт tower в группу.
+	_set_tower_aggro(false)
 	# Гномы выходят бродить.
 	for g in _gnomes:
 		if is_instance_valid(g):
@@ -642,6 +684,9 @@ func _finalize_pack() -> void:
 	# где был лагерь — игрок может подобрать рукой и поставить заново).
 	if _center_slot:
 		_center_slot.enabled = false
+	# Tower снова цель скелетов в каравне — фоновые wander'ы могут увидеть
+	# караван и накинуться. Симметрично _start_deploy, который убирает.
+	_set_tower_aggro(true)
 	packed.emit()
 
 
