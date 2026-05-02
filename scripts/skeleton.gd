@@ -680,9 +680,18 @@ func _physics_process(delta: float) -> void:
 			work_delta = delta * float(lod_mid_tick_divisor)
 
 	_vision_scan_timer -= work_delta
-	var stale := _cached_target == null \
-		or not is_instance_valid(_cached_target) \
-		or not _cached_target.is_in_group(TARGET_GROUP)
+	# Stale-чек: пересканировать **только** если кэшированная цель умерла или
+	# вышла из группы. `_cached_target == null` НЕ stale — это легитимное
+	# «целей в зоне нет» (типичное состояние FAR-скелета в поле). Раньше
+	# тут было `stale := _cached_target == null or ...`, и бесцельный скелет
+	# рескан'ил каждый physics-tick (60Гц), вместо одного раза в 0.3с/0.6с/1.2с
+	# по LOD. На 452 скелетах это давало 27k _scan_target/сек вместо ~1.5k —
+	# главный пожиратель Physics_Frame. См. профайлер этап 43.
+	var stale := false
+	if _cached_target != null:
+		if not is_instance_valid(_cached_target) or not _cached_target.is_in_group(TARGET_GROUP):
+			stale = true
+			_cached_target = null
 	if _vision_scan_timer <= 0.0 or stale:
 		_cached_target = _scan_target()
 		_vision_scan_timer = vision_scan_interval * _lod_vision_multiplier()

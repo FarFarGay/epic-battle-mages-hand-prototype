@@ -134,10 +134,15 @@ func _active_tick(delta: float) -> void:
 func _defender_combat_tick(delta: float) -> void:
 	_target_scan_timer -= delta
 	# Принудительный пересмотр кэша если цель умерла или вышла за зону —
-	# это дешёвые проверки, ради них не стоит ждать таймер.
-	var stale: bool = _cached_target == null \
-		or not is_instance_valid(_cached_target) \
-		or global_position.distance_to(_cached_target.global_position) > attack_radius
+	# это дешёвые проверки, ради них не стоит ждать таймер. NB: `null` НЕ
+	# stale — иначе защитник без цели делал бы PhysicsShapeQuery каждый
+	# physics-tick (54 × 60 = 3240 query/сек). Симметрично фиксу в
+	# Skeleton._physics_process, см. этап 43.
+	var stale: bool = false
+	if _cached_target != null:
+		if not is_instance_valid(_cached_target) or global_position.distance_to(_cached_target.global_position) > attack_radius:
+			stale = true
+			_cached_target = null
 	if _target_scan_timer <= 0.0 or stale:
 		var prev := _cached_target
 		_cached_target = _find_skeleton_target()
