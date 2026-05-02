@@ -169,6 +169,8 @@ hand_gameplay_prot/
 
 **Назначение:** управляемая башня-герой. Передвигается по миру через WASD, прижимается гравитацией к полу. Если встречает на пути `Item`, который легче неё, — толкает его телом по направлению движения. Контактирующих kinematic-целей (скелетов и любых будущих врагов) расталкивает через универсальный `Pushable`-контракт.
 
+**Коллизия:** `collision_layer=4 (ACTORS)`, `collision_mask=31 (TERRAIN+ITEMS+ACTORS+PROJECTILES+ENEMIES = MASK_ALL_GAMEPLAY)`. Включение бита ENEMIES (этап 43) — bidirectional коллизия со скелетами: Skeleton.mask=39 уже включала ACTORS (скелет упирался об башню), Tower.mask теперь включает ENEMIES (башня упирается об скелетов). Раньше `mask=15` без ENEMIES — Tower проходила сквозь толпу. С etапа 43 толпа физически замедляет караван — игрок чувствует массу скелетов телом башни.
+
 **Регистрации в `_ready`:**
 - `Damageable.register(self)` — башня принимает урон. `Pushable` НЕ регистрируется: башня не должна толкаться чужими импульсами (это игровая стена-герой).
 
@@ -616,7 +618,10 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 
 **Vision-таргетинг (override базового `_targets`):**
 
-Skeleton не использует `Enemy._targets` — вместо этого **сканирует группу `skeleton_target`** в радиусе `vision_radius` и выбирает цель с приоритетом. В группу входят: палатки лагеря (только в DEPLOYED-фазе через `CampPart.set_vulnerable(true)`) и активные гномы (через `Gnome.enter_deployed`/`request_return`). Tower в `skeleton_target` **не входит** — скелеты охотятся на лагерь, не на башню напрямую.
+Skeleton не использует `Enemy._targets` — вместо этого **сканирует группу `skeleton_target`** в радиусе `vision_radius` и выбирает цель с приоритетом. В группу входят (этап 42-43):
+- **Tower** — пока `Camp._state == CARAVAN_FOLLOWING` или `_finalize_pack` (Camp ставит/убирает через `_set_tower_aggro`). Скелеты бьют башню при движении каравана. На развёртке tower уходит из группы — агро переключается на палатки/гномов вокруг костра.
+- **Палатки** (CampPart) — теперь почти всегда (кроме PACKING_RETURNING когда тент бронируется): в каравне атакуемы тоже. Раньше «только в DEPLOYED», изменено по геймдизайну: караван = полноценная цель.
+- **Активные гномы** — через `Gnome.enter_deployed/request_return`. Защитники у периметра — тоже.
 
 **Приоритет: гномы > палатки.** Скелеты «голодные», охотятся на существ. Если в радиусе хоть один живой гном (любого типа — собиратель или защитник), идём к ближайшему гному, палатки игнорируются. Палатка берётся целью только когда гномов в зоне нет (например, на свёртке лагеря все попрятались). Защитники-лучники у периметра лагеря «перехватывают агро» — wave-скелеты переключаются на них как только подходят на 12м к лагерю, прежде чем добежать до палаток.
 
@@ -631,8 +636,8 @@ Skeleton не использует `Enemy._targets` — вместо этого 
 
 **Cache + throttle поверх grid'а:**
 - Поле `_cached_target: Node3D` — последняя найденная цель.
-- Поле `_vision_scan_timer: float`, период `vision_scan_interval = 0.3с` (поднят с 0.15 — экономия ×2).
-- Override `_physics_process(delta)`: тикает таймер; если истёк или кэш устарел (null / `is_instance_valid=false` / уже не в группе `skeleton_target`) — `_cached_target = _scan_target()`, таймер сбрасывается.
+- Поле `_vision_scan_timer: float`, период `vision_scan_interval = 0.4с` (история: 0.15 → 0.3 → 0.4, см. этап 43).
+- Override `_physics_process(delta)`: тикает таймер; если истёк **или** кэш протух (`is_instance_valid=false` или вне группы `skeleton_target`) — рескан. **NB (этап 43):** `null` НЕ считается stale — это легитимное «целей в зоне нет». Раньше было `stale := _cached_target == null or ...`, и бесцельный скелет сканировал каждый physics-tick (60Гц) вместо раз в 0.4с — на 452 скелетах `_scan_target` давал 27k вызовов/сек и 2.39ms/тик. После фикса — 27 вызовов/тик, 0.30ms.
 - Override `get_active_target()`: возвращает кэш, провалидировав группу/валидность; если устарел — `null` (следующий тик пере-сканирует).
 - В `_ready` → `_vision_scan_timer = randf() * vision_scan_interval` — фазовый сдвиг, чтобы 50 скелетов не сканировали группу в один кадр.
 
@@ -651,7 +656,7 @@ if node == null:
 - Группа **Vision:**
   - `vision_radius: float = 12.0` — дальность зрения. Цель в этом радиусе считается «увиденной».
 - Группа **Vision scan throttle:**
-  - `vision_scan_interval: float = 0.3` — период между ре-сканами целей (с). Группа `skeleton_target` содержит и палатки (~18), и гномов (~126) — на 290+ скелетах при 0.15с давало ~280k distance-checks/сек.
+  - `vision_scan_interval: float = 0.4` (этап 43, было 0.3) — период между ре-сканами целей (с). На 2000 скелетов даёт +25% экономии vs 0.3с. См. также fix throttle когда `_cached_target=null` в `_physics_process`.
 - Группа **Wander (без цели):**
   - `wander_speed: float = 1.2` — скорость патруля без цели.
   - `wander_distance_min/max: 5.0/15.0` — диапазон следующей wander-точки.
@@ -669,17 +674,17 @@ if node == null:
   - `lod_near_distance: float = 25.0` — ближе которой работает на полной частоте (LOD `NEAR`).
   - `lod_far_distance: float = 50.0` — дальше которой минимальная частота (LOD `FAR`). Между — `MID`.
   - `lod_check_interval: float = 0.5` — период переоценки LOD-уровня. Distance-чек 2000 врагов на каждом физкадре сам по себе нагрузка.
-  - `lod_far_tick_divisor: int = 3` (range 1-6) — кратность пропуска физтика для FAR-скелетов. На 1900 FAR-скелетах `_far_step` (knockback.tick, vision-валидность, AI, position-write) — основной пожиратель physics_ms после того, как broad-phase отключён через `CollisionShape3D.disabled`. Кратность 3 даёт пропорциональное падение нагрузки. Slam-knockback по FAR задерживается максимум на `divisor × 16.6мс ≈ 50мс` — игрок не успевает заметить.
-  - `lod_mid_tick_divisor: int = 3` (range 1-4) — кратность пропуска физтика для MID-скелетов. 3 = каждый 3-й физкадр (60→20Гц). Скорость движения сохраняется компенсацией `velocity *= divisor` в `_ai_step` — один `move_and_slide` на N тиков переносит N-кратное движение. Tunneling-риск: `move_speed=2.7 × 3 × 0.0167 = 0.135м/тик` при радиусе 0.4м (запас ×3). На 25-50м от камеры визуально незаметно.
+  - `lod_far_tick_divisor: int = 4` (range 1-6) (этап 43, было 3) — кратность пропуска физтика для FAR-скелетов. На 1900 FAR-скелетах `_far_step` (knockback.tick, vision-валидность, AI, position-write) — основной пожиратель physics_ms после того, как broad-phase отключён через `CollisionShape3D.disabled`. Кратность 4 = 60→15Гц. Slam-knockback по FAR задерживается максимум на `divisor × 16.6мс ≈ 67мс` — игрок не успевает заметить.
+  - `lod_mid_tick_divisor: int = 4` (range 1-6) (этап 43, было 3) — кратность пропуска физтика для MID-скелетов. 4 = каждый 4-й физкадр (60→15Гц). Скорость движения сохраняется компенсацией `velocity *= divisor` в `_ai_step` — один `move_and_slide` на N тиков переносит N-кратное движение. Tunneling-риск: `move_speed=2.7 × 4 × 0.0167 = 0.18м/тик` при радиусе 0.4м (запас ×2, безопасно). На 25-50м от камеры визуально незаметно.
   - `lod_offscreen_half_angle_deg: float = 60.0` (range 30-90) — **frustum-override**: скелет вне cone'а «впереди камеры» форсируется в FAR независимо от расстояния (его не видно игроку — симулировать дёшево безопасно). 60° полу-cone = 120° полный, с запасом покрывает горизонтальный FOV ~95°. Прекомпьют `cos(deg_to_rad(...))` в `_ready` (раз в 0.5с × 2000 скелетов на trig-функциях — заметно). При типичном кластере вокруг Tower'а frustum-override переносит ~50% NEAR/MID в FAR, освобождая physics.
 
 **LOD-поведение** (см. enum `LodLevel { NEAR, MID, FAR }`):
 
 | Уровень | Дистанция от камеры | AI-tick | vision_scan | Физика |
 |---|---|---|---|---|
-| NEAR | ≤ 25м, в frustum-cone | каждый кадр | каждые 0.3с | Полная (collision_layer=ENEMIES, MASK_SKELETON, move_and_slide на 60Гц) |
-| MID | 25..50м, в cone | каждый 2-й | каждые 0.6с (×2) | Полная, но move_and_slide на 20Гц (`mid_tick_divisor=3` с velocity-компенсацией) |
-| FAR | > 50м **или** вне cone | каждый 3-й (внутри `_far_step`) | каждые 1.2с (×4) | **Холодная: collision_layer=0, mask=0, `CollisionShape3D.disabled=true`, без `move_and_slide`. `_far_step` тикает только каждый N-й физкадр (`far_tick_divisor=3`)** |
+| NEAR | ≤ 25м, в frustum-cone | каждый кадр | каждые 0.4с | Полная (collision_layer=ENEMIES, MASK_SKELETON, move_and_slide на 60Гц). Boids-avoidance включён. |
+| MID | 25..50м, в cone | каждый 2-й | каждые 0.8с (×2) | Полная, но move_and_slide на 15Гц (`mid_tick_divisor=4` с velocity-компенсацией). Boids выключен (этап 43). |
+| FAR | > 50м **или** вне cone | каждый 3-й (внутри `_far_step`) | каждые 1.6с (×4) | **Холодная: collision_layer=0, mask=0, `CollisionShape3D.disabled=true`, без `move_and_slide`. `_far_step` тикает только каждый N-й физкадр (`far_tick_divisor=4`)** |
 
 **Что мерится:** дистанция до **точки интереса камеры** — `Camera3D.get_parent()` если он Node3D (т.е. наш `CameraRig`), иначе сама `Camera3D.global_position`. Через CameraRig потому, что он lerp'ом следует за Tower, а зум камеры (через `Camera3D.position × _zoom`) меняет реальную позицию Camera3D, **не** меняя CameraRig. До этого фикса при максимальном зуме (zoom=2.5, Camera3D на ~111м от центра карты) скелеты возле башни все становились FAR, и slam терял по ним цели — теперь зум на LOD не влияет. Tower как якорь не подошёл — он может queue_free, а CameraRig живёт всегда.
 
@@ -717,7 +722,8 @@ if node == null:
 **Реализация — второй static spatial grid:**
 - `static var _skel_grid: Dictionary` (по аналогии с `_target_grid`), `SKEL_GRID_CELL_SIZE = 4.0м`, `SKEL_GRID_REFRESH_INTERVAL = 0.3с`. Заполняется лениво из `SKELETON_GROUP` в начале `_apply_neighbor_avoidance`.
 - В `_ai_step` после `super._ai_step` / `_wander_tick` вызывается `_apply_neighbor_avoidance()`. Скелет суммирует векторы отталкивания от соседей в radius=1.5м (linear falloff `(radius − dist) / radius`), кап по магнитуде `move_speed × strength`, прибавка к velocity.
-- **Применяется только в APPROACH/wander и НЕ-FAR.** Engaged-скелеты (WINDUP/STRIKE/COOLDOWN) на позициях боя не отталкиваются — они стоят и бьют. FAR — невидимы, незаметно. Frustum-override переводит ближайшие FAR в NEAR/MID при панорамировании камеры; кластер расходится за ~1-2с (refresh + tick).
+- **Применяется только в APPROACH/wander на NEAR-уровне** (этап 43, было NEAR+MID). MID/FAR-скелеты пропускаются — на 25м+ от камеры мелкие столкновения тимы визуально не читаются, а cost ~18мкс/call. На 2000 скелетах экономия ~1ms vs прежнее «NEAR+MID». Engaged-скелеты (WINDUP/STRIKE/COOLDOWN) на позициях боя не отталкиваются — они стоят и бьют.
+- **Self-фильтр через идентичность ноды** (`entry[1] == self`), не через `d_sq < epsilon` — стейл-снимок отдалён на ~0.81м, эпсилон-чек давал бы фантомный push в собственную stale-копию (этап 41).
 - Avoidance прибавляется **до** MID-velocity-компенсации, чтобы масштабироваться синхронно с divisor'ом.
 
 **Цена:** 9-cell scan × ~5 entries × ~10 ops = ~200 ops/вызов. ~12k вызовов/сек × 200 ops ≈ 0.2мс/кадр на 400 NEAR/MID скелетов. Незначительно.
@@ -1864,6 +1870,31 @@ func _refresh_visual() -> void:
     - Поведение: фоновые wander-скелеты, увидев караван глазами, идут к башне через Skeleton-vision (TARGET_GROUP `skeleton_target`) и атакуют через `Damageable.try_damage(tower)`. На POI tower вне группы — агро на палатки/гномов, башня визуально стоит в центре лагеря, но не задевается.
 
     **Дизайнерская петля сейчас:** между POI караван едет, фон в карте растёт. Скелеты могут увидеть караван и накинуться (агро через vision на tower). Игрок подъезжает к POI (костёр), жмёт R — лагерь разворачивается ровно по центру костра. WaveDirector видит deploy и стартует осаду по wave_schedule этого POI. Стадии нарастают по темпу. Игрок отбивается, собирает ресурсы (ResourceZone-ы около POI), потом сворачивает лагерь и едет к следующему POI — но мир уже грязнее. Все параметры (radii, schedules, фоновый рост) в инспекторе на самих нодах, никаких магических чисел в коде.
+
+43. **POI handshake fix + полная атака каравана + perf на 2000 (4 коммита)**. После первого тестирования K1+K2+K3 всплыли два сюжетных бага и performance regression при 2000 скелетов.
+
+    **Bug 1 (`3bff0e1`) — POI handshake.** Лагерь развёрнут на костре, но осада не запускалась (O → «нет активного POI с осадой»). WaveDirector собирал `_pois` из poi_root_path-детей напрямую, а это `Poi_*`-маркеры (poi_marker.tscn без скрипта). `wave_schedule/safe_radius/get_wave_schedule` живут на их `QuestActor`-детях. `has_method("get_wave_schedule")` возвращал false → POI «мирный». Camp-side (`_find_poi_for_deploy`) использовал группу `poi_zone` корректно — handshake рвался только на стороне WaveDirector. Fix: собираю `_pois` через `get_nodes_in_group(QuestActor.POI_GROUP)` лениво в `_collect_pois_deferred` (после `process_frame`, чтобы все QuestActor`._ready` отработали). `poi_root_path` помечен deprecated.
+
+    **Bug 2 (`7c190ec`) — караван — целое.** Геймдизайнер: «Tower проходит сквозь скелетов; в каравне атакуется только башня, палатки нет — нужно чтобы атаковались и башня, и палатки». Два root cause:
+    - **Tower.collision_mask: 15 → 31** (`scenes/tower.tscn`). Skeleton.mask=39 (включает ACTORS) уже блокировался об башню, но Tower.mask=15 без ENEMIES → башня их игнорировала и проходила сквозь. Симметризовал: толпа теперь замедляет Tower массой.
+    - **CampPart уязвимы в каравне тоже**, не только в DEPLOYED. Раньше `_ready: vulnerable=false`, `_start_deploy: true`, `_start_pack: false`, `_finalize_pack` ничего не делал → в caravan-mode после первой свёртки палатки оставались бронированными. Сейчас vulnerable=true в caravan и DEPLOYED, false **только** в PACKING_RETURNING (бронь во время сбора). Хелпер `_set_parts_vulnerable(bool)` вместо четырёхкратного дубль-цикла.
+
+    **Bug 3 (`517b882`) — vision-scan throttle.** Профайлер на 452 скелетах: `Skeleton._scan_target` = 452 calls/тик (60Гц), 2.39ms self-time. Throttle через `_vision_scan_timer` не работал. Причина: `stale := _cached_target == null or not is_instance_valid(...) or ...` — когда скелет не находил цель, `_cached_target = null` после первого скана, на следующем тике `null → stale=true → немедленный rescan`. Бесцельный FAR-скелет рескан'ил каждый кадр вместо 1 раз/0.6с. Fix: `null` НЕ stale (это легитимное «целей в зоне нет»), stale только если cached невалиден или вышел из группы. После: 452 → 27 calls/тик (×17 сокращение). Та же правка в DefenderGnome (3240 → 216 PhysicsShapeQuery/сек на 54 защитниках).
+
+    **Perf-tuning (`c4bade0`) — на 2000 скелетов:**
+    - `lod_far_tick_divisor`: 3 → 4 (FAR 60→15Гц). Slam-задержка 50→67мс.
+    - `lod_mid_tick_divisor`: 3 → 4. Tunneling: `2.7×4×0.0167=0.18м/тик` при capsule_radius=0.4 — запас ×2.
+    - `vision_scan_interval`: 0.3 → 0.4с (доп. 25% экономии _scan_target).
+    - **Boids avoidance NEAR-only** (раньше NEAR+MID). На MID 25-50м от камеры мелкие столкновения тимы не читаются, cost ~18мкс/call → экономия ~1ms.
+
+    **Профайлер «до → после»** на 2000 скелетов (Inclusive Frame Time):
+    - Frame Time: ~17мс с пиками >25мс → ~12-13мс ровно.
+    - Script Functions: 14.63 → 9.80мс (**−33%**).
+    - Skeleton._physics_process: 11.59 → 7.57мс.
+    - Enemy._physics_process: 5.21 → 3.34мс.
+    - _far_step calls: 557 → 389.
+    - _apply_neighbor_avoidance calls: 105 → 50.
+    Бюджет 60Гц (16.66мс) теперь имеет 4-7мс запаса в среднем кадре на 2000 скелетов.
 
 ### 7.3 Решённые ошибки
 
