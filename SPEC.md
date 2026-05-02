@@ -25,7 +25,17 @@ hand_gameplay_prot/
 ├── project.godot              — конфиг движка, input map, layer_names, autoloads
 ├── SPEC.md                    — этот документ
 ├── resources/
-│   └── grid.gdshader          — спатиальный шейдер сетки на полу
+│   ├── grid.gdshader               — спатиальный шейдер сетки на полу
+│   ├── smoke.gdshader              — стилизованный дым (POI-костёр SmokeParticles): voronoi-нойз UV-скролл + alpha-curve через `COLOR.a` от ParticleProcessMaterial
+│   ├── smoke_material.tres         — `ShaderMaterial` для smoke.gdshader (params: Vor_Scale=0.8, Vor_Speed=0.2, Color, Alpha_Clip=0)
+│   ├── smoke_color_gradient.tres   — `GradientTexture1D` тёмный→светлый-серый (индексируется COLOR.a по жизни частицы)
+│   ├── smoke_voronoi_noise.tres    — `NoiseTexture2D` 256×256, FastNoiseLite type=CELLULAR, frequency=0.04, seamless
+│   ├── smoke_alpha_curve.tres      — `CurveTexture` peak в середине → создаёт «клочья» дыма
+│   ├── smoke_mesh.tres             — `ArrayMesh` (190KB, 9408 индексов) от Loop-Box/Stylized-Smoke-For-Godot4.5: объёмная сетка из множества quad'ов под разными углами для billboard-эффекта в particles
+│   ├── slam_distortion.gdshader    — distortion+ripple шейдер для slam-визуала: SCREEN_TEXTURE-преломление + chromatic aberration + accretion glow + SDF-noise dissolve + бегущая ripple-волна
+│   ├── slam_distortion_material.tres — `ShaderMaterial` для slam-эффекта; параметры `intensity`/`ripple_time` тveen'ятся из кода
+│   ├── slam_dust_material.tres     — `StandardMaterial3D` (billboard) для пылевых quad'ов при ударе
+│   └── slam_dust_process.tres      — `ParticleProcessMaterial` для пыли: emission sphere + spread 80° + scale_curve + color_ramp бело-серый → прозрачный
 ├── scenes/
 │   ├── main.tscn              — корневая сцена (композиция уровня)
 │   ├── tower.tscn             — модуль "башня"
@@ -40,8 +50,8 @@ hand_gameplay_prot/
 │   ├── resource_zone.tscn     — зона расставлятель куч (`@tool`-нода: drag → выставить тип/count/size → spawn на _ready)
 │   ├── octagon_turret.tscn    — защитный модуль (CampModule), стреляет стрелами
 │   ├── arrow.tscn             — снаряд защитного модуля
-│   ├── poi_marker.tscn        — маркер точки интереса (жёлтый плоский диск)
-│   ├── quest_actor.tscn       — актор-выдатчик квеста (капсула с цветом по состоянию)
+│   ├── poi_marker.tscn        — маркер точки интереса (тёмный круг золы под костром, ~0.95м)
+│   ├── quest_actor.tscn       — актор-выдатчик квеста: костёр (3 полена крест-накрест + FlameCore + FlameParticles + SmokeParticles + OmniLight)
 │   ├── spawn_zone.tscn        — зона спавна врагов (плоский красный box-индикатор, виден только в редакторе)
 │   ├── perf_hud.tscn          — оверлей FPS / process+physics ms / draw calls / скелеты+LOD
 │   └── gameplay_hud.tscn      — игровой HUD (способности слева, статус лагеря справа)
@@ -337,6 +347,44 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 - Лог: `[Hand:Physical:Slam] хлопок @ (x, y, z), задело: N (из них FAR: M)` — `M > 0` подтверждает, что fallback сработал.
 - Визуал спавнится в `effects_root_path` (NodePath); если пуст или не резолвится — фолбэк на `_hand.get_tree().current_scene`. Главное — НЕ в `_hand`: иначе расширяющаяся сфера таскалась бы за рукой, эпицентр уезжал бы. Пул `_slam_visual_pool` (cap 3) переиспользует MeshInstance3D.
 - `slammed.emit(origin, slam_radius)`.
+
+**Slam-визуал — distortion-сфера + dust:**
+
+`_spawn_slam_visual(origin)` создаёт **two parallel-effects** в эпицентре:
+
+1. **Distortion-сфера** (`SLAM_VISUAL_TWEEN_DURATION = 0.45с`):
+    - `SphereMesh` unit-radius=0.5 (height=1.0). **Важно:** шейдер использует `sphere_dist = length(object_position) - 0.5` для SDF-noise dissolve, поэтому радиус mesh'а должен быть ровно 0.5; визуальный размер — через `mesh.scale = ONE × (slam_radius / 0.5)` = 10× для дефолтного `slam_radius=5`. Если поставить меньший mesh-radius, dissolve обрезает alpha до 0 → пузырь невидим.
+    - `material_override` — `load(slam_distortion_material.tres).duplicate()` per-instance. **Duplicate обязателен:** параллельные slam'ы из пула (cap 3) хранят свой tween-state в shader_parameter'ах; без копии один tween затирает другой.
+    - **Tween parallel** трёх параметров одновременно:
+      - `mesh.scale: ONE → ONE × target_scale` (TRANS_QUAD, EASE_OUT — резкий старт расширения).
+      - `shader.intensity: 1.0 → 0.0` (TRANS_CUBIC, EASE_IN) — master-control шейдера, плавное затухание blur/chromatic/accretion/fresnel.
+      - `shader.ripple_time: 0.0 → 1.0` (LINEAR) — волна разбегается; шейдер сам гасит её через `(1 - ripple_time)`.
+    - `shader.ripple_center` ставится в **world-координатах** (= origin) перед стартом tween'а — шейдер считает дистанцию от world_position фрагмента, поэтому центр волны **не смещается** при росте сферы.
+    - `_set_slam_param(value, mat, name)` helper нужен потому что `Tween.tween_property` не умеет в `shader_parameter`'ы (читаются/пишутся через `set_shader_parameter`, не через property path). Используется `tween_method` с `.bind(mat, name)`.
+    - Cleanup через `_recycle_slam_visual(mesh)` — возврат в пул, при `pool.size > cap` — `queue_free`.
+
+2. **Пыль** (`_spawn_slam_dust(origin)`, fire-and-forget):
+    - `GPUParticles3D` с `one_shot=true`, `explosiveness=1.0` (все 72 частицы вылетают в первом кадре одним «взрывом», не размазываются по lifetime'у).
+    - `amount=72`, `lifetime=0.9с`, `cast_shadow=OFF`.
+    - `process_material` — `slam_dust_process.tres`: emission sphere r=0.3, spread 80°, velocity 3.5–6.5 м/с, gravity (0, -2.5, 0), damping 1.5–2.5 (быстро тормозятся в воздухе), angular_velocity ±180°/с (каждая крутится). `scale_curve` 0.4 → 1.0 → 0.0 (растёт первые 30%, плавно сжимается).
+    - `material_override` — `slam_dust_material.tres` (`StandardMaterial3D` billboard, серый albedo 0.78, мягкая emission 0.3).
+    - `draw_pass_1` — `QuadMesh` 0.22×0.22.
+    - **Без пула:** при `slam_cooldown=0.5с` и `dust_lifetime=0.9с` максимум 2 одновременно живых GPUParticles3D, новый создаётся реже чем старый завершается. Cleanup через `get_tree().create_timer(lifetime + 0.2с).timeout.connect(queue_free)`.
+
+**Distortion-shader** — `resources/slam_distortion.gdshader` (`spatial`, `unshaded, cull_disabled, blend_mix`):
+- **Black hole distortion**: SCREEN_TEXTURE сэмплируется со смещением `NORMAL.xy * distortion`, где `distortion = distortion_strength × edge_factor² × intensity + ripple_offset`. Вокруг краёв сферы фон преломляется как через линзу.
+- **Chromatic aberration**: R/G/B каналы сэмплятся с разным offset'ом по `chromatic_aberration × edge_factor`. Сейчас 0.0 в материале (геймдизайнер выключил для нейтрального ч/б эффекта).
+- **Accretion disk glow**: яркая добавка по краям sphere `accretion_color × pow(edge_factor, accretion_width) × accretion_intensity`. Текущий цвет — голубой (тюнинг геймдизайнера в инспекторе).
+- **Event horizon darkening**: `event_horizon_radius/darkness` затемняют центр sphere для эффекта «дыры».
+- **SDF noise dissolve**: `sdFbm` (recursive bumpy SDF) с `noise_detail=6` итерациями фрактала, `noise_scale_min/max` контролируют через `intensity_2` плавность переходов; на низком intensity_2 (0.3) `dissolve_sharpness=36` → резкие концентрические полосы; на высоком (0.9) `=5.9` → размытое облако.
+- **Ripple-волна**: `wave = sin(dist × ripple_frequency - ripple_time × ripple_speed) × 0.5 + 0.5`, затухание `exp(-dist × fade_distance) × (1 - ripple_time)`. Создаёт бегущие наружу концентрические кольца искажения; `ripple_glow` добавляет голубоватую подсветку (хардкод `vec3(0.4, 0.7, 1.0)` в шейдере) на ближней depth-зоне.
+- **Depth-аware base color**: `texture(depth_texture)` сравнивает с фрагментом sphere. За пределами `threshold` берётся `color1` (далёкий фон), внутри — `color2` (рядом с поверхностью объекта). Даёт разные тона на «свободном» небе vs «контактной» зоне у скелетов/земли.
+
+**Slam-визуал в инспекторе** (для тонкой настройки):
+- `slam_distortion_material.tres` — все шейдер-параметры: цвета, intensity, ripple, accretion, dissolve, blur. Изменения подхватываются на следующем slam'е (per-instance копия делается через `.duplicate()` в `_spawn_slam_visual`).
+- `slam_dust_process.tres` — emission/velocity/gravity/scale частиц пыли.
+- `slam_dust_material.tres` — albedo/emission пыли.
+- В скрипте [hand_physical_slam.gd](scripts/hand_physical_slam.gd) константы `SLAM_DUST_AMOUNT=72`, `SLAM_DUST_LIFETIME=0.9`, `SLAM_DUST_QUAD_SIZE=0.22`, `SLAM_VISUAL_TWEEN_DURATION=0.45`.
 
 **Flick-подмодуль (`HandPhysicalFlick`):**
 - `is_active()` возвращает `_active`. Координатор по нему понимает, что hold-state удерживается.
@@ -649,6 +697,10 @@ if node == null:
 - При скипе AI velocity сохраняется — скелет едет по инерции до следующего полного тика.
 
 **Anti-«волна»:** `_lod_check_timer = randf() * lod_check_interval`, `_lod_ai_tick_counter = randi() % 6`, `_far_phys_tick_counter = randi() % 6`, `_mid_phys_tick_counter = randi() % 4` в `_ready` — distance-чеки и skip-тики разнесены по фазе. Иначе кадровая нагрузка идёт волной каждые 0.5с.
+
+**Initial LOD apply в `_ready`:** в самом конце `Skeleton._ready()` зовётся `_apply_lod_physics_mode()`. До этой страховки initial `_lod_level=NEAR` полагался на маски в [skeleton.tscn](scenes/skeleton.tscn) (16/39); сейчас совпадает, но любая правка маски в `.tscn` тихо ломала бы первый кадр всех NEAR-скелетов до первого LOD-перехода (lod_check_interval=0.5с). Явный вызов делает контракт автономным.
+
+**Counter reset на knockback exit:** `_physics_process` запоминает `was_knockback_active := _knockback.is_active()` **до** super/_far_step и сравнивает после. На переходе active→inactive — `_mid_phys_tick_counter = 0` и `_far_phys_tick_counter = 0`. Без этого счётчик мог застрять на skip-фазе во время knockback'а → следующий кадр после восстановления был бы skipped → AI хочет двигаться, но скелет «глюк-замораживается» на ~16мс (MID) / ~50мс (FAR). Phase-randomization уменьшает шанс, но не исключает.
 
 **Что игрок не заметит:** скелеты вне камеры всё равно вне камеры; реакция дальних на цель хуже на ~0.5с (один divisor-цикл, меньше windup'а 0.4с). На 2000 скелетах при равномерном распределении (~25 NEAR + 75 MID + 1900 FAR) physics-сервер обрабатывает броад-фазу для ~100 тел вместо 2000 + `_far_step` тикает не на 60Гц, а на 20Гц. Замеры до фиксов: physics 29мс / FPS 7. После: physics ~5-10мс / FPS 30-60 (зависит от того, что становится следующим узким — обычно draw calls на 2000 уникальных MeshInstance3D). Дальнейший buster — MultiMesh + GPU-instanced рендер (~250 строк, 2-3 часа).
 
@@ -1134,18 +1186,30 @@ enum PileShape { AUTO, BOX, CYLINDER, SPHERE }
 
 | Контракт | Метод | Поведение |
 |---|---|---|
-| Damageable | `take_damage(amount)` | Декремент `hp`, эмит `damaged`. На `hp ≤ 0` — `destroyed.emit()` + `queue_free()`. Защита через `is_queued_for_deletion()`. |
+| Damageable | `take_damage(amount)` | Декремент `hp`, эмит `damaged`. На `hp ≤ 0` — `_dying = true` + `destroyed.emit()` + `queue_free()`. Защита через `_dying` флаг + `is_queued_for_deletion()`. |
 | Pushable | `apply_push(velocity_change, _duration)` | `apply_central_impulse(velocity_change × mass)`. **Return при `freeze`**. |
 | Grabbable | `set_highlighted(value)` | Toggle emission. Дёргается рукой на смене кандидата. |
 
-**Метод для гномов (`take_one`):**
+**Идемпотентность смерти — `_dying: bool` флаг.** `take_damage` и `take_one` могут привести pile к уничтожению **независимо в одном кадре** (например, slam добивает hp до 0, гном параллельно вызывает `take_one` на `units=1`). `queue_free()` сам по себе идемпотентен, но `destroyed.emit()` — нет, и без флага EventBus получал бы двойной `item_destroyed` → UI/счётчики реагировали бы дважды. Флаг `_dying` ставится в начало любой ветки перед эмитом и проверяется на входе в обе функции:
 
 ```gdscript
+func take_damage(amount: float) -> void:
+    if _dying or is_queued_for_deletion() or amount <= 0.0:
+        return
+    hp -= amount
+    damaged.emit(amount)
+    if hp <= 0.0:
+        _dying = true
+        destroyed.emit()
+        queue_free()
+
+
 func take_one() -> bool:
-    if freeze or units <= 0 or is_queued_for_deletion():
+    if _dying or freeze or units <= 0 or is_queued_for_deletion():
         return false
     units -= 1
     if units == 0:
+        _dying = true
         destroyed.emit()
         queue_free()
     return true
@@ -1171,7 +1235,7 @@ func take_one() -> bool:
 **Экспорты:**
 - `size: Vector2 = Vector2(20.0, 20.0)` — полные размеры по локальным X/Z (с сеттером, мгновенно перерисовывает индикатор в редакторе через `_refresh_visual`).
 - `resource_type: int` (`@export_enum("Generic","Wood","Stone","Iron","Food")`, дефолт 1=Wood) — тип ресурса. Маппинг 1:1 с `ResourcePile.ResourceType`. Дублируется как int (а не reference на enum) — `@export`-у enum нужен прямой type-reference, и cyclic-import между `ResourceZone ↔ ResourcePile` создаст проблему.
-- `count: int = 8` (range 1-100) — сколько pile'ов спавнить.
+- `count: int = 8` (range 1-1000) — сколько pile'ов спавнить. Верхний лимит поднят с 100 для плотных лесов и крупных каменоломен; на 1000 при `min_spacing=1.5` зоне нужна площадь хотя бы ~50×50м, иначе rejection sampling выдыхается и кучи пойдут внахлёст.
 - `units_per_pile: int = 5` (range 1-50) — `units` каждого спавненного pile'а.
 - `min_spacing: float = 1.5` — минимальная дистанция между соседними кучами (rejection sampling, до 10 попыток на pile; 0 = выключить фильтр).
 - `pile_scene: PackedScene` — что спавнить. Дефолт в `resource_zone.tscn` — `res://scenes/resource_pile.tscn`.
@@ -1187,6 +1251,7 @@ func take_one() -> bool:
 - Цикл по `count`, для каждого — `_pick_position(placed_positions, spacing², wave_director)` (rejection sampling до 10 попыток внутри прямоугольника `±size/2` через локаль → `global_transform * local`, поворот зоны вокруг Y учитывается).
 - **Safe-фильтр (только при `wave_director != null`):** каждая candidate-точка проверяется через `wave_director.is_safe_pos(pos)`. Точки внутри Camp `wave_safe_radius` или POI `poi_safe_radius` отбрасываются — лес в зоне огня защитников или вокруг сюжетного POI не появится. Внутри 10 попыток приоритет: сначала safe, потом spacing. Если все попытки unsafe — `_pick_position` возвращает `null` и pile пропускается (итоговый count может оказаться меньше заявленного, выводится `push_warning("...WOOD...")`). Если safe нашлась, но spacing не выдержан — берём последнюю safe (нахлёст ок, safe-нарушение нет).
 - На каждом инстансе — назначить `resource_type` и `units` **до** `add_child` (чтобы `_ready` применил правильный визуал сразу). Позиция выставляется после `add_child`, затем рандомная Y-rotation для визуального разнообразия.
+- **Жёсткий контракт `pile_scene`:** если `pile_scene.instantiate()` возвращает не-`ResourcePile` (дизайнер случайно подменил сцену) — `push_error` + `queue_free` инстанса + `continue`. Без этой проверки тип/units тихо не назначались бы и в дереве появлялись зелёные generic-pile'ы с дефолтным `units=5` — причина не очевидна; теперь сразу видно в консоли.
 
 **Визуальный индикатор в редакторе:** перекрашивается в цвет типа (массив `_TYPE_COLORS`: зелёный/коричневый/серый/стальной/оранжевый) — дизайнер видит зоны разного типа без чтения инспектора.
 
@@ -1307,26 +1372,44 @@ func take_one() -> bool:
 
 **Тип корня:** `Node3D` с `class_name QuestActor`.
 
-**Назначение:** «актор» квестов на POI. Визуал — **костёр** (4 наклонённых полена в форме вигвама + GPUParticles3D пламени и дыма + OmniLight3D). Состояние из `QuestProgress` управляет режимом костра, перекрас — по сигналу `EventBus.quest_advanced`:
-- **locked** — потухший: тлеющие угли (тёмно-оранжевая emission поленьев), струйка дыма (8 частиц), без пламени, свет выключен.
-- **active** — горящий: яркое оранжевое пламя (FlameCore + 32 GPUParticles), активный дым (24 частицы), тёплый свет (energy=1.6, color=оранжевый).
-- **completed** — отгоревший с магическим следом: бело-голубовато-зелёная emission поленьев, минимум дыма (4 частицы), тусклый зелёный свет (energy=0.7). Символика «закрыто», в отличие от обычного потухшего костра.
+**Назначение:** «актор» квестов на POI. Визуал — **костёр** (3 полена-BoxMesh крест-накрест в три уровня + статичное FlameCore + 2× GPUParticles3D пламени и дыма + OmniLight3D). Состояние из `QuestProgress` управляет режимом костра, перекрас — по сигналу `EventBus.quest_advanced`:
+- **locked** — потухший: тлеющие угли (тёмно-оранжевая emission поленьев energy=0.05), струйка дыма (5 частиц), без пламени, свет выключен.
+- **active** — горящий: яркое оранжевое пламя (FlameCore visible + 24 GPUParticles), активный дым (14 частиц), тёплый свет (energy=1.6, color=оранжевый).
+- **completed** — отгоревший с магическим следом: зелёно-голубоватая emission поленьев, минимум дыма (3 частицы), тусклый зелёный свет (energy=0.7). Символика «закрыто», в отличие от обычного потухшего костра.
 
 **Структура сцены:**
-- `Logs/Log1..Log4` — `MeshInstance3D` с `CylinderMesh` (radius=0.08, height=0.7), наклонённые в 4 стороны через transform basis (≈20° от вертикали к центру). Material_log общий в `.tscn`, но в `_ready` `_clone_log_material` делает per-instance копию через `duplicate()` — иначе все QuestActor'ы на сцене делили бы один override и emission переключался бы у всех разом.
+- `Logs/Log1..Log3` — `MeshInstance3D` с общим `BoxMesh` (size=0.7×0.14×0.14), три уровня крест-накрест:
+  - `Log1` — вдоль X на y=0 (базовый).
+  - `Log2` — повёрнут 90° вокруг Y, вдоль Z, на y=0.14 (поверх первого).
+  - `Log3` — повёрнут 45° вокруг Y, на y=0.28 (третий уровень).
+  Поверх Logs — корневой transform Y=0.07, чтобы низ первого полена сидел на полу. **Material_log общий в `.tscn`**, но в `_ready` `_clone_log_material` делает per-instance копию через `(_logs_root.get_child(0).material_override).duplicate()` и переназначает на все полена — иначе все QuestActor'ы на сцене делили бы один override и emission переключался бы у всех разом.
 - `FlameCore` — `MeshInstance3D` со `SphereMesh` (radius=0.18, scale Y=1.4) на y=0.45, материал `transparency=ALPHA, shading_mode=UNSHADED, emission_energy=4.0`. Видим только в active-состоянии. Это статичное «ядро» пламени — частицы FlameParticles рисуются поверх.
-- `FlameParticles` — `GPUParticles3D` на y=0.3, amount=32, lifetime=0.8с. ProcessMaterial: emission sphere r=0.12, gravity=(0, 1.2, 0) (антигравитация → летит вверх), velocity 0.6..1.2 м/с, scale_curve 1.0 → 0.05 (растёт и схлопывается), color_ramp ярко-жёлтый → оранжевый → тёмно-красный с alpha 1→0. draw_pass — `QuadMesh 0.7×0.7`.
-- `SmokeParticles` — `GPUParticles3D` на y=0.6, amount=24 (динамически: 8/24/4 по состоянию), lifetime=2.5с. ProcessMaterial: emission sphere r=0.18, gravity=(0.05, 0.8, 0) (медленно вверх со сносом), velocity 0.4..0.7 м/с, scale_curve 0.4 → 2.5 (расширяется), color_ramp white→white-alpha=0. **`material_override` — `res://resources/smoke_material.tres`** (см. ниже).
+- `FlameParticles` — `GPUParticles3D` на y=0.3, `amount=24`, `lifetime=0.8с`. ProcessMaterial: emission sphere r=0.12, gravity=(0, 1.2, 0) (антигравитация → летит вверх), velocity 0.6..1.2 м/с, **`particle_flag_rotate_y = true`** + `angle_min/max = ±90°` (рандомный начальный поворот, чтобы quad'ы из draw_pass не были параллельны), `scale_min/max = 0.18/0.28` (компенсация под объёмный smoke_mesh), scale_curve 1.0 → 0.05 (растёт и схлопывается), color_ramp ярко-жёлтый → оранжевый → тёмно-красный с alpha 1→0. **`draw_pass_1 = res://resources/smoke_mesh.tres`** — тот же объёмный mesh что у дыма (без него quad'ы лежат плоскими «жёлтыми кубиками»). `material_override` — отдельный `StandardMaterial3D` (UNSHADED, alpha=0.85, emission orange energy=2.5) для оранжевого цвета.
+- `SmokeParticles` — `GPUParticles3D` на y=0.45, `amount=10` (динамически: 5/14/3 по состоянию), `lifetime=2.95с`, `trail_lifetime=0.2`, `cast_shadow=OFF`. ProcessMaterial: emission sphere r=0.18, gravity=(0.05, 2.0, 0) (медленно вверх со сносом, в active взлетает выше), velocity 0.4..0.7 м/с, `particle_flag_rotate_y=true`, `angle_min/max=±90°`, `scale_min/max=0.4` (фиксированный), scale_curve 0.27 → 1.0, alpha_curve 0→1 (плавное появление), `hue_variation_min/max=0..0.02` (лёгкий разброс оттенков), `turbulence_noise_strength=0.05, scale=0.1` (мягкие завихрения). **`draw_pass_1 = res://resources/smoke_mesh.tres`**, **`material_override = res://resources/smoke_material.tres`** (см. ниже).
 - `Light` — `OmniLight3D` на y=0.5, range=7м, attenuation=1.5. Цвет/энергия меняются по состоянию.
 
-**Smoke ShaderMaterial — `resources/smoke_material.tres`:**
-- Шейдер `resources/smoke.gdshader` (`spatial`, `depth_prepass_alpha`).
-- В `fragment()`: UV скроллится через `TIME * Vor_Speed`, сэмплируется из voronoi-нойза → индексирует `Alpha_Curve` для финальной альфы. `COLOR.a` (от `color_ramp` GPUParticles) индексирует `Color_Gradiant` (тёмно-серый → светло-серый по жизни частицы). `EMISSION = Emmision_Power × Color × Gradiant`.
-- Подключённые ассеты:
-  - `smoke_color_gradient.tres` — `GradientTexture1D` тёмный→серый→светло-серый.
-  - `smoke_voronoi_noise.tres` — `NoiseTexture2D` 256×256 с `FastNoiseLite type=CELLULAR`, frequency=0.04, seamless.
-  - `smoke_alpha_curve.tres` — `CurveTexture` с пиком в середине (0→1→0), даёт «клочья» дыма.
-- Параметры (тюнятся в инспекторе): `Color`, `Vor_Scale=3.0`, `Vor_Speed=0.15`, `Emmision_Power=0.2`.
+**Smoke shader pipeline** — стилизованный billboard-volumetric:
+- **`resources/smoke.gdshader`** (`spatial`, `depth_prepass_alpha`). В `fragment()`: UV скроллится через `TIME * Vor_Speed`, сэмплируется из voronoi-нойза → индексирует `Alpha_Curve` для финальной альфы. `COLOR.a` (от `color_ramp` GPUParticles) индексирует `Color_Gradiant` по жизни частицы. `EMISSION = Emmision_Power × Color × Gradiant`.
+- **`resources/smoke_mesh.tres`** (190KB, 9408 индексов) — взят из [Loop-Box/Stylized-Smoke-For-Godot4.5](https://github.com/Loop-Box/Stylized-Smoke-For-Godot4.5). Объёмная сетка из quad'ов под разными углами; в паре с `particle_flag_rotate_y=true` даёт billboard-эффект во все стороны (без него обычный QuadMesh с шейдером превращается в плоские «чёрные коробки» в 3D-перспективе — баг был в первой итерации).
+- **`resources/smoke_material.tres`** — `ShaderMaterial`, params: `Vor_Scale=0.8, Vor_Speed=0.2, Color=(1,1,1,0.6), Alpha_Clip=0.0, Emmision_Power=1.0, Fernal_Power=1.0`. `Color.alpha=0.6` снижает плотность — раньше дым давил визуал, после уменьшения читается как лёгкая струя.
+- Подключённые текстуры:
+  - `smoke_color_gradient.tres` — `GradientTexture1D` тёмный→серый→светло-серый (offsets 0/0.4/1, colors `(0.05,0.05,0.06)` → `(0.45,0.45,0.5)` → `(0.85,0.85,0.92)`). Индексируется по `COLOR.a` от ParticleProcessMaterial.color_ramp.
+  - `smoke_voronoi_noise.tres` — `NoiseTexture2D` 256×256 с `FastNoiseLite type=CELLULAR (4)`, frequency=0.04, seamless=true.
+  - `smoke_alpha_curve.tres` — `CurveTexture` peak в середине (curve points: `(0,0)`, `(0.5,1)`, `(1,0)`) → создаёт «клочья» дыма вместо равномерного облака.
+
+**Логика управления состоянием в `quest_actor.gd`:**
+
+```gdscript
+func _refresh_visual() -> void:
+    if QuestProgress.is_completed(quest_order):
+        _apply_completed()
+    elif QuestProgress.is_active(quest_order):
+        _apply_active()
+    else:
+        _apply_locked()
+```
+
+Каждый `_apply_*` переключает: `_log_material.emission` (цвет+energy), `_flame_core.visible`, `_flame_particles.emitting`, `_smoke_particles.emitting/amount`, `_light.light_color/light_energy`. См. [quest_actor.gd](scripts/quest_actor.gd).
 
 **Экспорты:**
 - `actor_id: StringName` — уникальный идентификатор для будущих скриптовых триггеров (диалог, выдача награды, ивенты в EventBus). Сейчас не используется кроме логов.
@@ -1620,6 +1703,61 @@ func take_one() -> bool:
     **ResourceZone safe-фильтр — только для WOOD.** Сначала фильтр включался для всех типов ресурсов, но геймдизайнер уточнил: только лес. Логика — лес «глушь», вокруг поселений вырубленный; камень/железо/еда могут стоять под защитой (каменоломня, ферма, склад). В `_spawn_instances`: `if resource_type == WOOD: wave_director = get_first_node_in_group(...)`, иначе `wave_director = null` и safe-чек не работает. Для WOOD: внутри 10 попыток приоритет safe → spacing; если все unsafe — pile пропускается (count может выйти меньше заявленного; `push_warning("...WOOD...")` с числом skipped).
 
     **Safe-радиусы 45 → 32 (~30% меньше).** `wave_safe_radius` и `poi_safe_radius` уменьшены параллельно. Новый radius чуть внутри полной зоны огня защитника (12 + 22.5 = 34.5м) — спавн ближе к лагерю, скелеты быстрее доходят до боя, меньше нейтральных коридоров. WOOD-фильтр и `_pick_safe_pos` для скелетов используют один радиус → консистентно.
+
+    **`ResourceZone.count` лимит 100 → 1000** (`dbddd84`). Дизайнеру нужны 100+ куч в плотных лесах и крупных каменоломнях; прежний `@export_range(1, 100)` отсекал слайдер. Сама `_spawn_instances` масштабируется линейно (10 попыток rejection sampling × count), на 1000 куч с `min_spacing=1.5` зоне нужна площадь ~50×50м минимум.
+
+38. **Code review fix'ы — 4 находки** (`f9649a2`). После большой сессии запустил трёх параллельных code-review агентов на накопленные изменения skeleton.gd / hand_physical_slam.gd / resource_*.gd / wave_director.gd / scenes-masks. Из 30+ находок (большинство — косметика и edge-cases) выделил 4 **HIGH-priority** для одного коммита:
+
+    - **`ResourcePile._dying`-флаг.** `take_damage` и `take_one` независимо могли довести pile до уничтожения в одном кадре — `destroyed.emit()` срабатывал дважды, EventBus.item_destroyed эмитился двойным сигналом. `queue_free` идемпотентен сам по себе, но сигнал нет → UI/счётчики реагировали бы дважды. Добавлен `_dying: bool` флаг, ставится перед `destroyed.emit()` в обеих ветках, проверяется на входе.
+
+    - **`ResourceZone` валидирует `pile_scene`.** Раньше `if pile is ResourcePile` тихо пропускал присвоение `resource_type`/`units` если дизайнер случайно подменил сцену на не-ResourcePile — pile добавлялся в дерево с GENERIC дефолтами и units=5, причина не очевидна. Теперь `push_error` + `queue_free` инстанса + `continue`.
+
+    - **`Skeleton._apply_lod_physics_mode()` в `_ready()`.** Initial `_lod_level=NEAR` раньше полагался на маски в `skeleton.tscn` (16/39). Сейчас совпадает, но любая правка маски в `.tscn` тихо ломала бы первый кадр всех NEAR-скелетов до первого LOD-перехода (lod_check_interval=0.5с). Явный вызов делает контракт автономным.
+
+    - **MID/FAR-divisor counter reset на knockback exit.** `Skeleton._physics_process` теперь запоминает `was_knockback_active := _knockback.is_active()` **до** super/_far_step и сравнивает после. На переходе active→inactive — обнуляет `_mid_phys_tick_counter` и `_far_phys_tick_counter`. Без этого счётчик мог застрять на skip-фазе во время knockback'а → следующий кадр после восстановления был бы skipped → AI хочет двигаться, скелет «глюк-замораживается» на ~16мс (MID) / ~50мс (FAR).
+
+    Остальные находки (stale comment в `camp.gd:17`, sentinel `Color.BLACK` коллизия, `Quest unbounded advance`, `_pick_safe_pos` без минимума, `_resolve_visual_params` дублирование, per-instance materials cost) зафиксированы, но отложены — не баги-сейчас.
+
+39. **POI визуально стал костром** (коммиты `2d9f6a5`..`3398a5a`, `a25de28`, `855bb5f`, `1650683`, `a332b5b`). Геймдизайнер: «вместо диска и палки на POI поставим костёрок». Серия итераций по доводке визуала (см. §5.11 для финального состояния).
+
+    **Архитектурно (v1):** заменили `quest_actor.tscn` (была капсула с цветом по состоянию) на новую структуру: 4 наклонённых полена в форме вигвама + FlameCore (статичный sphere с emission) + FlameParticles (GPUParticles3D) + SmokeParticles (GPUParticles3D с предоставленным шейдером дыма) + OmniLight3D. `poi_marker.tscn` (был жёлтый плоский диск r=2.5) ужат до маленького круга золы r=0.95.
+
+    **`quest_actor.gd` переписан** под структурный костёр: `_clone_log_material` делает per-instance копию `Material_log` (иначе все QuestActor'ы делили бы один override и emission переключался бы у всех разом). `_apply_locked/_active/_completed` управляют `_log_material.emission`, `_flame_core.visible`, `_flame_particles.emitting`, `_smoke_particles.emitting/amount`, `_light.light_color/light_energy`.
+
+    **Smoke shader pipeline** (от Loop-Box/Stylized-Smoke-For-Godot4.5):
+    - `resources/smoke.gdshader` — voronoi-нойз UV-скролл + alpha-curve через `COLOR.a` от ProcessMaterial.
+    - `resources/smoke_color_gradient.tres` (тёмный → светлый), `smoke_voronoi_noise.tres` (cellular noise 256×256, frequency=0.04), `smoke_alpha_curve.tres` (peak в середине → «клочья»).
+    - `resources/smoke_material.tres` — ShaderMaterial с биндингами текстур.
+
+    **Главный визуальный фикс v2:** в первой версии `SmokeParticles.draw_pass_1 = QuadMesh 0.7×0.7` без `particle_flag_rotate_y` → quad'ы статичны в +Z, в перспективе превратились в «большие чёрные кубы». Изучил Loop-Box demo-проект через WebFetch; ключевые открытия:
+    - У них специальный `Mesh.tres` (190KB, 9408 индексов) — объёмная сетка из множества quad'ов под разными углами, **необходимая** для шейдера.
+    - В ParticleProcessMaterial критично `particle_flag_rotate_y = true` (каждая частица случайно вращается по Y) + `angle_min/max = ±90°` (рандомный стартовый поворот).
+    - `Vor_Scale=0.8, Alpha_Clip=0.0` (у меня по дефолту было 3.0 и 1.0).
+
+    Скачал их `Mesh.tres` → `resources/smoke_mesh.tres`, подключил как `draw_pass_1`. Чёрные кубы исчезли.
+
+    **Пламя на том же mesh'e v3:** сначала `FlameParticles` рисовал плоские «жёлтые кубики» (тот же баг что у дыма). Использовал `smoke_mesh.tres` для пламени тоже — он трёхмерный, billboard не нужен. Material — `StandardMaterial3D` UNSHADED + emission orange (без billboard_mode, конфликтовал бы с `particle_flag_rotate_y`).
+
+    **Тонкая настройка геймдизайнером** через инспектор: `amount_ratio` для регулирования density без изменения базового `amount`, `lifetime_randomness=0.09`, `gravity Y=2.0` (дым взлетает выше). Color/cast_shadow тюнинг.
+
+40. **Slam-визуал — distortion + ripple shader + пыль** (коммиты `5bc9691`..`3c9fc62`, `a332b5b`). К прежнему StandardMaterial3D-пузырю с emission и tween по альфе добавили серьёзный пост-эффект.
+
+    **Distortion shader** (`resources/slam_distortion.gdshader`, от внешнего автора): `unshaded, cull_disabled, blend_mix`. SCREEN_TEXTURE-преломление через `NORMAL.xy * distortion`, chromatic aberration по edge_factor, accretion disk glow, depth-aware base color (`depth_texture` сравнение → `color1` за threshold-ом vs `color2` рядом с поверхностью), SDF-noise dissolve через recursive `sdFbm`, бегущая ripple-волна (`sin(dist × frequency - time × speed)`).
+
+    **`_spawn_slam_visual` переписан:** `material_override = load(slam_distortion_material.tres).duplicate()` per-instance (без duplicate параллельные slam'ы из пула топчут друг друга через `set_shader_parameter`). Tween parallel:
+    - `mesh.scale: ONE → ONE × (slam_radius / 0.5)` (TRANS_QUAD, EASE_OUT — резкий старт).
+    - `shader.intensity: 1.0 → 0.0` (TRANS_CUBIC, EASE_IN) — master-control шейдера.
+    - `shader.ripple_time: 0.0 → 1.0` (LINEAR) — волна разбегается, шейдер сам гасит через `(1 - ripple_time)`.
+
+    **`_set_slam_param(value, mat, name)` helper** нужен потому что `Tween.tween_property` не умеет в `shader_parameter`'ы (читаются/пишутся через `set_shader_parameter`, не через property path). Используется `tween_method` с `.bind(mat, name)`.
+
+    **`shader.ripple_center` ставится в WORLD-координатах** (= origin) перед стартом tween'а — шейдер считает дистанцию от world_position фрагмента, поэтому центр волны не смещается при росте сферы.
+
+    **Bug-фикс: sphere unit-radius=0.5.** Шейдер использует `sphere_dist = length(object_position) - 0.5` для SDF-noise dissolve. Первая версия использовала `SphereMesh.radius=0.2`; `length(object_position) ≤ 0.2`, sphere_dist ∈ [-0.5, -0.3] всегда → `noise_alpha_raw = 0` → `dissolve_alpha = 0` → ALPHA = 0 → пузырь невидим. Поменял на radius=0.5/height=1.0, размер компенсируется через `target_scale = slam_radius / 0.5 = 10`.
+
+    **Тюнинг геймдизайнером:** color1/color2 → ч/б нейтральный (slam = физ-удар, не магия), `chromatic_aberration=0.0`, `intensity_2=0.3` (резкие концентрические полосы dissolve вместо размытия), затем переход на голубой accretion (синяя ударная волна). Все параметры в `slam_distortion_material.tres` — открой в инспекторе для крутилок.
+
+    **Пыль при ударе** (`9084ad7`..`3c9fc62`): добавлена `_spawn_slam_dust(origin)` — fire-and-forget GPUParticles3D без пула. `amount=72`, `lifetime=0.9с`, `explosiveness=1.0` (все частицы вылетают в первом кадре одним «взрывом»). Cleanup через `create_timer(lifetime + 0.2с).timeout.connect(queue_free)`. Ассеты: `slam_dust_material.tres` (StandardMaterial3D billboard серый), `slam_dust_process.tres` (sphere emission, spread 80°, velocity 3.5–6.5 м/с, gravity -2.5, damping). Слой пыли визуально весомо подкрепляет удар.
 
 ### 7.3 Решённые ошибки
 
