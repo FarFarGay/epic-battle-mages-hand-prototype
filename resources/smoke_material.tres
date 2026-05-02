@@ -8,12 +8,12 @@
 [resource]
 render_priority = 0
 shader = ExtResource("1_smoke_shader")
-shader_parameter/Color = Color(0.6, 0.6, 0.65, 1)
+shader_parameter/Color = Color(1, 1, 1, 1)
 shader_parameter/Color_Gradiant = ExtResource("2_smoke_grad")
 shader_parameter/Vor_Noise = ExtResource("3_smoke_vor")
 shader_parameter/Alpha_Curve = ExtResource("4_smoke_alpha")
-shader_parameter/Fernal_Power = 0.0
-shader_parameter/Vor_Scale = 3.0
-shader_parameter/Vor_Speed = 0.15
-shader_parameter/Emmision_Power = 0.2
-shader_parameter/Alpha_Clip = 1.0
+shader_parameter/Fernal_Power = 1.0
+shader_parameter/Vor_Scale = 0.8
+shader_parameter/Vor_Speed = 0.2
+shader_parameter/Emmision_Power = 1.0
+shader_parameter/Alpha_Clip = 0.0
