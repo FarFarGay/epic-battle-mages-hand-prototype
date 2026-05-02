@@ -170,6 +170,12 @@ func _ready() -> void:
 		# Когда лагерь развернётся — _start_deploy уберёт tower из группы
 		# (агро переключится на палатки), а на _finalize_pack — вернёт.
 		_set_tower_aggro(true)
+		# Палатки тоже атакуемы в каравне — скелеты, увидев караван глазами,
+		# идут на ближайшую цель (tower или палатку). Раньше было «уязвимы
+		# только в DEPLOYED», но геймдизайнер просил, чтобы караван был
+		# полноценной целью: tower + палатки. Бронируются только в
+		# PACKING_RETURNING (см. _start_pack).
+		_set_parts_vulnerable(true)
 
 
 ## Спавнит палатки по tent_scene × tent_count. Линейная цепочка позади башни:
@@ -634,10 +640,10 @@ func _start_deploy() -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] лагерь развёрнут @ (%.1f, %.1f, %.1f)" % [_deploy_anchor.x, _deploy_anchor.y, _deploy_anchor.z])
 	deployed.emit(_deploy_anchor)
-	# Палатки становятся уязвимы к атакам скелетов только в развёрнутом виде.
-	for p in _parts:
-		if p is CampPart:
-			(p as CampPart).set_vulnerable(true)
+	# Палатки уязвимы (как и в каравне сейчас — см. _ready/_finalize_pack).
+	# В DEPLOYED это идентично, в каравне они тоже atакуемы скелетами,
+	# единственное исключение — PACKING_RETURNING (бронь см. _start_pack).
+	_set_parts_vulnerable(true)
 	# Tower уходит из аггро-цели — скелеты переключаются на палатки/гномов.
 	# Если игрок свернёт лагерь, _finalize_pack вернёт tower в группу.
 	_set_tower_aggro(false)
@@ -665,10 +671,8 @@ func _start_pack() -> void:
 	_was_holding_stationary = false
 	# Палатки сразу неуязвимы — игрок начал свёртку, тент бронируется.
 	# Гномы остаются целью, пока не дойдут до своих палаток (они сами выходят
-	# из skeleton_target в _enter_in_tent).
-	for p in _parts:
-		if p is CampPart:
-			(p as CampPart).set_vulnerable(false)
+	# из skeleton_target в _enter_in_tent). На _finalize_pack бронь снимается.
+	_set_parts_vulnerable(false)
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] свёртка инициирована — ждём гномов")
 	for g in _gnomes:
@@ -687,7 +691,20 @@ func _finalize_pack() -> void:
 	# Tower снова цель скелетов в каравне — фоновые wander'ы могут увидеть
 	# караван и накинуться. Симметрично _start_deploy, который убирает.
 	_set_tower_aggro(true)
+	# Палатки также возвращаются в категорию целей — в каравне атакуемы.
+	# Бронь снимается, _set_parts_vulnerable(false) был выставлен в _start_pack.
+	_set_parts_vulnerable(true)
 	packed.emit()
+
+
+## Хелпер: разом ставит/убирает _vulnerable у всех живых палаток.
+## set_vulnerable у CampPart сам управляет членством в SKELETON_TARGET_GROUP
+## и приёмом урона. Используется в _ready (caravan-стартом), _start_deploy,
+## _start_pack, _finalize_pack — вместо четырёхкратного дублирования цикла.
+func _set_parts_vulnerable(value: bool) -> void:
+	for p in _parts:
+		if p is CampPart:
+			(p as CampPart).set_vulnerable(value)
 
 
 # --- Движение палаток ---

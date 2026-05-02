@@ -1,9 +1,12 @@
 class_name CampPart
 extends StaticBody3D
 ## Палатка лагеря. Препятствие для скелетов (CAMP_OBSTACLE) и одновременно
-## цель их атаки — но ТОЛЬКО в развёрнутом состоянии лагеря. Управляется
-## внешне через set_vulnerable: Camp вызывает true на _start_deploy и false
-## на _start_pack / _ready (стартуем в каравне → неуязвимы).
+## цель их атаки. Управляется внешне через set_vulnerable из Camp:
+##   - _ready (caravan-старт): true — скелеты могут атаковать караван.
+##   - _start_deploy: true — без изменений, в DEPLOYED тоже атакуемы.
+##   - _start_pack: false — лагерь свёртывается, тент бронируется (гномы
+##     внутри палаток, защитник от scattered ударов в момент сбора).
+##   - _finalize_pack: true — возврат в caravan-mode, цель снова открыта.
 ##
 ## Уязвимая = в группе skeleton_target + take_damage прибавляет урон.
 ## Неуязвимая = вне группы + take_damage no-op.
