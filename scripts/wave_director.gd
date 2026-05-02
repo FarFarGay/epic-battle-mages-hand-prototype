@@ -30,9 +30,11 @@ enum Phase { IDLE, RUNNING }
 ## по anchor'у при camp_deployed. WaveDirector сам не знает, какой Camp
 ## развернулся — ищет ближайший к anchor в этом массиве.
 @export var camp_paths: Array[NodePath] = []
-## Корневой узел POI-зон (QuestActor'ов). Прямые дети считаются POI; их
-## safe_radius используется в [_safe_score] для фоновых safe-фильтров,
-## а на camp_deployed мы ищем тут конкретный POI по anchor'у.
+## DEPRECATED (этап 42, фикс «POI без скрипта»): больше не используется.
+## POI собираются через группу [QuestActor.POI_GROUP], потому что
+## wave_schedule/safe_radius/API сидят на QuestActor-нодах (детях Poi_*),
+## а не на самих Poi_*-маркерах. Поле оставлено только чтоб main.tscn с
+## NodePath-override не валился на загрузке.
 @export_node_path("Node3D") var poi_root_path: NodePath
 @export var skeleton_scene: PackedScene
 @export_group("")
@@ -73,9 +75,11 @@ enum Phase { IDLE, RUNNING }
 
 var _spawner: EnemySpawner
 var _camps: Array[Camp] = []
-## POI-ноды (прямые дети poi_root_path). Используем как Node3D — фактически
-## это QuestActor'ы, но WaveDirector работает duck-typing'ом, чтобы не
-## жёстко зависеть от QuestActor-класса.
+## POI-ноды — собираются через группу [QuestActor.POI_GROUP] лениво в
+## _collect_pois_deferred. Раньше брались из poi_root_path-детей напрямую
+## (Poi_*-маркеры без скрипта), но wave_schedule/safe_radius/API живут
+## на их QuestActor-детях. Через группу мы гарантированно получаем нужные
+## ноды независимо от иерархии в main.tscn.
 var _pois: Array[Node3D] = []
 
 var _phase: int = Phase.IDLE
@@ -124,21 +128,37 @@ func _ready() -> void:
 		else:
 			push_warning("WaveDirector: camp_path %s не Camp" % path)
 
-	if not poi_root_path.is_empty():
-		var poi_root := get_node_or_null(poi_root_path) as Node3D
-		if poi_root != null:
-			for child in poi_root.get_children():
-				if child is Node3D:
-					_pois.append(child as Node3D)
-		else:
-			push_warning("WaveDirector: poi_root_path %s не Node3D" % poi_root_path)
-
 	# Подписка на лагерные сигналы — POI-driven осада активируется здесь.
 	# camp_deployed/packed эмитит каждый Camp при смене состояния
 	# CARAVAN ↔ DEPLOYED. WaveDirector один на сцену → один слушатель
 	# обрабатывает все лагеря.
 	EventBus.camp_deployed.connect(_on_camp_deployed)
 	EventBus.camp_packed.connect(_on_camp_packed)
+
+	# Собираем POI лениво — после первого process_frame все QuestActor._ready
+	# отработали и зарегистрировались в группе POI_GROUP. Без await группа
+	# может оказаться пустой если порядок _ready нашего узла раньше детей
+	# Poi_*/Actor (на практике редко, но защита бесплатная).
+	_collect_pois_deferred()
+
+
+## Лениво собирает POI через группу [QuestActor.POI_GROUP]. Группа содержит
+## именно QuestActor-ноды (на которых safe_radius и wave_schedule), а не
+## их родителей-маркеров Poi_*. Это решает баг «лагерь развёрнут — осады нет»:
+## раньше _pois содержал Poi_*-без-скрипта, has_method('get_wave_schedule')
+## возвращал false и WaveDirector считал POI «мирным».
+func _collect_pois_deferred() -> void:
+	await get_tree().process_frame
+	if not is_inside_tree():
+		return
+	_pois.clear()
+	for n in get_tree().get_nodes_in_group(QuestActor.POI_GROUP):
+		if not is_instance_valid(n):
+			continue
+		if n is Node3D:
+			_pois.append(n as Node3D)
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] собрано POI-зон: %d" % _pois.size())
 
 
 func _process(delta: float) -> void:
