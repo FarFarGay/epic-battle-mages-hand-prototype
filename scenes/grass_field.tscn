@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3 uid="uid://grassfield01"]
+
+[ext_resource type="Script" path="res://scripts/grass_field.gd" id="1_script"]
+[ext_resource type="PackedScene" uid="uid://grasschunk02" path="res://scenes/grass_chunk.tscn" id="2_chunk"]
+
+[node name="GrassField" type="Node3D"]
+script = ExtResource("1_script")
+world_size = 400.0
+chunk_count_xz = 8
+density = 0.1
+visibility_distance = 80.0
+blade_scale = 0.2
+blade_scale_variance = 0.3
+chunk_scene = ExtResource("2_chunk")

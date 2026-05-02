@@ -16,6 +16,7 @@
 [ext_resource type="PackedScene" uid="uid://drdbcmqb67xwj" path="res://scenes/quest_actor.tscn" id="16"]
 [ext_resource type="PackedScene" path="res://scenes/spawn_zone.tscn" id="17"]
 [ext_resource type="Resource" uid="uid://bj8ej7jf1bubo" path="res://resources/wave_schedule_default.tres" id="18_schedule_default"]
+[ext_resource type="PackedScene" uid="uid://grassfield01" path="res://scenes/grass_field.tscn" id="19_grass_field"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(400, 1, 400)
@@ -113,3 +114,5 @@ target_path = NodePath("../Tower")
 
 [node name="GameplayHud" parent="." unique_id=2130476976 instance=ExtResource("14")]
 camp_path = NodePath("../Camp")
+
+[node name="GrassField" parent="." instance=ExtResource("19_grass_field")]
