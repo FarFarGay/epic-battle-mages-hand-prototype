@@ -34,9 +34,7 @@ size = Vector2(0.5, 0.5)
 [sub_resource type="StandardMaterial3D" id="Material_flame_particle"]
 transparency = 1
 shading_mode = 0
-billboard_mode = 1
-billboard_keep_scale = true
-albedo_color = Color(1, 0.7, 0.2, 1)
+albedo_color = Color(1, 0.7, 0.2, 0.85)
 emission_enabled = true
 emission = Color(1, 0.5, 0.1, 1)
 emission_energy_multiplier = 2.5
@@ -60,15 +58,18 @@ gradient = SubResource("Gradient_flame_inner")
 width = 64
 
 [sub_resource type="ParticleProcessMaterial" id="Process_flame"]
+particle_flag_rotate_y = true
 emission_shape = 1
 emission_sphere_radius = 0.12
 direction = Vector3(0, 1, 0)
 spread = 8.0
+angle_min = -89.99999
+angle_max = 90.000015
 gravity = Vector3(0, 1.2, 0)
 initial_velocity_min = 0.6
 initial_velocity_max = 1.2
-scale_min = 0.4
-scale_max = 0.9
+scale_min = 0.18
+scale_max = 0.28
 scale_curve = SubResource("CurveTex_flame_scale")
 color = Color(1, 0.75, 0.25, 1)
 color_ramp = SubResource("GradTex_flame")
@@ -136,7 +137,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
 amount = 24
 lifetime = 0.8
 process_material = SubResource("Process_flame")
-draw_pass_1 = SubResource("QuadMesh_billboard")
+draw_pass_1 = ExtResource("3_smoke_mesh")
 material_override = SubResource("Material_flame_particle")
 
 [node name="SmokeParticles" type="GPUParticles3D" parent="."]
