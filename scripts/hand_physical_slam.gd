@@ -20,6 +20,14 @@ const SLAM_VISUAL_BASE_RADIUS: float = 0.5
 const SLAM_VISUAL_BASE_HEIGHT: float = 1.0
 const SLAM_VISUAL_TWEEN_DURATION: float = 0.45
 const SLAM_DISTORTION_MATERIAL_PATH: String = "res://resources/slam_distortion_material.tres"
+## Пыль при ударе: GPUParticles3D one-shot, разлёт радиально вверх.
+## Дефолтные ассеты — общие для всех slam'ов (process_material детерминирован
+## без параметров от инстанса), не нужно дублировать на каждый шлепок.
+const SLAM_DUST_MATERIAL_PATH: String = "res://resources/slam_dust_material.tres"
+const SLAM_DUST_PROCESS_PATH: String = "res://resources/slam_dust_process.tres"
+const SLAM_DUST_AMOUNT: int = 36
+const SLAM_DUST_LIFETIME: float = 0.7
+const SLAM_DUST_QUAD_SIZE: float = 0.12
 
 class SlamHit:
 	extends RefCounted
@@ -169,6 +177,7 @@ func _perform_slam() -> void:
 		print("[Hand:Physical:Slam] хлопок @ (%.1f, %.1f, %.1f), задело: %d (из них FAR: %d)" % [origin.x, origin.y, origin.z, affected_count, far_hits])
 
 	_spawn_slam_visual(origin)
+	_spawn_slam_dust(origin)
 	slammed.emit(origin, slam_radius)
 
 
@@ -268,3 +277,48 @@ func _recycle_slam_visual(mesh: MeshInstance3D) -> void:
 		_slam_visual_pool.append(mesh)
 	else:
 		mesh.queue_free()
+
+
+## Пыль при ударе — fire-and-forget GPUParticles3D one-shot. Без пула:
+## slam_cooldown=0.5с, lifetime пыли=0.7с — максимум 2 одновременно живых
+## партикл-узла, новый создаётся реже чем старый завершается. Overhead на
+## создание GPUParticles3D в разы меньше чем смысла усложнять пулом.
+##
+## Mesh — простой QuadMesh, billboard через material (StandardMaterial3D
+## billboard_mode=ENABLED). Частицы летят радиально (spread=80° от
+## direction Y) с быстрой стартовой скоростью (3.5..6.5 м/с) и затухают
+## damping'ом + гравитацией — выглядит как разлетевшаяся пыль от удара.
+func _spawn_slam_dust(pos: Vector3) -> void:
+	if _effects_root == null:
+		return
+	var process_mat := load(SLAM_DUST_PROCESS_PATH) as ParticleProcessMaterial
+	var dust_mat := load(SLAM_DUST_MATERIAL_PATH) as StandardMaterial3D
+	if process_mat == null or dust_mat == null:
+		push_error("[Slam] dust assets не загрузились")
+		return
+
+	var quad := QuadMesh.new()
+	quad.size = Vector2(SLAM_DUST_QUAD_SIZE, SLAM_DUST_QUAD_SIZE)
+
+	var particles := GPUParticles3D.new()
+	particles.process_material = process_mat
+	particles.draw_pass_1 = quad
+	particles.material_override = dust_mat
+	particles.amount = SLAM_DUST_AMOUNT
+	particles.lifetime = SLAM_DUST_LIFETIME
+	particles.one_shot = true
+	# explosiveness=1.0 — все частицы спавнятся в первом кадре (один взрыв
+	# пыли), а не размазываются по lifetime'у как у непрерывного эмиттера.
+	particles.explosiveness = 1.0
+	particles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+	_effects_root.add_child(particles)
+	particles.global_position = pos
+	particles.emitting = true
+
+	# Чистим через таймер. lifetime + небольшой запас на anim'у scale_curve до 0.
+	var cleanup_delay: float = SLAM_DUST_LIFETIME + 0.2
+	_hand.get_tree().create_timer(cleanup_delay).timeout.connect(func() -> void:
+		if is_instance_valid(particles):
+			particles.queue_free()
+	)
