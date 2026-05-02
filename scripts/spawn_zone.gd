@@ -7,16 +7,18 @@ extends Node3D
 ##
 ## Два аспекта:
 ##
-## 1. **Neutral-спавн** (initial/ramp/replenish/[-debug). EnemySpawner.pick_random_pos
+## 1. **Фоновый прилив** (initial + рост во времени, [-debug). EnemySpawner.pick_random_pos
 ##    выбирает случайную точку в объединении всех SpawnZone-ов площадно-взвешенно.
 ##    Wave-budget здесь не учитывается — даже исчерпанная зона участвует в
-##    neutral-спавне как фоновая «локация».
+##    фоновом спавне как «локация для wander-скелетов».
 ##
-## 2. **Волны (waves)**. Дирижёр `WaveDirector._spawn_wave` ищет SpawnZone-ы с
+## 2. **POI-волны**. `WaveDirector._spawn_poi_wave` ищет SpawnZone-ы с
 ##    `_waves_left > 0`, выбирает одну (политика — uniform random) и фейерит
 ##    группу `skeletons_per_wave` скелетов внутри её прямоугольника. После
 ##    выстрела зовётся `consume_wave()` — _waves_left декрементится. По
-##    исчерпанию зона больше не выбирается для волн (в neutral-спавне остаётся).
+##    исчерпанию зона больше не выбирается для волн (в фоне остаётся).
+##    `skeletons_per_wave` теперь приходит из активной WaveStage POI, а не
+##    из самой зоны (зона хранит только budget остатка).
 ##
 ## Рантайм-API для эвентов типа «приход Короля Ночи»:
 ## - `set_waves(n)` — переписать остаток (например, всем зонам по 50 разом).
@@ -49,6 +51,9 @@ extends Node3D
 ## (0) — зона тиха, пока кто-то не вызовет `add_waves`/`set_waves`.
 @export var wave_count: int = 5
 ## Сколько скелетов в группе за одну волну с этой зоны.
+## DEPRECATED (K2 POI-driven): размер пачки теперь читается из активной
+## WaveStage POI, а не из самой зоны. Поле оставлено чтобы main.tscn с
+## override'нутым значением не валился на загрузке. Игнорируется.
 @export var skeletons_per_wave: int = 10
 @export_group("")
 

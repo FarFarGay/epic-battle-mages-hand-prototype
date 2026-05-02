@@ -1,93 +1,71 @@
 class_name WaveDirector
 extends Node
-## Режиссёр волн. Управляет фазами кампании врагов — `EnemySpawner` остаётся
-## низкоуровневым «как» (инстанцируй сцену, поставь координату), а сюда уезжает
-## «когда и сколько» (фазы, таймеры, целевая популяция).
+## Режиссёр кампании врагов — POI-driven архитектура (с K2/K3-итерации).
 ##
-## Фазы:
-## - IDLE — до первого нажатия P. Ничего не делается.
-## - RAMP — первичный набор. На старт — initial_count uniform по карте,
-##   затем доспавн по 1 шт каждые ramp_interval с до ramp_target_count.
-##   ramp_interval автоматически = ramp_duration / (target − initial), так что
-##   полный ramp занимает ramp_duration. Длится фиксированное время — на
-##   убийства игрока не реагирует, чтобы первичный набор был детерминирован.
-## - MAINTAIN — параллельно: replenish + waves.
-##   * replenish: если живых ≤ ramp_target_count − replenish_threshold,
-##     доспавнивает по 1 шт каждые replenish_interval до возврата к target.
-##     Hysteresis (threshold=20): после убийств не торопимся восстанавливать —
-##     даём игроку «передышку», ramp возвращается только при значимой просадке.
-##   * waves: каждые wave_interval с дирижёр выбирает SpawnZone с остатком
-##     budget'а волн (uniform random) и спавнит из неё группу из
-##     `zone.skeletons_per_wave` штук. Цель — ближайший живой лагерь от точки
-##     спавна (когда Tower стоит на POI, Camp деплоится туда → wave с соседней
-##     зоны идёт на этот POI). После выстрела `zone.consume_wave()` декрементит
-##     budget; по исчерпанию зона перестаёт участвовать в волнах (но остаётся
-##     в neutral-спавне).
+## Геймдизайн-петля:
+## - Между POI: караван едет, активного лагеря нет. Фоновый «прилив» —
+##   глобальная популяция wander-скелетов растёт по wall-clock минутам
+##   (background_initial_count → background_cap), независимо от действий
+##   игрока. Эти скелеты сами агрятся на караван и гномов через vision.
+## - На POI: игрок жмёт R рядом с костром, лагерь развёртывается. Camp
+##   эмитит camp_deployed → WaveDirector находит соответствующий
+##   QuestActor по anchor'у, берёт его wave_schedule и проигрывает stage'ы
+##   по порядку. Стадии увеличивают темп И/ИЛИ размер пачки во времени.
+##   На camp_packed — POI-волны останавливаются. Фон продолжает идти.
+## - Следующий POI игрок заходит в более грязный мир (фон вырос). Это и
+##   даёт «постепенно тяжелее» без явного level-design'а сложности.
 ##
-## Рестарт по P (в любой фазе): kill_all_skeletons + reset_population на всех
-## camp_paths + новый initial spawn → RAMP с нуля. «Воскрешение убитых гномов»
-## делается через Camp.reset_population — снести оставшихся, заспавнить новых
-## на уцелевших палатках.
+## Старая RAMP/MAINTAIN-фаза удалена. initial_count/ramp_*/replenish_*
+## заменены на background_*. Wave-параметры (interval, per_wave) теперь
+## per-POI в [WaveSchedule], а не глобальные.
+##
+## Рестарт по P: kill_all_skeletons + reset_population на всех camp_paths
+## + сброс background-таргета + остановка активного POI. С нуля.
 
-enum Phase { IDLE, RAMP, MAINTAIN }
+enum Phase { IDLE, RUNNING }
 
 @export_group("Refs")
 @export_node_path("EnemySpawner") var spawner_path: NodePath
-## Лагеря: цели атаки (для каждой волны выбирается ближайший к точке спавна)
-## и адресаты reset_population при P-рестарте.
+## Лагеря: для P-рестарта (reset_population) и для поиска активного Camp
+## по anchor'у при camp_deployed. WaveDirector сам не знает, какой Camp
+## развернулся — ищет ближайший к anchor в этом массиве.
 @export var camp_paths: Array[NodePath] = []
-## Корневой узел POI — все его прямые дети считаются точками интереса со
-## своими safe-зонами (poi_safe_radius). POI на спавн скелетов влияют только
-## геометрически (волны и фоновый wander к ним не прилетают), сам Quest-прогресс
-## с этой логикой не связан.
+## Корневой узел POI-зон (QuestActor'ов). Прямые дети считаются POI; их
+## safe_radius используется в [_safe_score] для фоновых safe-фильтров,
+## а на camp_deployed мы ищем тут конкретный POI по anchor'у.
 @export_node_path("Node3D") var poi_root_path: NodePath
 @export var skeleton_scene: PackedScene
 @export_group("")
 
-@export_group("Initial ramp")
-## Сколько скелетов спавнится на нажатии P (мгновенно, uniform по карте).
-@export var initial_count: int = 20
-## Целевая популяция к концу ramp-фазы.
-@export var ramp_target_count: int = 50
-## За сколько секунд target_count набирается из initial_count. Темп ramp =
-## (target − initial) / duration штук в секунду. При 30с / (50 − 20) = 1/с.
-@export var ramp_duration: float = 30.0
+@export_group("Background tide (фоновая угроза)")
+## Сколько скелетов мгновенно спавнится на P (стартовое население карты).
+## Они wander-ят и агрятся на караван/гномов по vision'у.
+@export var background_initial_count: int = 50
+## Темп роста таргет-популяции в **скелетах в минуту** wall-clock времени.
+## Через 10 минут после P при growth=30 target = 50 + 300 = 350 скелетов.
+@export var background_growth_per_minute: float = 30.0
+## Потолок таргет-популяции. Дальше фон не растёт. Подбирается по PerfHUD —
+## на нашей оптимизированной симуляции 600 держит 60fps; за порог не лезем.
+@export var background_cap: int = 600
+## Период подспавна одного скелета при дефиците (live < target). 1.0с —
+## плавный «прилив», не залп. Если просадка большая (например после
+## зачистки POI игроком), подкачка идёт ровно по 1/сек до возврата к target.
+@export var background_replenish_interval: float = 1.0
 @export_group("")
 
-@export_group("Maintain — replenish (после ramp)")
-## Гистерезис: replenish активен только когда живых ≤ target − threshold.
-## При threshold=20 и target=50 — респавн запускается на 30 живых и ниже,
-## не на каждое убийство. Это «небольшая задержка на 20 скелетов».
-@export var replenish_threshold: int = 20
-## Темп респавна в фазе MAINTAIN. Замедленный — раз в 2с против 1с в ramp.
-@export var replenish_interval: float = 2.0
-@export_group("")
-
-@export_group("Maintain — waves")
-## Каждые сколько секунд идёт волна на ближайший лагерь.
-@export var wave_interval: float = 60.0
-## Радиус разброса группы вокруг точки спавна. Группа должна выглядеть
-## плотной (не одиночные скелеты по всей карте), но не накладываться телами.
-## 10 скелетов в круге r=4 — плотность ~0.2 м² на скелет, без штабеля.
+@export_group("POI siege spawn")
+## Радиус разброса группы вокруг точки спавна волны. Группа должна выглядеть
+## плотной, но не штабелем. 10 скелетов в r=4 — комфортная плотность.
 @export var wave_group_radius: float = 4.0
-## Минимальная дистанция от точки спавна до ближайшего лагеря. Меньше —
-## волна появляется в зоне видимости защитников/гномов, что ломает идею
-## «ниоткуда». Больше — карта забита safe-зонами и точку трудно найти.
-## 32м (~30% меньше прежних 45) — чуть внутри полной зоны огня защитника
-## (patrol_radius=12 + attack_radius=22.5 = 34.5м), это компромисс
-## геймдизайнера: спавн ближе к лагерю, скелеты быстрее доходят до боя,
-## меньше «мёртвых» нейтральных коридоров на карте. Та же константа
-## используется ResourceZone'ами как «ничейная зона» — там тоже стало
-## плотнее (см. is_safe_pos).
+## Минимальная дистанция от точки спавна волны до ближайшего лагеря. Меньше —
+## волна появляется в зоне видимости защитников, ломает идею «ниоткуда».
 @export var wave_safe_radius: float = 32.0
-## Минимальная дистанция от точки спавна до любой POI. POI — сюжетные
-## точки, спавн скелетов рядом ломает «безопасный подход» к актору. Зона
-## та же по порядку что и у лагеря, отдельный параметр чтобы крутить
-## независимо. Уменьшена параллельно с wave_safe_radius (~30%).
-@export var poi_safe_radius: float = 32.0
-## Сколько раз пробуем рандомную точку до фоллбэка. На карте 400×400 с
-## 6 лагерями вероятность попасть в safe-зону высокая — 30 попыток с большим
-## запасом. Фоллбэк: берём точку с максимумом min-distance до лагерей.
+## Fallback safe-радиус POI, если QuestActor не предоставил собственный
+## (через свойство safe_radius). Используется в [_safe_score] для фонового
+## размещения. POI с QuestActor-скриптом дают свой safe_radius напрямую —
+## это значение для совместимости со «странными» POI-нодами.
+@export var poi_safe_radius_fallback: float = 32.0
+## Сколько раз пробуем рандомную точку до фоллбэка для фонового спавна.
 @export var wave_position_attempts: int = 30
 @export_group("")
 
@@ -95,31 +73,39 @@ enum Phase { IDLE, RAMP, MAINTAIN }
 
 var _spawner: EnemySpawner
 var _camps: Array[Camp] = []
+## POI-ноды (прямые дети poi_root_path). Используем как Node3D — фактически
+## это QuestActor'ы, но WaveDirector работает duck-typing'ом, чтобы не
+## жёстко зависеть от QuestActor-класса.
 var _pois: Array[Node3D] = []
 
 var _phase: int = Phase.IDLE
-## Время в RAMP-фазе. По достижении ramp_duration — переход в MAINTAIN.
-var _ramp_elapsed: float = 0.0
-## Кулдаун до следующего ramp-спавна (по 1 шт).
-var _ramp_spawn_cd: float = 0.0
-## Сколько ramp-доспавнов сделано (0..ramp_target_count − initial_count).
-var _ramp_spawned: int = 0
-var _replenish_cd: float = 0.0
+## Текущая таргет-популяция фона. Float, чтобы плавно расти по delta.
+## Растёт со старта кампании; на P-рестарте сбрасывается в background_initial_count.
+var _background_target: float = 0.0
+## Кулдаун до следующего ramp-доспавна одного фонового скелета. Тикает в
+## _tick_background. Каждые background_replenish_interval секунд — попытка
+## подкачать одного скелета если live < target.
+var _background_replenish_cd: float = 0.0
+
+## Активный POI и его Camp — заполняются на camp_deployed, чистятся на packed.
+## Если null — POI-волны не идут (только фон).
+var _active_camp: Camp = null
+var _active_poi: Node3D = null
+var _active_schedule: WaveSchedule = null
+var _stage_index: int = 0
+var _stage_elapsed: float = 0.0
+## Кулдаун до следующей POI-волны. Берётся из stage.wave_interval, тикает
+## пока активный POI не сменился/не остановился.
 var _wave_cd: float = 0.0
-## Таймер периодического мониторинга skeleton-в-safe-зоне. Раз в секунду
-## считаем сколько скелетов внутри wave_safe_radius каждого лагеря, лог по
-## фронту изменения. Без этого логирование проникновений было бы либо спамом
-## (на каждый кадр), либо требовало бы on-enter событий через Area3D на лагерях.
+
+## Таймер периодического мониторинга skeleton-в-safe-зоне (как раньше).
 var _safe_zone_check_cd: float = 0.0
-## Кол-во скелетов в safe-зоне на прошлой проверке (агрегат по всем лагерям).
-## Меняется → лог. Стартовый -1 чтобы при первом 0 в фазах IDLE/RAMP не падал лог.
 var _last_safe_zone_count: int = -1
 
 
-## Группа для discovery извне без явных NodePath. WaveDirector один на сцену
-## (предполагается); ResourceZone и другие потребители safe-логики находят
-## его через get_first_node_in_group, чтобы не требовать ручной NodePath-привязки
-## в инспекторе для каждой зоны.
+## Группа для discovery извне без явных NodePath. WaveDirector один на сцену;
+## ResourceZone, Camp и другие потребители safe/POI-логики находят его
+## через get_first_node_in_group, чтобы не требовать ручной NodePath-привязки.
 const GROUP := &"wave_director"
 
 
@@ -147,53 +133,48 @@ func _ready() -> void:
 		else:
 			push_warning("WaveDirector: poi_root_path %s не Node3D" % poi_root_path)
 
+	# Подписка на лагерные сигналы — POI-driven осада активируется здесь.
+	# camp_deployed/packed эмитит каждый Camp при смене состояния
+	# CARAVAN ↔ DEPLOYED. WaveDirector один на сцену → один слушатель
+	# обрабатывает все лагеря.
+	EventBus.camp_deployed.connect(_on_camp_deployed)
+	EventBus.camp_packed.connect(_on_camp_packed)
+
 
 func _process(delta: float) -> void:
 	if Input.is_action_just_pressed("spawn_enemies"):
 		_start_campaign()
-		return  # на этом кадре не тикаем — initial spawn уже идёт async
+		return  # на этом кадре не тикаем — initial spawn уже идёт
 
-	# O — немедленная волна. Сбрасывает счётчик, чтобы следующая обычная волна
-	# была через полный wave_interval, а не через секунды (иначе при O за
-	# 5с до плановой волны игрок получил бы дабл-залп). Доступно в любой
-	# фазе, включая RAMP — для тестов это удобнее, чем ждать конца ramp'а.
+	# O — немедленная волна на активный POI. Сбрасывает _wave_cd. Без
+	# активного POI — игнор с предупреждением (волне некуда идти).
 	if Input.is_action_just_pressed("force_wave"):
-		if _phase == Phase.IDLE:
+		if _active_camp == null or _active_schedule == null or _active_schedule.is_empty():
 			if debug_log and LogConfig.master_enabled:
-				print("[WaveDirector] O проигнорировано — кампания не запущена (нажми P)")
+				print("[WaveDirector] O проигнорировано — нет активного POI с осадой")
 		else:
-			_spawn_wave()
-			_wave_cd = wave_interval
+			var stage := _active_schedule.get_stage(_stage_index)
+			if stage != null:
+				_spawn_poi_wave(stage.skeletons_per_wave)
+				_wave_cd = stage.wave_interval
 
 	# [ — debug: моментальный спавн 100 скелетов uniform по safe-зонам.
-	# Не трогает фазу/таймеры кампании, может зваться и в IDLE — это просто
-	# «накидать массовку для теста». Учитывает Camp/POI safe-зоны как обычный
-	# spawn_safe_uniform (через _pick_safe_pos).
 	if Input.is_action_just_pressed("debug_spawn_100"):
 		_spawn_safe_uniform(100)
 		if debug_log and LogConfig.master_enabled:
 			print("[WaveDirector] [-debug: спавн 100 скелетов (живых после: %d)" % _live_skeleton_count())
 
-	# ] — stress-test: спавн 2000 скелетов uniform по всему квадрату карты
-	# через async EnemySpawner.spawn_uniform (батчами по _SPAWNS_PER_FRAME=6).
-	# Цель — упереться в перфоманс и измерить через PerfHud (F3): где боттлнек
-	# — process_ms (CPU AI), physics_ms (CharacterBody3D-коллизии),
-	# draw_calls (GPU/uniqueness MeshInstance), память. Игнорирует safe-зоны
-	# и SpawnZone-границы — для перф-замера распределение неважно.
-	# Fire-and-forget: сама spawn_uniform — coroutine, _process не ждёт.
+	# ] — stress-test: 2000 скелетов uniform по всему квадрату карты.
 	if Input.is_action_just_pressed("debug_stress_2000"):
 		if _spawner != null and skeleton_scene != null:
 			_spawner.spawn_uniform(skeleton_scene, 2000)
 			if debug_log and LogConfig.master_enabled:
 				print("[WaveDirector] ]-stress: запущен async-спавн 2000 скелетов")
 
-	match _phase:
-		Phase.IDLE:
-			pass
-		Phase.RAMP:
-			_tick_ramp(delta)
-		Phase.MAINTAIN:
-			_tick_maintain(delta)
+	if _phase == Phase.RUNNING:
+		_tick_background(delta)
+		if _active_camp != null and _active_schedule != null:
+			_tick_active_poi(delta)
 
 	_tick_safe_zone_monitor(delta)
 
@@ -206,15 +187,13 @@ func _start_campaign() -> void:
 		return
 
 	# Первое P (фаза IDLE) — это «старт», а не «рестарт». Гномов не трогаем —
-	# они живые с _ready Camp'а и не должны заменяться на свежих. Скелетов
-	# тоже нет, kill_all_skeletons был бы no-op. Только в RAMP/MAINTAIN
-	# (повторное P) делаем чистку: убитые гномы воскресают, скелеты сносятся.
+	# они живые с _ready Camp'а. Скелетов нет, kill_all_skeletons был бы no-op.
+	# Только в RUNNING (повторное P) делаем чистку.
 	var is_restart := _phase != Phase.IDLE
 
 	if debug_log and LogConfig.master_enabled:
 		if is_restart:
-			var phase_name: String = ["IDLE", "RAMP", "MAINTAIN"][_phase]
-			print("[WaveDirector] P-рестарт из фазы %s" % phase_name)
+			print("[WaveDirector] P-рестарт")
 		else:
 			print("[WaveDirector] P-старт (первый запуск)")
 
@@ -223,121 +202,178 @@ func _start_campaign() -> void:
 		for camp in _camps:
 			if is_instance_valid(camp):
 				camp.reset_population()
-	# Initial spawn — uniform по карте, но вне safe-радиуса лагеря, чтобы
-	# защитники не открывали огонь сразу после P (раньше initial 20 uniform
-	# по 400×400 случайно ронял часть скелетов в 15м зону защитников).
-	_spawn_safe_uniform(initial_count)
-	# 4. Сброс таймеров и фазы.
-	_phase = Phase.RAMP
-	_ramp_elapsed = 0.0
-	_ramp_spawned = 0
-	_ramp_spawn_cd = _ramp_interval()
-	_replenish_cd = replenish_interval
-	# Первая волна — через wave_interval после конца ramp.
-	_wave_cd = ramp_duration + wave_interval
+		# Сбрасываем активный POI — Camp на рестарте уже не развёрнут
+		# (его reset_population/state не возвращает в DEPLOYED). На следующий
+		# деплой осада запустится заново по camp_deployed.
+		_clear_active_poi()
+
+	# Initial фоновое население — стартовый «прилив».
+	_spawn_safe_uniform(background_initial_count)
+	_background_target = float(background_initial_count)
+	_background_replenish_cd = background_replenish_interval
+	_phase = Phase.RUNNING
 
 
-# --- RAMP ---
+# --- Фоновый прилив ---
 
-func _tick_ramp(delta: float) -> void:
-	_ramp_elapsed += delta
-	_ramp_spawn_cd -= delta
+## Тик фонового прилива:
+## 1. _background_target плавно растёт со скоростью growth_per_minute (с cap'ом).
+## 2. Если live < target и кулдаун истёк — спавним одного скелета (uniform safe).
+## 3. Кулдаун перевзводится независимо от того, был ли спавн (иначе после долгой
+##    стабильности первая просадка ждала бы полный interval).
+func _tick_background(delta: float) -> void:
+	# Рост target. growth_per_minute / 60 = скелетов в секунду target-увеличения.
+	# float-точность не теряется: после 10 минут roughly +300, в float это OK.
+	_background_target = minf(
+		_background_target + (background_growth_per_minute / 60.0) * delta,
+		float(background_cap),
+	)
 
-	var ramp_total := ramp_target_count - initial_count
-	if _ramp_spawn_cd <= 0.0 and _ramp_spawned < ramp_total:
+	_background_replenish_cd -= delta
+	if _background_replenish_cd > 0.0:
+		return
+	_background_replenish_cd = background_replenish_interval
+
+	var live: int = _live_skeleton_count()
+	if float(live) < _background_target:
 		_spawn_safe_uniform(1)
-		_ramp_spawned += 1
-		_ramp_spawn_cd += _ramp_interval()
 
-	if _ramp_elapsed >= ramp_duration:
-		_phase = Phase.MAINTAIN
-		_replenish_cd = replenish_interval
-		_wave_cd = wave_interval
+
+# --- POI-волны ---
+
+func _on_camp_deployed(anchor: Vector3) -> void:
+	# Находим Camp, развернувшийся ровно сюда. anchor у нас защёлкнут на POI
+	# (если require_poi=true) → он же = POI.global_position.
+	var camp := _find_camp_at(anchor)
+	if camp == null:
 		if debug_log and LogConfig.master_enabled:
-			var live := _live_skeleton_count()
-			print("[WaveDirector] RAMP завершён — переход в MAINTAIN (живых: %d)" % live)
+			print("[WaveDirector] camp_deployed: лагерь по anchor %s не найден" % str(anchor))
+		return
+	# Находим POI по тому же anchor'у. Если POI нет (deploy без require_poi —
+	# дебаг-режим), осада не запускается. Camp всё равно нормально работает.
+	var poi := _find_poi_at(anchor)
+	if poi == null:
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] camp_deployed без POI — фон без осады (anchor=%s)" % str(anchor))
+		return
+	# Берём расписание у POI. Если null/пустое — POI «мирный».
+	var schedule: WaveSchedule = null
+	if poi.has_method("get_wave_schedule"):
+		schedule = poi.get_wave_schedule()
+	if schedule == null or schedule.is_empty():
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] POI %s мирный (нет wave_schedule) — без осады" % poi.name)
+		return
+
+	_active_camp = camp
+	_active_poi = poi
+	_active_schedule = schedule
+	_stage_index = 0
+	_stage_elapsed = 0.0
+	var first_stage := schedule.get_stage(0)
+	_wave_cd = first_stage.wave_interval if first_stage != null else 0.0
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] осада старт: POI=%s camp=%s stage=0 (interval=%.0fс, %d скел/волна)" % [
+			poi.name, camp.name, _wave_cd, first_stage.skeletons_per_wave if first_stage else 0,
+		])
 
 
-func _ramp_interval() -> float:
-	var ramp_total := ramp_target_count - initial_count
-	if ramp_total <= 0:
-		return 0.0
-	return ramp_duration / float(ramp_total)
+func _on_camp_packed() -> void:
+	if _active_camp == null:
+		return
+	if debug_log and LogConfig.master_enabled:
+		var stage_count: int = _active_schedule.stages.size() if _active_schedule != null else 0
+		print("[WaveDirector] осада стоп: POI=%s (доиграл до stage %d/%d)" % [
+			_active_poi.name if _active_poi != null else "?",
+			_stage_index, stage_count,
+		])
+	_clear_active_poi()
 
 
-# --- MAINTAIN ---
+func _clear_active_poi() -> void:
+	_active_camp = null
+	_active_poi = null
+	_active_schedule = null
+	_stage_index = 0
+	_stage_elapsed = 0.0
+	_wave_cd = 0.0
 
-func _tick_maintain(delta: float) -> void:
-	# Replenish с гистерезисом.
-	_replenish_cd -= delta
-	if _replenish_cd <= 0.0:
-		var live := _live_skeleton_count()
-		var deficit_threshold := ramp_target_count - replenish_threshold
-		if live <= deficit_threshold and live < ramp_target_count:
-			_spawn_safe_uniform(1)
-		# Таймер тикает всегда — иначе после долгой паузы (live=50) первый
-		# просадочный спавн отложится на полный interval. С тиканьем —
-		# реакция на просадку немедленная (но не чаще interval).
-		_replenish_cd = replenish_interval
 
-	# Waves.
+## Тик активной осады. Stage advance + wave timer.
+func _tick_active_poi(delta: float) -> void:
+	if not is_instance_valid(_active_camp) or not _active_camp.has_alive_parts():
+		# Лагерь разрушен — осада бессмысленна, выключаемся.
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] осада прервана: лагерь %s уничтожен" % (_active_camp.name if _active_camp else "?"))
+		_clear_active_poi()
+		return
+	var stage := _active_schedule.get_stage(_stage_index)
+	if stage == null:
+		return
+
+	_stage_elapsed += delta
 	_wave_cd -= delta
 	if _wave_cd <= 0.0:
-		_spawn_wave()
-		_wave_cd = wave_interval
+		_spawn_poi_wave(stage.skeletons_per_wave)
+		_wave_cd = stage.wave_interval
+
+	# Stage advance: только если есть следующая стадия. Последняя залипает.
+	if _stage_elapsed >= stage.duration and _stage_index + 1 < _active_schedule.stages.size():
+		_stage_index += 1
+		_stage_elapsed = 0.0
+		var next_stage := _active_schedule.get_stage(_stage_index)
+		# Wave_cd сохраняем — следующая волна идёт в обычное время по новому
+		# темпу. Без этого пользователь получал бы «бесплатную паузу» на
+		# переходе стадий, что ломает ощущение нарастающей угрозы.
+		_wave_cd = minf(_wave_cd, next_stage.wave_interval) if next_stage != null else _wave_cd
+		if debug_log and LogConfig.master_enabled and next_stage != null:
+			print("[WaveDirector] stage advance %d→%d (interval=%.0fс, %d скел/волна)" % [
+				_stage_index - 1, _stage_index, next_stage.wave_interval, next_stage.skeletons_per_wave,
+			])
 
 
-# --- Wave: точка спавна + ближайший лагерь + forced_target ---
-
-func _spawn_wave() -> void:
-	# 1. Найти SpawnZone-ы с остатком budget'а волн. Дирижёр здесь и есть
-	#    «решает в каком порядке атакуют» — uniform random pick из живых
-	#    зон. Если все исчерпаны — тишина (волна пропущена).
-	if _spawner == null:
+## Спавнит одну POI-волну: группу из count скелетов из случайной живой
+## SpawnZone в сторону палаток активного лагеря.
+func _spawn_poi_wave(count: int) -> void:
+	if _spawner == null or _active_camp == null:
 		return
+	# Выбираем зоны с остатком волн. Если все исчерпаны — волна пропускается
+	# (тишина). Это легаси-budget: можно крутить чтобы дизайнер ограничил
+	# «сколько в принципе волн с этой стороны может прилететь».
 	var live_zones: Array[SpawnZone] = []
 	for z in _spawner.get_zones():
 		if is_instance_valid(z) and z.waves_left() > 0:
 			live_zones.append(z)
 	if live_zones.is_empty():
 		if debug_log and LogConfig.master_enabled:
-			print("[WaveDirector] волна пропущена — нет SpawnZone-ов с остатком волн")
+			print("[WaveDirector] POI-волна пропущена — нет SpawnZone с остатком")
 		return
 	var zone: SpawnZone = live_zones[randi() % live_zones.size()]
 
-	# 2. Origin — uniform-точка внутри выбранной зоны. Safe-фильтр Camp/POI
-	#    не накладывается: дизайнер сам отвечает что зона стоит снаружи safe-зон
-	#    (визуальный контроль через poi-маркер делать не стали — пока трастуем).
 	var origin := _spawner.random_point_in_zone(zone)
 	origin.y = _spawner.spawn_y
 
-	# 3. Цель — ближайший живой лагерь от origin. Когда Tower стоит на POI,
-	#    Camp деплоится туда же → волна из соседней зоны идёт на этот POI.
-	var target_camp := _nearest_alive_camp(origin)
-	if target_camp == null:
-		if debug_log and LogConfig.master_enabled:
-			print("[WaveDirector] волна пропущена — нет живых лагерей")
-		return
-	var target_part := target_camp.nearest_part_to(origin)
+	var target_part := _active_camp.nearest_part_to(origin)
 	if target_part == null:
 		if debug_log and LogConfig.master_enabled:
-			print("[WaveDirector] волна пропущена — у лагеря %s нет живых палаток" % target_camp.name)
+			print("[WaveDirector] POI-волна пропущена — у лагеря нет живых палаток")
 		return
 
-	# 4. Спавн группы из `zone.skeletons_per_wave` штук и назначение forced_target.
-	var skeletons := _spawner.spawn_group(skeleton_scene, zone.skeletons_per_wave, origin, wave_group_radius)
+	var skeletons := _spawner.spawn_group(skeleton_scene, count, origin, wave_group_radius)
 	for enemy in skeletons:
 		if enemy is Skeleton:
 			(enemy as Skeleton).set_forced_target(target_part)
 	zone.consume_wave()
 	if debug_log and LogConfig.master_enabled:
 		var dist := origin.distance_to(target_part.global_position)
-		print("[WaveDirector] волна %d скелетов из зоны %s (%.0f, %.0f) → %s/%s (dist=%.0fм, осталось волн в зоне: %d)" % [skeletons.size(), zone.name, origin.x, origin.z, target_camp.name, target_part.name, dist, zone.waves_left()])
+		print("[WaveDirector] POI-волна %d скелетов из %s (%.0f, %.0f) → %s/%s (dist=%.0fм)" % [
+			skeletons.size(), zone.name, origin.x, origin.z,
+			_active_camp.name, target_part.name, dist,
+		])
 
 
 # --- Public API: рантайм-управление budget'ом зон ---
 
-## Перезаписывает остаток волн всем зонам (Король Ночи: «всем разом по N»).
 func set_waves_in_all_zones(n: int) -> void:
 	if _spawner == null:
 		return
@@ -348,7 +384,6 @@ func set_waves_in_all_zones(n: int) -> void:
 		print("[WaveDirector] всем зонам выставлено %d волн" % n)
 
 
-## Прибавляет N волн ко всем зонам (накопительное пополнение).
 func add_waves_to_all_zones(n: int) -> void:
 	if _spawner == null:
 		return
@@ -360,11 +395,7 @@ func add_waves_to_all_zones(n: int) -> void:
 
 
 ## Спавнит count скелетов uniform по карте, но каждая точка — вне safe-радиуса
-## всех лагерей. Используется для initial и ramp — иначе случайные uniform-точки
-## попадают в attack-зону защитников и они начинают огонь сразу после P.
-## После спавна скелет wander-ит и может зайти в зону огня сам (фоновый
-## противник) — это и нужно. Без forced_target, поэтому к лагерю не идёт
-## целеустремлённо (это работа waves).
+## всех лагерей и POI. Используется для фонового прилива.
 func _spawn_safe_uniform(count: int) -> void:
 	for i in range(count):
 		var pos := _pick_safe_pos()
@@ -372,17 +403,11 @@ func _spawn_safe_uniform(count: int) -> void:
 		_spawner.spawn_at(skeleton_scene, pos)
 
 
-## Рандомная точка на карте, удалённая от всех safe-источников (живых лагерей
-## и POI) минимум на их радиус. Делает wave_position_attempts попыток; если ни
-## одна не прошла фильтр — возвращает точку с максимальным `_safe_score`
-## (наименее плохую). Это деградация, не failure: спавн всё равно произойдёт.
 func _pick_safe_pos() -> Vector3:
 	var best_pos := Vector3.ZERO
 	var best_score := -INF
 
 	for i in range(wave_position_attempts):
-		# Кандидат — изнутри объединения SpawnZone-ов спавнера (или uniform по
-		# карте, если зон нет). Фильтр safe-зон Camp/POI применяется поверх.
 		var candidate := _spawner.pick_random_pos()
 		var score := _safe_score(candidate)
 		if score >= 0.0:
@@ -396,19 +421,15 @@ func _pick_safe_pos() -> Vector3:
 	return best_pos
 
 
-## Публичный safe-фильтр для внешних потребителей (ResourceZone, будущие
-## кампании). Возвращает true если точка снаружи всех safe-зон лагерей и POI.
-## Тонкий фасад над _safe_score, чтобы не светить наружу score-арифметику.
+## Публичный safe-фильтр для внешних потребителей (ResourceZone WOOD).
 func is_safe_pos(pos: Vector3) -> bool:
 	return _safe_score(pos) >= 0.0
 
 
 ## Score точки = минимальный «избыток» (distance − safe_radius) до ближайшей
-## запретной зоны: живой Camp (radius=wave_safe_radius) или POI (radius=
-## poi_safe_radius). >=0 → точка снаружи всех зон.
-## <0 → внутри какой-то зоны на |score| метров. Используется и для accept
-## (≥0), и для фоллбэка (max). Если ни лагерей, ни POI нет — возвращает 0
-## (любая точка ок).
+## запретной зоны: живой Camp (radius=wave_safe_radius) или POI (radius из
+## QuestActor.safe_radius, fallback на poi_safe_radius_fallback). Если ни
+## лагерей, ни POI нет — возвращает 0.
 func _safe_score(pos: Vector3) -> float:
 	var min_excess := INF
 	for camp in _camps:
@@ -421,8 +442,13 @@ func _safe_score(pos: Vector3) -> float:
 	for poi in _pois:
 		if not is_instance_valid(poi):
 			continue
+		# Per-POI radius если QuestActor.safe_radius доступен. Иначе fallback.
+		# Прямое чтение свойства через `in` дешевле, чем has_method-врапер.
+		var poi_radius: float = poi_safe_radius_fallback
+		if "safe_radius" in poi:
+			poi_radius = poi.safe_radius
 		var d: float = poi.global_position.distance_to(pos)
-		var excess := d - poi_safe_radius
+		var excess := d - poi_radius
 		if excess < min_excess:
 			min_excess = excess
 	if min_excess == INF:
@@ -430,16 +456,42 @@ func _safe_score(pos: Vector3) -> float:
 	return min_excess
 
 
-func _nearest_alive_camp(pos: Vector3) -> Camp:
+## Ищет Camp, у которого current_center совпадает с anchor (с эпсилоном).
+## Используется в _on_camp_deployed: anchor в сигнале — это Camp._deploy_anchor,
+## мы по нему находим обратно конкретный лагерь.
+func _find_camp_at(anchor: Vector3) -> Camp:
+	# Эпсилон по горизонтали: anchor захватывается на _start_deploy с точностью
+	# до floating-point, current_center() считается по живым палаткам, может
+	# отличаться (на свежем deploy палатки ещё едут к точкам кольца). Возьмём
+	# просто ближайший лагерь.
 	var nearest: Camp = null
 	var nearest_dist_sq := INF
 	for camp in _camps:
-		if not is_instance_valid(camp) or not camp.has_alive_parts():
+		if not is_instance_valid(camp):
 			continue
-		var d_sq: float = (camp.current_center() - pos).length_squared()
+		var d_sq: float = (camp.current_center() - anchor).length_squared()
 		if d_sq < nearest_dist_sq:
 			nearest_dist_sq = d_sq
 			nearest = camp
+	return nearest
+
+
+## Ищет POI с минимальной дистанцией до anchor. Если эпсилон-расстояние
+## (≤ 1м) — это явно тот POI, на который Camp защёлкнул anchor.
+func _find_poi_at(anchor: Vector3) -> Node3D:
+	var nearest: Node3D = null
+	var nearest_dist_sq := INF
+	for poi in _pois:
+		if not is_instance_valid(poi):
+			continue
+		var d_sq: float = (poi.global_position - anchor).length_squared()
+		if d_sq < nearest_dist_sq:
+			nearest_dist_sq = d_sq
+			nearest = poi
+	# Sanity-чек: если ближайший POI всё равно дальше 5м — это уже не «тот POI»,
+	# на котором стоит лагерь, а просто соседний. Возвращаем null — не привязываемся.
+	if nearest_dist_sq > 25.0:
+		return null
 	return nearest
 
 
@@ -447,11 +499,8 @@ func _live_skeleton_count() -> int:
 	return get_tree().get_nodes_in_group(&"skeleton").size()
 
 
-## Раз в секунду считаем скелетов внутри wave_safe_radius каждого лагеря
-## (зона из которой волны не спавнятся, но фоновые wander-скелеты могут
-## зайти). Логируем по фронту изменения общего count — без спама на
-## стационарном состоянии. Не учитывает пересечение зон лагерей; при
-## единственном лагере это и не нужно.
+## Раз в секунду считаем скелетов внутри wave_safe_radius каждого лагеря.
+## Логируем по фронту изменения. Для отладки/баланса.
 func _tick_safe_zone_monitor(delta: float) -> void:
 	if _phase == Phase.IDLE:
 		return
@@ -475,9 +524,12 @@ func _tick_safe_zone_monitor(delta: float) -> void:
 			var d_sq: float = (camp.current_center() - skel.global_position).length_squared()
 			if d_sq <= safe_sq:
 				count += 1
-				break  # один skel считается один раз даже если в зоне нескольких лагерей
+				break
 
 	if count != _last_safe_zone_count:
 		if debug_log and LogConfig.master_enabled:
-			print("[WaveDirector] скелетов в safe-зоне (r=%.0fм): %d (было %d)" % [wave_safe_radius, count, _last_safe_zone_count if _last_safe_zone_count >= 0 else 0])
+			print("[WaveDirector] скелетов в safe-зоне (r=%.0fм): %d (было %d) target=%d/%d" % [
+				wave_safe_radius, count, _last_safe_zone_count if _last_safe_zone_count >= 0 else 0,
+				int(_background_target), background_cap,
+			])
 		_last_safe_zone_count = count
