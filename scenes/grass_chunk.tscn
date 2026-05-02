@@ -1,4 +1,4 @@
-[gd_scene load_steps=4 format=3 uid="uid://grasschunk02"]
+[gd_scene format=3 uid="uid://grasschunk02"]
 
 [ext_resource type="Mesh" uid="uid://grassblade01" path="res://resources/grass_blade.obj" id="1_blade"]
 [ext_resource type="ShaderMaterial" uid="uid://grassmat02" path="res://resources/grass_material.tres" id="2_material"]

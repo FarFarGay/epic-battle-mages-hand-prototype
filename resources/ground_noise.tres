@@ -6,8 +6,5 @@ frequency = 0.018
 fractal_octaves = 4
 
 [resource]
-width = 512
-height = 512
-seamless = true
-seamless_blend_skirt = 0.1
 noise = SubResource("FNL_ground")
+seamless = true

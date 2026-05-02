@@ -5,9 +5,6 @@
 
 [sub_resource type="Resource" id="Stage_0_recon"]
 script = ExtResource("2_stage")
-duration = 60.0
-wave_interval = 60.0
-skeletons_per_wave = 5
 metadata/_custom_type_script = "uid://dyuckha78cek"
 
 [sub_resource type="Resource" id="Stage_1_pressure"]
@@ -26,5 +23,5 @@ metadata/_custom_type_script = "uid://dyuckha78cek"
 
 [resource]
 script = ExtResource("1_schedule")
-stages = Array[Resource]([SubResource("Stage_0_recon"), SubResource("Stage_1_pressure"), SubResource("Stage_2_siege")])
+stages = Array[ExtResource("2_stage")]([SubResource("Stage_0_recon"), SubResource("Stage_1_pressure"), SubResource("Stage_2_siege")])
 metadata/_custom_type_script = "uid://wnsnhjtdj7b3"
