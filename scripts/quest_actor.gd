@@ -74,7 +74,7 @@ func _apply_locked() -> void:
 	_flame_core.visible = false
 	_flame_particles.emitting = false
 	_smoke_particles.emitting = true
-	_smoke_particles.amount = 8
+	_smoke_particles.amount = 5
 	_light.light_energy = 0.0
 
 
@@ -86,7 +86,7 @@ func _apply_active() -> void:
 	_flame_core.visible = true
 	_flame_particles.emitting = true
 	_smoke_particles.emitting = true
-	_smoke_particles.amount = 24
+	_smoke_particles.amount = 14
 	_light.light_color = Color(1.0, 0.55, 0.2, 1.0)
 	_light.light_energy = 1.6
 
@@ -100,6 +100,6 @@ func _apply_completed() -> void:
 	_flame_core.visible = false
 	_flame_particles.emitting = false
 	_smoke_particles.emitting = true
-	_smoke_particles.amount = 4
+	_smoke_particles.amount = 3
 	_light.light_color = Color(0.5, 0.95, 0.6, 1.0)
 	_light.light_energy = 0.7

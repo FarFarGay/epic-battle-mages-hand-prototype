@@ -142,7 +142,7 @@ material_override = SubResource("Material_flame_particle")
 [node name="SmokeParticles" type="GPUParticles3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, 0)
 cast_shadow = 0
-amount = 16
+amount = 10
 lifetime = 2.0
 trail_lifetime = 0.2
 process_material = SubResource("Process_smoke")
