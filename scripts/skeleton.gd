@@ -66,14 +66,15 @@ enum WanderPhase { RESTING, WANDERING }
 @export_group("Vision scan throttle")
 ## Период между ре-сканами целей (с). Цель кэшируется и читается всеми вызовами
 ## get_active_target внутри одного физкадра — раньше скан group'ы проходил
-## 2-3 раза за тик на каждом скелете (50 врагов × 3 скана × 60fps).
-## С throttle'ом и кэшем — ~1/interval сканов в секунду на скелета.
-## Если кэшированная цель умерла или вышла из группы — рескан принудительно.
+## 2-3 раза за тик на каждом скелете. С throttle'ом и кэшем — ~1/interval
+## сканов в секунду на скелета. Если кэшированная цель умерла или вышла из
+## группы — рескан принудительно (NB: null — НЕ stale, см. _physics_process,
+## fix этап 43).
 ##
-## Группа skeleton_target теперь содержит и палатки (18), и гномов (126) —
-## всего 144 потенциальных цели. На 290 скелетах при interval=0.15 это
-## давало ~280k distance-checks/сек. Поднял до 0.3 — экономия ×2.
-@export var vision_scan_interval: float = 0.3
+## История: 0.15 → 0.3 → 0.4. На 2000 скелетах при 0.3с было 0.30ms self
+## per physics-frame на _scan_target (после fix throttle'а). 0.4 даёт
+## дополнительные 25% экономии — заметно при background_cap=600.
+@export var vision_scan_interval: float = 0.4
 @export_group("")
 
 @export_group("Wander (без цели)")
@@ -116,23 +117,28 @@ enum WanderPhase { RESTING, WANDERING }
 ## per-skeleton distance-чек на 100 врагов сам по себе нагрузка.
 @export var lod_check_interval: float = 0.5
 ## Кратность пропуска физтика для FAR-скелетов. 1 = каждый физкадр,
-## 3 = каждый 3-й (60→20Гц). На 1900 FAR-скелетах _far_step (knockback.tick,
+## 4 = каждый 4-й (60→15Гц). На 1900 FAR-скелетах _far_step (knockback.tick,
 ## vision-валидность, AI, position-write) — основной пожиратель physics_ms
 ## после того как broad-phase отключён через CollisionShape3D.disabled.
-## Кратность 3 даёт пропорциональное падение нагрузки. Визуально незаметно
+## Кратность 4 даёт пропорциональное падение нагрузки. Визуально незаметно
 ## (FAR > 50м от камеры). Slam-knockback по FAR задерживается максимум на
-## divisor × 16.6мс = 50мс — игрок не успевает заметить, отзумленная камера
+## divisor × 16.6мс = 67мс — игрок не успевает заметить, отзумленная камера
 ## смазывает движение.
-@export_range(1, 6) var lod_far_tick_divisor: int = 3
+##
+## История: 3 → 4 (этап 43, 2000 скелетов на профайлере: _far_step 2.80ms /
+## 557 calls. С divisor=4 ожидаю ~2.1ms / 418 calls).
+@export_range(1, 6) var lod_far_tick_divisor: int = 4
 ## Кратность пропуска физтика для MID-скелетов (между lod_near_distance и
-## lod_far_distance). 3 = каждый 3-й физкадр (60→20Гц). MID — это «средняя»
+## lod_far_distance). 4 = каждый 4-й физкадр (60→15Гц). MID — это «средняя»
 ## зона, видна игроку, но менее детально. На 300+ MID скелетах в кластере
 ## вокруг башни move_and_slide со slide-iterations об палатки/башню — ещё
 ## один пожиратель physics_ms. Скорость движения сохраняется компенсацией
 ## `velocity *= divisor` в _ai_step (один move_and_slide на N тиков
-## переносит N-кратное движение). Tunneling-риск: skel.move_speed=2.7 × 3 ×
-## 0.0167 = 0.135м/тик при радиусе 0.4м — запас ×3, безопасно.
-@export_range(1, 4) var lod_mid_tick_divisor: int = 3
+## переносит N-кратное движение). Tunneling-риск: skel.move_speed=2.7 × 4 ×
+## 0.0167 = 0.18м/тик при радиусе 0.4м — запас ×2, безопасно.
+##
+## История: 3 → 4 (этап 43, та же причина что и FAR).
+@export_range(1, 6) var lod_mid_tick_divisor: int = 4
 ## Угол полу-cone'а «впереди камеры». Скелет вне этого конуса (то есть строго
 ## позади камеры или сильно сбоку) форсируется в FAR независимо от расстояния:
 ## его не видно игроку, симулировать его дешёво безопасно. 60° = 120° полный
@@ -379,11 +385,13 @@ func _ai_step(delta: float) -> void:
 		super._ai_step(delta)
 	else:
 		_wander_tick(delta)
-	# Boids-style avoidance: только в APPROACH/wander (state == APPROACH ловит
-	# обе фазы — wander не меняет _state). FAR не применяется — невидимы.
-	# Avoidance прибавляется к velocity до MID-компенсации, чтобы тоже
-	# масштабировалось вместе с движением (corrupted-frequency коррекция).
-	if _lod_level != LodLevel.FAR and _state == AttackState.APPROACH:
+	# Boids-style avoidance: только NEAR. MID и FAR пропускаем — на расстоянии
+	# 25м+ от камеры мелкие накладки тимы не читаются, а boids стоит
+	# ~18мкс/call. На 2000 скелетах при divisor=4 в среднем 50-100 NEAR в
+	# кадре — экономия ~1ms vs прежнее «NEAR+MID». Если плотные кучи на MID
+	# станут визуально мешать, можно вернуть `_lod_level != LodLevel.FAR`.
+	# История: NEAR+MID → NEAR-only (этап 43, профайлер: 1.95ms / 105 calls).
+	if _lod_level == LodLevel.NEAR and _state == AttackState.APPROACH:
 		_apply_neighbor_avoidance()
 	# MID-divisor компенсация: super._physics_process вызывает нас раз в N
 	# физкадров (на пропускаемых _physics_process делает early return). Один
