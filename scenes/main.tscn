@@ -14,6 +14,7 @@
 [ext_resource type="PackedScene" path="res://scenes/gameplay_hud.tscn" id="14"]
 [ext_resource type="PackedScene" uid="uid://drdbcmqb67xwj" path="res://scenes/quest_actor.tscn" id="16"]
 [ext_resource type="PackedScene" path="res://scenes/spawn_zone.tscn" id="17"]
+[ext_resource type="Resource" uid="uid://bj8ej7jf1bubo" path="res://resources/wave_schedule_default.tres" id="18_schedule_default"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(400, 1, 400)
@@ -92,6 +93,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 147.60913, 0.3, -0.2122345)
 
 [node name="Actor" parent="PointsOfInterest/Poi_ESE" unique_id=1894827127 instance=ExtResource("16")]
 actor_id = &"ese"
+wave_schedule = ExtResource("18_schedule_default")
 
 [node name="Poi_Heart" parent="PointsOfInterest" unique_id=1859626028 instance=ExtResource("12")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -119.65268, 0.3, -0.3575287)
@@ -99,6 +101,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -119.65268, 0.3, -0.3575287)
 [node name="Actor" parent="PointsOfInterest/Poi_Heart" unique_id=1218000003 instance=ExtResource("16")]
 actor_id = &"heart"
 quest_order = 1
+wave_schedule = ExtResource("18_schedule_default")
 
 [node name="Camp" parent="." unique_id=745402752 instance=ExtResource("8")]
 target_path = NodePath("../Tower")

@@ -1,0 +1,30 @@
+[gd_resource type="Resource" script_class="WaveSchedule" format=3 uid="uid://bj8ej7jf1bubo"]
+
+[ext_resource type="Script" uid="uid://wnsnhjtdj7b3" path="res://scripts/wave_schedule.gd" id="1_schedule"]
+[ext_resource type="Script" uid="uid://dyuckha78cek" path="res://scripts/wave_stage.gd" id="2_stage"]
+
+[sub_resource type="Resource" id="Stage_0_recon"]
+script = ExtResource("2_stage")
+duration = 60.0
+wave_interval = 60.0
+skeletons_per_wave = 5
+metadata/_custom_type_script = "uid://dyuckha78cek"
+
+[sub_resource type="Resource" id="Stage_1_pressure"]
+script = ExtResource("2_stage")
+duration = 90.0
+wave_interval = 45.0
+skeletons_per_wave = 8
+metadata/_custom_type_script = "uid://dyuckha78cek"
+
+[sub_resource type="Resource" id="Stage_2_siege"]
+script = ExtResource("2_stage")
+duration = 999999.0
+wave_interval = 30.0
+skeletons_per_wave = 12
+metadata/_custom_type_script = "uid://dyuckha78cek"
+
+[resource]
+script = ExtResource("1_schedule")
+stages = Array[Resource]([SubResource("Stage_0_recon"), SubResource("Stage_1_pressure"), SubResource("Stage_2_siege")])
+metadata/_custom_type_script = "uid://wnsnhjtdj7b3"
