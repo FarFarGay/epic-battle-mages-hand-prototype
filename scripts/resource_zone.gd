@@ -99,6 +99,12 @@ func _refresh_visual() -> void:
 ## global_transform для поддержки поворота зоны вокруг Y. Соблюдает min_spacing
 ## где возможно (rejection sampling, до 10 попыток на pile; если не находит —
 ## всё равно ставит в случайную точку, но это редкость при разумных параметрах).
+##
+## Дополнительно: если на сцене есть WaveDirector (группа `wave_director`) —
+## точки внутри safe-зон лагерей и POI отбрасываются. Кучи в зоне огня
+## защитников или вокруг сюжетного POI — не появятся. Если зона целиком
+## накрыта safe-радиусами (10 попыток подряд unsafe) — pile пропускается,
+## фактический count может оказаться меньше заявленного.
 func _spawn_instances() -> void:
 	if pile_scene == null:
 		push_warning("ResourceZone (%s): pile_scene не задан — пропускаю спавн" % name)
@@ -108,10 +114,15 @@ func _spawn_instances() -> void:
 		root = get_node_or_null(spawn_root_path)
 	if root == null:
 		root = get_tree().current_scene
+	var wave_director: Node = get_tree().get_first_node_in_group(&"wave_director")
 	var placed_positions: Array[Vector3] = []
 	var spacing_sq := min_spacing * min_spacing
+	var skipped := 0
 	for i in range(count):
-		var pos: Vector3 = _pick_position(placed_positions, spacing_sq)
+		var pos: Variant = _pick_position(placed_positions, spacing_sq, wave_director)
+		if pos == null:
+			skipped += 1
+			continue
 		var pile := pile_scene.instantiate()
 		# Назначить тип и units ДО добавления в дерево, чтобы _ready применил
 		# правильный визуал сразу. Позицию выставляем после add_child (иначе
@@ -124,12 +135,18 @@ func _spawn_instances() -> void:
 		# Случайная Y-rotation для визуального разнообразия.
 		(pile as Node3D).rotation.y = randf() * TAU
 		placed_positions.append(pos)
+	if skipped > 0:
+		push_warning("ResourceZone (%s): %d из %d куч не размещены — кандидаты внутри safe-зон Camp/POI" % [name, skipped, count])
 
 
 ## Случайная точка внутри прямоугольника зоны (с учётом поворота через
-## global_transform). Если placed_positions содержит позиции ближе spacing_sq —
-## делает до 10 попыток найти свободную; иначе возвращает последнюю.
-func _pick_position(placed: Array[Vector3], spacing_sq: float) -> Vector3:
+## global_transform) и вне safe-зон (если задан wave_director). До 10 попыток
+## найти точку, удовлетворяющую обоим условиям (min_spacing + safe). Возвращает
+## null если ни одна попытка не прошла safe-фильтр — caller считает это
+## пропуском pile'а. Если spacing-фильтр не сработал, но safe-фильтр прошёл —
+## ставим внахлёст (визуальный нахлёст лучше пропуска).
+func _pick_position(placed: Array[Vector3], spacing_sq: float, wave_director: Node) -> Variant:
+	var last_safe_world: Variant = null
 	for attempt in range(10):
 		var local := Vector3(
 			randf_range(-size.x * 0.5, size.x * 0.5),
@@ -138,6 +155,10 @@ func _pick_position(placed: Array[Vector3], spacing_sq: float) -> Vector3:
 		)
 		var world := global_transform * local
 		world.y = global_position.y
+		# Safe-фильтр: точка не должна попадать в safe-зону Camp/POI.
+		if wave_director != null and not wave_director.is_safe_pos(world):
+			continue
+		last_safe_world = world
 		if spacing_sq <= 0.0:
 			return world
 		var ok := true
@@ -147,12 +168,6 @@ func _pick_position(placed: Array[Vector3], spacing_sq: float) -> Vector3:
 				break
 		if ok:
 			return world
-	# Фоллбэк — берём последний кандидат (ставим внахлёст, но pile появится).
-	var local_fb := Vector3(
-		randf_range(-size.x * 0.5, size.x * 0.5),
-		0.0,
-		randf_range(-size.y * 0.5, size.y * 0.5),
-	)
-	var world_fb := global_transform * local_fb
-	world_fb.y = global_position.y
-	return world_fb
+	# Все 10 попыток либо все unsafe → null (пропуск), либо safe но плотно стоят —
+	# берём последнюю safe (нахлёст ок, safe-нарушение нет).
+	return last_safe_world

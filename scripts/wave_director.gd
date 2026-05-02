@@ -73,14 +73,18 @@ enum Phase { IDLE, RAMP, MAINTAIN }
 ## Минимальная дистанция от точки спавна до ближайшего лагеря. Меньше —
 ## волна появляется в зоне видимости защитников/гномов, что ломает идею
 ## «ниоткуда». Больше — карта забита safe-зонами и точку трудно найти.
-## 45м = за пределами patrol_radius=12 + attack_radius=22.5 защитника
-## (зона огня = 34.5м) + 10.5м буфер.
-@export var wave_safe_radius: float = 45.0
+## 32м (~30% меньше прежних 45) — чуть внутри полной зоны огня защитника
+## (patrol_radius=12 + attack_radius=22.5 = 34.5м), это компромисс
+## геймдизайнера: спавн ближе к лагерю, скелеты быстрее доходят до боя,
+## меньше «мёртвых» нейтральных коридоров на карте. Та же константа
+## используется ResourceZone'ами как «ничейная зона» — там тоже стало
+## плотнее (см. is_safe_pos).
+@export var wave_safe_radius: float = 32.0
 ## Минимальная дистанция от точки спавна до любой POI. POI — сюжетные
 ## точки, спавн скелетов рядом ломает «безопасный подход» к актору. Зона
-## та же по порядку что и у лагеря (40-50м), отдельный параметр чтобы
-## крутить независимо.
-@export var poi_safe_radius: float = 45.0
+## та же по порядку что и у лагеря, отдельный параметр чтобы крутить
+## независимо. Уменьшена параллельно с wave_safe_radius (~30%).
+@export var poi_safe_radius: float = 32.0
 ## Сколько раз пробуем рандомную точку до фоллбэка. На карте 400×400 с
 ## 6 лагерями вероятность попасть в safe-зону высокая — 30 попыток с большим
 ## запасом. Фоллбэк: берём точку с максимумом min-distance до лагерей.
@@ -112,7 +116,15 @@ var _safe_zone_check_cd: float = 0.0
 var _last_safe_zone_count: int = -1
 
 
+## Группа для discovery извне без явных NodePath. WaveDirector один на сцену
+## (предполагается); ResourceZone и другие потребители safe-логики находят
+## его через get_first_node_in_group, чтобы не требовать ручной NodePath-привязки
+## в инспекторе для каждой зоны.
+const GROUP := &"wave_director"
+
+
 func _ready() -> void:
+	add_to_group(GROUP)
 	if not spawner_path.is_empty():
 		_spawner = get_node_or_null(spawner_path) as EnemySpawner
 	if _spawner == null:
@@ -382,6 +394,13 @@ func _pick_safe_pos() -> Vector3:
 	if debug_log and LogConfig.master_enabled:
 		print("[WaveDirector] safe-точка не найдена за %d попыток — фоллбэк (excess=%.1fм)" % [wave_position_attempts, best_score])
 	return best_pos
+
+
+## Публичный safe-фильтр для внешних потребителей (ResourceZone, будущие
+## кампании). Возвращает true если точка снаружи всех safe-зон лагерей и POI.
+## Тонкий фасад над _safe_score, чтобы не светить наружу score-арифметику.
+func is_safe_pos(pos: Vector3) -> bool:
+	return _safe_score(pos) >= 0.0
 
 
 ## Score точки = минимальный «избыток» (distance − safe_radius) до ближайшей

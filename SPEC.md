@@ -767,7 +767,7 @@ static func spawn(
   - **Waves**: каждые `wave_interval=60с` дирижёр выбирает SpawnZone с остатком budget'а волн (uniform random — это и есть «директор сам решает порядок») и спавнит из неё группу из `zone.skeletons_per_wave` скелетов. После выстрела `zone.consume_wave()` декрементит budget; по исчерпанию (0) зона перестаёт участвовать в волнах (но остаётся в neutral-спавне). Каждому скелету ставится `forced_target = nearest_part_to(origin)` ближайшего лагеря.
 
 **Два потока спавна — neutral и waves:**
-- **Neutral** (initial/ramp/replenish + debug `[`-100): `_spawn_safe_uniform` через `_pick_safe_pos`. Кандидат — `_spawner.pick_random_pos()` (площадно-взвешенно по всем зонам, включая исчерпанные). Safe-фильтр (Camp `wave_safe_radius=45м` + POI `poi_safe_radius=45м`) накладывается поверх; до `wave_position_attempts=30` попыток + фоллбэк на «наименее плохую» точку.
+- **Neutral** (initial/ramp/replenish + debug `[`-100): `_spawn_safe_uniform` через `_pick_safe_pos`. Кандидат — `_spawner.pick_random_pos()` (площадно-взвешенно по всем зонам, включая исчерпанные). Safe-фильтр (Camp `wave_safe_radius=32м` + POI `poi_safe_radius=32м`) накладывается поверх; до `wave_position_attempts=30` попыток + фоллбэк на «наименее плохую» точку.
 - **Waves**: зональный budget. Кандидат сразу из конкретной зоны через `random_point_in_zone(zone)` без safe-фильтра — дизайнер отвечает что зона стоит снаружи safe-зон.
 
 **Safe-фильтр (`_safe_score`):** возвращает «избыток» (distance − safe_radius) до ближайшей запретной зоны: живой Camp (radius=`wave_safe_radius`) или POI (radius=`poi_safe_radius`). >=0 → принимаем точку, <0 → запоминаем как фоллбэк-кандидата с максимальным score.
@@ -790,7 +790,7 @@ static func spawn(
 - Refs: `spawner_path`, `camp_paths: Array[NodePath]`, `poi_root_path: NodePath`, `skeleton_scene: PackedScene`.
 - Initial ramp: `initial_count=20`, `ramp_target_count=50`, `ramp_duration=30.0`.
 - Maintain replenish: `replenish_threshold=20`, `replenish_interval=2.0`.
-- Maintain waves: `wave_interval=60.0`, `wave_group_radius=4.0`, `wave_safe_radius=45.0`, `poi_safe_radius=45.0`, `wave_position_attempts=30`. Размер группы (`skeletons_per_wave`) ушёл per-zone в `SpawnZone`.
+- Maintain waves: `wave_interval=60.0`, `wave_group_radius=4.0`, `wave_safe_radius=32.0`, `poi_safe_radius=32.0` (~30% меньше прежних 45 — компромисс геймдизайнера, спавн ближе к лагерю), `wave_position_attempts=30`. Размер группы (`skeletons_per_wave`) ушёл per-zone в `SpawnZone`.
 
 **Зависимости:** держит ссылку на `EnemySpawner`, список `Camp`'ов, список POI-нод (Node3D-дети `poi_root_path`). Использует `Camp.current_center / has_alive_parts / nearest_part_to / reset_population` и `EnemySpawner.get_zones / random_point_in_zone / pick_random_pos`.
 
@@ -1182,7 +1182,9 @@ func take_one() -> bool:
 - В рантайме: `_spawn_instances.call_deferred()` + скрыть `Mesh`. **`call_deferred` важен** — `_ready` вызывается во время setup'а родительской сцены, и Godot не даёт `add_child` пока parent «is busy setting up children». К моменту deferred-вызова дерево полностью собрано, `add_child` проходит.
 
 **`_spawn_instances`:**
-- Цикл по `count`, для каждого — `_pick_position(placed_positions, spacing²)` (rejection sampling до 10 попыток внутри прямоугольника `±size/2` через локаль → `global_transform * local`, поворот зоны вокруг Y учитывается). Если все 10 попыток заняты — фоллбэк на последнюю случайную точку (нахлёст возможен, но pile появится).
+- В начале — `get_first_node_in_group(&"wave_director")`. WaveDirector добавляет себя в эту группу в `_ready`; ResourceZone находит его без явного NodePath — дизайнеру не надо подвязывать ссылку на каждой зоне. Если WaveDirector не нашёлся (тестовая сцена без режиссёра) — safe-фильтр выключен.
+- Цикл по `count`, для каждого — `_pick_position(placed_positions, spacing², wave_director)` (rejection sampling до 10 попыток внутри прямоугольника `±size/2` через локаль → `global_transform * local`, поворот зоны вокруг Y учитывается).
+- **Safe-фильтр.** Если `wave_director != null` — каждая candidate-точка проверяется через `wave_director.is_safe_pos(pos)`. Точки внутри Camp `wave_safe_radius` или POI `poi_safe_radius` отбрасываются — кучи ресурсов в зоне огня защитников или вокруг сюжетного POI не появятся. Внутри 10 попыток приоритет: сначала safe, потом spacing. Если все попытки unsafe — `_pick_position` возвращает `null` и pile пропускается (итоговый count может оказаться меньше заявленного, выводится `push_warning`). Если safe нашлась, но spacing не выдержан — берём последнюю safe (нахлёст ок, safe-нарушение нет).
 - На каждом инстансе — назначить `resource_type` и `units` **до** `add_child` (чтобы `_ready` применил правильный визуал сразу). Позиция выставляется после `add_child`, затем рандомная Y-rotation для визуального разнообразия.
 
 **Визуальный индикатор в редакторе:** перекрашивается в цвет типа (массив `_TYPE_COLORS`: зелёный/коричневый/серый/стальной/оранжевый) — дизайнер видит зоны разного типа без чтения инспектора.
@@ -1298,7 +1300,7 @@ func take_one() -> bool:
 **Назначение:** статический визуальный маркер точки интереса — плоский жёлтый цилиндр (top/bottom_radius=2.5, height=0.6) с emission. Используется для двух разных целей:
 
 1. **Quest-точка.** В `main.tscn` под `PointsOfInterest/` лежат три POI: `Poi_ESE`, `Poi_Heart`, `Poi_SW`. У каждого ребёнок `Actor` (см. ниже), на нём сидит `quest_order`.
-2. **Safe-зона спавна.** `WaveDirector` собирает прямых детей `poi_root_path` в `_pois` и применяет `poi_safe_radius=45м` как негативный фильтр для спавна скелетов (см. §5.5.4).
+2. **Safe-зона спавна.** `WaveDirector` собирает прямых детей `poi_root_path` в `_pois` и применяет `poi_safe_radius=32м` как негативный фильтр для спавна скелетов (см. §5.5.4). Та же зона работает для ResourceZone — кучи ресурсов рядом с POI не появляются.
 
 #### QuestActor — `scenes/quest_actor.tscn`, `scripts/quest_actor.gd`
 
@@ -1590,6 +1592,16 @@ func take_one() -> bool:
     **`ResourceZone`** (`@tool`, `class_name ResourceZone`, см. §5.9.1) — паттерн `SpawnZone` для куч. Дизайнер: drag → type/count/size → spawn на `_ready`. На запуске зоны разбрасывают pile'ы (через `call_deferred` — иначе `add_child` падает в setup'е родительской сцены). Рантайм-индикатор скрывается, в редакторе виден цветной плоский индикатор (цвет по типу — wood коричневый, stone серый, etc).
 
     **Этапы Б/В отложены:** многоэтапное дерево (стоит → trunk → 3 logs) и `interaction_time` на pile'е (гном «рубит/копает» N секунд). На функциональность сбора это не влияет — wood-pile = «бревно» с units=3, take_one мгновенный.
+
+37. **ResourceZone safe-фильтр + ужатие safe-радиусов** (сессия 2026-05-02 после docs-прохода). Геймдизайнер заметил, что в первой расставленной каменной зоне кучи иногда лежат внутри зоны огня защитников лагеря — выглядит как баг (защитники их «охраняют», но это не зона их прикрытия). Параллельно — safe-радиусы (45м) ощущались избыточно большими: между лагерем и SpawnZone оставались «мёртвые» нейтральные коридоры, где скелеты wander-или без агро.
+
+    **Публичный safe-API.** `WaveDirector` получил `is_safe_pos(pos: Vector3) -> bool` — тонкий фасад над приватным `_safe_score`. Внешние потребители (ResourceZone и любые будущие) не лезут в score-арифметику — спрашивают «эта точка снаружи safe-зон?».
+
+    **Discovery через group, не NodePath.** WaveDirector в `_ready` добавляет себя в `&"wave_director"` (одиночка на сцене). ResourceZone в `_spawn_instances` находит его через `get_first_node_in_group` — никаких ручных `wave_director_path` инспектор-привязок. Дизайнер просто ставит зону, фильтр работает.
+
+    **ResourceZone safe-фильтр в `_pick_position`.** Каждый кандидат проверяется через `is_safe_pos`. Внутри 10 попыток приоритет: safe → spacing. Если все 10 попыток внутри safe-зоны — pile пропускается (count может выйти меньше заявленного; `push_warning` с количеством skipped). Если safe найдена но spacing не выдержан — берём последнюю safe (нахлёст ок, safe-нарушение нет).
+
+    **Safe-радиусы 45 → 32 (~30% меньше).** `wave_safe_radius` и `poi_safe_radius` уменьшены параллельно. Новый radius чуть внутри полной зоны огня защитника (12 + 22.5 = 34.5м) — это сознательный компромисс: спавн ближе к лагерю, скелеты быстрее доходят до боя, меньше нейтральных коридоров. ResourceZone-фильтр и `_pick_safe_pos` для скелетов используют один радиус → консистентно.
 
 ### 7.3 Решённые ошибки
 
