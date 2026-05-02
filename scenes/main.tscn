@@ -4,6 +4,7 @@
 [ext_resource type="PackedScene" path="res://scenes/hand.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/camera_rig.tscn" id="3"]
 [ext_resource type="Shader" uid="uid://ufuibij83crl" path="res://resources/grid.gdshader" id="5"]
+[ext_resource type="Texture2D" uid="uid://groundnoise01" path="res://resources/ground_noise.tres" id="5_noise"]
 [ext_resource type="Script" uid="uid://g47nmagw0cfh" path="res://scripts/enemy_spawner.gd" id="6"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="7"]
 [ext_resource type="PackedScene" path="res://scenes/camp.tscn" id="8"]
@@ -24,9 +25,10 @@ render_priority = 0
 shader = ExtResource("5")
 shader_parameter/base_color = Color(0.3, 0.5, 0.25, 1)
 shader_parameter/noise_strength = 0.35
-shader_parameter/noise_scale = 0.5
+shader_parameter/noise_scale = 0.02
 shader_parameter/grass_color_dark = Color(0.18, 0.32, 0.12, 1)
 shader_parameter/grass_color_light = Color(0.45, 0.62, 0.28, 1)
+shader_parameter/noise_texture = ExtResource("5_noise")
 
 [sub_resource type="BoxMesh" id="BoxMesh_ground"]
 size = Vector3(400, 1, 400)

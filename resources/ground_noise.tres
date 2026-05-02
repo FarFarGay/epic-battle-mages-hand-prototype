@@ -1,0 +1,13 @@
+[gd_resource type="NoiseTexture2D" load_steps=2 format=3 uid="uid://groundnoise01"]
+
+[sub_resource type="FastNoiseLite" id="FNL_ground"]
+noise_type = 2
+frequency = 0.018
+fractal_octaves = 4
+
+[resource]
+width = 512
+height = 512
+seamless = true
+seamless_blend_skirt = 0.1
+noise = SubResource("FNL_ground")
