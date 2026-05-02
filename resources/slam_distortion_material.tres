@@ -1,0 +1,40 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3]
+
+[ext_resource type="Shader" path="res://resources/slam_distortion.gdshader" id="1_slam_shader"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_slam_shader")
+shader_parameter/color1 = Color(1, 0.85, 0.55, 0.15)
+shader_parameter/color2 = Color(1, 0.65, 0.25, 0.85)
+shader_parameter/threshold = 0.2
+shader_parameter/fresnel_sharpness = 1.5
+shader_parameter/intensity = 1.0
+shader_parameter/intensity_2 = 0.4
+shader_parameter/distortion_enabled = true
+shader_parameter/distortion_strength = 0.5
+shader_parameter/edge_distortion_power = 2.5
+shader_parameter/chromatic_aberration = 0.025
+shader_parameter/event_horizon_radius = 0.25
+shader_parameter/event_horizon_darkness = 0.4
+shader_parameter/blur_enabled = true
+shader_parameter/blur_amount = 2.0
+shader_parameter/blur_samples = 6
+shader_parameter/accretion_color = Color(1, 0.55, 0.15, 1)
+shader_parameter/accretion_intensity = 1.6
+shader_parameter/accretion_width = 3.0
+shader_parameter/noise_detail = 4
+shader_parameter/noise_inflate = 0.1
+shader_parameter/noise_speed = 0.4
+shader_parameter/invert_dissolve = false
+shader_parameter/noise_scale_min = 2.0
+shader_parameter/noise_scale_max = 4.0
+shader_parameter/noise_roughness_min = 0.5
+shader_parameter/noise_roughness_max = 0.3
+shader_parameter/ripple_enabled = true
+shader_parameter/ripple_time = 0.0
+shader_parameter/ripple_frequency = 12.0
+shader_parameter/ripple_speed = 5.0
+shader_parameter/ripple_amplitude = 0.08
+shader_parameter/ripple_fade_distance = 1.5
+shader_parameter/ripple_center = Vector3(0, 0, 0)

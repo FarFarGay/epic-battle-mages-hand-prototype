@@ -11,8 +11,8 @@ signal slammed(position: Vector3, radius: float)
 const SLAM_VISUAL_POOL_CAP: int = 3
 const SLAM_VISUAL_BASE_RADIUS: float = 0.2
 const SLAM_VISUAL_BASE_HEIGHT: float = 0.4
-const SLAM_VISUAL_TWEEN_DURATION: float = 0.3
-const SLAM_VISUAL_EMISSION_ENERGY: float = 2.0
+const SLAM_VISUAL_TWEEN_DURATION: float = 0.45
+const SLAM_DISTORTION_MATERIAL_PATH: String = "res://resources/slam_distortion_material.tres"
 
 class SlamHit:
 	extends RefCounted
@@ -42,7 +42,6 @@ class SlamHit:
 ## MOUNTED_MODULE сюда НЕ входит — снять модуль со слота можно только хватом
 ## руки, не AOE-хлопком.
 @export_flags_3d_physics var slam_mask: int = Layers.MASK_HAND_SLAM
-@export var slam_visual_color: Color = Color(1.0, 0.7, 0.3, 0.6)
 ## Длительность knockback'а на kinematic-целях (в течение этого времени AI отключён).
 @export var slam_knockback_duration: float = 0.4
 
@@ -181,10 +180,22 @@ func _slam_direction_and_falloff(target_pos: Vector3, origin: Vector3) -> SlamHi
 	return SlamHit.new(horizontal_dir, falloff)
 
 
+## Спавнит сферу с distortion-шейдером (resources/slam_distortion.gdshader) в
+## точке шлепка. Материал — per-instance копия base'ового, чтобы tween'ить
+## shader_parameter'ы независимо у параллельных slam'ов из пула. Tween'им три
+## параметра одновременно через SLAM_VISUAL_TWEEN_DURATION:
+##   - mesh.scale: 1 → slam_radius/sphere.radius (расширение пузыря)
+##   - shader.intensity: 1 → 0 (общая прозрачность + сила blur'а / chromatic /
+##     accretion / fresnel — все эти эффекты в шейдере умножены на intensity)
+##   - shader.ripple_time: 0 → 1 (волна разбегается изнутри: dist*frequency -
+##     ripple_time*speed → бегущий sin; затухание exp(-dist*fade)*(1-time))
+## Также передаём ripple_center=pos в WORLD-координатах — шейдер считает дистанцию
+## от world_position фрагмента до этой точки, поэтому центр волны не смещается
+## вместе с растущей сферой.
 func _spawn_slam_visual(pos: Vector3) -> void:
 	var mesh: MeshInstance3D
 	var sphere: SphereMesh
-	var mat: StandardMaterial3D
+	var mat: ShaderMaterial
 
 	# Чистим пул от freed-меш'ей до reuse — могли исчезнуть вместе со сценой.
 	while not _slam_visual_pool.is_empty() and not is_instance_valid(_slam_visual_pool.back()):
@@ -192,9 +203,7 @@ func _spawn_slam_visual(pos: Vector3) -> void:
 	if not _slam_visual_pool.is_empty():
 		mesh = _slam_visual_pool.pop_back()
 		sphere = mesh.mesh as SphereMesh
-		mat = mesh.material_override as StandardMaterial3D
-		mat.albedo_color = slam_visual_color
-		mat.emission = _opaque(slam_visual_color)
+		mat = mesh.material_override as ShaderMaterial
 		mesh.scale = Vector3.ONE
 		mesh.visible = true
 		if not mesh.is_inside_tree():
@@ -206,23 +215,42 @@ func _spawn_slam_visual(pos: Vector3) -> void:
 		sphere.height = SLAM_VISUAL_BASE_HEIGHT
 		mesh.mesh = sphere
 
-		mat = StandardMaterial3D.new()
-		mat.albedo_color = slam_visual_color
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		mat.emission_enabled = true
-		mat.emission = _opaque(slam_visual_color)
-		mat.emission_energy_multiplier = SLAM_VISUAL_EMISSION_ENERGY
+		# Per-instance копия — иначе tween'ы из пула затопчут друг друга.
+		var base_mat := load(SLAM_DISTORTION_MATERIAL_PATH) as ShaderMaterial
+		if base_mat == null:
+			push_error("[Slam] не загрузился slam_distortion_material.tres — fallback на StandardMaterial3D невозможен")
+			return
+		mat = base_mat.duplicate() as ShaderMaterial
 		mesh.material_override = mat
 		_effects_root.add_child(mesh)
 
 	mesh.global_position = pos
 
+	# Сбрасываем shader_parameter'ы к стартовым: пузырь только-только появился.
+	mat.set_shader_parameter("intensity", 1.0)
+	mat.set_shader_parameter("ripple_time", 0.0)
+	mat.set_shader_parameter("ripple_center", pos)
+
 	var target_scale: float = slam_radius / sphere.radius
 	var tween := mesh.create_tween()
 	tween.set_parallel(true)
 	tween.tween_property(mesh, "scale", Vector3.ONE * target_scale, SLAM_VISUAL_TWEEN_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.tween_property(mat, "albedo_color:a", 0.0, SLAM_VISUAL_TWEEN_DURATION).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	# intensity 1→0: master-control шейдера. Затухает плавно (CUBIC), чтобы
+	# blur/chromatic/accretion не отрубались резко в последний кадр.
+	tween.tween_method(_set_slam_param.bind(mat, "intensity"), 1.0, 0.0, SLAM_VISUAL_TWEEN_DURATION).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	# ripple_time 0→1: волна разбегается линейно, на 1.0 шейдер сам гасит
+	# (умножение на (1-ripple_time)).
+	tween.tween_method(_set_slam_param.bind(mat, "ripple_time"), 0.0, 1.0, SLAM_VISUAL_TWEEN_DURATION).set_trans(Tween.TRANS_LINEAR)
 	tween.finished.connect(_recycle_slam_visual.bind(mesh))
+
+
+## Сеттер shader_parameter'а через Tween.tween_method — нужен потому что
+## tween_property не умеет в shader_parameter'ы (их пишут через set_shader_parameter,
+## не через property path). bind(mat, name) фиксирует материал и имя параметра.
+func _set_slam_param(value: float, mat: ShaderMaterial, param_name: String) -> void:
+	if mat == null:
+		return
+	mat.set_shader_parameter(param_name, value)
 
 
 func _recycle_slam_visual(mesh: MeshInstance3D) -> void:
@@ -233,7 +261,3 @@ func _recycle_slam_visual(mesh: MeshInstance3D) -> void:
 		_slam_visual_pool.append(mesh)
 	else:
 		mesh.queue_free()
-
-
-static func _opaque(c: Color) -> Color:
-	return Color(c.r, c.g, c.b)
