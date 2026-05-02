@@ -3,6 +3,7 @@
 [ext_resource type="Script" uid="uid://c78dyma40p0fb" path="res://scripts/quest_actor.gd" id="1_script"]
 [ext_resource type="Material" path="res://resources/smoke_material.tres" id="2_smoke_mat"]
 [ext_resource type="ArrayMesh" uid="uid://c03p1wq8x7grl" path="res://resources/smoke_mesh.tres" id="3_smoke_mesh"]
+[ext_resource type="PackedScene" path="res://scenes/grass_chunk.tscn" id="4_grass_chunk"]
 
 [sub_resource type="StandardMaterial3D" id="Material_log"]
 albedo_color = Color(0.3, 0.18, 0.1, 1)
@@ -149,3 +150,8 @@ light_color = Color(1, 0.55, 0.2, 1)
 light_energy = 1.6
 omni_range = 7.0
 omni_attenuation = 1.5
+
+[node name="GrassChunk" parent="." instance=ExtResource("4_grass_chunk")]
+radius = 12.0
+density = 1.0
+exclude_center_radius = 1.5
