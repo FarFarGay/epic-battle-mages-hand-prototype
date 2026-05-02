@@ -9,8 +9,15 @@ extends Node
 signal slammed(position: Vector3, radius: float)
 
 const SLAM_VISUAL_POOL_CAP: int = 3
-const SLAM_VISUAL_BASE_RADIUS: float = 0.2
-const SLAM_VISUAL_BASE_HEIGHT: float = 0.4
+## SDF-noise dissolve в slam_distortion.gdshader работает с предположением,
+## что mesh — sphere unit-radius'а 0.5 в локальных координатах:
+## `sphere_dist = length(object_position) - 0.5`. Если SphereMesh имеет
+## другой radius (например 0.2), `length(object_position)` ≤ 0.2, sphere_dist
+## всегда отрицательная и далеко от нуля → `dissolve_alpha = 0` → весь
+## шейдер прозрачный. Поэтому держим 0.5/1.0 (radius/height) и компенсируем
+## размер через mesh.scale (target_scale = slam_radius / 0.5 = 10 при slam_radius=5).
+const SLAM_VISUAL_BASE_RADIUS: float = 0.5
+const SLAM_VISUAL_BASE_HEIGHT: float = 1.0
 const SLAM_VISUAL_TWEEN_DURATION: float = 0.45
 const SLAM_DISTORTION_MATERIAL_PATH: String = "res://resources/slam_distortion_material.tres"
 
