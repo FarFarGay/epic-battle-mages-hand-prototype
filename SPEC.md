@@ -73,9 +73,11 @@ hand_gameplay_prot/
     ├── gnome.gd               — class_name Gnome
     ├── defender_gnome.gd      — class_name DefenderGnome extends Gnome (лучник с прокачкой точности)
     ├── resource_pile.gd       — class_name ResourcePile (4 типа ресурса × 4 формы pile'а с дефолтами и override-экспортами)
-    ├── resource_zone.gd       — class_name ResourceZone (`@tool`, спавнит count pile'ов в прямоугольнике на _ready через call_deferred + rejection sampling)
+    ├── resource_zone.gd       — class_name ResourceZone (`@tool`, спавнит count pile'ов в прямоугольнике на _ready через await process_frame + rejection sampling)
     ├── quest_progress.gd      — autoload QuestProgress (линейный прогресс сюжета + Q-debug)
-    ├── quest_actor.gd         — class_name QuestActor (выдатчик квеста на POI)
+    ├── quest_actor.gd         — class_name QuestActor (POI-зона + выдатчик квеста: костёр, safe_radius, wave_schedule)
+    ├── wave_stage.gd          — class_name WaveStage (Resource): одна стадия осады POI
+    ├── wave_schedule.gd       — class_name WaveSchedule (Resource): массив стадий для QuestActor.wave_schedule
     ├── roads.gd               — генератор-меш дорог между POI (orphan, не подключён в main.tscn)
     ├── layers.gd              — class_name Layers (именованные физические слои + маски)
     ├── damageable.gd          — class_name Damageable (group-контракт + try_damage)
@@ -809,42 +811,52 @@ static func spawn(
 
 #### 5.5.4 WaveDirector — `scripts/wave_director.gd` (Node в `main.tscn`)
 
-**Назначение:** высокоуровневый «когда и сколько» — режиссёр кампании врагов. Управляет фазами, таймерами, целевой популяцией и волнами. Зовёт публичные методы `EnemySpawner` для самих спавнов.
+**Назначение:** режиссёр угрозы. POI-driven архитектура (с этапа 42): фоновый прилив скелетов растёт всегда, а POI-осады включаются по событию `EventBus.camp_deployed`. Сам не считает «когда у нас уже 50 скелетов» — это работа фонового таймера. Не считает «когда осаждать» — это работа подписки.
 
 **Фазы:**
 - `IDLE` — до первого нажатия P. Ничего не делается.
-- `RAMP` — первичный набор. На старт `initial_count=20` через `_spawn_safe_uniform` (точки внутри SpawnZone-ов площадно-взвешенно, отфильтрованные safe-зонами), затем доспавн по 1 шт каждые `ramp_duration / (target − initial)` секунд до `ramp_target_count=50`. Длится `ramp_duration=30с`.
-- `MAINTAIN` — параллельно:
-  - **Replenish** с гистерезисом: если живых ≤ `target − replenish_threshold` (= 30 при threshold=20), доспавнивает по 1 шт каждые `replenish_interval=2с` до возврата к target. Гистерезис даёт игроку «передышку» — после убийств не торопится восстанавливать.
-  - **Waves**: каждые `wave_interval=60с` дирижёр выбирает SpawnZone с остатком budget'а волн (uniform random — это и есть «директор сам решает порядок») и спавнит из неё группу из `zone.skeletons_per_wave` скелетов. После выстрела `zone.consume_wave()` декрементит budget; по исчерпанию (0) зона перестаёт участвовать в волнах (но остаётся в neutral-спавне). Каждому скелету ставится `forced_target = nearest_part_to(origin)` ближайшего лагеря.
+- `RUNNING` — после P. Тикает фон + (если есть активный POI) тикает осада.
 
-**Два потока спавна — neutral и waves:**
-- **Neutral** (initial/ramp/replenish + debug `[`-100): `_spawn_safe_uniform` через `_pick_safe_pos`. Кандидат — `_spawner.pick_random_pos()` (площадно-взвешенно по всем зонам, включая исчерпанные). Safe-фильтр (Camp `wave_safe_radius=32м` + POI `poi_safe_radius=32м`) накладывается поверх; до `wave_position_attempts=30` попыток + фоллбэк на «наименее плохую» точку.
-- **Waves**: зональный budget. Кандидат сразу из конкретной зоны через `random_point_in_zone(zone)` без safe-фильтра — дизайнер отвечает что зона стоит снаружи safe-зон.
+**Старая RAMP/MAINTAIN-фаза удалена** на этапе 42 — простота вместо двух раздельных state-machine'ов. См. этап 42 в §7.2.
 
-**Safe-фильтр (`_safe_score`):** возвращает «избыток» (distance − safe_radius) до ближайшей запретной зоны: живой Camp (radius=`wave_safe_radius`) или POI (radius=`poi_safe_radius`). >=0 → принимаем точку, <0 → запоминаем как фоллбэк-кандидата с максимальным score.
+**Фоновый прилив (`_tick_background`):**
+- На P: `background_initial_count=50` спавнится мгновенно через `_spawn_safe_uniform`, `_background_target = 50.0`.
+- Каждый кадр: `_background_target += background_growth_per_minute / 60 × delta`, кламп до `background_cap`. По умолчанию `growth=30` скел/мин wall-clock, `cap=600`.
+- Каждые `background_replenish_interval=1.0с`: если живых < target — спавним одного скелета (uniform safe). Темп подкачки 1/сек — плавный «прилив», не залп.
+- На P-рестарте target сбрасывается в initial. Стартовый initial-спавн снова идёт.
 
-**P-рестарт:** в фазах RAMP/MAINTAIN P снова → `kill_all_skeletons` + `Camp.reset_population()` для каждого camp в `camp_paths` + новый initial spawn → RAMP с нуля. В фазе IDLE первый P — это «старт», не «рестарт»: гномов и скелетов не трогает (их ещё нет на старте), только initial spawn. **Бюджет волн SpawnZone-ов рестарт не трогает** — это design-time состояние плюс рантайм-API ниже.
+**POI-осада (`_tick_active_poi`, активна только если есть `_active_poi`/`_active_schedule`):**
+- На `EventBus.camp_deployed(anchor)`: ищем Camp по anchor (ближайший в `_camps`), POI по anchor (ближайший в `_pois`, sanity-чек ≤5м). Берём `poi.get_wave_schedule()`. Если null/пустое — POI «мирный», только фон.
+- Иначе: `_active_camp / _active_poi / _active_schedule = ...`, `_stage_index=0`, `_stage_elapsed=0`, `_wave_cd = stages[0].wave_interval`.
+- Каждый кадр: `_stage_elapsed += delta`, `_wave_cd -= delta`. Если `_wave_cd ≤ 0` — `_spawn_poi_wave(stage.skeletons_per_wave)`, перевзвод `_wave_cd`.
+- Stage advance: если `_stage_elapsed ≥ stage.duration` и есть следующая стадия — `_stage_index += 1`, `_stage_elapsed=0`. **Финальная стадия залипает** (продолжает играть пока лагерь не свернут).
+- Sanity: если `_active_camp.has_alive_parts() == false` (палатки разбили в ходе осады) — `_clear_active_poi()`.
+- На `EventBus.camp_packed` — `_clear_active_poi()`. Фон продолжает идти, POI-волны останавливаются.
 
-**Force_wave:** `Input.is_action_just_pressed("force_wave")` (клавиша O) → немедленный `_spawn_wave()` + `_wave_cd = wave_interval` (сбрасывает таймер до плановой). Доступно в RAMP/MAINTAIN; в IDLE логирует подсказку «нажми P».
+**Spawn POI-волны (`_spawn_poi_wave`):** ищем SpawnZone-ы с `waves_left() > 0`, выбираем одну (uniform random) и фейерим группу `count` штук в её прямоугольнике, где `count = stage.skeletons_per_wave`. Каждому ставится `forced_target = active_camp.nearest_part_to(origin)`. `consume_wave()` декрементит budget зоны; по исчерпанию зона больше не участвует в волнах (фон остаётся).
 
-**Debug spawn (`[`):** `Input.is_action_just_pressed("debug_spawn_100")` → `_spawn_safe_uniform(100)` (neutral по зонам). Не трогает фазу/таймеры кампании, можно жать в любой фазе включая IDLE.
+**Safe-фильтр (`_safe_score`):** возвращает «избыток» (distance − safe_radius) до ближайшей запретной зоны: живой Camp (radius=`wave_safe_radius=32м`) или POI (radius читается с `poi.safe_radius` — каждый POI имеет свой через `QuestActor.safe_radius`; fallback `poi_safe_radius_fallback=32м`). >=0 → принимаем, <0 → запоминаем как фоллбэк. Используется только для фонового спавна; POI-волны идут из SpawnZone напрямую без safe-фильтра.
 
-**Stress test (`]`):** `Input.is_action_just_pressed("debug_stress_2000")` → fire-and-forget `EnemySpawner.spawn_uniform(skeleton_scene, 2000)` (батчи по 6/кадр, ≈5.5с до полного спавна). Игнорирует safe-зоны и SpawnZone-границы — для замера перфоманса распределение не важно. Используется в паре с PerfHud (F3) для локализации боттлнека на 2000 скелетов: высокий `Process` — CPU AI/vision, высокий `Physics` — CharacterBody3D коллизии, высокий `Draw calls` — упор в GPU/уникальные MeshInstance.
+**P-рестарт:** в фазе RUNNING повторное P → `kill_all_skeletons` + `Camp.reset_population()` для каждого camp + `_clear_active_poi()` + новый initial-спавн фона. Если игрок стоит на POI и хочет возобновить осаду — сворачивает и разворачивает лагерь (camp_packed → camp_deployed эмитится снова, осада запустится с stage 0).
 
-**Safe-zone monitor:** раз в 1с считает скелетов в `wave_safe_radius` от каждого `current_center()` лагеря. Лог по фронту изменения count — видно сколько фоновых wander-скелетов проникает в зону.
+**Force_wave (O):** немедленный `_spawn_poi_wave(stage.skeletons_per_wave)` + перевзвод `_wave_cd`. Без активного POI — игнор с предупреждением «волне некуда идти».
 
-**Public API — рантайм-управление зонами (для эвентов типа «приход Короля Ночи»):**
-- `set_waves_in_all_zones(n)` — перезаписывает остаток budget'а всем зонам разом.
-- `add_waves_to_all_zones(n)` — накопительное пополнение.
+**Debug spawn (`[`):** `_spawn_safe_uniform(100)` поверх фона. Не трогает таргет/таймеры — единоразовый дамп.
+
+**Stress test (`]`):** fire-and-forget `EnemySpawner.spawn_uniform(skeleton_scene, 2000)`. Игнорирует safe-зоны и SpawnZone-границы; для замера перфоманса (PerfHud F3).
+
+**Safe-zone monitor:** раз в 1с считает скелетов в `wave_safe_radius` от `current_center()` каждого лагеря. Лог по фронту с указанием `target/cap` фона.
+
+**Public API:**
+- `set_waves_in_all_zones(n) / add_waves_to_all_zones(n)` — рантайм-управление budget'ом SpawnZone-ов (для будущих эвентов «Король Ночи»).
+- `is_safe_pos(pos) -> bool` — внешний фасад над `_safe_score >= 0`. Используется `ResourceZone` WOOD-фильтром.
 
 **Экспорты (в инспекторе):**
 - Refs: `spawner_path`, `camp_paths: Array[NodePath]`, `poi_root_path: NodePath`, `skeleton_scene: PackedScene`.
-- Initial ramp: `initial_count=20`, `ramp_target_count=50`, `ramp_duration=30.0`.
-- Maintain replenish: `replenish_threshold=20`, `replenish_interval=2.0`.
-- Maintain waves: `wave_interval=60.0`, `wave_group_radius=4.0`, `wave_safe_radius=32.0`, `poi_safe_radius=32.0` (~30% меньше прежних 45 — компромисс геймдизайнера, спавн ближе к лагерю), `wave_position_attempts=30`. Размер группы (`skeletons_per_wave`) ушёл per-zone в `SpawnZone`.
+- Background tide: `background_initial_count=50`, `background_growth_per_minute=30.0`, `background_cap=600`, `background_replenish_interval=1.0`.
+- POI siege: `wave_group_radius=4.0`, `wave_safe_radius=32.0`, `poi_safe_radius_fallback=32.0`, `wave_position_attempts=30`.
 
-**Зависимости:** держит ссылку на `EnemySpawner`, список `Camp`'ов, список POI-нод (Node3D-дети `poi_root_path`). Использует `Camp.current_center / has_alive_parts / nearest_part_to / reset_population` и `EnemySpawner.get_zones / random_point_in_zone / pick_random_pos`.
+**Зависимости:** держит ссылку на `EnemySpawner`, `Array[Camp]`, `Array[Node3D]` POI. Подписан на `EventBus.camp_deployed/camp_packed`. Использует `Camp.current_center / has_alive_parts / nearest_part_to / reset_population` и `EnemySpawner.get_zones / random_point_in_zone / pick_random_pos`. POI читает duck-typing через `has_method("get_wave_schedule")` и свойство `safe_radius`.
 
 #### 5.5.5 SpawnZone — `scenes/spawn_zone.tscn`, `scripts/spawn_zone.gd` (`@tool`)
 
@@ -852,16 +864,16 @@ static func spawn(
 
 **Назначение:** прямоугольник `size` (X×Z, в метрах) с центром в собственной `global_position` и поворотом из transform узла. Два аспекта:
 
-1. **Neutral-спавн.** `EnemySpawner.pick_random_pos` выбирает рандомную точку в объединении всех SpawnZone-ов площадно-взвешенно (size.x·size.y). Wave-budget здесь не учитывается — даже исчерпанная зона остаётся фоновой «локацией».
+1. **Фоновый прилив.** `EnemySpawner.pick_random_pos` выбирает рандомную точку в объединении всех SpawnZone-ов площадно-взвешенно (size.x·size.y). Wave-budget здесь не учитывается — даже исчерпанная зона остаётся фоновой «локацией».
 
-2. **Волны.** `WaveDirector._spawn_wave` ищет SpawnZone-ы с `waves_left() > 0`, выбирает одну (uniform random) и фейерит группу `skeletons_per_wave` штук внутри её прямоугольника. После выстрела зовётся `consume_wave()` — `_waves_left` декрементится. По исчерпанию зона больше не выбирается для волн.
+2. **POI-волны.** `WaveDirector._spawn_poi_wave` ищет SpawnZone-ы с `waves_left() > 0`, выбирает одну (uniform random) и фейерит группу штук внутри её прямоугольника. **Размер группы теперь читается из активной `WaveStage` POI**, не из самой зоны (на этапе 42 параметр `skeletons_per_wave` стал deprecated). После выстрела `consume_wave()` декрементит `_waves_left`; при 0 зона выходит из POI-пула, но в фоновом потоке остаётся.
 
 **Экспорты:**
 - `size: Vector2 = Vector2(60, 60)` — полные размеры по локальным X (size.x) и Z (size.y). Сеттер `@tool` мгновенно масштабирует визуальный индикатор (плоский box под собой) — в редакторе видно размер сразу. Поворот вокруг Y берётся из transform узла; сэмплирование (`random_point_in_zone`) учитывает basis.
 - Группа **Waves**:
   - `target_poi: NodePath` — метаданные привязки к POI (для дизайна и потенциальных будущих политик дирижёра вроде «бить по POI с ближайшим Tower»). В текущей реализации не запрещает другим POI «получить» волну отсюда — только справочно.
   - `wave_count: int = 5` — стартовый budget волн. На `_ready` копируется в `_waves_left`.
-  - `skeletons_per_wave: int = 10` — размер группы при выстреле этой зоны.
+  - `skeletons_per_wave: int = 10` — **DEPRECATED** (этап 42). Размер пачки теперь приходит из `WaveStage.skeletons_per_wave` POI; поле оставлено только чтобы main.tscn с override-нутым значением не валился на загрузке.
 
 **Public API:**
 - `area() -> float` — площадь (size.x·size.y). Используется EnemySpawner'ом для взвешивания выбора зоны.
@@ -917,8 +929,11 @@ static func spawn(
 - `follow_max_distance: float = 30.0` — «зона видимости».
 - `deploy_duration: float = 3.0` — секунды зажатой `R` при неподвижной башне для развёртки.
 - `pack_duration: float = 4.0` — секунды зажатой `R` в развёрнутом состоянии для свёртки.
+- `pack_timeout: float = 12.0` — таймаут принудительной свёртки если кто-то из гномов застрял (см. ниже).
 - `deploy_radius: float = 8.0` — радиус кольца палаток вокруг anchor (×2 от исходного 4 в коммите про геометрию лагеря).
 - `stationary_threshold: float = 0.01` — порог смещения **позиции** цели за кадр, ниже которого считаем её неподвижной (раньше читалась `velocity` у CharacterBody3D — теперь `_tower` хранится как `Node3D`, и неподвижность определяется через эпсилон-чек delta-position).
+- Группа **POI deploy gate** (этап 42):
+  - `require_poi: bool = true` — если true, deploy возможен только когда башня в радиусе [QuestActor.safe_radius] хотя бы одной POI-зоны (группа `poi_zone`). Hold R вне POI игнорируется. Anchor лагеря защёлкивается на POI.global_position (а не на tower) — палатки кольцом строятся симметрично вокруг костра. false — старое поведение «deploy где угодно». Для отладки.
 - Группа **Gnomes:**
   - `gnome_scene: PackedScene` — сцена обычного гнома-собирателя.
   - `defender_scene: PackedScene` — сцена защитника-лучника (DefenderGnome). Camp читает `CampPart.defenders_per_tent` и `gnomes_per_tent`, спавнит `defenders_per_tent` защитников и `(gnomes_per_tent − defenders_per_tent)` собирателей на каждую палатку. Дефолт 7 жителей: 3 защитника + 4 собирателя.
@@ -979,11 +994,19 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 **Сироты при гибели палатки** (`_on_part_destroyed → _reassign_orphan_gnomes`): когда палатка умирает, гномы с `_home_tent == dead_tent` получают `set_home_tent(nearest_alive)`. Без этого RETURNING_TO_TENT при `_home_tent == null` сразу делал `_enter_in_tent` на текущей точке (гном «телепортируется домой» где попало в поле, невидим), а в CARAVAN IN_TENT-приклейка к null'у не работала — гном застревал. Если живых палаток вообще нет — оставляем как есть (Camp всё равно невалиден для волн через `has_alive_parts`).
 
 **Логика развёртки (`_handle_input` в `CARAVAN_FOLLOWING`):**
-- Пока зажата `R` И `_is_tower_stationary()` — `_deploy_hold += delta`. Любое движение башни или отпускание `R` → сброс.
-- На `_deploy_hold ≥ deploy_duration` → `_start_deploy()`: `_deploy_anchor = tower.global_position`; для каждой палатки считается своя `_deployed_targets[i]`; `_state = DEPLOYED`; эмит `deployed(anchor)`.
+- POI-gate: каждый кадр `_find_poi_for_deploy()` ищет ближайший QuestActor в группе `poi_zone`, в радиусе которого находится башня. `poi_ok = (not require_poi) or (poi != null)`.
+- Пока зажата `R` И `_is_tower_stationary()` И `poi_ok` — `_deploy_hold += delta`. Движение башни / отпускание R / выезд из POI → сброс счётчика. Лог-фронт различает причину сброса.
+- На `_deploy_hold ≥ deploy_duration` → `_start_deploy()`: anchor приоритет `poi.global_position > _tower.global_position > self`. Для каждой палатки считается своя `_deployed_targets[i]`; `_state = DEPLOYED`; эмит `deployed(anchor)`. Anchor совпадает с POI → WaveDirector найдёт POI по anchor'у и запустит осаду по `wave_schedule`.
 - Вызов `g.enter_deployed()` для каждого гнома → выходит из палатки, `_state = SEARCHING`.
 
 **`_is_tower_stationary`:** `_tower != null` и delta-position на горизонтали `< stationary_threshold`. Не зависит от того, что цель — `CharacterBody3D`; работает с любым `Node3D`.
+
+**Tower aggro (этап 42):** Camp ставит/убирает `_tower` в группу `skeleton_target`:
+- На `_ready` (если не start_deployed): `_set_tower_aggro(true)` — в каравне tower сам по себе цель. Фоновые wander-скелеты, увидев караван глазами, идут к tower и атакуют (Damageable.try_damage от Skeleton._perform_strike).
+- На `_start_deploy`: `_set_tower_aggro(false)` — осада переключается на палатки/гномов вокруг костра.
+- На `_finalize_pack`: `_set_tower_aggro(true)` — возвращаем после свёртки.
+- На `_on_tower_destroyed`: `_set_tower_aggro(false)` (страховка перед очисткой ссылки).
+- `_set_tower_aggro` идемпотентен (повторный add no-op), null-safe (tower=null → no-op), `is_inside_tree()`-guard.
 
 **Дележ куч между гномами (`is_pile_claimed`):**
 
@@ -1358,9 +1381,9 @@ func take_one() -> bool:
 
 Если новому модулю нужна другая высота — настроить `module_offset` на слотах под него (можно сделать слот-специфичный или ввести `placement_offset` на самом модуле).
 
-### 5.11 Quest system — POI markers, QuestActor, QuestProgress
+### 5.11 POI/Quest system — POI markers, QuestActor (POI-зона), WaveSchedule, QuestProgress
 
-Линейная цепочка сюжетных заданий: 3 POI на карте, на каждой стоит «актор» (NPC-выдатчик квеста). Прогресс продвигается клавишей `Q` (debug-заглушка до настоящих триггеров завершения).
+POI = костёр. Одна нода [QuestActor] совмещает три вещи: квест-выдатчик, визуал костра и параметры **POI-зоны** для геймплея «лагерь + осада» (этап 42). Линейная цепочка сюжетных заданий: 3 POI на карте, прогресс продвигается клавишей `Q` (debug-заглушка до настоящих триггеров завершения).
 
 #### POI markers — `scenes/poi_marker.tscn`
 
@@ -1369,7 +1392,7 @@ func take_one() -> bool:
 **Назначение:** статический визуальный маркер точки интереса — небольшой круг тёмной золы под костром (top/bottom_radius≈0.95, height=0.04, грязно-серый, без emission). Раньше был большой жёлтый плоский цилиндр r=2.5, height=0.6 — заменили на скромное «пятно» (`516ddbf` → текущая версия), потому что весь визуал POI теперь несёт `QuestActor` (костёр сверху). Используется для двух разных целей:
 
 1. **Quest-точка.** В `main.tscn` под `PointsOfInterest/` лежат три POI: `Poi_ESE`, `Poi_Heart`, `Poi_SW`. У каждого ребёнок `Actor` (см. ниже), на нём сидит `quest_order`.
-2. **Safe-зона спавна.** `WaveDirector` собирает прямых детей `poi_root_path` в `_pois` и применяет `poi_safe_radius=32м` как негативный фильтр для спавна скелетов (см. §5.5.4). Та же зона работает для WOOD-ResourceZone — лес рядом с POI не появляется. Для остальных типов ресурсов фильтр не применяется.
+2. **POI-зона.** Сам `Actor` (QuestActor) регистрируется в группе `poi_zone`, его `safe_radius` используется и Camp'ом (deploy-gate), и WaveDirector'ом (фоновый safe-фильтр + поиск POI по anchor). См. §5.5.4 и описание QuestActor ниже. Та же зона работает для WOOD-ResourceZone — лес рядом с POI не появляется. Для остальных типов ресурсов фильтр не применяется.
 
 #### QuestActor — `scenes/quest_actor.tscn`, `scripts/quest_actor.gd`
 
@@ -1415,12 +1438,45 @@ func _refresh_visual() -> void:
 Каждый `_apply_*` переключает: `_log_material.emission` (цвет+energy), `_flame_core.visible`, `_flame_particles.emitting`, `_smoke_particles.emitting/amount`, `_light.light_color/light_energy`. См. [quest_actor.gd](scripts/quest_actor.gd).
 
 **Экспорты:**
-- `actor_id: StringName` — уникальный идентификатор для будущих скриптовых триггеров (диалог, выдача награды, ивенты в EventBus). Сейчас не используется кроме логов.
-- `quest_order: int = 0` — порядковый номер в линейной цепочке (0=первый, 1=второй, …).
+- Quest:
+  - `actor_id: StringName` — уникальный идентификатор для будущих скриптовых триггеров (диалог, выдача награды, ивенты в EventBus). Сейчас не используется кроме логов.
+  - `quest_order: int = 0` — порядковый номер в линейной цепочке (0=первый, 1=второй, …).
+- POI zone (этап 42):
+  - `safe_radius: float = 12.0` — радиус, в котором лагерь может развернуться вокруг костра. Должен быть ≥ `Camp.deploy_radius` (8м), иначе кольцо палаток выйдет за пределы «зоны костра». Также используется WaveDirector'ом как safe-радиус для фонового спавна (см. §5.5.4).
+  - `wave_schedule: WaveSchedule` (nullable) — расписание осады. Если null/пустое — POI «мирный»: лагерь развернётся, но волны не идут.
+
+**Public API (POI-роль):**
+- `is_within_safe_radius(world_pos: Vector3) -> bool` — XZ-расстояние ≤ safe_radius. Camp использует для deploy-gate'а.
+- `get_wave_schedule() -> WaveSchedule` — для WaveDirector'а на `camp_deployed`.
+
+**Группа:** `add_to_group(QuestActor.POI_GROUP)` (= `&"poi_zone"`) в `_ready`. Camp ищет ближайший POI через `get_tree().get_nodes_in_group(POI_GROUP)`.
 
 **Подписка:** `EventBus.quest_advanced.connect(_on_quest_advanced)` — все 3 актора слушают, переключают режим костра одновременно при продвижении прогресса.
 
-**Использование в `main.tscn`:** под каждым `Poi_*` инстанс `quest_actor.tscn` с уникальным `actor_id` (`"ese"`, `"heart"`, `"sw"`) и `quest_order = 0/1/2` соответственно.
+**Использование в `main.tscn`:** под каждым `Poi_*` инстанс `quest_actor.tscn` с уникальным `actor_id` (`"ese"`, `"heart"`, `"sw"`), `quest_order = 0/1/2` соответственно и (опционально) `wave_schedule` — отдельный `.tres` для разной сложности на разных POI.
+
+#### WaveSchedule + WaveStage — `scripts/wave_schedule.gd`, `scripts/wave_stage.gd`
+
+**Тип:** оба — `Resource` (с `class_name`).
+
+**Назначение:** дизайнерский «расписание осады». Прикладывается в инспекторе костра (`QuestActor.wave_schedule`). Когда лагерь развёртывается на POI, WaveDirector проигрывает массив `WaveStage` по порядку — это даёт нелинейный рост угрозы во времени без массива магических чисел в коде.
+
+**`WaveStage` поля (одна стадия):**
+- `duration: float = 60.0` — сколько играет эта стадия (с). По истечении → переход в `stages[i+1]`. Финальная стадия залипает.
+- `wave_interval: float = 60.0` — период между волнами в этой стадии (с).
+- `skeletons_per_wave: int = 5` — размер пачки в одной волне.
+
+**`WaveSchedule` поля:**
+- `stages: Array[WaveStage]` — массив стадий по порядку. Если пуст — POI «мирный».
+
+**`WaveSchedule.get_stage(index)`** клампит до последней — это и даёт «залипание» финальной стадии без специальной ветки в WaveDirector'е.
+
+**Пример (стандартная сложность):**
+- `stages[0]: duration=60, interval=60, per_wave=5`  — «разведка» (5 скел/мин).
+- `stages[1]: duration=90, interval=45, per_wave=8`  — «давление» (~10 скел/мин).
+- `stages[2]: duration=∞,  interval=30, per_wave=12` — «осада» (24 скел/мин).
+
+Лёгкие POI (стартовые) могут иметь пологое расписание, поздние — агрессивное. Все параметры в `.tres` ресурсах.
 
 #### QuestProgress — `scripts/quest_progress.gd` (autoload)
 
@@ -1784,6 +1840,30 @@ func _refresh_visual() -> void:
     - `MountSlot._mount` re-entrance + zombie-detach: защёлку `_mounted = module` поставил **до** `module.attach_to_slot(self)` (re-entrance-protection если внутри attach сигналы вернутся в `_on_hand_released`). Добавил one-shot подписку на `module.unmounted`: если другой слот через `attach_to_slot` перехватит модуль, мы получаем сигнал и сбрасываем стейл-ссылку через `_on_module_force_detached` (проверяет `_mounted.get_slot() != self`).
 
     Все фиксы покрыты документирующими комментами в коде с описанием **причины** (incident / risk / mechanism), не только «что делает».
+
+42. **POI-driven gameplay loop (3 коммита)**. Геймдизайн-петля «лагерь только в POI, угроза по нарастающей»: до этого этапа RAMP/MAINTAIN-фазы лили скелетов независимо от действий игрока, лагерь ставился где угодно, ResourceZone'ы и SpawnZone'ы балансировались параллельно на сцене. Стало: фон = всегда, POI = триггер осады.
+
+    **K1 (`522712e`) — POI-зона + WaveSchedule + Camp deploy-gate:**
+    - Новые `Resource`-классы:
+      - `scripts/wave_stage.gd` (`WaveStage`): одна стадия осады с `duration / wave_interval / skeletons_per_wave`.
+      - `scripts/wave_schedule.gd` (`WaveSchedule`): массив `stages`, `get_stage(idx)` клампит до последней (финальная стадия залипает).
+    - `quest_actor.gd` расширен до POI-зоны: константа `POI_GROUP = &"poi_zone"`, регистрация в группе на `_ready`. Экспорты `safe_radius=12.0` и `wave_schedule: WaveSchedule` (nullable). API `is_within_safe_radius(world_pos)` для Camp-gate'а, `get_wave_schedule()` для WaveDirector'а.
+    - `camp.gd` deploy-gate: `require_poi=true` (по умолчанию), `_find_poi_for_deploy()` ищет ближайший POI в группе `poi_zone`, в радиус которого попадает башня. В `_handle_input` `poi_ok` добавлен в условие запуска `_deploy_hold`. В `_start_deploy` anchor приоритет `poi.global_position > _tower.global_position > self`. Лог-фронт различает rejection-причину «башня поехала» vs «вышли из POI».
+
+    **K2 (`7ade69a`) — WaveDirector POI-driven + фоновый прилив:**
+    - Удалена RAMP/MAINTAIN фаза + параметры `initial_count / ramp_target_count / ramp_duration / replenish_threshold / replenish_interval / wave_interval` (глобальный). Заменено на `Phase.IDLE/RUNNING` (один фазовый бит) + фон + per-POI осада.
+    - **Фоновый прилив** (`_tick_background`): `background_initial_count=50` мгновенно на P, `_background_target` плавно растёт `growth_per_minute=30 скел/мин` с cap'ом `background_cap=600`. Каждые `background_replenish_interval=1.0с` подспавн одного скелета через `_spawn_safe_uniform` если live < target. Игрок заходит в более грязный мир со временем — даёт «постепенно тяжелее» без ручного масштабирования сложности.
+    - **POI-осада**: подписка на `EventBus.camp_deployed/camp_packed`. На deploy ищем Camp по anchor (ближайший в `_camps`) и POI по anchor (ближайший в `_pois`, sanity-чек ≤5м). Берём `poi.get_wave_schedule()`. Если пусто — POI «мирный». Иначе stage-machine: `_stage_index=0`, `_stage_elapsed`, `_wave_cd = stage.wave_interval`. Каждую `wave_interval` секунд `_spawn_poi_wave(stage.skeletons_per_wave)`. По `stage.duration` — `_stage_index += 1`, финальная залипает. На `camp_packed` — `_clear_active_poi`. Фон продолжает идти.
+    - Защита: если активный лагерь разрушен в ходе осады — `_clear_active_poi`. POI без расписания — мирный, только фон.
+    - `_safe_score` теперь читает per-POI `safe_radius` через duck-typing (`"safe_radius" in poi`); fallback `poi_safe_radius_fallback=32`.
+    - `SpawnZone.skeletons_per_wave` deprecated — размер пачки приходит из `WaveStage`. Поле оставлено чтобы override в `main.tscn` не валился.
+
+    **K3 (`09f9e54`) — Tower aggro в каравне:**
+    - `Camp._set_tower_aggro(active)` — добавляет/убирает `_tower` в группу `skeleton_target`. Идемпотентен, null-safe, `is_inside_tree`-guard.
+    - В `_ready` (если не `start_deployed`): aggro=true. На `_start_deploy`: false (осада на палатки). На `_finalize_pack`: true (караван снова цель). На `_on_tower_destroyed`: false (страховка).
+    - Поведение: фоновые wander-скелеты, увидев караван глазами, идут к башне через Skeleton-vision (TARGET_GROUP `skeleton_target`) и атакуют через `Damageable.try_damage(tower)`. На POI tower вне группы — агро на палатки/гномов, башня визуально стоит в центре лагеря, но не задевается.
+
+    **Дизайнерская петля сейчас:** между POI караван едет, фон в карте растёт. Скелеты могут увидеть караван и накинуться (агро через vision на tower). Игрок подъезжает к POI (костёр), жмёт R — лагерь разворачивается ровно по центру костра. WaveDirector видит deploy и стартует осаду по wave_schedule этого POI. Стадии нарастают по темпу. Игрок отбивается, собирает ресурсы (ResourceZone-ы около POI), потом сворачивает лагерь и едет к следующему POI — но мир уже грязнее. Все параметры (radii, schedules, фоновый рост) в инспекторе на самих нодах, никаких магических чисел в коде.
 
 ### 7.3 Решённые ошибки
 
