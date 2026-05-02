@@ -921,13 +921,18 @@ static func spawn(
 
 **Назначение:** chunked 3D-mesh трава по всей карте (этап 44). На `_ready` спавнит `chunk_count_xz × chunk_count_xz` инстансов `GrassChunk` (`MultiMeshInstance3D`-обёртка), каждый со своим `MultiMesh`, заполненным random-blade'ами в его прямоугольнике.
 
-**Зачем чанки:** Godot культит MultiMesh по общему AABB — один большой MultiMesh на 400×400 пересекал бы frustum из любой точки и vertex-шейдер гонял бы все ~800k blade каждый кадр. Сетка 8×8 чанков по 50м даёт 64 отдельных AABB; frustum culling оставляет только видимые ~3-9 чанков. На каждом чанке ещё `visibility_range_end=60м` — дальние пропадают по дистанции до камеры.
+**Зачем чанки:** Godot культит MultiMesh по общему AABB — один большой MultiMesh на 400×400 пересекал бы frustum из любой точки и vertex-шейдер гонял бы все blade'ы каждый кадр. Сетка 16×16 чанков по 25м даёт 256 отдельных AABB; frustum culling оставляет только видимые. На каждом чанке ещё `visibility_range_end=120м` — дальние пропадают по дистанции до камеры (раньше было 60м, но при зум-out видимая дистанция камеры ~150м, чанки за 60м пропадали посередине экрана).
 
-**Cost-estimate (дефолты `density=5`, `chunk_count=8`, `visibility=60м`):**
-- 64 чанка × ~12 500 blade per chunk = ~800k blade суммарно по карте.
-- В кадре видно ~3-9 чанков = ~38k-115k blade × 7 трисов = ~260k-800k трисов на vertex stage.
+**Cost-estimate (дефолты `density=4`, `chunk_count=16`, `visibility=120м`):**
+- 256 чанков × 25м×25м×4 = 2500 blade per chunk = ~640k blade суммарно по карте.
+- В кадре видно ~12-20 чанков = ~30k-50k blade × 7 трисов = ~210k-350k трисов на vertex stage.
 - Шейдер дешёвый: один texture-sample + sin + 2 add'a в vertex'е, fragment без alpha и без discard.
 - Один draw call на чанк (MultiMesh batched через GPU instancing).
+- Память: 256 уникальных MultiMesh-resource'ов × 2500 × 64 байта Transform3D ≈ 40MB.
+
+**Ключевой баг (этап 44, фикс `9f03444`):** MultiMesh в `grass_chunk.tscn` — это `sub_resource`, и `chunk_scene.instantiate()` копирует **NodePath на ресурс**, не сам ресурс. Без `chunk.multimesh = chunk.multimesh.duplicate()` все 256 чанков пишут в один и тот же MultiMesh-буфер, `instance_count=X` и `set_instance_transform(...)` перезаписывают друг друга. На скрине геймдизайнера это спамило 429 ошибок в дебаггере и визуально показывало только один чанк (последний). Fix — duplicate в `_spawn_one_chunk` сразу после instantiate.
+
+**Y-position (этап 44):** `GrassField` в `main.tscn` имеет `transform.origin.y = -0.28`. Причина: Ground transform в main.tscn — `position.y=-0.5`, `scale.y=0.439`, BoxMesh size.y=1 → top of ground = -0.5 + 0.5×0.439 = -0.28. Корень blade'а в OBJ на y=0, при scale=0.15 в transform — низ blade'а должен совпадать с верхом пола. GrassField с y=0 ставил blade'ы на 0.28м над полом (парили).
 
 **Шейдер `resources/grass.gdshader`:**
 - `render_mode cull_disabled` — травинку видно с обеих сторон.
@@ -939,11 +944,18 @@ static func spawn(
 
 **Параметры (`scenes/grass_field.tscn`, инспектор):**
 - `world_size: float = 400.0` — должен совпадать с размером Ground.
-- `chunk_count_xz: int = 8` — сетка чанков. 8×8 при world_size=400 → 50м чанк.
-- `density: float = 5.0` — травинок на квадратный метр.
-- `visibility_distance: float = 60.0` — дистанция культинга по `visibility_range_end`.
-- `blade_scale: float = 0.12`, `blade_scale_variance: float = 0.2` — базовый размер blade'а и разброс.
+- `chunk_count_xz: int = 16` — сетка чанков. 16×16 при world_size=400 → 25м чанк (мельче culling-step, плотнее покрытие видимой зоны).
+- `density: float = 4.0` — травинок на квадратный метр.
+- `visibility_distance: float = 120.0` — дистанция культинга по `visibility_range_end` (покрывает зум-out камеры на 100-150м).
+- `blade_scale: float = 0.15`, `blade_scale_variance: float = 0.2` — базовый размер blade'а и разброс.
 - `random_seed: int = -1` — `-1 = randomize`, иначе фиксированный seed для воспроизводимого распределения.
+
+**Параметры ветра (`grass_material.tres`, инспектор):**
+- `sway: float = 0.6` — амплитуда смещения как доля высоты blade'а. Макс смещение по миру = blade.height × sway = 0.6м × 0.6 ≈ 0.36м для дефолтного blade'а. Итерации тюнинга: 0.15 → 0.25 → 0.6.
+- `sway_pow: float = 1.5` — степень затухания к корню. 2 — корень неподвижен (статичная база), 1 — линейное затухание (низ тоже двигается). 1.5 — компромисс «активное колыхание».
+- `sway_time_scale: float = 2.5` — частота. ~раз в 2.5с одно полное качание.
+- `sway_dir: Vector2 = (1, 0.3)` — направление ветра по XZ.
+- `sway_noise_scale: float = 0.08` — масштаб noise-вариации между травинками. Меньше = крупнее единые «волны», больше = каждая травинка качается по-своему.
 
 **Откат:** `density = 0` в инспекторе GrassField (на _ready ранний return — чанки не спавнятся).
 
@@ -1951,9 +1963,12 @@ func _refresh_visual() -> void:
 
     **Bug-fix в шейдере:** первая версия имела ветер `TIME × sway_time_scale × 0.05` — за секунду noise сдвигался на 0.02, период 20м → одно полное качание за ~1000 секунд. Визуально ветер не работал. Убрал `× 0.05` множитель + переписал на sin+noise, теперь видно.
 
-    **Параметры (дефолты в `grass_field.tscn`):** `density=5/м²`, `visibility_distance=60м`, `blade_scale=0.12 ± 0.2`. Cost: ~800k blade суммарно, ~38k-115k в кадре, vertex-bound, ~один draw call на чанк. Откат: `density=0` в инспекторе GrassField.
+    **Дальнейший дебаг (коммиты `f66b78f` → `9f03444` → `a1d6215`):**
+    - `f66b78f`: visibility 60→120м (зум-out камеры видит ~150м, чанки за 60м пропадали посреди экрана), chunk_count 8→16 (мелкое culling-step, 25м чанки), density 5→4 (компенсация), blade_scale 0.12→0.15 (видимее с расстояния), GrassField y=−0.28 (корни на полу — Ground top at y=−0.28 из-за scale.y=0.439).
+    - `9f03444`: **критический фикс** — `chunk.multimesh = chunk.multimesh.duplicate()` в `_spawn_one_chunk`. До этого все 256 чанков делили один MultiMesh-resource (sub_resource в .tscn копирует NodePath, не сам ресурс), `instance_count=X` и `set_instance_transform(i,t)` перезаписывали друг друга — 429 ошибок в дебаггере и виден только последний чанк.
+    - `a1d6215`: усилены параметры ветра: `sway` 0.25→0.6 (амплитуда ×2.4), `sway_time_scale` 1.5→2.5 (быстрее), `sway_pow` 2→1.5 (корень тоже двигается). Геймдизайнер: «травинки почти не видно как шевелятся».
 
-    Используется тот же `ground_noise.tres` что и для пола — один shared NoiseTexture2D на проект.
+    **Финальные дефолты:** `density=4`, `visibility_distance=120м`, `blade_scale=0.15`, ~640k blade суммарно, ~30k-50k в кадре. Откат: `density=0` в инспекторе GrassField. Используется тот же `ground_noise.tres` что и для пола — один shared NoiseTexture2D на проект.
 
 ### 7.3 Решённые ошибки
 
