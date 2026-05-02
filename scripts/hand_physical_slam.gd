@@ -25,9 +25,9 @@ const SLAM_DISTORTION_MATERIAL_PATH: String = "res://resources/slam_distortion_m
 ## без параметров от инстанса), не нужно дублировать на каждый шлепок.
 const SLAM_DUST_MATERIAL_PATH: String = "res://resources/slam_dust_material.tres"
 const SLAM_DUST_PROCESS_PATH: String = "res://resources/slam_dust_process.tres"
-const SLAM_DUST_AMOUNT: int = 36
-const SLAM_DUST_LIFETIME: float = 0.7
-const SLAM_DUST_QUAD_SIZE: float = 0.12
+const SLAM_DUST_AMOUNT: int = 72
+const SLAM_DUST_LIFETIME: float = 0.9
+const SLAM_DUST_QUAD_SIZE: float = 0.22
 
 class SlamHit:
 	extends RefCounted
