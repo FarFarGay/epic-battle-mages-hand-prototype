@@ -61,6 +61,13 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 @export var deploy_duration: float = 3.0
 ## Секунды зажатой R для свёртки (stationary не требуется).
 @export var pack_duration: float = 4.0
+## Таймаут после _start_pack: если за это время не все гномы дошли домой
+## (застряли вне reach'а, ушли далеко, рука держит их с RETURNING_TO_TENT
+## пропуская _tick_returning, и т.п.) — форсированно завершаем свёртку.
+## Без таймаута Camp залипал в PACKING_RETURNING вечно: один зависший гном
+## (например, упавший с обрыва или застрявший в коллизии скелета)
+## блокировал весь караван от движения.
+@export var pack_timeout: float = 12.0
 ## Радиус кольца, на которое расставляются палатки вокруг anchor.
 @export var deploy_radius: float = 8.0
 ## Порог смещения цели за кадр, ниже которого считаем её неподвижной.
@@ -88,6 +95,9 @@ var _deploy_hold: float = 0.0
 var _pack_hold: float = 0.0
 var _deploy_anchor: Vector3 = Vector3.ZERO
 var _deployed_targets: Array[Vector3] = []
+## Часы PACKING_RETURNING: тикают с момента _start_pack. По достижении
+## pack_timeout — _finalize_pack принудительно, даже если кто-то не дома.
+var _pack_elapsed: float = 0.0
 ## Позиция башни на прошлом кадре — для эпсилон-чека неподвижности.
 var _last_target_pos: Vector3 = Vector3.INF
 ## Гномы лагеря — gnomes_per_tent × количество палаток. Создаются в _ready.
@@ -326,8 +336,53 @@ func _on_part_destroyed(part: StaticBody3D) -> void:
 	_parts.remove_at(idx)
 	if idx < _deployed_targets.size():
 		_deployed_targets.remove_at(idx)
+	# Переназначаем сиротских гномов на ближайшую живую палатку. Без этого
+	# гном с _home_tent → freed-инстансом застревает: при request_return
+	# _tick_returning видит null tent и сразу _enter_in_tent на текущей
+	# позиции (становится невидим где-то в поле), а в CARAVAN_FOLLOWING
+	# IN_TENT-приклейка к null'у не работает — он не двигается с караваном.
+	# Если живых палаток вообще не осталось — просто оставляем _home_tent=null,
+	# гномы продолжают жить на местах (Camp всё равно невалиден для волн).
+	_reassign_orphan_gnomes(part)
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] палатка %s уничтожена (осталось: %d)" % [part.name, _parts.size()])
+
+
+## Гномы, чей home_tent был только что разрушен, получают новую ближайшую
+## живую палатку как home. Если живых палаток нет — оставляем как есть
+## (лагерь всё равно потерян: has_alive_parts вернёт false и WaveDirector
+## перестанет назначать его целью волн).
+func _reassign_orphan_gnomes(dead_tent: StaticBody3D) -> void:
+	if _parts.is_empty():
+		return
+	var reassigned := 0
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		if g.get_home_tent() != dead_tent:
+			continue
+		var new_home := _nearest_alive_tent_to(g.global_position)
+		if new_home == null:
+			continue
+		g.set_home_tent(new_home)
+		reassigned += 1
+	if reassigned > 0 and debug_log and LogConfig.master_enabled:
+		print("[Camp] переназначено %d гномов на новые палатки" % reassigned)
+
+
+## Ближайшая живая палатка к точке. Используется при переназначении
+## гномов-сирот после гибели их home_tent.
+func _nearest_alive_tent_to(pos: Vector3) -> StaticBody3D:
+	var nearest: StaticBody3D = null
+	var nearest_dist_sq := INF
+	for part in _parts:
+		if not is_instance_valid(part):
+			continue
+		var d_sq: float = (part.global_position - pos).length_squared()
+		if d_sq < nearest_dist_sq:
+			nearest_dist_sq = d_sq
+			nearest = part
+	return nearest
 
 
 func _on_gnome_destroyed(gnome: Gnome) -> void:
@@ -351,9 +406,17 @@ func _process(delta: float) -> void:
 			_update_deployed(delta)
 		State.PACKING_RETURNING:
 			# Палатки стоят на местах развёртки, гномы возвращаются.
-			# Когда все дома — финализируем pack.
+			# Когда все дома — финализируем pack. Если кто-то завис (схвачен
+			# рукой, застрял в коллизии, упал с обрыва) — таймаут спасает
+			# караван от вечного простоя.
 			_update_deployed(delta)
+			_pack_elapsed += delta
 			if _all_gnomes_home():
+				_finalize_pack()
+			elif _pack_elapsed >= pack_timeout:
+				if debug_log and LogConfig.master_enabled:
+					var stuck := _count_gnomes_not_home()
+					print("[Camp] свёртка форсированно завершена (таймаут %.1fс, %d гномов не дома)" % [pack_timeout, stuck])
 				_finalize_pack()
 	if _tower != null:
 		_last_target_pos = _tower.global_position
@@ -366,6 +429,18 @@ func _all_gnomes_home() -> bool:
 		if not g.is_home():
 			return false
 	return true
+
+
+## Считает живых гномов, которые ещё не дома. Используется в логе таймаута
+## свёртки — без этого «застрял на N гномов» в логе не покажется.
+func _count_gnomes_not_home() -> int:
+	var n := 0
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		if not g.is_home():
+			n += 1
+	return n
 
 
 # --- Дележ куч между гномами ---
@@ -480,6 +555,7 @@ func _start_pack() -> void:
 	_state = State.PACKING_RETURNING
 	_deploy_hold = 0.0
 	_pack_hold = 0.0
+	_pack_elapsed = 0.0
 	_was_holding_stationary = false
 	# Палатки сразу неуязвимы — игрок начал свёртку, тент бронируется.
 	# Гномы остаются целью, пока не дойдут до своих палаток (они сами выходят

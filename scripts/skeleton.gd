@@ -278,6 +278,12 @@ var _mid_phys_tick_counter: int = 0
 ## пересчитывается в _ready после применения экспорта. Дешевле, чем гонять
 ## deg_to_rad+cos на каждом LOD-чеке (раз в 0.5с × 2000 скелетов).
 var _lod_offscreen_cos: float = 0.5
+## Гистерезисный cos: чтобы войти обратно в NEAR/MID после frustum-FAR,
+## нужно зайти в cone глубже на ~5° от границы. Без этого скелет на самой
+## границе угла дёргается NEAR↔FAR каждые lod_check_interval (0.5с) с
+## пересчётом collision_layer и broad-phase. _lod_offscreen_cos_exit < _lod_offscreen_cos
+## (cos монотонно убывает на [0..π], меньше cos = больше угол).
+var _lod_offscreen_cos_exit: float = 0.4
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 ## Ссылка на коллайдер — нужна, чтобы в FAR-режиме отключать его через
@@ -316,8 +322,11 @@ func _ready() -> void:
 	# То же для MID-divisor — иначе 300 MID-скелетов одновременно делают
 	# super._physics_process в одном кадре, кадровая нагрузка всплеском.
 	_mid_phys_tick_counter = randi() % 4
-	# Прекомпьют cos(half-angle) для frustum-override LOD'а.
+	# Прекомпьют cos(half-angle) для frustum-override LOD'а. Hysteresis: 5°
+	# шире на выходе — чтобы скелет на границе cone'а не флипал FAR↔NEAR/MID
+	# каждые 0.5с (каждый flip = collision_layer write + broad-phase rebuild).
 	_lod_offscreen_cos = cos(deg_to_rad(lod_offscreen_half_angle_deg))
+	_lod_offscreen_cos_exit = cos(deg_to_rad(lod_offscreen_half_angle_deg + 5.0))
 	# Применяем физ-режим под стартовый _lod_level (по дефолту NEAR). Без этого
 	# initial mask/layer/disabled полагались бы на значения в skeleton.tscn (16/39).
 	# Сейчас они совпадают, но любая правка маски в .tscn тихо ломала бы первый
@@ -420,11 +429,21 @@ func _apply_neighbor_avoidance() -> void:
 				continue
 			var entries: Array = Skeleton._skel_grid[cell]
 			for entry in entries:
+				# Self-фильтр через идентичность ноды, НЕ через d_sq < epsilon.
+				# Снимок позиции в grid'е stale (refresh раз в 0.3с), а скелет
+				# успевает уйти на ~0.81м за это время — d_sq против собственной
+				# stale-копии может быть 0.5+ м². Эпсилон-чек этот случай
+				# пропускал бы как чужого соседа, давая фантомный push в ту
+				# точку, откуда мы только что пришли. Сравнение по reference
+				# не зависит от движения.
+				if entry[1] == self:
+					continue
 				var npos: Vector3 = entry[0]
 				var dx_l := skel_pos.x - npos.x
 				var dz_l := skel_pos.z - npos.z
 				var d_sq := dx_l * dx_l + dz_l * dz_l
-				# d_sq < epsilon — это сам себя в snapshot'е (его позиция в grid'е).
+				# Доп. защита от d≈0 (двойной спавн на одной точке) — без
+				# деления на 0 в нормализации ниже.
 				if d_sq < 0.0001:
 					continue
 				if d_sq > r_sq:
@@ -518,12 +537,17 @@ func _update_lod_level() -> void:
 	# больше half-angle), форсируем FAR. Делаем ДО distance-проверки, чтобы
 	# скелеты «строго за камерой» сразу шли в FAR-режим — без lavish NEAR/MID
 	# физики. Маленький epsilon на dist чтоб избежать NaN от division.
+	#
+	# Hysteresis: вход в frustum-FAR по основному cos'у, выход (возврат в
+	# NEAR/MID) — только когда заходим заметно глубже в cone (cos_exit, +5°
+	# уже). Скелет на границе cone'а уже ничего не дёргает.
 	var to_skel: Vector3 = global_position - camera.global_position
 	var dist_to_camera: float = to_skel.length()
 	if dist_to_camera > 0.001:
 		var forward: Vector3 = -camera.global_transform.basis.z
 		var cos_angle: float = forward.dot(to_skel) / dist_to_camera
-		if cos_angle < _lod_offscreen_cos:
+		var threshold: float = _lod_offscreen_cos_exit if _lod_level == LodLevel.FAR else _lod_offscreen_cos
+		if cos_angle < threshold:
 			_set_lod_level(LodLevel.FAR)
 			return
 

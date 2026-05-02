@@ -64,14 +64,23 @@ func _ready() -> void:
 	# В рантайме (НЕ в редакторе): спавним инстансы и прячем визуал зоны.
 	if Engine.is_editor_hint():
 		return
-	# Defer'им спавн до следующего кадра — _ready вызывается во время setup'а
-	# родительской сцены, а Godot не даёт add_child пока parent "is busy
-	# setting up children". К моменту deferred-вызова дерево полностью
-	# собрано, get_global_transform валидно, add_child проходит.
-	_spawn_instances.call_deferred()
 	var mesh := get_node_or_null("Mesh") as Node3D
 	if mesh != null:
 		mesh.visible = false
+	# Откладываем спавн до следующего process-кадра, чтобы _ready всех
+	# сиблингов уже отработал — в т.ч. WaveDirector._ready, который добавляет
+	# себя в группу `wave_director`. С call_deferred (idle-фрейм) формально
+	# тоже после _ready, но _spawn_one_pile внутри использует add_child, и
+	# safer вариант — явно дождаться process_frame.
+	_deferred_spawn()
+
+
+func _deferred_spawn() -> void:
+	await get_tree().process_frame
+	if not is_inside_tree():
+		# Зона удалена за этот кадр — спавнить кучи бессмысленно.
+		return
+	_spawn_instances()
 
 
 func _refresh_visual() -> void:
@@ -118,9 +127,16 @@ func _spawn_instances() -> void:
 		root = get_tree().current_scene
 	# Safe-фильтр включается только для WOOD. Остальные типы — как раньше:
 	# rejection sampling только по min_spacing, точка где угодно в зоне.
+	# Тип-чек has_method на случай если в группе wave_director окажется не
+	# WaveDirector (тестовый стаб, перепутанные группы) — лучше отключить
+	# safe-фильтр чем падать на is_safe_pos на чужой ноде.
 	var wave_director: Node = null
 	if resource_type == ResourcePile.ResourceType.WOOD:
-		wave_director = get_tree().get_first_node_in_group(&"wave_director")
+		var candidate := get_tree().get_first_node_in_group(&"wave_director")
+		if candidate != null and candidate.has_method("is_safe_pos"):
+			wave_director = candidate
+		elif candidate != null:
+			push_warning("ResourceZone (%s): нода в группе wave_director не имеет is_safe_pos — safe-фильтр отключён" % name)
 	var placed_positions: Array[Vector3] = []
 	var spacing_sq := min_spacing * min_spacing
 	var skipped := 0
@@ -135,9 +151,14 @@ func _spawn_instances() -> void:
 		# молча добавить её — она не получит resource_type/units, в инспекторе
 		# будет «зелёный generic с дефолтными units=5» и причина не очевидна.
 		if not pile is ResourcePile:
-			push_error("ResourceZone (%s): pile_scene не extends ResourcePile (получили %s) — пропускаю спавн" % [name, pile.get_class() if pile else "null"])
-			if pile:
-				pile.queue_free()
+			var got: String = pile.get_class() if pile != null else "null"
+			push_error("ResourceZone (%s): pile_scene не extends ResourcePile (получили %s) — пропускаю спавн" % [name, got])
+			# instantiate теоретически может вернуть Object без Node-предка
+			# (нестандартные сцены/скрипты) — queue_free есть только у Node.
+			# Без guard'а получили бы «Invalid call. Nonexistent function
+			# 'queue_free'» вместо чистого пропуска.
+			if pile is Node:
+				(pile as Node).queue_free()
 			continue
 		# Назначить тип и units ДО добавления в дерево, чтобы _ready применил
 		# правильный визуал сразу. Позицию выставляем после add_child (иначе

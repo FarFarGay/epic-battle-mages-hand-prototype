@@ -16,4 +16,3 @@ shader_parameter/Fernal_Power = 1.0
 shader_parameter/Vor_Scale = 0.8
 shader_parameter/Vor_Speed = 0.2
 shader_parameter/Emmision_Power = 1.0
-shader_parameter/Alpha_Clip = 0.0

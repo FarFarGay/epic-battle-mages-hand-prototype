@@ -27,10 +27,20 @@ extends Node3D
 # Per-instance копия материала поленьев — иначе все QuestActor'ы на сцене
 # делили бы один material_override и emission переключался бы у всех разом.
 var _log_material: StandardMaterial3D
+## Базовое количество частиц дыма (читается из .tscn в _ready). Все три
+## состояния (locked/active/completed) меняют через amount_ratio — НЕ amount.
+## Запись в GPUParticles3D.amount пересоздаёт буфер симуляции и вызывает
+## визуальную «икоту»: дым на кадр пропадает и стартует заново. amount_ratio
+## масштабирует уже существующий пул без перезапуска.
+var _smoke_amount_max: int = 14
 
 
 func _ready() -> void:
 	_clone_log_material()
+	# Зафиксируем максимум амоунта (active-состояние). Все переключения —
+	# через amount_ratio, см. _smoke_amount_max в комменте выше.
+	if _smoke_particles != null:
+		_smoke_amount_max = maxi(_smoke_particles.amount, 1)
 	EventBus.quest_advanced.connect(_on_quest_advanced)
 	_refresh_visual()
 
@@ -74,7 +84,8 @@ func _apply_locked() -> void:
 	_flame_core.visible = false
 	_flame_particles.emitting = false
 	_smoke_particles.emitting = true
-	_smoke_particles.amount = 5
+	# 5 / max ≈ 0.36 — едва тлеющая струйка.
+	_smoke_particles.amount_ratio = 5.0 / float(_smoke_amount_max)
 	_light.light_energy = 0.0
 
 
@@ -86,7 +97,7 @@ func _apply_active() -> void:
 	_flame_core.visible = true
 	_flame_particles.emitting = true
 	_smoke_particles.emitting = true
-	_smoke_particles.amount = 14
+	_smoke_particles.amount_ratio = 1.0
 	_light.light_color = Color(1.0, 0.55, 0.2, 1.0)
 	_light.light_energy = 1.6
 
@@ -100,6 +111,8 @@ func _apply_completed() -> void:
 	_flame_core.visible = false
 	_flame_particles.emitting = false
 	_smoke_particles.emitting = true
-	_smoke_particles.amount = 3
+	# 3 / max ≈ 0.21 — почти невидимая ниточка. Минимум выше нуля,
+	# чтобы игрок видел: «здесь был квест, я его закрыл».
+	_smoke_particles.amount_ratio = 3.0 / float(_smoke_amount_max)
 	_light.light_color = Color(0.5, 0.95, 0.6, 1.0)
 	_light.light_energy = 0.7

@@ -137,8 +137,58 @@ var _lod_check_timer: float = 0.0
 ## Прекомпьют cos(half-angle) для frustum-override. Дешевле, чем deg_to_rad+cos
 ## на каждом LOD-чеке (раз в 0.5с × 126 гномов).
 var _lod_offscreen_cos: float = 0.5
+## Hysteresis-cos: чтобы выйти из frustum-FAR обратно в hot-mode, нужно зайти
+## в cone глубже на ~5° от границы. Без этого гном на границе угла дёргается
+## FAR↔NEAR каждые lod_check_interval (0.5с) с переключением физ-режима.
+var _lod_offscreen_cos_exit: float = 0.4
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
+
+## Размер cell'а в spatial-grid'е куч ресурсов. ~vision_radius=10м,
+## округлено до 10 для совпадения по решётке. Гном смотрит только 9 cell'ов
+## (3×3 вокруг себя), не всю группу из 100+ куч.
+const PILE_GRID_CELL_SIZE: float = 10.0
+## Период обновления pile-grid'а (с). Кучи статичны (RigidBody freeze=false,
+## но обычно лежат, gnome их таскает по одной), позиции почти не меняются —
+## редкий refresh ок. С 0.5с stale-боль = max 1 кадр промаха цели.
+const PILE_GRID_REFRESH_INTERVAL: float = 0.5
+
+## Spatial grid куч: { Vector2i(cell_x, cell_z) → Array of [Vector3 pos,
+## ResourcePile node] }. Заменяет полный обход group resource_pile в
+## _scan_vision (на 126 гномах × 100 куч × 60fps это было 756k проверок/сек).
+## Все гномы читают один глобальный snapshot, refresh ленивый.
+static var _pile_grid: Dictionary = {}
+static var _pile_grid_time: float = -1000.0
+
+
+## Cell-координаты по плоскости XZ.
+static func _pile_cell(pos: Vector3) -> Vector2i:
+	return Vector2i(
+		int(floor(pos.x / PILE_GRID_CELL_SIZE)),
+		int(floor(pos.z / PILE_GRID_CELL_SIZE)),
+	)
+
+
+## Лениво пересоздаёт _pile_grid из group resource_pile. Зовётся в начале
+## _scan_vision и _world_has_any_pile. Один pass по группе раз в
+## PILE_GRID_REFRESH_INTERVAL глобально.
+static func _maybe_refresh_pile_grid(tree: SceneTree) -> void:
+	var now: float = float(Time.get_ticks_msec()) / 1000.0
+	if now - _pile_grid_time < PILE_GRID_REFRESH_INTERVAL:
+		return
+	_pile_grid_time = now
+	_pile_grid.clear()
+	for n in tree.get_nodes_in_group(ResourcePile.GROUP):
+		if not is_instance_valid(n):
+			continue
+		var rp := n as ResourcePile
+		if rp == null or rp.units <= 0 or rp.freeze:
+			continue
+		var cell := _pile_cell(rp.global_position)
+		if not _pile_grid.has(cell):
+			_pile_grid[cell] = []
+		var entries: Array = _pile_grid[cell]
+		entries.append([rp.global_position, rp])
 
 
 ## Камп вызывает после спавна гнома. До этого момента — без активной логики.
@@ -168,8 +218,11 @@ func _ready() -> void:
 	# Фазовый сдвиг LOD-чека: 126+ гномов не должны пересчитывать дистанцию
 	# до камеры одним кадром. Размазываем по 0..lod_check_interval.
 	_lod_check_timer = randf() * lod_check_interval
-	# Прекомпьют cos(half-angle) для frustum-override.
+	# Прекомпьют cos(half-angle) для frustum-override + hysteresis (5°
+	# шире на выходе) — без него гном на границе cone'а флипал FAR↔NEAR
+	# каждые 0.5с с пересчётом физ-режима.
 	_lod_offscreen_cos = cos(deg_to_rad(lod_offscreen_half_angle_deg))
+	_lod_offscreen_cos_exit = cos(deg_to_rad(lod_offscreen_half_angle_deg + 5.0))
 
 
 func _apply_visual() -> void:
@@ -209,6 +262,20 @@ func request_return() -> void:
 
 func is_home() -> bool:
 	return _state == State.IN_TENT
+
+
+## Геттер home_tent — Camp использует для поиска гномов, чья палатка
+## была уничтожена (см. Camp._reassign_orphan_gnomes).
+func get_home_tent() -> Node3D:
+	return _home_tent
+
+
+## Переназначить home_tent. Camp вызывает после _on_part_destroyed для
+## осиротевших гномов: вместо мёртвого инстанса палатки получают новую
+## (ближайшую живую). Это позволяет IN_TENT-приклейке (физпроцесс) и
+## RETURNING_TO_TENT-логике корректно работать.
+func set_home_tent(new_tent: Node3D) -> void:
+	_home_tent = new_tent
 
 
 ## Камп использует, чтобы понять «занята ли куча» — другие гномы её пропустят.
@@ -338,12 +405,16 @@ func _update_lod() -> void:
 		return
 
 	# Frustum-cone override: если гном вне обзора, FAR без оглядки на distance.
+	# Hysteresis: вход в FAR по основному cos'у; чтобы выйти обратно — нужно
+	# зайти глубже в cone (cos_exit). Без этого гном на границе угла флипает
+	# каждые 0.5с с пересчётом hot/cold-mode.
 	var to_self: Vector3 = global_position - camera.global_position
 	var dist_to_camera: float = to_self.length()
 	if dist_to_camera > 0.001:
 		var forward: Vector3 = -camera.global_transform.basis.z
 		var cos_angle: float = forward.dot(to_self) / dist_to_camera
-		if cos_angle < _lod_offscreen_cos:
+		var threshold: float = _lod_offscreen_cos_exit if _lod_far else _lod_offscreen_cos
+		if cos_angle < threshold:
 			_lod_far = true
 			return
 
@@ -465,36 +536,59 @@ func _horizontal_distance(target: Vector3) -> float:
 
 ## «Глаза» гнома — ближайшая куча в vision_radius от текущей позиции.
 ## Пропускает: пустые кучи, кучи в чужой клейм, замороженные (рука держит).
+##
+## **Spatial grid** ([Gnome._pile_grid]): вместо полного обхода группы
+## resource_pile (на 126 гномах × 100 куч × 60fps = 756k distance-checks)
+## смотрим только 9 cell'ов (3×3 вокруг гнома). Все гномы читают один
+## глобальный snapshot, refresh ленивый раз в 0.5с — кучи почти статичны,
+## stale-окно несущественно. Снижение ~10× в плотных зонах.
 func _scan_vision() -> ResourcePile:
+	Gnome._maybe_refresh_pile_grid(get_tree())
+	var pos := global_position
+	var center_cell := Gnome._pile_cell(pos)
+	var vr_sq: float = vision_radius * vision_radius
 	var nearest: ResourcePile = null
-	var nearest_dist := INF
-	for pile in get_tree().get_nodes_in_group(ResourcePile.GROUP):
-		if not is_instance_valid(pile):
-			continue
-		var rp := pile as ResourcePile
-		if rp == null or rp.units <= 0 or rp.freeze:
-			continue
-		if _camp.is_pile_claimed(rp, self):
-			continue
-		var d := global_position.distance_to(rp.global_position)
-		if d > vision_radius:
-			continue
-		if d < nearest_dist:
-			nearest_dist = d
-			nearest = rp
+	var nearest_dist_sq := vr_sq
+	for dx in [-1, 0, 1]:
+		for dz in [-1, 0, 1]:
+			var cell := Vector2i(center_cell.x + dx, center_cell.y + dz)
+			if not Gnome._pile_grid.has(cell):
+				continue
+			var entries: Array = Gnome._pile_grid[cell]
+			for entry in entries:
+				var ppos: Vector3 = entry[0]
+				var d_sq: float = pos.distance_squared_to(ppos)
+				if d_sq >= nearest_dist_sq:
+					continue
+				# Untyped read до is_instance_valid — иначе typed-cast на
+				# freed-инстанс (взяли из stale-снимка) вылетает с
+				# "previously freed instance".
+				var raw = entry[1]
+				if not is_instance_valid(raw):
+					continue
+				var rp := raw as ResourcePile
+				if rp == null or rp.units <= 0 or rp.freeze:
+					continue
+				if _camp.is_pile_claimed(rp, self):
+					continue
+				nearest_dist_sq = d_sq
+				nearest = rp
 	return nearest
 
 
 ## Анти-livelock: есть ли в мире хоть одна куча с units > 0. Используется
 ## только чтобы перевести гнома в IDLE, когда патрулировать бесполезно.
+##
+## Читает _pile_grid (тот же snapshot, что и _scan_vision). Маркер «куча
+## существует и непустая» уже зашит в фильтр grid-builder'а — если grid
+## непустой, значит хоть одна валидная куча есть.
 func _world_has_any_pile() -> bool:
-	for pile in get_tree().get_nodes_in_group(ResourcePile.GROUP):
-		if not is_instance_valid(pile):
-			continue
-		var rp := pile as ResourcePile
-		if rp and rp.units > 0:
-			return true
-	return false
+	Gnome._maybe_refresh_pile_grid(get_tree())
+	# Быстрый путь: пустой grid → ни одной непустой непомёрзшей кучи.
+	# Не проверяем каждую entry — refresh уже отфильтровал по units/freeze.
+	# Stale-погрешность: куча могла опустеть/замёрзнуть после refresh'а; гном
+	# в худшем случае один кадр патрулирует впустую — несущественно.
+	return not Gnome._pile_grid.is_empty()
 
 
 func _random_point_around(center: Vector3, radius: float) -> Vector3:

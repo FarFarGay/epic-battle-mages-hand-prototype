@@ -84,12 +84,42 @@ func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 # --- Mount/unmount ---
 
 func _mount(module: CampModule) -> void:
+	# Защёлка ДО attach_to_slot: re-entrance-защита если внутри attach
+	# случится переэмит сигналов (mounted/unmounted) и слушатели
+	# вернутся в _on_hand_released текущего слота — _mounted уже занят,
+	# повторный _mount вернётся через гард в начале _on_hand_released.
 	_mounted = module
+	# Подписка на module.unmounted: если модуль перехватит другой слот
+	# (вызовет attach_to_slot со своим self → unmounted старого слота),
+	# наш _mounted станет зомби-ссылкой. Однократная подписка с oneshot —
+	# сама отвалится на любом detach (включая release_to_hand).
+	if not module.unmounted.is_connected(_on_module_force_detached):
+		module.unmounted.connect(_on_module_force_detached, CONNECT_ONE_SHOT)
 	module.attach_to_slot(self)
 	module.global_position = global_position + module_offset
 	module_attached.emit(module)
 	if debug_log and LogConfig.master_enabled:
 		print("[MountSlot:%s] монтаж: %s" % [name, module.name])
+
+
+## Защита от стейл-ссылки _mounted: если модуль был перехвачен другим слотом
+## (через attach_to_slot, который в CampModule безусловно сменит _slot и
+## эмитит unmounted старого слота), мы получаем сигнал и чистим _mounted.
+## Без этого слот думал бы что владеет модулем, а module.get_slot() указывает
+## на чужой — следующий _drop_mounted/_release_to_hand работал бы с фантомом.
+func _on_module_force_detached(_old_slot: Node) -> void:
+	# Сигнал может прилететь на нашу же _release_to_hand/_drop_mounted —
+	# в этом случае _mounted уже null, ничего не делаем. Если же это
+	# чужой слот — сбрасываем зомби-ссылку.
+	if _mounted == null:
+		return
+	# get_slot() вернёт нового владельца (или null) — если не мы, обнуляем.
+	if _mounted.get_slot() != self:
+		var old := _mounted
+		_mounted = null
+		module_detached.emit(old)
+		if debug_log and LogConfig.master_enabled:
+			print("[MountSlot:%s] зомби-detach: модуль перехвачен другим слотом" % name)
 
 
 ## Размонтаж по факту захвата рукой. Hand уже владеет freeze (выставил true

@@ -263,13 +263,22 @@ func _spawn_slam_visual(pos: Vector3) -> void:
 ## Сеттер shader_parameter'а через Tween.tween_method — нужен потому что
 ## tween_property не умеет в shader_parameter'ы (их пишут через set_shader_parameter,
 ## не через property path). bind(mat, name) фиксирует материал и имя параметра.
+##
+## Tween создаётся mesh.create_tween() — он привязан к mesh'у и автоматически
+## останавливается, когда mesh выходит из дерева. Но если HandPhysicalSlam
+## (self) уйдёт из сцены до конца tween'а (рестарт сцены, владелец freed) —
+## bind(self.method) указывает на освобождённый объект. is_instance_valid(mat)
+## ловит и этот случай, и обычное «материал освобождён» — тогда тихо выходим.
 func _set_slam_param(value: float, mat: ShaderMaterial, param_name: String) -> void:
-	if mat == null:
+	if mat == null or not is_instance_valid(mat):
 		return
 	mat.set_shader_parameter(param_name, value)
 
 
 func _recycle_slam_visual(mesh: MeshInstance3D) -> void:
+	# Если HandPhysicalSlam уже free'нут (рестарт сцены mid-tween), Callable
+	# на этот метод тихо проигнорируется самой Godot. Если жив — обычная
+	# обработка с гардом на mesh.
 	if not is_instance_valid(mesh):
 		return
 	if _slam_visual_pool.size() < SLAM_VISUAL_POOL_CAP:
@@ -277,6 +286,17 @@ func _recycle_slam_visual(mesh: MeshInstance3D) -> void:
 		_slam_visual_pool.append(mesh)
 	else:
 		mesh.queue_free()
+
+
+func _exit_tree() -> void:
+	# Чистим пул: meshes были добавлены в _effects_root (current_scene), а не
+	# в self — они переживут наш free и осядут до конца сцены. queue_free на
+	# выходе чтобы не держать invisible-инстансы вечно (на рестарте сцены
+	# current_scene всё равно сбросится, но в случае ручного reload — поможет).
+	for mesh in _slam_visual_pool:
+		if is_instance_valid(mesh):
+			mesh.queue_free()
+	_slam_visual_pool.clear()
 
 
 ## Пыль при ударе — fire-and-forget GPUParticles3D one-shot. Без пула:

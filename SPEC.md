@@ -970,10 +970,13 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 
 **Логика свёртки (двухфазная):**
 1. `_pack_hold ≥ pack_duration` → `_start_pack()`:
-   - `_state = PACKING_RETURNING`, локальный сигнал **не** эмитится (пока).
+   - `_state = PACKING_RETURNING`, `_pack_elapsed = 0`, локальный сигнал **не** эмитится (пока).
    - Вызов `g.request_return()` для каждого гнома.
    - Палатки продолжают `_update_deployed` (стоят на местах кольца).
-2. Каждый кадр в `_process` при `PACKING_RETURNING`: проверка `_all_gnomes_home()`. Если да — `_finalize_pack()`: `_state = CARAVAN_FOLLOWING`, эмит `packed`. Палатки возобновляют follow с текущих позиций — без teleport'а.
+2. Каждый кадр в `_process` при `PACKING_RETURNING`: `_pack_elapsed += delta`, проверка `_all_gnomes_home()`. Если да — `_finalize_pack()`: `_state = CARAVAN_FOLLOWING`, эмит `packed`. Палатки возобновляют follow с текущих позиций — без teleport'а.
+3. **Таймаут** (`pack_timeout=12с`): если `_pack_elapsed >= pack_timeout` и не все гномы дома — `_finalize_pack()` форсированно с логом числа зависших. Без таймаута один гном, схваченный рукой / упавший с обрыва / застрявший в коллизии, блокировал свёртку лагеря навсегда.
+
+**Сироты при гибели палатки** (`_on_part_destroyed → _reassign_orphan_gnomes`): когда палатка умирает, гномы с `_home_tent == dead_tent` получают `set_home_tent(nearest_alive)`. Без этого RETURNING_TO_TENT при `_home_tent == null` сразу делал `_enter_in_tent` на текущей точке (гном «телепортируется домой» где попало в поле, невидим), а в CARAVAN IN_TENT-приклейка к null'у не работала — гном застревал. Если живых палаток вообще нет — оставляем как есть (Camp всё равно невалиден для волн через `has_alive_parts`).
 
 **Логика развёртки (`_handle_input` в `CARAVAN_FOLLOWING`):**
 - Пока зажата `R` И `_is_tower_stationary()` — `_deploy_hold += delta`. Любое движение башни или отпускание `R` → сброс.
@@ -1758,6 +1761,29 @@ func _refresh_visual() -> void:
     **Тюнинг геймдизайнером:** color1/color2 → ч/б нейтральный (slam = физ-удар, не магия), `chromatic_aberration=0.0`, `intensity_2=0.3` (резкие концентрические полосы dissolve вместо размытия), затем переход на голубой accretion (синяя ударная волна). Все параметры в `slam_distortion_material.tres` — открой в инспекторе для крутилок.
 
     **Пыль при ударе** (`9084ad7`..`3c9fc62`): добавлена `_spawn_slam_dust(origin)` — fire-and-forget GPUParticles3D без пула. `amount=72`, `lifetime=0.9с`, `explosiveness=1.0` (все частицы вылетают в первом кадре одним «взрывом»). Cleanup через `create_timer(lifetime + 0.2с).timeout.connect(queue_free)`. Ассеты: `slam_dust_material.tres` (StandardMaterial3D billboard серый), `slam_dust_process.tres` (sphere emission, spread 80°, velocity 3.5–6.5 м/с, gravity -2.5, damping). Слой пыли визуально весомо подкрепляет удар.
+
+41. **Большое код-ревью: 13 фиксов C/H/M-уровня** (этот коммит). Прогнал 6 параллельных агентов по всем подсистемам, синтезировал отчёт, прошёлся по списку.
+
+    **CRITICAL** (блокирующие баги, без которых лагерь/визуал ломаются):
+    - `Camp.PACKING_RETURNING` deadlock: один зависший гном (рука держит, упал с обрыва, застрял в коллизии) залипал весь караван навсегда — `_all_gnomes_home` никогда не возвращал true. Добавил `pack_timeout=12с` и `_pack_elapsed`-таймер: если за это время не все дома — форсированный `_finalize_pack` с логом числа зависших.
+    - `Camp` orphan-гномы: при гибели палатки гномы с `_home_tent → freed` оставались сиротами; их `request_return → _tick_returning` сразу `_enter_in_tent` на текущей точке (невидимы где попало в поле), а в `CARAVAN_FOLLOWING` IN_TENT-приклейка к null tent'у не работала — не двигались с караваном. Добавил `_reassign_orphan_gnomes(dead_tent)` в `_on_part_destroyed`: ищет ближайшую живую палатку и зовёт `gnome.set_home_tent(new_home)`. Публичный API в `gnome.gd`: `get_home_tent()`/`set_home_tent(Node3D)`.
+    - `QuestActor` SmokeParticles cough: переключения состояний `locked/active/completed` писали `_smoke_particles.amount = N` — Godot пересоздаёт буфер симуляции при изменении `amount`, дым на кадр пропадает и стартует заново («икота»). Заменил на `amount_ratio`: `amount` зафиксирован максимумом из `.tscn` в `_ready` (поле `_smoke_amount_max`), три состояния пишут только `amount_ratio` (1.0 / 5÷max / 3÷max).
+    - `Skeleton._apply_neighbor_avoidance` self-detection drift: фильтр своей же позиции через `if d_sq < 0.0001: continue`. Snapshot обновляется раз в 0.3с, а скелет успевает уйти на ~0.81м — d_sq против собственной stale-копии может быть 0.5+ м². Эпсилон-чек пропускал self как чужого соседа, давая фантомный push в точку, откуда мы только что пришли. Заменил на сравнение по идентичности ноды: `if entry[1] == self: continue` (не зависит от движения).
+
+    **HIGH** (производительность и надёжность):
+    - `Gnome._scan_vision` O(G×P): 126 гномов × 100 куч × 60Гц = 756k distance-checks/сек. Добавил статический spatial-grid `Gnome._pile_grid` (cell=10м=vision_radius, refresh раз в 0.5с лениво) — по аналогии со `Skeleton._target_grid`. `_scan_vision` теперь смотрит только 9 cell'ов, `_world_has_any_pile` редуцируется до `not _pile_grid.is_empty()`. Снижение ~10× в плотных зонах. Stale-погрешность ≤0.5с допустима — кучи почти статичны (RigidBody freeze=false, но обычно лежат).
+    - Frustum-override hysteresis (`Skeleton`/`Gnome`): на самой границе cone-угла LOD флипал FAR↔NEAR/MID каждые `lod_check_interval` (0.5с) с пересчётом `collision_layer` и broad-phase rebuild'ом. Добавил `_lod_offscreen_cos_exit = cos(half_angle + 5°)`: вход в FAR по основному `_lod_offscreen_cos`, выход — только когда заходим в cone глубже на 5°. Скелет/гном на границе уже не дёргает физический режим.
+    - `HandPhysicalActions._held` lifecycle race: `_update_held_position` каждый кадр писал `global_position` в потенциально freed RigidBody (если slam-damage в текущем тике уничтожил pile, который рука держала). Добавил guard'ы `is_instance_valid(_held) and not is_queued_for_deletion()` в начале `_physics_process`, в `_update_held_position` и в `_release` (с обнулением ссылки если invalid).
+    - `HandPhysicalSlam` tween orphan: `Tween.tween_method(_set_slam_param.bind(mat, ...))` держит callable на self; если HandPhysicalSlam уйдёт из дерева mid-tween (рестарт сцены), bind на self.method указывает на freed-объект. Добавил `is_instance_valid(mat)` в `_set_slam_param`. Также `_exit_tree` чистит `_slam_visual_pool` через `queue_free`.
+    - `ResourceZone` ordering: `_spawn_instances.call_deferred()` гарантирует idle-фрейм после `_ready`-цепочки, но `WaveDirector.add_to_group` в его `_ready` мог не отработать к этому моменту (порядок _ready детерминирован, но хрупок — call_deferred выполняется в idle-frame перед физикой следующего кадра, после всех _ready'ев в дереве). Заменил на `await get_tree().process_frame` явно — после await все _ready точно отработали. Также добавил `if not is_inside_tree(): return` после await на случай если зону удалили.
+    - `ResourceZone` type-check на is_safe_pos: брал `get_first_node_in_group(&"wave_director")` без проверки `has_method("is_safe_pos")` — если в группе окажется чужая нода (тестовый стаб, перепутанные группы), упало бы на `wave_director.is_safe_pos(world)`. Теперь `if candidate.has_method("is_safe_pos")` — иначе warning и safe-фильтр отключён (лучше чем падать).
+    - `ResourceZone` queue_free guard: `pile.queue_free()` вызывался на любом `pile`, который не extends ResourcePile. Теоретически `PackedScene.instantiate()` может вернуть Object без Node-предка (нестандартные сцены) — без guard'а упало бы «Nonexistent function 'queue_free'». Добавил `if pile is Node: (pile as Node).queue_free()`.
+    - `smoke.gdshader` ALPHA_SCISSOR vs depth_prepass_alpha conflict: исходный Loop-Box шейдер прописывал и `render_mode depth_prepass_alpha`, и `ALPHA_SCISSOR_THRESHOLD = COLOR.a`. Это два взаимоисключающих режима: первый — плавный градиент с записью в depth, второй — бинарный clip. Godot 4.6 трактует ALPHA_SCISSOR как cutout только при `alpha_to_coverage`/без depth_prepass_alpha; легаси-артефакт в шейдере был mute, но создавал концептуальную путаницу. Удалил `ALPHA_SCISSOR_THRESHOLD` из fragment'а и параметр `Alpha_Clip` из uniform'а и `.tres`.
+
+    **MEDIUM:**
+    - `MountSlot._mount` re-entrance + zombie-detach: защёлку `_mounted = module` поставил **до** `module.attach_to_slot(self)` (re-entrance-protection если внутри attach сигналы вернутся в `_on_hand_released`). Добавил one-shot подписку на `module.unmounted`: если другой слот через `attach_to_slot` перехватит модуль, мы получаем сигнал и сбрасываем стейл-ссылку через `_on_module_force_detached` (проверяет `_mounted.get_slot() != self`).
+
+    Все фиксы покрыты документирующими комментами в коде с описанием **причины** (incident / risk / mechanism), не только «что делает».
 
 ### 7.3 Решённые ошибки
 

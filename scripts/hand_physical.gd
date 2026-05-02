@@ -110,6 +110,12 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(_delta: float) -> void:
+	# Удерживаемый предмет мог самоуничтожиться (ResourcePile.take_damage от
+	# slam'а в этом же кадре, EventBus, manual destroy). Без чистки _held
+	# указывает на freed-инстанс, и _update_held_position в _process пишет
+	# global_position в нулевой указатель → краш. Чистим _ref в начале тика.
+	if _held != null and not is_instance_valid(_held):
+		_held = null
 	# Магнит и попытка захвата — в физик-кадре, чтобы силы суммировались стабильно.
 	if _is_grabbing and not _held:
 		_try_grab()
@@ -292,7 +298,8 @@ func _attach(body: RigidBody3D) -> void:
 
 
 func _release() -> void:
-	if not _held:
+	if _held == null or not is_instance_valid(_held) or _held.is_queued_for_deletion():
+		_held = null
 		return
 	var item_name := str(_held.name)
 	_held.freeze = false
@@ -307,8 +314,13 @@ func _release() -> void:
 
 
 func _update_held_position() -> void:
-	if _held:
-		_held.global_position = _hand.global_position + hold_offset
+	# Гард на freed: _held мог стать невалидным между _physics_process чисткой
+	# и текущим _process (например, slam-damage в hand_slammed → take_damage
+	# → queue_free). is_queued_for_deletion ловит «уже стоит в очереди free».
+	if _held == null or not is_instance_valid(_held) or _held.is_queued_for_deletion():
+		_held = null
+		return
+	_held.global_position = _hand.global_position + hold_offset
 
 
 # --- Подсветка кандидата ---
