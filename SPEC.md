@@ -36,12 +36,13 @@ hand_gameplay_prot/
 │   ├── camp.tscn              — лагерь (4 палатки + спавн гномов + центральный mount-slot)
 │   ├── gnome.tscn             — обитатель лагеря (CharacterBody3D)
 │   ├── defender_gnome.tscn    — защитник-лучник (Gnome extends, красный, стреляет стрелами)
-│   ├── resource_pile.tscn     — куча ресурсов на полу
+│   ├── resource_pile.tscn     — куча ресурсов на полу (типы: WOOD/STONE/IRON/FOOD/GENERIC + форма)
+│   ├── resource_zone.tscn     — зона расставлятель куч (`@tool`-нода: drag → выставить тип/count/size → spawn на _ready)
 │   ├── octagon_turret.tscn    — защитный модуль (CampModule), стреляет стрелами
 │   ├── arrow.tscn             — снаряд защитного модуля
 │   ├── poi_marker.tscn        — маркер точки интереса (жёлтый плоский диск)
 │   ├── quest_actor.tscn       — актор-выдатчик квеста (капсула с цветом по состоянию)
-│   ├── spawn_zone.tscn        — зона спавна врагов (плоский красный диск-индикатор)
+│   ├── spawn_zone.tscn        — зона спавна врагов (плоский красный box-индикатор, виден только в редакторе)
 │   ├── perf_hud.tscn          — оверлей FPS / process+physics ms / draw calls / скелеты+LOD
 │   └── gameplay_hud.tscn      — игровой HUD (способности слева, статус лагеря справа)
 └── scripts/
@@ -61,7 +62,8 @@ hand_gameplay_prot/
     ├── camp.gd                — class_name Camp
     ├── gnome.gd               — class_name Gnome
     ├── defender_gnome.gd      — class_name DefenderGnome extends Gnome (лучник с прокачкой точности)
-    ├── resource_pile.gd       — class_name ResourcePile
+    ├── resource_pile.gd       — class_name ResourcePile (4 типа ресурса × 4 формы pile'а с дефолтами и override-экспортами)
+    ├── resource_zone.gd       — class_name ResourceZone (`@tool`, спавнит count pile'ов в прямоугольнике на _ready через call_deferred + rejection sampling)
     ├── quest_progress.gd      — autoload QuestProgress (линейный прогресс сюжета + Q-debug)
     ├── quest_actor.gd         — class_name QuestActor (выдатчик квеста на POI)
     ├── roads.gd               — генератор-меш дорог между POI (orphan, не подключён в main.tscn)
@@ -120,25 +122,30 @@ hand_gameplay_prot/
 |---|---|---|---|
 | 1 | Terrain | Ground (в будущем — холмы, стены) | все динамические тела + Hand-cursor-raycast + shatter-фрагменты |
 | 2 | Items | `Item`, `ResourcePile` | все динамические тела + Hand-cursor-raycast + GrabArea/MagnetArea + Slam |
-| 3 | Actors | Tower (player-side) | Items, Enemies |
+| 3 | Actors | Tower (player-side) | Items, Enemies (но **не сами Skeleton'ы для других Skeleton'ов** — см. MASK_SKELETON ниже) |
 | 4 | Projectiles | (заготовка под магию) | Terrain, Actors, Enemies |
-| 5 | Enemies | `Skeleton` и будущие враги | Tower (Actors), Slam, Flick |
-| 6 | CampObstacle | палатки `Camp` (Tent*-инстансы из `tent.tscn`) — статически на этом слое в обоих режимах | Skeleton (мутуально-исключающе с Tower — башня НЕ сканирует слой 6) |
+| 5 | Enemies | `Skeleton` и будущие враги | Tower (исторически; теперь Tower.mask=15 без ENEMIES — башня **физически проходит сквозь скелетов**, см. ниже), Arrow, Slam, Flick |
+| 6 | CampObstacle | палатки `Camp` (Tent*-инстансы из `tent.tscn`) — статически на этом слое в обоих режимах | Skeleton (палатки блокируют скелетов в любом режиме). Tower **не** сканирует — палатки своего же лагеря не должны мешать башне |
 | 7 | MountedModule | `CampModule` в момент монтажа в слот (динамически переключается с ITEMS) | Hand.GrabArea, Hand.cursor_raycast — иначе игрок не сможет снять модуль с башни обратно. Tower **не** сканирует — иначе touching-контакт «башня снизу, модуль на ней» давал бы ложные wall-collision'ы |
-| 8 | ColdEnemy | FAR-LOD скелеты (динамически переключается с ENEMIES при выходе за `lod_far_distance`) | Hand.GrabArea, Hand:PhysicalSlam.slam_mask — рука и slam должны доставать дальние стаи независимо от LOD. Другие скелеты, башня, турель **не** сканируют — отсюда смысл «холодного» режима: снимаем broad-phase нагрузку на 1000+ врагов |
+| 8 | ColdEnemy | **зарезервированный, на 2026-05-02 не используется**. Раньше FAR-LOD скелеты лежали на нём (`collision_layer=COLD_ENEMY, mask=0`), но broad-phase BVH всё равно индексировал AABB 2000 движущихся скелетов → 25+мс на physics_ms. Сейчас FAR-скелеты полностью исключаются из broad-phase через `CollisionShape3D.disabled = true` (см. §5.5.2), а слам ловит их вторым проходом по `Skeleton.SKELETON_GROUP` с distance²-фильтром. Бит COLD_ENEMY ещё включён в `MASK_HAND_TARGETS / MASK_HAND_SLAM / MASK_FRIENDLY_PROJECTILE` исторически — это no-op (никто на этом слое не лежит). Слой оставлен на случай повторного использования для других «исключаемых» сущностей | Hand.GrabArea, Slam, Arrow (все — no-op в текущей реализации) |
+| 9 | FriendlyUnit | `Gnome`, `DefenderGnome` — отдельный от ACTORS, чтобы скелеты могли блокироваться об башню (ACTORS в `MASK_SKELETON`) и при этом **физически проходить сквозь гномов** (FRIENDLY_UNIT не в `MASK_SKELETON`) | никто из активных систем — гномы только принимают raycast/area-запросы по своим контрактам (Damageable). Hand.GrabArea / Slam / Arrow на FRIENDLY_UNIT не смотрят — у гномов своё дело |
 
 В коде GDScript маски берутся именованными константами из `Layers`; в `.tscn` Godot хранит ints, поэтому там — литералы (значения должны соответствовать `Layers.MASK_*`).
 
 **Маски тел (актуальные значения):**
-- `Tower`, `Item`, `Ground`, `ResourcePile`: `Layers.MASK_ALL_GAMEPLAY = 31` (Terrain + Items + Actors + Projectiles + Enemies) — взаимодействуют со всем «обычным», но **не с CampObstacle**: палатки намеренно не блокируют башню/предметы.
-- `Skeleton`: `Layers.MASK_SKELETON = 55` (Terrain + Items + Actors + Enemies + CampObstacle) — включает свой же слой (мутуальная блокировка) и слой палаток (упирается в них и в каравне, и в развёрнутом лагере).
+- `Item`, `Ground`, `ResourcePile`: `Layers.MASK_ALL_GAMEPLAY = 31` (Terrain + Items + Actors + Projectiles + Enemies) — взаимодействуют со всем «обычным», но **не с CampObstacle**: палатки намеренно не блокируют ящики/кучи.
+- `Tower`: `15` (Terrain + Items + Actors + Projectiles, **без ENEMIES**) — башня **не процессит контакты со скелетами** в `move_and_slide`. Раньше было 31, но Tower сама движется (CharacterBody3D), и в плотном кластере 100+ скелетов вокруг неё каждый m_a_s обходил все skel-Tower пары → отдельные миллисекунды physics_ms. Скелеты по-прежнему обнаруживают Tower как препятствие (Tower.layer=ACTORS в MASK_SKELETON), упираются и получают bounce-off на lunge. Только сама Tower сквозит толпу не тормозясь — это разумно (тяжёлая башня, скелеты лёгкие).
+- `Skeleton`: `Layers.MASK_SKELETON = 39` (Terrain + Items + Actors + CampObstacle, **без ENEMIES**) — скелеты **проходят сквозь друг друга** (perf-фикс на 400+ кластерах: skel-skel пары были главным пожирателем broad-phase + slide-iterations об соседей). Цена: `Enemy._push_neighbor` lunge-domino не работает (slide-collision между скелетами не регистрируется). Восстановление — через group+dist push, по аналогии со Slam-fallback. Визуально лечится через `_apply_neighbor_avoidance` (boids-style раздвигание, см. §5.5.2).
+- `Gnome` / `DefenderGnome`: `collision_layer = Layers.FRIENDLY_UNIT = 256`, `collision_mask = Layers.TERRAIN = 1` — гномы видят только пол. Не блокируются скелетами, не толкают друг друга, проходят сквозь Tower и Item. Урон по гномам приходит через `Damageable.try_damage` на STRIKE-фазе скелета (контракт, не physics-collision) — смена слоя не сломала геймплей.
 - Shatter-фрагменты: `Layers.MASK_TERRAIN_ONLY = 1` — падают на пол, проходят сквозь тела и друг друга.
+- **FAR-LOD Skeleton (динамически):** `collision_layer = 0, collision_mask = 0`, плюс `CollisionShape3D.disabled = true` — полностью вне broad-phase. Slam достаёт через group-fallback (см. §5.2.1).
 
 **Маски запросов (не тел):**
 - `Hand.cursor_raycast_mask`: `Layers.MASK_HAND_CURSOR = 67` (Terrain + Items + MountedModule) — рука поднимается над полом, ящиками/кучами и смонтированными модулями (иначе курсор не «ловил» бы турель на верху башни и снять рукой не получалось бы). На лету в `Hand._raycast_terrain` к маске прибавляется `ACTORS`, если в руке `CampModule` — чтобы при переноске модуля курсор «находил» верхушку башни и hand поднимался к слоту, а не упирался в стену тауэра.
-- `Hand.GrabArea`: `Layers.MASK_HAND_TARGETS = 210` (Items + Enemies + MountedModule + ColdEnemy) — рука цепляет любую цель, включая модуль уже стоящий в слоте и FAR-LOD скелетов (на ColdEnemy). LMB-grab дополнительно фильтрует через `Grabbable.is_grabbable` + `mass < max_lift_mass`, поэтому скелета случайно не схватить. Flick читает ту же зону.
+- `Hand.GrabArea`: `Layers.MASK_HAND_TARGETS = 210` (Items + Enemies + MountedModule + ColdEnemy) — рука цепляет любую цель, включая модуль уже стоящий в слоте. Бит COLD_ENEMY формально включён, но в текущей реализации никто на нём не лежит (FAR-скелеты вне broad-phase). LMB-grab дополнительно фильтрует через `Grabbable.is_grabbable` + `mass < max_lift_mass`, поэтому скелета случайно не схватить. Flick читает ту же зону. **FAR-скелеты руке недоступны** (не в broad-phase) — на практике игрок редко грабит зумаут-камерой, поэтому live-with-it; нужен будет — копировать паттерн group-fallback.
 - `Hand.MagnetArea`: `Layers.ITEMS = 2` — магнит тянет только то, что на слое Items (Items, ResourcePile).
-- `Hand:PhysicalSlam.slam_mask`: `Layers.MASK_HAND_SLAM = 146` (Items + Enemies + ColdEnemy, без MOUNTED_MODULE). ColdEnemy включён, чтобы slam доставал FAR-LOD скелетов — иначе при отзумленной камере вся стая становилась невидимой для AOE. Без MOUNTED_MODULE — намеренно: смонтированный модуль нельзя сбить хлопком, только хватом руки.
+- `Hand:PhysicalSlam.slam_mask`: `Layers.MASK_HAND_SLAM = 146` (Items + Enemies + ColdEnemy, без MOUNTED_MODULE). Бит ColdEnemy остался исторически — FAR-скелеты теперь не на нём, slam ловит их **отдельным проходом по `Skeleton.SKELETON_GROUP` с distance²-фильтром** (см. §5.2.1). Без MOUNTED_MODULE — намеренно: смонтированный модуль нельзя сбить хлопком, только хватом руки.
+- `Arrow.collision_mask`: `Layers.MASK_FRIENDLY_PROJECTILE = 145` (Terrain + Enemies + ColdEnemy). FAR-скелеты сейчас вне broad-phase — стрелы их не пробивают; на практике это OK (`attack_radius` лучников ~22м < `lod_near_distance=25м`, FAR-скелетов в полётной траектории не бывает).
 
 ---
 
@@ -319,13 +326,15 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 **Slam-подмодуль (`HandPhysicalSlam`):**
 - Вызывает координатор: `can_trigger() / on_press() / on_release() / tick(delta) / is_active() (=false для one-shot)`.
 - Кулдаун-гейт через `_slam_cooldown_remaining`.
-- `PhysicsShapeQueryParameters3D` со сферой `slam_radius` в `_hand.global_position`, `collision_mask = slam_mask` (`@export_flags_3d_physics`, дефолт `Layers.MASK_HAND_SLAM = 18`, Items + Enemies без MOUNTED_MODULE).
+- `PhysicsShapeQueryParameters3D` со сферой `slam_radius` в `_hand.global_position`, `collision_mask = slam_mask` (`@export_flags_3d_physics`, дефолт `Layers.MASK_HAND_SLAM = 146`, Items + Enemies + ColdEnemy без MOUNTED_MODULE).
 - **Балансные параметры:** `slam_damage: float = 60.0`, `slam_radius: float = 5.0`, `slam_force: float = 30.0`, `slam_cooldown: float = 0.5`. На скелете `hp=30` это даёт ваншот при прицельном попадании (d ≤ 2.5м, 50% радиуса) и стабильный 2-шот в среднем поясе (2.5 < d ≤ 3.75м, туда попадают коллатеральные скелеты при slam'е по основной цели); за 3.75м рим-хит, 3+ удара. Подробная разбивка в комментарии у `slam_damage` в `hand_physical_slam.gd`.
-- Для каждого результата (Damageable, не равного `_coord.get_held_item()`):
+- Для каждого результата `intersect_shape` (Damageable, не равного `_coord.get_held_item()`):
   - Falloff = `clamp(1 − horizontal_dist / slam_radius, 0, 1)` — горизонтальная, не 3D, иначе `hand_height` съел бы силу у близких целей.
   - Direction = `(horizontal + UP × slam_lift_factor).normalized()` (`_slam_direction_and_falloff`).
   - `Pushable.try_push(collider, dir × slam_force × falloff, slam_knockback_duration)`.
   - `Damageable.try_damage(collider, slam_damage × falloff)`.
+- **Group-fallback по FAR-скелетам.** FAR-LOD-скелеты выключены из broad-phase (`CollisionShape3D.disabled = true`) и не попадают в `intersect_shape`. После основного цикла идёт второй проход по `get_nodes_in_group(Skeleton.SKELETON_GROUP)`: для каждого с `_lod_level == FAR` и `(skel.global_position - origin).length_squared() ≤ slam_radius²` применяется тот же `Pushable.try_push` + `Damageable.try_damage`. На 2000 скелетах в группе — ~2000 distance²-операций, ~0.05мс на slam_cooldown=0.5с (копейки). Без этого fallback'а игрок при отзумленной камере (где почти вся стая FAR) не мог бы ударить хлопком. NEAR/MID-скелеты пропускаются по `_lod_level` — они уже обработаны в первом цикле.
+- Лог: `[Hand:Physical:Slam] хлопок @ (x, y, z), задело: N (из них FAR: M)` — `M > 0` подтверждает, что fallback сработал.
 - Визуал спавнится в `effects_root_path` (NodePath); если пуст или не резолвится — фолбэк на `_hand.get_tree().current_scene`. Главное — НЕ в `_hand`: иначе расширяющаяся сфера таскалась бы за рукой, эпицентр уезжал бы. Пул `_slam_visual_pool` (cap 3) переиспользует MeshInstance3D.
 - `slammed.emit(origin, slam_radius)`.
 
@@ -551,7 +560,7 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 - `CollisionShape3D` — `CapsuleShape3D` r=0.4, h=2.
 - `MeshInstance3D` — `CapsuleMesh` того же размера.
 
-**Слой/маска (в `.tscn`):** `collision_layer = 16` (Enemies), `collision_mask = 55` (Terrain + Items + Actors + Enemies + CampObstacle).
+**Слой/маска (в `.tscn`):** `collision_layer = 16` (Enemies), `collision_mask = 39` (Terrain + Items + Actors + CampObstacle, **без Enemies**). См. §4.1: skel-skel коллизии отключены ради перфоманса (broad-phase + slide-iterations были главным пожирателем physics_ms на 400+ кластерах вокруг Tower).
 
 **Override на инстансе:** `move_speed = 2.7` (медленнее общего дефолта Enemy=4.0).
 
@@ -563,14 +572,30 @@ Skeleton не использует `Enemy._targets` — вместо этого 
 
 **`forced_target: Node3D` — fallback aggro-точка для wave-скелетов.** WaveDirector назначает её через `set_forced_target(palatка)` сразу после `spawn_group`. В `_scan_target` используется только если весь vision пуст — это «направление движения» для скелетов, заспавненных в 50м+ от лагеря (vision только 12м, без forced они wander бесцельно). Когда волна доходит до 12м зоны — vision захватывает гномов на периметре, и приоритет переключает скелета на ближайшего гнома.
 
-Скан кэшируется и троттлится:
+**Spatial grid целей (главный perf-фикс на 290+ скелетах × 144 цели):** наивный скан `get_nodes_in_group("skeleton_target")` каждым скелетом × ~5000 сканов/сек × 144 элементов = **~720k distance-checks/сек** = ~12-15мс из 20мс physics_ms. Заменён на статический spatial grid:
+- `static var _target_grid: Dictionary = {}` — `Vector2i(cell_x, cell_z) → Array of [Vector3 pos, Node3D node]`. Глобальный для всех скелетов.
+- `TARGET_GRID_CELL_SIZE = 12.0` (= `vision_radius`). 3×3 cell'ов вокруг скелета гарантированно покрывают vision-диск.
+- `TARGET_GRID_REFRESH_INTERVAL = 0.4с`. Все скелеты читают один глобальный snapshot. Stale-границы: гном двигается ≤0.64м за 0.4с (move_speed=1.6 × 0.4) — для vision_radius=12 неотличимо. Палатки и большинство гномов в зоне атаки стоят на месте — тоже неотличимо.
+- `_maybe_refresh_target_grid(tree)` — ленивый pass по группе раз в 0.4с globally, в начале каждого скана. Один pass на 144 цели вместо 5000 pass'ов.
+- `_scan_target` теперь читает 9 cell'ов (3×3) вокруг своей cell-позиции. Каждый cell — Array из ~5-15 элементов в плотной Camp-зоне, 0 в пустой. Итого ~50 distance-checks вместо 144 на скан, **редукция ×3**.
+
+**Cache + throttle поверх grid'а:**
 - Поле `_cached_target: Node3D` — последняя найденная цель.
-- Поле `_vision_scan_timer: float`, период `vision_scan_interval = 0.15с`.
+- Поле `_vision_scan_timer: float`, период `vision_scan_interval = 0.3с` (поднят с 0.15 — экономия ×2).
 - Override `_physics_process(delta)`: тикает таймер; если истёк или кэш устарел (null / `is_instance_valid=false` / уже не в группе `skeleton_target`) — `_cached_target = _scan_target()`, таймер сбрасывается.
 - Override `get_active_target()`: возвращает кэш, провалидировав группу/валидность; если устарел — `null` (следующий тик пере-сканирует).
 - В `_ready` → `_vision_scan_timer = randf() * vision_scan_interval` — фазовый сдвиг, чтобы 50 скелетов не сканировали группу в один кадр.
 
-Раньше скан проходил по группе 2-3 раза за тик (через `_ai_step → super → get_active_target`, `_resolve_knockback_contacts`, `_perform_strike`). С кэшем — один скан на физкадр; с throttle'ом — ~1/0.15 ≈ 7 сканов в секунду на скелета вместо 60×3 = 180.
+**Gotcha (важный паттерн при работе с grid-snapshot'ами):** typed-assignment из Array (`var node: Node3D = entry[1]`) вылетает с `Trying to assign invalid previously freed instance`, если объект уже освобождён — runtime бьёт ошибку **до** проверки `is_instance_valid`. Правильный паттерн:
+```gdscript
+var raw = entry[1]              # untyped Variant
+if not is_instance_valid(raw):
+    continue
+var node := raw as Node3D       # `as` cast freed-объекта возвращает null без ошибки
+if node == null:
+    continue
+```
+В loops через `for n in get_nodes_in_group(...)` тот же паттерн (`n` заимствуется как Variant, `as` возвращает null для freed) — безопасно. Опасно именно при typed `var x: Type = arr[i]` на потенциально-freed-элементе.
 
 **Экспорты:**
 - Группа **Vision:**
@@ -590,36 +615,60 @@ Skeleton не использует `Enemy._targets` — вместо этого 
   - `shatter_fragment_count: int = 7`.
   - `shatter_lifetime: float = 2.0` (секунды).
   - `shatter_color: Color` — цвет осколков (дефолт = цвет тела).
-- Группа **LOD (масштабирование на 100+ скелетов):**
+- Группа **LOD (масштабирование на 2000+ скелетов):**
   - `lod_near_distance: float = 25.0` — ближе которой работает на полной частоте (LOD `NEAR`).
   - `lod_far_distance: float = 50.0` — дальше которой минимальная частота (LOD `FAR`). Между — `MID`.
-  - `lod_check_interval: float = 0.5` — период переоценки LOD-уровня. Distance-чек 100 врагов на каждом физкадре сам по себе нагрузка, поэтому не каждый кадр.
+  - `lod_check_interval: float = 0.5` — период переоценки LOD-уровня. Distance-чек 2000 врагов на каждом физкадре сам по себе нагрузка.
+  - `lod_far_tick_divisor: int = 3` (range 1-6) — кратность пропуска физтика для FAR-скелетов. На 1900 FAR-скелетах `_far_step` (knockback.tick, vision-валидность, AI, position-write) — основной пожиратель physics_ms после того, как broad-phase отключён через `CollisionShape3D.disabled`. Кратность 3 даёт пропорциональное падение нагрузки. Slam-knockback по FAR задерживается максимум на `divisor × 16.6мс ≈ 50мс` — игрок не успевает заметить.
+  - `lod_mid_tick_divisor: int = 3` (range 1-4) — кратность пропуска физтика для MID-скелетов. 3 = каждый 3-й физкадр (60→20Гц). Скорость движения сохраняется компенсацией `velocity *= divisor` в `_ai_step` — один `move_and_slide` на N тиков переносит N-кратное движение. Tunneling-риск: `move_speed=2.7 × 3 × 0.0167 = 0.135м/тик` при радиусе 0.4м (запас ×3). На 25-50м от камеры визуально незаметно.
+  - `lod_offscreen_half_angle_deg: float = 60.0` (range 30-90) — **frustum-override**: скелет вне cone'а «впереди камеры» форсируется в FAR независимо от расстояния (его не видно игроку — симулировать дёшево безопасно). 60° полу-cone = 120° полный, с запасом покрывает горизонтальный FOV ~95°. Прекомпьют `cos(deg_to_rad(...))` в `_ready` (раз в 0.5с × 2000 скелетов на trig-функциях — заметно). При типичном кластере вокруг Tower'а frustum-override переносит ~50% NEAR/MID в FAR, освобождая physics.
 
 **LOD-поведение** (см. enum `LodLevel { NEAR, MID, FAR }`):
 
 | Уровень | Дистанция от камеры | AI-tick | vision_scan | Физика |
 |---|---|---|---|---|
-| NEAR | ≤ 25м | каждый кадр | каждые 0.15с | Полная (collision_layer=ENEMIES, move_and_slide) |
-| MID | 25..50м | каждый 2-й | каждые 0.30с (×2) | Полная (как NEAR) |
-| FAR | > 50м | каждый 3-й | каждые 0.60с (×4) | **Холодная: collision_layer=0, без move_and_slide** |
+| NEAR | ≤ 25м, в frustum-cone | каждый кадр | каждые 0.3с | Полная (collision_layer=ENEMIES, MASK_SKELETON, move_and_slide на 60Гц) |
+| MID | 25..50м, в cone | каждый 2-й | каждые 0.6с (×2) | Полная, но move_and_slide на 20Гц (`mid_tick_divisor=3` с velocity-компенсацией) |
+| FAR | > 50м **или** вне cone | каждый 3-й (внутри `_far_step`) | каждые 1.2с (×4) | **Холодная: collision_layer=0, mask=0, `CollisionShape3D.disabled=true`, без `move_and_slide`. `_far_step` тикает только каждый N-й физкадр (`far_tick_divisor=3`)** |
 
 **Что мерится:** дистанция до **точки интереса камеры** — `Camera3D.get_parent()` если он Node3D (т.е. наш `CameraRig`), иначе сама `Camera3D.global_position`. Через CameraRig потому, что он lerp'ом следует за Tower, а зум камеры (через `Camera3D.position × _zoom`) меняет реальную позицию Camera3D, **не** меняя CameraRig. До этого фикса при максимальном зуме (zoom=2.5, Camera3D на ~111м от центра карты) скелеты возле башни все становились FAR, и slam терял по ним цели — теперь зум на LOD не влияет. Tower как якорь не подошёл — он может queue_free, а CameraRig живёт всегда.
 
-**Холодный режим FAR (главный win на 1000+ скелетах):**
-- `collision_layer = Layers.COLD_ENEMY` (бит 8 = 128), `collision_mask = 0` — скелет на отдельном «холодном» слое. Другие скелеты (`MASK_SKELETON=55`), башня (`mask=31`) и турель (`target_mask=ENEMIES=16`) НЕ сканируют ColdEnemy → broad-phase их не учитывает. **Но рука и slam (`MASK_HAND_TARGETS=210`, `MASK_HAND_SLAM=146`) этот слой включают** — иначе при отзумленной камере, когда вся стая становится FAR, slam через `PhysicsShapeQuery` не находил бы ни одного врага (это был баг до этого фикса). На 1400 скелетах это убирает квадратичную нагрузку взаимных коллизий, но удар руки/slam'а по дальним стаям продолжает работать.
-- `move_and_slide()` пропускается. Вместо неё `_far_step` делает простое `global_position.x/z += velocity * delta`. Y не трогается (пол плоский, гравитация не нужна).
+**Холодный режим FAR (главный win на 2000 скелетах: physics_ms 29 → ~5-10мс):**
+- `collision_layer = 0`, `collision_mask = 0`, **`CollisionShape3D.disabled = true`**. На 2000 движущихся CharacterBody3D `collision_mask=0` сам по себе НЕ убирает тело из broad-phase BVH — physics-сервер всё равно индексирует AABB и ребилдит дерево каждый раз, когда `_far_step` двигает `global_position`. Только `disabled = true` (или `collision_layer=0`) полностью исключает тело из broad-phase. Это и есть главный перф-фикс — раньше FAR-скелеты лежали на `Layers.COLD_ENEMY`, и BVH индексировал их зря.
+- `@onready var _collision_shape: CollisionShape3D = $CollisionShape3D` — кэшированная ссылка для toggle.
+- `_apply_lod_physics_mode` идемпотентен: переключение `disabled` происходит только при реальной смене уровня, не каждые 0.5с.
+- `move_and_slide()` пропускается. Вместо неё `_far_step` делает простое `global_position.x/z += velocity * delta × divisor` (на полном тике, остальные — early return).
+- **FAR-divisor с work_delta-компенсацией:** счётчик `_far_phys_tick_counter` декрементируется каждый физкадр; на N-м тике вызывается `_far_step(delta * N)`, чтобы movement, knockback friction и vision_scan_timer корректно покрывали пропущенные кадры в wall-clock. Фазовый сдвиг `randi() % 6` в `_ready` — иначе 1900 FAR-скелетов работали бы синхронно одной волной нагрузки.
 - **Что сохраняется в _far_step:** `KnockbackState.tick(delta)` (иначе lunge через `_apply_velocity_change` навечно отправил бы скелета в полёт), декремент `_state_timer` для COOLDOWN, AI-step (включая LOD-skip в APPROACH), Damageable.try_damage в `_perform_strike` (урон по палатке/гному не зависит от collision-layer'ов).
 - **Что теряется:** скелеты сквозят друг друга и палатки вне камеры (но игрок этого не видит); нет gravity (плоский пол — ок); `is_on_floor()` всегда false на FAR (AI это не читает).
-- **При возврате FAR→MID** (скелет приблизился к камере): `_apply_lod_physics_mode` восстанавливает `collision_layer = Layers.ENEMIES` / `collision_mask = MASK_SKELETON`, и со следующего тика снова работает полный `super._physics_process` — physics возвращается без проблем.
+- **При возврате FAR→MID** (скелет приблизился к камере или зашёл в frustum-cone): `_apply_lod_physics_mode` восстанавливает `collision_layer = Layers.ENEMIES` / `collision_mask = MASK_SKELETON` / `_collision_shape.disabled = false`, и со следующего тика снова работает полный `super._physics_process` — physics возвращается без проблем.
 
 **Что скипается, что нет на NEAR/MID:**
-- Скип AI-tick — **только в `AttackState.APPROACH`**. В `WINDUP` не скипаем (там декрементится таймер замаха, скип заморозил бы скелета); в `STRIKE` транзитно; в `COOLDOWN` таймер тикает в базе независимо.
-- Knockback, гравитация и `move_and_slide` работают на полной частоте всегда (только на NEAR/MID; FAR — холодный режим выше).
+- Скип AI-tick — **только в `AttackState.APPROACH/wander`**. В `WINDUP` не скипаем (там декрементится таймер замаха, скип заморозил бы скелета); в `STRIKE` транзитно; в `COOLDOWN` таймер тикает в базе независимо.
+- Knockback, гравитация работают на полной частоте всегда (только на NEAR/MID; FAR — холодный режим выше).
 - При скипе AI velocity сохраняется — скелет едет по инерции до следующего полного тика.
 
-**Anti-«волна»:** `_lod_check_timer = randf() * lod_check_interval` и `_lod_ai_tick_counter = randi() % 6` в `_ready` — distance-чеки и skip-тики разнесены по фазе. Также `_set_lod_level` идемпотентен — `_apply_lod_physics_mode` вызывается только при реальной смене уровня (write на collision_layer = мутация broad-phase), не каждые 0.5с.
+**Anti-«волна»:** `_lod_check_timer = randf() * lod_check_interval`, `_lod_ai_tick_counter = randi() % 6`, `_far_phys_tick_counter = randi() % 6`, `_mid_phys_tick_counter = randi() % 4` в `_ready` — distance-чеки и skip-тики разнесены по фазе. Иначе кадровая нагрузка идёт волной каждые 0.5с.
 
-**Что игрок не заметит:** скелеты вне камеры всё равно вне камеры; реакция дальних на цель хуже на 0.15..0.45с (один LOD-цикл, меньше windup'а 0.4с). На 1400 скелетах при равномерном распределении (~50 NEAR + 200 MID + 1150 FAR) physics-сервер обрабатывает только 250 тел вместо 1400 — что даёт основной перфоманс-буст. Дальнейший buster требует MultiMesh + GPU-instanced рендера (1400 draw calls сейчас уходят в рендер, не в физику).
+**Что игрок не заметит:** скелеты вне камеры всё равно вне камеры; реакция дальних на цель хуже на ~0.5с (один divisor-цикл, меньше windup'а 0.4с). На 2000 скелетах при равномерном распределении (~25 NEAR + 75 MID + 1900 FAR) physics-сервер обрабатывает броад-фазу для ~100 тел вместо 2000 + `_far_step` тикает не на 60Гц, а на 20Гц. Замеры до фиксов: physics 29мс / FPS 7. После: physics ~5-10мс / FPS 30-60 (зависит от того, что становится следующим узким — обычно draw calls на 2000 уникальных MeshInstance3D). Дальнейший buster — MultiMesh + GPU-instanced рендер (~250 строк, 2-3 часа).
+
+#### Boids-style avoidance — мягкое расступание толпы взамен убранных physics-пар
+
+Симптом, который вылез после убирания skel-skel коллизий (`MASK_SKELETON` без ENEMIES, см. §4.1): скелеты сходятся в одну кучу и проходят друг через друга — некрасиво. Лечение через flocking-avoidance, не возвращая physics-пары.
+
+**Параметры (экспорты группы `Neighbor avoidance (boids-style)`):**
+- `neighbor_avoidance_radius: float = 1.5` — personal space (≥ `capsule_radius × 2 = 0.8м` с запасом для визуально-комфортного зазора).
+- `neighbor_avoidance_strength: float = 0.5` (range 0.0-2.0) — сила отталкивания как доля `move_speed`. 0.5 = avoidance может прибавить до 0.5 × 2.7 = 1.35м/с к velocity. **0 — выключить** (вернётся «толпа фантомов»).
+
+**Реализация — второй static spatial grid:**
+- `static var _skel_grid: Dictionary` (по аналогии с `_target_grid`), `SKEL_GRID_CELL_SIZE = 4.0м`, `SKEL_GRID_REFRESH_INTERVAL = 0.3с`. Заполняется лениво из `SKELETON_GROUP` в начале `_apply_neighbor_avoidance`.
+- В `_ai_step` после `super._ai_step` / `_wander_tick` вызывается `_apply_neighbor_avoidance()`. Скелет суммирует векторы отталкивания от соседей в radius=1.5м (linear falloff `(radius − dist) / radius`), кап по магнитуде `move_speed × strength`, прибавка к velocity.
+- **Применяется только в APPROACH/wander и НЕ-FAR.** Engaged-скелеты (WINDUP/STRIKE/COOLDOWN) на позициях боя не отталкиваются — они стоят и бьют. FAR — невидимы, незаметно. Frustum-override переводит ближайшие FAR в NEAR/MID при панорамировании камеры; кластер расходится за ~1-2с (refresh + tick).
+- Avoidance прибавляется **до** MID-velocity-компенсации, чтобы масштабироваться синхронно с divisor'ом.
+
+**Цена:** 9-cell scan × ~5 entries × ~10 ops = ~200 ops/вызов. ~12k вызовов/сек × 200 ops ≈ 0.2мс/кадр на 400 NEAR/MID скелетов. Незначительно.
+
+**Эмерджентное поведение:** скелеты, идущие к одной палатке, формируют не плотный «клин», а арку/полукольцо вокруг неё (avoidance = тяга наружу, target = тяга внутрь, equilibrium на ring'е). Выглядит естественно как RTS-flocking.
 
 **Константы:** `BODY_ALBEDO_COLOR`, `WINDUP_EMISSION_COLOR`, `WINDUP_EMISSION_INTENSITY`. Per-instance тонкая настройка цвета не предусмотрена.
 
@@ -685,7 +734,7 @@ static func spawn(
 - `enemy_counts: Array[int]` — параллельный массив для `spawn_wave()`.
 - `target_path: NodePath` (`@export_node_path("Node3D")`) — кого ставить в `set_target` базовому Enemy. Skeleton override'ит и `_targets` игнорирует, но для будущих врагов фолбэк остаётся.
 - `spawn_root_path: NodePath` (`@export_node_path("Node")`) — куда добавлять врагов как детей. Пустой → фолбэк на `get_tree().current_scene`.
-- `zone_root_path: NodePath` (`@export_node_path("Node3D")`) — корень узлов `SpawnZone` (см. §5.5.5). Все прямые дети этого узла собираются в `_zones` на _ready и формируют **позитивный фильтр спавна**: `pick_random_pos()` возвращает точку только внутри объединения этих дисков (площадно-взвешенно). Если корень не задан или пуст — фоллбэк на uniform по `±map_half_extent`.
+- `zone_root_path: NodePath` (`@export_node_path("Node3D")`) — корень узлов `SpawnZone` (см. §5.5.5). Все прямые дети этого узла собираются в `_zones` на _ready и формируют **позитивный фильтр спавна**: `pick_random_pos()` возвращает точку только внутри объединения прямоугольников этих зон (площадно-взвешенно по `size.x · size.y`). Если корень не задан или пуст — фоллбэк на uniform по `±map_half_extent`.
 - `map_half_extent: float = 195.0` — полу-длина карты от центра (карта 400×400). Используется как фоллбэк `pick_random_pos()` при отсутствии зон, и для clamp в `spawn_group/spawn_ring`.
 - `spawn_y: float = 1.0` — Y-координата спавна.
 - `debug_log: bool = true`.
@@ -693,7 +742,7 @@ static func spawn(
 **Внутренние константы:** `_SPAWNS_PER_FRAME: int = 6` — сколько спавнов в одном физкадре в async-методах.
 
 **Публичный API (вызывается WaveDirector'ом):**
-- `pick_random_pos() -> Vector3` — кандидат-точка (Y=0). Если есть `SpawnZone`-ы — выбирает зону площадно-взвешенно (πr²), затем uniform-точку внутри её диска (`sqrt(randf())*r` — без концентрации в центре). Иначе — uniform по `±map_half_extent`. Используется WaveDirector'ом как генератор кандидатов для neutral-спавна (initial/ramp/replenish/[-debug-100); safe-фильтр Camp/POI накладывается caller'ом отдельно.
+- `pick_random_pos() -> Vector3` — кандидат-точка (Y=0). Если есть `SpawnZone`-ы — выбирает зону площадно-взвешенно (`size.x · size.y`), затем `random_point_in_zone(zone)` внутри неё. Иначе — uniform по `±map_half_extent`. Используется WaveDirector'ом как генератор кандидатов для neutral-спавна (initial/ramp/replenish/[-debug-100); safe-фильтр Camp/POI накладывается caller'ом отдельно.
 - `random_point_in_zone(zone) -> Vector3` — uniform-точка внутри **одной конкретной** зоны. Используется для wave-спавна, где зона уже выбрана через budget-логику в WaveDirector.
 - `get_zones() -> Array[SpawnZone]` — отдаёт собранный список зон. WaveDirector фильтрует по `waves_left() > 0`.
 - `spawn_at(scene, pos) -> Enemy` — синхронный, один спавн в точке. Ставит `set_target(_target)` базовому Enemy. Возвращает инстанс для постобработки (например `WaveDirector` ставит `forced_target`).
@@ -908,7 +957,7 @@ func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool
 - `MeshInstance3D` — `CapsuleMesh` того же размера.
 - (рантайм) `_carry_visual: MeshInstance3D` — маленький зелёный куб над головой при подборе, `queue_free` при дропе.
 
-**Слой/маска:** `collision_layer = 0`, `collision_mask = 1` (только Terrain). Гномы проходят сквозь башню, врагов, предметы и друг друга — не толкаются и не блокируют игрока. Гравитация — единственное физическое взаимодействие.
+**Слой/маска:** `collision_layer = Layers.FRIENDLY_UNIT = 256`, `collision_mask = Layers.TERRAIN = 1`. Гномы проходят сквозь башню, врагов, предметы и друг друга — не толкаются и не блокируют игрока. Гравитация — единственное физическое взаимодействие. **Главное:** `MASK_SKELETON = 39` НЕ включает FRIENDLY_UNIT → скелет в broad-phase гнома не видит → пар нет → `move_and_slide` скелета проходит сквозь гнома без collision-iteration. На 126 гномах в плотной толпе скелетов это была одна из главных нагрузок (каждый skel в кадре обходил contact-list по каждому соседнему гному). Урон по гномам идёт через `Damageable.try_damage` на STRIKE-фазе (контракт, не physics-collision) — смена слоя не сломала геймплей, только визуально скелет проходит сквозь гнома.
 
 **Экспорты:**
 - Группа **Movement:** `move_speed: float = 1.6`, `gravity: float = 20.0`.
@@ -922,6 +971,7 @@ func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool
 - Группа **LOD (масштабирование на 100+ гномов):**
   - `lod_far_distance: float = 50.0` — дальше этой дистанции до точки интереса камеры (`CameraRig`) гном уходит в холодный режим: `_physics_process` пропускает `move_and_slide` и гравитацию, position обновляется через `global_position += velocity * delta` (X/Z). AI продолжает работать на полной частоте — он дёшев. Главный win: при удалённой камере 6 поселений × ~21 гном = 126 гномов без `move_and_slide`.
   - `lod_check_interval: float = 0.5` — период переоценки.
+  - `lod_offscreen_half_angle_deg: float = 60.0` — **frustum-override** (симметрично Skeleton): гном вне cone'а перед Camera3D форсируется в FAR-режим независимо от расстояния. На 126 гномах в кластере вокруг Tower при стандартной FOV это переносит ~50% в холодный режим. Прекомпьют `cos(...)` в `_ready`. Frustum-чек берётся от Camera3D (реальная точка наблюдения), distance — от CameraRig (зум-стабильный якорь).
 - `debug_log: bool = false` — по умолчанию выключен.
 
 **FSM:**
@@ -1029,16 +1079,45 @@ enum State {
 
 **Назначение:** куча ресурсов на карте. Гномы забирают по 1 единице через `take_one()` в фазе сбора. Параллельно куча — полноценный физический предмет: рука может схватить её и кинуть, башня и Item могут толкнуть, slam ломает по hp. Реализует **три** контракта одновременно: `Damageable`, `Pushable`, `Grabbable`.
 
+Поддерживает **4 типа ресурса** (Этап А — простые pile'ы): WOOD / STONE / IRON / FOOD + GENERIC (старый зелёный для обратной совместимости). Тип задаёт дефолтный визуал (цвет, форма, размер); если `pile_color/pile_size/pile_shape` оставлены дефолтными (`Color.BLACK / Vector3.ZERO / AUTO`) — берётся пресет, иначе экспорты переопределяют.
+
+**Этапы Б/В отложены:** многоэтапность дерева (стоит → trunk → 3 logs) и `interaction_time` на pile'е (гном «рубит/копает» N секунд перед `take_one`) — не сделано, на функциональность сбора это не влияет (wood-pile = «бревно» с units=3, take_one мгновенный).
+
 **Дочерние узлы:**
-- `MeshInstance3D` — пустой в `.tscn`, в `_apply_visual` создаётся `BoxMesh` `pile_size`.
-- `CollisionShape3D` — пустой в `.tscn`, в `_apply_shape` создаётся `BoxShape3D` `pile_size`.
+- `MeshInstance3D` — пустой в `.tscn`, в `_apply_visual` создаётся `BoxMesh` / `CylinderMesh` / `SphereMesh` по `pile_shape`.
+- `CollisionShape3D` — пустой в `.tscn`, в `_apply_shape` создаётся `BoxShape3D` / `CylinderShape3D` / `SphereShape3D` под форму.
+
+**Enum'ы:**
+
+```gdscript
+enum ResourceType { GENERIC, WOOD, STONE, IRON, FOOD }
+enum PileShape { AUTO, BOX, CYLINDER, SPHERE }
+```
+
+`PileShape.AUTO` — берётся дефолт от типа. Остальные — явное переопределение формы независимо от типа (например, food-куча в виде BOX'а вместо стандартной сферы).
+
+**Дефолтные визуалы по `resource_type`** (в `_defaults_for_type`):
+
+| Тип | Цвет | Размер | Форма |
+|---|---|---|---|
+| WOOD | коричневый `(0.45, 0.28, 0.15)` | `(0.5, 1.4, 0.5)` | CYLINDER (бревно вертикально) |
+| STONE | серый `(0.55, 0.55, 0.55)` | `(0.9, 0.7, 0.9)` | BOX (каменный блок) |
+| IRON | стальной `(0.35, 0.38, 0.42)` | `(0.8, 0.4, 0.8)` | BOX (приплюснутая куча оружия/доспехов) |
+| FOOD | оранжево-красный `(0.85, 0.35, 0.25)` | `(0.7, 0.7, 0.7)` | SPHERE (фруктовый куст/ягоды) |
+| GENERIC | зелёный `(0.4, 0.75, 0.3)` | `(0.6, 0.6, 0.6)` | BOX (старый pile) |
+
+В `_apply_visual` / `_apply_shape` через `match` создаётся правильный mesh + shape. Размер передаётся как `Vector3`, для CYLINDER берётся `radius = s.x * 0.5, height = s.y`; для SPHERE — `radius = s.x * 0.5`.
 
 **Слой/маска (в `.tscn`):** `collision_layer = Layers.ITEMS` (бит 2), `collision_mask = Layers.MASK_ALL_GAMEPLAY = 31`. Та же раскладка, что у `Item`.
 
 **Экспорты:**
+- `resource_type: ResourceType = GENERIC` — тип ресурса. Используется для дефолтных визуалов и (в будущем) для UI/HUD/Camp-инвентаря, чтобы агрегировать «сколько у нас дерева/камня».
 - `units: int = 5` — запас ресурсов; декрементируется при `take_one()`. На 0 — `queue_free`.
 - `hp: float = 30.0` — здоровье. Урон от руки/slam'а. На 0 — `queue_free` независимо от `units`.
-- `pile_color: Color`, `pile_size: Vector3`, `highlight_color: Color`, `highlight_intensity: float`.
+- `pile_color: Color = BLACK` — переопределить цвет. `BLACK` = «не задан, бери дефолт от типа».
+- `pile_size: Vector3 = ZERO` — переопределить размер. `ZERO` = «бери дефолт от типа».
+- `pile_shape: PileShape = AUTO` — переопределить форму. `AUTO` = «бери дефолт от типа».
+- `highlight_color: Color`, `highlight_intensity: float` — emission при подсветке кандидата (Grabbable).
 - Унаследованный `mass: float = 0.5` (в `.tscn`) — лёгкая, грабится рукой при `max_lift_mass = 10`.
 
 **Сигналы:** `damaged(amount: float)`, `destroyed`. Re-emit'ятся в `EventBus.item_damaged` / `EventBus.item_destroyed` (как у Item — UI/счёт не различает Item и ResourcePile).
@@ -1074,9 +1153,41 @@ func take_one() -> bool:
 
 `freeze` (рука держит) → `false`. Гном считает кучу «занятой» и через `_on_pile_lost` уходит искать другую.
 
-**Размещение в `main.tscn`:** в группе `Resources` (Node3D-контейнер) **20 ResourcePile-инстансов** в трёх кольцах от origin: радиусы ~30, 50, 70.
+**Размещение в `main.tscn`:** через `ResourceZone`-расставлятели (см. §5.9.1) — дизайнер ставит зону в нужное место, выбирает тип/count/size, на старте сцены зона разбрасывает pile'ы. Ручной список pile-инстансов больше не используется (раньше было 20 куч в трёх кольцах от origin).
 
 **Зависимости:** `Damageable`, `Pushable`, `Grabbable`, `EventBus`, `Layers`. Не знает Gnome/Camp напрямую — связь через группу и публичные поля.
+
+---
+
+### 5.9.1 ResourceZone — `scenes/resource_zone.tscn`, `scripts/resource_zone.gd` (`@tool`)
+
+**Тип корня:** `Node3D` с `class_name ResourceZone`. По паттерну `SpawnZone` (см. §5.5.5) — `@tool`-нода-расставлятель: дизайнер бросает её в сцену, в инспекторе задаёт `resource_type / count / size`, на `_ready` сцены зона спавнит `count` инстансов `ResourcePile` в случайных точках внутри своего прямоугольника.
+
+**Назначение:** убрать ручную расстановку 20+ куч по карте. Дизайнерский цикл: drag ResourceZone → type/count/size → save. На запуске сцены — pile'ы появляются, индикатор зоны исчезает.
+
+**Дочерние узлы:**
+- `Mesh` — `MeshInstance3D` со `BoxMesh` (1×0.04×1), масштабируется сеттером `size` до `(size.x, 1, size.y)`. Виден **только в редакторе**, в `_ready` (не editor_hint) скрывается.
+
+**Экспорты:**
+- `size: Vector2 = Vector2(20.0, 20.0)` — полные размеры по локальным X/Z (с сеттером, мгновенно перерисовывает индикатор в редакторе через `_refresh_visual`).
+- `resource_type: int` (`@export_enum("Generic","Wood","Stone","Iron","Food")`, дефолт 1=Wood) — тип ресурса. Маппинг 1:1 с `ResourcePile.ResourceType`. Дублируется как int (а не reference на enum) — `@export`-у enum нужен прямой type-reference, и cyclic-import между `ResourceZone ↔ ResourcePile` создаст проблему.
+- `count: int = 8` (range 1-100) — сколько pile'ов спавнить.
+- `units_per_pile: int = 5` (range 1-50) — `units` каждого спавненного pile'а.
+- `min_spacing: float = 1.5` — минимальная дистанция между соседними кучами (rejection sampling, до 10 попыток на pile; 0 = выключить фильтр).
+- `pile_scene: PackedScene` — что спавнить. Дефолт в `resource_zone.tscn` — `res://scenes/resource_pile.tscn`.
+- `spawn_root_path: NodePath` — куда добавлять. Пусто → `current_scene` (чтобы pile'ы пережили возможное удаление зоны или её родителя).
+
+**`_ready`-логика:**
+- В editor-hint: только `_refresh_visual()` — индикатор виден дизайнеру.
+- В рантайме: `_spawn_instances.call_deferred()` + скрыть `Mesh`. **`call_deferred` важен** — `_ready` вызывается во время setup'а родительской сцены, и Godot не даёт `add_child` пока parent «is busy setting up children». К моменту deferred-вызова дерево полностью собрано, `add_child` проходит.
+
+**`_spawn_instances`:**
+- Цикл по `count`, для каждого — `_pick_position(placed_positions, spacing²)` (rejection sampling до 10 попыток внутри прямоугольника `±size/2` через локаль → `global_transform * local`, поворот зоны вокруг Y учитывается). Если все 10 попыток заняты — фоллбэк на последнюю случайную точку (нахлёст возможен, но pile появится).
+- На каждом инстансе — назначить `resource_type` и `units` **до** `add_child` (чтобы `_ready` применил правильный визуал сразу). Позиция выставляется после `add_child`, затем рандомная Y-rotation для визуального разнообразия.
+
+**Визуальный индикатор в редакторе:** перекрашивается в цвет типа (массив `_TYPE_COLORS`: зелёный/коричневый/серый/стальной/оранжевый) — дизайнер видит зоны разного типа без чтения инспектора.
+
+**Зависимости:** `ResourcePile` (для `resource_type`/`units` присвоения и instanceof-проверки), `current_scene` для root-fallback.
 
 ---
 
@@ -1443,6 +1554,42 @@ func take_one() -> bool:
     - **Explicit radius-фильтр** для PhysicsShapeQuery в DefenderGnome и OctagonTurret. Godot 4.6 подмешивает результаты AABB-broadphase (тела вне sphere). Без фильтра защитники видели цели на 50м+ при `attack_radius=22.5` (наблюдалось в логе).
 
 34. **GameplayHud — игровой HUD** (`df7cdb0`). Левая панель: индикаторы способностей (1=хлоп, 2=щелк) под PerfHud. Правая панель: статус лагеря (гномы/лучники/уровень=число палаток) с цветными иконками-плашками. Считывает три публичных геттера Camp каждые 0.25с. Раздел 9.3.
+
+35. **Большая перф-сессия под 2000 скелетов** (`1f97c5a`). Стресс-тест через `]` (новый action `debug_stress_2000`, см. §5.5.4) показал на 2000 скелетов FPS 7 / Process 6мс / **Physics 29мс** / Draw calls 25 — узкое место именно физика. Серия итераций по локализации и устранению боттлнеков:
+
+    **PerfHud расширен** (см. §9.2). К FPS+LOD добавлены `Process` ms / `Physics` ms / `Draw calls` / `Objects` / `Mem` MB / `Nodes`. Без этих счётчиков «оптимизировал бы вслепую» — методология теперь: P→старт→]→спавн 2000→читать счётчики→локализовать.
+
+    **(а) `MASK_SKELETON` 55 → 39** — убран бит ENEMIES. Скелеты больше не сталкиваются друг с другом физически (broad-phase + slide-iterations). Цена: `Enemy._push_neighbor` lunge-domino перестаёт работать (slide-collision между скелетами не регистрируется). Документировал в `layers.gd` и `skeleton.gd`.
+
+    **(б) Frustum-aware LOD** (`lod_offscreen_half_angle_deg=60`). Скелет вне cone'а перед камерой → форсируем FAR независимо от расстояния. Кластер NEAR/MID вокруг Tower при типичной FOV сокращается ~50%. Без эксплойтов «отвернись и не получишь удар» — симуляция продолжает работать в FAR-режиме (с divisor=3), просто дёшево.
+
+    **(в) MID-divisor с velocity-компенсацией** (`lod_mid_tick_divisor=3`). MID-скелеты тикают на 20Гц вместо 60Гц. Скорость сохраняется через `velocity *= divisor` в `_ai_step` — один `move_and_slide` переносит N кадров пути. Tunneling-проверка: 2.7×3×0.0167=0.135м/тик при радиусе 0.4м — запас ×3.
+
+    **(г) Layer FRIENDLY_UNIT для гномов** (`Layers.FRIENDLY_UNIT = 256`, layer 9). Гномов и DefenderGnome'ов перенёс с ACTORS(4) на FRIENDLY_UNIT(256). MASK_SKELETON FRIENDLY_UNIT не включает → skel-gnome пары в broad-phase не формируются. На 126 гномах в плотной толпе скелетов — это была одна из главных нагрузок. Урон по гномам идёт через `Damageable.try_damage` на STRIKE-фазе (контракт, не physics-collision) — смена слоя не сломала геймплей.
+
+    **(д) Tower.mask 31 → 15** (без ENEMIES, [scenes/tower.tscn](scenes/tower.tscn)). Tower сам — CharacterBody3D, движется и `move_and_slide`. В кластере 100+ скелетов вокруг неё каждый m_a_s обходил contact-list по каждому близкому скелету. Pair всё ещё формируется (Tower.layer=ACTORS, в MASK_SKELETON), скелет упирается → bounce-off на lunge работает; только Tower сама сквозит толпу не тормозясь.
+
+    **(е) Spatial grid для skeleton_target** (`_target_grid` static, cell=12, refresh=0.4с). Vision-сканы — главный CPU-боттлнек на 2000+ скелетах × 144 целях (палатки + 126 гномов). 720k distance-checks/сек → ~250k. Process падает с ~12мс до ~3мс.
+
+    **(ж) Главный perf-фикс — `CollisionShape3D.disabled = true` на FAR.** Раньше FAR-скелеты лежали на `Layers.COLD_ENEMY` с `mask=0`, но broad-phase BVH всё равно индексировал AABB всех 2000 движущихся скелетов и ребилдил дерево каждый раз, когда `_far_step` двигал `global_position`. **`mask=0` НЕ убирает тело из BVH — только `disabled=true` или `layer=0`.** Теперь FAR: `layer=0, mask=0, disabled=true` — полностью исключены из broad-phase. Slam доcтаёт через group-fallback (см. §5.2.1) — второй проход по `SKELETON_GROUP` с distance²-фильтром. На 2000 элементах группы ~0.05мс на slam_cooldown=0.5с — копейки. Документировал COLD_ENEMY как зарезервированный слой.
+
+    **(з) FAR-divisor с work_delta** (`lod_far_tick_divisor=3`, фазовый сдвиг `randi() % 6`). Даже после исключения из broad-phase 1900 FAR × 60Гц = 114k вызовов `_far_step`/сек оставались GDScript-нагрузкой. Tick на 20Гц с компенсацией `delta × N` для движения/knockback friction/таймеров.
+
+    **(и) Boids-style avoidance** (`_skel_grid` static, cell=4, refresh=0.3с; `_apply_neighbor_avoidance`). Симптом после убирания skel-skel пар: толпа сходится в одну кучу и сквозит сама себя — некрасиво. Лечение через flocking без возврата physics-пар: 9-cell scan по spatial grid'у, linear falloff отталкивания, кап `move_speed × 0.5`. Применяется только в APPROACH/wander и не-FAR. Цена ~0.2мс/кадр на 400 NEAR/MID. Эмерджент: толпа формирует арку вокруг палатки, не клин.
+
+    **Stress-test `]` для воспроизводимости.** Новый `debug_stress_2000` (keycode 93, `]`) в `wave_director.gd:_process` — fire-and-forget `EnemySpawner.spawn_uniform(skeleton_scene, 2000)`. Без safe-фильтра, без SpawnZone-фильтра — uniform по всему квадрату ±195м. Async-батч по 6/кадр, 5.6с до полного спавна. Кнопка задумана как ежедневный регрессионный замер, не геймплей.
+
+    **SpawnZone: диск → прямоугольник.** Параллельно (`1f97c5a`) старый `SpawnZone.radius: float` заменён на `SpawnZone.size: Vector2`. Поворот вокруг Y живёт в transform узла; sample-точка прогоняется через `zone.global_transform`. Визуал — `BoxMesh` (1×0.04×1) с масштабированием через `transform.scale`. Видим только в редакторе (`mesh.visible = Engine.is_editor_hint()`) — игрок красные коврики не видит. EnemySpawner взвешивает зоны теперь по `area() = size.x * size.y`, не πr². Дефолт `Vector2(60, 60)` ≈ старому диску r=30 по площади.
+
+    **Итог замеров:** physics 29мс → ~5-10мс, FPS 7 → 30-60. Дальнейший buster требует MultiMesh + GPU-instanced рендера (1900 уникальных MeshInstance3D = 1900 draw calls, frustum culling помогает но vertex-transform остаётся).
+
+36. **Этап А ресурс-системы — типы + ResourceZone-расставлятель** (`516ddbf`). Геймдизайнер запросил 4 типа ресурсов с разными визуалами и быстрый дизайнерский UX расстановки.
+
+    **`ResourcePile.ResourceType` enum** (GENERIC/WOOD/STONE/IRON/FOOD) + `PileShape` enum (AUTO/BOX/CYLINDER/SPHERE). Дефолтные визуалы по типу через `_defaults_for_type` (см. таблицу в §5.9). При дефолтных значениях `pile_color/pile_size/pile_shape` (BLACK/ZERO/AUTO) — берётся пресет, иначе экспорты переопределяют. CollisionShape пересоздаётся под форму (Box/Cylinder/Sphere). Logical поведение `take_one()` / hp / freeze не изменилось.
+
+    **`ResourceZone`** (`@tool`, `class_name ResourceZone`, см. §5.9.1) — паттерн `SpawnZone` для куч. Дизайнер: drag → type/count/size → spawn на `_ready`. На запуске зоны разбрасывают pile'ы (через `call_deferred` — иначе `add_child` падает в setup'е родительской сцены). Рантайм-индикатор скрывается, в редакторе виден цветной плоский индикатор (цвет по типу — wood коричневый, stone серый, etc).
+
+    **Этапы Б/В отложены:** многоэтапное дерево (стоит → trunk → 3 logs) и `interaction_time` на pile'е (гном «рубит/копает» N секунд). На функциональность сбора это не влияет — wood-pile = «бревно» с units=3, take_one мгновенный.
 
 ### 7.3 Решённые ошибки
 
