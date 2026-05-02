@@ -1,11 +1,8 @@
-[gd_resource type="CurveTexture" load_steps=2 format=3]
+[gd_resource type="CurveTexture" format=3 uid="uid://c7a6elftwgsqv"]
 
 [sub_resource type="Curve" id="Curve_smoke_alpha"]
-min_value = 0.0
-max_value = 1.0
-_data = [Vector2(0.0, 0.0), 0.0, 4.0, 0, 0, Vector2(0.5, 1.0), 0.0, 0.0, 0, 0, Vector2(1.0, 0.0), -4.0, 0.0, 0, 0]
+_data = [Vector2(0, 0), 0.0, 4.0, 0, 0, Vector2(0.5, 1), 0.0, 0.0, 0, 0, Vector2(1, 0), -4.0, 0.0, 0, 0]
 point_count = 3
 
 [resource]
-width = 256
 curve = SubResource("Curve_smoke_alpha")
