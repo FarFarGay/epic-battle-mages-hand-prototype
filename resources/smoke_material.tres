@@ -1,0 +1,19 @@
+[gd_resource type="ShaderMaterial" load_steps=5 format=3]
+
+[ext_resource type="Shader" path="res://resources/smoke.gdshader" id="1_smoke_shader"]
+[ext_resource type="Texture2D" path="res://resources/smoke_color_gradient.tres" id="2_smoke_grad"]
+[ext_resource type="Texture2D" path="res://resources/smoke_voronoi_noise.tres" id="3_smoke_vor"]
+[ext_resource type="Texture2D" path="res://resources/smoke_alpha_curve.tres" id="4_smoke_alpha"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_smoke_shader")
+shader_parameter/Color = Color(0.6, 0.6, 0.65, 1)
+shader_parameter/Color_Gradiant = ExtResource("2_smoke_grad")
+shader_parameter/Vor_Noise = ExtResource("3_smoke_vor")
+shader_parameter/Alpha_Curve = ExtResource("4_smoke_alpha")
+shader_parameter/Fernal_Power = 0.0
+shader_parameter/Vor_Scale = 3.0
+shader_parameter/Vor_Speed = 0.15
+shader_parameter/Emmision_Power = 0.2
+shader_parameter/Alpha_Clip = 1.0

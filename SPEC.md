@@ -1298,7 +1298,7 @@ func take_one() -> bool:
 
 **Тип корня:** `Node3D` (без скрипта).
 
-**Назначение:** статический визуальный маркер точки интереса — плоский жёлтый цилиндр (top/bottom_radius=2.5, height=0.6) с emission. Используется для двух разных целей:
+**Назначение:** статический визуальный маркер точки интереса — небольшой круг тёмной золы под костром (top/bottom_radius≈0.95, height=0.04, грязно-серый, без emission). Раньше был большой жёлтый плоский цилиндр r=2.5, height=0.6 — заменили на скромное «пятно» (`516ddbf` → текущая версия), потому что весь визуал POI теперь несёт `QuestActor` (костёр сверху). Используется для двух разных целей:
 
 1. **Quest-точка.** В `main.tscn` под `PointsOfInterest/` лежат три POI: `Poi_ESE`, `Poi_Heart`, `Poi_SW`. У каждого ребёнок `Actor` (см. ниже), на нём сидит `quest_order`.
 2. **Safe-зона спавна.** `WaveDirector` собирает прямых детей `poi_root_path` в `_pois` и применяет `poi_safe_radius=32м` как негативный фильтр для спавна скелетов (см. §5.5.4). Та же зона работает для WOOD-ResourceZone — лес рядом с POI не появляется. Для остальных типов ресурсов фильтр не применяется.
@@ -1307,15 +1307,32 @@ func take_one() -> bool:
 
 **Тип корня:** `Node3D` с `class_name QuestActor`.
 
-**Назначение:** «актор» квестов на POI. Капсула высотой 2.5м с цветом по состоянию: **locked** (тусклый серый), **active** (яркий жёлтый с emission), **completed** (зелёный). Состояние читается из `QuestProgress`, перекрас — по сигналу `EventBus.quest_advanced`.
+**Назначение:** «актор» квестов на POI. Визуал — **костёр** (4 наклонённых полена в форме вигвама + GPUParticles3D пламени и дыма + OmniLight3D). Состояние из `QuestProgress` управляет режимом костра, перекрас — по сигналу `EventBus.quest_advanced`:
+- **locked** — потухший: тлеющие угли (тёмно-оранжевая emission поленьев), струйка дыма (8 частиц), без пламени, свет выключен.
+- **active** — горящий: яркое оранжевое пламя (FlameCore + 32 GPUParticles), активный дым (24 частицы), тёплый свет (energy=1.6, color=оранжевый).
+- **completed** — отгоревший с магическим следом: бело-голубовато-зелёная emission поленьев, минимум дыма (4 частицы), тусклый зелёный свет (energy=0.7). Символика «закрыто», в отличие от обычного потухшего костра.
+
+**Структура сцены:**
+- `Logs/Log1..Log4` — `MeshInstance3D` с `CylinderMesh` (radius=0.08, height=0.7), наклонённые в 4 стороны через transform basis (≈20° от вертикали к центру). Material_log общий в `.tscn`, но в `_ready` `_clone_log_material` делает per-instance копию через `duplicate()` — иначе все QuestActor'ы на сцене делили бы один override и emission переключался бы у всех разом.
+- `FlameCore` — `MeshInstance3D` со `SphereMesh` (radius=0.18, scale Y=1.4) на y=0.45, материал `transparency=ALPHA, shading_mode=UNSHADED, emission_energy=4.0`. Видим только в active-состоянии. Это статичное «ядро» пламени — частицы FlameParticles рисуются поверх.
+- `FlameParticles` — `GPUParticles3D` на y=0.3, amount=32, lifetime=0.8с. ProcessMaterial: emission sphere r=0.12, gravity=(0, 1.2, 0) (антигравитация → летит вверх), velocity 0.6..1.2 м/с, scale_curve 1.0 → 0.05 (растёт и схлопывается), color_ramp ярко-жёлтый → оранжевый → тёмно-красный с alpha 1→0. draw_pass — `QuadMesh 0.7×0.7`.
+- `SmokeParticles` — `GPUParticles3D` на y=0.6, amount=24 (динамически: 8/24/4 по состоянию), lifetime=2.5с. ProcessMaterial: emission sphere r=0.18, gravity=(0.05, 0.8, 0) (медленно вверх со сносом), velocity 0.4..0.7 м/с, scale_curve 0.4 → 2.5 (расширяется), color_ramp white→white-alpha=0. **`material_override` — `res://resources/smoke_material.tres`** (см. ниже).
+- `Light` — `OmniLight3D` на y=0.5, range=7м, attenuation=1.5. Цвет/энергия меняются по состоянию.
+
+**Smoke ShaderMaterial — `resources/smoke_material.tres`:**
+- Шейдер `resources/smoke.gdshader` (`spatial`, `depth_prepass_alpha`).
+- В `fragment()`: UV скроллится через `TIME * Vor_Speed`, сэмплируется из voronoi-нойза → индексирует `Alpha_Curve` для финальной альфы. `COLOR.a` (от `color_ramp` GPUParticles) индексирует `Color_Gradiant` (тёмно-серый → светло-серый по жизни частицы). `EMISSION = Emmision_Power × Color × Gradiant`.
+- Подключённые ассеты:
+  - `smoke_color_gradient.tres` — `GradientTexture1D` тёмный→серый→светло-серый.
+  - `smoke_voronoi_noise.tres` — `NoiseTexture2D` 256×256 с `FastNoiseLite type=CELLULAR`, frequency=0.04, seamless.
+  - `smoke_alpha_curve.tres` — `CurveTexture` с пиком в середине (0→1→0), даёт «клочья» дыма.
+- Параметры (тюнятся в инспекторе): `Color`, `Vor_Scale=3.0`, `Vor_Speed=0.15`, `Emmision_Power=0.2`.
 
 **Экспорты:**
 - `actor_id: StringName` — уникальный идентификатор для будущих скриптовых триггеров (диалог, выдача награды, ивенты в EventBus). Сейчас не используется кроме логов.
 - `quest_order: int = 0` — порядковый номер в линейной цепочке (0=первый, 1=второй, …).
 
-**Логика `_refresh_visual`:** в `_ready` создаётся свежий `StandardMaterial3D` через `MeshInstance3D.material_override` (без `resource_local_to_scene` на сцене — каждая инстанс получает свой материал в коде). Дальше — switch по `QuestProgress.is_completed/is_active` и подмена `albedo_color` + `emission`.
-
-**Подписка:** `EventBus.quest_advanced.connect(_on_quest_advanced)` — все 3 актора слушают, перекрашиваются одновременно при продвижении прогресса.
+**Подписка:** `EventBus.quest_advanced.connect(_on_quest_advanced)` — все 3 актора слушают, переключают режим костра одновременно при продвижении прогресса.
 
 **Использование в `main.tscn`:** под каждым `Poi_*` инстанс `quest_actor.tscn` с уникальным `actor_id` (`"ese"`, `"heart"`, `"sw"`) и `quest_order = 0/1/2` соответственно.
 
