@@ -25,7 +25,11 @@ hand_gameplay_prot/
 ├── project.godot              — конфиг движка, input map, layer_names, autoloads
 ├── SPEC.md                    — этот документ
 ├── resources/
-│   ├── grid.gdshader               — спатиальный шейдер сетки на полу
+│   ├── grid.gdshader               — спатиальный шейдер пола (исторически с grid'ом, в этапе 44 grid убран — остался только fbm-травянистый noise через NoiseTexture2D sample)
+│   ├── ground_noise.tres           — `NoiseTexture2D` 512×512, FastNoiseLite type=Perlin, frequency=0.018, octaves=4, seamless — texture-noise для пола И для ветра травы (один на всё)
+│   ├── grass.gdshader              — 3D-mesh grass с vertex displacement: sin-волна по миру + noise variance, без transparency (godotshaders.com/shader/grass-shader подход)
+│   ├── grass_blade.obj             — low-poly blade 9 vertices / 7 трисов (1м×4м, узкий к верху). Импортируется как Mesh
+│   ├── grass_material.tres         — `ShaderMaterial` для grass.gdshader, использует ground_noise.tres как noise_texture для качания
 │   ├── smoke.gdshader              — стилизованный дым (POI-костёр SmokeParticles): voronoi-нойз UV-скролл + alpha-curve через `COLOR.a` от ParticleProcessMaterial
 │   ├── smoke_material.tres         — `ShaderMaterial` для smoke.gdshader (params: Vor_Scale=0.8, Vor_Speed=0.2, Color, Alpha_Clip=0)
 │   ├── smoke_color_gradient.tres   — `GradientTexture1D` тёмный→светлый-серый (индексируется COLOR.a по жизни частицы)
@@ -54,7 +58,9 @@ hand_gameplay_prot/
 │   ├── quest_actor.tscn       — актор-выдатчик квеста: костёр (3 полена крест-накрест + FlameCore + FlameParticles + SmokeParticles + OmniLight)
 │   ├── spawn_zone.tscn        — зона спавна врагов (плоский красный box-индикатор, виден только в редакторе)
 │   ├── perf_hud.tscn          — оверлей FPS / process+physics ms / draw calls / скелеты+LOD
-│   └── gameplay_hud.tscn      — игровой HUD (способности слева, статус лагеря справа)
+│   ├── gameplay_hud.tscn      — игровой HUD (способности слева, статус лагеря справа)
+│   ├── grass_chunk.tscn       — `MultiMeshInstance3D` с blade-mesh + grass-материалом (шаблон для GrassField._spawn_chunks)
+│   └── grass_field.tscn       — корневой Node3D с GrassField-скриптом, сеткой ChunkCount×ChunkCount чанков по карте
 └── scripts/
     ├── tower.gd               — class_name Tower
     ├── hand.gd                — class_name Hand (координатор)
@@ -92,6 +98,7 @@ hand_gameplay_prot/
     ├── vec_util.gd            — class_name VecUtil (горизонтальные хелперы Vector3)
     ├── perf_hud.gd            — class_name PerfHud (оверлей FPS/ms/draw calls/скелеты/LOD, F3 toggle)
     ├── gameplay_hud.gd        — игровой HUD (способности + статус лагеря)
+    ├── grass_field.gd         — class_name GrassField (Node3D, корень chunked-grass'a; на _ready спавнит 8×8 GrassChunk-нод по карте 400×400)
     ├── event_bus.gd           — autoload EventBus
     └── log_config.gd          — autoload LogConfig
 ```
@@ -896,17 +903,49 @@ static func spawn(
 
 **Тип корня:** `StaticBody3D`.
 
-**Назначение:** пол с отрисованной сеткой 2×2 м.
+**Назначение:** пол 400×400м с travel-noise (этап 44, было — с grid-сеткой 2×2м, удалена по геймдизайну).
+
+**Шейдер `resources/grid.gdshader`** (имя историческое):
+- В fragment'е сэмпл `noise_texture` (см. `resources/ground_noise.tres` — `NoiseTexture2D` 512×512 с FastNoiseLite type=Perlin, freq=0.018, octaves=4, **seamless=true**) по `world_pos.xz × noise_scale`. Результат смешивается между `grass_color_dark` и `grass_color_light` через smoothstep, потом mix'ится с `base_color` по `noise_strength`.
+- Texture-based вместо in-shader fbm — на координатах ±200 (карта 400×400) float-precision in-shader hash21+fbm плыл и давал видимые квадраты ~50м. NoiseTexture2D + repeat_enable + seamless даёт чистый bake без артефактов.
+- Cost: один texture-sample на пиксель пола. На 400×400м BoxMesh — копейки.
+- Параметры в Material_ground (`main.tscn`): `base_color`, `noise_strength=0.35`, `noise_scale=0.02` (тайл ~50м), `grass_color_dark/light`. Откат: `noise_strength=0`.
 
 **Состав:**
 - `GroundCollision` — `CollisionShape3D` с `BoxShape3D` 400×1×400.
 - `GroundMesh` — `MeshInstance3D` с тем же боксом и `ShaderMaterial`, использующим `resources/grid.gdshader`.
 
-**Шейдер (`grid.gdshader`):**
-- Считает в фрагментном шейдере расстояние до ближайшей линии по мировым XZ.
-- Сглаживает края через `fwidth + smoothstep` — линии не «лесенят» при любом зуме.
-- Принимает освещение от `DirectionalLight3D` (тень от башни падает на пол).
-- Параметры: `base_color`, `grid_color`, `grid_size`, `line_width`. Дефолты в `main.tscn`: `grid_size=2.0`, `line_width=0.04`.
+### 5.6.1 GrassField — `scenes/grass_field.tscn`, `scripts/grass_field.gd`
+
+**Тип корня:** `Node3D` с `class_name GrassField`.
+
+**Назначение:** chunked 3D-mesh трава по всей карте (этап 44). На `_ready` спавнит `chunk_count_xz × chunk_count_xz` инстансов `GrassChunk` (`MultiMeshInstance3D`-обёртка), каждый со своим `MultiMesh`, заполненным random-blade'ами в его прямоугольнике.
+
+**Зачем чанки:** Godot культит MultiMesh по общему AABB — один большой MultiMesh на 400×400 пересекал бы frustum из любой точки и vertex-шейдер гонял бы все ~800k blade каждый кадр. Сетка 8×8 чанков по 50м даёт 64 отдельных AABB; frustum culling оставляет только видимые ~3-9 чанков. На каждом чанке ещё `visibility_range_end=60м` — дальние пропадают по дистанции до камеры.
+
+**Cost-estimate (дефолты `density=5`, `chunk_count=8`, `visibility=60м`):**
+- 64 чанка × ~12 500 blade per chunk = ~800k blade суммарно по карте.
+- В кадре видно ~3-9 чанков = ~38k-115k blade × 7 трисов = ~260k-800k трисов на vertex stage.
+- Шейдер дешёвый: один texture-sample + sin + 2 add'a в vertex'е, fragment без alpha и без discard.
+- Один draw call на чанк (MultiMesh batched через GPU instancing).
+
+**Шейдер `resources/grass.gdshader`:**
+- `render_mode cull_disabled` — травинку видно с обеих сторон.
+- Vertex: `bend = (sin(TIME×sway_time_scale + dot(instance.xz, vec2(0.07, 0.13))) × 0.5 + (noise(...) − 0.5) × 0.6) × sway × pow(height_norm, sway_pow)`. Двухкомпонентное смещение: главная sin-волна с фазой по миру (бежит видимая «волна» по полю) + локальная вариация из noise (травинки качаются не perfect-sin). `height_norm = VERTEX.y × 0.25` (blade.obj высотой 4 → нормируется в [0,1]). `pow(_, sway_pow=2)` — корень неподвижен, верхушка качается.
+- Fragment: `mix(base_color, tip_color, smoothstep(0, color_grad_height, height_norm))`. Без alpha, без discard.
+- Использует **тот же** `ground_noise.tres` что и пол — один noise-texture на проект.
+
+**Mesh `resources/grass_blade.obj`:** 9 vertices, 7 трисов. Базовый размер 1м×4м, узкий к верху. В MultiMesh `transform.basis` масштабируется на `blade_scale × randf_range(1−variance, 1+variance)` — дефолт даёт blade ~0.1м×0.4м.
+
+**Параметры (`scenes/grass_field.tscn`, инспектор):**
+- `world_size: float = 400.0` — должен совпадать с размером Ground.
+- `chunk_count_xz: int = 8` — сетка чанков. 8×8 при world_size=400 → 50м чанк.
+- `density: float = 5.0` — травинок на квадратный метр.
+- `visibility_distance: float = 60.0` — дистанция культинга по `visibility_range_end`.
+- `blade_scale: float = 0.12`, `blade_scale_variance: float = 0.2` — базовый размер blade'а и разброс.
+- `random_seed: int = -1` — `-1 = randomize`, иначе фиксированный seed для воспроизводимого распределения.
+
+**Откат:** `density = 0` в инспекторе GrassField (на _ready ранний return — чанки не спавнятся).
 
 ### 5.7 Camp — `scenes/camp.tscn`, `scripts/camp.gd`
 
@@ -1895,6 +1934,26 @@ func _refresh_visual() -> void:
     - _far_step calls: 557 → 389.
     - _apply_neighbor_avoidance calls: 105 → 50.
     Бюджет 60Гц (16.66мс) теперь имеет 4-7мс запаса в среднем кадре на 2000 скелетов.
+
+44. **Trial-and-error trip по визуалу: ground noise, billboard grass, 3D-mesh grass.** Геймдизайнер хотел оживить сцену травой — пройдены три варианта.
+
+    **(а) Ground noise — fbm в `grid.gdshader`** (коммит `eabb562`). Дешёвый shader-эффект на полу: 3 octaves hash21+value_noise дают «травянистый» pattern. Зашло — пол стал природным.
+
+    **(б) Billboard grass на POI** (коммит `e71f14b`, потом откат `94efcd4`). Кольца биллборд-quad'ов вокруг каждого костра радиусом 12м, плотность 1/м², ~450 blade per POI. **Не зашло** — кольца выглядят как искусственные «островки», не как лужайка. Удалены файлы `grass.gdshader` (билборд-версия), `grass_chunk.tscn`, `scripts/grass_chunk.gd`, `grass_material.tres`, `grass_quad_mesh.tres`. Заодно убрана grid-сетка 2×2м из ground-шейдера (по геймдизайну: «не нужна, fbm-noise сам даёт масштаб»).
+
+    **(в) Texture-noise vs in-shader fbm** (коммит `a1df929`). Симптом: на полу видны квадраты ~50м с резкими краями. Причина: на координатах ±200 (карта 400×400) `world_pos × scale=0.5` доходило до ±100, hash21+fbm плыл из-за float32 precision. Fix: заменил in-shader fbm на `texture(noise_texture, world_pos.xz × scale).r`, где `noise_texture = ground_noise.tres` (NoiseTexture2D 512×512 FastNoiseLite Perlin, freq=0.018, octaves=4, **seamless=true**). Godot bake'ит её один раз на CPU; sampler с repeat_enable плавно тайлит без швов.
+
+    **(г) 3D-mesh grass по всей карте** (коммиты `3b1a5fe` → `b1787d0` → `612ad05`). Подход с https://godotshaders.com/shader/grass-shader: low-poly blade (`grass_blade.obj`, 9 vertices / 7 трисов, узкая к верху) + vertex displacement по noise-texture. **Без transparency** — silhouette даёт реальная геометрия, нет fragment-overdraw'а. Critically важно при нашем 60fps впритык на 2000 скелетов.
+
+    Архитектура — chunked MultiMesh: `GrassField` (`scripts/grass_field.gd`) на `_ready` спавнит `chunk_count_xz × chunk_count_xz` (8×8) узлов `GrassChunk` (`MultiMeshInstance3D`-обёртка). Каждый чанк имеет `visibility_range_end=60м` — дальние пропадают. Frustum-culling оставляет ~3-9 видимых чанков из 64.
+
+    Ветер в шейдере: `bend = (sin(TIME×scale + worldPhase)×0.5 + (noise(...)−0.5)×0.6) × sway × pow(height_norm, sway_pow)`. Главная sin-волна даёт видимую бегущую волну по полю; noise-vary — травинки качаются не идентично; pow(height) — корень неподвижен, верхушка раскачивается.
+
+    **Bug-fix в шейдере:** первая версия имела ветер `TIME × sway_time_scale × 0.05` — за секунду noise сдвигался на 0.02, период 20м → одно полное качание за ~1000 секунд. Визуально ветер не работал. Убрал `× 0.05` множитель + переписал на sin+noise, теперь видно.
+
+    **Параметры (дефолты в `grass_field.tscn`):** `density=5/м²`, `visibility_distance=60м`, `blade_scale=0.12 ± 0.2`. Cost: ~800k blade суммарно, ~38k-115k в кадре, vertex-bound, ~один draw call на чанк. Откат: `density=0` в инспекторе GrassField.
+
+    Используется тот же `ground_noise.tres` что и для пола — один shared NoiseTexture2D на проект.
 
 ### 7.3 Решённые ошибки
 
