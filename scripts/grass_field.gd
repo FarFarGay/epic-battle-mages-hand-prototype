@@ -76,6 +76,14 @@ func _spawn_chunks() -> void:
 
 ## Один чанк: инстанс chunk_scene, transform на середину чанка, multimesh
 ## заполнен blades_per_chunk травинок в локальных координатах ±chunk_size/2.
+##
+## **КРИТИЧНО**: MultiMesh в `grass_chunk.tscn` — это `sub_resource`, и при
+## `chunk_scene.instantiate()` Godot **разделяет** этот ресурс между всеми
+## инстансами (NodePath на ресурс копируется, не сам ресурс). Без
+## `duplicate()` 256 чанков пишут в один общий MultiMesh, instance_count
+## и set_instance_transform перезаписывают друг друга — это и спамит
+## ошибки в дебаггере (429 шт. на скрине геймдизайнера). После duplicate
+## каждый чанк получает свой собственный MultiMesh-буфер.
 func _spawn_one_chunk(rng: RandomNumberGenerator, origin: Vector3, chunk_size: float, count: int) -> void:
 	var chunk: MultiMeshInstance3D = chunk_scene.instantiate() as MultiMeshInstance3D
 	if chunk == null:
@@ -88,10 +96,13 @@ func _spawn_one_chunk(rng: RandomNumberGenerator, origin: Vector3, chunk_size: f
 	chunk.visibility_range_end = visibility_distance
 	chunk.visibility_range_end_margin = visibility_distance * 0.1
 
-	var mm: MultiMesh = chunk.multimesh
-	if mm == null:
+	if chunk.multimesh == null:
 		push_error("GrassField: chunk_scene.multimesh не задан")
 		return
+	# Per-instance копия — иначе все чанки делят один shared MultiMesh
+	# (см. док-комментарий выше).
+	var mm: MultiMesh = chunk.multimesh.duplicate() as MultiMesh
+	chunk.multimesh = mm
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = false
 	mm.use_custom_data = false
