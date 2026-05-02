@@ -318,6 +318,11 @@ func _ready() -> void:
 	_mid_phys_tick_counter = randi() % 4
 	# Прекомпьют cos(half-angle) для frustum-override LOD'а.
 	_lod_offscreen_cos = cos(deg_to_rad(lod_offscreen_half_angle_deg))
+	# Применяем физ-режим под стартовый _lod_level (по дефолту NEAR). Без этого
+	# initial mask/layer/disabled полагались бы на значения в skeleton.tscn (16/39).
+	# Сейчас они совпадают, но любая правка маски в .tscn тихо ломала бы первый
+	# кадр всех NEAR-скелетов до первого LOD-перехода (через lod_check_interval).
+	_apply_lod_physics_mode()
 
 
 static func _ensure_shared_materials() -> void:
@@ -658,12 +663,26 @@ func _physics_process(delta: float) -> void:
 		_cached_target = _scan_target()
 		_vision_scan_timer = vision_scan_interval * _lod_vision_multiplier()
 
+	# Запоминаем knockback-состояние ДО физ-шага. Тик knockback'а живёт внутри
+	# super._physics_process (NEAR/MID) и _far_step (FAR) — после них сравниваем,
+	# чтобы детектировать knockback exit и сбросить divisor-counter'ы. Иначе
+	# counter может остановиться на «skip-фазе» во время knockback'а и сразу
+	# после восстановления первый AI-кадр будет skipped — скелет «глюк-замораживается»
+	# на ~16мс (для MID) / ~50мс (для FAR) даже хотя AI хочет двигаться.
+	var was_knockback_active := _knockback.is_active()
+
 	if _lod_level == LodLevel.FAR:
 		_far_step(work_delta)
-		return
-	# NEAR/MID: super тикает с обычным delta. Внутри super → _ai_step (наш
-	# override), который для MID множит velocity на divisor.
-	super._physics_process(delta)
+	else:
+		# NEAR/MID: super тикает с обычным delta. Внутри super → _ai_step (наш
+		# override), который для MID множит velocity на divisor.
+		super._physics_process(delta)
+
+	# Knockback закончился в этом тике — выравниваем counter'ы в 0, чтобы
+	# следующий физкадр был полным AI-тиком (counter % divisor == 0).
+	if was_knockback_active and not _knockback.is_active():
+		_mid_phys_tick_counter = 0
+		_far_phys_tick_counter = 0
 
 
 ## «Холодный» физический шаг для FAR-скелетов: AI считает velocity (через те

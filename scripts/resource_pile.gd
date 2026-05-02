@@ -44,6 +44,12 @@ enum PileShape { AUTO, BOX, CYLINDER, SPHERE }
 @export_range(0.0, 5.0) var highlight_intensity: float = 0.6
 
 var _material: StandardMaterial3D
+## Идемпотентность смерти: take_damage и take_one могут привести pile к
+## уничтожению независимо в одном кадре (например, slam добивает hp, а гном
+## параллельно вызывает take_one на units=1). Без флага оба вызвали бы
+## destroyed.emit() → EventBus.item_destroyed.emit(self) дважды → UI/счётчики
+## ловят двойной сигнал. queue_free() идемпотентен сам по себе, но сигнал — нет.
+var _dying: bool = false
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 @onready var _shape: CollisionShape3D = $CollisionShape3D
@@ -147,11 +153,12 @@ func _apply_shape() -> void:
 # --- Damageable ---
 
 func take_damage(amount: float) -> void:
-	if is_queued_for_deletion() or amount <= 0.0:
+	if _dying or is_queued_for_deletion() or amount <= 0.0:
 		return
 	hp -= amount
 	damaged.emit(amount)
 	if hp <= 0.0:
+		_dying = true
 		destroyed.emit()
 		queue_free()
 
@@ -184,10 +191,11 @@ func set_highlighted(value: bool) -> void:
 ## Не отдаёт, если кучу сейчас держит рука (freeze=true) — гном считает
 ## её «занятой» и ищет другую через _on_pile_lost.
 func take_one() -> bool:
-	if freeze or units <= 0 or is_queued_for_deletion():
+	if _dying or freeze or units <= 0 or is_queued_for_deletion():
 		return false
 	units -= 1
 	if units == 0:
+		_dying = true
 		destroyed.emit()
 		queue_free()
 	return true

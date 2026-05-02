@@ -130,12 +130,20 @@ func _spawn_instances() -> void:
 			skipped += 1
 			continue
 		var pile := pile_scene.instantiate()
+		# Жёсткий контракт: pile_scene должна давать ResourcePile. Если дизайнер
+		# подменил сцену на другую (Item, ноду без скрипта и т.п.), мы НЕ хотим
+		# молча добавить её — она не получит resource_type/units, в инспекторе
+		# будет «зелёный generic с дефолтными units=5» и причина не очевидна.
+		if not pile is ResourcePile:
+			push_error("ResourceZone (%s): pile_scene не extends ResourcePile (получили %s) — пропускаю спавн" % [name, pile.get_class() if pile else "null"])
+			if pile:
+				pile.queue_free()
+			continue
 		# Назначить тип и units ДО добавления в дерево, чтобы _ready применил
 		# правильный визуал сразу. Позицию выставляем после add_child (иначе
 		# transform может перезаписаться родителем).
-		if pile is ResourcePile:
-			(pile as ResourcePile).resource_type = resource_type
-			(pile as ResourcePile).units = units_per_pile
+		(pile as ResourcePile).resource_type = resource_type
+		(pile as ResourcePile).units = units_per_pile
 		root.add_child(pile)
 		(pile as Node3D).global_position = pos
 		# Случайная Y-rotation для визуального разнообразия.
