@@ -1,13 +1,15 @@
 shader_type spatial;
+// Имя «grid» оставлено историческим — раньше шейдер рисовал сетку 2×2м
+// поверх базового цвета. С этапа 44 grid убран по геймдизайну: на полу
+// только травянистый fbm-noise. Если понадобится вернуть линии — см.
+// git log: коммит eabb562 (до этого) или e71f14b (с grid + noise).
 
 uniform vec4 base_color : source_color = vec4(0.3, 0.5, 0.25, 1.0);
-uniform vec4 grid_color : source_color = vec4(0.1, 0.2, 0.1, 1.0);
-uniform float grid_size = 2.0;
-uniform float line_width = 0.04;
 
-// «Травянистый» fbm-noise поверх базового цвета — даёт ощущение лужайки без
-// 3D-травы. Дёшево (3 octaves hash-noise в fragment'е, ~30 ops). Сила и
-// масштаб тюнятся с инспектора. Отключение: noise_strength=0.
+// Травянистый fbm-noise — два цвета (тёмный/светлый) смешиваются по
+// fbm 3-octave hash-noise. Дёшево (~30 ops в fragment'е), один draw call
+// на ground BoxMesh 400×400. noise_strength=0 — выключить, fallback на
+// чистый base_color.
 uniform float noise_strength : hint_range(0.0, 1.0) = 0.35;
 uniform float noise_scale : hint_range(0.05, 2.0) = 0.5;
 uniform vec4 grass_color_dark : source_color = vec4(0.18, 0.32, 0.12, 1.0);
@@ -53,15 +55,7 @@ void vertex() {
 }
 
 void fragment() {
-	// Травяной слой: fbm по мировым XZ, индексирует градиент dark→light.
 	float n = fbm3(world_pos.xz * noise_scale);
 	vec3 grass = mix(grass_color_dark.rgb, grass_color_light.rgb, smoothstep(0.2, 0.8, n));
-	vec3 ground = mix(base_color.rgb, grass, noise_strength);
-
-	// Поверх — старый grid (тёмные линии 2×2м для визуального масштаба).
-	vec2 d = abs(mod(world_pos.xz - grid_size * 0.5, grid_size) - grid_size * 0.5);
-	float line = min(d.x, d.y);
-	float aa = fwidth(line);
-	float t = 1.0 - smoothstep(line_width, line_width + aa, line);
-	ALBEDO = mix(ground, grid_color.rgb, t);
+	ALBEDO = mix(base_color.rgb, grass, noise_strength);
 }
