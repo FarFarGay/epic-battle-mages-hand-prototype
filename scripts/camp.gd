@@ -50,6 +50,22 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 @export var start_deployed: bool = false
 @export_group("")
 
+@export_group("POI deploy gate")
+## Если true — деплой возможен ТОЛЬКО когда башня в радиусе safe_radius
+## хотя бы одной POI-зоны (см. [QuestActor.safe_radius] и группу `poi_zone`).
+## Hold R вне POI игнорируется (счётчик _deploy_hold не накапливается).
+## Anchor лагеря защёлкивается на позицию POI, а не на текущую позицию
+## башни — палатки кольцом строятся симметрично вокруг костра.
+##
+## Геймдизайнерская идея: POI = костёр = единственное место «осесть».
+## Между POI караван едет, защитники в палатках, никаких атак волной —
+## фоновые скелеты могут увидеть и накинуться, но это редкие стычки.
+##
+## false — старое поведение (deploy где угодно, anchor=tower.position).
+## Полезно для отладки и потенциально для «лагерь без POI» режимов.
+@export var require_poi: bool = true
+@export_group("")
+
 ## Decay-коэффициент (log-rate) экспоненциального следования палаток.
 ## Чем выше — тем быстрее палатка догоняет точку-цель. Не зависит от dt.
 @export var follow_speed: float = 4.0
@@ -477,17 +493,28 @@ func _handle_input(delta: float) -> void:
 
 	match _state:
 		State.CARAVAN_FOLLOWING:
-			if _is_tower_stationary():
+			# Стационарность башни — необходимое условие. POI-gate (если
+			# require_poi=true) — второе. Оба должны быть true, чтобы
+			# счётчик отсчёта развёртки тикал.
+			var poi := _find_poi_for_deploy()
+			var poi_ok: bool = (not require_poi) or (poi != null)
+			if _is_tower_stationary() and poi_ok:
 				if not _was_holding_stationary:
 					if debug_log and LogConfig.master_enabled:
-						print("[Camp] начат отсчёт развёртки")
+						if poi != null:
+							print("[Camp] начат отсчёт развёртки (POI: %s)" % poi.name)
+						else:
+							print("[Camp] начат отсчёт развёртки")
 					_was_holding_stationary = true
 				_deploy_hold += delta
 				if _deploy_hold >= deploy_duration:
 					_start_deploy()
 			else:
 				if _was_holding_stationary and debug_log and LogConfig.master_enabled:
-					print("[Camp] отсчёт прерван (башня поехала)")
+					if not _is_tower_stationary():
+						print("[Camp] отсчёт прерван (башня поехала)")
+					else:
+						print("[Camp] отсчёт прерван (вышли из POI)")
 				_deploy_hold = 0.0
 				_was_holding_stationary = false
 		State.DEPLOYED:
@@ -509,11 +536,48 @@ func _is_tower_stationary() -> bool:
 	return d.length() < stationary_threshold
 
 
+## Возвращает ближайший POI, в радиус которого попадает башня. Если башни нет
+## или POI не найдено — null. Используется и в _handle_input как gate-чек,
+## и в _start_deploy как источник якоря.
+##
+## "Ближайший" — на случай перекрытия safe_radius'ов соседних POI: лагерь
+## защёлкивается на тот, к которому башня ближе. Без этого первый POI в
+## группе бы выигрывал, и игрок не смог бы выбрать более далёкий.
+func _find_poi_for_deploy() -> Node3D:
+	if _tower == null:
+		return null
+	var tower_pos := _tower.global_position
+	var nearest: Node3D = null
+	var nearest_dist_sq := INF
+	for poi in get_tree().get_nodes_in_group(QuestActor.POI_GROUP):
+		if not is_instance_valid(poi):
+			continue
+		if not poi.has_method("is_within_safe_radius"):
+			continue
+		if not poi.is_within_safe_radius(tower_pos):
+			continue
+		var poi_node := poi as Node3D
+		if poi_node == null:
+			continue
+		var d_sq: float = (poi_node.global_position - tower_pos).length_squared()
+		if d_sq < nearest_dist_sq:
+			nearest_dist_sq = d_sq
+			nearest = poi_node
+	return nearest
+
+
 func _start_deploy() -> void:
 	_state = State.DEPLOYED
-	# Anchor: позиция башни если есть, иначе собственная позиция Camp
-	# (для static-режима через start_deployed — см. _ready).
-	_deploy_anchor = _tower.global_position if _tower != null else global_position
+	# Anchor: позиция POI (если рядом с костром) > позиция башни > собственная.
+	# POI-snap даёт визуально центрированный лагерь на костре, не «рядом с ним
+	# со смещением, где башня случайно остановилась».
+	var poi := _find_poi_for_deploy()
+	if poi != null:
+		_deploy_anchor = poi.global_position
+	elif _tower != null:
+		_deploy_anchor = _tower.global_position
+	else:
+		_deploy_anchor = global_position
 	_deployed_targets.clear()
 	var count := _parts.size()
 	for i in range(count):

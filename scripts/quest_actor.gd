@@ -1,6 +1,10 @@
 class_name QuestActor
 extends Node3D
-## Сюжетный «актор» — выдатчик задания на конкретной POI.
+## Сюжетный «актор» — выдатчик задания на конкретной POI. **И сама POI-зона**:
+## один и тот же узел совмещает визуал костра, выдачу квеста и параметры
+## осады лагеря. Дизайнерская идея: точка интереса = костёр; лагерь ставится
+## ровно на костёр; ресурсы вокруг костра спавнятся ResourceZone-ами как
+## дочерние ноды этого QuestActor'а.
 ##
 ## Визуал — костёр (поленья + GPUParticles3D пламени и дыма + OmniLight3D).
 ## Состояние читается из QuestProgress по `quest_order`:
@@ -9,14 +13,40 @@ extends Node3D
 ##   - completed — отгоревший: бело-голубое тление, минимум дыма, тусклый зелёный свет
 ##                 (символика «задание сделано», в отличие от обычного потухшего костра).
 ##
+## **POI-зона:** регистрируется в группе [POI_GROUP] на _ready. Camp читает
+## группу, чтобы разрешить deploy только в радиусе `safe_radius` от костра.
+## WaveDirector читает группу + `wave_schedule` чтобы запустить осаду на
+## конкретном POI когда лагерь развернулся.
+##
 ## `actor_id` — уникальный ID для будущих скриптовых триггеров (диалог,
 ## выдача награды, ивенты в EventBus). Сейчас не используется кроме логов.
 ##
 ## Подписан на `EventBus.quest_advanced`, чтобы перекраситься без явных
 ## связей с другими акторами.
 
+## Группа всех POI-зон на сцене. Camp ищет ближайшую через
+## get_nodes_in_group(POI_GROUP) для deploy-gate'а. WaveDirector — для
+## привязки осады к конкретному POI на camp_deployed.
+const POI_GROUP := &"poi_zone"
+
 @export var actor_id: StringName
 @export var quest_order: int = 0
+
+@export_group("POI zone")
+## Радиус, в котором лагерь может развернуться вокруг костра. Должен быть
+## ≥ Camp.deploy_radius (8м), иначе палатки кольцом вылезут за пределы
+## «зоны костра» и визуально POI будет выглядеть просто как точка в пустоте.
+## Игрок жмёт R только в пределах этого круга — иначе deploy игнорируется.
+## Также используется как "anchor": Camp на deploy ставит _deploy_anchor
+## ровно в global_position костра (а не в текущую позицию башни) — палатки
+## кольцом строятся симметрично вокруг костра, не уезжают на пол-метра.
+@export var safe_radius: float = 12.0
+
+## Расписание осады. Если null — POI «мирный»: лагерь развернётся, но волны
+## на него не идут. Если задан — WaveDirector проигрывает stages по порядку
+## с момента camp_deployed. См. [WaveSchedule] для формата.
+@export var wave_schedule: WaveSchedule
+@export_group("")
 
 @onready var _logs_root: Node3D = $Logs
 @onready var _flame_core: MeshInstance3D = $FlameCore
@@ -36,6 +66,8 @@ var _smoke_amount_max: int = 14
 
 
 func _ready() -> void:
+	# POI-зона: регистрация в группе для discovery'я Camp'ом и WaveDirector'ом.
+	add_to_group(POI_GROUP)
 	_clone_log_material()
 	# Зафиксируем максимум амоунта (active-состояние). Все переключения —
 	# через amount_ratio, см. _smoke_amount_max в комменте выше.
@@ -43,6 +75,21 @@ func _ready() -> void:
 		_smoke_amount_max = maxi(_smoke_particles.amount, 1)
 	EventBus.quest_advanced.connect(_on_quest_advanced)
 	_refresh_visual()
+
+
+## True если world-точка в радиусе safe_radius от костра. Camp использует
+## для deploy-gate'а: hold R вне круга — игнор. Расчёт по горизонтали
+## (XZ), Y игнорируется — для плоской карты разница несущественна.
+func is_within_safe_radius(world_pos: Vector3) -> bool:
+	var dx: float = world_pos.x - global_position.x
+	var dz: float = world_pos.z - global_position.z
+	return (dx * dx + dz * dz) <= (safe_radius * safe_radius)
+
+
+## Геттер расписания осады для WaveDirector'а. Может вернуть null —
+## тогда POI «мирный», волны не идут.
+func get_wave_schedule() -> WaveSchedule:
+	return wave_schedule
 
 
 func _on_quest_advanced(_new_index: int) -> void:
