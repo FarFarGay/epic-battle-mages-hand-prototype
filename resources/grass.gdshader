@@ -37,20 +37,26 @@ void vertex() {
 	// ветра и для color-градиента.
 	v_height_norm = clamp(VERTEX.y * 0.25, 0.0, 1.0); // y ∈ [0..4] → [0..1]
 
-	// Mировые координаты blade-инстанса для сэмпла noise. MODEL_MATRIX[3]
-	// даёт translation MultiMesh-инстанса; не зависит от текущей вершины.
+	// Двухкомпонентное движение для видимого ветра:
+	// 1. Главная волна — sin(TIME × sway_time_scale + phase). Phase сдвигается
+	//    по мировым XZ координатам инстанса → соседние травинки в разных фазах,
+	//    бежит волна по полю.
+	// 2. Локальная вариация из noise-texture — каждая травинка качается
+	//    немного по-своему (разная амплитуда, не perfect-sin).
 	vec3 instance_origin = MODEL_MATRIX[3].xyz;
-	vec2 noise_uv = instance_origin.xz * sway_noise_scale + TIME * sway_time_scale * 0.05;
-	float n = texture(noise_texture, noise_uv).r;
+	float global_phase = TIME * sway_time_scale + dot(instance_origin.xz, vec2(0.07, 0.13));
+	float wave = sin(global_phase) * 0.5;  // ∈ [-0.5, 0.5]
+
+	vec2 noise_uv = instance_origin.xz * sway_noise_scale + vec2(TIME * sway_time_scale * 0.5);
+	float noise_val = texture(noise_texture, noise_uv).r - 0.5;  // ∈ [-0.5, 0.5]
 
 	// Затухание ветра к корню: pow(height_norm, sway_pow). Верхушка качается,
 	// корень почти неподвижен.
 	float fade = pow(v_height_norm, sway_pow);
 	// Смещение в локальных координатах. sway_dir — направление ветра по XZ.
-	// Носим shift на noise * sway * fade — чем выше, тем сильнее.
-	vec2 shift = sway_dir * (n - 0.5) * sway * fade;
-	VERTEX.x += shift.x;
-	VERTEX.z += shift.y;
+	float bend = (wave + noise_val * 0.6) * sway * fade;
+	VERTEX.x += sway_dir.x * bend;
+	VERTEX.z += sway_dir.y * bend;
 }
 
 void fragment() {
