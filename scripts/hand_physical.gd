@@ -29,6 +29,15 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 @export var throw_strength: float = 1.2
 @export var max_throw_speed: float = 30.0
 @export var hold_offset: Vector3 = Vector3(0, -1.0, 0)
+## Порог, ниже которого smoothed_velocity руки считается «стоянием» для
+## soft-release предметов (Layers.HAND_SOFT_RELEASE_GROUP). Если предмет в
+## этой группе И velocity < threshold → impulse не применяется, предмет
+## встаёт ровно там, где была рука. Без soft-release ветки smoothed_velocity
+## всегда содержит остаточное движение последних 6 кадров (~0.1с истории
+## курсора), и тихий «положил» легко пробивает 3-5 m/s — и палатки от меня
+## разрушались по drop_destroy_speed просто потому что я водил рукой
+## за миг до release. Threshold — стенка между «поставил» и «бросил».
+@export var soft_release_velocity_threshold: float = 8.0
 
 @export_subgroup("Magnet")
 ## Базовая сила магнита. Фактически прикладывается min(magnet_force, mass*max_accel).
@@ -143,11 +152,14 @@ func find_grab_candidate() -> RigidBody3D:
 
 ## Возвращает ближайшую damageable-цель в зоне захвата (с фильтром массы для RigidBody).
 ## Используется Flick'ом — он бьёт всё damageable, не только Items/Enemies по имени.
+## Цели в группе HAND_IMMUNE_GROUP пропускаются (per-target иммунитет от руки).
 func find_flick_target() -> Node3D:
 	var closest: Node3D = null
 	var closest_dist := INF
 	for body in _hand.get_grabbable_bodies():
 		if not Damageable.is_damageable(body):
+			continue
+		if Layers.is_hand_immune(body):
 			continue
 		if not _is_within_lift_mass(body):
 			continue
@@ -269,11 +281,15 @@ func _apply_magnet() -> void:
 
 ## Ближайший Grabbable RigidBody3D с массой < max_lift_mass.
 ## Класс цели не важен — Item, ResourcePile, любой будущий тип.
+## Цели в группе HAND_IMMUNE_GROUP пропускаются — рука их не хватает и магнитом
+## не тянет (применяется к grab и к _apply_magnet через тот же helper).
 func _find_closest_grabbable(bodies: Array[Node3D]) -> RigidBody3D:
 	var closest: RigidBody3D = null
 	var closest_dist := INF
 	for body in bodies:
 		if not Grabbable.is_grabbable(body):
+			continue
+		if Layers.is_hand_immune(body):
 			continue
 		if not (body is RigidBody3D):
 			continue
@@ -303,9 +319,18 @@ func _release() -> void:
 		return
 	var item_name := str(_held.name)
 	_held.freeze = false
-	var v := _hand.smoothed_velocity() * throw_strength
-	if v.length() > max_throw_speed:
-		v = v.normalized() * max_throw_speed
+	var raw_v := _hand.smoothed_velocity()
+	var v: Vector3
+	# Soft-release ветка: для предметов, у которых дизайнер хочет различать
+	# «поставил» и «бросил» (палатки и т.д.), ниже порога velocity полностью
+	# обнуляем impulse — предмет встаёт там, где была рука, без полёта.
+	# Выше порога логика та же, что и для обычных RB — летит по smoothed.
+	if Layers.is_hand_soft_release(_held) and raw_v.length() < soft_release_velocity_threshold:
+		v = Vector3.ZERO
+	else:
+		v = raw_v * throw_strength
+		if v.length() > max_throw_speed:
+			v = v.normalized() * max_throw_speed
 	_held.linear_velocity = v
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Physical] отпущен %s, v=(%.2f, %.2f, %.2f), |v|=%.2f" % [item_name, v.x, v.y, v.z, v.length()])

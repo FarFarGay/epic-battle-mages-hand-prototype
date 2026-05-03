@@ -1,9 +1,11 @@
 class_name Camp
 extends Node3D
-## Лагерь — модуль каравана+развёртки. Цепочка из 4 палаток-StaticBody3D
-## следует за башней (CARAVAN_FOLLOWING) и по hold-инпуту разворачивается в
-## кольцо вокруг точки остановки башни (DEPLOYED), превращая палатки в
-## твёрдые препятствия для самой башни.
+## Лагерь — модуль каравана+развёртки. Цепочка палаток-RigidBody3D
+## (frozen=true в норме — Camp двигает их через global_position) следует за
+## башней (CARAVAN_FOLLOWING) и по hold-инпуту разворачивается в кольцо
+## вокруг точки остановки башни (DEPLOYED). На физический удар (Slam, Flick,
+## магия) палатка снимается с freeze, эмиттит CampPart.is_torn_off=true,
+## Camp пропускает её в follow-логике — она физически летает и кувыркается.
 ##
 ## Состояния:
 ## - CARAVAN_FOLLOWING — палатки тянутся «змейкой» за башней. Hold R с условием
@@ -80,6 +82,14 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 @export var part_gap: float = 2.5
 ## За этим порогом ведущая палатка перестаёт двигаться (башня «ушла далеко»).
 @export var follow_max_distance: float = 30.0
+## Радиус «зоны каравана» — куда игрок может рукой вернуть палатку в строй.
+## В CARAVAN_FOLLOWING зона измеряется от башни, в DEPLOYED — от _deploy_anchor.
+## Если игрок аккуратно (тихий release) поставил палатку В этой зоне →
+## Camp пересортирует _parts по позиции и втянет её в строй. Если ВНЕ зоны →
+## palatка просто стоит на месте, Camp её не таскает (но и гномы IN_TENT
+## остаются в ней — никого не убивает). Чтобы вернуть палатку в строй,
+## её надо подобрать ещё раз и поставить ближе чем placement_zone_radius.
+@export var placement_zone_radius: float = 15.0
 ## Секунды зажатой R + неподвижности башни для развёртки.
 @export var deploy_duration: float = 3.0
 ## Секунды зажатой R для свёртки (stationary не требуется).
@@ -111,7 +121,12 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 
 var _tower: Node3D
 var _state: State = State.CARAVAN_FOLLOWING
-var _parts: Array[StaticBody3D] = []
+## Палатки каравана. Тип Node3D (а не RigidBody3D), потому что после tear-off
+## (apply_push на CampPart) палатка остаётся в массиве несколько кадров до
+## фактического `_remove_torn_part` — но сама follow-логика её уже пропускает
+## через `(part as CampPart).is_torn_off()`. Также удобнее, если когда-то
+## появятся не-RB палатки.
+var _parts: Array[Node3D] = []
 ## Таймер удержания R в CARAVAN_FOLLOWING (для развёртки).
 var _deploy_hold: float = 0.0
 ## Таймер удержания R в DEPLOYED (для свёртки).
@@ -199,9 +214,12 @@ func _spawn_tents() -> void:
 	# центре и потом «уезжали» к башне. Сразу строим конечную цепочку.
 	var leader_xz: Vector3 = _tower.global_position if _tower != null else global_position
 	for i in range(tent_count):
-		var tent := tent_scene.instantiate() as StaticBody3D
+		# Tent — RigidBody3D с freeze=true (после смены StaticBody → RB на 2026-05-03):
+		# на freeze палатка ведёт себя как кинематическое тело, Camp двигает её
+		# через global_position. На apply_push freeze снимается, палатка летит.
+		var tent := tent_scene.instantiate() as Node3D
 		if tent == null:
-			push_warning("Camp: tent_scene не инстанцируется как StaticBody3D")
+			push_warning("Camp: tent_scene не инстанцируется как Node3D")
 			continue
 		tent.name = "Tent%d" % (i + 1)
 		add_child(tent)
@@ -243,7 +261,7 @@ func _spawn_gnomes() -> void:
 ## Инстанцирует одну сцену гнома, привязывает к палатке. Используется
 ## и для защитников (defender_scene), и для собирателей (gnome_scene).
 ## Если сцена null или не инстанцируется как Gnome — push_warning и пропуск.
-func _spawn_one_gnome(scene: PackedScene, tent: StaticBody3D, role: String) -> void:
+func _spawn_one_gnome(scene: PackedScene, tent: Node3D, role: String) -> void:
 	if scene == null:
 		push_warning("Camp: сцена для роли '%s' не задана — пропуск" % role)
 		return
@@ -258,6 +276,94 @@ func _spawn_one_gnome(scene: PackedScene, tent: StaticBody3D, role: String) -> v
 	# и _all_gnomes_home будут спотыкаться об invalid-инстансы.
 	gnome.destroyed.connect(_on_gnome_destroyed.bind(gnome))
 	_gnomes.append(gnome)
+
+
+## Публичный геттер списка гномов лагеря. CampPart использует, чтобы найти
+## своих жильцов IN_TENT при tear-off (eject + damage). Возвращает internal
+## ссылку — caller'ы должны не мутировать массив, только итерировать.
+func get_gnomes() -> Array[Gnome]:
+	return _gnomes
+
+
+## Публичный геттер ссылки на башню. Бездомные гномы (FOLLOWING_CARAVAN) идут
+## за ней. Может быть null если target_path не разрешился или Tower уничтожена.
+func get_tower() -> Node3D:
+	return _tower
+
+
+## Уведомление от CampPart, что её только что аккуратно поставили рукой
+## (тихий release без impulse). Camp проверяет distance до leader'а:
+## - В зоне → reorder _parts по позиции, палатка встаёт в новый слот строя.
+##   Зону проверяем ОДНОКРАТНО здесь, не каждый кадр в follow — иначе
+##   палатка, попавшая по краю зоны, могла бы выпасть из строя через секунду
+##   когда строй растянется (баг 2026-05-04: «выбивает четвёртую»).
+## - Вне зоны → mark_outside_caravan на палатке. Camp.follow её пропускает
+##   до следующего pickup (тогда _outside_caravan сбрасывается).
+func notify_part_settled(part: CampPart) -> void:
+	var leader_pos := _leader_pos_for_zone()
+	var zone_sq := placement_zone_radius * placement_zone_radius
+	if (part.global_position - leader_pos).length_squared() > zone_sq:
+		part.mark_outside_caravan()
+		if debug_log and LogConfig.master_enabled:
+			print("[Camp] %s оставлена вне зоны (dist > %.1f), стоит вне строя" % [part.name, placement_zone_radius])
+		return
+	_reorder_parts_by_position()
+
+
+## Leader-позиция для зоны установки и follow-фильтра. CARAVAN — башня,
+## DEPLOYED/PACKING — anchor.
+func _leader_pos_for_zone() -> Vector3:
+	if _state == State.CARAVAN_FOLLOWING and _tower != null:
+		return _tower.global_position
+	return _deploy_anchor
+
+
+## Сортирует _parts по distance до leader'а. Палатки в строю (is_in_caravan)
+## впереди, torn_off / outside_caravan — в конце (Camp их всё равно skip'ает
+## в follow). _deployed_targets перестраиваются под новое количество
+## активных палаток в DEPLOYED-режимах.
+func _reorder_parts_by_position() -> void:
+	var leader_pos: Vector3 = _leader_pos_for_zone()
+	_parts.sort_custom(func(a: Node3D, b: Node3D) -> bool:
+		var a_active := not (a is CampPart) or (a as CampPart).is_in_caravan()
+		var b_active := not (b is CampPart) or (b as CampPart).is_in_caravan()
+		if a_active != b_active:
+			# Активные впереди (true перед false в sort_custom).
+			return a_active
+		return a.global_position.distance_squared_to(leader_pos) < b.global_position.distance_squared_to(leader_pos)
+	)
+	if _state == State.DEPLOYED or _state == State.PACKING_RETURNING:
+		_rebuild_deployed_targets()
+
+
+## Пересчитывает _deployed_targets[i] под текущий порядок _parts. Считаем
+## количество активных (не torn_off) палаток как N, делим круг на N
+## секторов и расставляем targets по углам. Torn_off палатки не получают
+## target — они всё равно skip'аются в _update_deployed.
+func _rebuild_deployed_targets() -> void:
+	_deployed_targets.clear()
+	var active_count := 0
+	for part in _parts:
+		if part is CampPart and not (part as CampPart).is_in_caravan():
+			continue
+		active_count += 1
+	if active_count == 0:
+		return
+	var idx := 0
+	for part in _parts:
+		if part is CampPart and not (part as CampPart).is_in_caravan():
+			# Placeholder — _update_deployed skip'ает по индексу, i должен
+			# совпадать с _parts. Используем текущую позицию палатки.
+			_deployed_targets.append(part.global_position)
+			continue
+		var angle := float(idx) * TAU / float(active_count)
+		var part_y: float = part.global_position.y
+		_deployed_targets.append(Vector3(
+			_deploy_anchor.x + cos(angle) * deploy_radius,
+			part_y,
+			_deploy_anchor.z + sin(angle) * deploy_radius,
+		))
+		idx += 1
 
 
 ## Считает живых гномов-собирателей (исключая защитников). Используется HUD'ом.
@@ -316,12 +422,15 @@ func current_center() -> Vector3:
 ## Ближайшая живая палатка к точке. WaveDirector использует для назначения
 ## aggro-цели волне: 10 скелетов получают forced_target = эту палатку.
 ## Возвращает null если все палатки разрушены — лагерь больше не валидная
-## цель, и вся волна идёт мимо.
-func nearest_part_to(pos: Vector3) -> StaticBody3D:
-	var nearest: StaticBody3D = null
+## цель, и вся волна идёт мимо. Оторванные (torn_off) палатки не считаются
+## легитимной целью каравана — волна идёт на стационарные палатки лагеря.
+func nearest_part_to(pos: Vector3) -> Node3D:
+	var nearest: Node3D = null
 	var nearest_dist_sq := INF
 	for part in _parts:
 		if not is_instance_valid(part):
+			continue
+		if part is CampPart and (part as CampPart).is_torn_off():
 			continue
 		var d_sq: float = (part.global_position - pos).length_squared()
 		if d_sq < nearest_dist_sq:
@@ -361,7 +470,7 @@ func reset_population() -> void:
 		print("[Camp] популяция сброшена (гномов: %d)" % _gnomes.size())
 
 
-func _on_part_destroyed(part: StaticBody3D) -> void:
+func _on_part_destroyed(part: Node3D) -> void:
 	# Удаляем по индексу, чтобы синхронно обрезать _deployed_targets — иначе
 	# после смерти палатки [i] оставшиеся палатки поедут к чужим точкам кольца
 	# (каждая палатка читает _deployed_targets[i] по своему индексу в _parts).
@@ -384,34 +493,41 @@ func _on_part_destroyed(part: StaticBody3D) -> void:
 
 
 ## Гномы, чей home_tent был только что разрушен, получают новую ближайшую
-## живую палатку как home. Если живых палаток нет — оставляем как есть
-## (лагерь всё равно потерян: has_alive_parts вернёт false и WaveDirector
-## перестанет назначать его целью волн).
-func _reassign_orphan_gnomes(dead_tent: StaticBody3D) -> void:
-	if _parts.is_empty():
-		return
+## живую палатку как home. Если живых палаток нет — гном переходит в
+## FOLLOWING_CARAVAN (идёт за башней без дома). До этого orphan мог сидеть
+## IN_TENT с freed-ссылкой и телепортироваться по последней позиции мёртвой
+## палатки — теперь он явно «бездомный» с активным state.
+func _reassign_orphan_gnomes(dead_tent: Node3D) -> void:
 	var reassigned := 0
+	var stranded := 0
 	for g in _gnomes:
 		if not is_instance_valid(g):
 			continue
 		if g.get_home_tent() != dead_tent:
 			continue
 		var new_home := _nearest_alive_tent_to(g.global_position)
-		if new_home == null:
-			continue
-		g.set_home_tent(new_home)
-		reassigned += 1
-	if reassigned > 0 and debug_log and LogConfig.master_enabled:
-		print("[Camp] переназначено %d гномов на новые палатки" % reassigned)
+		if new_home != null:
+			g.set_home_tent(new_home)
+			reassigned += 1
+		else:
+			# Живых палаток нет — становится бездомным, идёт за башней.
+			# IN_TENT гномы тоже нужно «выпустить» — просто set state.
+			g.enter_following_caravan()
+			stranded += 1
+	if (reassigned > 0 or stranded > 0) and debug_log and LogConfig.master_enabled:
+		print("[Camp] осиротели после смерти %s: на новые палатки %d, бездомных %d" % [dead_tent.name, reassigned, stranded])
 
 
 ## Ближайшая живая палатка к точке. Используется при переназначении
-## гномов-сирот после гибели их home_tent.
-func _nearest_alive_tent_to(pos: Vector3) -> StaticBody3D:
-	var nearest: StaticBody3D = null
+## гномов-сирот после гибели их home_tent. Оторванные (torn_off) палатки
+## пропускаются — переназначать сироту на летающую палатку бессмысленно.
+func _nearest_alive_tent_to(pos: Vector3) -> Node3D:
+	var nearest: Node3D = null
 	var nearest_dist_sq := INF
 	for part in _parts:
 		if not is_instance_valid(part):
+			continue
+		if part is CampPart and (part as CampPart).is_torn_off():
 			continue
 		var d_sq: float = (part.global_position - pos).length_squared()
 		if d_sq < nearest_dist_sq:
@@ -713,7 +829,25 @@ func _update_caravan_follow(delta: float) -> void:
 	if _tower == null or _parts.is_empty():
 		return
 
-	var lead_dist: float = _parts[0].global_position.distance_to(_tower.global_position)
+	# Виртуальная цепочка: только палатки, которыми Camp реально может управлять.
+	# Skip'аются: torn_off (живут по физике), in_hand (Hand двигает), вне строя
+	# (флаг _outside_caravan, ставится в notify_part_settled при release вне
+	# placement-зоны и сбрасывается при следующем pickup). distance-фильтра
+	# здесь НЕТ — он каждый кадр выкидывал бы из строя «отстающие» палатки
+	# когда tower уезжает быстрее цепочки.
+	var active_parts: Array[Node3D] = []
+	for part in _parts:
+		if not is_instance_valid(part):
+			continue
+		if part is CampPart:
+			var cp := part as CampPart
+			if not cp.is_in_caravan() or cp.is_in_hand():
+				continue
+		active_parts.append(part)
+	if active_parts.is_empty():
+		return
+
+	var lead_dist: float = active_parts[0].global_position.distance_to(_tower.global_position)
 	var leader_too_far := lead_dist > follow_max_distance
 
 	if debug_log and LogConfig.master_enabled and leader_too_far != _was_out_of_range:
@@ -723,9 +857,9 @@ func _update_caravan_follow(delta: float) -> void:
 			print("[Camp] башня вернулась в зону видимости (dist=%.1f)" % lead_dist)
 		_was_out_of_range = leader_too_far
 
-	for i in range(_parts.size()):
-		var part := _parts[i]
-		var leader_pos: Vector3 = _tower.global_position if i == 0 else _parts[i - 1].global_position
+	for i in range(active_parts.size()):
+		var part := active_parts[i]
+		var leader_pos: Vector3 = _tower.global_position if i == 0 else active_parts[i - 1].global_position
 
 		# Ведущая палатка стоит, если башня ушла за порог. Остальные всё равно
 		# подтягиваются к своему (стоящему) лидеру — цепочка собирается.
@@ -738,7 +872,12 @@ func _update_caravan_follow(delta: float) -> void:
 			continue
 		var dir := to_leader.normalized()
 		var target_pos := leader_pos - dir * part_gap
-		target_pos.y = _ground_y_at(part, target_pos)
+		# Y: ground + half-height — палатка стоит ровно на полу, не утопает.
+		# Без offset palatka.center на ground_y → её нижняя сторона уходит
+		# под пол на половину высоты (визуально незаметно из-за толщины
+		# Ground'а, но математически некорректно).
+		var part_offset_y: float = (part as CampPart).floor_offset_y() if part is CampPart else 0.0
+		target_pos.y = _ground_y_at(part, target_pos) + part_offset_y
 		part.global_position = _exp_decay(part.global_position, target_pos, follow_speed, delta)
 
 
@@ -747,6 +886,13 @@ func _update_deployed(delta: float) -> void:
 		if i >= _deployed_targets.size():
 			break
 		var part := _parts[i]
+		# Skip правило симметрично caravan-follow: torn_off, in_hand,
+		# _outside_caravan. Distance-фильтра нет — однократная проверка
+		# происходит в notify_part_settled при release.
+		if part is CampPart:
+			var cp := part as CampPart
+			if not cp.is_in_caravan() or cp.is_in_hand():
+				continue
 		part.global_position = _exp_decay(part.global_position, _deployed_targets[i], follow_speed, delta)
 
 
@@ -759,7 +905,7 @@ static func _exp_decay(current: Vector3, target: Vector3, decay: float, delta: f
 
 ## Y под точкой target_pos через raycast по слою TERRAIN. Если raycast пуст —
 ## возвращаем текущую Y палатки (не дёргаем по высоте).
-func _ground_y_at(part: StaticBody3D, target_pos: Vector3) -> float:
+func _ground_y_at(part: Node3D, target_pos: Vector3) -> float:
 	var space := part.get_world_3d().direct_space_state
 	if space == null:
 		return part.global_position.y

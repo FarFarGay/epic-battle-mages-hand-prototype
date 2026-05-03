@@ -55,21 +55,26 @@ const FRIENDLY_UNIT := 1 << 8    # 256 — bit 8 = layer 9
 ## курсор пролетал бы сквозь неё (тауэр на ACTORS, не в маске).
 const MASK_HAND_CURSOR := TERRAIN | ITEMS | MOUNTED_MODULE      # 67
 
-## Hand grab / flick: предметы и враги (то, во что бьём/подсвечиваем).
+## Hand grab / flick: всё, что рука может «увидеть» в зоне захвата.
+## По дизайнерскому решению (2026-05-03) рука действует одинаково на врагов
+## и на дружественных (гномы, башня, палатки): slam/flick наносят damage,
+## grab подсвечивает кандидата (фактически взять можно только Grabbable
+## RigidBody3D — гном/башня/палатка не RigidBody, в _find_closest_grabbable
+## фильтруются). Per-target исключение — через группу HAND_IMMUNE_GROUP
+## (`add_to_group("hand_immune")` или Groups-вкладка в editor'е).
 ## MOUNTED_MODULE — чтобы рука могла снять смонтированный модуль обратно
-## с башни / центра лагеря. COLD_ENEMY оставлен в маске на случай ручной
-## пометки сущностей этим слоем; сами FAR-скелеты теперь имеют
-## collision_layer=0 и в broad-phase не попадают (см. Skeleton._apply_lod_physics_mode).
-## Если понадобится грабить FAR-скелетов — нужен group-fallback в Hand,
-## по аналогии со Slam.
-const MASK_HAND_TARGETS := ITEMS | ENEMIES | MOUNTED_MODULE | COLD_ENEMY     # 210
+## с башни / центра лагеря.
+## COLD_ENEMY оставлен на случай ручной пометки сущностей этим слоем; сами
+## FAR-скелеты теперь имеют collision_layer=0 (Skeleton._apply_lod_physics_mode).
+const MASK_HAND_TARGETS := ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE | MOUNTED_MODULE | COLD_ENEMY | FRIENDLY_UNIT  # 502
 
-## Slam: предметы и враги, без MOUNTED_MODULE. Хлопок не должен срывать
-## смонтированный модуль со слота — снять модуль можно только хватом руки
-## (через MASK_HAND_TARGETS), а Slam — это AOE по «свободному» миру.
-## COLD_ENEMY оставлен исторически; FAR-скелеты теперь не на нём — slam ловит
-## их отдельным проходом по SKELETON_GROUP с distance²-фильтром в _perform_slam.
-const MASK_HAND_SLAM := ITEMS | ENEMIES | COLD_ENEMY                         # 146
+## Slam: AOE по миру, без MOUNTED_MODULE (модуль снимается только хватом).
+## Те же дружественные слои, что и MASK_HAND_TARGETS — slam одинаково бьёт
+## врагов, гномов, башню и палатки. Per-target иммунитет — через
+## группу HAND_IMMUNE_GROUP.
+## COLD_ENEMY оставлен исторически; FAR-скелеты slam ловит отдельным проходом
+## по SKELETON_GROUP с distance²-фильтром в _perform_slam.
+const MASK_HAND_SLAM := ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE | COLD_ENEMY | FRIENDLY_UNIT                       # 438
 
 ## «Всё обычное» (без палаток лагеря). Tower / Item / Ground / shatter.
 const MASK_ALL_GAMEPLAY := TERRAIN | ITEMS | ACTORS | PROJECTILES | ENEMIES   # 31
@@ -100,6 +105,40 @@ const MASK_TERRAIN_ONLY := TERRAIN                              # 1
 ## стрела «улетит» далеко и должна задеть FAR-скелета — нужен group-fallback
 ## в стрелах, по аналогии со Slam.
 const MASK_FRIENDLY_PROJECTILE := TERRAIN | ENEMIES | COLD_ENEMY  # 145
+
+
+## Группа-маркер: цель исключена из всех hand-actions (slam, flick, grab,
+## magnet) и магии. Включи через editor (Node → Groups → Add «hand_immune»)
+## на конкретном инстансе сцены или программно (`add_to_group(Layers.HAND_IMMUNE_GROUP)`)
+## в _ready, если нужно сделать исключение по типу. Пустая по умолчанию —
+## дизайнер опционально помечает то, что должно стать недосягаемым для руки.
+const HAND_IMMUNE_GROUP := &"hand_immune"
+
+
+## True, если объект — Node, исключённый из hand-actions через HAND_IMMUNE_GROUP.
+## Hand-actions (slam, flick, grab, magnet) фильтруют через эту проверку
+## ПОСЛЕ broad-phase / overlap-выборки.
+static func is_hand_immune(target: Object) -> bool:
+	return target is Node and (target as Node).is_in_group(HAND_IMMUNE_GROUP)
+
+
+## Группа-маркер: «soft-release» предметы. При отпускании рукой если её
+## smoothed_velocity ниже порога (`HandPhysical.soft_release_velocity_threshold`),
+## Hand пропускает применение impulse и кладёт предмет ровно там, где была
+## рука — без полёта-броска. Используется для палаток (CampPart) и любых
+## объектов, которые игрок «ставит, а не бросает». Обычные RB вне группы
+## всегда получают impulse от smoothed_velocity (как и было).
+##
+## Семантика: «ставится, не бросается». Если игрок РЕЗКО махнул рукой
+## (velocity ≥ threshold), Hand применит impulse — soft-release не запрещает
+## бросок, просто отделяет «положить» от «швырнуть».
+const HAND_SOFT_RELEASE_GROUP := &"hand_soft_release"
+
+
+## True, если объект — Node, помеченный как soft-release. Hand._release
+## использует это перед применением impulse.
+static func is_hand_soft_release(target: Object) -> bool:
+	return target is Node and (target as Node).is_in_group(HAND_SOFT_RELEASE_GROUP)
 
 
 ## Возвращает true, если в маске установлен бит указанного слоя.

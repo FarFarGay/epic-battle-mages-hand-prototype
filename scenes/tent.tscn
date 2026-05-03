@@ -11,10 +11,17 @@ size = Vector3(2, 1.5, 1.5)
 [sub_resource type="StandardMaterial3D" id="Material_tent"]
 albedo_color = Color(0.45, 0.3, 0.18, 1)
 
-[node name="Tent" type="StaticBody3D"]
+[node name="Tent" type="RigidBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
 collision_layer = 32
-collision_mask = 0
+collision_mask = 17
+mass = 8.0
+linear_damp = 2.0
+angular_damp = 2.5
+contact_monitor = false
+can_sleep = true
+freeze = true
+freeze_mode = 0
 script = ExtResource("1")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]

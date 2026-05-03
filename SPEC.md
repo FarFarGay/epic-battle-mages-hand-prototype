@@ -112,7 +112,7 @@ hand_gameplay_prot/
    - `Damageable` — `register(node) → group "damageable"`, `is_damageable(target)`, `try_damage(target, amount)`. Цели: `Item`, `Tower`, `Enemy` (Skeleton), `ResourcePile`.
    - `Pushable` — `register/is_pushable/try_push(target, Δv, duration)`. RigidBody-цели реализуют `apply_push` через `apply_central_impulse(Δv * mass)`, kinematic-цели (Enemy) — через свой `apply_knockback`. Снаружи всё едино — `Tower._push_kinematic` не знает, какой класс перед ним.
    - `Grabbable` — `register/is_grabbable`. Hand сейчас грабит «любой `RigidBody3D` в группе grabbable, у которого есть `set_highlighted` и `mass < max_lift_mass`» вместо `body is Item`. `ResourcePile` подключился без правок руки — только через `Grabbable.register` в своём `_ready`.
-3. **Именованные физические слои.** `scripts/layers.gd` (`class_name Layers`) — единая точка правды: `Layers.TERRAIN/ITEMS/ACTORS/PROJECTILES/ENEMIES/CAMP_OBSTACLE/MOUNTED_MODULE` плюс композитные `MASK_HAND_CURSOR / MASK_HAND_TARGETS / MASK_HAND_SLAM / MASK_ALL_GAMEPLAY / MASK_SKELETON / MASK_TERRAIN_ONLY / MASK_FRIENDLY_PROJECTILE`. В коде GDScript маски берутся через `Layers.X`. В `.tscn` Godot хранит маски как ints — там литералы; пересчитываются от констант (комментарий рядом).
+3. **Именованные физические слои.** `scripts/layers.gd` (`class_name Layers`) — единая точка правды: `Layers.TERRAIN/ITEMS/ACTORS/PROJECTILES/ENEMIES/CAMP_OBSTACLE/MOUNTED_MODULE/COLD_ENEMY/FRIENDLY_UNIT` плюс композитные `MASK_HAND_CURSOR / MASK_HAND_TARGETS / MASK_HAND_SLAM / MASK_ALL_GAMEPLAY / MASK_SKELETON / MASK_TERRAIN_ONLY / MASK_FRIENDLY_PROJECTILE`. В коде GDScript маски берутся через `Layers.X`. В `.tscn` Godot хранит маски как ints — там литералы; пересчитываются от констант (комментарий рядом). Кросс-cutting иммунитет руки/магии — группа `Layers.HAND_IMMUNE_GROUP` (`hand_immune`), helper `Layers.is_hand_immune(target)`.
 4. **Связи между модулями — через `@export` и `setup(...)` инъекцию.** Подмодули руки (`HandPhysicalSlam/Flick/Spell`) получают ссылки на `Hand` и координатор через явный `setup(hand, coord)`, а не лезут вверх по дереву через `get_parent().get_parent()`. Камера, лагерь, спавнер — всё на `@export NodePath`.
 5. **`main.tscn` — только композиция:** инстансы модулей + ландшафт + свет. Никакой собственной логики.
 6. **`scripts/` — только поведение, `scenes/` — только структура.** Сцены не содержат скриптов в чужих папках, скрипты не делают `preload` чужих сцен (кроме рантайм-спавна — гномы, скелеты, фрагменты-осколки).
@@ -144,10 +144,10 @@ hand_gameplay_prot/
 | 3 | Actors | Tower (player-side) | Items, Enemies (но **не сами Skeleton'ы для других Skeleton'ов** — см. MASK_SKELETON ниже) |
 | 4 | Projectiles | (заготовка под магию) | Terrain, Actors, Enemies |
 | 5 | Enemies | `Skeleton` и будущие враги | Tower (исторически; теперь Tower.mask=15 без ENEMIES — башня **физически проходит сквозь скелетов**, см. ниже), Arrow, Slam, Flick |
-| 6 | CampObstacle | палатки `Camp` (Tent*-инстансы из `tent.tscn`) — статически на этом слое в обоих режимах | Skeleton (палатки блокируют скелетов в любом режиме). Tower **не** сканирует — палатки своего же лагеря не должны мешать башне |
+| 6 | CampObstacle | палатки `Camp` (Tent*-инстансы из `tent.tscn`, `RigidBody3D` с `freeze=true` в норме) — на этом слое и в frozen-, и в torn_off-режиме | Skeleton (палатки блокируют скелетов в любом режиме; летящая torn_off-палатка через CAMP_OBSTACLE в `MASK_SKELETON` физически разбрасывает их). Tower **не** сканирует — палатки своего же лагеря не должны мешать башне |
 | 7 | MountedModule | `CampModule` в момент монтажа в слот (динамически переключается с ITEMS) | Hand.GrabArea, Hand.cursor_raycast — иначе игрок не сможет снять модуль с башни обратно. Tower **не** сканирует — иначе touching-контакт «башня снизу, модуль на ней» давал бы ложные wall-collision'ы |
 | 8 | ColdEnemy | **зарезервированный, на 2026-05-02 не используется**. Раньше FAR-LOD скелеты лежали на нём (`collision_layer=COLD_ENEMY, mask=0`), но broad-phase BVH всё равно индексировал AABB 2000 движущихся скелетов → 25+мс на physics_ms. Сейчас FAR-скелеты полностью исключаются из broad-phase через `CollisionShape3D.disabled = true` (см. §5.5.2), а слам ловит их вторым проходом по `Skeleton.SKELETON_GROUP` с distance²-фильтром. Бит COLD_ENEMY ещё включён в `MASK_HAND_TARGETS / MASK_HAND_SLAM / MASK_FRIENDLY_PROJECTILE` исторически — это no-op (никто на этом слое не лежит). Слой оставлен на случай повторного использования для других «исключаемых» сущностей | Hand.GrabArea, Slam, Arrow (все — no-op в текущей реализации) |
-| 9 | FriendlyUnit | `Gnome`, `DefenderGnome` — отдельный от ACTORS, чтобы скелеты могли блокироваться об башню (ACTORS в `MASK_SKELETON`) и при этом **физически проходить сквозь гномов** (FRIENDLY_UNIT не в `MASK_SKELETON`) | никто из активных систем — гномы только принимают raycast/area-запросы по своим контрактам (Damageable). Hand.GrabArea / Slam / Arrow на FRIENDLY_UNIT не смотрят — у гномов своё дело |
+| 9 | FriendlyUnit | `Gnome`, `DefenderGnome` — отдельный от ACTORS, чтобы скелеты могли блокироваться об башню (ACTORS в `MASK_SKELETON`) и при этом **физически проходить сквозь гномов** (FRIENDLY_UNIT не в `MASK_SKELETON`) | Hand.GrabArea / Slam — теперь **смотрят** на FRIENDLY_UNIT (изменение 2026-05-03, унификация рукой и магии: рука одинаково действует на врагов и на гномов). Arrow на FRIENDLY_UNIT не смотрит — стрелы дружественные, по гномам не бьют |
 
 В коде GDScript маски берутся именованными константами из `Layers`; в `.tscn` Godot хранит ints, поэтому там — литералы (значения должны соответствовать `Layers.MASK_*`).
 
@@ -155,16 +155,41 @@ hand_gameplay_prot/
 - `Item`, `Ground`, `ResourcePile`: `Layers.MASK_ALL_GAMEPLAY = 31` (Terrain + Items + Actors + Projectiles + Enemies) — взаимодействуют со всем «обычным», но **не с CampObstacle**: палатки намеренно не блокируют ящики/кучи.
 - `Tower`: `15` (Terrain + Items + Actors + Projectiles, **без ENEMIES**) — башня **не процессит контакты со скелетами** в `move_and_slide`. Раньше было 31, но Tower сама движется (CharacterBody3D), и в плотном кластере 100+ скелетов вокруг неё каждый m_a_s обходил все skel-Tower пары → отдельные миллисекунды physics_ms. Скелеты по-прежнему обнаруживают Tower как препятствие (Tower.layer=ACTORS в MASK_SKELETON), упираются и получают bounce-off на lunge. Только сама Tower сквозит толпу не тормозясь — это разумно (тяжёлая башня, скелеты лёгкие).
 - `Skeleton`: `Layers.MASK_SKELETON = 39` (Terrain + Items + Actors + CampObstacle, **без ENEMIES**) — скелеты **проходят сквозь друг друга** (perf-фикс на 400+ кластерах: skel-skel пары были главным пожирателем broad-phase + slide-iterations об соседей). Цена: `Enemy._push_neighbor` lunge-domino не работает (slide-collision между скелетами не регистрируется). Восстановление — через group+dist push, по аналогии со Slam-fallback. Визуально лечится через `_apply_neighbor_avoidance` (boids-style раздвигание, см. §5.5.2).
-- `Gnome` / `DefenderGnome`: `collision_layer = Layers.FRIENDLY_UNIT = 256`, `collision_mask = Layers.TERRAIN = 1` — гномы видят только пол. Не блокируются скелетами, не толкают друг друга, проходят сквозь Tower и Item. Урон по гномам приходит через `Damageable.try_damage` на STRIKE-фазе скелета (контракт, не physics-collision) — смена слоя не сломала геймплей.
+- `Gnome` / `DefenderGnome`: `collision_layer = Layers.FRIENDLY_UNIT = 256`, `collision_mask = Layers.TERRAIN = 1` — гномы видят только пол. Не блокируются скелетами, не толкают друг друга, проходят сквозь Tower и Item. Урон по гномам приходит через `Damageable.try_damage` — раньше только от STRIKE скелета, с 2026-05-03 ещё и от Slam/Flick (рука стала «вездесущей» по дизайнерскому решению, см. §4.1.bis). Push от Slam применяется через `Pushable.try_push` → `gnome.apply_push` (knockback-механизм гнома, AI глушится на `slam_knockback_duration`).
 - Shatter-фрагменты: `Layers.MASK_TERRAIN_ONLY = 1` — падают на пол, проходят сквозь тела и друг друга.
 - **FAR-LOD Skeleton (динамически):** `collision_layer = 0, collision_mask = 0`, плюс `CollisionShape3D.disabled = true` — полностью вне broad-phase. Slam достаёт через group-fallback (см. §5.2.1).
 
 **Маски запросов (не тел):**
 - `Hand.cursor_raycast_mask`: `Layers.MASK_HAND_CURSOR = 67` (Terrain + Items + MountedModule) — рука поднимается над полом, ящиками/кучами и смонтированными модулями (иначе курсор не «ловил» бы турель на верху башни и снять рукой не получалось бы). На лету в `Hand._raycast_terrain` к маске прибавляется `ACTORS`, если в руке `CampModule` — чтобы при переноске модуля курсор «находил» верхушку башни и hand поднимался к слоту, а не упирался в стену тауэра.
-- `Hand.GrabArea`: `Layers.MASK_HAND_TARGETS = 210` (Items + Enemies + MountedModule + ColdEnemy) — рука цепляет любую цель, включая модуль уже стоящий в слоте. Бит COLD_ENEMY формально включён, но в текущей реализации никто на нём не лежит (FAR-скелеты вне broad-phase). LMB-grab дополнительно фильтрует через `Grabbable.is_grabbable` + `mass < max_lift_mass`, поэтому скелета случайно не схватить. Flick читает ту же зону. **FAR-скелеты руке недоступны** (не в broad-phase) — на практике игрок редко грабит зумаут-камерой, поэтому live-with-it; нужен будет — копировать паттерн group-fallback.
+- `Hand.GrabArea`: `Layers.MASK_HAND_TARGETS = 502` (Items + Actors + Enemies + CampObstacle + MountedModule + ColdEnemy + FriendlyUnit) — рука «видит» в зоне всё, что может быть целью какого-либо action'а. С 2026-05-03 включает гномов (FRIENDLY_UNIT), башню (ACTORS) и палатки (CAMP_OBSTACLE) — это нужно Flick'у, который через `find_flick_target` ищет Damageable-цель в зоне руки. LMB-grab дополнительно фильтрует через `Grabbable.is_grabbable` + `mass < max_lift_mass`, поэтому гнома/башню случайно не схватить (они не Grabbable, не RigidBody). Per-target иммунитет — через группу `Layers.HAND_IMMUNE_GROUP = "hand_immune"`: дизайнер ставит её на конкретный инстанс через editor (Node → Groups), и рука его пропускает в Slam, Flick, grab, magnet. Бит COLD_ENEMY формально включён, но в текущей реализации никто на нём не лежит (FAR-скелеты вне broad-phase). **FAR-скелеты руке недоступны** (не в broad-phase) — на практике игрок редко грабит зумаут-камерой, поэтому live-with-it; нужен будет — копировать паттерн group-fallback.
 - `Hand.MagnetArea`: `Layers.ITEMS = 2` — магнит тянет только то, что на слое Items (Items, ResourcePile).
-- `Hand:PhysicalSlam.slam_mask`: `Layers.MASK_HAND_SLAM = 146` (Items + Enemies + ColdEnemy, без MOUNTED_MODULE). Бит ColdEnemy остался исторически — FAR-скелеты теперь не на нём, slam ловит их **отдельным проходом по `Skeleton.SKELETON_GROUP` с distance²-фильтром** (см. §5.2.1). Без MOUNTED_MODULE — намеренно: смонтированный модуль нельзя сбить хлопком, только хватом руки.
+- `Hand:PhysicalSlam.slam_mask`: `Layers.MASK_HAND_SLAM = 438` (Items + Actors + Enemies + CampObstacle + ColdEnemy + FriendlyUnit, без MOUNTED_MODULE). С 2026-05-03 хлопок одинаково бьёт врагов, гномов, башню и палатки — дизайнерская унификация. Per-target иммунитет — `Layers.is_hand_immune(target)` (группа `hand_immune`); `_perform_slam` проверяет её сразу после `Damageable.is_damageable`. Бит ColdEnemy остался исторически — FAR-скелеты теперь не на нём, slam ловит их **отдельным проходом по `Skeleton.SKELETON_GROUP` с distance²-фильтром** (FAR-fallback тоже фильтрует по `is_hand_immune`). Без MOUNTED_MODULE — намеренно: смонтированный модуль нельзя сбить хлопком, только хватом руки.
 - `Arrow.collision_mask`: `Layers.MASK_FRIENDLY_PROJECTILE = 145` (Terrain + Enemies + ColdEnemy). FAR-скелеты сейчас вне broad-phase — стрелы их не пробивают; на практике это OK (`attack_radius` лучников ~22м < `lod_near_distance=25м`, FAR-скелетов в полётной траектории не бывает).
+
+### 4.2 Унификация руки и магии (friendly fire by default + per-target иммунитет)
+
+**Дизайнерское решение от 2026-05-03.** Все физические действия руки (Slam, Flick, Grab, Magnet) и магия (HandSpell, заглушка) одинаково применяются к врагам и к дружественным сущностям (гномы, Tower, палатки). Логика:
+- Враг подставился под Slam — получит damage и push.
+- Гном попал в радиус Slam — получит damage и push (через `gnome.apply_push` → knockback).
+- Tower попала в радиус Slam — получит damage (но НЕ push — Tower не Pushable).
+- Палатка в радиусе Slam — получит damage (палатка не Pushable).
+- Гном/враг в зоне руки + Flick — будет щёлкнут (если Damageable + mass-фильтр прошёл; гном — CharacterBody3D, mass-фильтр для не-RigidBody всегда true → попадёт под flick).
+- Гном/Tower/палатка в зоне Grab — НЕ хватаются (фильтр `Grabbable.is_grabbable` + `body is RigidBody3D`; ни один из этих типов не Grabbable и не RigidBody).
+
+**Маски:** `MASK_HAND_TARGETS = 502`, `MASK_HAND_SLAM = 438` — оба включают `FRIENDLY_UNIT | ACTORS | CAMP_OBSTACLE` помимо `ITEMS | ENEMIES`. `GrabArea.collision_mask` в `hand.tscn` синхронно = 502.
+
+**Per-target исключение** — группа `Layers.HAND_IMMUNE_GROUP = "hand_immune"`:
+- Дизайнерский путь: открыть инстанс в editor'е, вкладка Node → Groups, добавить группу `hand_immune`. Конкретный гном/палатка/предмет станет невидим для всех hand-actions и магии.
+- Программный путь: `node.add_to_group(Layers.HAND_IMMUNE_GROUP)` в `_ready` (например, для сюжетного NPC, бесcмертного босса, «защищённого» здания).
+- Helper для проверки: `Layers.is_hand_immune(target)` (используется внутри Slam, Flick, grab/magnet ПОСЛЕ broad-phase / overlap-выборки).
+
+**Где иммунитет проверяется:**
+- `HandPhysicalSlam._perform_slam` — основной shape-query цикл и FAR-fallback по `Skeleton.SKELETON_GROUP`.
+- `HandPhysical.find_flick_target` — для Flick'а.
+- `HandPhysical._find_closest_grabbable` — для Grab и Magnet (один helper на оба).
+- `HandSpell` (заглушка): TODO в коде указывает использовать `MASK_HAND_SLAM` + `Layers.is_hand_immune` при будущей реализации AOE-заклинаний — симметрия с физическими действиями.
+
+**Чего НЕ затрагивает иммунитет:** скелетных STRIKE-атак по гномам, башенных стрел/турелей, физических контактов «башня тащит ящик / скелет упирается в палатку» — это не hand-actions, у них своя логика.
 
 ---
 
@@ -238,7 +263,7 @@ hand_gameplay_prot/
 
 **Дочерние узлы:**
 - `HandMesh` — `MeshInstance3D` со сферой r=0.5 (визуал).
-- `GrabArea` — `Area3D` со сферой r=2 на оффсете `(0, −1.5, 0)`, `collision_mask=82` (Items + Enemies + MountedModule, == `Layers.MASK_HAND_TARGETS`). Зона захвата (LMB) и поиска цели для Flick. Доступ снаружи — только через `get_grabbable_bodies()`.
+- `GrabArea` — `Area3D` со сферой r=2 на оффсете `(0, −1.5, 0)`, `collision_mask=502` (Items + Actors + Enemies + CampObstacle + MountedModule + ColdEnemy + FriendlyUnit, == `Layers.MASK_HAND_TARGETS`). Зона захвата (LMB) и поиска цели для Flick. Доступ снаружи — только через `get_grabbable_bodies()`.
 - `MagnetArea` — `Area3D` со сферой r=4 на том же оффсете, `collision_mask=2` (только Items). Доступ — через `get_magnet_bodies()`.
 - `PhysicalActions` — `Node` со скриптом `hand_physical.gd` (см. §5.2.1).
 - `SpellActions` — `Node` со скриптом `hand_spell.gd` (см. §5.2.2).
@@ -347,9 +372,9 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 **Slam-подмодуль (`HandPhysicalSlam`):**
 - Вызывает координатор: `can_trigger() / on_press() / on_release() / tick(delta) / is_active() (=false для one-shot)`.
 - Кулдаун-гейт через `_slam_cooldown_remaining`.
-- `PhysicsShapeQueryParameters3D` со сферой `slam_radius` в `_hand.global_position`, `collision_mask = slam_mask` (`@export_flags_3d_physics`, дефолт `Layers.MASK_HAND_SLAM = 146`, Items + Enemies + ColdEnemy без MOUNTED_MODULE).
+- `PhysicsShapeQueryParameters3D` со сферой `slam_radius` в `_hand.global_position`, `collision_mask = slam_mask` (`@export_flags_3d_physics`, дефолт `Layers.MASK_HAND_SLAM = 438`, Items + Actors + Enemies + CampObstacle + ColdEnemy + FriendlyUnit без MOUNTED_MODULE).
 - **Балансные параметры:** `slam_damage: float = 60.0`, `slam_radius: float = 5.0`, `slam_force: float = 30.0`, `slam_cooldown: float = 0.5`. На скелете `hp=30` это даёт ваншот при прицельном попадании (d ≤ 2.5м, 50% радиуса) и стабильный 2-шот в среднем поясе (2.5 < d ≤ 3.75м, туда попадают коллатеральные скелеты при slam'е по основной цели); за 3.75м рим-хит, 3+ удара. Подробная разбивка в комментарии у `slam_damage` в `hand_physical_slam.gd`.
-- Для каждого результата `intersect_shape` (Damageable, не равного `_coord.get_held_item()`):
+- Для каждого результата `intersect_shape` (Damageable, **не в группе `hand_immune`**, не равного `_coord.get_held_item()`):
   - Falloff = `clamp(1 − horizontal_dist / slam_radius, 0, 1)` — горизонтальная, не 3D, иначе `hand_height` съел бы силу у близких целей.
   - Direction = `(horizontal + UP × slam_lift_factor).normalized()` (`_slam_direction_and_falloff`).
   - `Pushable.try_push(collider, dir × slam_force × falloff, slam_knockback_duration)`.
@@ -963,7 +988,7 @@ static func spawn(
 
 **Тип корня:** `Node3D` с `class_name Camp`.
 
-**Назначение:** модуль «лагеря» — несколько палаток (`StaticBody3D`) с гномами-жителями. Работает в **двух режимах**, переключается через флаг `start_deployed`:
+**Назначение:** модуль «лагеря» — несколько палаток (`RigidBody3D` с `freeze=true`, см. §5.7.bis) с гномами-жителями. Работает в **двух режимах**, переключается через флаг `start_deployed`:
 
 1. **Mobile (caravan mode, `start_deployed = false`):** в `CARAVAN_FOLLOWING` палатки следуют за башней цепочкой. По зажатию `R` (при неподвижной башне) лагерь разворачивается вокруг текущей позиции башни в кольцо. По повторному зажатию — сворачивается обратно. Этот режим — для основного игрока-башни.
 
@@ -978,7 +1003,7 @@ static func spawn(
 **Экспорты:**
 - `target_path: NodePath` (`@export_node_path("Node3D")`) — за кем следует караван. Обычно Tower.
 - Группа **Caravan composition:**
-  - `tent_scene: PackedScene` — сцена палатки. По дефолту в `camp.tscn` стоит `tent.tscn`, но можно подменить любой `StaticBody3D` со скриптом `CampPart`.
+  - `tent_scene: PackedScene` — сцена палатки. По дефолту в `camp.tscn` стоит `tent.tscn`, но можно подменить любой `RigidBody3D` со скриптом `CampPart` (StaticBody больше не сработает — apply_push требует RB API).
   - `tent_count: int = 4` — сколько палаток в караване. Меняется в инспекторе. Layout цепочки автоматически распределяется через `part_gap`; на развёртку угол кольца = `TAU / tent_count` — любое разумное число работает.
   - `start_deployed: bool = false` — static-режим: на `_ready` минуем `CARAVAN_FOLLOWING`, сразу разворачиваемся вокруг собственной `global_position`. R-toggle игнорируется. Используется для статических поселений на POI карты.
 - `follow_speed: float = 4.0` — **decay-коэффициент** (log-rate) экспоненциального следования палаток. **Не зависит от dt** (см. `_exp_decay`).
@@ -998,7 +1023,7 @@ static func spawn(
 
 **Публичный API (используется WaveDirector'ом и HUD'ом):**
 - `current_center() -> Vector3` — реальный центр лагеря: среднее живых палаток (в caravan-mode узел Camp статичен, двигаются только дочерние палатки). Fallback: позиция Tower → собственная позиция узла. WaveDirector использует для расчёта safe-зоны.
-- `nearest_part_to(pos) -> StaticBody3D` — ближайшая живая палатка. Для назначения `forced_target` волне.
+- `nearest_part_to(pos) -> Node3D` — ближайшая живая палатка. Для назначения `forced_target` волне. Оторванные (torn_off) пропускаются — волне не назначаем летающую цель.
 - `has_alive_parts() -> bool` — есть ли хоть одна живая палатка. Лагерь-без-палаток не валидная цель волны.
 - `reset_population() -> void` — `queue_free` всех живых гномов и `_spawn_gnomes` снова. Палатки не восстанавливаются. Используется при P-рестарте кампании WaveDirector'ом. После reset в `DEPLOYED`-режиме новые гномы сразу `enter_deployed()` — выходят бродить.
 - `gatherer_count() / defender_count() / tent_count_alive() -> int` — счётчики для GameplayHud. Defender'ы фильтруются через `is DefenderGnome`.
@@ -1021,7 +1046,7 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 
 **Поля:**
 - `_tower: Node3D` (не `CharacterBody3D`!) — тип ослаблен, чтобы не зависеть от Tower по конкретному классу.
-- `_state: State`, `_parts: Array[StaticBody3D]`, `_deploy_anchor: Vector3`, `_deployed_targets: Array[Vector3]`.
+- `_state: State`, `_parts: Array[Node3D]` (палатки в любом физтипе — сейчас RigidBody3D), `_deploy_anchor: Vector3`, `_deployed_targets: Array[Vector3]`.
 - `_deploy_hold: float`, `_pack_hold: float` — раздельные таймеры удержания `R`. Раньше был один `_hold_progress` на оба перехода.
 - `_last_target_pos: Vector3 = Vector3.INF` — позиция башни на прошлом кадре.
 - `_gnomes: Array[Gnome]` — гномы лагеря (создаются в `_spawn_gnomes`).
@@ -1039,6 +1064,33 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 - Сглаживание — **`_exp_decay`** (статический helper): `target + (current - target) * exp(-decay * delta)`. Покадрово стабильное, в отличие от прошлого `lerp(a, b, follow_speed × delta)` (frame-зависимый).
 
 **Логика DEPLOYED (`_update_deployed`):** каждая палатка `_exp_decay` к своей `_deployed_targets[i]` (точка кольца).
+
+**Финальная модель каравана с физикой палаток (2026-05-04).** Tent — `RigidBody3D` (`mass=8`, `linear_damp=2`, `angular_damp=2.5`) с `freeze=true` в норме. Camp двигает её через `global_position`, пока заморожен.
+
+**Источники impulse'а на палатку** (Slam, Flick, бросок рукой) идут через единый путь `_become_torn_off(impact, apply_impulse)`:
+1. `_torn_off = true` (необратимо).
+2. `freeze=false`, `sleeping=false`.
+3. `apply_central_impulse(impact × push_velocity_factor × mass)` если `apply_impulse=true`. Slam/Flick передают Δv → импульс нужен. Hand-throw уже задал `linear_velocity` в `Hand._release` → `apply_impulse=false` (без удвоения).
+4. `apply_torque_impulse(random_unit × |impact| × torque_factor × mass)` — кувыркание.
+5. `_eject_in_tent_gnomes(|impact|)` — гномы IN_TENT получают per-gnome random damage `base × clamp(impact/30, 0.2, 2) × randf_range(0.5, 1.5)`. На gnome-hp=20 при slam-impulse даёт 9..27: ~50% умирает, ~50% выживает.
+
+**После tear-off палатка живёт по физике**: катится, кувыркается, отскакивает. Через `body_entered` (`contact_monitor=true`) при каждом ударе о препятствие со скоростью выше `contact_damage_min_speed` (4 m/s) берёт `(speed - min) × contact_damage_factor` (4) damage. Несколько сильных ударов → hp=0 → стандартный `_destroy()` (shatter с фрагментами). На hp=250 это ~3-8 ударов при средней скорости. Slam/Flick применяют тот же путь — лежащий обломок можно «добить» ещё одним хлопком. Дизайн: «палатка не сразу разрушается, а катится по земле, кувыркается и разрушается от ударов».
+
+`take_damage` для `_torn_off` пропускает гейт `_vulnerable` (PACKING_RETURNING-бронь не действует на обломки — они уже не часть строя).
+
+**Тихий release** (`velocity == 0` через soft-release ветку Hand'а):
+- `not _torn_off` → `_snap_to_ground()` (raycast по TERRAIN, Y = `hit.y + floor_offset_y()`) — палатка садится ровно на пол, иначе после release из руки висела бы на ~метр над землёй (Hand держит на `cursor.y + hold_offset = ~1.5м`). Затем freeze=true, `Camp.notify_part_settled(self)` проверяет distance до leader'а **однократно** (не каждый кадр в follow — иначе строй, растянувшийся за башней, выпадал бы из «зоны» по очереди — баг 2026-05-04 «выбивает четвёртую»):
+  - **В зоне** (`distance ≤ placement_zone_radius=15м`) → `_reorder_parts_by_position()` пересортирует `_parts` по расстоянию до башни/anchor. Палатка встаёт в слот строя по своему положению (не обязательно прежний — порядок может смениться). `_deployed_targets` пересчитываются.
+  - **Вне зоны** → `mark_outside_caravan()` ставит на палатке флаг `_outside_caravan=true`. Camp.follow её пропускает через `is_in_caravan()` (false если `_torn_off OR _outside_caravan`). Гномы IN_TENT в ней остаются. На следующий `_on_hand_grabbed` флаг сбрасывается — игрок может вернуть палатку в строй, подняв и положив в зоне.
+- `_torn_off` → palatka остаётся в физике (freeze=false выставлен Hand'ом), упадёт под гравитацией.
+
+**Soft-release threshold** (`HandPhysical.soft_release_velocity_threshold=8 m/s`): в `Hand._release` если held в `Layers.HAND_SOFT_RELEASE_GROUP` и `smoothed_velocity < threshold` — `linear_velocity` обнуляется. Стенка между «поставил» и «бросил». Группа открыта для любых других предметов через `add_to_group`.
+
+**Виртуальная цепочка** (`Camp._update_caravan_follow`). Камп строит `active_parts` из `_parts`, исключая `not is_in_caravan()` (= torn_off ИЛИ outside_caravan) и `is_in_hand()`. Идёт цепочкой: `active[0]` за башней, `active[i]` за `active[i-1]`. Если выбили `parts[0]`, `parts[1]` сжимает строй и сама становится ведущей. `_update_deployed` использует ту же фильтрацию, но без цепочки (каждая активная palatка ползёт к своей точке кольца). `placement_zone_radius` НЕ применяется здесь каждый кадр — однократно в `notify_part_settled` при release.
+
+**Бездомные гномы (FOLLOWING_CARAVAN, 2026-05-04).** Когда гном выкинут из палатки, а живых палаток в `nearest_part_to` нет (все torn_off / разрушены), он переходит в state `FOLLOWING_CARAVAN`: visible, в группе skeleton_target, в `_tick_following_caravan` идёт прямо к `Camp.get_tower().global_position`. Останавливается ближе 3м. То же делает `Camp._reassign_orphan_gnomes` для гномов, чей home_tent destroyed когда других палаток не осталось — стандартного reassign на nearest_alive не получается, гном переходит в FOLLOWING_CARAVAN. Дизайн: «выжившие встраиваются в караван и идут за башней, даже если палаток вообще нет».
+
+**Слой палатки** остаётся `CAMP_OBSTACLE` в любом состоянии — летящая палатка физически разбрасывает скелетов на пути. `collision_mask` Tent = TERRAIN+ENEMIES (17). Гномы IN_TENT — `Grabbable` контракт, `set_highlighted(value)` через per-instance копию `StandardMaterial3D` (дублируется в `_ready`).
 
 **Логика свёртки (двухфазная):**
 1. `_pack_hold ≥ pack_duration` → `_start_pack()`:

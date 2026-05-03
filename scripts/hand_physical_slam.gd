@@ -133,6 +133,11 @@ func _perform_slam() -> void:
 		var collider = r.collider
 		if not Damageable.is_damageable(collider):
 			continue
+		# Per-target иммунитет: дизайнер помечает конкретный инстанс группой
+		# `hand_immune` (через editor'а или add_to_group), и slam/flick/grab
+		# его не трогают — даже если он по слою попал в shape-query.
+		if Layers.is_hand_immune(collider):
+			continue
 		# Только пойманный рукой собственный Item исключаем — чтобы хлопок не
 		# толкал свой же ящик. Прочие freeze=true RigidBody (декорации/динамика)
 		# теперь нормально получают damage; push на них всё равно будет no-op
@@ -160,6 +165,10 @@ func _perform_slam() -> void:
 		if skel == null:
 			continue
 		if skel.get_lod_level() != Skeleton.LodLevel.FAR:
+			continue
+		# Per-target иммунитет также применяется к FAR-fallback: на всякий случай,
+		# если дизайнер пометит конкретный скелет (босс? сюжетный NPC?) `hand_immune`.
+		if Layers.is_hand_immune(skel):
 			continue
 		var d_sq: float = (skel.global_position - origin).length_squared()
 		if d_sq > slam_radius_sq:

@@ -43,6 +43,12 @@ enum State {
 	COMMUTING_TO_BASE,
 	IDLE_NEAR_BASE,
 	RETURNING_TO_TENT,
+	## «Бездомный» гном — палатки нет (своя торн_оффнута / разрушена,
+	## другие тоже не доступны). Идёт за башней с боковым offset'ом, чтобы
+	## не сливаться кучей. В этом state'е всегда видим, в группе skeleton_target.
+	## Активируется через `enter_following_caravan()` из CampPart.eject_in_tent
+	## и Camp._reassign_orphan_gnomes когда новый home не найден.
+	FOLLOWING_CARAVAN,
 }
 
 @export_group("Stats")
@@ -247,6 +253,55 @@ func enter_deployed() -> void:
 		print("[Gnome:%s] вышел из палатки" % name)
 
 
+## Палатка-дом получила физический tear-off (Slam, бросок рукой, ...). Гном
+## получает урон от падения; если выжил — выпрыгивает из IN_TENT, ему
+## назначается ближайшая живая non-torn палатка как новый home, идёт к ней
+## (RETURNING_TO_TENT). Если живых палаток нет — переходит в FOLLOWING_CARAVAN
+## (идёт за башней).
+##
+## Per-gnome damage variance делает CampPart._eject_in_tent_gnomes (передаёт
+## уже-разный urоn каждому, чтобы кто-то умирал, кто-то выживал).
+func eject_from_tent(damage: float, camp: Camp) -> void:
+	if _state != State.IN_TENT or _dying:
+		return
+	# Меняем state ДО take_damage, чтобы _physics_process в IN_TENT-ветке не
+	# приклеил нас обратно к палатке на следующем тике.
+	_state = State.SEARCHING
+	visible = true
+	_assigned_pile = null
+	_wander_target = Vector3.INF
+	add_to_group(SKELETON_TARGET_GROUP)
+	take_damage(damage)
+	if _dying:
+		return
+	# Назначаем новый дом если есть. Camp.nearest_part_to пропускает torn_off.
+	if camp != null:
+		var new_home := camp.nearest_part_to(global_position)
+		if new_home != null:
+			_home_tent = new_home
+			_state = State.RETURNING_TO_TENT
+			if debug_log and LogConfig.master_enabled:
+				print("[Gnome:%s] выкинут из палатки, идёт к %s" % [name, new_home.name])
+			return
+	# Живых палаток нет — идём за башней.
+	enter_following_caravan()
+
+
+## Гном без дома (все палатки разрушены или torn_off, и nearest_part_to=null).
+## Идёт за башней. Визуально такой гном «встроен в караван», но без палатки.
+## Используется из eject_from_tent и Camp._reassign_orphan_gnomes.
+func enter_following_caravan() -> void:
+	if _dying:
+		return
+	visible = true
+	_assigned_pile = null
+	_wander_target = Vector3.INF
+	add_to_group(SKELETON_TARGET_GROUP)
+	_state = State.FOLLOWING_CARAVAN
+	if debug_log and LogConfig.master_enabled:
+		print("[Gnome:%s] идёт за башней (бездомный)" % name)
+
+
 ## Лагерь свёртывается — возвращаемся в палатку. Roняем то, что несли.
 func request_return() -> void:
 	if _state == State.IN_TENT:
@@ -382,6 +437,32 @@ func _active_tick(_delta: float) -> void:
 			_tick_idle_near_base()
 		State.RETURNING_TO_TENT:
 			_tick_returning()
+		State.FOLLOWING_CARAVAN:
+			_tick_following_caravan()
+
+
+## Бездомный гном — идёт к башне. Дальше follow_arrival м (~3м) — двигается;
+## ближе — стоит. Простая логика без wander, без offset'ов: гномов мало (тех,
+## у кого уничтожили палатку), общей кучи не образуют. Если потребуется
+## визуально красивее (расходятся по сторонам) — добавить per-gnome
+## angle-offset вокруг tower.
+func _tick_following_caravan() -> void:
+	if _camp == null:
+		velocity = Vector3.ZERO
+		return
+	var tower: Node3D = _camp.get_tower()
+	if tower == null:
+		velocity = Vector3.ZERO
+		return
+	var to_tower := tower.global_position - global_position
+	to_tower.y = 0.0
+	if to_tower.length_squared() < 9.0:  # < 3м — рядом, стоим
+		velocity.x = 0.0
+		velocity.z = 0.0
+		return
+	var dir := to_tower.normalized()
+	velocity.x = dir.x * move_speed
+	velocity.z = dir.z * move_speed
 
 
 ## Расчёт LOD-уровня по дистанции до точки интереса камеры (CameraRig).

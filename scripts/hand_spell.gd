@@ -31,3 +31,12 @@ func setup(hand: Hand) -> void:
 
 # TODO: _process — обработка ввода для заклинаний (ПКМ / клавиши).
 # TODO: cast(spell_name: String) — проверки cooldown/маны → spell_cast.emit + эффект.
+#
+# Архитектурно (унификация рукой и магии — дизайнерское решение 2026-05-03):
+# AOE-заклинания используют ту же универсальную маску, что и Slam
+# (`Layers.MASK_HAND_SLAM` — враги + гномы + башня + палатки + items), и
+# обязаны фильтровать цели через `Layers.is_hand_immune(target)` ПОСЛЕ
+# broad-phase-выборки. Single-target snaplinks (если будут) — через
+# `Layers.MASK_HAND_TARGETS` с тем же иммунити-чеком. Это сохраняет
+# симметрию: одна группа `hand_immune` исключает цель и от physical-
+# действий руки, и от заклинаний.
