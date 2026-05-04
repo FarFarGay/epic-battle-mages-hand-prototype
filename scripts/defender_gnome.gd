@@ -115,10 +115,15 @@ func _ready() -> void:
 ## или cold (skip физики на FAR-LOD), включает гравитацию и knockback —
 ## defender автоматически получает всё это. RETURNING_TO_TENT идёт через
 ## базовый _tick_returning (защитник возвращается домой при свёртке лагеря).
+## FOLLOWING_CARAVAN — выкинутый из палатки защитник идёт за башней так же,
+## как обычный гном; combat-логика отключена, т.к. дома у него больше нет
+## (патруль был бы вокруг места уничтоженной палатки).
 func _active_tick(delta: float) -> void:
 	match _state:
 		State.RETURNING_TO_TENT:
 			_tick_returning()
+		State.FOLLOWING_CARAVAN:
+			_tick_following_caravan()
 		_:
 			# SEARCHING / COMMUTING_* / IDLE — для защитника всё это
 			# означает «активен у лагеря», логика одна: стрелять или

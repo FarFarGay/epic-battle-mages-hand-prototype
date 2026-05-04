@@ -1,6 +1,6 @@
 [gd_resource type="ShaderMaterial" format=3 uid="uid://grassmat02"]
 
-[ext_resource type="Shader" path="res://resources/grass.gdshader" id="1_grass_shader"]
+[ext_resource type="Shader" uid="uid://s180vk0dnkj6" path="res://resources/grass.gdshader" id="1_grass_shader"]
 [ext_resource type="Texture2D" uid="uid://cway2bqfxljaa" path="res://resources/ground_noise.tres" id="2_noise"]
 
 [resource]
@@ -10,9 +10,9 @@ shader_parameter/base_color = Color(0.18, 0.32, 0.12, 1)
 shader_parameter/tip_color = Color(0.5, 0.75, 0.32, 1)
 shader_parameter/color_grad_height = 0.5
 shader_parameter/grass_roughness = 0.85
+shader_parameter/noise_texture = ExtResource("2_noise")
 shader_parameter/sway = 0.6
 shader_parameter/sway_pow = 1.5
 shader_parameter/sway_time_scale = 2.5
 shader_parameter/sway_dir = Vector2(1, 0.3)
 shader_parameter/sway_noise_scale = 0.08
-shader_parameter/noise_texture = ExtResource("2_noise")

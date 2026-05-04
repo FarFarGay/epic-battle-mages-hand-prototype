@@ -83,6 +83,31 @@ enum State {
 ## уходил за пол. Должно совпадать со Skeleton.wander_map_half_extent.
 @export var wander_map_half_extent: float = 195.0
 
+@export_group("Caravan follow (для бездомных гномов)")
+## Sprint-cap для FOLLOWING_CARAVAN: чем дальше гном от своего слота в
+## цепочке, тем быстрее бежит, lerp от move_speed (в слоте) до этого значения
+## (отстал на caravan_full_sprint_distance метров). Tower бежит на 8 m/s —
+## sprint должен быть выше, иначе отрыв не сократить. 9.0 даёт +1 m/s на
+## сокращение дистанции при максимальном отставании.
+@export var caravan_sprint_speed: float = 9.0
+## Дистанция отставания от chain-слота, на которой гном выходит на полный
+## sprint. Меньше — резче переход walk↔run; больше — плавнее (гном дольше
+## идёт в «среднем» темпе). 5м = 2× part_gap, разумный диапазон.
+@export var caravan_full_sprint_distance: float = 5.0
+@export_group("")
+
+@export_group("Tent eject (вылет из палатки на улицу)")
+## Окно неуязвимости после выхода из палатки. Гном вылетел оглушённым,
+## пока не успел сориентироваться — скелеты не наносят ему damage. По
+## истечении времени take_damage снова работает как обычно.
+@export var post_eject_invulnerability: float = 2.0
+## Скорость scatter'а в случайном направлении при выходе. AI выключен на
+## post_eject_scatter_duration секунд (через _knockback) — гном летит по
+## инерции, затухает по knockback_friction, потом FSM ведёт его за башней.
+@export var post_eject_scatter_speed: float = 5.0
+@export var post_eject_scatter_duration: float = 0.5
+@export_group("")
+
 @export_group("Visual")
 @export var gnome_color: Color = Color(0.7, 0.45, 0.25)
 @export var carry_color: Color = Color(0.4, 0.75, 0.3)
@@ -136,6 +161,20 @@ var _assigned_pile: ResourcePile = null
 var _wander_target: Vector3 = Vector3.INF
 var _carry_visual: MeshInstance3D = null
 var _knockback := KnockbackState.new()
+## Время (Time.get_ticks_msec) до которого гном неуязвим после eject'а из
+## палатки. До этого момента take_damage возвращает рано. 0 = выключено.
+var _post_eject_invulnerable_until_msec: int = 0
+## Per-гном random смещение в цепочке-каравана: x = side (perpendicular),
+## y = forward. Каждое в [−1, 1], разворачивается Camp'ом в реальные метры
+## через gnome_chain_jitter / gnome_chain_gap_variance. Генерируется
+## однократно на enter_following_caravan — стабильное «индивидуальное место»
+## гнома в строю, не дрожит между кадрами.
+var _caravan_chain_offset: Vector2 = Vector2.ZERO
+## Time.get_ticks_msec() следующей попытки заселиться в палатку. Бездомный
+## гном в FOLLOWING_CARAVAN периодически (раз в ~1-1.5с) спрашивает Camp,
+## есть ли свободное место в живых палатках. Если есть — переключается в
+## RETURNING_TO_TENT с новым home_tent.
+var _next_tent_vacancy_check_msec: int = 0
 var _dying: bool = false
 var _effects_root: Node = null
 var _lod_far: bool = false
@@ -253,53 +292,96 @@ func enter_deployed() -> void:
 		print("[Gnome:%s] вышел из палатки" % name)
 
 
-## Палатка-дом получила физический tear-off (Slam, бросок рукой, ...). Гном
-## получает урон от падения; если выжил — выпрыгивает из IN_TENT, ему
-## назначается ближайшая живая non-torn палатка как новый home, идёт к ней
-## (RETURNING_TO_TENT). Если живых палаток нет — переходит в FOLLOWING_CARAVAN
-## (идёт за башней).
+## Палатка-дом получила удар (отрыв от каравана, удар о землю, разрушение).
+## Гном выходит из IN_TENT БЕЗ damage — целая палатка защитила его при ударе,
+## а в момент разрушения «вытряхнула» наружу.
 ##
-## Per-gnome damage variance делает CampPart._eject_in_tent_gnomes (передаёт
-## уже-разный urоn каждому, чтобы кто-то умирал, кто-то выживал).
-func eject_from_tent(damage: float, camp: Camp) -> void:
+## После вылета:
+## - окно неуязвимости `post_eject_invulnerability` секунд (take_damage гейтится),
+## - случайный horizontal scatter-импульс через apply_push (AI off на
+##   `post_eject_scatter_duration` — гном по инерции разлетается),
+## - state → FOLLOWING_CARAVAN: идёт за башней независимо от того, остались
+##   ли в кампе живые палатки. Кикнутый из дома гном больше домой не лезет.
+func eject_from_tent() -> void:
 	if _state != State.IN_TENT or _dying:
 		return
-	# Меняем state ДО take_damage, чтобы _physics_process в IN_TENT-ветке не
-	# приклеил нас обратно к палатке на следующем тике.
+	# Меняем state ДО любых side-effects, чтобы _physics_process в IN_TENT-ветке
+	# не приклеил нас обратно к палатке на следующем тике. enter_following_caravan
+	# ниже выставит итоговый FOLLOWING_CARAVAN.
 	_state = State.SEARCHING
 	visible = true
 	_assigned_pile = null
 	_wander_target = Vector3.INF
-	add_to_group(SKELETON_TARGET_GROUP)
-	take_damage(damage)
-	if _dying:
-		return
-	# Назначаем новый дом если есть. Camp.nearest_part_to пропускает torn_off.
-	if camp != null:
-		var new_home := camp.nearest_part_to(global_position)
-		if new_home != null:
-			_home_tent = new_home
-			_state = State.RETURNING_TO_TENT
-			if debug_log and LogConfig.master_enabled:
-				print("[Gnome:%s] выкинут из палатки, идёт к %s" % [name, new_home.name])
-			return
-	# Живых палаток нет — идём за башней.
+	# Неуязвимость на 2с — пока не отлетит и не сориентируется.
+	_post_eject_invulnerable_until_msec = Time.get_ticks_msec() + int(post_eject_invulnerability * 1000.0)
+	# Random scatter в горизонтальной плоскости. Через apply_push, чтобы AI
+	# выключился на длительность knockback'а (иначе FSM сразу же начнёт
+	# править velocity к башне и scatter не успеет визуально проиграться).
+	var scatter_dir := Vector3(randf_range(-1.0, 1.0), 0.0, randf_range(-1.0, 1.0))
+	if scatter_dir.length_squared() > 0.0001:
+		scatter_dir = scatter_dir.normalized()
+	else:
+		scatter_dir = Vector3.RIGHT
+	apply_push(scatter_dir * post_eject_scatter_speed, post_eject_scatter_duration)
+	# Идём за башней. _home_tent больше не нужен — кикнутый из дома гном
+	# к другим палаткам не возвращается.
+	_home_tent = null
 	enter_following_caravan()
 
 
-## Гном без дома (все палатки разрушены или torn_off, и nearest_part_to=null).
-## Идёт за башней. Визуально такой гном «встроен в караван», но без палатки.
+## Гном без дома (выкинут из палатки или его палатка разрушена). Встраивается
+## в общую цепочку каравана за палатками: Camp.register_caravan_follower
+## добавляет его в хвост, а в _tick_following_caravan гном идёт к
+## chain-слоту, рассчитанному Camp.get_chain_target_for_follower.
 ## Используется из eject_from_tent и Camp._reassign_orphan_gnomes.
 func enter_following_caravan() -> void:
 	if _dying:
+		return
+	# Идемпотентно: если уже в FOLLOWING_CARAVAN, не перерандомиваем
+	# chain-offset и не дёргаем register повторно. Иначе пакет вызовов
+	# request_return → enter_following_caravan на уже-follower'ах визуально
+	# дёргает позиции в строю.
+	if _state == State.FOLLOWING_CARAVAN:
 		return
 	visible = true
 	_assigned_pile = null
 	_wander_target = Vector3.INF
 	add_to_group(SKELETON_TARGET_GROUP)
+	# Random per-гном смещение в строю: чтоб не выстраивались ровной очередью.
+	# Camp читает через get_caravan_chain_offset и масштабирует в метры.
+	_caravan_chain_offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0))
 	_state = State.FOLLOWING_CARAVAN
+	if _camp != null:
+		_camp.register_caravan_follower(self)
 	if debug_log and LogConfig.master_enabled:
-		print("[Gnome:%s] идёт за башней (бездомный)" % name)
+		print("[Gnome:%s] идёт за караваном (бездомный)" % name)
+
+
+## True если гном в строю каравана (FOLLOWING_CARAVAN). Camp проверяет на
+## _all_gnomes_home для финализации pack: «дома» теперь = IN_TENT либо
+## встроился в колонну.
+func is_following_caravan() -> bool:
+	return _state == State.FOLLOWING_CARAVAN
+
+
+## Геттер для Camp.get_chain_target_for_follower. Per-гном random смещение
+## (стабильно после enter_following_caravan) — формация выглядит как толпа,
+## а не очередь.
+func get_caravan_chain_offset() -> Vector2:
+	return _caravan_chain_offset
+
+
+## Бездомный гном нашёл свободное место в палатке (Camp.find_tent_with_vacancy_for).
+## Снимаемся из caravan-цепочки и переходим в RETURNING_TO_TENT — _tick_returning
+## побежит к новому home'у sprint-скоростью. По прибытии _enter_in_tent
+## переведёт нас в IN_TENT (palatка-щит, неуязвимость).
+func _claim_tent_as_home(tent: CampPart) -> void:
+	_home_tent = tent
+	_state = State.RETURNING_TO_TENT
+	if _camp != null:
+		_camp.unregister_caravan_follower(self)
+	if debug_log and LogConfig.master_enabled:
+		print("[Gnome:%s] нашёл свободное место в %s, идёт заселяться" % [name, tent.name])
 
 
 ## Лагерь свёртывается — возвращаемся в палатку. Roняем то, что несли.
@@ -308,11 +390,13 @@ func request_return() -> void:
 		return
 	_drop_carry()
 	_assigned_pile = null
-	_state = State.RETURNING_TO_TENT
-	# Идёт домой — больше не цель скелетов (логически отступает).
-	remove_from_group(SKELETON_TARGET_GROUP)
-	if debug_log and LogConfig.master_enabled:
-		print("[Gnome:%s] возвращается в палатку" % name)
+	# При свёртке лагеря не идём в палатку — даже sprint-скоростью гномы с
+	# другого края лагеря висели бы pack_timeout секунд. Вместо этого все
+	# не-IN_TENT гномы (включая защитников, собирателей, возвращающихся,
+	# уже-бездомных) встают в общую колонну каравана за палатками. Когда
+	# караван тронется, IN_TENT гномы поедут внутри палаток, остальные —
+	# в FOLLOWING_CARAVAN-цепочке.
+	enter_following_caravan()
 
 
 func is_home() -> bool:
@@ -348,6 +432,16 @@ func get_assigned_pile() -> ResourcePile:
 func take_damage(amount: float) -> void:
 	if _dying or amount <= 0.0:
 		return
+	# Целая палатка щит: пока IN_TENT, никакой damage не проходит — ни от Slam'а
+	# по AOE Damageable, ни от случайных скелетов. Уязвимость включается на
+	# выходе через eject_from_tent / enter_deployed (там state ≠ IN_TENT).
+	if _state == State.IN_TENT:
+		return
+	# Окно «оглушения» сразу после вылета из палатки: пара секунд гном бежит
+	# к каравану безнаказанно, чтобы не быть мгновенно срезанным окружившими
+	# скелетами в момент разрушения палатки.
+	if Time.get_ticks_msec() < _post_eject_invulnerable_until_msec:
+		return
 	hp -= amount
 	damaged.emit(amount)
 	HitFlash.flash(_mesh)
@@ -357,6 +451,10 @@ func take_damage(amount: float) -> void:
 		# и без этого скелет ещё успел бы взять умирающего гнома в целеуказание
 		# в текущем тике (get_nodes_in_group видит queued-инстансы до фактической смерти).
 		remove_from_group(SKELETON_TARGET_GROUP)
+		# Если гном был в цепочке-каравана — вычищаем его слот, чтобы Camp
+		# не итерировал invalid ссылку и не считал её леидером для следующих.
+		if _camp != null:
+			_camp.unregister_caravan_follower(self)
 		# Прячем тело и спавним фрагменты — те живут в _effects_root, переживают
 		# queue_free самого гнома (queue_free ниже прибьёт его в конце кадра).
 		if _mesh:
@@ -441,28 +539,52 @@ func _active_tick(_delta: float) -> void:
 			_tick_following_caravan()
 
 
-## Бездомный гном — идёт к башне. Дальше follow_arrival м (~3м) — двигается;
-## ближе — стоит. Простая логика без wander, без offset'ов: гномов мало (тех,
-## у кого уничтожили палатку), общей кучи не образуют. Если потребуется
-## визуально красивее (расходятся по сторонам) — добавить per-gnome
-## angle-offset вокруг tower.
+## Бездомный гном — идёт в свой слот цепочки каравана за палатками. Camp
+## считает target по той же формуле, что и для палаток в _update_caravan_follow:
+## leader_pos − (leader_pos − me).normalized() × part_gap. Каждый follower
+## слотится за предыдущим follower'ом (или за последней активной палаткой,
+## или за башней — если в кампе никого больше нет).
+##
+## Скорость не фиксированная: чем дальше гном от слота, тем быстрее идёт
+## (lerp move_speed → caravan_sprint_speed по дистанции). В слоте — walk;
+## оторвался караван — sprint. Tower бегает на 8 m/s, гном в слоте — на 1.6,
+## и без catch-up'а догнать невозможно. Это естественный аналог «пешее
+## сопровождение бежит когда отстало», без фиксированной overall-ускоренной
+## скорости (которая делала бы гномов дешёвыми и в спокойном состоянии).
+##
+## Arrival 0.4м — в слоте стоим, чтобы не дрожать поверх target'а. Меньше
+## arrival для палатки (там лерп Camp'а гладкий), но гном-walker с дискретной
+## скоростью легко перепрыгнет ноль и задёргает velocity.
 func _tick_following_caravan() -> void:
 	if _camp == null:
 		velocity = Vector3.ZERO
 		return
-	var tower: Node3D = _camp.get_tower()
-	if tower == null:
-		velocity = Vector3.ZERO
-		return
-	var to_tower := tower.global_position - global_position
-	to_tower.y = 0.0
-	if to_tower.length_squared() < 9.0:  # < 3м — рядом, стоим
+	# Раз в ~1-1.5с спрашиваем Camp, есть ли в палатках свободное место.
+	# Если есть — заселяемся: home_tent → найденная палатка, state →
+	# RETURNING_TO_TENT (бежим домой sprint-скоростью). Это даёт «динамическое
+	# заполнение» — после смерти жильца палатки бездомный гном из колонны
+	# подхватывает вакансию.
+	var now_msec: int = Time.get_ticks_msec()
+	if now_msec >= _next_tent_vacancy_check_msec:
+		_next_tent_vacancy_check_msec = now_msec + 1000 + (randi() % 500)
+		var t: CampPart = _camp.find_tent_with_vacancy_for(self)
+		if t != null:
+			_claim_tent_as_home(t)
+			return
+	var target: Vector3 = _camp.get_chain_target_for_follower(self)
+	var to_target := target - global_position
+	to_target.y = 0.0
+	var dist_sq: float = to_target.length_squared()
+	if dist_sq < 0.16:  # < 0.4м — на слоте, стоим
 		velocity.x = 0.0
 		velocity.z = 0.0
 		return
-	var dir := to_tower.normalized()
-	velocity.x = dir.x * move_speed
-	velocity.z = dir.z * move_speed
+	var dist: float = sqrt(dist_sq)
+	var dir: Vector3 = to_target / dist  # normalized без второго sqrt
+	var t: float = clampf(dist / maxf(caravan_full_sprint_distance, 0.001), 0.0, 1.0)
+	var speed: float = lerpf(move_speed, caravan_sprint_speed, t)
+	velocity.x = dir.x * speed
+	velocity.z = dir.z * speed
 
 
 ## Расчёт LOD-уровня по дистанции до точки интереса камеры (CameraRig).
@@ -567,11 +689,22 @@ func _tick_idle_near_base() -> void:
 
 func _tick_returning() -> void:
 	if not is_instance_valid(_home_tent):
-		# Палатка пропала — фиксируем дома там, где стоим, чистим состояние.
+		# Палатка пропала — фиксируем дома там, что стоим, чистим состояние.
 		_enter_in_tent()
 		return
 	var tent_pos := _home_tent.global_position
-	_move_toward_xz(tent_pos)
+	# Бегут домой sprint-скоростью (та же, что и догон каравана) — иначе
+	# свёртка лагеря висит pack_timeout секунд из-за гномов, шагающих
+	# 1.6 m/s через всё поле.
+	var to_tent := tent_pos - global_position
+	to_tent.y = 0.0
+	if to_tent.length_squared() > VecUtil.EPSILON_SQ:
+		var dir := to_tent.normalized()
+		velocity.x = dir.x * caravan_sprint_speed
+		velocity.z = dir.z * caravan_sprint_speed
+	else:
+		velocity.x = 0.0
+		velocity.z = 0.0
 	if _horizontal_distance(tent_pos) <= home_distance:
 		_enter_in_tent()
 

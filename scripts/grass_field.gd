@@ -24,10 +24,17 @@ extends Node3D
 ##
 ## **Откат:** density=0 (или удалить ноду из main.tscn).
 
-## Сторона мира покрытия травой (метры). Должна совпадать с размером ground'а
-## в main.tscn (BoxMesh size=400, центр в 0,0,0 → world_size=400).
+## Сторона fallback-мира (метры) — используется только когда `coverage_target_path`
+## пуст или указывает на невалидный узел. Квадратный регион с центром в (0,0).
 @export var world_size: float = 400.0
-## Сетка чанков. 8×8 при world_size=400 → каждый чанк 50м.
+## Опциональная ссылка на `VisualInstance3D` (обычно `GroundMesh`), чьи мировые
+## границы AABB задают зону покрытия травой. Когда указан — `world_size`
+## игнорируется, а grass спавнится только внутри XZ-проекции этого AABB.
+## Это даёт единый источник правды для размера ground'а: дизайнер двигает
+## или масштабирует Ground в `main.tscn` — grass подстраивается без правки
+## параметров здесь.
+@export var coverage_target_path: NodePath
+## Сетка чанков. 8×8 → каждый чанк ≈ coverage_size / 8.
 @export var chunk_count_xz: int = 8
 ## Травинок на квадратный метр. На 64 чанках при density=0.1 это
 ## ~16k blade всего. 0.05 — реже, 0.2 — гуще (но vertex-cost растёт линейно).
@@ -56,6 +63,21 @@ func _ready() -> void:
 	_spawn_chunks()
 
 
+## Зона покрытия в мировых координатах: XZ-прямоугольник.
+## Если `coverage_target_path` указан и валиден — берём world AABB цели.
+## Иначе — квадрат `world_size×world_size` с центром в (0,0).
+func _get_coverage_rect() -> Rect2:
+	if not coverage_target_path.is_empty():
+		var node: Node = get_node_or_null(coverage_target_path)
+		if node is VisualInstance3D:
+			var local_aabb: AABB = (node as VisualInstance3D).get_aabb()
+			var world_aabb: AABB = node.global_transform * local_aabb
+			return Rect2(world_aabb.position.x, world_aabb.position.z, world_aabb.size.x, world_aabb.size.z)
+		push_warning("GrassField: coverage_target_path не указывает на VisualInstance3D — fallback на world_size")
+	var half: float = world_size * 0.5
+	return Rect2(-half, -half, world_size, world_size)
+
+
 func _spawn_chunks() -> void:
 	var rng := RandomNumberGenerator.new()
 	if random_seed >= 0:
@@ -63,15 +85,16 @@ func _spawn_chunks() -> void:
 	else:
 		rng.randomize()
 
-	var chunk_size: float = world_size / float(chunk_count_xz)
-	var half_world: float = world_size * 0.5
-	var blades_per_chunk: int = maxi(int(round(chunk_size * chunk_size * density)), 1)
+	var rect: Rect2 = _get_coverage_rect()
+	var chunk_size_x: float = rect.size.x / float(chunk_count_xz)
+	var chunk_size_z: float = rect.size.y / float(chunk_count_xz)
+	var blades_per_chunk: int = maxi(int(round(chunk_size_x * chunk_size_z * density)), 1)
 
 	for cx in range(chunk_count_xz):
 		for cz in range(chunk_count_xz):
-			var chunk_origin_x: float = -half_world + (float(cx) + 0.5) * chunk_size
-			var chunk_origin_z: float = -half_world + (float(cz) + 0.5) * chunk_size
-			_spawn_one_chunk(rng, Vector3(chunk_origin_x, 0.0, chunk_origin_z), chunk_size, blades_per_chunk)
+			var chunk_origin_x: float = rect.position.x + (float(cx) + 0.5) * chunk_size_x
+			var chunk_origin_z: float = rect.position.y + (float(cz) + 0.5) * chunk_size_z
+			_spawn_one_chunk(rng, Vector3(chunk_origin_x, 0.0, chunk_origin_z), Vector2(chunk_size_x, chunk_size_z), blades_per_chunk)
 
 
 ## Один чанк: инстанс chunk_scene, transform на середину чанка, multimesh
@@ -84,7 +107,7 @@ func _spawn_chunks() -> void:
 ## и set_instance_transform перезаписывают друг друга — это и спамит
 ## ошибки в дебаггере (429 шт. на скрине геймдизайнера). После duplicate
 ## каждый чанк получает свой собственный MultiMesh-буфер.
-func _spawn_one_chunk(rng: RandomNumberGenerator, origin: Vector3, chunk_size: float, count: int) -> void:
+func _spawn_one_chunk(rng: RandomNumberGenerator, origin: Vector3, chunk_size: Vector2, count: int) -> void:
 	var chunk: MultiMeshInstance3D = chunk_scene.instantiate() as MultiMeshInstance3D
 	if chunk == null:
 		push_error("GrassField: chunk_scene не инстанцируется как MultiMeshInstance3D")
@@ -108,10 +131,11 @@ func _spawn_one_chunk(rng: RandomNumberGenerator, origin: Vector3, chunk_size: f
 	mm.use_custom_data = false
 	mm.instance_count = count
 
-	var half_chunk: float = chunk_size * 0.5
+	var half_x: float = chunk_size.x * 0.5
+	var half_z: float = chunk_size.y * 0.5
 	for i in range(count):
-		var lx: float = rng.randf_range(-half_chunk, half_chunk)
-		var lz: float = rng.randf_range(-half_chunk, half_chunk)
+		var lx: float = rng.randf_range(-half_x, half_x)
+		var lz: float = rng.randf_range(-half_z, half_z)
 		var size_mul: float = blade_scale * rng.randf_range(1.0 - blade_scale_variance, 1.0 + blade_scale_variance)
 		var rot_y: float = rng.randf() * TAU
 		var basis := Basis().rotated(Vector3.UP, rot_y).scaled(Vector3.ONE * size_mul)

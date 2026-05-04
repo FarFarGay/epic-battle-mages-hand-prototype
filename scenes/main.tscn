@@ -117,3 +117,4 @@ camp_path = NodePath("../Camp")
 
 [node name="GrassField" parent="." unique_id=1914557295 instance=ExtResource("19_grass_field")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.28, 0)
+coverage_target_path = NodePath("../Ground/GroundMesh")

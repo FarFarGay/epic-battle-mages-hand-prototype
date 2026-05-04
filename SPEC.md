@@ -967,8 +967,13 @@ static func spawn(
 
 **Mesh `resources/grass_blade.obj`:** 9 vertices, 7 трисов. Базовый размер 1м×4м, узкий к верху. В MultiMesh `transform.basis` масштабируется на `blade_scale × randf_range(1−variance, 1+variance)` — дефолт даёт blade ~0.1м×0.4м.
 
+**Coverage target (этап 45):** в `main.tscn` GrassField имеет `coverage_target_path = NodePath("../Ground/GroundMesh")`. На `_ready` через `_get_coverage_rect()` берётся world AABB указанного `VisualInstance3D` (`mesh.global_transform * mesh.get_aabb()`), и спавн чанков идёт в его XZ-проекцию. Это даёт единый источник правды: дизайнер двигает / масштабирует Ground — grass подстраивается без правки `world_size`.
+
+Без coverage_target — fallback на квадрат `world_size × world_size` с центром в (0,0). Чанки могут быть **не квадратными**: `chunk_size_x = rect.size.x / chunk_count_xz`, `chunk_size_z = rect.size.y / chunk_count_xz`. Раньше Ground в `main.tscn` имел `scale.z = 0.439` (несимметричный squash) — реальный ground X∈±200, Z∈±88, а GrassField со `world_size=400` спавнил blade'ы на 400×400 → ~56% травы (640k → 360k blade) висели за границей пола. После фикса blade'ы сидят строго внутри Ground'а.
+
 **Параметры (`scenes/grass_field.tscn`, инспектор):**
-- `world_size: float = 400.0` — должен совпадать с размером Ground.
+- `coverage_target_path: NodePath` — опционально. Указывается на `MeshInstance3D` (обычно `GroundMesh`); пустой → fallback на `world_size`.
+- `world_size: float = 400.0` — fallback-сторона мира когда coverage пуст.
 - `chunk_count_xz: int = 16` — сетка чанков. 16×16 при world_size=400 → 25м чанк (мельче culling-step, плотнее покрытие видимой зоны).
 - `density: float = 4.0` — травинок на квадратный метр.
 - `visibility_distance: float = 120.0` — дистанция культинга по `visibility_range_end` (покрывает зум-out камеры на 100-150м).
@@ -1065,42 +1070,69 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 
 **Логика DEPLOYED (`_update_deployed`):** каждая палатка `_exp_decay` к своей `_deployed_targets[i]` (точка кольца).
 
-**Финальная модель каравана с физикой палаток (2026-05-04).** Tent — `RigidBody3D` (`mass=8`, `linear_damp=2`, `angular_damp=2.5`) с `freeze=true` в норме. Camp двигает её через `global_position`, пока заморожен.
+**Финальная модель каравана с физикой палаток (2026-05-04 + этап 45).** Tent — `RigidBody3D` (`mass=8`, `linear_damp=2`, `angular_damp=2.5` в покое) с `freeze=true` в норме. Camp двигает её через `global_position`, пока заморожен. HP палатки = 120 (под 2 хлопка от Slam, см. ниже).
+
+**Палатка как щит для гномов (этап 45).** Пока палатка цела (hp > 0), гномы IN_TENT неуязвимы — `Gnome.take_damage` ранний return при `_state == IN_TENT`. Это блокирует и Slam-AOE по `Damageable`, и удары скелетов по гномам внутри. До этого (на старой модели) Slam через Damageable.try_damage пробивал по всем зарегистрированным в радиусе и выкашивал IN_TENT гномов одним хлопком. Сейчас гномов «выпускает наружу» только сама палатка через `_eject_in_tent_gnomes`. Дизайн: «целая палатка защищает жителей; разрушенная — их освобождает».
 
 **Источники impulse'а на палатку** (Slam, Flick, бросок рукой) идут через единый путь `_become_torn_off(impact, apply_impulse)`:
-1. `_torn_off = true` (необратимо).
-2. `freeze=false`, `sleeping=false`.
-3. `apply_central_impulse(impact × push_velocity_factor × mass)` если `apply_impulse=true`. Slam/Flick передают Δv → импульс нужен. Hand-throw уже задал `linear_velocity` в `Hand._release` → `apply_impulse=false` (без удвоения).
+1. `_torn_off = true` (обратимо: на следующий `_on_hand_grabbed` флаг сбрасывается).
+2. `freeze=false`, `sleeping=false`, `linear_damp=torn_off_linear_damp(0.5)`, `angular_damp=torn_off_angular_damp(0.3)` — низкое затухание, чтобы обломок красиво кубарем летел и крутился.
+3. `apply_central_impulse(impact × push_velocity_factor × mass)` если `apply_impulse=true`. Slam/Flick передают Δv → импульс нужен. Hand-throw уже задал `linear_velocity` в `Hand._release` → `apply_impulse=false`.
 4. `apply_torque_impulse(random_unit × |impact| × torque_factor × mass)` — кувыркание.
-5. `_eject_in_tent_gnomes(|impact|)` — гномы IN_TENT получают per-gnome random damage `base × clamp(impact/30, 0.2, 2) × randf_range(0.5, 1.5)`. На gnome-hp=20 при slam-impulse даёт 9..27: ~50% умирает, ~50% выживает.
+5. **Гномов сам tear-off НЕ вылетает** (изменение этапа 45 vs 2026-05-04). Они вылетают порциями на ударах о землю/тело.
 
-**После tear-off палатка живёт по физике**: катится, кувыркается, отскакивает. Через `body_entered` (`contact_monitor=true`) при каждом ударе о препятствие со скоростью выше `contact_damage_min_speed` (4 m/s) берёт `(speed - min) × contact_damage_factor` (4) damage. Несколько сильных ударов → hp=0 → стандартный `_destroy()` (shatter с фрагментами). На hp=250 это ~3-8 ударов при средней скорости. Slam/Flick применяют тот же путь — лежащий обломок можно «добить» ещё одним хлопком. Дизайн: «палатка не сразу разрушается, а катится по земле, кувыркается и разрушается от ударов».
+**Pinata-механика (этап 45).** После tear-off палатка работает как пиньята. На каждом `body_entered` со speed ≥ `contact_damage_min_speed` (4 m/s):
+- Контактный damage по hp палатки: `(speed - min) × contact_damage_factor (4)`.
+- Eject `gnomes_per_impact` гномов (default 1) из тех, кто ещё IN_TENT. С cooldown'ом `impact_eject_cooldown=0.15с` против дублирования при кучных контактах в одном кадре.
+- Гномы выходят **без damage** — палатка их защитила, выход в стрессе, но живыми.
 
-`take_damage` для `_torn_off` пропускает гейт `_vulnerable` (PACKING_RETURNING-бронь не действует на обломки — они уже не часть строя).
+При hp ≤ 0 → `_destroy()`: shatter-фрагменты, queue_free. Перед shatter'ом `_eject_in_tent_gnomes(-1)` выпускает всех ещё-сидящих внутри гномов, тоже без damage. Дизайн: «удар о землю → партия гномов наружу; если разнесло палатку до того, как все вышли — оставшиеся всё равно живы и на свободе».
 
-**Тихий release** (`velocity == 0` через soft-release ветку Hand'а):
-- `not _torn_off` → `_snap_to_ground()` (raycast по TERRAIN, Y = `hit.y + floor_offset_y()`) — палатка садится ровно на пол, иначе после release из руки висела бы на ~метр над землёй (Hand держит на `cursor.y + hold_offset = ~1.5м`). Затем freeze=true, `Camp.notify_part_settled(self)` проверяет distance до leader'а **однократно** (не каждый кадр в follow — иначе строй, растянувшийся за башней, выпадал бы из «зоны» по очереди — баг 2026-05-04 «выбивает четвёртую»):
-  - **В зоне** (`distance ≤ placement_zone_radius=15м`) → `_reorder_parts_by_position()` пересортирует `_parts` по расстоянию до башни/anchor. Палатка встаёт в слот строя по своему положению (не обязательно прежний — порядок может смениться). `_deployed_targets` пересчитываются.
-  - **Вне зоны** → `mark_outside_caravan()` ставит на палатке флаг `_outside_caravan=true`. Camp.follow её пропускает через `is_in_caravan()` (false если `_torn_off OR _outside_caravan`). Гномы IN_TENT в ней остаются. На следующий `_on_hand_grabbed` флаг сбрасывается — игрок может вернуть палатку в строй, подняв и положив в зоне.
-- `_torn_off` → palatka остаётся в физике (freeze=false выставлен Hand'ом), упадёт под гравитацией.
+`take_damage` для `_torn_off` пропускает гейт `_vulnerable` (PACKING_RETURNING-бронь не действует на обломки).
 
-**Soft-release threshold** (`HandPhysical.soft_release_velocity_threshold=8 m/s`): в `Hand._release` если held в `Layers.HAND_SOFT_RELEASE_GROUP` и `smoothed_velocity < threshold` — `linear_velocity` обнуляется. Стенка между «поставил» и «бросил». Группа открыта для любых других предметов через `add_to_group`.
+**Возврат целой палатки в строй (этап 45).** `_on_hand_grabbed` сбрасывает **оба** флага: `_outside_caravan = false` И `_torn_off = false`. Если палатка не разрушилась (HP > 0) и игрок её подобрал — она снова normal tent. Soft-release → `notify_part_settled` → встанет в строй (если в зоне) или mark_outside_caravan (если вне). Hard-throw → `_become_torn_off` снова → летит как пиньята. Гномы, которые уже вылетели за время полёта, остаются follower'ами в FOLLOWING_CARAVAN (они с `_home_tent=null`); те, что ещё внутри — едут вместе с восстановленной палаткой.
 
-**Виртуальная цепочка** (`Camp._update_caravan_follow`). Камп строит `active_parts` из `_parts`, исключая `not is_in_caravan()` (= torn_off ИЛИ outside_caravan) и `is_in_hand()`. Идёт цепочкой: `active[0]` за башней, `active[i]` за `active[i-1]`. Если выбили `parts[0]`, `parts[1]` сжимает строй и сама становится ведущей. `_update_deployed` использует ту же фильтрацию, но без цепочки (каждая активная palatка ползёт к своей точке кольца). `placement_zone_radius` НЕ применяется здесь каждый кадр — однократно в `notify_part_settled` при release.
+**Тихий release** — снэп-зависит от `Camp._state`:
+- В `not _torn_off` ветке палатки: `_snap_to_ground()` (raycast по TERRAIN, Y = `hit.y + floor_offset_y()`), `freeze=true`, `linear_velocity = angular_velocity = 0`, затем `Camp.notify_part_settled(self)`.
+- `notify_part_settled` теперь ветвится по `Camp._state`:
+  - **CARAVAN_FOLLOWING** — zone-snap. В зоне (`distance ≤ placement_zone_radius=15м` от tower) → `_reorder_parts_by_position()`. Вне зоны → `mark_outside_caravan()`.
+  - **DEPLOYED / PACKING_RETURNING** (этап 45) — **free-placement**: всегда `mark_outside_caravan`, никакого snap'а к ring-слоту. Игрок может перестраивать лагерь под местность. На `_finalize_pack` все палатки восстанавливаются (см. ниже).
+- В `_torn_off` ветке (брошенная или soft-released после броска) palatка остаётся в физике, упадёт под гравитацией.
 
-**Бездомные гномы (FOLLOWING_CARAVAN, 2026-05-04).** Когда гном выкинут из палатки, а живых палаток в `nearest_part_to` нет (все torn_off / разрушены), он переходит в state `FOLLOWING_CARAVAN`: visible, в группе skeleton_target, в `_tick_following_caravan` идёт прямо к `Camp.get_tower().global_position`. Останавливается ближе 3м. То же делает `Camp._reassign_orphan_gnomes` для гномов, чей home_tent destroyed когда других палаток не осталось — стандартного reassign на nearest_alive не получается, гном переходит в FOLLOWING_CARAVAN. Дизайн: «выжившие встраиваются в караван и идут за башней, даже если палаток вообще нет».
+**Soft-release threshold** (`HandPhysical.soft_release_velocity_threshold=8 m/s`): в `Hand._release` если held в `Layers.HAND_SOFT_RELEASE_GROUP` и `smoothed_velocity < threshold` — `linear_velocity` обнуляется. Стенка между «поставил» и «бросил».
 
-**Слой палатки** остаётся `CAMP_OBSTACLE` в любом состоянии — летящая палатка физически разбрасывает скелетов на пути. `collision_mask` Tent = TERRAIN+ENEMIES (17). Гномы IN_TENT — `Grabbable` контракт, `set_highlighted(value)` через per-instance копию `StandardMaterial3D` (дублируется в `_ready`).
+**Виртуальная цепочка** (`Camp._update_caravan_follow`). Камп строит `active_parts` из `_parts`, исключая `not is_in_caravan()` (= torn_off ИЛИ outside_caravan) и `is_in_hand()`. Идёт цепочкой: `active[0]` за башней, `active[i]` за `active[i-1]`. Если выбили `parts[0]`, `parts[1]` сжимает строй и сама становится ведущей.
 
-**Логика свёртки (двухфазная):**
+**Цепочка с гномами-followers (этап 45).** За палатками в каравне идут не только палатки, но и **бездомные гномы** в общей цепочке. Camp ведёт `_caravan_followers: Array[Gnome]` (порядок регистрации = слот). API:
+- `register_caravan_follower(g)` — Gnome.enter_following_caravan вызывает на себя.
+- `unregister_caravan_follower(g)` — Gnome.take_damage при death + Gnome._claim_tent_as_home при заселении в вакантную палатку.
+- `get_chain_target_for_follower(g) → Vector3` — для Gnome._tick_following_caravan. Звенья: tower → active tents → followers до slot−1. Target = `leader_pos − dir × gnome_chain_gap + perp × side_offset + dir × forward_offset`. Per-гном `_caravan_chain_offset: Vector2` (рандомный, стабильный после `enter_following_caravan`) разворачивается через `gnome_chain_jitter (0.7)` и `gnome_chain_gap_variance (0.35)`. Цепочка не выглядит ниткой — гномы рассыпаются полосой шириной до 1.4м с раздёрганным gap. `gnome_chain_gap=1.2` (плотнее tent's `part_gap=2.5`).
+- В `DEPLOYED` цепочка не имеет смысла (палатки в кольце) — `get_chain_target_for_follower` fallback'ает на `_tower.global_position`, гномы идут к башне.
+
+**Vacancy claim (этап 45).** Бездомные гномы (FOLLOWING_CARAVAN) периодически (раз в ~1-1.5с с jitter'ом) спрашивают `Camp.find_tent_with_vacancy_for(self)`. Если в палатке есть свободное место (`get_tent_occupancy(tent) < tent.gnomes_per_tent`) — гном «заселяется»: `_home_tent = tent`, `state = RETURNING_TO_TENT`, бежит sprint-скоростью, на прибытии `_enter_in_tent`. На `PACKING_RETURNING` Camp возвращает `null` — иначе свёртка ждала бы только-что-переведённого в FOLLOWING_CARAVAN гнома до его прибытия в палатку.
+
+**Свободное размещение в DEPLOYED + восстановление на pack (этап 45).** В `DEPLOYED` игрок может поднять палатку и опустить в любом месте лагеря — она остаётся там (mark_outside_caravan, `_update_deployed` пропускает). На `_finalize_pack` Camp вызывает `restore_to_caravan()` на каждой `CampPart` (сбрасывает `_outside_caravan`, не трогает `_torn_off`) и затем `_reorder_parts_by_position()` — палатки сортируются по расстоянию до Tower, ближайшая становится первой в строю. `_update_caravan_follow` плавно вытягивает их в линию через exp_decay.
+
+**Слой палатки** остаётся `CAMP_OBSTACLE` в любом состоянии. `collision_mask` Tent = TERRAIN+ENEMIES (17). Гномы IN_TENT — `Grabbable` контракт, `set_highlighted(value)` через per-instance копию `StandardMaterial3D`.
+
+**Логика свёртки (двухфазная, этап 45):**
 1. `_pack_hold ≥ pack_duration` → `_start_pack()`:
-   - `_state = PACKING_RETURNING`, `_pack_elapsed = 0`, локальный сигнал **не** эмитится (пока).
-   - Вызов `g.request_return()` для каждого гнома.
-   - Палатки продолжают `_update_deployed` (стоят на местах кольца).
-2. Каждый кадр в `_process` при `PACKING_RETURNING`: `_pack_elapsed += delta`, проверка `_all_gnomes_home()`. Если да — `_finalize_pack()`: `_state = CARAVAN_FOLLOWING`, эмит `packed`. Палатки возобновляют follow с текущих позиций — без teleport'а.
-3. **Таймаут** (`pack_timeout=12с`): если `_pack_elapsed >= pack_timeout` и не все гномы дома — `_finalize_pack()` форсированно с логом числа зависших. Без таймаута один гном, схваченный рукой / упавший с обрыва / застрявший в коллизии, блокировал свёртку лагеря навсегда.
+   - `_state = PACKING_RETURNING`, `_pack_elapsed = 0`.
+   - `g.request_return()` для каждого гнома: **не идёт в палатку**, а вызывает `enter_following_caravan()` (исключение — IN_TENT гномы остаются в палатке). Раньше гномы пешком брели через лагерь со скоростью 1.6 m/s — pack постоянно упирался в timeout.
+2. Каждый кадр при `PACKING_RETURNING`: проверка `_all_gnomes_home()` = «все гномы IN_TENT or FOLLOWING_CARAVAN» (этап 45 — обновлённая семантика). Так как `request_return` мгновенно переключает в FOLLOWING_CARAVAN — проверка проходит на следующем тике. Pack завершается практически мгновенно.
+3. `_finalize_pack()`: `_state = CARAVAN_FOLLOWING`. `restore_to_caravan` на каждой палатке. `_reorder_parts_by_position()`. Эмит `packed`. `_update_caravan_follow` далее ведёт строй.
+4. **Таймаут** (`pack_timeout=12с`): если `_all_gnomes_home()` всё-таки не true — форсированный `_finalize_pack()` с логом. На практике с новой моделью триггерится только при патологическом залипании.
 
-**Сироты при гибели палатки** (`_on_part_destroyed → _reassign_orphan_gnomes`): когда палатка умирает, гномы с `_home_tent == dead_tent` получают `set_home_tent(nearest_alive)`. Без этого RETURNING_TO_TENT при `_home_tent == null` сразу делал `_enter_in_tent` на текущей точке (гном «телепортируется домой» где попало в поле, невидим), а в CARAVAN IN_TENT-приклейка к null'у не работала — гном застревал. Если живых палаток вообще нет — оставляем как есть (Camp всё равно невалиден для волн через `has_alive_parts`).
+**Гномы возвращаются sprint-скоростью (этап 45).** `Gnome._tick_returning` использует `caravan_sprint_speed` (9 m/s, выше Tower=8) вместо `move_speed` (1.6). Через лагерь 12м гном пробегает за 1.3с. С vacancy-claim это значит: в `CARAVAN_FOLLOWING` бездомный нашёл вакансию → бежит к ней быстро, тут же IN_TENT.
+
+**Сироты при гибели палатки** (`_on_part_destroyed → _reassign_orphan_gnomes`): когда палатка умирает, гномы с `_home_tent == dead_tent` получают `set_home_tent(nearest_alive)`. Если живых палаток нет — `enter_following_caravan` (бездомные). Ejected гномы (eject_from_tent поставил `_home_tent=null`) этим reassign'ом не затрагиваются.
+
+**Eject из палатки (этап 45).** `Gnome.eject_from_tent(camp)` вызывается из `CampPart._eject_in_tent_gnomes`:
+1. State = SEARCHING (промежуточный, чтобы IN_TENT-приклейка не вернула гнома обратно).
+2. `add_to_group(SKELETON_TARGET_GROUP)` — теперь скелет может его атаковать.
+3. **Окно неуязвимости** `post_eject_invulnerability` (2с) — `take_damage` ранний return. Чтобы окруживший скелетоход не срезал гнома мгновенно при разрушении палатки.
+4. Random `apply_push(scatter_dir × post_eject_scatter_speed (5), post_eject_scatter_duration (0.5))` — горизонтальный scatter по инерции, AI off на длительность knockback'а. Гномы разлетаются в стороны, не идут аккуратной очередью.
+5. `_home_tent = null`, `enter_following_caravan` → state FOLLOWING_CARAVAN, регистрация в `Camp._caravan_followers`.
 
 **Логика развёртки (`_handle_input` в `CARAVAN_FOLLOWING`):**
 - POI-gate: каждый кадр `_find_poi_for_deploy()` ищет ближайший QuestActor в группе `poi_zone`, в радиусе которого находится башня. `poi_ok = (not require_poi) or (poi != null)`.
@@ -1166,24 +1198,27 @@ func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool
 ```gdscript
 enum State {
     IN_TENT, SEARCHING, COMMUTING_TO_PILE, COMMUTING_TO_BASE,
-    IDLE_NEAR_BASE, RETURNING_TO_TENT,
+    IDLE_NEAR_BASE, RETURNING_TO_TENT, FOLLOWING_CARAVAN,
 }
 ```
 
-- `IN_TENT` — приклеен к `_home_tent.global_position`, `visible = false`. Состояние по умолчанию (караван).
-- `SEARCHING` — фаза 1 поиска.
-- `COMMUTING_TO_PILE` / `COMMUTING_TO_BASE` — фаза 2 «челнок» с найденной кучей.
-- `IDLE_NEAR_BASE` — куч на карте нет, ошивается возле anchor'а в `idle_radius`.
-- `RETURNING_TO_TENT` — лагерь свёртывается, идёт к своей палатке. Carry-визуал дропается сразу.
+- `IN_TENT` — приклеен к `_home_tent.global_position`, `visible = false`. Палатка-щит: `take_damage` ранний return (этап 45).
+- `SEARCHING` / `COMMUTING_TO_PILE` / `COMMUTING_TO_BASE` / `IDLE_NEAR_BASE` — активная AI-логика в DEPLOYED.
+- `RETURNING_TO_TENT` — идёт к своей палатке sprint-скоростью `caravan_sprint_speed` (9 m/s, этап 45). Дропает carry. Используется при свёртке + при vacancy-claim (бездомный нашёл место).
+- `FOLLOWING_CARAVAN` (этап 45, расширение) — бездомный гном идёт за караваном в общей цепочке за палатками. Зарегистрирован в `Camp._caravan_followers`. В `_tick_following_caravan` запрашивает `Camp.get_chain_target_for_follower(self)` и идёт к chain-слоту. Скорость — lerp от `move_speed` (в слоте) до `caravan_sprint_speed` по дистанции до slot'а через `caravan_full_sprint_distance` (5м). Раз в ~1-1.5с проверяет вакансии в живых палатках через `Camp.find_tent_with_vacancy_for(self)`; найдёт — `_claim_tent_as_home(tent)` переключает в RETURNING_TO_TENT.
 
-**Поля:** `_camp: Camp`, `_home_tent: Node3D`, `_state: State`, `_assigned_pile: ResourcePile`, `_wander_target: Vector3`, `_carry_visual: MeshInstance3D`, `_knockback: KnockbackState` (общий helper, тот же что у Enemy — единая реализация kinematic-knockback'а: timer + lerp-затухание горизонтали).
+**Поля:** `_camp: Camp`, `_home_tent: Node3D`, `_state: State`, `_assigned_pile: ResourcePile`, `_wander_target: Vector3`, `_carry_visual: MeshInstance3D`, `_knockback: KnockbackState`, `_post_eject_invulnerable_until_msec: int` (этап 45, время неуязвимости после eject'а), `_caravan_chain_offset: Vector2` (этап 45, per-гном смещение в строю), `_next_tent_vacancy_check_msec: int` (этап 45, throttle vacancy-чека).
 
 **API для Camp:**
 - `setup(camp, home_tent)` — кэширует ссылки, входит в `IN_TENT`.
 - `enter_deployed()` — `visible = true`, `_state = SEARCHING`.
-- `request_return()` — дропает carry, `_state = RETURNING_TO_TENT`.
+- `request_return()` (этап 45) — IN_TENT → ничего, иначе `enter_following_caravan()`. Pack-flow ведёт всех out-of-tent гномов в колонну, не пешком в палатку.
+- `eject_from_tent()` (этап 45, без `damage` параметра) — выпуск из IN_TENT с 2с неуязвимостью + scatter knockback + FOLLOWING_CARAVAN.
+- `enter_following_caravan()` — идемпотентно ставит state, регистрирует в `_caravan_followers`, рандомизирует chain-offset.
 - `is_home() -> bool` — `_state == IN_TENT`.
-- `get_assigned_pile() -> ResourcePile` — возвращает `_assigned_pile` если гном сейчас в фазе челнока, иначе `null`. Camp использует в `is_pile_claimed`.
+- `is_following_caravan() -> bool` (этап 45) — `_state == FOLLOWING_CARAVAN`. Camp `_all_gnomes_home` считает «settled» = `is_home() or is_following_caravan()`.
+- `get_caravan_chain_offset() -> Vector2` (этап 45) — для Camp.get_chain_target_for_follower.
+- `get_assigned_pile() -> ResourcePile`.
 
 **Двухфазная логика сбора:**
 
@@ -1218,7 +1253,7 @@ enum State {
 - LOD (cold-mode при удалении от камеры) — автоматически.
 
 **Что переопределяется:**
-- `_active_tick(delta)` — виртуальный hook базового Gnome. У базы — match _state по `_tick_searching/_tick_commuting_*`. У защитника — `_defender_combat_tick(delta)` для всех «активных» состояний (SEARCHING / COMMUTING_* / IDLE_NEAR_BASE), `_tick_returning()` для RETURNING_TO_TENT.
+- `_active_tick(delta)` — виртуальный hook базового Gnome. У базы — match _state по `_tick_searching/_tick_commuting_*`. У защитника — `_defender_combat_tick(delta)` для всех «активных» состояний (SEARCHING / COMMUTING_* / IDLE_NEAR_BASE), `_tick_returning()` для RETURNING_TO_TENT, **`_tick_following_caravan()` для FOLLOWING_CARAVAN** (этап 45). Бездомный лучник встаёт в общую колонну за караваном — combat-режим выключен (вокруг бывшей палатки патрулировать нет смысла), идёт к chain-слоту наравне с собирателями.
 
 **Боевые экспорты:**
 - `attack_radius: float = 22.5` — радиус сканирования скелетов через `PhysicsShapeQuery` со сферой. ×1.5 от исходного 15м.
@@ -2021,6 +2056,36 @@ func _refresh_visual() -> void:
     - `a1d6215`: усилены параметры ветра: `sway` 0.25→0.6 (амплитуда ×2.4), `sway_time_scale` 1.5→2.5 (быстрее), `sway_pow` 2→1.5 (корень тоже двигается). Геймдизайнер: «травинки почти не видно как шевелятся».
 
     **Финальные дефолты:** `density=4`, `visibility_distance=120м`, `blade_scale=0.15`, ~640k blade суммарно, ~30k-50k в кадре. Откат: `density=0` в инспекторе GrassField. Используется тот же `ground_noise.tres` что и для пола — один shared NoiseTexture2D на проект.
+
+45. **Палатка как пиньята + цепочка-каравана с гномами + перепродумывание pack/deploy.** Большой архитектурный пересбор поведения палаток и гномов (2026-05-05).
+
+    **(а) GrassField bounds через AABB (фикс).** GrassField со `world_size=400` спавнил blade'ы в квадрат 400×400, а Ground в `main.tscn` имеет `scale.z=0.439` — реальный пол только X∈±200, Z∈±88, ~360k blade висели за границей в воздухе. Добавил опциональный `coverage_target_path: NodePath` (в `main.tscn` указывает на `../Ground/GroundMesh`); GrassField берёт его world AABB через `mesh.global_transform * mesh.get_aabb()` и спавнит чанки строго внутрь. Чанки теперь могут быть не квадратными (`chunk_size_x ≠ chunk_size_z`).
+
+    **(б) Палатка-щит для гномов IN_TENT.** Раньше Slam через `Damageable.try_damage` бил по всем зарегистрированным в радиусе — гномы внутри палатки получали damage и одним хлопком умирали все 21 (наблюдалось в логе). Фикс: `Gnome.take_damage` ранний return при `_state == State.IN_TENT`. Целая палатка теперь защищает жителей от любых damage-источников (Slam-AOE, скелеты).
+
+    **(в) Pinata-механика tear-off.** Старая модель: `_become_torn_off` сразу выкидывал всех IN_TENT гномов с per-gnome random damage — половина умирала. Новая: tear-off гномов НЕ выкидывает; на каждом `body_entered` со speed ≥ min_speed палатка выпускает `gnomes_per_impact` (default 1) гномов с cooldown 0.15с, **без damage** — палатка защитила, при ударе вытряхивает наружу здоровыми. На `_destroy` (hp ≤ 0) выпускает оставшихся, тоже без damage. Дизайн «палатка как пиньята».
+
+    **(г) HP палатки 250 → 120 + кубарем.** 2 хлопка Slam (60 damage каждый) убивают палатку. Параметры `torn_off_linear_damp=0.5, torn_off_angular_damp=0.3` снижаются на `_become_torn_off` (tent.tscn держит 2.0/2.5 для статики в покое) — обломок красиво летит и крутится вместо мгновенного torque-decay'а.
+
+    **(д) Целая палатка в руке возвращается в строй.** Раньше `_torn_off` был необратим: даже если игрок подобрал летающую (но живую) палатку и тихо опустил — она оставалась обломком (`_on_hand_released` early return на `_torn_off`). Добавил сброс `_torn_off=false` на `_on_hand_grabbed` (вместе с `_outside_caravan`). Подобранная целая палатка ведёт себя как нормальная: soft-release → встаёт в строй (zone-snap или mark_outside_caravan); throw → `_become_torn_off` снова.
+
+    **(е) Free-placement в DEPLOYED + restore на pack.** В `notify_part_settled` ветка по `Camp._state`: в DEPLOYED/PACKING_RETURNING всегда mark_outside_caravan (палатка остаётся где опустили), без zone-snap к ring-слоту. Игрок свободно перестраивает лагерь под местность. На `_finalize_pack` Camp вызывает `restore_to_caravan()` на всех CampPart (сбрасывает `_outside_caravan`, не `_torn_off`) и `_reorder_parts_by_position()` — палатки сортируются по distance до Tower и плавно вытягиваются в строй через exp_decay.
+
+    **(ж) FOLLOWING_CARAVAN превратился в полноценную цепочку.** Раньше бездомные гномы (eject + отсутствие живых палаток) шли тупо к `_tower.global_position` и кучковались возле башни. Теперь Camp ведёт `_caravan_followers: Array[Gnome]` (порядок регистрации = слот). API `Camp.get_chain_target_for_follower(g)` возвращает chain-target по той же формуле что для палаток в `_update_caravan_follow`: `leader_pos − dir × gap + perp × side + dir × forward`. Звенья: `tower → активные палатки → followers до slot−1`.
+
+    Per-гном `_caravan_chain_offset: Vector2` (рандомный, стабильный после `enter_following_caravan`) разворачивается через `gnome_chain_jitter (0.7м)` и `gnome_chain_gap_variance (0.35)` — гномы рассыпаются полосой шириной ~1.4м с раздёрганным gap. `gnome_chain_gap=1.2м` (плотнее tent's `part_gap=2.5`). Тоже самое для DefenderGnome: добавил `State.FOLLOWING_CARAVAN: _tick_following_caravan()` в его `_active_tick`-overrride. Бездомный лучник встаёт в общий строй наравне с собирателями.
+
+    **(з) Sprint-скорость для догона каравана.** Tower бежит на 8 m/s, гном при `move_speed=1.6` отстать на любое расстояние означает «никогда не догнать». Решение: `_tick_following_caravan` считает скорость через `lerpf(move_speed, caravan_sprint_speed (9.0), dist / caravan_full_sprint_distance (5))`. В слоте walking, отстал — sprint. Естественное поведение «пешее сопровождение бежит когда отстало», без overall-ускоренной скорости (которая делала бы гномов дешёвыми и в спокойном состоянии).
+
+    **(и) Vacancy claim.** В палатке `gnomes_per_tent` мест. Бездомные гномы FOLLOWING_CARAVAN раз в ~1-1.5с (random jitter) спрашивают `Camp.find_tent_with_vacancy_for(self)` — ближайшая non-torn / non-in-hand палатка с `get_tent_occupancy(tent) < tent.gnomes_per_tent`. Найдёт → `_claim_tent_as_home(tent)` ставит state RETURNING_TO_TENT, гном бежит и заселяется. Изначально палатки полны, вакансии открываются после смертей гномов внутри (или если игрок настроит `gnomes_per_tent` больше начального спавна).
+
+    **(к) Pack завершается мгновенно через FOLLOWING_CARAVAN.** Раньше `request_return` вёл out-of-tent гномов в RETURNING_TO_TENT — те шли пешком 1.6 m/s через лагерь, pack постоянно упирался в `pack_timeout=12c`. Сейчас `request_return` для не-IN_TENT вызывает `enter_following_caravan` → они мгновенно в колонне за палатками. `_all_gnomes_home` обновлён: «settled» = `IN_TENT or FOLLOWING_CARAVAN`. Pack завершается на следующем тике после `_start_pack`. `Find_tent_with_vacancy_for` в PACKING_RETURNING возвращает `null` — иначе только-что-переведённый в FOLLOWING_CARAVAN гном тут же занял бы вакансию и pack ждал бы его прибытия.
+
+    **(л) Sprint при возврате домой.** `_tick_returning` теперь использует `caravan_sprint_speed` вместо `move_speed`. Через лагерь 12м гном пробегает за 1.3с. Через vacancy-claim это значит: бездомный нашёл вакансию → bystrо туда → IN_TENT.
+
+    **(м) Eject из палатки: 2с неуязвимость + scatter.** `Gnome.eject_from_tent()` (без `damage` параметра) ставит state SEARCHING → FOLLOWING_CARAVAN, добавляет в `SKELETON_TARGET_GROUP`, выставляет `_post_eject_invulnerable_until_msec = now + 2000` (take_damage гейтится), применяет random horizontal `apply_push(scatter_dir × 5, 0.5)` — гномы разлетаются в стороны по инерции, AI off на длительность knockback'а. Естественный «вылет из палатки в шоке».
+
+    **(н) Defender-gnome FOLLOWING_CARAVAN-ветка.** Без неё лучник, выкинутый из палатки, попадал в `_defender_combat_tick` → `_patrol_tick` → патрулировал вокруг `_camp.deploy_anchor` (позиция бывшей палатки) и не уходил с караваном. Добавил явную ветку в `match _state` чтобы передать управление в `_tick_following_caravan` (наследуется от Gnome).
 
 ### 7.3 Решённые ошибки
 

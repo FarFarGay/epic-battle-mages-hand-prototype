@@ -80,6 +80,18 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 @export var follow_speed: float = 4.0
 ## Расстояние между палатками в цепочке и между башней и parts[0].
 @export var part_gap: float = 2.5
+## Базовое расстояние между гномами-followers в цепочке. Меньше part_gap —
+## гномы идут плотнее палаток, как «толпа за караваном». Реальный gap
+## раздёргивается per-гном через gnome_chain_gap_variance.
+@export var gnome_chain_gap: float = 1.2
+## Разброс forward-смещения per-гном (доля gnome_chain_gap). 0.3 = ±30%,
+## фактический gap гнома в диапазоне [0.7, 1.3] × gnome_chain_gap.
+## 0 = ровная очередь.
+@export var gnome_chain_gap_variance: float = 0.35
+## Максимум lateral-смещения per-гном перпендикулярно цепочке (метры).
+## 0.7м — гномы рассыпаются полосой шириной до 1.4м, не идут ниткой.
+## 0 = идеально ровная линия.
+@export var gnome_chain_jitter: float = 0.7
 ## За этим порогом ведущая палатка перестаёт двигаться (башня «ушла далеко»).
 @export var follow_max_distance: float = 30.0
 ## Радиус «зоны каравана» — куда игрок может рукой вернуть палатку в строй.
@@ -140,6 +152,12 @@ var _pack_elapsed: float = 0.0
 var _last_target_pos: Vector3 = Vector3.INF
 ## Гномы лагеря — gnomes_per_tent × количество палаток. Создаются в _ready.
 var _gnomes: Array[Gnome] = []
+## Бездомные гномы (выкинутые из палатки), идут за караваном в общей цепочке
+## за палатками. Порядок = порядок регистрации (раньше eject'нутые — ближе к
+## палаткам). Слот в цепочке = индекс в массиве. Регистрируются из
+## Gnome.enter_following_caravan, снимаются на death через unregister.
+## Используется в get_chain_target_for_follower.
+var _caravan_followers: Array[Gnome] = []
 ## Центральный mount-slot для модулей (turret и т. д.). В фазе CARAVAN он
 ## выключен и невидим — «центра лагеря» не существует. На развёртке слот
 ## переезжает в anchor и активируется; на свёртке — выключается, что
@@ -291,15 +309,147 @@ func get_tower() -> Node3D:
 	return _tower
 
 
+## Регистрация гнома в цепочке-каравана как нового хвостового звена. Вызывается
+## из Gnome.enter_following_caravan. Идемпотентна (повторный register тот же
+## гном не дублирует). Слот = индекс в массиве, считается лениво в
+## get_chain_target_for_follower.
+func register_caravan_follower(g: Gnome) -> void:
+	if g != null and not _caravan_followers.has(g):
+		_caravan_followers.append(g)
+
+
+## Считает гномов, у которых указанная палатка — _home_tent. Сравнивается с
+## CampPart.gnomes_per_tent для определения вакансий: бездомные гномы из
+## цепочки могут «заселиться» в палатку с occupancy < capacity. Сложность
+## O(N_gnomes) на вызов — но Gnome._tick_following_caravan вызывает редко
+## (раз в ~1с с jitter'ом), не на каждом физкадре.
+func get_tent_occupancy(tent: CampPart) -> int:
+	var n := 0
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		if g.get_home_tent() == tent:
+			n += 1
+	return n
+
+
+## Ищет ближайшую к гному живую non-torn / non-in-hand палатку, где есть
+## свободное место (occupancy < gnomes_per_tent). Возвращает null если
+## вакансий нет — гном остаётся в FOLLOWING_CARAVAN и продолжает идти за
+## караваном. Не учитывает дистанцию-cap: даже далёкая палатка с местом
+## лучше, чем пешее путешествие за башней навечно.
+##
+## В PACKING_RETURNING вакансии не выдаём: иначе гном, только что
+## переведённый в FOLLOWING_CARAVAN из-за свёртки, тут же займёт место в
+## палатке → state RETURNING_TO_TENT → _all_gnomes_home false → pack ждёт
+## его прибытия. Во время свёртки все out-of-tent гномы должны оставаться
+## в колонне.
+func find_tent_with_vacancy_for(g: Gnome) -> CampPart:
+	if _state == State.PACKING_RETURNING:
+		return null
+	var best: CampPart = null
+	var best_dist_sq := INF
+	var g_pos := g.global_position
+	for part in _parts:
+		if not is_instance_valid(part) or not (part is CampPart):
+			continue
+		var cp := part as CampPart
+		if cp.is_torn_off() or cp.is_in_hand():
+			continue
+		if get_tent_occupancy(cp) >= cp.gnomes_per_tent:
+			continue
+		var d_sq := cp.global_position.distance_squared_to(g_pos)
+		if d_sq < best_dist_sq:
+			best_dist_sq = d_sq
+			best = cp
+	return best
+
+
+## Снятие гнома с цепочки. Вызывается из Gnome.take_damage при смерти.
+## После erase индексы оставшихся followers сдвигаются — их слоты становятся
+## ближе к палаткам в следующем кадре. Это естественно: умер передний — задний
+## подтянулся. Стабильность порядка между смертями сохраняется.
+func unregister_caravan_follower(g: Gnome) -> void:
+	_caravan_followers.erase(g)
+
+
+## Позиция-цель в цепочке для гнома-follower'а. Цепочка звеньев:
+##   tower → active tents (по _parts, skip torn_off/in_hand/outside_caravan)
+##         → followers (по _caravan_followers, до slot-1)
+## Target = leader.pos - dir × gap + perp × side + dir × forward, где dir =
+## (leader.pos − me).normalized(), perp — горизонтальная нормаль к dir.
+## Per-гном random side/forward (g.get_caravan_chain_offset()) делает строй
+## не ниткой, а полосой шириной gnome_chain_jitter×2 с раздёрганным gap.
+##
+## Gap считается plотным `gnome_chain_gap` (меньше tent-gap), чтобы гномы
+## шли тесной толпой, а не редкой очередью.
+##
+## В DEPLOYED-режиме цепочка не имеет смысла (палатки в кольце) — возвращаем
+## позицию башни, чтобы гном просто шёл к ней.
+func get_chain_target_for_follower(g: Gnome) -> Vector3:
+	if _tower == null:
+		return global_position
+	if _state != State.CARAVAN_FOLLOWING:
+		return _tower.global_position
+	var slot := _caravan_followers.find(g)
+	if slot < 0:
+		return _tower.global_position
+	var leader_pos := _last_chain_link_before_follower(slot)
+	var to_leader := leader_pos - g.global_position
+	to_leader.y = 0.0
+	if to_leader.length_squared() < VecUtil.EPSILON_SQ:
+		return g.global_position
+	var dir := to_leader.normalized()
+	var offset: Vector2 = g.get_caravan_chain_offset()
+	# perp: 90° поворот dir на Y-плоскости (правая сторона относительно
+	# направления к лидеру). offset.x ± этой нормали → разлёт по бокам.
+	var perp := Vector3(dir.z, 0.0, -dir.x)
+	# offset.y > 0 → ближе к лидеру (target смещается на +dir), < 0 — дальше.
+	# Сжимаем в [−1, 1] × gnome_chain_gap × variance, чтобы reasonable bound.
+	var forward_shift: float = clampf(offset.y, -1.0, 1.0) * gnome_chain_gap * gnome_chain_gap_variance
+	var side_shift: float = clampf(offset.x, -1.0, 1.0) * gnome_chain_jitter
+	return leader_pos - dir * gnome_chain_gap + dir * forward_shift + perp * side_shift
+
+
+## Позиция предыдущего звена для follower'а с указанным slot-индексом. Сначала
+## ищем в followers (от slot-1 вниз), беря первый is_instance_valid. Если все
+## впереди-стоящие followers невалидны — спускаемся к последней активной
+## палатке. Если палаток в строю нет — лидер = башня.
+func _last_chain_link_before_follower(follower_slot: int) -> Vector3:
+	for i in range(follower_slot - 1, -1, -1):
+		var prev := _caravan_followers[i]
+		if is_instance_valid(prev):
+			return prev.global_position
+	for i in range(_parts.size() - 1, -1, -1):
+		var part := _parts[i]
+		if not is_instance_valid(part):
+			continue
+		if part is CampPart:
+			var cp := part as CampPart
+			if not cp.is_in_caravan() or cp.is_in_hand():
+				continue
+		return part.global_position
+	return _tower.global_position
+
+
 ## Уведомление от CampPart, что её только что аккуратно поставили рукой
-## (тихий release без impulse). Camp проверяет distance до leader'а:
-## - В зоне → reorder _parts по позиции, палатка встаёт в новый слот строя.
-##   Зону проверяем ОДНОКРАТНО здесь, не каждый кадр в follow — иначе
-##   палатка, попавшая по краю зоны, могла бы выпасть из строя через секунду
-##   когда строй растянется (баг 2026-05-04: «выбивает четвёртую»).
-## - Вне зоны → mark_outside_caravan на палатке. Camp.follow её пропускает
-##   до следующего pickup (тогда _outside_caravan сбрасывается).
+## (тихий release без impulse). Логика зависит от состояния лагеря:
+##
+## **CARAVAN_FOLLOWING**: zone-snap. В зоне → `_reorder_parts_by_position`
+## вставляет палатку в новый слот строя. Вне зоны → mark_outside_caravan,
+## стоит на месте до следующего pickup. Зона проверяется однократно здесь,
+## не каждый кадр в follow (баг 2026-05-04: «выбивает четвёртую»).
+##
+## **DEPLOYED / PACKING_RETURNING**: free-placement. Палатка остаётся ровно
+## там, где её опустили — никакого snap'а в ring-слот. Это даёт игроку
+## свободу перестраивать лагерь под местность. На _finalize_pack Camp
+## вернёт все палатки в строй через restore_to_caravan + reorder.
 func notify_part_settled(part: CampPart) -> void:
+	if _state == State.DEPLOYED or _state == State.PACKING_RETURNING:
+		part.mark_outside_caravan()
+		if debug_log and LogConfig.master_enabled:
+			print("[Camp] %s оставлена в лагере на свободном месте" % part.name)
+		return
 	var leader_pos := _leader_pos_for_zone()
 	var zone_sq := placement_zone_radius * placement_zone_radius
 	if (part.global_position - leader_pos).length_squared() > zone_sq:
@@ -599,24 +749,31 @@ func _process(delta: float) -> void:
 		_last_target_pos = _tower.global_position
 
 
+## Гном «готов к движению каравана» если он либо в палатке (IN_TENT, едет
+## внутри), либо уже встроился в колонну за палатками (FOLLOWING_CARAVAN).
+## request_return на _start_pack переключает не-IN_TENT гномов сразу в
+## FOLLOWING_CARAVAN, так что обычно этот чек проходит на следующем тике
+## после _start_pack — pack завершается без задержки.
 func _all_gnomes_home() -> bool:
 	for g in _gnomes:
 		if not is_instance_valid(g):
 			continue
-		if not g.is_home():
-			return false
+		if g.is_home() or g.is_following_caravan():
+			continue
+		return false
 	return true
 
 
-## Считает живых гномов, которые ещё не дома. Используется в логе таймаута
-## свёртки — без этого «застрял на N гномов» в логе не покажется.
+## Считает живых гномов, которые НЕ готовы к движению каравана. Используется
+## в логе таймаута свёртки — без этого «застрял на N гномов» в логе не покажется.
 func _count_gnomes_not_home() -> int:
 	var n := 0
 	for g in _gnomes:
 		if not is_instance_valid(g):
 			continue
-		if not g.is_home():
-			n += 1
+		if g.is_home() or g.is_following_caravan():
+			continue
+		n += 1
 	return n
 
 
@@ -810,6 +967,16 @@ func _finalize_pack() -> void:
 	# Палатки также возвращаются в категорию целей — в каравне атакуемы.
 	# Бронь снимается, _set_parts_vulnerable(false) был выставлен в _start_pack.
 	_set_parts_vulnerable(true)
+	# Возвращаем в строй ВСЕ палатки, независимо от того, как они стояли в
+	# развёрнутом лагере (ring-слот / свободно расставленные игроком).
+	# torn_off обломки restore'ом не затрагиваются — они физически утеряны.
+	# Reorder по distance до Tower → ближайшая к башне становится первой
+	# в цепочке (передняя в формации). _update_caravan_follow дальше плавно
+	# вытянет всех в линию через exp_decay.
+	for p in _parts:
+		if p is CampPart:
+			(p as CampPart).restore_to_caravan()
+	_reorder_parts_by_position()
 	packed.emit()
 
 

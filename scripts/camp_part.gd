@@ -4,8 +4,16 @@ extends RigidBody3D
 ## плавно через global_position (как Item в руке: while frozen transform-set
 ## работает, ни гравитации, ни forces). На физический отрыв (Slam, Flick,
 ## бросок рукой, любой Pushable.try_push) палатка переходит в torn_off:
-## freeze=false, impulse+torque, гномы внутри получают урон и выпрыгивают.
-## Дальше — обычный физический обломок, Camp его не трогает.
+## freeze=false, impulse+torque, damping снижается для читаемого кувырка.
+##
+## **Палатка как щит для гномов**: пока цела (hp > 0), гномы внутри неуязвимы
+## и урона не получают, даже когда палатка кубарем катится по земле. На
+## каждом ударе о землю/тело (`body_entered` со speed ≥ min) палатка
+## вытряхивает наружу `gnomes_per_impact` штук — здоровыми. На улице эти
+## гномы попадают в SKELETON_TARGET_GROUP и становятся уязвимы к скелетам.
+## Если палатку разнесёт по hp раньше, чем все вылезут — `_destroy` выпускает
+## оставшихся, тоже без урона. Дальше — обычный физический обломок,
+## Camp его не трогает.
 ##
 ## Управляется внешне через set_vulnerable из Camp:
 ##   - _ready (caravan-старт): true — скелеты могут атаковать караван.
@@ -18,9 +26,12 @@ signal destroyed
 
 const SKELETON_TARGET_GROUP := &"skeleton_target"
 
-## Палатке нужно много ударов: 250 hp при skeleton.attack_damage=5 → 50 ударов.
-## Лагерь должен ощущаться крепостью, а не палаткой из ткани.
-@export var hp: float = 250.0
+## HP палатки. Slam (hand_physical_slam.slam_damage=60 × falloff) рассчитан
+## на 2 точных хлопка → hp=120. Скелеты (attack_damage=5) бьют 24 раза для
+## разрушения — лагерь по-прежнему ощущается крепостью против обычных врагов.
+## Контактный damage от полётов (после tear-off) поверх — палатку можно
+## «добить» броском, если первый хлопок уже снёс часть hp.
+@export var hp: float = 120.0
 
 ## Сколько гномов живёт в этой палатке. Camp читает это значение в своём
 ## _spawn_gnomes() и инстанцирует gnome_scene нужное количество раз.
@@ -39,19 +50,33 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 ## Угловой импульс при отрыве. Случайный 3D-вектор × magnitude. Magnitude
 ## масштабируется от силы удара — слабый щелбан не вращает как пропеллер.
 @export var torque_factor: float = 0.8
-## Базовый урон гномам внутри палатки при tear-off. Реальный урон каждому
-## гному — base * (impulse_speed / reference) * randf_range(0.5, 1.5):
-## зависит от силы удара и индивидуального везения, поэтому часть гибнет,
-## часть выживает. Reference: lord-impulse уровня slam_force=30.
-@export var eject_base_damage: float = 18.0
 ## Контактный урон от ударов о препятствия после tear-off. Множитель × скорость
 ## контакта (м/с): damage = (speed - min_speed) × factor. Палатка катится, отскакивает,
 ## кувыркается, при каждом ударе о землю/тело берёт damage. Hp=250 → ~3-8 ударов
 ## при средней скорости, чтобы разрушиться. Slam/Flick применяют этот же путь,
 ## так что лежащий обломок можно «добить» ещё одним хлопком.
+##
+## **Гномы внутри урон не получают** — целая палатка щит, при ударе их
+## просто вытряхивает наружу здоровыми. Уязвимыми они становятся только на
+## улице (после eject'а в SKELETON_TARGET_GROUP). См. _eject_in_tent_gnomes.
 @export var contact_damage_factor: float = 4.0
 ## Скорости ниже этого порога не дают damage (тихие касания, скольжение).
 @export var contact_damage_min_speed: float = 4.0
+## Сколько гномов вылетает за один удар о землю/препятствие. На каждый
+## body_entered (со speed ≥ contact_damage_min_speed) палатка выплёвывает
+## столько гномов из тех, кто ещё внутри. 7 гномов на палатку при значении 1
+## → нужно 7 ударов чтобы опустошить, при 2 → 4 удара. Если палатку разнесёт
+## раньше — оставшихся выпустит _destroy (тоже без урона, палатка их защищала).
+@export var gnomes_per_impact: int = 1
+## Минимальный интервал между eject'ами от ударов. Несколько одновременных
+## body_entered (палатка коснулась двух тел в одном кадре) не дублируют выпуск.
+@export var impact_eject_cooldown: float = 0.15
+## Damping палатки после tear-off. tent.tscn держит linear=2.0, angular=2.5
+## для статики в строю — но эти же значения гасят кувырок брошенной палатки
+## за пару десятых секунды. На отрыве снижаем damping, чтобы обломок красиво
+## летел и крутился до первого удара/полной остановки.
+@export var torn_off_linear_damp: float = 0.5
+@export var torn_off_angular_damp: float = 0.3
 
 @export_group("Highlight (рамка-кандидата для руки)")
 @export var highlight_color: Color = Color(1.0, 0.85, 0.4, 1.0)
@@ -78,6 +103,9 @@ var _in_hand: bool = false
 ## в строй. В отличие от `_torn_off` (необратимо, физический отрыв).
 var _outside_caravan: bool = false
 var _effects_root: Node = null
+## Время последнего eject'а от удара (Time.get_ticks_msec()/1000.0). Гейт
+## против дублирования при кучных body_entered'ах в одном кадре.
+var _last_impact_eject_time: float = -INF
 ## Per-instance копия материала меша для индивидуальной emission-рамки.
 ## tent.tscn ссылается на shared StandardMaterial3D — без duplicate подсветка
 ## одной палатки засветила бы все. Дублируем в _ready и держим ref.
@@ -173,11 +201,16 @@ func _on_hand_grabbed(item: Node3D) -> void:
 	if item != self:
 		return
 	_in_hand = true
-	# Поднятие сбрасывает флаг «вне строя»: после release решим заново,
-	# в зоне ли поставили. Это позволяет игроку «вернуть» палатку, которая
-	# раньше была размещена далеко: подобрал → перенёс ближе → release в зоне
-	# → втянулась обратно в строй.
+	# Поднятие сбрасывает флаги «вне строя» И «оторванная»: после release
+	# решим заново, как палатку обработать. Это позволяет вернуть и палатку
+	# далеко поставленную (outside_caravan), и палатку, которую ударили в
+	# караване и она вылетела (torn_off, но HP > 0 — иначе она бы уже
+	# queue_free'нулась через _destroy). Если игрок снова бросает (release
+	# с velocity > 0) — _become_torn_off в hand_released ставит _torn_off
+	# обратно в true. Soft-release с целой палаткой → notify_part_settled
+	# и палатка возвращается в строй / встаёт на свободное место.
 	_outside_caravan = false
+	_torn_off = false
 	# Hand сам ставит freeze=true в _attach.
 
 
@@ -228,6 +261,17 @@ func mark_outside_caravan() -> void:
 	_outside_caravan = true
 
 
+## Camp вызывает на _finalize_pack, чтобы вернуть в строй ВСЕ палатки,
+## которые были «вне строя» в развёрнутом лагере (свободно расставлены
+## игроком). После этого is_in_caravan() снова true и палатка попадает в
+## _update_caravan_follow → плавно вытягивается в цепочку за башней.
+## Не сбрасывает _torn_off — физически оторванные обломки остаются обломками.
+func restore_to_caravan() -> void:
+	if _torn_off or _dying:
+		return
+	_outside_caravan = false
+
+
 ## Сажает палатку ровно на пол под её текущей XZ-позицией: raycast вниз по
 ## TERRAIN, Y = hit.y + half-height. Без snap'а тихий release из руки оставлял
 ## палатку висеть на ~метр над землёй (рука держит на cursor.y + hold_offset).
@@ -251,13 +295,23 @@ func _snap_to_ground() -> void:
 ## body_entered летит на каждый physics-контакт RB (не frozen). Гейтим по
 ## _torn_off — frozen палатка в строю и так не получает контактов
 ## (RB-frozen пропускает контакт-callbacks). Damage пропорционален скорости
-## касания: linear_velocity на момент сигнала ≈ скорость удара.
+## касания: linear_velocity на момент сигнала ≈ скорость удара. На том же
+## ударе выпускаем gnomes_per_impact гномов — палатка ведёт себя как
+## пиньята: каждый удар о землю / тело роняет наружу очередную партию.
+##
+## Eject ИДЁТ ПЕРЕД take_damage: если этот удар добивает hp до нуля,
+## _destroy выпустит оставшихся как «их завалило» — без двойного eject'а
+## (gnome.eject_from_tent переключает is_home → false, второй проход отфильтрует).
 func _on_body_entered(_body: Node) -> void:
 	if not _torn_off or _dying:
 		return
 	var speed: float = linear_velocity.length()
 	if speed < contact_damage_min_speed:
 		return
+	var now: float = Time.get_ticks_msec() / 1000.0
+	if now - _last_impact_eject_time >= impact_eject_cooldown:
+		_last_impact_eject_time = now
+		_eject_in_tent_gnomes(gnomes_per_impact)
 	var damage: float = (speed - contact_damage_min_speed) * contact_damage_factor
 	take_damage(damage)
 
@@ -283,9 +337,14 @@ func take_damage(amount: float) -> void:
 ## Уничтожение от исчерпания hp. Прячет меш, сыплет фрагменты, queue_free.
 ## Используется только из take_damage — tear-off / drop сами по себе НЕ
 ## разрушают палатку (она остаётся как меш-обломок).
+##
+## Перед shatter'ом вытряхиваем всех ещё-сидящих внутри гномов БЕЗ урона —
+## целая палатка их защищала, при разрушении они просто оказываются на
+## улице. Дальше они уязвимы как обычные гномы (в SKELETON_TARGET_GROUP).
 func _destroy() -> void:
 	_dying = true
 	remove_from_group(SKELETON_TARGET_GROUP)
+	_eject_in_tent_gnomes(-1)
 	if _mesh:
 		_mesh.visible = false
 	if _effects_root:
@@ -310,16 +369,26 @@ func apply_push(velocity_change: Vector3, _duration: float) -> void:
 		apply_central_impulse(velocity_change * push_velocity_factor * mass)
 
 
-## Универсальный путь tear-off: снимает freeze, кидает torque, выкидывает
-## гномов с уроном. Опционально применяет central impulse (Slam/Flick передают
-## Δv → нужен impulse; Hand-throw уже задал linear_velocity напрямую → impulse
-## не нужен, иначе ускорение удвоится).
+## Универсальный путь tear-off: снимает freeze, понижает damping (чтобы
+## обломок красиво кувыркался и далеко летел), кидает random torque.
+## Опционально применяет central impulse (Slam/Flick передают Δv → нужен
+## impulse; Hand-throw уже задал linear_velocity напрямую → impulse не нужен,
+## иначе ускорение удвоится).
+##
+## **Гномов сам tear-off НЕ выкидывает** — они вылетают порциями на каждом
+## ударе через _on_body_entered → _eject_in_tent_gnomes. Если палатку
+## разнесёт по hp раньше, чем все вылезут, _destroy выпустит оставшихся.
 func _become_torn_off(impact_velocity: Vector3, apply_impulse: bool) -> void:
 	_torn_off = true
 	freeze = false
 	# RB после freeze→false иногда остаётся спящим — будим явно, чтобы
 	# impulse и торque сработали в этом же кадре.
 	sleeping = false
+	# Низкий damping — палатка летит и крутится визуально читаемо.
+	# В строю (frozen=true) damping не считается, так что пониженные значения
+	# здесь не аффектят покоящуюся палатку.
+	linear_damp = torn_off_linear_damp
+	angular_damp = torn_off_angular_damp
 	if apply_impulse:
 		apply_central_impulse(impact_velocity * push_velocity_factor * mass)
 	var torque_dir := Vector3(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0), randf_range(-1.0, 1.0))
@@ -327,27 +396,29 @@ func _become_torn_off(impact_velocity: Vector3, apply_impulse: bool) -> void:
 		torque_dir = torque_dir.normalized()
 	var torque_magnitude: float = impact_velocity.length() * torque_factor * mass
 	apply_torque_impulse(torque_dir * torque_magnitude)
-	_eject_in_tent_gnomes(impact_velocity.length())
 
 
-## Гномы внутри палатки получают урон от падения и переходят в state, в
-## котором идут с караваном. Кто-то умирает (если urоn ≥ hp), кто-то выживает
-## с раной — это per-gnome random factor, поэтому исход разный.
+## Гномы внутри палатки выходят на улицу БЕЗ damage — целая палатка щит.
+## На улице каждый получает scatter-импульс в случайном направлении +
+## ~2с неуязвимости (см. Gnome.eject_from_tent), затем уходит в FOLLOWING_CARAVAN
+## (за башней). К другим палаткам кикнутые гномы не возвращаются.
 ##
-## Reference impulse_speed: 30 (slam_force, базовый удар) → urоn ~= 18.
-## На скелетных hp=20 это 90% шанс ваншота с rand 0.5..1.5 (диапазон 9..27).
-func _eject_in_tent_gnomes(impact_speed: float) -> void:
+## `max_count`: максимум гномов за один вызов. -1 → выпустить всех оставшихся
+## (используется в _destroy, когда палатку разнесли). Положительное значение
+## ограничивает порцию (1-2 гнома за удар в _on_body_entered).
+func _eject_in_tent_gnomes(max_count: int) -> void:
 	var camp := get_parent() as Camp
 	if camp == null:
 		return
-	var reference_speed: float = 30.0
-	var damage_scale: float = clampf(impact_speed / reference_speed, 0.2, 2.0)
+	var ejected: int = 0
 	for g in camp.get_gnomes():
+		if max_count >= 0 and ejected >= max_count:
+			break
 		if not is_instance_valid(g):
 			continue
 		if g.get_home_tent() != self:
 			continue
 		if not g.is_home():
 			continue
-		var damage: float = eject_base_damage * damage_scale * randf_range(0.5, 1.5)
-		g.eject_from_tent(damage, camp)
+		g.eject_from_tent()
+		ejected += 1
