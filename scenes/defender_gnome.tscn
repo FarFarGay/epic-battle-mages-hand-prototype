@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/defender_gnome.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/arrow.tscn" id="2"]
@@ -10,6 +10,13 @@ height = 0.7
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_defender"]
 radius = 0.25
 height = 0.7
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_facing"]
+albedo_color = Color(0.08, 0.08, 0.08, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_facing"]
+material = SubResource("StandardMaterial3D_facing")
+size = Vector3(0.15, 0.15, 0.3)
 
 [node name="DefenderGnome" type="CharacterBody3D"]
 collision_layer = 256
@@ -23,4 +30,9 @@ shape = SubResource("CapsuleShape3D_defender")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 mesh = SubResource("CapsuleMesh_defender")
+cast_shadow = 0
+
+[node name="FacingIndicator" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -0.3)
+mesh = SubResource("BoxMesh_facing")
 cast_shadow = 0

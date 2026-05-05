@@ -876,7 +876,13 @@ func _perform_strike(_target: Node3D) -> void:
 		return
 	# Урон — до выпада, чтобы логически «удар попал», даже если bounce-off
 	# отбросит скелета на следующем кадре.
-	Damageable.try_damage(active, attack_damage)
+	var hit: bool = Damageable.try_damage(active, attack_damage)
+	# Alarm-сигнал: только если удар реально прошёл (не по freed/не damageable),
+	# и жертва — палатка или мирный гном. Defender'ы по альму не триггерят
+	# (см. сигнатуру в EventBus). Фильтр по типу здесь дёшев и упрощает
+	# подписчиков — им не нужно отсеивать «бьют скелета об скелета» и пр.
+	if hit and (active is CampPart or (active is Gnome and not active is DefenderGnome)):
+		EventBus.skeleton_attacked_camp.emit(self, active, active.global_position)
 	_do_lunge(active)
 
 

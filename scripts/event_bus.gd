@@ -40,6 +40,14 @@ signal camp_part_destroyed(part: Node3D)
 signal gnome_damaged(gnome: Node3D, amount: float)
 signal gnome_destroyed(gnome: Node3D)
 
+# --- Camp alarm: скелет бьёт по «мирному» лагерю (палатка / гном-собиратель) ---
+## Эмитится из Skeleton._perform_strike, когда скелет наносит урон CampPart
+## или НЕ-DefenderGnome'у. DefenderGnome подписан и использует attacker как
+## приоритетную цель (override конуса зрения) на период тревоги. Defender,
+## получающий урон, alarm НЕ триггерит — иначе лучник, по которому уже
+## стреляют, сам бы развернулся в свой обстрел.
+signal skeleton_attacked_camp(attacker: Node3D, victim: Node3D, position: Vector3)
+
 # --- Modules / mount slots ---
 signal module_mounted(module: Node, slot: Node)
 signal module_unmounted(module: Node, slot: Node)
