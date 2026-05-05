@@ -58,6 +58,25 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 ## и гномов вокруг костра).
 const SKELETON_TARGET_GROUP := &"skeleton_target"
 
+## ID-константы апгрейдов отряда. Используются в has_upgrade() и в каталоге
+## UPGRADE_CATALOG (для UI/модала).
+const UPGRADE_KITING := &"kiting"
+const UPGRADE_LONG_DRAW := &"long_draw"
+
+## Каталог апгрейдов отряда — id → отображаемые поля. UpgradeModal читает
+## name/description чтобы построить карточки. Эффекты применяются на стороне
+## DefenderGnome через has_upgrade(id) — тут только метаданные.
+const UPGRADE_CATALOG: Dictionary = {
+	UPGRADE_KITING: {
+		"name": "Манёвр уклонения",
+		"description": "Лучники стреляют на ходу и пятятся от близких скелетов, удерживая дистанцию.",
+	},
+	UPGRADE_LONG_DRAW: {
+		"name": "Усиленное натяжение",
+		"description": "Дальность стрельбы +5 метров. Лучники открывают огонь раньше.",
+	},
+}
+
 
 @export_group("POI deploy gate")
 ## Если true — деплой возможен ТОЛЬКО когда башня в радиусе safe_radius
@@ -128,6 +147,25 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 ## Если null — защитники не спавнятся, на их слоты подставятся обычные гномы.
 @export var defender_scene: PackedScene
 
+@export_group("Squad XP / upgrades")
+## Сколько XP отряд получает за каждого убитого скелета. Засчитывается
+## стрелку как «kill credit» (стрела хранит ссылку на defender'а, проверяет
+## hp_before>0 → hp_after≤0 на попадании).
+@export var squad_xp_per_kill: int = 10
+## Кривая порогов уровней. squad_level_xp_curve[N] = XP, нужный для уровня N+1.
+## Дойдя до индекса >= size — больше уровней не дают (всё, апгрейды кончились).
+## Дефолт «5×geometric» — 50, 120, 250, 500, 1000: к концу 1900 XP = 190 убийств
+## по 10 XP, что соответствует ~10-15 минутам активного боя.
+@export var squad_level_xp_curve: Array[int] = [50, 120, 250, 500, 1000]
+## Дальность стрельбы +N метров для апгрейда long_draw. Прибавляется к
+## attack_radius защитника через DefenderGnome.effective_attack_radius().
+@export var upgrade_long_draw_bonus: float = 5.0
+## Дистанция, на которой kiting-апгрейд переходит в режим «пятиться» —
+## близкий враг → defender отступает спиной, продолжая стрелять. Дальше
+## порога — обычный stand-and-shoot.
+@export var kite_threshold_distance: float = 6.0
+@export_group("")
+
 @export_group("")
 @export var debug_log: bool = true
 
@@ -158,6 +196,19 @@ var _gnomes: Array[Gnome] = []
 ## Gnome.enter_following_caravan, снимаются на death через unregister.
 ## Используется в get_chain_target_for_follower.
 var _caravan_followers: Array[Gnome] = []
+## XP отряда защитников. Накапливается через credit_kill() — Arrow на лет.
+## hit'е стрелка-DefenderGnome'а проверяет «убил ли» и зовёт _camp.credit_kill().
+var _squad_xp: int = 0
+## Текущий уровень отряда. Считается по squad_level_xp_curve: пока _squad_xp
+## дотягивает до следующего порога — _squad_level++ + emit squad_leveled_up.
+var _squad_level: int = 0
+## Сколько уровней «висит» в очереди на выбор апгрейда. Игрок может догнать
+## уровни быстрее чем закрыть модал — тогда модал откроется снова после grant.
+var _pending_upgrade_choices: int = 0
+## Активные апгрейды отряда. DefenderGnome читает has_upgrade(id) на каждом
+## тике, эффекты применяются динамически (новые защитники после смерти/
+## reset_population автоматически в курсе).
+var _active_upgrades: Array[StringName] = []
 ## Центральный mount-slot для модулей (turret и т. д.). В фазе CARAVAN он
 ## выключен и невидим — «центра лагеря» не существует. На развёртке слот
 ## переезжает в anchor и активируется; на свёртке — выключается, что
@@ -174,7 +225,13 @@ var _was_holding_stationary: bool = false
 var _was_out_of_range: bool = false
 
 
+## Группа для UpgradeModal (autoload). Модал на squad_leveled_up ищет Camp
+## через get_first_node_in_group('camp') — нужен один публичный handle.
+const CAMP_GROUP := &"camp"
+
+
 func _ready() -> void:
+	add_to_group(CAMP_GROUP)
 	if not target_path.is_empty():
 		_tower = get_node_or_null(target_path) as Node3D
 	if not _tower and not start_deployed:
@@ -596,6 +653,78 @@ func has_alive_parts() -> bool:
 		if is_instance_valid(part):
 			return true
 	return false
+
+
+## --- Squad XP / upgrades ---
+
+## Кредит за убитого скелета. Зовётся из DefenderGnome.on_kill_credit
+## после летального попадания стрелы (hp_before > 0 → hp_after ≤ 0).
+## Накручивает _squad_xp, проверяет уровни, эмитит сигналы.
+##
+## `at_position` — мировая координата убитого (для popup'а «+N» над трупом).
+## Если позиция не нужна — передавай Vector3.ZERO, popup просто не имеет
+## точки спавна (визуализатор сам решит как обработать).
+##
+## Идемпотентность по «уровень за один XP-инкремент»: while-цикл — на случай
+## большого XP-bonus'а (сейчас бонусов нет, но защищаемся на будущее).
+func credit_kill(at_position: Vector3 = Vector3.ZERO) -> void:
+	_squad_xp += squad_xp_per_kill
+	# Popup-сигнал ПЕРВЫМ — слушатели всплывашки получают сырое значение
+	# инкремента, ещё до bar-обновления.
+	EventBus.squad_xp_gained_at.emit(squad_xp_per_kill, at_position)
+	EventBus.squad_xp_changed.emit(_squad_xp, _squad_level)
+	while _squad_level < squad_level_xp_curve.size() and _squad_xp >= squad_level_xp_curve[_squad_level]:
+		_squad_level += 1
+		_pending_upgrade_choices += 1
+		if debug_log and LogConfig.master_enabled:
+			print("[Camp:Squad] уровень %d достигнут (XP=%d, в очереди выбор: %d)" % [_squad_level, _squad_xp, _pending_upgrade_choices])
+		EventBus.squad_leveled_up.emit(_squad_level)
+
+
+## True если отряд получил указанный апгрейд. Используется DefenderGnome'ом
+## для гейтинга поведения (kiting, long_draw — см. UPGRADE_CATALOG).
+func has_upgrade(id: StringName) -> bool:
+	return _active_upgrades.has(id)
+
+
+## Игрок выбрал апгрейд из модала. Идемпотентно: повторный grant того же id
+## не дублирует. Уменьшает счётчик ожидающих выборов; если ещё есть pending
+## уровни без выбора — модал должен подхватить и показаться снова.
+func grant_upgrade(id: StringName) -> void:
+	if has_upgrade(id):
+		return
+	if not UPGRADE_CATALOG.has(id):
+		push_warning("Camp.grant_upgrade: неизвестный id %s" % id)
+		return
+	_active_upgrades.append(id)
+	_pending_upgrade_choices = max(0, _pending_upgrade_choices - 1)
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp:Squad] апгрейд %s применён" % id)
+	EventBus.squad_upgrade_granted.emit(id)
+
+
+## Список апгрейдов, ещё не выбранных отрядом. Модал использует чтобы
+## показать карточки (берёт первые 2 случайных из этого списка).
+func available_upgrades() -> Array[StringName]:
+	var result: Array[StringName] = []
+	for id in UPGRADE_CATALOG.keys():
+		if not has_upgrade(id):
+			result.append(id)
+	return result
+
+
+## Сколько уровней висят в очереди на выбор апгрейда (модал ещё не закрыл
+## их). UpgradeModal читает чтобы решить «открываться повторно?».
+func get_pending_upgrade_choices() -> int:
+	return _pending_upgrade_choices
+
+
+func get_squad_xp() -> int:
+	return _squad_xp
+
+
+func get_squad_level() -> int:
+	return _squad_level
 
 
 ## Воскрешает гномов лагеря: вычищает оставшихся, заспавнивает новых на

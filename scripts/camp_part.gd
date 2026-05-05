@@ -38,8 +38,8 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 @export var gnomes_per_tent: int = 7
 
 ## Сколько из gnomes_per_tent — защитники-лучники (DefenderGnome).
-## Остальные — собиратели (Gnome). Дефолт 7 жителей: 3 защитника + 4 собирателя.
-@export var defenders_per_tent: int = 3
+## Остальные — собиратели (Gnome). Дефолт 7 жителей: 1 защитник + 6 собирателей.
+@export var defenders_per_tent: int = 1
 
 @export_group("Tear-off (физический отрыв от каравана)")
 ## Множитель импульса при apply_push. Pushable.try_push передаёт желаемый

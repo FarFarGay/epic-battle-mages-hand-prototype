@@ -48,6 +48,23 @@ signal gnome_destroyed(gnome: Node3D)
 ## стреляют, сам бы развернулся в свой обстрел.
 signal skeleton_attacked_camp(attacker: Node3D, victim: Node3D, position: Vector3)
 
+# --- Defender squad: общий опыт отряда лучников + апгрейды ---
+## XP отряда изменился (накапливается за убийства скелетов). HUD/UI слушает
+## для отображения шкалы прогресса.
+signal squad_xp_changed(xp: int, level: int)
+## Отряд получил новый уровень. UpgradeModal слушает и показывает игроку
+## выбор улучшения. Параметр — новый уровень (1, 2, 3, ...).
+signal squad_leveled_up(level: int)
+## Игрок выбрал апгрейд из модала. Все DefenderGnome нашего лагеря читают
+## Camp.has_upgrade(id) на каждом тике — отдельных переподписок не нужно.
+## Сигнал нужен HUD'у для индикации «активные апгрейды».
+signal squad_upgrade_granted(upgrade_id: StringName)
+## XP-инкремент с привязкой к мировой точке (позиция убитого скелета).
+## Используется визуальным feedback'ом (всплывающий «+10» над трупом).
+## Идёт ПЕРЕД squad_xp_changed — слушатели popup'а получают свежий amount,
+## слушатели бара — итоговый XP/level.
+signal squad_xp_gained_at(amount: int, world_position: Vector3)
+
 # --- Modules / mount slots ---
 signal module_mounted(module: Node, slot: Node)
 signal module_unmounted(module: Node, slot: Node)

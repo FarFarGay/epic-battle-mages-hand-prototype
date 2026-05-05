@@ -1161,6 +1161,34 @@ func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool
 
 **Внешние зависимости:** Tower через `target_path` (читается только `global_position`). Тип `Gnome` (для `_gnomes` массива и API). Тип `ResourcePile` (для сигнатуры `is_pile_claimed`). `Layers.TERRAIN` для raycast'а пола под палатками.
 
+#### Squad XP и апгрейды отряда (этап 47)
+
+Camp накапливает общий **squad XP** и уровни отряда защитников. Apgreids читаются защитниками через `has_upgrade(id)`.
+
+**Состояние:**
+- `_squad_xp: int` — общий XP отряда. Накапливается через `credit_kill(at_position)` из `DefenderGnome.on_kill_credit` после летального arrow-попадания.
+- `_squad_level: int` — текущий уровень. Считается по `squad_level_xp_curve: Array[int] = [50, 120, 250, 500, 1000]`. Дойдя до порога — `_squad_level++ + _pending_upgrade_choices++ + EventBus.squad_leveled_up.emit(level)`.
+- `_active_upgrades: Array[StringName]` — выданные апгрейды. Защитники читают на каждом тике через `has_upgrade(id)` — новые после respawn'а автоматически в курсе.
+- `_pending_upgrade_choices: int` — счётчик уровней в очереди на выбор апгрейда. UpgradeModal закрывает их по одному.
+
+**Параметры:**
+- `squad_xp_per_kill: int = 10` — XP за скелета.
+- `upgrade_long_draw_bonus: float = 5.0` — +5м к `attack_radius` при апгрейде long_draw.
+- `kite_threshold_distance: float = 6.0` — порог для kiting-апгрейда: ближе → защитник пятится.
+
+**API:**
+- `credit_kill(at_position: Vector3)` — +`squad_xp_per_kill` в `_squad_xp`. Эмитит `EventBus.squad_xp_gained_at(amount, position)` (для popup'а), затем `squad_xp_changed`. While-цикл проверяет уровни, эмитит `squad_leveled_up`.
+- `has_upgrade(id) -> bool`, `grant_upgrade(id)` — для UpgradeModal'а.
+- `available_upgrades() -> Array[StringName]` — id'шки, ещё не выданные. Модал берёт первые 2 случайных.
+
+**Каталог апгрейдов** — `UPGRADE_CATALOG: Dictionary` (id → name + description):
+- `UPGRADE_KITING` — "Манёвр уклонения": лучники стреляют на ходу и пятятся от близких скелетов.
+- `UPGRADE_LONG_DRAW` — "Усиленное натяжение": дальность стрельбы +5м.
+
+**Группа `camp`:** Camp в `_ready` добавляется в группу `camp` через `add_to_group(CAMP_GROUP)`. UpgradeModal находит лагерь через `get_first_node_in_group("camp")`.
+
+**Skeleton alarm на удар по лагерю** (этап 47): `Skeleton._perform_strike` после успешного `try_damage` по CampPart или НЕ-DefenderGnome'у эмитит `EventBus.skeleton_attacked_camp(self, victim, position)`. Defender'ы своего лагеря (фильтр в хендлере) разворачиваются на attacker'а на 5с (override конуса).
+
 ---
 
 ### 5.8 Gnome — `scenes/gnome.tscn`, `scripts/gnome.gd`
@@ -1241,57 +1269,86 @@ enum State {
 
 **Тип корня:** `CharacterBody3D` с `class_name DefenderGnome extends Gnome`.
 
-**Назначение:** гном-защитник. Спавнится `Camp` по `defenders_per_tent` штук на каждую палатку (по дефолту 3 из 7 жителей; остальные 4 — обычные собиратели). **Патрулирует по внешнему контуру лагеря** (окружность `patrol_radius=6м` вокруг `Camp.deploy_anchor`, за палатками которые стоят на `deploy_radius=4м`) — выбирает случайные точки на этом радиусе, ходит между ними. При обнаружении скелета в `attack_radius` — **останавливается**, целится по cooldown'у, стреляет; пока цель в зоне — стоит. Когда цель ушла или умерла — продолжает патруль.
+**Назначение:** гном-защитник-лучник. Спавнится `Camp` по `defenders_per_tent` штук на каждую палатку (дефолт 1 из 7 жителей; остальные 6 — обычные собиратели). В отличие от собирателей, **никогда не сидит в палатке** — на спавне сразу выходит в режим escort, в развёрнутом лагере патрулирует периметр. Видит угрозы через **конус зрения** (не sphere), реагирует на **alarm-канал** удара по лагерю, прокачивает **squad XP** убийствами.
 
 **Что наследуется без изменений:**
-- Весь `_physics_process`: IN_TENT-приклейка, LOD-чек, гравитация, knockback, move_and_slide vs cold-mode (LOD).
-- Привязка к палатке через `setup(camp, home_tent)`.
-- `take_damage` / `apply_push` / `_knockback`-логика. HP тот же (20).
-- `request_return` (Camp вызывает на свёртку, у статических лагерей не вызывается, но контракт сохранён).
+- Базовый `_physics_process` (LOD, gravity, knockback, move_and_slide vs cold-mode).
+- `take_damage` / `apply_push` / `_knockback`. HP то же (20).
 - Shatter-эффект на смерть.
-- Цвет `gnome_color` через `_apply_visual` — в `defender_gnome.tscn` его override на красный (`Color(0.85, 0.2, 0.2)`).
-- LOD (cold-mode при удалении от камеры) — автоматически.
+- Цвет `gnome_color` через `_apply_visual` — в `defender_gnome.tscn` override на красный.
 
 **Что переопределяется:**
-- `_active_tick(delta)` — виртуальный hook базового Gnome. У базы — match _state по `_tick_searching/_tick_commuting_*`. У защитника — `_defender_combat_tick(delta)` для всех «активных» состояний (SEARCHING / COMMUTING_* / IDLE_NEAR_BASE), `_tick_returning()` для RETURNING_TO_TENT, **`_tick_following_caravan()` для FOLLOWING_CARAVAN** (этап 45). Бездомный лучник встаёт в общую колонну за караваном — combat-режим выключен (вокруг бывшей палатки патрулировать нет смысла), идёт к chain-слоту наравне с собирателями.
+- `_enter_in_tent()` → перенаправляет в `enter_following_caravan()`. Защитник не сидит в палатке: и на спавне, и при возврате домой сразу идёт в escort.
+- `enter_following_caravan()` → переключает state в FOLLOWING_CARAVAN, но **не регистрируется** в `_caravan_followers` (orphan-end-of-column не для него).
+- `_tick_following_caravan()` → escort: цель = `_compute_escort_target` (палатка + perpendicular × `escort_lateral_distance × ±1`). Если палатка уничтожена — fallback на башню. Sprint-catchup как у обычного гнома.
+- `enter_deployed()` → super + ставит `_facing` наружу от лагеря, чтобы первый кадр сканировал в правильную сторону.
+- `_active_tick(delta)` — четыре ветки: RETURNING_TO_TENT (super), FOLLOWING_CARAVAN (escort + parallel `_caravan_combat_tick`), DEPLOYED-states (`_defender_combat_tick`).
 
-**Боевые экспорты:**
-- `attack_radius: float = 22.5` — радиус сканирования скелетов через `PhysicsShapeQuery` со сферой. ×1.5 от исходного 15м.
-- `attack_cooldown_min/max: float = 1.0 / 2.0` — рандомный интервал между выстрелами.
-- `arrow_damage_min/max: float = 25.0 / 40.0` — `randf_range`. На `skeleton.hp = 30` это 1-shot kill в ~66% случаев (когда damage > 30) и 2-shot в остальных.
-- `arrow_speed: float = 22.0`, `arrow_spawn_offset: Vector3 = (0, 0.6, 0)` — над головой, чтобы стрела не задела свой же корпус.
-- `arrow_scene: PackedScene` — переиспользуется `arrow.tscn` от OctagonTurret.
-- `projectiles_root_path: NodePath` — куда складывать спавн стрел (фолбэк на `current_scene`).
+**Конус зрения** (этап 47):
+- `cone_vision_radius: float = 35.0` — радиус ВИДИМОСТИ (больше attack_radius=22.5 — лучник видит дальше чем стреляет).
+- `vision_half_angle_deg: float = 45.0` — полу-угол конуса (90° FOV total). Сужено с 60° чтобы оставить место апгрейду «сторожевая вышка».
+- `_facing: Vector3` — текущее направление взгляда (горизонтальный unit-vector). Тело физически разворачивается через `rotation.y = atan2(-_facing.x, -_facing.z)`. Видимый игроку индикатор — `FacingIndicator` (тёмный «нос» на капсуле).
+- `_is_in_cone(target_pos)`: dot(_facing, dir_to_target) >= cos(half_angle). Прекомпьют `_vision_cone_cos` в `_ready`.
+- `_scan_cone()` — PhysicsShapeQuery со сферой `cone_vision_radius` (broadphase) → фильтр по углу через `_is_in_cone` → выбор «лучшей» цели по формуле `score = dist × (1 + aimers × target_share_penalty)`. Это распределение огня (см. ниже).
 
-**Точность и прокачка:**
-- `base_inaccuracy_radius: float = 1.5` — стартовый горизонтальный разброс прицела (метры). Стрела целится в круг этого радиуса вокруг центра цели — uniform по площади через `sqrt(randf())`. На `skeleton.capsule_radius=0.4` шанс попасть в тело новичка ~7%.
-- `experience_half_shots: int = 100` — после стольких выстрелов фактический разброс падает вдвое от базового. Логарифмическая кривая `current = base / (1 + shots/half)`:
-  - 0 выстрелов: 1.50м (новичок, ~7% точности)
-  - 100: 0.75м (середина, ~28%)
-  - 500: 0.25м (ветеран, стабильно цепляет тело)
-  - 1000: 0.14м (снайпер, почти всегда)
-- `_shots_fired: int` — per-инстанс счётчик опыта. Не сохраняется между сессиями. На P-рестарт через `Camp.reset_population()` все защитники пересоздаются с нуля — ветераны теряются.
-- Публичный API: `current_inaccuracy_radius() -> float`, `get_shots_fired() -> int` — для будущего HUD-индикатора уровня и прокачки.
+**Alarm-канал** (этап 47):
+- `EventBus.skeleton_attacked_camp(attacker, victim, position)` — emit'ится из `Skeleton._perform_strike` после удара по CampPart или НЕ-DefenderGnome (мирному гному).
+- DefenderGnome подписан в `_ready`. Хендлер `_on_skeleton_attacked_camp` фильтрует «наш ли лагерь» (CampPart-родитель == _camp, или Gnome ∈ _camp.get_gnomes()), ставит `_alarm_target = attacker`, `_alarm_until_msec = now + alarm_persist_sec×1000`.
+- В `_resolve_target` alarm имеет приоритет над cone-сканом — конус игнорируется, лучник разворачивается на attacker даже из-за спины. Через 5с без ре-триггера alarm протухает.
+- `alarm_persist_sec: float = 5.0` (export).
 
-**Геймплей-стимулы:** игроку выгодно держать защитников живыми — старики стреляют 9/10, новички 1/10. После убийств (волной разрушили) новые с нуля. В будущем при возврате каравана-режима ветераны путешествуют со своим опытом (он per-instance, без привязки к Camp).
+**Apply при перцепции** — единый путь `_resolve_target(delta) -> Node3D`:
+1. Cleanup freed `_cached_target` (жёсткий `is_instance_valid` cleanup в начале — без него typed Node3D-параметр в `_log_target_change` падает на freed-инстансе с ошибкой Godot 4.6 «previously freed not subclass»).
+2. Alarm-target если активный → `_cached_target = alarm`, throttle-сброс.
+3. Иначе — stale-чек cone-цели (вне радиуса/конуса), рескан раз в `TARGET_SCAN_INTERVAL=0.25с` или при стейл-стимулом (была цель — теперь null).
+4. Вызывается из обоих боевых тиков (DEPLOYED+CARAVAN).
 
-**Патрульные экспорты:**
-- `patrol_radius: float = 12.0` — окружность вокруг `Camp.deploy_anchor`, по которой защитник ходит. Чуть больше `Camp.deploy_radius=8` чтобы быть **за** палатками.
-- `patrol_speed: float = 1.0` — медленный шаг стража. Меньше `Gnome.move_speed=1.6` (та используется в `_tick_returning` при возврате в палатку).
-- `patrol_arrival: float = 0.6` — порог «дошёл до точки», после которого выбирается новая случайная.
+**Боевая модель:**
+- `attack_radius: float = 22.5` — дистанция гарантированного попадания (читается через `effective_attack_radius()`, +5м с апгрейдом long_draw).
+- `attack_cooldown_min/max = 1.0 / 2.0`.
+- `arrow_damage_min/max = 25 / 40`. На skeleton.hp=30 1-shot ~66%, 2-shot 33%.
+- `arrow_speed = 22`, `arrow_spawn_offset = (0, 0.6, 0)`.
+- На `_fire_at(target)` лучник **передаёт ссылку на себя в стрелу** через `arrow.set_shooter(self)` — для kill-credit (squad XP).
 
-**Маска поиска целей:** `ENEMIES | COLD_ENEMY = 144`. Исторически — чтобы защитники видели и горячих, и cold-mode скелетов; в текущей реализации FAR-скелеты имеют `collision_layer=0` (исключены из broad-phase для перфоманса), бит COLD_ENEMY в маске избыточен. Но это OK на практике: `attack_radius=22.5м` ≪ `lod_near_distance=25м`, все цели защитника — NEAR/MID, FAR-скелетов в зоне обстрела не бывает.
+**Боевой тик в DEPLOYED** (`_defender_combat_tick`):
+- Цель в `effective_attack_radius()` → стой, стреляй. С апгрейдом kiting и `dist < kite_threshold_distance` — пятимся (-_facing × patrol_speed) продолжая стрелять.
+- Цель в конусе, но дальше attack_radius → sector-патруль: точка на окружности `patrol_radius=12м` от `deploy_anchor`, под углом = direction от лагеря к цели. Идёт туда; войдя в attack range, переключится автоматически.
+- Без цели → случайный патруль по периметру + cone-fallback `_facing` в направление движения, иначе outward от лагеря.
+- В attack-ветке всегда добавляется **сепарация** (см. ниже) — лучники не стоят «один на одном».
 
-**Explicit radius-фильтр:** после `intersect_shape` ручной чек `if d > attack_radius: continue` — Godot 4.6 PhysicsShapeQuery подмешивает результаты AABB-broadphase (тела вне sphere). Без этого фильтра защитники видели цели на 50м+ при `attack_radius=22.5` (наблюдалось в логе). Тот же фикс в `OctagonTurret._find_target`.
+**Боевой тик в CARAVAN** (`_caravan_combat_tick`):
+- Параллельно с escort-движением: тот же `_resolve_target`, при цели в attack_radius — стрельба НЕ останавливаясь (велосити управляется escort-логикой).
+- Sector-патруль здесь не применяется (anchor stale, колонна ведёт).
 
-**Combat-цикл:**
-1. Каждый тик `_defender_combat_tick(delta)` сначала **проверяет кэш цели** (`_cached_target`). PhysicsShapeQuery дорогой; на 54 защитниках при 60fps был бы убийцей fps (на стресс-тесте с 340 скелетами получали 3fps — фикс). Используется кэш + throttle `TARGET_SCAN_INTERVAL=0.25с`. Принудительный пересмотр если цель умерла, ушла за `attack_radius` или таймер истёк. Старт `_target_scan_timer` рандомизирован в `_ready` — 54 защитника не сканируют в одном кадре.
-2. **Если кэш-цель есть** — `velocity.x/z = 0` (стоп), тикает `_attack_timer`. По истечении — `_fire_at(_cached_target)` (тот же паттерн что у `OctagonTurret._fire_at`: спавн `arrow.tscn` в `_projectiles_root`, вызов `arrow.setup(spawn, target.global_position)` с `damage = randf_range(min, max)`). Новый `_attack_timer = randf_range(cooldown_min, cooldown_max)`. Пока цель в зоне — лучник стоит и периодически стреляет.
-3. **Если цели нет** — `_attack_timer` тикает в фоне (готовность к первому выстрелу при появлении цели сразу), вызывается `_patrol_tick()`: если `_patrol_target` достигнут или ещё не выбран — `_pick_patrol_point(anchor)` ставит новую случайную точку на окружности `patrol_radius` вокруг `Camp.deploy_anchor`. Шаг к цели через `_step_toward(target, patrol_speed)` — локальный аналог `Gnome._move_toward_xz` с произвольной скоростью.
+**Точность и прокачка (per-instance):**
+- `base_inaccuracy_radius = 1.5`, `experience_half_shots = 100` — кривая `base / (1 + shots/half)`. 0 выстрелов: 1.5м, 100: 0.75м, 500: 0.25м, 1000: 0.14м.
+- `_shots_fired` per-инстанс, не сохраняется. На смерть теряется.
+- Геттер `current_inaccuracy_radius()`, `get_shots_fired()`.
 
-**Архитектура:** `Gnome` — базовый класс с виртуальным hook'ом `_active_tick(delta)`. `DefenderGnome` переопределяет только этот hook. Весь structural скелет (IN_TENT, LOD-cold/hot, gravity, knockback, move_and_slide) живёт в базе один раз. При появлении третьего типа гнома (целитель, инженер) добавляется ещё один override без правки базы.
+**Сепарация и распределение огня** (этап 47):
+- `separation_radius = 1.5`, `separation_strength = 0.5` (× patrol_speed) — `_compute_separation_force()` суммирует векторы отталкивания от защитников в радиусе с linear falloff. Прибавляется к velocity в attack-ветке. Защитник стоит/пятится, но дрейфует вбок если сосед прижался. `_facing` не меняется.
+- `target_share_penalty = 0.5` — в `_scan_cone` цель с N уже-стрелков получает score × (1 + N×0.5). Близкая цель с 1 стрелком сравняется с целью на 50% дальше без стрелков. Раскидывает огонь.
+- `DEFENDER_GROUP = "defender"` — все живые DefenderGnome (для итерации в обоих механиках).
 
-**Зависимости:** `Arrow` (для стрельбы), физик-сервер (PhysicsShapeQuery), `Damageable.is_damageable`. Не знает про конкретные типы скелетов — только про `Damageable`-контракт.
+**Escort (caravan-режим)** (этап 46):
+- `escort_lateral_distance = 2.0` — метров вбок от палатки.
+- `_escort_lateral_sign: ±1.0` рандомизирован в `_ready` per-инстанс — несколько защитников распределяются по обоим бортам.
+- `_compute_escort_target()`: `tent.position + perpendicular × lateral × sign`. Forward-вектор каравана = (tower − tent).normalized; perpendicular = 90° rotation в плоскости XZ.
+- Если палатка убита и Camp не нашёл новой — fallback на башню.
+
+**Kill credit (squad XP)**:
+- Arrow на летальном попадании (hp_before > 0 → hp_after ≤ 0) вызывает `_shooter.on_kill_credit(victim)`.
+- `on_kill_credit(victim)` → `_camp.credit_kill(victim.global_position)` — XP начисляется в общий пул отряда (см. секцию Squad XP).
+
+**Squad-апгрейды** (читаются через `_camp.has_upgrade(id)`):
+- `Camp.UPGRADE_KITING` — пятиться при близком враге (см. боевой тик).
+- `Camp.UPGRADE_LONG_DRAW` — `effective_attack_radius() = attack_radius + camp.upgrade_long_draw_bonus`.
+
+**Маска поиска целей:** `ENEMIES | COLD_ENEMY = 144` (исторически, чтобы видеть и cold-LOD скелетов).
+
+**Explicit radius-фильтр после intersect_shape:** Godot 4.6 PhysicsShapeQuery подмешивает AABB-broadphase результаты вне сферы. Ручной `if d > cone_vision_radius: continue` без этого видели цели на 50м+.
+
+**Архитектура:** `Gnome` — базовый класс с виртуальным `_active_tick(delta)`. DefenderGnome переопределяет hook + ряд lifecycle-методов (`_enter_in_tent`, `enter_following_caravan`, `_tick_following_caravan`, `enter_deployed`). Весь structural скелет (IN_TENT-приклейка для не-defender'ов, LOD, gravity, knockback) живёт в базе один раз.
 
 ---
 
@@ -2087,6 +2144,42 @@ func _refresh_visual() -> void:
 
     **(н) Defender-gnome FOLLOWING_CARAVAN-ветка.** Без неё лучник, выкинутый из палатки, попадал в `_defender_combat_tick` → `_patrol_tick` → патрулировал вокруг `_camp.deploy_anchor` (позиция бывшей палатки) и не уходил с караваном. Добавил явную ветку в `match _state` чтобы передать управление в `_tick_following_caravan` (наследуется от Gnome).
 
+46. **Защитники: конус зрения + alarm-канал + escort-режим в каравне.** Перцепция защитников переписана со sphere-сканера на cone-vision + общий alarm-bus. Дизайнер: «лучник должен иметь слабое место — фланги», + хочется триггерить реакцию когда враг бьёт лагерь.
+
+    **(а) Cone vision вместо 360° sphere.** `cone_vision_radius=35м` (видит дальше) + `vision_half_angle_deg=60°` (этап 47 → сужено до 45°). PhysicsShapeQuery со сферой как broadphase, потом per-target dot-фильтр через `_is_in_cone(pos)`. Тело физически разворачивается через `rotation.y = atan2(-_facing.x, -_facing.z)`. Visual: добавил `FacingIndicator` (тёмный нос на красной капсуле) — игроку видно куда смотрит страж.
+
+    **(б) Зоны реакции по дистанции до защитника.** Цель в `attack_radius` → стой/стреляй; цель в конусе, но дальше → sector-патруль (точка на `patrol_radius` в направлении угрозы от лагеря). Это даёт «защитник видит далёкого — идёт на сторону», без ухода далеко от позиций.
+
+    **(в) Alarm через EventBus.** Новый сигнал `skeleton_attacked_camp(attacker, victim, position)` — `Skeleton._perform_strike` эмитит после успешного `try_damage` по CampPart или НЕ-DefenderGnome'у. DefenderGnome подписан, фильтрует «наш ли лагерь» (CampPart-родитель == _camp, или Gnome ∈ _camp.get_gnomes()), ставит attacker как `_alarm_target` на `alarm_persist_sec=5`. В `_resolve_target` alarm priority над cone-сканом — лучник разворачивается даже на скелета за спиной. Это даёт чёткую причину играть осторожно: если скелет проскользнул мимо конусов, alarm активируется только когда он начал бить.
+
+    **(г) Escort вместо IN_TENT.** Защитники больше не сидят в палатках. Override `_enter_in_tent` → `enter_following_caravan`. Override `_tick_following_caravan` идёт сбоку от своей палатки: target = `tent.position + perpendicular × escort_lateral_distance × ±1`. `_escort_lateral_sign` рандомизируется per-инстанс — несколько защитников распределяются по обоим бортам. В палатках теперь только мирные гномы. На спавне defender уже снаружи и работает.
+
+    **(д) Стрельба на ходу в caravan-режиме.** Параллельно с escort-движением `_caravan_combat_tick` использует тот же `_resolve_target`, при цели в attack_radius стреляет НЕ останавливая velocity. Sector-патруль здесь не вызывается (anchor лагеря в caravan stale, колонна ведёт). Бездомный лучник (палатка убита) идёт за башней как fallback.
+
+    **(е) Freed-safety паттерн.** Между физтиками `_cached_target` мог стать freed (скелет умер от чужой стрелы). Godot 4.6 на typed Node3D-параметре строго отвергает freed-инстанс с ошибкой «previously freed not subclass». Фикс: жёсткий `is_instance_valid` cleanup в начале `_resolve_target` — после него `_cached_target` либо null, либо живой. Также параметр-индикатор `had_prev: bool` (вместо передачи самого Node3D) в `_log_target_change` — типчек не падает.
+
+47. **Squad XP, апгрейды отряда + сепарация и распределение огня.** Дизайнер: лучники не должны кучковаться (визуально и по огню). Плюс хочется прокачку отряда с выбором.
+
+    **(а) Squad XP foundation.** Camp накапливает `_squad_xp` через `credit_kill(at_position)`. Кривая `squad_level_xp_curve = [50, 120, 250, 500, 1000]`. Arrow на летальном попадании (`hp_before > 0 → hp_after ≤ 0` через snapshot HP перед `try_damage`) вызывает `_shooter.on_kill_credit(victim)` — DefenderGnome форвардит в `_camp.credit_kill(victim.global_position)`. Сигналы EventBus: `squad_xp_gained_at` (popup), `squad_xp_changed` (HUD-bar), `squad_leveled_up` (модал + flash).
+
+    **(б) Каталог апгрейдов + UpgradeModal autoload.** `Camp.UPGRADE_CATALOG: Dictionary[StringName, Dictionary]` с полями `name`/`description`. Защитники читают через `_camp.has_upgrade(id)` на каждом тике — новые после respawn'а в курсе автоматически. UpgradeModal — autoload, CanvasLayer с программно-собранным UI (overlay + центрированный panel + 2 кнопки-карточки), `process_mode=ALWAYS` для работы при `paused=true`. На `squad_leveled_up` берёт 2 случайных из `available_upgrades`, открывается, на клике вызывает `grant_upgrade` + закрывается. Если `_pending_upgrade_choices > 0` (несколько уровней быстро) — открывается заново.
+
+    **(в) Два первых апгрейда:**
+    - **`UPGRADE_KITING`** ("Манёвр уклонения"): в DEPLOYED при цели в `attack_radius` И ближе `kite_threshold_distance=6м` — лучник пятится `-_facing × patrol_speed`, продолжая стрелять. Дальше 6м — обычный stand-and-shoot.
+    - **`UPGRADE_LONG_DRAW`** ("Усиленное натяжение"): `effective_attack_radius() = attack_radius + upgrade_long_draw_bonus(=5м)`. Используется и в DEPLOYED, и в caravan.
+
+    **(г) HUD squad row.** В `gameplay_hud.gd` программно собирается ряд: золотая иконка + Label «ур. N» + ProgressBar с overlay-Label «X/Y». Реактивно обновляется на `squad_xp_changed` (без таймера). На `squad_leveled_up` — `tween` modulate flash белым на 200мс. На максимальном уровне (curve исчерпана) — бар 100% + текст «MAX».
+
+    **(д) XP-popup `+10`.** `SquadXpPopup` (extends Label3D, билборд, fixed_size=false с `pixel_size=0.005, font_size=48` — текст ~0.24м высоты в мире, читается без перекрытия экрана). Поднимается на 0.8м/с, фадится последние 40% жизни (1с total). `SquadXpFx` autoload подписан на `squad_xp_gained_at`, спавнит popup в `current_scene` на переданной позиции.
+
+    **(е) Сепарация защитников.** В attack-ветке `_compute_separation_force()` суммирует векторы отталкивания от других DefenderGnome в `separation_radius=1.5м` с linear falloff. Прибавляется к velocity (стой/пятиться) — лучник дрейфует вбок если сосед прижался, не ломая `_facing`. Сила `separation_strength=0.5 × patrol_speed` — ~0.5 м/с при касании. Группа `defender` для итерации.
+
+    **(ж) Распределение огня.** В `_scan_cone` каждая цель получает `score = dist × (1 + aimers × target_share_penalty)`. `_count_aimers_on(target)` итерирует группу `defender`, считает у скольки `_cached_target == target`. С `target_share_penalty=0.5` близкая цель с 1 стрелком сравняется с целью на 50% дальше без стрелков. Лучники предпочитают распределяться, но не ломятся к далёкому.
+
+    **(з) Konсу сужено 60° → 45°.** В конце сессии чтобы оставить место апгрейду «сторожевая вышка» (план на завтра — пассивный +15° к конусу + +5м радиуса, 1 gatherer становится spotter'ом).
+
+    **(и) Меньше защитников.** `defenders_per_tent` 3 → 2 → 1 за две правки. На 4 палатки = 4 защитника + 24 собирателя.
+
 ### 7.3 Решённые ошибки
 
 | # | Ошибка | Причина | Исправление |
@@ -2166,6 +2259,11 @@ func _refresh_visual() -> void:
 | `module_mounted` | `(module: Node, slot: Node)` | `MountSlot._mount` |
 | `module_unmounted` | `(module: Node, slot: Node)` | `MountSlot._release_to_hand` / `_drop_mounted` |
 | `quest_advanced` | `(new_index: int)` | `QuestProgress.advance` (autoload) — эмит на каждое продвижение прогресса. Слушают QuestActor (перекрас) и потенциально HUD. |
+| `skeleton_attacked_camp` | `(attacker: Node3D, victim: Node3D, position: Vector3)` | `Skeleton._perform_strike` после успешного `try_damage` по CampPart или НЕ-DefenderGnome'у. Defender'ы своего лагеря используют как alarm-цель (override конуса). |
+| `squad_xp_changed` | `(xp: int, level: int)` | `Camp.credit_kill` после инкремента XP. HUD-бар (GameplayHud) слушает для обновления. |
+| `squad_leveled_up` | `(level: int)` | `Camp.credit_kill` при пересечении threshold'а. UpgradeModal слушает — открывает модал выбора апгрейда. GameplayHud — flash-tween бара. |
+| `squad_upgrade_granted` | `(upgrade_id: StringName)` | `Camp.grant_upgrade` после клика игрока в модале. Сейчас только для логирования / будущего HUD активных апгрейдов. |
+| `squad_xp_gained_at` | `(amount: int, world_position: Vector3)` | `Camp.credit_kill` ПЕРЕД `squad_xp_changed`. SquadXpFx autoload спавнит Label3D-popup «+10» в этой точке мира. |
 
 `ResourcePile.take_one` через шину **не эмитит** (декремент `units` пока не нужен наружу — счётчика ресурсов ещё нет). При появлении HUD-счётчика добавится отдельный сигнал — типизированный как `Node3D`, как и остальные.
 

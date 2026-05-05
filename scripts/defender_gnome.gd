@@ -21,10 +21,11 @@ extends Gnome
 ## скелета и отреагировать (пойти патрулировать сторону), но стрелять сможет
 ## только когда скелет войдёт в attack_radius.
 @export var cone_vision_radius: float = 35.0
-## Полу-угол конуса зрения в градусах. 60° = 120° FOV — широкий обзор стража.
-## Больше — почти круг (теряется смысл «откуда угроза»). Меньше — лучник
-## упускает фланги, угроза проходит мимо незамеченной.
-@export_range(15.0, 90.0) var vision_half_angle_deg: float = 60.0
+## Полу-угол конуса зрения в градусах. 45° = 90° FOV — лучник видит
+## впереди-перед-собой, фланги пропускает. Сужено с 60° чтобы реакция
+## ощущалась чуть медленнее (надо доворачиваться/патрулировать) и было
+## где апгрейдить через сторожевую вышку.
+@export_range(15.0, 90.0) var vision_half_angle_deg: float = 45.0
 @export_group("")
 
 @export_group("Defender combat")
@@ -98,6 +99,22 @@ extends Gnome
 @export var escort_arrival: float = 0.4
 @export_group("")
 
+@export_group("Defender separation")
+## Личное пространство: если другой защитник в этом радиусе — наш дрейфует
+## вбок, чтобы не стояли «один на одном». Меньше capsule-радиуса × 4 = тесная
+## группа кучкой; больше 3м = гипер-разреженный строй. 1.5м — две капсулы
+## раздвинуты с зазором 1м.
+@export var separation_radius: float = 1.5
+## Сила сепарации как доля patrol_speed. 0.5 = гентл-дрейф (0.5 м/с при
+## касании), не ломающий прицел. 1.0+ — суетливо и не читается. 0 = выкл.
+@export_range(0.0, 2.0) var separation_strength: float = 0.5
+## Штраф к «эффективной дистанции» цели за каждого уже-стреляющего по ней
+## защитника (для распределения огня в _scan_cone). 0.5 = «целью в N метров
+## с одним стрелком воспринимается как N×1.5 метра без стрелка». 0 = не
+## распределять (все огонь на ближайшего). 1.0+ = почти строгое 1-к-1.
+@export_range(0.0, 2.0) var target_share_penalty: float = 0.5
+@export_group("")
+
 @export_group("Defender alarm")
 ## Сколько секунд лучник держит alarm-цель после получения сигнала
 ## EventBus.skeleton_attacked_camp. Если за это время скелет не убит и не
@@ -111,6 +128,12 @@ extends Gnome
 ## ENEMIES + COLD_ENEMY = 144. Видим и горячих, и холодных скелетов.
 ## Используем литерал — `const` не может ссылаться на другой class const.
 const TARGET_MASK: int = 16 | 128
+
+## Группа всех живых DefenderGnome. Используется для:
+##  - сепарации позиций (не стоять в одной точке);
+##  - распределения целей (учитывать кто на кого уже стреляет).
+## Регистрация в _ready, удаление автоматическое на queue_free.
+const DEFENDER_GROUP := &"defender"
 
 ## Период между сканами цели через PhysicsShapeQuery. Без throttle'а 54
 ## защитника на карте делали бы 54×60 = 3240 sphere-query/сек, и на 340+
@@ -176,6 +199,8 @@ func _ready() -> void:
 	# Бросок монетки: левый борт vs правый. Несколько защитников одной палатки
 	# в среднем распределятся 50/50 (для 3 — может выйти 2:1, это OK).
 	_escort_lateral_sign = -1.0 if randf() < 0.5 else 1.0
+	# В группу для соседского-учёта: сепарация позиций + распределение целей.
+	add_to_group(DEFENDER_GROUP)
 
 
 ## Лагерь развернулся — защитник выходит из палатки. Базовый enter_deployed
@@ -329,10 +354,28 @@ func _defender_combat_tick(delta: float) -> void:
 		var dist: float = global_position.distance_to(target.global_position)
 		# Поворачиваемся к цели — даже если она пришла по alarm'у из-за спины.
 		_facing = _horizontal_dir_to(target.global_position)
-		if dist <= attack_radius:
-			# Близкая зона — стой, стреляй.
-			velocity.x = 0.0
-			velocity.z = 0.0
+		if dist <= effective_attack_radius():
+			# Близкая зона — стреляем. По умолчанию стоим неподвижно;
+			# с апгрейдом kiting и слишком близкой угрозой — пятимся спиной,
+			# продолжая стрелять (лучник держит дистанцию).
+			var kiting: bool = _camp != null and is_instance_valid(_camp) \
+				and _camp.has_upgrade(Camp.UPGRADE_KITING) \
+				and dist < _camp.kite_threshold_distance
+			if kiting:
+				# -_facing — вектор «от цели». patrol_speed как темп отступления:
+				# медленнее обычного движения, не суматошный «убегает в панике».
+				velocity.x = -_facing.x * patrol_speed
+				velocity.z = -_facing.z * patrol_speed
+			else:
+				velocity.x = 0.0
+				velocity.z = 0.0
+			# Сепарация: дрейф вбок если соседний защитник прижался ближе
+			# separation_radius. Прибавляется к base velocity (стой / kite),
+			# чтобы лучники не стояли «один на одном». _facing на цели не
+			# меняется — выстрелы идут в правильную сторону.
+			var sep: Vector3 = _compute_separation_force()
+			velocity.x += sep.x
+			velocity.z += sep.z
 			_attack_timer -= delta
 			if _attack_timer <= 0.0:
 				_fire_at(target)
@@ -374,7 +417,7 @@ func _caravan_combat_tick(delta: float) -> void:
 	if target != null and is_instance_valid(target):
 		_facing = _horizontal_dir_to(target.global_position)
 		var dist: float = global_position.distance_to(target.global_position)
-		if dist <= attack_radius:
+		if dist <= effective_attack_radius():
 			# Стреляем НЕ останавливаясь: velocity управляется super
 			# `_tick_following_caravan` (идём к chain-слоту), мы только
 			# тикаем cooldown и спавним стрелу.
@@ -543,12 +586,13 @@ func _step_toward(target: Vector3, speed: float) -> void:
 
 
 ## Cone-скан: PhysicsShapeQuery со сферой cone_vision_radius (broadphase),
-## потом фильтр по углу относительно _facing. Возвращает ближайшую цель
-## в конусе. Vision_radius > attack_radius — лучник видит дальше, чем
-## стреляет; цель за attack_radius уйдёт в дальнюю зону (sector-патруль).
+## потом фильтр по углу относительно _facing. Возвращает «лучшую» цель в
+## конусе с учётом распределения огня между защитниками — цель, по которой
+## уже стреляет N соседей, считается «дальше» на множитель
+## target_share_penalty × N. Это раскидывает огонь между видимыми
+## скелетами вместо «все на одного».
 ##
-## Mask = ENEMIES + COLD_ENEMY: видим и активных скелетов, и LOD-холодных
-## (которые на отзумленной камере уходят в FAR-mode и теряют hot-маску).
+## Mask = ENEMIES + COLD_ENEMY: видим и активных скелетов, и LOD-холодных.
 func _scan_cone() -> Node3D:
 	var space := get_world_3d().direct_space_state
 	if space == null:
@@ -561,8 +605,8 @@ func _scan_cone() -> Node3D:
 	query.collision_mask = TARGET_MASK
 	query.collide_with_bodies = true
 	var results := space.intersect_shape(query, 32)
-	var nearest: Node3D = null
-	var nearest_dist := INF
+	var best: Node3D = null
+	var best_score: float = INF
 	for r in results:
 		var collider = r.collider
 		if collider == null or not (collider is Node3D):
@@ -571,17 +615,73 @@ func _scan_cone() -> Node3D:
 			continue
 		var node := collider as Node3D
 		var d: float = global_position.distance_to(node.global_position)
-		# Explicit radius check: PhysicsShapeQuery в Godot 4.6 подмешивает
-		# результаты broadphase AABB вне sphere — фильтруем по centroid.
+		# Explicit radius check: Godot 4.6 подмешивает broadphase AABB вне sphere.
 		if d > cone_vision_radius:
 			continue
 		# Cone-фильтр: dot(forward, dir_to_target) >= cos(half_angle).
 		if not _is_in_cone(node.global_position):
 			continue
-		if d < nearest_dist:
-			nearest_dist = d
-			nearest = node
-	return nearest
+		# Score = dist × (1 + aimers × penalty). Penalty=0 → чистая дистанция
+		# (старое поведение). Penalty=0.5 → каждый уже-стрелок на цели
+		# делает её «дальше» на 50%: близкая цель с 1 стрелком сравняется по
+		# приоритету с целью на 50% дальше без стрелков.
+		var aimers: int = _count_aimers_on(node)
+		var score: float = d * (1.0 + float(aimers) * target_share_penalty)
+		if score < best_score:
+			best_score = score
+			best = node
+	return best
+
+
+## Сколько ДРУГИХ защитников из нашей группы уже целят в указанную цель.
+## Используется в _scan_cone для распределения огня. Дёшево: 8 защитников ×
+## ~5 кандидатов × 4 скана/сек = ~160 итераций/сек.
+##
+## Freed-safety: _cached_target другого защитника читаем untyped'ом, чтобы
+## не упасть на freed-инстансе (между его scan'ом и нашим он мог умереть).
+func _count_aimers_on(target: Node3D) -> int:
+	var count: int = 0
+	for d in get_tree().get_nodes_in_group(DEFENDER_GROUP):
+		if d == self or not is_instance_valid(d):
+			continue
+		var dn := d as DefenderGnome
+		if dn == null:
+			continue
+		var their_target = dn._cached_target
+		if not is_instance_valid(their_target):
+			continue
+		if their_target == target:
+			count += 1
+	return count
+
+
+## Сепарация: суммарный вектор отталкивания от ближайших защитников
+## внутри separation_radius. Linear falloff (близкий = сильнее). Применяется
+## к velocity в attack-ветке боевого тика — лучник стоит/пятится, но
+## дрейфует вбок если сосед прижался. Не ломает _facing (выстрелы по цели
+## идут как обычно).
+func _compute_separation_force() -> Vector3:
+	if separation_strength <= 0.0:
+		return Vector3.ZERO
+	var force: Vector3 = Vector3.ZERO
+	var radius_sq: float = separation_radius * separation_radius
+	var my_pos: Vector3 = global_position
+	for d in get_tree().get_nodes_in_group(DEFENDER_GROUP):
+		if d == self or not is_instance_valid(d):
+			continue
+		var other := d as Node3D
+		if other == null:
+			continue
+		var to_self: Vector3 = my_pos - other.global_position
+		to_self.y = 0.0
+		var d_sq: float = to_self.length_squared()
+		if d_sq > radius_sq or d_sq < 0.0001:
+			continue
+		var dist: float = sqrt(d_sq)
+		# Linear falloff: на касании (dist→0) сила = 1.0; на radius — 0.
+		var falloff: float = (separation_radius - dist) / separation_radius
+		force += (to_self / dist) * falloff
+	return force * (patrol_speed * separation_strength)
 
 
 ## Точка в конусе зрения? Сравниваем угол между _facing и направлением
@@ -679,6 +779,33 @@ func get_shots_fired() -> int:
 	return _shots_fired
 
 
+## Killing blow callback — Arrow вызывает после успешного летального попадания.
+## Кредит за убийство уходит в squad XP лагеря (общий опыт отряда). Личный
+## опыт стрельбы (точность через _shots_fired) накапливается отдельно в _fire_at.
+##
+## victim не используется здесь, но передаётся на случай если в будущем
+## разные враги дают разный XP (элиты, боссы).
+func on_kill_credit(victim: Node) -> void:
+	if _camp == null or not is_instance_valid(_camp):
+		return
+	# Позиция жертвы — для popup'а «+10» над трупом. Если жертва уже
+	# освобождена (queue_free на death) — fallback на собственную позицию
+	# стрелка (popup появится у лучника, тоже читаемо).
+	var pos: Vector3 = global_position
+	if victim != null and is_instance_valid(victim) and victim is Node3D:
+		pos = (victim as Node3D).global_position
+	_camp.credit_kill(pos)
+
+
+## Эффективный радиус стрельбы с учётом активных squad-апгрейдов. long_draw
+## добавляет camp.upgrade_long_draw_bonus метров к базовому attack_radius.
+## Используется и в боевом тике (DEPLOYED+CARAVAN), и в alarm-логике.
+func effective_attack_radius() -> float:
+	if _camp != null and is_instance_valid(_camp) and _camp.has_upgrade(Camp.UPGRADE_LONG_DRAW):
+		return attack_radius + _camp.upgrade_long_draw_bonus
+	return attack_radius
+
+
 func _fire_at(target: Node3D) -> void:
 	if arrow_scene == null:
 		push_warning("DefenderGnome: arrow_scene не задан")
@@ -705,6 +832,9 @@ func _fire_at(target: Node3D) -> void:
 	arrow.damage = damage
 	arrow.speed = arrow_speed
 	arrow.setup(spawn, aim_pos)
+	# Привязка к стрелку для squad XP — на летальном попадании Arrow
+	# вызовет on_kill_credit ниже.
+	arrow.set_shooter(self)
 	_shots_fired += 1
 	if debug_log and LogConfig.master_enabled:
 		var d: float = global_position.distance_to(target.global_position)
