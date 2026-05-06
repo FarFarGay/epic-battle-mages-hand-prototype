@@ -43,6 +43,9 @@ const GROUP := &"xp_orb"
 @export var bobbing_amplitude: float = 0.15
 @export var bobbing_speed: float = 2.0
 
+@export_group("")
+@export var debug_log: bool = true
+
 enum State { IDLE, MAGNETIZED }
 
 ## Шейр'нутый материал — все орбы рисуются одним и тем же золотым emissive'ом,
@@ -80,6 +83,10 @@ func _ready() -> void:
 	_base_y = global_position.y
 	_bob_phase = randf() * TAU
 	_magnet_area.body_entered.connect(_on_body_entered)
+	if debug_log and LogConfig.master_enabled:
+		print("[XpOrb:%s] ready: pos=(%.2f, %.2f, %.2f), base_y=%.2f, amount=%d" % [
+			name, global_position.x, global_position.y, global_position.z, _base_y, amount,
+		])
 
 
 static func _ensure_shared_material() -> void:
@@ -96,6 +103,11 @@ static func _ensure_shared_material() -> void:
 func _physics_process(delta: float) -> void:
 	_life_elapsed += delta
 	if _life_elapsed >= lifetime:
+		if debug_log and LogConfig.master_enabled:
+			print("[XpOrb:%s] expired (lifetime=%.0fс) at pos=(%.2f, %.2f, %.2f), state=%s" % [
+				name, lifetime, global_position.x, global_position.y, global_position.z,
+				"IDLE" if _state == State.IDLE else "MAGNETIZED",
+			])
 		queue_free()
 		return
 	match _state:
@@ -123,6 +135,11 @@ func _tick_magnetized(delta: float) -> void:
 	var to_target: Vector3 = target_pos - global_position
 	var dist: float = to_target.length()
 	if dist <= arrival_distance:
+		if debug_log and LogConfig.master_enabled:
+			print("[XpOrb:%s] arrival: pos=(%.2f, %.2f, %.2f), camp_center=(%.2f, %.2f, %.2f), +%d xp" % [
+				name, global_position.x, global_position.y, global_position.z,
+				center.x, center.y, center.z, amount,
+			])
 		_camp_target.add_squad_xp(amount, global_position)
 		collected.emit(amount, global_position)
 		queue_free()
@@ -172,3 +189,9 @@ func _activate_magnet(camp: Camp) -> void:
 	# Снимаем Area3D.monitoring — больше не интересны новые касания.
 	# Лишнее body_entered в полёте к anchor'у только зря тратит physics-call'ы.
 	_magnet_area.monitoring = false
+	if debug_log and LogConfig.master_enabled:
+		var center: Vector3 = camp.current_center()
+		print("[XpOrb:%s] magnet activated: pos=(%.2f, %.2f, %.2f), target_xz=(%.2f, %.2f), target_y=%.2f (=base_y), camp_center.y=%.2f" % [
+			name, global_position.x, global_position.y, global_position.z,
+			center.x, center.z, _base_y, center.y,
+		])

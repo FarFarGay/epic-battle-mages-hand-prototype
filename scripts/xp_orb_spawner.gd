@@ -14,6 +14,8 @@ extends Node
 ## привязан к .tscn-инстансу и @export-поля у него не редактируются из
 ## инспектора. Если потребуется балансить — менять прямо в этом файле.
 
+@export var debug_log: bool = true
+
 const ORB_SCENE := preload("res://scenes/xp_orb.tscn")
 ## Сколько XP даёт один орб на arrival. Совпадает с прежним
 ## `Camp.squad_xp_per_kill = 10`.
@@ -50,4 +52,11 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 		return
 	tree.current_scene.add_child(orb)
 	# Спавним там, где умер скелет, на `SPAWN_OFFSET_Y` выше центра капсулы.
-	orb.global_position = enemy.global_position + Vector3.UP * SPAWN_OFFSET_Y
+	var enemy_pos: Vector3 = enemy.global_position
+	orb.global_position = enemy_pos + Vector3.UP * SPAWN_OFFSET_Y
+	if debug_log and LogConfig.master_enabled:
+		print("[XpOrbSpawner] spawn: enemy=(%.2f, %.2f, %.2f) → orb=(%.2f, %.2f, %.2f), offset_y=%.2f" % [
+			enemy_pos.x, enemy_pos.y, enemy_pos.z,
+			orb.global_position.x, orb.global_position.y, orb.global_position.z,
+			SPAWN_OFFSET_Y,
+		])
