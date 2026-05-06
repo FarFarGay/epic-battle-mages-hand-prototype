@@ -116,10 +116,13 @@ func _tick_magnetized(delta: float) -> void:
 		# Camp умер до прибытия — орб не имеет получателя, просто исчезает.
 		queue_free()
 		return
-	# Целимся НА высоте `magnet_target_offset_y` над anchor'ом, не в сам
-	# anchor (тот может быть на полу = y=0 для POI, или на y≈3 для центра
-	# меша Tower). Без этого орб либо ныряет в землю, либо взлетает в небо.
-	var target_pos: Vector3 = _camp_target.deploy_anchor + Vector3.UP * magnet_target_offset_y
+	# Целимся в `current_center()` (среднее живых палаток, fallback на Tower),
+	# а не в `deploy_anchor`. Anchor устанавливается только при `_start_deploy`,
+	# до этого он = `Vector3.ZERO` — орб магнитился в мировой ноль вместо
+	# к лагерю. `current_center()` валиден во всех состояниях (caravan, deployed,
+	# packing). Плюс высота `magnet_target_offset_y` над землёй — иначе орб
+	# ныряет к точке-цели, которая на полу.
+	var target_pos: Vector3 = _camp_target.current_center() + Vector3.UP * magnet_target_offset_y
 	var to_target: Vector3 = target_pos - global_position
 	var dist: float = to_target.length()
 	if dist <= arrival_distance:
