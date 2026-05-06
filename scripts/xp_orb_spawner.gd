@@ -50,10 +50,14 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 		# тихо пропускаем, чтобы не утечь дочерней нодой.
 		orb.queue_free()
 		return
-	tree.current_scene.add_child(orb)
-	# Спавним там, где умер скелет, на `SPAWN_OFFSET_Y` выше центра капсулы.
+	# Позицию ставим ДО `add_child`: иначе `_ready` орба сработает на момент
+	# добавления, ещё с дефолтной (0,0,0), и захватит `_base_y = 0`. Bobbing
+	# тогда качается вокруг нуля и орб уходит под пол. Используем `.position`,
+	# которая совпадает с `global_position` потому что parent (current_scene =
+	# `Main`) — Node3D с identity transform.
 	var enemy_pos: Vector3 = enemy.global_position
-	orb.global_position = enemy_pos + Vector3.UP * SPAWN_OFFSET_Y
+	orb.position = enemy_pos + Vector3.UP * SPAWN_OFFSET_Y
+	tree.current_scene.add_child(orb)
 	if debug_log and LogConfig.master_enabled:
 		print("[XpOrbSpawner] spawn: enemy=(%.2f, %.2f, %.2f) → orb=(%.2f, %.2f, %.2f), offset_y=%.2f" % [
 			enemy_pos.x, enemy_pos.y, enemy_pos.z,
