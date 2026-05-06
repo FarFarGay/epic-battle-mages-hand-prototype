@@ -53,7 +53,10 @@ class SlamHit:
 ## 2-шот почти не возникал (аиминг обычно близко к эпицентру).
 @export var slam_damage: float = 60.0
 @export var slam_cooldown: float = 0.5
-## По каким слоям бьёт хлопок: Items + Enemies (Layers.MASK_HAND_SLAM = 18).
+## По каким слоям бьёт хлопок (`Layers.MASK_HAND_SLAM = 438` = Items + Actors +
+## Enemies + CampObstacle + ColdEnemy + FriendlyUnit). Бьёт всех, кого рука
+## вообще «видит» как мишень: и врагов, и дружественных гномов, и палатки.
+## Per-target иммунитет — через группу `hand_immune` (см. `Layers.is_hand_immune`).
 ## MOUNTED_MODULE сюда НЕ входит — снять модуль со слота можно только хватом
 ## руки, не AOE-хлопком.
 @export_flags_3d_physics var slam_mask: int = Layers.MASK_HAND_SLAM
@@ -129,6 +132,9 @@ func _perform_slam() -> void:
 
 	var held: Item = _coord.get_held_item() if _coord else null
 	var affected_count := 0
+	# Shared radius² для обоих циклов: основного (broad-phase results) и
+	# FAR-fallback'а (group SKELETON_GROUP) ниже.
+	var slam_radius_sq: float = slam_radius * slam_radius
 	for r in results:
 		var collider = r.collider
 		if not Damageable.is_damageable(collider):
@@ -144,6 +150,14 @@ func _perform_slam() -> void:
 		# (Item.apply_push вернёт ранний return при freeze).
 		if collider == held:
 			continue
+		# Explicit radius check: Godot 4.6 PhysicsShapeQuery подмешивает результаты
+		# AABB-broadphase вне самой sphere-формы. Тот же паттерн что и в
+		# OctagonTurret._find_target и DefenderGnome._scan_cone — единая защита
+		# для всех sphere-query во всём проекте. Falloff-чек ниже всё равно
+		# отсёк бы такой результат (linear falloff = 0 на radius), но явный
+		# guard понятнее и совпадает с конвенцией.
+		if (collider.global_position - origin).length_squared() > slam_radius_sq:
+			continue
 		var hit := _slam_direction_and_falloff(collider.global_position, origin)
 		if hit.falloff <= 0.0:
 			continue
@@ -158,7 +172,6 @@ func _perform_slam() -> void:
 	# фильтром. NEAR/MID-скелетов в группе тоже много, но они уже обработаны
 	# через PhysicsShapeQuery — пропускаем по `_lod_level`. На 2000 скелетах
 	# проход — 2000 distance_squared-операций, ~0.05мс, на фоне slam-cooldown 0.5с.
-	var slam_radius_sq: float = slam_radius * slam_radius
 	var far_hits := 0
 	for n in _hand.get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		var skel := n as Skeleton

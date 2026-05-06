@@ -776,10 +776,12 @@ static var _shared_windup_material: StandardMaterial3D
 **`_ready`:** `super._ready()` (обязателен), затем `_ensure_shared_materials()` и `_mesh.material_override = _shared_normal_material`.
 
 **Override'ы базы:**
-- `_on_state_enter(new_state)`: на `AttackState.WINDUP` → `_set_glow(true)`.
-- `_on_state_exit(old_state)`: на выходе из `WINDUP` → `_set_glow(false)` (включая случай отмены замаха через базовый `_on_knockback`).
-- `_perform_strike(_target)`: перевыбирает цель через `get_active_target()` (между `_ai_step` и `_perform_strike` цель могла умереть). Если живых нет — выходим. Иначе: `Damageable.try_damage(active, attack_damage)` (через контракт, **не** `has_method`/`call`), затем `_do_lunge(active)`.
+- `_on_state_enter(new_state)`: на `AttackState.WINDUP` → `_set_glow(true)` + **защёлкиваем `_windup_target = get_active_target()`** (этап 47). Это лок цели замаха — strike будет бить именно её, а не текущий рескан-результат.
+- `_on_state_exit(old_state)`: на выходе из `WINDUP` → `_set_glow(false)` (включая случай отмены замаха через базовый `_on_knockback`). `_windup_target` НЕ обнуляется здесь — `_perform_strike` сам прочитает и очистит, либо следующий WINDUP перезапишет.
+- `_perform_strike(_target)` (этап 47, обновлено): использует **`_windup_target`** (защёлкнут на входе в WINDUP), а не текущий `get_active_target()`. Параметр `_target` из `Enemy._ai_step` тоже игнорируется — он = текущий cached. Валидация: жив + в группе + `dist² ≤ (attack_range × WINDUP_TARGET_RANGE_SLACK)²` (slack=1.5, запас на движение цели за `attack_windup`). Если протух — strike отменяется, COOLDOWN тикает обычным образом. Иначе: `Damageable.try_damage(active, attack_damage)` (через контракт, **не** `has_method`/`call`), `EventBus.skeleton_attacked_camp.emit` для CampPart/мирных гномов, `_do_lunge(active)`.
 - `_do_lunge(target)`: считаем горизонтальное направление к цели; **`_apply_velocity_change(dir × lunge_speed, lunge_duration)`**, а не `apply_knockback`. Свой собственный strike через `apply_knockback` дёрнул бы `_on_knockback` хук, который сбил бы только что выставленное состояние.
+
+**Зачем target-lock в WINDUP** (этап 47): `_vision_scan_timer` тикает в `_physics_process` независимо от FSM-состояния, поэтому за 0.4с замаха `_cached_target` мог быть подменён ближайшим гномом из 12-метрового vision. До фикса — strike бил по новой цели на любой дистанции (`Damageable.try_damage` без contact-чека → мгновенный урон по цели за 11м). После фикса — strike бьёт того, на кого замахнулся, или мажет, если он ушёл.
 
 **Жизненный цикл (на уровне FSM базы):** APPROACH → WINDUP (`attack_windup` сек, красная подсветка через свап `material_override`) → STRIKE (зовётся `_perform_strike`, наносит урон + self-lunge через `_apply_velocity_change`) → COOLDOWN (`attack_cooldown` сек, тикает даже в knockback'е) → APPROACH.
 
@@ -1115,13 +1117,16 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 
 **Слой палатки** остаётся `CAMP_OBSTACLE` в любом состоянии. `collision_mask` Tent = TERRAIN+ENEMIES (17). Гномы IN_TENT — `Grabbable` контракт, `set_highlighted(value)` через per-instance копию `StandardMaterial3D`.
 
-**Логика свёртки (двухфазная, этап 45):**
+**Логика свёртки (двухфазная, этап 47):**
 1. `_pack_hold ≥ pack_duration` → `_start_pack()`:
    - `_state = PACKING_RETURNING`, `_pack_elapsed = 0`.
-   - `g.request_return()` для каждого гнома: **не идёт в палатку**, а вызывает `enter_following_caravan()` (исключение — IN_TENT гномы остаются в палатке). Раньше гномы пешком брели через лагерь со скоростью 1.6 m/s — pack постоянно упирался в timeout.
-2. Каждый кадр при `PACKING_RETURNING`: проверка `_all_gnomes_home()` = «все гномы IN_TENT or FOLLOWING_CARAVAN» (этап 45 — обновлённая семантика). Так как `request_return` мгновенно переключает в FOLLOWING_CARAVAN — проверка проходит на следующем тике. Pack завершается практически мгновенно.
+   - `g.request_return()` для каждого гнома. Поведение зависит от роли:
+     - **Gatherer с живой `_home_tent`** → `_state = RETURNING_TO_TENT`, sprint к палатке (`caravan_sprint_speed=9 м/с`), на arrival `_enter_in_tent` → IN_TENT (visible=false, неуязвим). Палатка = безопасное место.
+     - **Gatherer без палатки (бездомный)** → `enter_following_caravan` (некуда возвращаться).
+     - **Defender** (override `DefenderGnome.request_return`) → сразу `enter_following_caravan`. Палатка для защитника — не безопасное место, он остаётся в строю и стреляет на ходу.
+2. Каждый кадр при `PACKING_RETURNING`: проверка `_all_gnomes_home()` = «все гномы IN_TENT or FOLLOWING_CARAVAN». Гном в `RETURNING_TO_TENT` НЕ считается дома — Camp ждёт его прихода или таймаута.
 3. `_finalize_pack()`: `_state = CARAVAN_FOLLOWING`. `restore_to_caravan` на каждой палатке. `_reorder_parts_by_position()`. Эмит `packed`. `_update_caravan_follow` далее ведёт строй.
-4. **Таймаут** (`pack_timeout=12с`): если `_all_gnomes_home()` всё-таки не true — форсированный `_finalize_pack()` с логом. На практике с новой моделью триггерится только при патологическом залипании.
+4. **Таймаут** (`pack_timeout=12с`): если `_all_gnomes_home()` всё-таки не true (gatherer застрял sprint'ом через всё поле под огнём) — форсированный `_finalize_pack()` с логом. Sprint=9м/с покрывает диаметр лагеря (~16м) за ~1.8с, поэтому таймаут срабатывает только при патологии.
 
 **Гномы возвращаются sprint-скоростью (этап 45).** `Gnome._tick_returning` использует `caravan_sprint_speed` (9 m/s, выше Tower=8) вместо `move_speed` (1.6). Через лагерь 12м гном пробегает за 1.3с. С vacancy-claim это значит: в `CARAVAN_FOLLOWING` бездомный нашёл вакансию → бежит к ней быстро, тут же IN_TENT.
 
@@ -1240,7 +1245,7 @@ enum State {
 **API для Camp:**
 - `setup(camp, home_tent)` — кэширует ссылки, входит в `IN_TENT`.
 - `enter_deployed()` — `visible = true`, `_state = SEARCHING`.
-- `request_return()` (этап 45) — IN_TENT → ничего, иначе `enter_following_caravan()`. Pack-flow ведёт всех out-of-tent гномов в колонну, не пешком в палатку.
+- `request_return()` (этап 47, обновлено) — IN_TENT → ничего; иначе если `is_instance_valid(_home_tent)` → `_state = RETURNING_TO_TENT` (gatherer бежит домой), иначе → `enter_following_caravan()` (бездомный в колонну). Палатка = безопасное место для собирателей. Защитники переопределяют этот метод и сразу идут в колонну (см. 5.8.1).
 - `eject_from_tent()` (этап 45, без `damage` параметра) — выпуск из IN_TENT с 2с неуязвимостью + scatter knockback + FOLLOWING_CARAVAN.
 - `enter_following_caravan()` — идемпотентно ставит state, регистрирует в `_caravan_followers`, рандомизирует chain-offset.
 - `is_home() -> bool` — `_state == IN_TENT`.
@@ -1279,10 +1284,11 @@ enum State {
 
 **Что переопределяется:**
 - `_enter_in_tent()` → перенаправляет в `enter_following_caravan()`. Защитник не сидит в палатке: и на спавне, и при возврате домой сразу идёт в escort.
+- `request_return()` (этап 47) → сразу `enter_following_caravan()`, минуя `RETURNING_TO_TENT` базового класса. Защитнику палатка не «безопасное место», поэтому он не делает крюк к ней при свёртке — встаёт в строй и продолжает стрелять на ходу.
 - `enter_following_caravan()` → переключает state в FOLLOWING_CARAVAN, но **не регистрируется** в `_caravan_followers` (orphan-end-of-column не для него).
 - `_tick_following_caravan()` → escort: цель = `_compute_escort_target` (палатка + perpendicular × `escort_lateral_distance × ±1`). Если палатка уничтожена — fallback на башню. Sprint-catchup как у обычного гнома.
 - `enter_deployed()` → super + ставит `_facing` наружу от лагеря, чтобы первый кадр сканировал в правильную сторону.
-- `_active_tick(delta)` — четыре ветки: RETURNING_TO_TENT (super), FOLLOWING_CARAVAN (escort + parallel `_caravan_combat_tick`), DEPLOYED-states (`_defender_combat_tick`).
+- `_active_tick(delta)` — четыре ветки: RETURNING_TO_TENT (super, но в норме не активен — request_return защитника сразу в FOLLOWING_CARAVAN), FOLLOWING_CARAVAN (escort + parallel `_caravan_combat_tick`), DEPLOYED-states (`_defender_combat_tick`).
 
 **Конус зрения** (этап 47):
 - `cone_vision_radius: float = 35.0` — радиус ВИДИМОСТИ (больше attack_radius=22.5 — лучник видит дальше чем стреляет).
@@ -2179,6 +2185,22 @@ func _refresh_visual() -> void:
     **(з) Konсу сужено 60° → 45°.** В конце сессии чтобы оставить место апгрейду «сторожевая вышка» (план на завтра — пассивный +15° к конусу + +5м радиуса, 1 gatherer становится spotter'ом).
 
     **(и) Меньше защитников.** `defenders_per_tent` 3 → 2 → 1 за две правки. На 4 палатки = 4 защитника + 24 собирателя.
+
+48. **Большой код-ревью: WINDUP target lock + поведение свёртки + уборка drift'а** (2026-05-06).
+
+    **(а) Skeleton WINDUP target lock — bug fix.** `Skeleton._physics_process` тикает `_vision_scan_timer` независимо от FSM-состояния, поэтому за `attack_windup=0.4с` `_cached_target` мог быть подменён ближайшим гномом из vision_radius=12. До фикса `_perform_strike` через `get_active_target()` бил по новой цели на любой дистанции (Damageable.try_damage без contact-чека). После фикса: `_on_state_enter(WINDUP)` защёлкивает `_windup_target = get_active_target()`, `_perform_strike` использует именно его + валидирует жив/в группе/`dist² ≤ (attack_range × 1.5)²`. Если цель ушла или сдохла — strike отменяется, COOLDOWN тикает обычно. Константа `WINDUP_TARGET_RANGE_SLACK=1.5` — запас на движение цели за время замаха (move_speed × attack_windup ≈ 0.6м + capsule).
+
+    **(б) Поведение свёртки: gatherer домой, defender в строй.** До этапа 48 `Gnome.request_return` редиректил ВСЕХ гномов в `enter_following_caravan` ради мгновенного завершения pack. Геймдизайнерское решение: палатка = безопасное место для собирателей, поэтому при свёртке gatherer'ы должны прятаться внутрь. Теперь `Gnome.request_return` для gatherer'а с живой `_home_tent` ставит `_state = RETURNING_TO_TENT` (sprint к палатке через `caravan_sprint_speed=9 м/с`, на arrival → IN_TENT). Бездомные gatherer'ы → в колонну (некуда возвращаться). `DefenderGnome.request_return` — override, всегда `enter_following_caravan` (защитник не сидит в палатке принципиально, не делает крюк к ней). Pack timeout (12с) защищает от gatherer'а, застрявшего sprint'ом — sprint=9м/с покрывает диаметр лагеря (16м) за 1.8с, таймаут срабатывает только при патологии.
+
+    **(в) Уборка docs/drift.** Несколько комментариев устарели после рефакторов слоёв и контрактов:
+    - `hand_physical_slam.gd:slam_mask` docstring говорил «MASK_HAND_SLAM = 18» (реально 438 после добавления FRIENDLY_UNIT, COLD_ENEMY и пр.).
+    - `octagon_turret.gd` shebang говорил «Гномы (layer=0)» (реально FRIENDLY_UNIT, бит 8).
+    - `camp.gd` shebang говорил «Skeleton.mask=55, Tower.mask=31» (реально 39 / 15 после удаления skel-skel пар и ENEMIES из tower-mask).
+    Все три обновлены до текущих значений. Также `arrow.gd` имел `@export var debug_log: bool = false`, который нигде не читался — экспорт удалён.
+
+    **(г) Slam: explicit radius-check для консистентности.** OctagonTurret и DefenderGnome уже делали `if d > radius: continue` после `intersect_shape` (Godot 4.6 PhysicsShapeQuery подмешивает AABB-broadphase результаты вне сферы). Slam защищался через `falloff <= 0.0` — математически эквивалентно, но непоследовательно. Добавил явный distance²-чек в `_perform_slam` для единого паттерна по всем sphere-query в проекте.
+
+    **(д) POI cache в Camp.** `_find_poi_for_deploy` дёргался каждый кадр на зажатой R (60 Гц) через `get_tree().get_nodes_in_group(POI_GROUP)` — лишние Array-аллокации. Добавлен кеш с TTL `POI_CACHE_TTL_SEC=0.1` — 6× срез нагрузки, граница «вошёл/вышел из safe_radius» задерживается на ≤100мс (игроком не читается; башня за это время проходит ≤0.8м).
 
 ### 7.3 Решённые ошибки
 

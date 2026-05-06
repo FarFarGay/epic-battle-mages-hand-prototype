@@ -385,18 +385,33 @@ func _claim_tent_as_home(tent: CampPart) -> void:
 
 
 ## Лагерь свёртывается — возвращаемся в палатку. Roняем то, что несли.
+##
+## Геймдизайнерское правило (2026-05-06): палатка — безопасное место для
+## гномов-собирателей, поэтому при свёртке они идут домой (RETURNING_TO_TENT
+## → _enter_in_tent → IN_TENT, скрыты, неуязвимы). Бездомные (без `_home_tent`)
+## идут в общую колонну за караваном — им просто некуда возвращаться.
+##
+## Защитники переопределяют `request_return` (см. DefenderGnome.request_return)
+## и сразу уходят в FOLLOWING_CARAVAN — палатка для них не «безопасное место»,
+## а склад, в который они не садятся принципиально.
+##
+## Pack timeout (Camp.pack_timeout=12с) защищает от зависания: если гном застрял
+## далеко от палатки, Camp force-finalize'ит свёртку и trigger'ит караван.
 func request_return() -> void:
 	if _state == State.IN_TENT:
 		return
 	_drop_carry()
 	_assigned_pile = null
-	# При свёртке лагеря не идём в палатку — даже sprint-скоростью гномы с
-	# другого края лагеря висели бы pack_timeout секунд. Вместо этого все
-	# не-IN_TENT гномы (включая защитников, собирателей, возвращающихся,
-	# уже-бездомных) встают в общую колонну каравана за палатками. Когда
-	# караван тронется, IN_TENT гномы поедут внутри палаток, остальные —
-	# в FOLLOWING_CARAVAN-цепочке.
-	enter_following_caravan()
+	if is_instance_valid(_home_tent):
+		# Снимаемся из caravan-цепочки если уже были там (бездомный) —
+		# теперь у нас есть валидная палатка-цель. _tick_returning сделает
+		# sprint к home, _enter_in_tent посадит внутрь.
+		if _camp != null and _state == State.FOLLOWING_CARAVAN:
+			_camp.unregister_caravan_follower(self)
+		_state = State.RETURNING_TO_TENT
+	else:
+		# Бездомный — некуда возвращаться, идём в колонну за караваном.
+		enter_following_caravan()
 
 
 func is_home() -> bool:

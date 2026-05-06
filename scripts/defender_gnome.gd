@@ -224,6 +224,24 @@ func _enter_in_tent() -> void:
 	enter_following_caravan()
 
 
+## Override базового `request_return`: при свёртке лагеря защитник НЕ идёт
+## в палатку (палатка не его «безопасное место»), а сразу встаёт в общую
+## колонну каравана. Геймдизайнерское правило (2026-05-06): обычный гном =
+## идёт домой; защитник = идёт в строй.
+##
+## Без этого override защитник звал бы базовый `Gnome.request_return`, который
+## с правок 2026-05-06 переводит в `RETURNING_TO_TENT`. Защитник пробежался
+## бы к палатке, и `_tick_returning` на arrival вызывал бы `_enter_in_tent` →
+## наш собственный redirect на `enter_following_caravan`. Двойной шаг, лишние
+## метры пути под огнём. Сразу в колонну — короче и читаемее.
+func request_return() -> void:
+	if _state == State.IN_TENT:
+		return
+	_drop_carry()
+	_assigned_pile = null
+	enter_following_caravan()
+
+
 ## Defender'ская версия caravan-режима. Не регистрируется в orphan-цепочке
 ## (`_caravan_followers`) — он не идёт в хвосте, он шагает СБОКУ от своей
 ## палатки. Слот рассчитывается каждый тик в `_tick_following_caravan`

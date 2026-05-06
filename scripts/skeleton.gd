@@ -55,6 +55,13 @@ const TARGET_GROUP := &"skeleton_target"
 ## Отдельная от Damageable.GROUP, чтобы HUD не фильтровал по `is Skeleton`.
 const SKELETON_GROUP := &"skeleton"
 
+## Запас по дистанции при валидации цели в `_perform_strike`. Замах длится
+## attack_windup секунд; за это время цель (живой гном) может пройти
+## move_speed × attack_windup ≈ 0.6м. Множитель 1.5 от attack_range покрывает
+## этот сдвиг + капсулу скелета. Если цель ушла дальше — strike мажет
+## (отмена в _perform_strike), вместо «удар на 11м без контакта».
+const WINDUP_TARGET_RANGE_SLACK: float = 1.5
+
 enum WanderPhase { RESTING, WANDERING }
 
 @export_group("Vision")
@@ -262,6 +269,17 @@ var _wander_target: Vector3 = Vector3.INF
 var _rest_timer: float = 0.0
 var _cached_target: Node3D = null
 var _vision_scan_timer: float = 0.0
+## Цель, на которую сейчас идёт замах. Защёлкивается в `_on_state_enter(WINDUP)`,
+## используется в `_perform_strike` вместо текущего `_cached_target` —
+## иначе рескан зрения внутри 0.4с замаха мог подменить цель на ближайшего
+## гнома, и удар наносился по нему **без contact-чека**: Damageable.try_damage
+## не проверяет дистанцию, и при vision_radius=12 это давало мгновенный урон
+## по цели за 11м. Теперь правила такие:
+##   - WINDUP запоминает того, на кого замахнулся.
+##   - STRIKE бьёт его, если жив + в группе + не дальше attack_range × WINDUP_TARGET_RANGE_SLACK.
+##   - Если протух — strike отменяется, COOLDOWN тикает как обычно, на следующем
+##     APPROACH FSM выберет новую цель естественным образом.
+var _windup_target: Node3D = null
 ## Принудительная цель — wave-скелеты получают её на спавне и идут к ней
 ## независимо от vision_radius (палатка лагеря в 100м от спавн-точки тоже
 ## считается видимой). Если умирает или выходит из skeleton_target — fallback
@@ -357,11 +375,19 @@ static func _ensure_shared_materials() -> void:
 func _on_state_enter(new_state: int) -> void:
 	if new_state == AttackState.WINDUP:
 		_set_glow(true)
+		# Защёлкиваем цель замаха — strike будет бить её, не текущий cached_target.
+		# get_active_target() возвращает _cached_target (override skeleton'a), а
+		# тот свежий: WINDUP запускается из _approach_target в том же тике, когда
+		# дистанция упала ≤ attack_range, т.е. рескан был только что.
+		_windup_target = get_active_target()
 
 
 func _on_state_exit(old_state: int) -> void:
 	if old_state == AttackState.WINDUP:
 		_set_glow(false)
+		# _windup_target НЕ обнуляется здесь: STRIKE → _perform_strike читает
+		# его, дальше сам очищает. Если выйти из WINDUP в APPROACH через
+		# _on_knockback (Enemy.gd) — то же самое: следующий WINDUP перезапишет.
 
 
 ## Override _ai_step: при наличии цели — обычный FSM (super), без цели — wander.
@@ -868,11 +894,24 @@ func set_forced_target(target: Node3D) -> void:
 
 
 func _perform_strike(_target: Node3D) -> void:
-	# Перевыбираем цель — между _ai_step и _perform_strike та могла умереть.
-	# Параметр _target тут не используем: он мог стать невалидным, и проверять
-	# его freed-инстансом небезопасно. get_active_target сам пропускает мёртвых.
-	var active := get_active_target()
-	if not active:
+	# Используем _windup_target (защёлкнут в _on_state_enter(WINDUP)), а не
+	# текущий _cached_target: рескан зрения мог подменить cached на ближайшего
+	# гнома за время замаха, и без этой защиты strike бил бы его на любой
+	# дистанции (Damageable.try_damage без contact-чека). Параметр `_target`,
+	# приходящий из Enemy._ai_step:208, тоже игнорируем — он = текущий
+	# get_active_target(), та же подмена.
+	var active: Node3D = _windup_target
+	_windup_target = null
+	if active == null or not is_instance_valid(active):
+		return  # Цель сдохла или freed во время замаха — strike мажет.
+	if not active.is_in_group(TARGET_GROUP):
+		return  # Перестала быть целью (палатка torn_off, гном вернулся в IN_TENT).
+	# Distance-валидация: цель не должна была убежать дальше attack_range × slack.
+	# Skeleton'у запрещено бить «в космос» — без этого внезапный спавн волны
+	# гномов в 11м от windup-скелета мог получить мгновенный урон.
+	var d_sq: float = (active.global_position - global_position).length_squared()
+	var max_strike_range: float = attack_range * WINDUP_TARGET_RANGE_SLACK
+	if d_sq > max_strike_range * max_strike_range:
 		return
 	# Урон — до выпада, чтобы логически «удар попал», даже если bounce-off
 	# отбросит скелета на следующем кадре.

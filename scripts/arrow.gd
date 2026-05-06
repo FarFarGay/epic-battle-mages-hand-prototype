@@ -26,7 +26,6 @@ signal hit(target: Node, position: Vector3)
 @export var gravity: float = 6.0
 ## Секунды до автоматического queue_free, если стрела не попала.
 @export var lifetime: float = 4.0
-@export var debug_log: bool = false
 
 @onready var _hit_area: Area3D = $HitArea
 

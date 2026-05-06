@@ -14,10 +14,12 @@ extends Node3D
 ##   вокруг _deploy_anchor. Hold R ≥ pack_duration сворачивает (без
 ##   stationary-проверки).
 ##
-## Коллизии: палатки всегда на слое CampObstacle (6, бит 5). Tower.mask=31
-## не включает этот бит → башня проходит сквозь палатки в любом состоянии.
-## Skeleton.mask=55 включает его → скелеты упираются в палатки и в каравне,
-## и в развёрнутом лагере. Никакого рантайм-toggle коллизии нет.
+## Коллизии: палатки всегда на слое CampObstacle (6, бит 5). Tower.mask=15
+## (Terrain | Items | Actors | Projectiles, без CAMP_OBSTACLE и без ENEMIES) →
+## башня проходит сквозь палатки и сквозь скелетов в любом состоянии.
+## Skeleton.mask=39 (Terrain | Items | Actors | CAMP_OBSTACLE; см.
+## `Layers.MASK_SKELETON`) → скелеты упираются в палатки и в каравне, и в
+## развёрнутом лагере. Никакого рантайм-toggle коллизии нет.
 ##
 ## Зависит только от Tower через target_path. Локальные сигналы deployed/packed
 ## ре-эмитятся в EventBus для UI / звука / статистики.
@@ -223,6 +225,16 @@ var deploy_anchor: Vector3:
 # Логирование (фронт-триггеры, чтобы не спамить каждый кадр).
 var _was_holding_stationary: bool = false
 var _was_out_of_range: bool = false
+
+# Кеш _find_poi_for_deploy — _handle_input зовётся каждый кадр на зажатой R
+# (60Гц), и в каждом вызове мы делаем `get_tree().get_nodes_in_group(POI_GROUP)`
+# + distance²-проход. Группа маленькая (3-7 POI), но Array-аллокация
+# 60 раз/сек на одну фичу — лишний шум. TTL 0.1с: за это время башня успеет
+# проехать ≤ 0.8м (move_speed≈8м/с), и пограничный «вошёл/вышел из safe_radius»
+# случай задержится максимум на 100мс — игроком не читается.
+const POI_CACHE_TTL_SEC: float = 0.1
+var _poi_cache: Node3D = null
+var _poi_cache_time_msec: int = -1000000
 
 
 ## Группа для UpgradeModal (autoload). Модал на squad_leveled_up ищет Camp
@@ -880,9 +892,11 @@ func _process(delta: float) -> void:
 
 ## Гном «готов к движению каравана» если он либо в палатке (IN_TENT, едет
 ## внутри), либо уже встроился в колонну за палатками (FOLLOWING_CARAVAN).
-## request_return на _start_pack переключает не-IN_TENT гномов сразу в
-## FOLLOWING_CARAVAN, так что обычно этот чек проходит на следующем тике
-## после _start_pack — pack завершается без задержки.
+## После правок 2026-05-06: gatherer'ы при `request_return` идут в свою палатку
+## (`RETURNING_TO_TENT`), сидя в палатке считаются домом; защитники сразу в
+## колонну (`FOLLOWING_CARAVAN`) через override `DefenderGnome.request_return`.
+## Если кто-то завис в `RETURNING_TO_TENT` дольше `pack_timeout` — `_update_deployed`
+## форсированно завершает свёртку через `_finalize_pack`.
 func _all_gnomes_home() -> bool:
 	for g in _gnomes:
 		if not is_instance_valid(g):
@@ -990,8 +1004,23 @@ func _is_tower_stationary() -> bool:
 ## "Ближайший" — на случай перекрытия safe_radius'ов соседних POI: лагерь
 ## защёлкивается на тот, к которому башня ближе. Без этого первый POI в
 ## группе бы выигрывал, и игрок не смог бы выбрать более далёкий.
+##
+## Кеширование: `_handle_input` дёргает функцию каждый кадр на зажатой R (60Гц),
+## и `get_tree().get_nodes_in_group` каждый раз аллоцирует Array. TTL 0.1с
+## срезает 6× нагрузку и не вносит видимой задержки на gate-переходах.
+## Кеш инвалидируется и по freed-инстансу — POI могут уничтожиться (хотя
+## сейчас не уничтожаются — но если когда-нибудь POI станут разрушаемыми,
+## защита уже на месте).
 func _find_poi_for_deploy() -> Node3D:
+	var now_msec: int = Time.get_ticks_msec()
+	var cache_age_msec: int = now_msec - _poi_cache_time_msec
+	if cache_age_msec < int(POI_CACHE_TTL_SEC * 1000.0):
+		if _poi_cache == null or is_instance_valid(_poi_cache):
+			return _poi_cache
+	_poi_cache_time_msec = now_msec
+
 	if _tower == null:
+		_poi_cache = null
 		return null
 	var tower_pos := _tower.global_position
 	var nearest: Node3D = null
@@ -1010,6 +1039,7 @@ func _find_poi_for_deploy() -> Node3D:
 		if d_sq < nearest_dist_sq:
 			nearest_dist_sq = d_sq
 			nearest = poi_node
+	_poi_cache = nearest
 	return nearest
 
 
