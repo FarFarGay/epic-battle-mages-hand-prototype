@@ -188,7 +188,10 @@ func _activate_magnet(camp: Camp) -> void:
 	_state = State.MAGNETIZED
 	# Снимаем Area3D.monitoring — больше не интересны новые касания.
 	# Лишнее body_entered в полёте к anchor'у только зря тратит physics-call'ы.
-	_magnet_area.monitoring = false
+	# `set_deferred`, не прямое присваивание: мы внутри обработчика body_entered
+	# (Godot вызвал нас из in/out signal'а), и менять `monitoring` напрямую
+	# во время этой фазы запрещено — спамит ошибкой каждый кадр магнита.
+	_magnet_area.set_deferred("monitoring", false)
 	if debug_log and LogConfig.master_enabled:
 		var center: Vector3 = camp.current_center()
 		print("[XpOrb:%s] magnet activated: pos=(%.2f, %.2f, %.2f), target_xz=(%.2f, %.2f), target_y=%.2f (=base_y), camp_center.y=%.2f" % [
