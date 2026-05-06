@@ -101,7 +101,7 @@ hand_gameplay_prot/
     ├── grass_field.gd         — class_name GrassField (Node3D, корень chunked-grass'a; на _ready спавнит 8×8 GrassChunk-нод по карте 400×400)
     ├── xp_orb.gd              — class_name XpOrb (этап 49, осязаемый XP-дроп; Node3D + Area3D, IDLE → MAGNETIZED)
     ├── xp_orb_spawner.gd      — autoload XpOrbSpawner (слушает EventBus.enemy_destroyed, спавнит XpOrb)
-    ├── squad_xp_fx.gd         — autoload SquadXpFx (popup'ы +XP + kill-trail-частицы к ближайшему защитнику)
+    ├── squad_xp_fx.gd         — autoload SquadXpFx (popup'ы «+N» в точке arrival орба к anchor'у)
     ├── event_bus.gd           — autoload EventBus
     └── log_config.gd          — autoload LogConfig
 ```
@@ -2223,11 +2223,9 @@ func _refresh_visual() -> void:
 
     **(е) Level-up flash на защитниках.** `DefenderGnome._on_squad_leveled_up` — подписка на `EventBus.squad_leveled_up`. Tween scale меша 1.0 → 1.3 → 1.0 за 300мс (TRANS_QUAD). Каждый живой защитник «вспыхивает» на левел-апе. Tween создаётся на меше — корректно отвалится если защитник умрёт mid-flight.
 
-    **(ж) Per-kill flavor trail.** В `SquadXpFx` добавлен handler `_on_enemy_destroyed`: ищет ближайшего живого DefenderGnome в радиусе 25м от трупа (через `DEFENDER_GROUP`), спавнит маленький Node3D-mesh (`SphereMesh` radius=0.1, золотой emissive) с tween'ом `global_position` от точки трупа+0.5 к позиции защитника за 0.45с (TRANS_QUAD, EASE_IN). По завершении — queue_free. **Чисто визуальный flavor**, XP не несёт; ВSEM кому-то «объясняет» что только что произошло (мы уже на gameplay-уровне знаем — орб упал). Если защитника в радиусе нет (slam/flick убил скелета далеко от лучников) — trail не спавним, чтобы частица не летела «в никуда».
+    **(ж) Один путь, не много.** Архитектурно соблюдается правило `feedback_one_path_not_many`: единственный канал XP — orbs. Promежуточная попытка добавить per-kill flavor-trail (золотая искорка от трупа к ближайшему защитнику) была снята как мешающая: визуально trail неотличим от XpOrb (тот же золотой emissive шарик), игрок считывает частицу как «вот мой XP полетел в стрелка», а орб на земле — как что-то отдельное. Когнитивный диссонанс с реальной механикой. Один визуальный язык — один смысл: **золотой шар = XP, и это орб на земле, который надо собрать**.
 
-    **(з) Один путь, не много.** Архитектурно соблюдается правило `feedback_one_path_not_many`: единственный канал XP — orbs. Trail (#3) — визуал поверх, без gameplay-эффекта. Per-kill частица не отменяет orb (если бы она несла XP — конфликтовала бы), а дополняет: «защитник убил» → trail к нему + орб в землю.
-
-    **(и) Будущее: апгрейд автомагнита.** Сохранён в памяти как `UPGRADE_ORB_MAGNET` для следующих этапов. После прокачки лагерь в радиусе R сам тянет орбы к anchor'у, без необходимости посылать гномов или провозить караван. Сейчас этого НЕТ — текущая модель «гномы/караван собирают» — это feature.
+    **(з) Будущее: апгрейд автомагнита.** Сохранён в памяти как `UPGRADE_ORB_MAGNET` для следующих этапов. После прокачки лагерь в радиусе R сам тянет орбы к anchor'у, без необходимости посылать гномов или провозить караван. Сейчас этого НЕТ — текущая модель «гномы/караван собирают» — это feature.
 
 ### 7.3 Решённые ошибки
 
