@@ -36,6 +36,12 @@ const GROUP := &"xp_orb"
 ## Дистанция до anchor'а, на которой орб «прибыл» и зачисляется. Меньше
 ## arrival_distance = риск проскочить за один тик при magnet_speed=12.
 @export var arrival_distance: float = 0.5
+## Вертикальный offset target'а магнита: летим не в `deploy_anchor` напрямую
+## (он на y=0 для POI или y≈3 для Tower-центра), а на эту высоту над ним.
+## Иначе орб ныряет в землю / в анхор-точку и визуально пропадает под полом.
+## 0.7 ≈ та же высота, на которой орб лежит в IDLE — траектория «по уровню
+## травы», без вертикальных скачков.
+@export var magnet_target_offset_y: float = 0.7
 
 @export_group("Idle visual")
 ## Амплитуда вертикального покачивания в IDLE — даёт орбу «жизнь», глаз
@@ -109,7 +115,10 @@ func _tick_magnetized(delta: float) -> void:
 		# Camp умер до прибытия — орб не имеет получателя, просто исчезает.
 		queue_free()
 		return
-	var target_pos: Vector3 = _camp_target.deploy_anchor
+	# Целимся НА высоте `magnet_target_offset_y` над anchor'ом, не в сам
+	# anchor (тот может быть на полу = y=0 для POI, или на y≈3 для центра
+	# меша Tower). Без этого орб либо ныряет в землю, либо взлетает в небо.
+	var target_pos: Vector3 = _camp_target.deploy_anchor + Vector3.UP * magnet_target_offset_y
 	var to_target: Vector3 = target_pos - global_position
 	var dist: float = to_target.length()
 	if dist <= arrival_distance:

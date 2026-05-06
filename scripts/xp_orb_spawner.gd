@@ -39,7 +39,10 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 		orb.queue_free()
 		return
 	tree.current_scene.add_child(orb)
-	# Спавним там, где умер скелет, чуть приподняв над полом — иначе sphere
-	# radius=0.2 наполовину утопает в Ground'е (base_y отсчитывается от точки
-	# спавна, поэтому +0.3 = центр сферы над землёй).
-	orb.global_position = enemy.global_position + Vector3.UP * 0.3
+	# Спавним там, где умер скелет, поднимая над полом. base_y у орба =
+	# точка спавна, и bobbing колеблется ±bobbing_amplitude=0.15. Чтобы
+	# нижняя сторона sphere (radius=0.2) не уходила под Ground даже в
+	# нижней фазе, нужно: spawn_y - amplitude - radius ≥ 0 → spawn_y ≥ 0.35.
+	# Берём 0.7 с запасом (~0.55..0.85 диапазон центра, ~0.35..0.65 для низа
+	# сферы) — комфортно над травой, орб всегда читается visually.
+	orb.global_position = enemy.global_position + Vector3.UP * 0.7
