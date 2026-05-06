@@ -150,10 +150,6 @@ const UPGRADE_CATALOG: Dictionary = {
 @export var defender_scene: PackedScene
 
 @export_group("Squad XP / upgrades")
-## Сколько XP отряд получает за каждого убитого скелета. Засчитывается
-## стрелку как «kill credit» (стрела хранит ссылку на defender'а, проверяет
-## hp_before>0 → hp_after≤0 на попадании).
-@export var squad_xp_per_kill: int = 10
 ## Кривая порогов уровней. squad_level_xp_curve[N] = XP, нужный для уровня N+1.
 ## Дойдя до индекса >= size — больше уровней не дают (всё, апгрейды кончились).
 ## Дефолт «5×geometric» — 50, 120, 250, 500, 1000: к концу 1900 XP = 190 убийств
@@ -198,8 +194,9 @@ var _gnomes: Array[Gnome] = []
 ## Gnome.enter_following_caravan, снимаются на death через unregister.
 ## Используется в get_chain_target_for_follower.
 var _caravan_followers: Array[Gnome] = []
-## XP отряда защитников. Накапливается через credit_kill() — Arrow на лет.
-## hit'е стрелка-DefenderGnome'а проверяет «убил ли» и зовёт _camp.credit_kill().
+## XP отряда защитников. Накапливается через `add_squad_xp(amount, position)` —
+## зовётся `XpOrb` на arrival к anchor'у лагеря. Сами орбы дропают скелеты
+## на смерть (через `XpOrbSpawner`-autoload, см. `EventBus.enemy_destroyed`).
 var _squad_xp: int = 0
 ## Текущий уровень отряда. Считается по squad_level_xp_curve: пока _squad_xp
 ## дотягивает до следующего порога — _squad_level++ + emit squad_leveled_up.
@@ -669,21 +666,28 @@ func has_alive_parts() -> bool:
 
 ## --- Squad XP / upgrades ---
 
-## Кредит за убитого скелета. Зовётся из DefenderGnome.on_kill_credit
-## после летального попадания стрелы (hp_before > 0 → hp_after ≤ 0).
-## Накручивает _squad_xp, проверяет уровни, эмитит сигналы.
+## Добавляет XP отряду (этап 49 — заменяет старый `credit_kill`). Зовётся из
+## `XpOrb.MAGNETIZED → arrival`: орб коснулся anchor'а, кредит зачислен.
+## Старая модель «стрелок шлёт credit при kill» удалена — XP теперь приходит
+## через осязаемый объект-орб, который игрок видит на земле.
 ##
-## `at_position` — мировая координата убитого (для popup'а «+N» над трупом).
-## Если позиция не нужна — передавай Vector3.ZERO, popup просто не имеет
-## точки спавна (визуализатор сам решит как обработать).
+## Накручивает `_squad_xp`, проверяет уровни, эмитит сигналы.
 ##
-## Идемпотентность по «уровень за один XP-инкремент»: while-цикл — на случай
-## большого XP-bonus'а (сейчас бонусов нет, но защищаемся на будущее).
-func credit_kill(at_position: Vector3 = Vector3.ZERO) -> void:
-	_squad_xp += squad_xp_per_kill
+## `at_position` — мировая координата прибытия орба (для popup'а «+N»).
+## Используем именно её, а не позицию трупа — иначе popup появлялся бы там,
+## где скелет умер, а не там, где собрался XP. Связь действия и feedback'а
+## должна совпадать с положением игрока внимания: караван собрал → popup
+## над караваном.
+##
+## Идемпотентность по «уровень за один XP-инкремент»: while-цикл на случай
+## большого инкремента (например орб-bonus, если когда-нибудь появится).
+func add_squad_xp(amount: int, at_position: Vector3 = Vector3.ZERO) -> void:
+	if amount <= 0:
+		return
+	_squad_xp += amount
 	# Popup-сигнал ПЕРВЫМ — слушатели всплывашки получают сырое значение
 	# инкремента, ещё до bar-обновления.
-	EventBus.squad_xp_gained_at.emit(squad_xp_per_kill, at_position)
+	EventBus.squad_xp_gained_at.emit(amount, at_position)
 	EventBus.squad_xp_changed.emit(_squad_xp, _squad_level)
 	while _squad_level < squad_level_xp_curve.size() and _squad_xp >= squad_level_xp_curve[_squad_level]:
 		_squad_level += 1

@@ -35,10 +35,6 @@ var _life: float = 0.0
 ## кадре, или стрела пролетела через два enemy'я в один тик) — урон проходит
 ## ровно одной целью.
 var _consumed: bool = false
-## Стрелок, выпустивший стрелу — обычно DefenderGnome. Untyped, чтобы не
-## упасть на freed-инстансе (проверяется через is_instance_valid перед
-## использованием). null если стрела создана без привязки (например магией).
-var _shooter = null
 
 
 ## Вызывается стрелком сразу после instantiate + add_child. Задаёт стартовую
@@ -49,12 +45,6 @@ func setup(source_position: Vector3, target_position: Vector3) -> void:
 	global_position = source_position
 	_velocity = _compute_launch_velocity(source_position, target_position)
 	_orient_along_velocity()
-
-
-## Привязка к стрелку для kill-credit'а (squad XP). Зовётся DefenderGnome._fire_at
-## сразу после setup. На летальном попадании Arrow вызывает shooter.on_kill_credit.
-func set_shooter(shooter: Node) -> void:
-	_shooter = shooter
 
 
 ## Решение баллистической задачи: source, target, фиксированный |v| = speed,
@@ -112,21 +102,9 @@ func _on_body_entered(body: Node) -> void:
 		return
 	_consumed = true
 	# Если попали в Damageable (скелет) — наносим урон. В terrain — просто
-	# исчезаем.
+	# исчезаем. Kill credit идёт через EventBus.enemy_destroyed → XpOrbSpawner
+	# (autoload), поэтому стрела сама про XP ничего не знает (этап 49).
 	if Damageable.is_damageable(body):
-		# Snapshot HP до удара — чтобы понять «убил ли именно наш выстрел»
-		# (kill credit не идёт за добивание уже мёртвого тела). "hp" in body
-		# защищает от damageable без hp-поля (палатки, башня — там тоже hp,
-		# но kill credit за них не выдаётся: Skeleton проверяется отдельно).
-		var hp_before: float = -1.0
-		if "hp" in body:
-			hp_before = body.hp
 		Damageable.try_damage(body, damage)
-		# Killing blow: hp перешло из положительного в ≤0 от нашего удара.
-		# Только тогда credit'им стрелка. Защита от freed-инстанса через
-		# is_instance_valid (untyped — типы не падают на freed).
-		if hp_before > 0.0 and "hp" in body and body.hp <= 0.0:
-			if _shooter != null and is_instance_valid(_shooter) and _shooter.has_method("on_kill_credit"):
-				_shooter.on_kill_credit(body)
 		hit.emit(body, global_position)
 	queue_free()

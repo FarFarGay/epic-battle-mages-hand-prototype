@@ -21,6 +21,7 @@ LogConfig="*res://scripts/log_config.gd"
 QuestProgress="*res://scripts/quest_progress.gd"
 UpgradeModal="*res://scripts/upgrade_modal.gd"
 SquadXpFx="*res://scripts/squad_xp_fx.gd"
+XpOrbSpawner="*res://scripts/xp_orb_spawner.gd"
 
 [display]
 

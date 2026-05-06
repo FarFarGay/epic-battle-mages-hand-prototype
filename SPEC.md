@@ -99,6 +99,9 @@ hand_gameplay_prot/
     ├── perf_hud.gd            — class_name PerfHud (оверлей FPS/ms/draw calls/скелеты/LOD, F3 toggle)
     ├── gameplay_hud.gd        — игровой HUD (способности + статус лагеря)
     ├── grass_field.gd         — class_name GrassField (Node3D, корень chunked-grass'a; на _ready спавнит 8×8 GrassChunk-нод по карте 400×400)
+    ├── xp_orb.gd              — class_name XpOrb (этап 49, осязаемый XP-дроп; Node3D + Area3D, IDLE → MAGNETIZED)
+    ├── xp_orb_spawner.gd      — autoload XpOrbSpawner (слушает EventBus.enemy_destroyed, спавнит XpOrb)
+    ├── squad_xp_fx.gd         — autoload SquadXpFx (popup'ы +XP + kill-trail-частицы к ближайшему защитнику)
     ├── event_bus.gd           — autoload EventBus
     └── log_config.gd          — autoload LogConfig
 ```
@@ -1171,18 +1174,18 @@ func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool
 Camp накапливает общий **squad XP** и уровни отряда защитников. Apgreids читаются защитниками через `has_upgrade(id)`.
 
 **Состояние:**
-- `_squad_xp: int` — общий XP отряда. Накапливается через `credit_kill(at_position)` из `DefenderGnome.on_kill_credit` после летального arrow-попадания.
+- `_squad_xp: int` — общий XP отряда. Накапливается через `add_squad_xp(amount, at_position)` (этап 49) — зовётся `XpOrb` на arrival к anchor'у.
 - `_squad_level: int` — текущий уровень. Считается по `squad_level_xp_curve: Array[int] = [50, 120, 250, 500, 1000]`. Дойдя до порога — `_squad_level++ + _pending_upgrade_choices++ + EventBus.squad_leveled_up.emit(level)`.
 - `_active_upgrades: Array[StringName]` — выданные апгрейды. Защитники читают на каждом тике через `has_upgrade(id)` — новые после respawn'а автоматически в курсе.
 - `_pending_upgrade_choices: int` — счётчик уровней в очереди на выбор апгрейда. UpgradeModal закрывает их по одному.
 
 **Параметры:**
-- `squad_xp_per_kill: int = 10` — XP за скелета.
 - `upgrade_long_draw_bonus: float = 5.0` — +5м к `attack_radius` при апгрейде long_draw.
 - `kite_threshold_distance: float = 6.0` — порог для kiting-апгрейда: ближе → защитник пятится.
+- (Сумма XP за орб задаётся в `XpOrbSpawner.XP_PER_KILL = 10`, не в Camp — Camp получает amount как параметр и не привязан к фиксированному значению.)
 
 **API:**
-- `credit_kill(at_position: Vector3)` — +`squad_xp_per_kill` в `_squad_xp`. Эмитит `EventBus.squad_xp_gained_at(amount, position)` (для popup'а), затем `squad_xp_changed`. While-цикл проверяет уровни, эмитит `squad_leveled_up`.
+- `add_squad_xp(amount: int, at_position: Vector3)` (этап 49) — добавляет XP. Эмитит `EventBus.squad_xp_gained_at(amount, position)` (для popup'а), затем `squad_xp_changed`. While-цикл проверяет уровни, эмитит `squad_leveled_up`. Заменил старый `credit_kill` — XP теперь приходит через осязаемый объект-орб, который игрок видит на земле и собирает.
 - `has_upgrade(id) -> bool`, `grant_upgrade(id)` — для UpgradeModal'а.
 - `available_upgrades() -> Array[StringName]` — id'шки, ещё не выданные. Модал берёт первые 2 случайных.
 
@@ -1314,7 +1317,7 @@ enum State {
 - `attack_cooldown_min/max = 1.0 / 2.0`.
 - `arrow_damage_min/max = 25 / 40`. На skeleton.hp=30 1-shot ~66%, 2-shot 33%.
 - `arrow_speed = 22`, `arrow_spawn_offset = (0, 0.6, 0)`.
-- На `_fire_at(target)` лучник **передаёт ссылку на себя в стрелу** через `arrow.set_shooter(self)` — для kill-credit (squad XP).
+- На `_fire_at(target)` лучник готовит и спавнит стрелу. Kill-credit chain (этап 47-48) удалён в этапе 49 — XP теперь идёт через `XpOrbSpawner` autoload (слушает `EventBus.enemy_destroyed`). Стрелок не привязан к стреле.
 
 **Боевой тик в DEPLOYED** (`_defender_combat_tick`):
 - Цель в `effective_attack_radius()` → стой, стреляй. С апгрейдом kiting и `dist < kite_threshold_distance` — пятимся (-_facing × patrol_speed) продолжая стрелять.
@@ -1342,9 +1345,13 @@ enum State {
 - `_compute_escort_target()`: `tent.position + perpendicular × lateral × sign`. Forward-вектор каравана = (tower − tent).normalized; perpendicular = 90° rotation в плоскости XZ.
 - Если палатка убита и Camp не нашёл новой — fallback на башню.
 
-**Kill credit (squad XP)**:
-- Arrow на летальном попадании (hp_before > 0 → hp_after ≤ 0) вызывает `_shooter.on_kill_credit(victim)`.
-- `on_kill_credit(victim)` → `_camp.credit_kill(victim.global_position)` — XP начисляется в общий пул отряда (см. секцию Squad XP).
+**Kill credit** (этап 49 — переработано на XP-orbs):
+- Прежняя цепочка `Arrow._shooter → on_kill_credit → camp.credit_kill` удалена. Стрелок не передаётся в стрелу, `Arrow.on_body_entered` ничего не знает про XP.
+- Вместо этого: `XpOrbSpawner` autoload подписан на `EventBus.enemy_destroyed`, на каждый kill спавнит `XpOrb` в позиции трупа. Орб лежит, ждёт касания союзника (Tower / CampPart / Gnome), на касании магнитится к `Camp.deploy_anchor`, на arrival вызывает `add_squad_xp`. См. §5.10 (XpOrb).
+- Личный опыт защитника (`_shots_fired` для точности) не зависел и не зависит от kill credit'а — инкрементируется в `_fire_at` per-выстрел.
+
+**Level-up flash** (этап 49):
+- `_on_squad_leveled_up(_level)` — подписка на `EventBus.squad_leveled_up` в `_ready`. Tween scale меша 1.0 → 1.3 → 1.0 за 300мс (TRANS_QUAD). Каждый живой защитник «вспыхивает» на левел-апе. Без шейдеров; tween на `_mesh.create_tween()` — если защитник умрёт mid-flight, mesh queue_free'нется вместе с ним и tween тихо отвалится.
 
 **Squad-апгрейды** (читаются через `_camp.has_upgrade(id)`):
 - `Camp.UPGRADE_KITING` — пятиться при близком враге (см. боевой тик).
@@ -2202,6 +2209,26 @@ func _refresh_visual() -> void:
 
     **(д) POI cache в Camp.** `_find_poi_for_deploy` дёргался каждый кадр на зажатой R (60 Гц) через `get_tree().get_nodes_in_group(POI_GROUP)` — лишние Array-аллокации. Добавлен кеш с TTL `POI_CACHE_TTL_SEC=0.1` — 6× срез нагрузки, граница «вошёл/вышел из safe_radius» задерживается на ≤100мс (игроком не читается; башня за это время проходит ≤0.8м).
 
+49. **Squad XP — orb-drops + visual flair** (2026-05-06). Перевод XP с instant-credit'а на осязаемые орбы, которые надо собрать. Базовая модель: «гоняй караван в зону боя», апгрейд автомагнита оставлен на потом.
+
+    **(а) `XpOrb` (`scripts/xp_orb.gd` + `scenes/xp_orb.tscn`).** Node3D с MeshInstance3D (золотой emissive sphere radius=0.2) и Area3D (radius=0.6, mask=ACTORS|CAMP_OBSTACLE|FRIENDLY_UNIT=292). Two states: IDLE (лежит, bobbing вокруг `_base_y`) → MAGNETIZED (лерпит к `_camp_target.deploy_anchor` со speed=12м/с, на arrival вызывает `add_squad_xp(amount, position)` + queue_free). Lifetime=60с — fallback против накопления неподобранных орбов после стресс-волн.
+
+    **(б) `XpOrbSpawner` autoload.** Подписан на `EventBus.enemy_destroyed`, спавнит `XpOrb` в позиции трупа (+0.3 по Y). Сцена орба и `XP_PER_KILL=10` — `preload`/`const` (autoload без .tscn-инстанса, @export не настраиваются из инспектора). Skeleton ничего не знает про XP, EnemySpawner — про орбы.
+
+    **(в) Снят kill-credit chain.** Удалены `Arrow._shooter / set_shooter / on_kill_credit`-цепочка и `DefenderGnome.on_kill_credit`. Стрелок не передаётся в стрелу. `Camp.credit_kill` переименован в `add_squad_xp(amount, position)` — параметризован суммой, не привязан к фиксированному `squad_xp_per_kill` (поле удалено).
+
+    **(г) Resolve Camp на касании орба.** `XpOrb._on_body_entered` определяет владельца касания: `Gnome.get_camp()` (новый публичный геттер), `CampPart.get_parent() as Camp`, либо для Tower — итерация группы `camp` с проверкой `c.get_tower() == body` (Tower не хранит ссылку на Camp; группа маленькая — 1-2 Camp на карте). После активации магнита `Area3D.monitoring=false` чтобы лишние касания на полёте не обрабатывались.
+
+    **(д) Гном-собиратель видит орбы.** Новый state `Gnome.State.COMMUTING_TO_ORB`. В `_tick_searching` и `_tick_idle_near_base` приоритет: орб > pile (орб исчезает за 60с, pile стационарен). `_scan_orb()` итерирует `XpOrb.GROUP` без spatial grid (на текущих масштабах достаточно; добавить grid если волны генерируют 500+ орбов одновременно). На касании Area3D орб магнитится к Camp'у, гном теряет цель → возврат в SEARCHING. arrival-чека через `pickup_distance` нет: Area3D radius=0.6 ловит контакт раньше.
+
+    **(е) Level-up flash на защитниках.** `DefenderGnome._on_squad_leveled_up` — подписка на `EventBus.squad_leveled_up`. Tween scale меша 1.0 → 1.3 → 1.0 за 300мс (TRANS_QUAD). Каждый живой защитник «вспыхивает» на левел-апе. Tween создаётся на меше — корректно отвалится если защитник умрёт mid-flight.
+
+    **(ж) Per-kill flavor trail.** В `SquadXpFx` добавлен handler `_on_enemy_destroyed`: ищет ближайшего живого DefenderGnome в радиусе 25м от трупа (через `DEFENDER_GROUP`), спавнит маленький Node3D-mesh (`SphereMesh` radius=0.1, золотой emissive) с tween'ом `global_position` от точки трупа+0.5 к позиции защитника за 0.45с (TRANS_QUAD, EASE_IN). По завершении — queue_free. **Чисто визуальный flavor**, XP не несёт; ВSEM кому-то «объясняет» что только что произошло (мы уже на gameplay-уровне знаем — орб упал). Если защитника в радиусе нет (slam/flick убил скелета далеко от лучников) — trail не спавним, чтобы частица не летела «в никуда».
+
+    **(з) Один путь, не много.** Архитектурно соблюдается правило `feedback_one_path_not_many`: единственный канал XP — orbs. Trail (#3) — визуал поверх, без gameplay-эффекта. Per-kill частица не отменяет orb (если бы она несла XP — конфликтовала бы), а дополняет: «защитник убил» → trail к нему + орб в землю.
+
+    **(и) Будущее: апгрейд автомагнита.** Сохранён в памяти как `UPGRADE_ORB_MAGNET` для следующих этапов. После прокачки лагерь в радиусе R сам тянет орбы к anchor'у, без необходимости посылать гномов или провозить караван. Сейчас этого НЕТ — текущая модель «гномы/караван собирают» — это feature.
+
 ### 7.3 Решённые ошибки
 
 | # | Ошибка | Причина | Исправление |
@@ -2282,10 +2309,10 @@ func _refresh_visual() -> void:
 | `module_unmounted` | `(module: Node, slot: Node)` | `MountSlot._release_to_hand` / `_drop_mounted` |
 | `quest_advanced` | `(new_index: int)` | `QuestProgress.advance` (autoload) — эмит на каждое продвижение прогресса. Слушают QuestActor (перекрас) и потенциально HUD. |
 | `skeleton_attacked_camp` | `(attacker: Node3D, victim: Node3D, position: Vector3)` | `Skeleton._perform_strike` после успешного `try_damage` по CampPart или НЕ-DefenderGnome'у. Defender'ы своего лагеря используют как alarm-цель (override конуса). |
-| `squad_xp_changed` | `(xp: int, level: int)` | `Camp.credit_kill` после инкремента XP. HUD-бар (GameplayHud) слушает для обновления. |
-| `squad_leveled_up` | `(level: int)` | `Camp.credit_kill` при пересечении threshold'а. UpgradeModal слушает — открывает модал выбора апгрейда. GameplayHud — flash-tween бара. |
+| `squad_xp_changed` | `(xp: int, level: int)` | `Camp.add_squad_xp` (этап 49) после инкремента XP. HUD-бар (GameplayHud) слушает для обновления. |
+| `squad_leveled_up` | `(level: int)` | `Camp.add_squad_xp` при пересечении threshold'а. Слушают: UpgradeModal (открывает модал выбора апгрейда), GameplayHud (flash-tween бара), DefenderGnome (этап 49 — scale-pulse «вспышка» на каждом живом защитнике). |
 | `squad_upgrade_granted` | `(upgrade_id: StringName)` | `Camp.grant_upgrade` после клика игрока в модале. Сейчас только для логирования / будущего HUD активных апгрейдов. |
-| `squad_xp_gained_at` | `(amount: int, world_position: Vector3)` | `Camp.credit_kill` ПЕРЕД `squad_xp_changed`. SquadXpFx autoload спавнит Label3D-popup «+10» в этой точке мира. |
+| `squad_xp_gained_at` | `(amount: int, world_position: Vector3)` | `Camp.add_squad_xp` (этап 49) ПЕРЕД `squad_xp_changed`. SquadXpFx autoload спавнит Label3D-popup «+10» в этой точке мира (это позиция arrival орба, не позиция трупа). |
 
 `ResourcePile.take_one` через шину **не эмитит** (декремент `units` пока не нужен наружу — счётчика ресурсов ещё нет). При появлении HUD-счётчика добавится отдельный сигнал — типизированный как `Node3D`, как и остальные.
 

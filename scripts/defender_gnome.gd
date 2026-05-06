@@ -196,11 +196,30 @@ func _ready() -> void:
 	# фильтр «это мой лагерь?» — внутри хендлера. Без этой подписки лучник
 	# не отреагировал бы на скелета за спиной, который рвёт палатку.
 	EventBus.skeleton_attacked_camp.connect(_on_skeleton_attacked_camp)
+	# Level-up flash (этап 49): подписка на squad_leveled_up. Каждый живой
+	# защитник «вспыхивает» scale-pulse'ом — визуальная обратная связь
+	# «отряд получил награду». Сигнал летит всем глобально; фильтра «наш
+	# лагерь» НЕТ (на карте сейчас один Camp; если станет несколько —
+	# добавить чек `_camp.get_squad_level() == new_level` в хендлере).
+	EventBus.squad_leveled_up.connect(_on_squad_leveled_up)
 	# Бросок монетки: левый борт vs правый. Несколько защитников одной палатки
 	# в среднем распределятся 50/50 (для 3 — может выйти 2:1, это OK).
 	_escort_lateral_sign = -1.0 if randf() < 0.5 else 1.0
 	# В группу для соседского-учёта: сепарация позиций + распределение целей.
 	add_to_group(DEFENDER_GROUP)
+
+
+## Реакция на левел-ап отряда — короткий scale-pulse меша (1.0 → 1.3 → 1.0
+## за 300мс). Визуально читается как «вспышка», без шейдеров и emission'а.
+## Tween создаётся на меше — если защитник умрёт mid-tween, mesh queue_free'нется
+## вместе с ним, tween тихо отвалится.
+func _on_squad_leveled_up(_level: int) -> void:
+	if _mesh == null or not is_instance_valid(_mesh):
+		return
+	var tween := _mesh.create_tween()
+	tween.set_trans(Tween.TRANS_QUAD)
+	tween.tween_property(_mesh, "scale", Vector3.ONE * 1.3, 0.12).set_ease(Tween.EASE_OUT)
+	tween.tween_property(_mesh, "scale", Vector3.ONE, 0.18).set_ease(Tween.EASE_IN)
 
 
 ## Лагерь развернулся — защитник выходит из палатки. Базовый enter_deployed
@@ -797,24 +816,6 @@ func get_shots_fired() -> int:
 	return _shots_fired
 
 
-## Killing blow callback — Arrow вызывает после успешного летального попадания.
-## Кредит за убийство уходит в squad XP лагеря (общий опыт отряда). Личный
-## опыт стрельбы (точность через _shots_fired) накапливается отдельно в _fire_at.
-##
-## victim не используется здесь, но передаётся на случай если в будущем
-## разные враги дают разный XP (элиты, боссы).
-func on_kill_credit(victim: Node) -> void:
-	if _camp == null or not is_instance_valid(_camp):
-		return
-	# Позиция жертвы — для popup'а «+10» над трупом. Если жертва уже
-	# освобождена (queue_free на death) — fallback на собственную позицию
-	# стрелка (popup появится у лучника, тоже читаемо).
-	var pos: Vector3 = global_position
-	if victim != null and is_instance_valid(victim) and victim is Node3D:
-		pos = (victim as Node3D).global_position
-	_camp.credit_kill(pos)
-
-
 ## Эффективный радиус стрельбы с учётом активных squad-апгрейдов. long_draw
 ## добавляет camp.upgrade_long_draw_bonus метров к базовому attack_radius.
 ## Используется и в боевом тике (DEPLOYED+CARAVAN), и в alarm-логике.
@@ -850,9 +851,10 @@ func _fire_at(target: Node3D) -> void:
 	arrow.damage = damage
 	arrow.speed = arrow_speed
 	arrow.setup(spawn, aim_pos)
-	# Привязка к стрелку для squad XP — на летальном попадании Arrow
-	# вызовет on_kill_credit ниже.
-	arrow.set_shooter(self)
+	# Этап 49: kill credit убрали — XP идёт через `XpOrbSpawner` (autoload,
+	# слушает EventBus.enemy_destroyed), стрела про XP больше не знает.
+	# Личный опыт защитника (точность через _shots_fired) — отдельный механизм,
+	# не зависит от убийства цели, инкрементируется на каждом выстреле.
 	_shots_fired += 1
 	if debug_log and LogConfig.master_enabled:
 		var d: float = global_position.distance_to(target.global_position)

@@ -49,6 +49,12 @@ enum State {
 	## Активируется через `enter_following_caravan()` из CampPart.eject_in_tent
 	## и Camp._reassign_orphan_gnomes когда новый home не найден.
 	FOLLOWING_CARAVAN,
+	## Гном-собиратель идёт к XpOrb (этап 49) — увидел орб в vision_radius
+	## во время SEARCHING/IDLE_NEAR_BASE. На касании Area3D орба сам активирует
+	## магнит, орб улетает к Camp.deploy_anchor. Гном после этого возвращается
+	## в SEARCHING. Если орб коснулся другой союзник раньше или истёк
+	## lifetime — `_assigned_orb` инвалидируется, переход в SEARCHING.
+	COMMUTING_TO_ORB,
 }
 
 @export_group("Stats")
@@ -158,6 +164,10 @@ var _state: State = State.IN_TENT:
 			print("[Gnome:%s] state %s → %s" % [name, State.keys()[_state], State.keys()[value]])
 		_state = value
 var _assigned_pile: ResourcePile = null
+## Орб, к которому гном сейчас бежит в COMMUTING_TO_ORB. Untyped, чтобы не
+## упасть на freed-инстансе (между сканом и тиком орб может улетететь к
+## Camp'у и queue_free); проверка через is_instance_valid + as XpOrb.
+var _assigned_orb: XpOrb = null
 var _wander_target: Vector3 = Vector3.INF
 var _carry_visual: MeshInstance3D = null
 var _knockback := KnockbackState.new()
@@ -424,6 +434,12 @@ func get_home_tent() -> Node3D:
 	return _home_tent
 
 
+## Геттер ссылки на родительский Camp. Используется `XpOrb._resolve_camp_from`
+## когда орб коснулся гнома — нужно понять, к какому лагерю отправлять XP.
+func get_camp() -> Camp:
+	return _camp
+
+
 ## Переназначить home_tent. Camp вызывает после _on_part_destroyed для
 ## осиротевших гномов: вместо мёртвого инстанса палатки получают новую
 ## (ближайшую живую). Это позволяет IN_TENT-приклейке (физпроцесс) и
@@ -546,6 +562,8 @@ func _active_tick(_delta: float) -> void:
 			_tick_commuting_to_pile()
 		State.COMMUTING_TO_BASE:
 			_tick_commuting_to_base()
+		State.COMMUTING_TO_ORB:
+			_tick_commuting_to_orb()
 		State.IDLE_NEAR_BASE:
 			_tick_idle_near_base()
 		State.RETURNING_TO_TENT:
@@ -643,6 +661,16 @@ func _update_lod() -> void:
 
 
 func _tick_searching() -> void:
+	# Шаг 0 (этап 49): орб приоритетнее куч — он исчезает через lifetime.
+	# Ресурс может полежать минутами, орб — 60с, и пропавший XP в стресс-волне
+	# теряется навсегда. Поэтому проверяем сначала.
+	var orb := _scan_orb()
+	if orb != null:
+		_assigned_orb = orb
+		_wander_target = Vector3.INF
+		_state = State.COMMUTING_TO_ORB
+		return
+
 	# Шаг 1: глаза — ближайшая НЕ занятая другим гномом куча в vision_radius.
 	var spotted := _scan_vision()
 	if spotted:
@@ -692,10 +720,69 @@ func _tick_commuting_to_base() -> void:
 			_on_pile_lost()
 
 
+## Гном идёт к XpOrb. Касание Area3D орба сработает само — наш job только
+## довести гнома до него. Если орб улетел/просрочился до контакта (касание
+## другого союзника, lifetime expire) — сваливаемся в SEARCHING.
+##
+## arrival-чека по pickup_distance НЕТ: Area3D на орбе (radius=0.6м) сама
+## триггернет body_entered ещё до того как гном дотянется по дистанции.
+## Если же сцена орба настроена так, что Area3D меньше pickup_distance —
+## гном упрётся в орб и будет дёргаться; для текущей сцены это не важно.
+func _tick_commuting_to_orb() -> void:
+	if not is_instance_valid(_assigned_orb) or not _assigned_orb.is_idle():
+		_on_orb_lost()
+		return
+	_move_toward_xz(_assigned_orb.global_position)
+
+
+## Орб исчез или коснулся другого. Вернуться в SEARCHING — там приоритет:
+## новый орб → pile → idle/patrol.
+func _on_orb_lost() -> void:
+	_assigned_orb = null
+	_state = State.SEARCHING
+
+
+## «Глаза» гнома для XP-орбов — ближайший ещё-IDLE орб в vision_radius.
+## Без spatial grid: на 30 гномах × ~50-100 орбах × 60fps = ~150k checks/сек,
+## ~2мс CPU/сек. Если стресс-волны генерируют 500+ орбов одновременно —
+## добавить grid по аналогии с _pile_grid (см. PILE_GRID_*).
+func _scan_orb() -> XpOrb:
+	var pos := global_position
+	var vr_sq := vision_radius * vision_radius
+	var nearest: XpOrb = null
+	var nearest_d_sq := vr_sq
+	for n in get_tree().get_nodes_in_group(XpOrb.GROUP):
+		if not is_instance_valid(n):
+			continue
+		var orb := n as XpOrb
+		if orb == null:
+			continue
+		# Идёт к идле-орбу. MAGNETIZED уже к лагерю летит, гном за ним
+		# не угонится и не нужен.
+		if not orb.is_idle():
+			continue
+		var d_sq: float = (orb.global_position - pos).length_squared()
+		if d_sq < nearest_d_sq:
+			nearest_d_sq = d_sq
+			nearest = orb
+	return nearest
+
+
 func _tick_idle_near_base() -> void:
 	# Пока в idle — не сканируем кучи. Камп вернёт нас в SEARCHING при следующей
 	# развёртке, либо появление куч нас не разбудит до этого момента — это ок,
 	# на текущей итерации куч на карте больше не появляется.
+	#
+	# Орбы — другое дело (этап 49): они появляются прямо во время idle, когда
+	# скелеты бьются о палатки/стены. Гном в idle, увидев орб поблизости,
+	# должен побежать его собрать. Без этого XP с волн вокруг лагеря-в-idle
+	# терялся бы.
+	var orb := _scan_orb()
+	if orb != null:
+		_assigned_orb = orb
+		_wander_target = Vector3.INF
+		_state = State.COMMUTING_TO_ORB
+		return
 	var anchor := _camp.deploy_anchor
 	if _wander_target == Vector3.INF or _horizontal_distance(_wander_target) < wander_arrival:
 		_wander_target = _random_point_around(anchor, idle_radius)
