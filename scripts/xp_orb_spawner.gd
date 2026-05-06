@@ -18,6 +18,14 @@ const ORB_SCENE := preload("res://scenes/xp_orb.tscn")
 ## Сколько XP даёт один орб на arrival. Совпадает с прежним
 ## `Camp.squad_xp_per_kill = 10`.
 const XP_PER_KILL: int = 10
+## Высота над трупом, на которой орб спавнится (и от которой `_base_y`
+## отсчитывает bobbing ±bobbing_amplitude=0.15). Должна быть выше верхушек
+## травы, иначе орб утопает визуально и кажется будто «уходит под землю».
+## Трава GrassField ~0.7м высотой, sphere radius 0.2 — берём 1.2 чтобы низ
+## sphere в нижней фазе bobbing'а (1.2 − 0.15 − 0.2 = 0.85м) был явно над
+## верхушками травы. Должна совпадать с `XpOrb.magnet_target_offset_y`,
+## иначе на полёте орб уйдёт ниже и нырнёт в траву.
+const SPAWN_OFFSET_Y: float = 1.2
 
 
 func _ready() -> void:
@@ -39,10 +47,11 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 		orb.queue_free()
 		return
 	tree.current_scene.add_child(orb)
-	# Спавним там, где умер скелет, поднимая над полом. base_y у орба =
-	# точка спавна, и bobbing колеблется ±bobbing_amplitude=0.15. Чтобы
-	# нижняя сторона sphere (radius=0.2) не уходила под Ground даже в
-	# нижней фазе, нужно: spawn_y - amplitude - radius ≥ 0 → spawn_y ≥ 0.35.
-	# Берём 0.7 с запасом (~0.55..0.85 диапазон центра, ~0.35..0.65 для низа
-	# сферы) — комфортно над травой, орб всегда читается visually.
-	orb.global_position = enemy.global_position + Vector3.UP * 0.7
+	# Спавним там, где умер скелет, поднимая над полом на SPAWN_OFFSET_Y.
+	# Берём X/Z с трупа, Y задаём абсолютной высотой над землёй (а не +offset
+	# к skel.y, иначе при нестабильной Y-позиции скелета — на ходу, в
+	# knockback'е, под анимацией смерти — орб мог появиться ниже травы).
+	# Карта плоская, ground.y=0 — `SPAWN_OFFSET_Y` в мировых координатах = OK.
+	var spawn_pos: Vector3 = enemy.global_position
+	spawn_pos.y = SPAWN_OFFSET_Y
+	orb.global_position = spawn_pos
