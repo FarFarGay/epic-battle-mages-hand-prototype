@@ -36,13 +36,6 @@ const GROUP := &"xp_orb"
 ## Дистанция до anchor'а, на которой орб «прибыл» и зачисляется. Меньше
 ## arrival_distance = риск проскочить за один тик при magnet_speed=12.
 @export var arrival_distance: float = 0.5
-## Вертикальный offset target'а магнита: летим не в `deploy_anchor` напрямую
-## (он на y=0 для POI или y≈3 для Tower-центра), а на эту высоту над ним.
-## Иначе орб ныряет в землю / в анхор-точку и визуально пропадает под полом.
-## Должна совпадать с `XpOrbSpawner.SPAWN_OFFSET_Y` — тогда орб летит
-## строго горизонтально, без вертикальных скачков. Над верхушками травы
-## (~0.7м), sphere radius=0.2 — снизу всегда не меньше 1.0м над полом.
-@export var magnet_target_offset_y: float = 1.2
 
 @export_group("Idle visual")
 ## Амплитуда вертикального покачивания в IDLE — даёт орбу «жизнь», глаз
@@ -65,6 +58,8 @@ var _life_elapsed: float = 0.0
 ## синхронно, выглядит естественно.
 var _bob_phase: float = 0.0
 ## Базовая Y-координата (точка спавна) — bobbing колеблется относительно неё.
+## Также используется как Y магнитного полёта: target_y = _base_y, чтобы орб
+## летел строго горизонтально и не нырял в anchor-точку (которая на полу).
 var _base_y: float = 0.0
 ## Куда лететь после активации магнита. None = ещё в IDLE.
 var _camp_target: Camp = null
@@ -116,13 +111,15 @@ func _tick_magnetized(delta: float) -> void:
 		# Camp умер до прибытия — орб не имеет получателя, просто исчезает.
 		queue_free()
 		return
-	# Целимся в `current_center()` (среднее живых палаток, fallback на Tower),
-	# а не в `deploy_anchor`. Anchor устанавливается только при `_start_deploy`,
-	# до этого он = `Vector3.ZERO` — орб магнитился в мировой ноль вместо
-	# к лагерю. `current_center()` валиден во всех состояниях (caravan, deployed,
-	# packing). Плюс высота `magnet_target_offset_y` над землёй — иначе орб
-	# ныряет к точке-цели, которая на полу.
-	var target_pos: Vector3 = _camp_target.current_center() + Vector3.UP * magnet_target_offset_y
+	# Целимся в X/Z `current_center()` (среднее живых палаток, fallback на Tower),
+	# но Y держим равной `_base_y` — высоте, на которой орб появился и
+	# bobbing'ал в IDLE. Это даёт горизонтальный полёт без ныряний:
+	#  - `current_center().y` ≈ половина высоты палатки (origin палатки в
+	#    центре меша) — не та высота, что у орба;
+	#  - `deploy_anchor.y` = 0 пока лагерь не развёрнут — вообще не вариант.
+	# Один источник правды для высоты — точка рождения орба.
+	var center: Vector3 = _camp_target.current_center()
+	var target_pos := Vector3(center.x, _base_y, center.z)
 	var to_target: Vector3 = target_pos - global_position
 	var dist: float = to_target.length()
 	if dist <= arrival_distance:

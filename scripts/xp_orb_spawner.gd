@@ -18,14 +18,16 @@ const ORB_SCENE := preload("res://scenes/xp_orb.tscn")
 ## Сколько XP даёт один орб на arrival. Совпадает с прежним
 ## `Camp.squad_xp_per_kill = 10`.
 const XP_PER_KILL: int = 10
-## Высота над трупом, на которой орб спавнится (и от которой `_base_y`
-## отсчитывает bobbing ±bobbing_amplitude=0.15). Должна быть выше верхушек
-## травы, иначе орб утопает визуально и кажется будто «уходит под землю».
-## Трава GrassField ~0.7м высотой, sphere radius 0.2 — берём 1.2 чтобы низ
-## sphere в нижней фазе bobbing'а (1.2 − 0.15 − 0.2 = 0.85м) был явно над
-## верхушками травы. Должна совпадать с `XpOrb.magnet_target_offset_y`,
-## иначе на полёте орб уйдёт ниже и нырнёт в траву.
-const SPAWN_OFFSET_Y: float = 1.2
+## Высота спавна орба над `enemy.global_position` (то есть над **центром
+## капсулы скелета**, не над полом). Skeleton.tscn — CapsuleShape3D height=2,
+## origin в центре капсулы → когда скелет стоит на полу, его global_position.y
+## ≈ 1.0 (низ капсулы касается пола). +1.0 → орб появляется на y≈2.0 — над
+## макушкой скелета и явно выше любой травы (~0.7м).
+##
+## Не используем абсолютную мировую Y: ground в `main.tscn` смещён по Y
+## (origin.y=−0.5), а Y скелета меняется в knockback/lunge — относительный
+## offset от трупа стабилен в любой момент смерти.
+const SPAWN_OFFSET_Y: float = 1.0
 
 
 func _ready() -> void:
@@ -47,11 +49,5 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 		orb.queue_free()
 		return
 	tree.current_scene.add_child(orb)
-	# Спавним там, где умер скелет, поднимая над полом на SPAWN_OFFSET_Y.
-	# Берём X/Z с трупа, Y задаём абсолютной высотой над землёй (а не +offset
-	# к skel.y, иначе при нестабильной Y-позиции скелета — на ходу, в
-	# knockback'е, под анимацией смерти — орб мог появиться ниже травы).
-	# Карта плоская, ground.y=0 — `SPAWN_OFFSET_Y` в мировых координатах = OK.
-	var spawn_pos: Vector3 = enemy.global_position
-	spawn_pos.y = SPAWN_OFFSET_Y
-	orb.global_position = spawn_pos
+	# Спавним там, где умер скелет, на `SPAWN_OFFSET_Y` выше центра капсулы.
+	orb.global_position = enemy.global_position + Vector3.UP * SPAWN_OFFSET_Y
