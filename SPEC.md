@@ -104,6 +104,8 @@ hand_gameplay_prot/
     ├── xp_orb.gd              — class_name XpOrb (этап 49, осязаемый XP-дроп; Node3D + Area3D, IDLE → MAGNETIZED)
     ├── xp_orb_spawner.gd      — autoload XpOrbSpawner (слушает EventBus.enemy_destroyed, спавнит XpOrb)
     ├── squad_xp_fx.gd         — autoload SquadXpFx (popup'ы «+N» в точке arrival орба к anchor'у)
+    ├── journal_panel.gd       — autoload JournalPanel (J открывает CanvasLayer с тремя вкладками: Юниты/Лагерь/План; level-gated апгрейды отряда, постройки за ресурсы, preset'ы плана сбора)
+    ├── resource_fx.gd         — autoload ResourceFx (одноразовый GPUParticles3D-всплеск при сборе единицы / consume pile'а; цвет = ResourcePile.color_for_type)
     ├── event_bus.gd           — autoload EventBus
     └── log_config.gd          — autoload LogConfig
 ```
@@ -1179,7 +1181,7 @@ Camp накапливает общий **squad XP** и уровни отряда
 - `_squad_xp: int` — общий XP отряда. Накапливается через `add_squad_xp(amount, at_position)` (этап 49) — зовётся `XpOrb` на arrival к anchor'у.
 - `_squad_level: int` — текущий уровень. Считается по `squad_level_xp_curve: Array[int] = [50, 120, 250, 500, 1000]`. Дойдя до порога — `_squad_level++ + _pending_upgrade_choices++ + EventBus.squad_leveled_up.emit(level)`.
 - `_active_upgrades: Array[StringName]` — выданные апгрейды. Защитники читают на каждом тике через `has_upgrade(id)` — новые после respawn'а автоматически в курсе.
-- `_pending_upgrade_choices: int` — счётчик уровней в очереди на выбор апгрейда. UpgradeModal закрывает их по одному.
+- `_pending_upgrade_choices: int` — банк выборов: уровни в очереди на трату. JournalPanel-вкладка «Юниты» рисует бэйдж с числом и активирует кнопки «выбрать»; на трате эмитит `EventBus.pending_upgrade_choices_changed(count)`.
 
 **Параметры:**
 - `upgrade_long_draw_bonus: float = 5.0` — +5м к `attack_radius` при апгрейде long_draw.
@@ -1188,14 +1190,53 @@ Camp накапливает общий **squad XP** и уровни отряда
 
 **API:**
 - `add_squad_xp(amount: int, at_position: Vector3)` (этап 49) — добавляет XP. Эмитит `EventBus.squad_xp_gained_at(amount, position)` (для popup'а), затем `squad_xp_changed`. While-цикл проверяет уровни, эмитит `squad_leveled_up`. Заменил старый `credit_kill` — XP теперь приходит через осязаемый объект-орб, который игрок видит на земле и собирает.
-- `has_upgrade(id) -> bool`, `grant_upgrade(id)` — для UpgradeModal'а.
-- `available_upgrades() -> Array[StringName]` — id'шки, ещё не выданные. Модал берёт первые 2 случайных.
+- `has_upgrade(id) -> bool`, `grant_upgrade(id)` — для JournalPanel-вкладки «Юниты». На trate эмитит `pending_upgrade_choices_changed`.
+- `available_upgrades() -> Array[StringName]` — id'шки, ещё не выданные.
 
-**Каталог апгрейдов** — `UPGRADE_CATALOG: Dictionary` (id → name + description):
-- `UPGRADE_KITING` — "Манёвр уклонения": лучники стреляют на ходу и пятятся от близких скелетов.
-- `UPGRADE_LONG_DRAW` — "Усиленное натяжение": дальность стрельбы +5м.
+**Каталог апгрейдов** — `UPGRADE_CATALOG: Dictionary` (id → name + description + level):
+- `UPGRADE_KITING` (level 1) — "Манёвр уклонения": лучники стреляют на ходу и пятятся от близких скелетов.
+- `UPGRADE_LONG_DRAW` (level 1) — "Усиленное натяжение": дальность стрельбы +5м.
 
-**Группа `camp`:** Camp в `_ready` добавляется в группу `camp` через `add_to_group(CAMP_GROUP)`. UpgradeModal находит лагерь через `get_first_node_in_group("camp")`.
+`level` — минимальный `squad_level` для разблокировки. JournalPanel показывает все апгрейды (активные / нужен уровень / нет очков / выбрать), отсортированные по `level`. Дизайнер: первые два доступны на уровне 1, дальше по одному на уровень.
+
+**Замена UpgradeModal на JournalPanel (2026-05-07):** старый `UpgradeModal`-autoload (попап на `squad_leveled_up` с `get_tree().paused = true`) удалён. Дизайнер: «не останавливать каждый раз игру для улучшения юнитов». Теперь level-up просто инкрементит `_pending_upgrade_choices` + flash в HUD, игрок открывает Journal (J) когда удобно. Подробнее — раздел JournalPanel ниже.
+
+**Группа `camp`:** Camp в `_ready` добавляется в группу `camp` через `add_to_group(CAMP_GROUP)`. JournalPanel и другие UI-autoload'ы находят лагерь через `get_first_node_in_group("camp")`.
+
+#### Ресурсная экономика (фаза 2, 2026-05-07)
+
+Camp хранит пул ресурсов и API списания. Гном на arrival к `deploy_anchor` кредитует 1 единицу типа который нёс (см. `Gnome._tick_commuting_to_base`). Рука может бросить целый pile в `_anchor_drop_zone` — он consume'нется целиком (см. ниже).
+
+- `_resources: Dictionary[int, int]` — `ResourcePile.ResourceType (int) → amount`. Хранится только заполненные ключи (Dictionary, не Array — на проекте могут быть зоны без всех типов).
+- `add_resource(type, amount)` — гном/anchor-zone кредитует. Эмитит `EventBus.resources_changed(type, total)`.
+- `try_spend(cost: Dictionary) -> bool` — атомарно. Если хватает по всем типам, списывает; иначе ничего не меняет.
+- `can_afford(cost) -> bool` / `get_resource(type) -> int` — для UI.
+
+#### Постройки лагеря (фаза 3, 2026-05-07)
+
+Параллельный каталог `CAMP_BUILDING_CATALOG` отдельно от `UPGRADE_CATALOG`: апгрейды отряда — за уровни (XP-driven), постройки — за ресурсы. Дизайнер: «У лагеря нет источника XP. Это постройка за ресурсы».
+
+- `BUILDING_NEW_TENT` — новая палатка в кольце лагеря. Cost: 20 wood + 10 stone + 5 food. `deployed_only: true` (строится только в `State.DEPLOYED` — дизайнерское правило 2026-05-08, изменено с прежнего «только в свёрнутом»). `repeatable: true`.
+- `try_build(id) -> {success, reason}` — атомарно: `can_build_reason` (state) → `can_afford` → `try_spend` → `_apply_building`. Эмитит `camp_buildings_changed`.
+- `_build_new_tent`: вызывает извлечённый `_spawn_one_tent()` (общий с инициализацией), ставит палатку на `_deploy_anchor`, дёргает `_rebuild_deployed_targets()` (кольцо пересчитывается на N+1 слотов), спавнит гномов, дёргает `enter_deployed()` на новых.
+
+#### Anchor drop zone (бросок ресурса рукой)
+
+`_anchor_drop_zone: Area3D` (sphere radius=`anchor_drop_radius=2.5м`, layer=0/mask=Items). Создаётся в `_ready`, monitoring=false. На `_start_deploy` едет на anchor (+0.5м по Y) и включается, на `_start_pack` выключается.
+
+Polling в `_process` через `_consume_piles_in_drop_zone()`: иду по `get_overlapping_bodies()`, фильтрую `pile.freeze` (рука держит — не вырываем), вызываю `pile.consume_all() -> int`, кредитую `add_resource`, спавню `ResourceFx.pulse(pile_pos, color)`. Polling, а не `body_entered`-сигнал — чтобы поймать «рука держит pile в зоне → отпускает» (entered не сработал бы).
+
+#### План распределения сбора + alarm/work (2026-05-08)
+
+`_collection_priority: Dictionary[int, float]` — нормализованные веса по типам (sum=1). Гном в `_find_nearest_pile` использует weighted distance: `dist² / weight²`. Высокий weight «приближает» pile, weight≤0.001 — тип игнорируется.
+
+- `set_collection_priority(weights)` — нормализует sum к 1, эмитит `collection_priority_changed`. JournalPanel-вкладка «План» имеет 5 preset'ов (Равномерно / Больше дерева/камня/железа/еды).
+- Дефолт через `@export initial_collection_priority_*` (по 1.0 каждому → равномерно).
+- На смену приоритета гномы реактивно перевыбирают pile (см. Gnome._on_collection_priority_changed).
+
+`_collection_mode: CollectionMode {WORK, ALARM}` — переключается хоткеями `gnome_collect` (C) и `gnome_alarm` (V), обработка в новом `_handle_collection_input()` (отдельно от `_handle_input` чтобы работало и в start_deployed-лагерях). На переключение в DEPLOYED:
+- `WORK`: каждый gatherer → `enter_deployed()` (выходит, идёт в SEARCHING).
+- `ALARM`: каждый gatherer → `request_return()` (бежит в палатку → IN_TENT, скрыт). DefenderGnome пропускается (продолжает защищать).
 
 **Skeleton alarm на удар по лагерю** (этап 47): `Skeleton._perform_strike` после успешного `try_damage` по CampPart или НЕ-DefenderGnome'у эмитит `EventBus.skeleton_attacked_camp(self, victim, position)`. Defender'ы своего лагеря (фильтр в хендлере) разворачиваются на attacker'а на 5с (override конуса).
 
@@ -1219,11 +1260,11 @@ Camp накапливает общий **squad XP** и уровни отряда
 **Экспорты:**
 - Группа **Movement:** `move_speed: float = 1.6`, `gravity: float = 20.0`.
 - Группа **Behaviour:**
-  - `search_radius: float = 300.0` — радиус патруля от anchor'а (карта 400×400, диагональ ~566; радиус нарочно покрывает большую часть карты — clamp `wander_map_half_extent` отсекает выход за пол).
-  - `vision_radius: float = 10.0` — дальность зрения. Куча в этом радиусе считается «увиденной» во время патруля.
-  - `idle_radius: float = 4.0` — радиус ошивания возле anchor'а, когда куч на карте нет.
+  - `vision_radius: float = 10.0` — дальность зрения только для XP-орбов (`_scan_orb`). Pile-ам не нужна: гном ищет ближайший годный pile **глобально** через `_find_nearest_pile` (без cap'а дистанции, weight'ы из `Camp._collection_priority` управляют выбором). Изменено 2026-05-08: раньше был `search_radius=300` random-wander, гномы бегали через всю карту; теперь идут целенаправленно.
+  - `idle_radius: float = 4.0` — радиус ошивания возле anchor'а, когда куч нет / все claim'нуты другими.
+  - `idle_pile_rescan_sec: float = 1.5` — пауза между rescan'ами в IDLE_NEAR_BASE. Без этого гном залипал в idle (raньше не пересканировал куч до следующего deploy'я).
   - `pickup_distance: float = 0.8`, `deposit_distance: float = 1.2`, `home_distance: float = 0.8`, `wander_arrival: float = 0.6`.
-  - `wander_map_half_extent: float = 195.0` — половина стороны квадратной карты от центра (200) минус 5м буфер от края. Wander-точки в `_random_point_around` клампятся в эти пределы. При `search_radius=300` без clamp'а гном уходил бы за пол. Должно совпадать со `Skeleton.wander_map_half_extent`.
+  - `wander_map_half_extent: float = 195.0` — clamp idle-wander к границам карты (на случай если deploy_anchor близко к краю).
 - Группа **Visual:** `gnome_color`, `carry_color`, `carry_visual_size`.
 - Группа **LOD (масштабирование на 100+ гномов):**
   - `lod_far_distance: float = 50.0` — дальше этой дистанции до точки интереса камеры (`CameraRig`) гном уходит в холодный режим: `_physics_process` пропускает `move_and_slide` и гравитацию, position обновляется через `global_position += velocity * delta` (X/Z). AI продолжает работать на полной частоте — он дёшев. Главный win: при удалённой камере 6 поселений × ~21 гном = 126 гномов без `move_and_slide`.
@@ -1258,18 +1299,23 @@ enum State {
 - `get_caravan_chain_offset() -> Vector2` (этап 45) — для Camp.get_chain_target_for_follower.
 - `get_assigned_pile() -> ResourcePile`.
 
-**Двухфазная логика сбора:**
+**Логика сбора (2026-05-08, единая модель):**
 
 | Шаг | Условие | Действие |
 |---|---|---|
-| 1. Поиск (SEARCHING) | каждый кадр | `_scan_vision()`: ближайшая куча в `vision_radius` от **позиции гнома**, не пустая, не `freeze`, не claimed чужим. |
-| 2. Найдено | `spotted != null` | `_assigned_pile = spotted` → `COMMUTING_TO_PILE`. |
-| 3. Не нашёл, кучи в мире нет | `_world_has_any_pile() == false` | → `IDLE_NEAR_BASE`. |
-| 4. Не нашёл, кучи где-то есть | иначе | патруль: новая `_wander_target` через `_random_point_around(anchor, search_radius)`. |
-| 5. Челнок к куче | `COMMUTING_TO_PILE` | если `_assigned_pile.units > 0` и не `freeze` — идём к ней. На `pickup_distance` зовём `take_one()`; успех → carry-визуал, `COMMUTING_TO_BASE`. Провал/потеря → `_on_pile_lost()` → SEARCHING. |
-| 6. К базе | `COMMUTING_TO_BASE` | идём к `_camp.deploy_anchor`. На `deposit_distance` дропаем carry. Если `_assigned_pile` ещё валиден и `units > 0` — снова в `COMMUTING_TO_PILE`. Иначе → SEARCHING. |
+| 1. Поиск (SEARCHING) | каждый кадр | `_find_nearest_pile()`: глобальный обход `_pile_grid`, weighted-cost = `dist² / weight²` где `weight = _camp.get_collection_priority_weight(pile.resource_type)`. Skip: пустые, `freeze=true`, claimed, weight≤0.001. |
+| 2. Найдено | `pile != null` | `_assigned_pile = pile` → `COMMUTING_TO_PILE`. |
+| 3. Не нашёл | nothing годное | → `IDLE_NEAR_BASE` (не random-wander, как было до). |
+| 4. Челнок к куче | `COMMUTING_TO_PILE` | идём к `pile.global_position` (читаем каждый кадр — следим за катящимся бревном). На `pickup_distance` зовём `take_one()`; успех → carry, `_carry_type = pile.resource_type`, `COMMUTING_TO_BASE`. Провал/потеря → `_on_pile_lost()` → SEARCHING. |
+| 5. К базе | `COMMUTING_TO_BASE` | идём к `_camp.deploy_anchor`. На `deposit_distance` зовём `_camp.add_resource(_carry_type, 1)` + `ResourceFx.pulse(...)`, дропаем carry. **Всегда** `_on_pile_lost()` → SEARCHING (полный rescan под текущий приоритет; если приоритет тот же, ближайший pile часто остаётся тем же — челнок неявный). |
+| 6. Idle | `IDLE_NEAR_BASE` | слоняемся в `idle_radius` вокруг anchor'а. Раз в `idle_pile_rescan_sec` зовём `_find_nearest_pile` — ловим момент когда другой гном освободил claim или новый pile появился. Если pile найден → `COMMUTING_TO_PILE`. |
 
-**Skip frozen-куч:** во `_scan_vision` и в `_tick_commuting_to_pile` явно проверяется `pile.freeze` — рука держит кучу, гном считает её недоступной. Контракт: пока кучу схватили рукой, гномы не топчут к ней зря и переходят в SEARCHING (`_on_pile_lost`).
+**Реактивность:**
+- `pile.freeze == true` (рука держит) → `_tick_commuting_to_pile` → `_on_pile_lost()` → SEARCHING. Когда отпустят, гном переисщет.
+- `pile.global_position` читается каждый кадр в `_tick_commuting_to_pile` — следит за катящимся бревном автоматически.
+- `EventBus.collection_priority_changed` (игрок поменял preset плана): гном в `COMMUTING_TO_PILE` дропает текущий pile (`_on_pile_lost`), новый поиск под обновлённый приоритет. Гном с carry в `COMMUTING_TO_BASE` донесёт текущую единицу — кредит важнее мгновенной переоценки. После доставки auto-rescan подхватит.
+
+**Carry-тип** (`_carry_type: int`) — записывается в `_pickup_carry` из `_assigned_pile.resource_type` ДО возможного `queue_free` pile'а (units → 0); сбрасывается в `_drop_carry`. Цвет carry-визуала — `ResourcePile.color_for_type(_carry_type)`. Кредит в `_tick_commuting_to_base` происходит ТОЛЬКО на честной доставке (по `deposit_distance` к anchor'у); смерть гнома и `RETURNING_TO_TENT` дропают carry без кредита (буквально «уронил по дороге»).
 
 **Зависимости:** типы `Camp` (через ссылку из `setup`, читает `deploy_anchor`, `is_pile_claimed`) и `ResourcePile`. Не знает Tower/Hand/Skeleton.
 
@@ -1730,6 +1776,9 @@ func _refresh_visual() -> void:
 | `force_wave` | O | WaveDirector (немедленная волна, сбрасывает таймер) |
 | `camp_toggle` | R | Camp (зажать для развёртки/свёртки) |
 | `complete_quest` | Q | QuestProgress (debug-продвижение прогресса сюжета на 1 шаг) |
+| `ui_journal` | J | JournalPanel (открыть/закрыть журнал — три вкладки: Юниты / Лагерь / План) |
+| `gnome_collect` | C | Camp.set_collection_mode(WORK) — gatherer'ы возвращаются на сбор |
+| `gnome_alarm` | V | Camp.set_collection_mode(ALARM) — gatherer'ы бегут в палатки (request_return); defender'ы продолжают защищать |
 | `debug_spawn_100` | `[` | WaveDirector (debug-спавн 100 скелетов neutral по зонам, не трогает фазу/таймеры) |
 | `debug_stress_2000` | `]` | WaveDirector (stress-test: спавн 2000 скелетов uniform по карте через async-batched spawn_uniform, для замеров перфоманса в PerfHud) |
 
@@ -2316,9 +2365,14 @@ func _refresh_visual() -> void:
 | `quest_advanced` | `(new_index: int)` | `QuestProgress.advance` (autoload) — эмит на каждое продвижение прогресса. Слушают QuestActor (перекрас) и потенциально HUD. |
 | `skeleton_attacked_camp` | `(attacker: Node3D, victim: Node3D, position: Vector3)` | `Skeleton._perform_strike` после успешного `try_damage` по CampPart или НЕ-DefenderGnome'у. Defender'ы своего лагеря используют как alarm-цель (override конуса). |
 | `squad_xp_changed` | `(xp: int, level: int)` | `Camp.add_squad_xp` (этап 49) после инкремента XP. HUD-бар (GameplayHud) слушает для обновления. |
-| `squad_leveled_up` | `(level: int)` | `Camp.add_squad_xp` при пересечении threshold'а. Слушают: UpgradeModal (открывает модал выбора апгрейда), GameplayHud (flash-tween бара), DefenderGnome (этап 49 — scale-pulse «вспышка» на каждом живом защитнике). |
-| `squad_upgrade_granted` | `(upgrade_id: StringName)` | `Camp.grant_upgrade` после клика игрока в модале. Сейчас только для логирования / будущего HUD активных апгрейдов. |
-| `squad_xp_gained_at` | `(amount: int, world_position: Vector3)` | `Camp.add_squad_xp` (этап 49) ПЕРЕД `squad_xp_changed`. SquadXpFx autoload спавнит Label3D-popup «+10» в этой точке мира (это позиция arrival орба, не позиция трупа). |
+| `squad_leveled_up` | `(level: int)` | `Camp.add_squad_xp` при пересечении threshold'а. JournalPanel инкрементит банк выборов (через pending_upgrade_choices_changed); GameplayHud делает flash-tween бара; DefenderGnome — scale-pulse «вспышка» на живых защитниках. |
+| `squad_upgrade_granted` | `(upgrade_id: StringName)` | `Camp.grant_upgrade` после клика игрока в Journal. Сейчас только для логирования / будущего HUD активных апгрейдов. |
+| `squad_xp_gained_at` | `(amount: int, world_position: Vector3)` | `Camp.add_squad_xp` (этап 49) ПЕРЕД `squad_xp_changed`. SquadXpFx autoload спавнит Label3D-popup «+10» в этой точке мира. |
+| `pending_upgrade_choices_changed` | `(count: int)` | `Camp.add_squad_xp` (на новом уровне) и `Camp.grant_upgrade` (на трате). HUD рисует бэйдж на кнопке журнала; JournalPanel перерисовывает кнопки «выбрать». |
+| `resources_changed` | `(type: int, amount: int)` | `Camp.add_resource` / `try_spend`. type — `ResourcePile.ResourceType` (int). amount — итоговый запас. HUD-счётчики, Journal «Лагерь» (афорд построек). |
+| `camp_buildings_changed` | — | `Camp.try_build` после успешной постройки. JournalPanel перерисовывает карточки построек (для будущих одноразовых типа watchtower). |
+| `collection_mode_changed` | `(mode: int)` | `Camp.set_collection_mode` (хоткеи C / V). HUD-индикатор «⚠ тревога» / скрыт. |
+| `collection_priority_changed` | `(weights: Dictionary)` | `Camp.set_collection_priority` (preset-кнопки в Journal-вкладке «План»). Гном в `COMMUTING_TO_PILE` → `_on_pile_lost` → перевыбор. |
 
 `ResourcePile.take_one` через шину **не эмитит** (декремент `units` пока не нужен наружу — счётчика ресурсов ещё нет). При появлении HUD-счётчика добавится отдельный сигнал — типизированный как `Node3D`, как и остальные.
 
@@ -2383,27 +2437,53 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 
 ### 9.3. GameplayHud — `scenes/gameplay_hud.tscn`, `scripts/gameplay_hud.gd`
 
-**Тип корня:** `CanvasLayer`. Не debug-оверлей, а игровой UI с двумя зонами.
+**Тип корня:** `CanvasLayer`. Игровой UI.
 
-**Левая панель (под PerfHud):** два «окошка» способностей с цифрой клавиши и подписью:
-- `[1]` хлоп
-- `[2]` щелк
+**Левая панель (под PerfHud):** два «окошка» способностей с цифрой клавиши и подписью: `[1]` хлоп, `[2]` щелк.
 
-Цифра жёлтая (font_size=22) — как hotkey-индикатор. Подпись подписью маленькая. Используется панель с рамкой (StyleBoxFlat с border 2px, тёмным фоном). Сейчас статичная — будет основой для индикаторов кулдауна / зарядов в будущем.
+**Правая панель (top-right):** статус лагеря, программно дополняется тремя блоками:
+1. Базовые строки из `.tscn`: 🟫 гном, 🟥 лучник, 🟫 палатки (`Camp.tent_count_alive()`).
+2. Squad XP row (программно): иконка золота + «ур. N» + ProgressBar с XP/threshold внутри текущего уровня. Реактивно через `EventBus.squad_xp_changed`. На `squad_leveled_up` — flash-tween бара (200мс белого modulate).
+3. Resources rows (программно, фаза 2): четыре строки с цветным квадратиком + названием + числом для WOOD/STONE/IRON/FOOD. Серый цвет числа при 0, белый при >0. Реактивно через `EventBus.resources_changed`.
 
-**Правая панель (top-right):** статус лагеря — три строки с цветной иконкой (ColorRect 20×20) + подписью + 3-значным счётчиком:
-- 🟫 гном (`Color(0.7, 0.45, 0.25)` = `gnome_color` собирателя) — `Camp.gatherer_count()`
-- 🟥 лучник (`Color(0.85, 0.2, 0.2)` = override DefenderGnome) — `Camp.defender_count()`
-- 🟫 уровень (`Color(0.45, 0.3, 0.18)` = `shatter_color` палатки) — `Camp.tent_count_alive()`
+**Программные элементы вне правой панели:**
+- **Кнопка журнала** «📔 журнал [J]» — TOP_RIGHT-anchor под расширенной правой панелью, открывает JournalPanel. Бэйдж — красный кружок с числом невыбранных squad-апгрейдов (реактивно через `pending_upgrade_choices_changed`); скрыт при count=0.
+- **Mode label** — под кнопкой журнала; виден только при ALARM (красный «⚠ тревога [V→C сброс]»). Реактивно через `collection_mode_changed`.
 
-«Уровень лагеря = число живых палаток» — потеря палатки понижает «уровень». В будущем апгрейды могут добавлять/восстанавливать палатки.
+**Экспорты:** `camp_path: NodePath`. Цикл: `_process` раз в `UPDATE_INTERVAL=0.25с` обновляет базовые счётчики (гном/лучник/палатки). Squad XP, ресурсы, бэйдж, mode — реактивные сигналы.
 
-**Экспорты:**
-- `camp_path: NodePath` (`@export_node_path("Camp")`) — лагерь, у которого читаются счётчики. Сейчас единственный Camp в сцене.
+### 9.4. JournalPanel — `scripts/journal_panel.gd` (autoload)
 
-**Цикл:** `_process` тикает `_update_timer`; при истечении (`UPDATE_INTERVAL=0.25с`) `_update_counts()` читает три геттера Camp'а и пишет в Label'ы. Если `_camp == null` — все счётчики `—`.
+**Тип корня:** `CanvasLayer` (autoload). Заменяет старый `UpgradeModal` (удалён 2026-05-07): дизайнер не хотел останавливать игру модалом на каждый level-up.
 
-**Стоимость:** один проход по `Camp._gnomes` (типа `is DefenderGnome` фильтр, итерация ≤30 элементов) + проход по `_parts` (≤4) раз в 0.25с. Pernebrezhimo.
+**Открытие:** хоткей `J` (action `ui_journal`), либо клик кнопки в HUD'е. **Не ставит игру на паузу** — игрок выбирает апгрейд / постройку когда удобно. Закрытие: повторное `J`, крестик «×» в углу панели. Клики по полупрозрачному фону НЕ закрывают (легко промахнуться).
+
+**Три вкладки:**
+
+1. **Юниты** — апгрейды отряда из `Camp.UPGRADE_CATALOG`. Сортировка по `level`. Карточка показывает `name + description + level-tag`, состояние:
+   - `✓ активен` — взят (карточка притенена)
+   - `требуется ур. N` — `squad_level < required_level` (заблокировано)
+   - `нет очков` — уровень есть, но банк `pending_upgrade_choices` пуст
+   - `выбрать` — берётся, тратит очко из банка
+
+2. **Лагерь** — постройки из `Camp.CAMP_BUILDING_CATALOG`. Карточка: `name + description + cost-row` (для каждого ресурса в cost — цветной квадратик + `имеется/требуется`, недостающие красным). Кнопка-состояние:
+   - `только в развёрнутом лагере` — `deployed_only=true` и не в DEPLOYED
+   - `не хватает ресурсов` — afford failed
+   - `построить` — активна
+
+3. **План** — preset'ы распределения сбора (`PLAN_PRESETS` const): Равномерно / Больше дерева/камня/железа/еды. Активный preset (тот, чьи нормализованные веса совпадают с `Camp.get_collection_priority()` с эпсилон 0.005) показан как `✓ активен`. На клик другого — `Camp.set_collection_priority(weights)`.
+
+**Реактивность:** подписки на `pending_upgrade_choices_changed`, `squad_xp_changed`, `squad_upgrade_granted`, `resources_changed`, `camp_deployed/packed`, `camp_buildings_changed`, `collection_priority_changed` — `_refresh()` пересобирает только активную вкладку (если visible).
+
+### 9.5. ResourceFx — `scripts/resource_fx.gd` (autoload)
+
+Одноразовый particle-всплеск при сборе ресурса. Используется в двух местах:
+- `Gnome._tick_commuting_to_base` — после `add_resource(_carry_type, 1)`
+- `Camp._consume_piles_in_drop_zone` — после `pile.consume_all()`
+
+API: `pulse(world_position: Vector3, color: Color)`. Программно создаёт `GPUParticles3D` (one_shot, 14 частиц, lifetime=0.6с, sphere-mesh 0.06м, unshaded+emission материал), парентится к `current_scene` (переживёт смерть Camp/Gnome'а), spawn'ится на `position + (0, 0.4, 0)` (над землёй / травой). Auto-cleanup через `create_timer(lifetime + 0.4)`.
+
+Цвет берётся из `ResourcePile.color_for_type(type)` (единый источник истины — туда же ходят HUD/Journal/Gnome carry-визуал).
 
 ---
 
