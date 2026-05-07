@@ -190,7 +190,13 @@ func _pick_position(placed: Array[Vector3], spacing_sq: float, wave_director: No
 			randf_range(-size.y * 0.5, size.y * 0.5),
 		)
 		var world := global_transform * local
-		world.y = global_position.y
+		# +1м над зоной: pile стартует выше земли и нормально на неё падает.
+		# При world.y = global_position.y (=0) центр pile'а оказывается ровно
+		# на поверхности → его geometry ниже surface на половину высоты shape
+		# (0.7м для wood-cylinder, 0.35м для food-sphere) → physics выталкивает
+		# в случайную сторону, иногда вниз сквозь terrain. С +1м гарантированно
+		# приземляется сверху.
+		world.y = global_position.y + 1.0
 		# Safe-фильтр (только если caller передал wave_director): точка не
 		# должна попадать в safe-зону Camp/POI.
 		if wave_director != null and not wave_director.is_safe_pos(world):

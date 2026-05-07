@@ -52,13 +52,42 @@ signal skeleton_attacked_camp(attacker: Node3D, victim: Node3D, position: Vector
 ## XP отряда изменился (накапливается за убийства скелетов). HUD/UI слушает
 ## для отображения шкалы прогресса.
 signal squad_xp_changed(xp: int, level: int)
-## Отряд получил новый уровень. UpgradeModal слушает и показывает игроку
-## выбор улучшения. Параметр — новый уровень (1, 2, 3, ...).
+## Отряд получил новый уровень. JournalPanel инкрементит банк выборов;
+## HUD моргает баром. Параметр — новый уровень (1, 2, 3, ...).
 signal squad_leveled_up(level: int)
 ## Игрок выбрал апгрейд из модала. Все DefenderGnome нашего лагеря читают
 ## Camp.has_upgrade(id) на каждом тике — отдельных переподписок не нужно.
 ## Сигнал нужен HUD'у для индикации «активные апгрейды».
 signal squad_upgrade_granted(upgrade_id: StringName)
+## Изменилось число невыбранных апгрейдов (банк выборов отряда). Эмитится
+## из Camp.add_squad_xp (на новом уровне) и Camp.grant_upgrade (на трате).
+## HUD слушает чтобы рисовать бэйдж на кнопке журнала.
+signal pending_upgrade_choices_changed(count: int)
+
+# --- Camp resources (фаза 2 ресурсной экономики) ---
+## Изменился запас одного типа ресурса лагеря. Эмитится из Camp.add_resource
+## и Camp.try_spend. type — значение ResourcePile.ResourceType (int).
+## amount — итоговый накопленный запас этого типа после изменения.
+## HUD слушает чтобы реактивно обновлять счётчики; JournalPanel — чтобы
+## переоценивать «по карману ли» постройки.
+signal resources_changed(type: int, amount: int)
+
+# --- Camp buildings (фаза 3) ---
+## Состав построек лагеря изменился: новая палатка построена, или одноразовая
+## постройка типа watchtower стала «уже куплена». JournalPanel слушает,
+## чтобы перерисовать карточки. Без аргументов — UI читает текущее состояние
+## из Camp напрямую.
+signal camp_buildings_changed
+
+# --- Camp collection orders (план распределения + alarm/work режим) ---
+## Игрок переключил режим сбора (C — работать, V — тревога). HUD рисует
+## индикатор; гномы реагируют через Camp.set_collection_mode (request_return /
+## enter_deployed). mode = Camp.CollectionMode (int).
+signal collection_mode_changed(mode: int)
+## Игрок поменял приоритет сбора по типам (Journal-вкладка «План»). weights —
+## Dictionary[ResourcePile.ResourceType (int) → float], нормированный к сумме 1.
+## Гномы читают через Camp.get_collection_priority_weight в _find_nearest_pile.
+signal collection_priority_changed(weights: Dictionary)
 ## XP-инкремент с привязкой к мировой точке (позиция убитого скелета).
 ## Используется визуальным feedback'ом (всплывающий «+10» над трупом).
 ## Идёт ПЕРЕД squad_xp_changed — слушатели popup'а получают свежий amount,

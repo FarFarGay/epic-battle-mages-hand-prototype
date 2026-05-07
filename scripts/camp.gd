@@ -34,6 +34,14 @@ signal packed
 ##                     гномы IN_TENT — переход в CARAVAN_FOLLOWING.
 enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 
+## Режим сбора: WORK — гномы работают как обычно (SEARCHING → собирают по
+## приоритету), ALARM — все gatherer'ы возвращаются в палатки (request_return).
+## DefenderGnome НЕ затрагивается режимом — защитники всегда снаружи и
+## продолжают защищать (у них собственный override request_return, который мы
+## специально пропускаем). Режим имеет смысл только в DEPLOYED — в каравне
+## гномы и так в палатках, в PACKING — уже идут домой.
+enum CollectionMode { WORK, ALARM }
+
 @export_node_path("Node3D") var target_path: NodePath
 
 @export_group("Caravan composition")
@@ -65,17 +73,56 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 const UPGRADE_KITING := &"kiting"
 const UPGRADE_LONG_DRAW := &"long_draw"
 
-## Каталог апгрейдов отряда — id → отображаемые поля. UpgradeModal читает
-## name/description чтобы построить карточки. Эффекты применяются на стороне
-## DefenderGnome через has_upgrade(id) — тут только метаданные.
+## ID-константы построек лагеря. Отдельный namespace от squad-апгрейдов:
+## юнит-апгрейды берутся за очко уровня (одноразово на id), постройки —
+## за ресурсы (BUILDING_NEW_TENT можно строить многократно). См.
+## CAMP_BUILDING_CATALOG ниже.
+const BUILDING_NEW_TENT := &"new_tent"
+
+## Каталог апгрейдов отряда — id → отображаемые поля. JournalPanel читает
+## name/description/level чтобы построить карточки. Эффекты применяются на
+## стороне DefenderGnome через has_upgrade(id) — тут только метаданные.
+##
+## `level` — минимальный squad_level, при котором апгрейд можно выбрать.
+## Конвенция дизайнера: первые два апгрейда доступны на уровне 1, дальше
+## по одному на уровень. Незакрытый банк выборов копится — игрок может
+## дойти до 3-го уровня и потом купить старый апгрейд первого.
 const UPGRADE_CATALOG: Dictionary = {
 	UPGRADE_KITING: {
 		"name": "Манёвр уклонения",
 		"description": "Лучники стреляют на ходу и пятятся от близких скелетов, удерживая дистанцию.",
+		"level": 1,
 	},
 	UPGRADE_LONG_DRAW: {
 		"name": "Усиленное натяжение",
 		"description": "Дальность стрельбы +5 метров. Лучники открывают огонь раньше.",
+		"level": 1,
+	},
+}
+
+
+## Каталог построек лагеря — id → {name, description, cost, packed_only,
+## repeatable}. JournalPanel читает чтобы построить карточки, Camp.try_build
+## применяет эффект через _apply_building.
+##
+## - cost: Dictionary[ResourcePile.ResourceType (int) → int]. Списывается
+##   атомарно через try_spend.
+## - packed_only: true → постройка только в State.CARAVAN_FOLLOWING (свёрнут).
+##   Дизайнерское правило: палатки строятся только в свёрнутом лагере, в
+##   развёрнутом — нет (см. project_ebm_camp_progression).
+## - repeatable: true → можно купить много раз (новые палатки). false →
+##   одноразово (для будущих watchtower / orb_magnet).
+const CAMP_BUILDING_CATALOG: Dictionary = {
+	BUILDING_NEW_TENT: {
+		"name": "Новая палатка",
+		"description": "Добавляет ещё одну палатку в кольцо лагеря — +жителей, +лучник, +собиратели.",
+		"cost": {
+			ResourcePile.ResourceType.WOOD: 20,
+			ResourcePile.ResourceType.STONE: 10,
+			ResourcePile.ResourceType.FOOD: 5,
+		},
+		"deployed_only": true,
+		"repeatable": true,
 	},
 }
 
@@ -149,6 +196,26 @@ const UPGRADE_CATALOG: Dictionary = {
 ## Если null — защитники не спавнятся, на их слоты подставятся обычные гномы.
 @export var defender_scene: PackedScene
 
+@export_group("Collection orders")
+## Стартовый приоритет сбора по типам ресурсов. Ключи — ResourcePile.ResourceType
+## (int), значения — относительные веса (нормализуются при первом set'е и
+## после init'а: weights / sum). Гном при выборе ближайшего pile делит
+## реальную дистанцию на weight типа — высокий weight «приближает» pile,
+## нулевой полностью отключает. Дефолт: равномерно (по 1.0 каждому из 4 типов).
+@export var initial_collection_priority_wood: float = 1.0
+@export var initial_collection_priority_stone: float = 1.0
+@export var initial_collection_priority_iron: float = 1.0
+@export var initial_collection_priority_food: float = 1.0
+@export_group("")
+
+@export_group("Anchor drop zone")
+## Радиус Area3D в центре развёрнутого лагеря, в которой брошенные рукой
+## ResourcePile засчитываются целиком (все units разом). Активна только в
+## DEPLOYED — в каравне «центра» нет. ~2.5м примерно равно deploy_radius/3,
+## хорошо отделяет «центр» от «кольца» палаток.
+@export var anchor_drop_radius: float = 2.5
+@export_group("")
+
 @export_group("Squad XP / upgrades")
 ## Кривая порогов уровней. squad_level_xp_curve[N] = XP, нужный для уровня N+1.
 ## Дойдя до индекса >= size — больше уровней не дают (всё, апгрейды кончились).
@@ -213,6 +280,20 @@ var _active_upgrades: Array[StringName] = []
 ## переезжает в anchor и активируется; на свёртке — выключается, что
 ## размонтирует всё что на нём стояло (модуль остаётся лежать на земле).
 @onready var _center_slot: MountSlot = $CenterMountSlot if has_node("CenterMountSlot") else null
+## Area3D в центре развёрнутого лагеря, ловит брошенные рукой ResourcePile.
+## Создаётся в _ready, monitoring=false. На _start_deploy ставится на anchor
+## и включается; на _start_pack — выключается. Polling каждый кадр через
+## _consume_piles_in_drop_zone — так ловим и кучи, которые пролежали под
+## рукой и были отпущены уже внутри зоны (body_entered не сработал бы).
+var _anchor_drop_zone: Area3D = null
+
+## Текущий режим сбора (см. CollectionMode). Меняется через set_collection_mode
+## (хоткеи C / V в _handle_input, или из API). HUD рисует индикатор.
+var _collection_mode: CollectionMode = CollectionMode.WORK
+## Нормализованные веса приоритета сбора по типам, sum=1.0. Дефолт ставится
+## в _init_collection_priority из @export'ов. Меняется через set_collection_priority
+## (Journal-вкладка «План»). Гном читает get_collection_priority_weight.
+var _collection_priority: Dictionary = {}
 
 ## Публичный геттер anchor'а — гномы читают, чтобы знать, куда нести ресурс.
 var deploy_anchor: Vector3:
@@ -234,8 +315,8 @@ var _poi_cache: Node3D = null
 var _poi_cache_time_msec: int = -1000000
 
 
-## Группа для UpgradeModal (autoload). Модал на squad_leveled_up ищет Camp
-## через get_first_node_in_group('camp') — нужен один публичный handle.
+## Группа для JournalPanel и других UI-autoload'ов: один публичный handle на
+## get_first_node_in_group('camp'), без знания о конкретном Camp-инстансе.
 const CAMP_GROUP := &"camp"
 
 
@@ -248,6 +329,8 @@ func _ready() -> void:
 
 	_spawn_tents()
 	_spawn_gnomes()
+	_build_anchor_drop_zone()
+	_init_collection_priority()
 
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	deployed.connect(func(anchor: Vector3) -> void: EventBus.camp_deployed.emit(anchor))
@@ -292,32 +375,43 @@ func _spawn_tents() -> void:
 		return
 	if tent_count <= 0:
 		return
-	# Стартовая привязка цепочки: за башней (если есть), иначе у самого Camp.
-	# Раньше tent[0] ставился в локальном (0,0,0) и подтягивался к башне через
-	# exp_decay — на разнесённых Camp/Tower палатки на первом кадре сидели в
-	# центре и потом «уезжали» к башне. Сразу строим конечную цепочку.
-	var leader_xz: Vector3 = _tower.global_position if _tower != null else global_position
 	for i in range(tent_count):
-		# Tent — RigidBody3D с freeze=true (после смены StaticBody → RB на 2026-05-03):
-		# на freeze палатка ведёт себя как кинематическое тело, Camp двигает её
-		# через global_position. На apply_push freeze снимается, палатка летит.
-		var tent := tent_scene.instantiate() as Node3D
-		if tent == null:
-			push_warning("Camp: tent_scene не инстанцируется как Node3D")
-			continue
-		tent.name = "Tent%d" % (i + 1)
-		add_child(tent)
-		# Цепочка позади башни вдоль -X: tent[0] на part_gap позади башни,
-		# каждая следующая ещё на part_gap дальше. Y оставляем тот, что задал
-		# tent.tscn (там transform.y=0.75 — половина высоты, чтобы стояла на полу).
-		tent.global_position = Vector3(
-			leader_xz.x - float(i + 1) * part_gap,
-			tent.global_position.y,
-			leader_xz.z,
-		)
-		_parts.append(tent)
-		if tent is CampPart:
-			(tent as CampPart).destroyed.connect(_on_part_destroyed.bind(tent))
+		_spawn_one_tent()
+
+
+## Спавнит одну палатку в конец цепочки (`_parts.size()` = новый индекс).
+## Используется и при инициализации (`_spawn_tents` × tent_count), и для
+## run-time строительства (`_build_new_tent`). Палатка ставится «за башней»
+## вдоль -X в позиции, которую заняла бы N-я в полностью построенной
+## цепочке — follow exp_decay подтянет в строй за следующие кадры.
+##
+## Возвращает инстанс палатки (или null, если не получилось инстанцировать).
+func _spawn_one_tent() -> Node3D:
+	if tent_scene == null:
+		push_warning("Camp: tent_scene не задан")
+		return null
+	# Tent — RigidBody3D с freeze=true (после смены StaticBody → RB на 2026-05-03):
+	# на freeze палатка ведёт себя как кинематическое тело, Camp двигает её
+	# через global_position. На apply_push freeze снимается, палатка летит.
+	var tent := tent_scene.instantiate() as Node3D
+	if tent == null:
+		push_warning("Camp: tent_scene не инстанцируется как Node3D")
+		return null
+	var index: int = _parts.size()
+	tent.name = "Tent%d" % (index + 1)
+	add_child(tent)
+	# Цепочка позади башни вдоль -X. Y оставляем тот, что задал tent.tscn
+	# (transform.y=0.75 — половина высоты, чтобы стояла на полу).
+	var leader_xz: Vector3 = _tower.global_position if _tower != null else global_position
+	tent.global_position = Vector3(
+		leader_xz.x - float(index + 1) * part_gap,
+		tent.global_position.y,
+		leader_xz.z,
+	)
+	_parts.append(tent)
+	if tent is CampPart:
+		(tent as CampPart).destroyed.connect(_on_part_destroyed.bind(tent))
+	return tent
 
 
 func _spawn_gnomes() -> void:
@@ -344,15 +438,17 @@ func _spawn_gnomes() -> void:
 
 ## Инстанцирует одну сцену гнома, привязывает к палатке. Используется
 ## и для защитников (defender_scene), и для собирателей (gnome_scene).
-## Если сцена null или не инстанцируется как Gnome — push_warning и пропуск.
-func _spawn_one_gnome(scene: PackedScene, tent: Node3D, role: String) -> void:
+## Если сцена null или не инстанцируется как Gnome — push_warning и null.
+## Возвращает спавненного гнома (или null) — caller'у может потребоваться
+## дёрнуть enter_deployed на нём (run-time постройка в DEPLOYED).
+func _spawn_one_gnome(scene: PackedScene, tent: Node3D, role: String) -> Gnome:
 	if scene == null:
 		push_warning("Camp: сцена для роли '%s' не задана — пропуск" % role)
-		return
+		return null
 	var gnome := scene.instantiate() as Gnome
 	if gnome == null:
 		push_warning("Camp: сцена для роли '%s' не инстанцируется как Gnome" % role)
-		return
+		return null
 	add_child(gnome)
 	gnome.global_position = tent.global_position
 	gnome.setup(self, tent)
@@ -360,6 +456,7 @@ func _spawn_one_gnome(scene: PackedScene, tent: Node3D, role: String) -> void:
 	# и _all_gnomes_home будут спотыкаться об invalid-инстансы.
 	gnome.destroyed.connect(_on_gnome_destroyed.bind(gnome))
 	_gnomes.append(gnome)
+	return gnome
 
 
 ## Публичный геттер списка гномов лагеря. CampPart использует, чтобы найти
@@ -695,6 +792,7 @@ func add_squad_xp(amount: int, at_position: Vector3 = Vector3.ZERO) -> void:
 		if debug_log and LogConfig.master_enabled:
 			print("[Camp:Squad] уровень %d достигнут (XP=%d, в очереди выбор: %d)" % [_squad_level, _squad_xp, _pending_upgrade_choices])
 		EventBus.squad_leveled_up.emit(_squad_level)
+		EventBus.pending_upgrade_choices_changed.emit(_pending_upgrade_choices)
 
 
 ## True если отряд получил указанный апгрейд. Используется DefenderGnome'ом
@@ -717,6 +815,7 @@ func grant_upgrade(id: StringName) -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp:Squad] апгрейд %s применён" % id)
 	EventBus.squad_upgrade_granted.emit(id)
+	EventBus.pending_upgrade_choices_changed.emit(_pending_upgrade_choices)
 
 
 ## Список апгрейдов, ещё не выбранных отрядом. Модал использует чтобы
@@ -729,8 +828,8 @@ func available_upgrades() -> Array[StringName]:
 	return result
 
 
-## Сколько уровней висят в очереди на выбор апгрейда (модал ещё не закрыл
-## их). UpgradeModal читает чтобы решить «открываться повторно?».
+## Сколько уровней висят в очереди на выбор апгрейда (банк выборов).
+## JournalPanel читает чтобы пересчитать бэйдж и активность кнопок «выбрать».
 func get_pending_upgrade_choices() -> int:
 	return _pending_upgrade_choices
 
@@ -741,6 +840,305 @@ func get_squad_xp() -> int:
 
 func get_squad_level() -> int:
 	return _squad_level
+
+
+## --- Resources (фаза 2 ресурсной экономики) ---
+
+## Накопленный пул ресурсов лагеря. Ключ — int (ResourcePile.ResourceType),
+## значение — целое количество единиц. Гномы доставляют по 1 единице через
+## add_resource(type, 1) на касании anchor'а; постройки списывают через
+## try_spend(cost). Лагерь не различает «пилу из деревянной зоны» и
+## «пилу принесённую рукой» — итоговый ресурс анонимен.
+##
+## Хранится в Dictionary[int, int], а не Array: типов ресурсов мало (4-5),
+## разные камп-инстансы могут иметь разный набор активных типов (например,
+## без iron-зон рядом — _resources не содержит ключ IRON), а Dictionary
+## естественно поддерживает «не было — нет ключа».
+var _resources: Dictionary = {}
+
+
+## Гном принёс единицу ресурса к anchor'у. amount > 0 — обычно 1, но
+## контракт не запрещает batch-кредит (магия каравана, бонусные постройки).
+func add_resource(type: int, amount: int) -> void:
+	if amount <= 0:
+		return
+	var current: int = int(_resources.get(type, 0))
+	_resources[type] = current + amount
+	EventBus.resources_changed.emit(type, _resources[type])
+
+
+func get_resource(type: int) -> int:
+	return int(_resources.get(type, 0))
+
+
+## Атомарная трата нескольких ресурсов одновременно. cost — Dictionary[int, int]
+## (тип → стоимость). Либо все ресурсы есть и списываются разом (с emit'ом
+## по каждому типу), либо ничего не меняется. Возвращает true на успех.
+##
+## Атомарность важна: если первая трата успела пройти, а на второй не хватило —
+## игрок остался без первого ресурса, не получив постройки. Вместо try-rollback
+## делаем сначала проверку всего, потом списание.
+func try_spend(cost: Dictionary) -> bool:
+	if not can_afford(cost):
+		return false
+	for type in cost:
+		var amount: int = int(cost[type])
+		if amount <= 0:
+			continue
+		_resources[type] = int(_resources.get(type, 0)) - amount
+		EventBus.resources_changed.emit(type, _resources[type])
+	return true
+
+
+func can_afford(cost: Dictionary) -> bool:
+	for type in cost:
+		if int(_resources.get(type, 0)) < int(cost[type]):
+			return false
+	return true
+
+
+## --- Camp buildings (фаза 3) ---
+
+## Проверяет, можно ли сейчас построить указанную постройку. Возвращает ""
+## если можно; иначе — короткое описание причины (для UI-кнопки/тултипа).
+## Ресурсный чек НЕ проверяется здесь, только условия состояния и каталога —
+## цена обновляется чаще ресурсов и UI и так перерисовывается на каждом
+## resources_changed; смешивать «не хватает дерева» с «нельзя пока в походе»
+## плохо для UX (разные причины — разные сообщения).
+func can_build_reason(id: StringName) -> String:
+	var data: Dictionary = CAMP_BUILDING_CATALOG.get(id, {})
+	if data.is_empty():
+		return "неизвестная постройка"
+	if data.get("deployed_only", false) and _state != State.DEPLOYED:
+		return "только в развёрнутом лагере"
+	return ""
+
+
+## Атомарная попытка построить. Проверяет состояние → ресурсы → списывает →
+## применяет эффект. Возвращает Dictionary {"success": bool, "reason": String}.
+##
+## На успехе — ресурсы списаны, эффект применён, EventBus.camp_buildings_changed
+## эмитится для реактивного UI. На неудаче — ничего не меняется.
+##
+## Если apply падает после try_spend — это ошибка кода (push_error), ресурсы
+## уже списаны и не восстанавливаются. Простой rollback пока не нужен —
+## единственный handler (новая палатка) почти не падает (instantiate() мог бы
+## не сработать только при null tent_scene, но это уже отлавливается на первом
+## вызове в _ready).
+func try_build(id: StringName) -> Dictionary:
+	var reason := can_build_reason(id)
+	if reason != "":
+		return {"success": false, "reason": reason}
+	var data: Dictionary = CAMP_BUILDING_CATALOG.get(id, {})
+	var cost: Dictionary = data.get("cost", {})
+	if not can_afford(cost):
+		return {"success": false, "reason": "не хватает ресурсов"}
+	if not try_spend(cost):
+		# Race с другим вызовом try_build в один кадр — теоретически возможно,
+		# фактически в одном потоке нет; страхуем чтобы не разойтись с can_afford.
+		return {"success": false, "reason": "не хватает ресурсов"}
+	if not _apply_building(id):
+		push_error("Camp.try_build: apply провалился для id=%s после успешного списания" % id)
+		return {"success": false, "reason": "ошибка постройки"}
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp:Build] %s построено" % id)
+	EventBus.camp_buildings_changed.emit()
+	return {"success": true, "reason": ""}
+
+
+## Применяет эффект постройки по id. Вынесен в отдельную функцию (а не switch
+## внутри try_build) — каждая постройка получит свой _build_X метод с
+## специфичными параметрами (палатки, башни, апгрейды). Возвращает true на
+## успех, false при ошибке инстанцирования.
+func _apply_building(id: StringName) -> bool:
+	match id:
+		BUILDING_NEW_TENT:
+			return _build_new_tent()
+	push_error("Camp._apply_building: нет handler для id=%s" % id)
+	return false
+
+
+## Эффект BUILDING_NEW_TENT: спавнит новую палатку и заселяет её жителями
+## (по defaults из tent.tscn — gnomes_per_tent / defenders_per_tent).
+## Доступно только в DEPLOYED (гарантировано can_build_reason'ом).
+##
+## В DEPLOYED палатки расставлены кольцом. Новая встаёт на anchor (центр),
+## кольцо пересчитывается на N+1 слотов через _rebuild_deployed_targets,
+## follow-tick подтянет к её target'у на новом кольце за следующие кадры.
+## Гномы новой палатки сразу получают enter_deployed() — как и обычные при
+## развёртке (выходят из IN_TENT в SEARCHING, ищут ресурс).
+func _build_new_tent() -> bool:
+	var tent: Node3D = _spawn_one_tent()
+	if tent == null:
+		return false
+	# В DEPLOYED ставим на центр — _spawn_one_tent поставил «за башней» (как
+	# для каравана), это плохо для развёрнутого лагеря. Follow подвезёт до
+	# слота на кольце.
+	if _state == State.DEPLOYED:
+		tent.global_position = Vector3(
+			_deploy_anchor.x,
+			tent.global_position.y,
+			_deploy_anchor.z,
+		)
+		_rebuild_deployed_targets()
+	if tent is CampPart:
+		var part := tent as CampPart
+		var defender_count: int = clampi(part.defenders_per_tent, 0, part.gnomes_per_tent)
+		var gatherer_count: int = part.gnomes_per_tent - defender_count
+		var new_gnomes: Array[Gnome] = []
+		for i in range(defender_count):
+			var g := _spawn_one_gnome(defender_scene, tent, "defender")
+			if g != null:
+				new_gnomes.append(g)
+		for i in range(gatherer_count):
+			var g := _spawn_one_gnome(gnome_scene, tent, "gatherer")
+			if g != null:
+				new_gnomes.append(g)
+		# В DEPLOYED новые гномы должны сразу выйти на сбор, как и
+		# существующие — иначе сидели бы в палатке до следующего deploy'я.
+		if _state == State.DEPLOYED:
+			for g in new_gnomes:
+				g.enter_deployed()
+	return true
+
+
+## --- Anchor drop zone (бросок ресурса рукой в центр лагеря) ---
+
+## Создаёт Area3D в центре лагеря — ловит брошенные рукой ResourcePile.
+## Layer=0 (сама ничего не блокирует), mask=Items (видит pile-ы). Зона —
+## SphereShape3D радиусом anchor_drop_radius. Monitoring=false до первого
+## _start_deploy.
+func _build_anchor_drop_zone() -> void:
+	_anchor_drop_zone = Area3D.new()
+	_anchor_drop_zone.name = "AnchorDropZone"
+	_anchor_drop_zone.collision_layer = 0
+	_anchor_drop_zone.collision_mask = Layers.ITEMS
+	_anchor_drop_zone.monitoring = false
+	var col := CollisionShape3D.new()
+	var sphere := SphereShape3D.new()
+	sphere.radius = anchor_drop_radius
+	col.shape = sphere
+	_anchor_drop_zone.add_child(col)
+	add_child(_anchor_drop_zone)
+
+
+## --- Collection orders (план + alarm/work) ---
+
+## Инициализирует _collection_priority из @export'ов через set_collection_priority
+## (нормализация автоматом). Зовётся в _ready после _spawn_gnomes — чтобы первый
+## emit имел слушателей (HUD/Journal к этому моменту уже подключились).
+func _init_collection_priority() -> void:
+	var weights: Dictionary = {
+		ResourcePile.ResourceType.WOOD: initial_collection_priority_wood,
+		ResourcePile.ResourceType.STONE: initial_collection_priority_stone,
+		ResourcePile.ResourceType.IRON: initial_collection_priority_iron,
+		ResourcePile.ResourceType.FOOD: initial_collection_priority_food,
+	}
+	set_collection_priority(weights)
+
+
+## Назначает новые приоритеты сбора. weights — Dictionary[int, float] по
+## типам ресурсов; будут нормализованы к сумме 1.0. Все ключи — ResourcePile.ResourceType.
+##
+## Если сумма весов ≤ 0 (всё нули) — fallback на равномерное распределение,
+## иначе гномы вообще не смогут собирать. Это страховка от случайного preset'а
+## «всё по 0».
+func set_collection_priority(weights: Dictionary) -> void:
+	var total: float = 0.0
+	for w in weights.values():
+		total += maxf(float(w), 0.0)
+	_collection_priority.clear()
+	if total <= 0.0:
+		# Fallback: равномерно по 4 типам.
+		var fallback_keys: Array = [
+			ResourcePile.ResourceType.WOOD,
+			ResourcePile.ResourceType.STONE,
+			ResourcePile.ResourceType.IRON,
+			ResourcePile.ResourceType.FOOD,
+		]
+		for k in fallback_keys:
+			_collection_priority[k] = 0.25
+	else:
+		for k in weights:
+			_collection_priority[k] = maxf(float(weights[k]), 0.0) / total
+	EventBus.collection_priority_changed.emit(_collection_priority.duplicate())
+
+
+## Текущий нормализованный вес типа (0..1). Гном использует в _find_nearest_pile
+## как делитель дистанции — чем выше weight, тем «ближе» pile этого типа.
+## Незаданный тип трактуется как 0 → pile никогда не выбирается.
+func get_collection_priority_weight(type: int) -> float:
+	return float(_collection_priority.get(type, 0.0))
+
+
+func get_collection_priority() -> Dictionary:
+	# Копия — чтобы caller не мог мутировать внутреннее состояние.
+	return _collection_priority.duplicate()
+
+
+func get_collection_mode() -> int:
+	return _collection_mode
+
+
+## Переключает режим сбора. WORK — все gatherer'ы возвращаются к работе
+## (enter_deployed → SEARCHING). ALARM — все gatherer'ы → request_return
+## (бегут в палатки → IN_TENT, скрыты, неуязвимы).
+##
+## DefenderGnome пропускается в обоих случаях: они снаружи всегда и в WORK,
+## и в ALARM (продолжают защищать периметр). Режим имеет эффект только в
+## DEPLOYED — в каравне/при свёртке гномы и так в палатках или идут туда.
+func set_collection_mode(mode: int) -> void:
+	if _collection_mode == mode:
+		return
+	_collection_mode = mode
+	EventBus.collection_mode_changed.emit(mode)
+	if debug_log and LogConfig.master_enabled:
+		var name: String = "WORK" if mode == CollectionMode.WORK else "ALARM"
+		print("[Camp] режим сбора: %s" % name)
+	if _state != State.DEPLOYED:
+		return
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		if g is DefenderGnome:
+			continue
+		match mode:
+			CollectionMode.WORK:
+				g.enter_deployed()
+			CollectionMode.ALARM:
+				g.request_return()
+
+
+## Проходит по overlapping_bodies зоны и пожирает каждую годную ResourcePile.
+## Игнорирует freeze=true (рука держит — жалко вырывать из-под пальцев).
+## consume_all возвращает все units, кредитуем в тип ресурса pile'а.
+##
+## Polling (а не body_entered) специально: ловит случай «рука держит pile в
+## зоне, потом отпускает» — body_entered тут не сработал бы (pile уже был
+## внутри). Стоимость polling'а пренебрежима — overlapping обычно 0-1
+## объект, зона маленькая.
+func _consume_piles_in_drop_zone() -> void:
+	if _anchor_drop_zone == null or not _anchor_drop_zone.monitoring:
+		return
+	for body in _anchor_drop_zone.get_overlapping_bodies():
+		if not is_instance_valid(body):
+			continue
+		var pile := body as ResourcePile
+		if pile == null:
+			continue
+		if pile.freeze:
+			continue
+		if pile.units <= 0 or pile.is_queued_for_deletion():
+			continue
+		# Запоминаем тип и позицию ДО consume_all — после queue_free свойства не достать.
+		var type: int = int(pile.resource_type)
+		var fx_pos: Vector3 = pile.global_position
+		var amount: int = pile.consume_all()
+		if amount > 0:
+			add_resource(type, amount)
+			ResourceFx.pulse(fx_pos, ResourcePile.color_for_type(type))
+			if debug_log and LogConfig.master_enabled:
+				print("[Camp] поглощён pile (type=%d, units=%d)" % [type, amount])
 
 
 ## Воскрешает гномов лагеря: вычищает оставшихся, заспавнивает новых на
@@ -871,6 +1269,7 @@ func _set_tower_aggro(active: bool) -> void:
 
 func _process(delta: float) -> void:
 	_handle_input(delta)
+	_handle_collection_input()
 	match _state:
 		State.CARAVAN_FOLLOWING:
 			_update_caravan_follow(delta)
@@ -890,6 +1289,10 @@ func _process(delta: float) -> void:
 					var stuck := _count_gnomes_not_home()
 					print("[Camp] свёртка форсированно завершена (таймаут %.1fс, %d гномов не дома)" % [pack_timeout, stuck])
 				_finalize_pack()
+	# Polling брошенных в anchor куч. monitoring=false → метод сразу выходит.
+	# Polling важнее body_entered: ловит случай «рука держит pile в зоне →
+	# отпускает (freeze стал false) → нет нового entered-события».
+	_consume_piles_in_drop_zone()
 	if _tower != null:
 		_last_target_pos = _tower.global_position
 
@@ -942,6 +1345,16 @@ func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool:
 
 
 # --- Ввод / переходы состояний ---
+
+## Edge-trigger хоткеи C / V для команд гномам. Отдельно от _handle_input
+## (который про camp_toggle и start_deployed-gate'ом блокируется для
+## статичных POI-лагерей) — команды гномам нужны и в статичных лагерях.
+func _handle_collection_input() -> void:
+	if Input.is_action_just_pressed("gnome_collect"):
+		set_collection_mode(CollectionMode.WORK)
+	elif Input.is_action_just_pressed("gnome_alarm"):
+		set_collection_mode(CollectionMode.ALARM)
+
 
 func _handle_input(delta: float) -> void:
 	# Static-camp (start_deployed=true) не реагирует на R — он не сворачивается.
@@ -1096,6 +1509,10 @@ func _start_deploy() -> void:
 			ground_y = _ground_y_at(_parts[0], _deploy_anchor)
 		_center_slot.global_position = Vector3(_deploy_anchor.x, ground_y, _deploy_anchor.z)
 		_center_slot.enabled = true
+	# Anchor drop zone: переехала на anchor, начинает пожирать брошенные кучи.
+	if _anchor_drop_zone != null:
+		_anchor_drop_zone.global_position = Vector3(_deploy_anchor.x, _deploy_anchor.y + 0.5, _deploy_anchor.z)
+		_anchor_drop_zone.monitoring = true
 
 
 func _start_pack() -> void:
@@ -1109,6 +1526,10 @@ func _start_pack() -> void:
 	# Гномы остаются целью, пока не дойдут до своих палаток (они сами выходят
 	# из skeleton_target в _enter_in_tent). На _finalize_pack бронь снимается.
 	_set_parts_vulnerable(false)
+	# Anchor drop zone выключается со старта свёртки — кучи, брошенные во время
+	# свёртывания, не должны засчитываться (лагерь уже не «принимает»).
+	if _anchor_drop_zone != null:
+		_anchor_drop_zone.monitoring = false
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] свёртка инициирована — ждём гномов")
 	for g in _gnomes:

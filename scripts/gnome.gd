@@ -4,17 +4,18 @@ extends CharacterBody3D
 ## находит глазами и сам носит ресурс челноком. По сигналу кампа →
 ## возвращается в свою палатку.
 ##
-## Двухфазная FSM сбора:
-##   ФАЗА 1 (поиск): SEARCHING — каждый кадр гном:
-##     1) Глазами сканирует кучи в vision_radius от себя. Учитывает только
-##        кучи, которые ещё никем не нацелены (Camp.is_pile_claimed) — каждый
-##        ищет «своё», нашедший один не созывает остальных.
-##     2) Если в мире вообще нет куч (анти-livelock-чек на пустой group) —
-##        переход в IDLE_NEAR_BASE.
-##     3) Иначе патрулируем: случайные точки в search_radius от anchor'а.
-##        Глаза ловят кучи, мимо которых проходим.
-##   ФАЗА 2 (челнок): COMMUTING_TO_PILE → COMMUTING_TO_BASE → ... пока
-##     закреплённая куча валидна. На опустошении → SEARCHING (ищет дальше).
+## FSM сбора:
+##   SEARCHING — гном ищет ближайший годный pile во ВСЁМ мире (через статический
+##     _pile_grid, без cap'а дистанции). Никакого random-wander: зоны ресурсов
+##     статичны, fog-of-war здесь не нужен — гном идёт прямо к ближайшему.
+##     Если все pile-ы пусты или нацелены другими (Camp.is_pile_claimed) → IDLE.
+##   COMMUTING_TO_PILE → COMMUTING_TO_BASE → ... пока закреплённая куча валидна.
+##     Позиция pile читается каждый кадр — если бревно укатили рукой, гном
+##     следит за ним до тех пор пока не возьмёт или pile не уничтожат/занимают.
+##     На pile_lost → SEARCHING → новый ближайший.
+##   IDLE_NEAR_BASE — pile-ов нет / все нацелены. Гном слоняется возле anchor'а,
+##     раз в idle_pile_rescan_sec пытается найти новый pile (чтобы не залипать
+##     если кто-то освободил клейм или истёк pile).
 ##
 ## Прочие состояния:
 ##   IN_TENT — приклеен к палатке, скрыт. Состояние по умолчанию (караван).
@@ -68,11 +69,9 @@ enum State {
 @export var gravity: float = 20.0
 
 @export_group("Behaviour")
-## Радиус патруля — где гном выбирает случайные точки во время SEARCHING.
-## Покрывает всю карту от любой точки развёртки. Карта 200×200, диагональ ~283.
-@export var search_radius: float = 300.0
-## Дальность зрения гнома: куча в этом радиусе считается «увиденной».
-## Маленький радиус → дольше искать; большой → почти всезнайство.
+## Дальность зрения гнома для XP-орбов (см. _scan_orb). Pile-ам vision_radius
+## не нужен — гном ищет ближайший глобально, без cap'а. Орбы же исчезают за
+## ~60с, и собирать их «всей картой» было бы перебором.
 @export var vision_radius: float = 10.0
 ## Радиус «ошивания» возле anchor'а, когда на карте не осталось куч.
 @export var idle_radius: float = 4.0
@@ -84,10 +83,15 @@ enum State {
 @export var home_distance: float = 0.8
 ## Дистанция до wander-точки, чтобы выбрать новую (или после прибытия).
 @export var wander_arrival: float = 0.6
-## Половина стороны квадратной карты от центра (0,0). Wander-точки клампятся
-## в этих пределах, чтобы при search_radius=300 на карте 400×400 гном не
-## уходил за пол. Должно совпадать со Skeleton.wander_map_half_extent.
+## Половина стороны квадратной карты от центра (0,0). Idle wander-точки
+## клампятся в этих пределах — на случай, если deploy_anchor близко к краю
+## карты. Должно совпадать со Skeleton.wander_map_half_extent.
 @export var wander_map_half_extent: float = 195.0
+## Пауза между rescan'ами pile-ов в IDLE_NEAR_BASE. Если все pile-ы были
+## claim'нуты другими, гном уходит в idle; периодический rescan ловит момент
+## когда кто-то освободил pile (доставил, забрал последний unit). Без этого
+## гном залипал в idle до следующего deploy'я.
+@export var idle_pile_rescan_sec: float = 1.5
 
 @export_group("Caravan follow (для бездомных гномов)")
 ## Sprint-cap для FOLLOWING_CARAVAN: чем дальше гном от своего слота в
@@ -164,11 +168,21 @@ var _state: State = State.IN_TENT:
 			print("[Gnome:%s] state %s → %s" % [name, State.keys()[_state], State.keys()[value]])
 		_state = value
 var _assigned_pile: ResourcePile = null
+## Тип ресурса, который сейчас несёт гном. Заполняется в _pickup_carry из
+## _assigned_pile.resource_type, сбрасывается в _drop_carry. Хранить
+## отдельно (а не читать с pile в момент сдачи) обязательно: pile может
+## сделать queue_free сразу после take_one (units==0), и к моменту прихода
+## к anchor'у его уже не существует. -1 = не несёт.
+var _carry_type: int = -1
 ## Орб, к которому гном сейчас бежит в COMMUTING_TO_ORB. Untyped, чтобы не
 ## упасть на freed-инстансе (между сканом и тиком орб может улетететь к
 ## Camp'у и queue_free); проверка через is_instance_valid + as XpOrb.
 var _assigned_orb: XpOrb = null
 var _wander_target: Vector3 = Vector3.INF
+## Время (Time.get_ticks_msec) следующего rescan'а pile-ов в IDLE_NEAR_BASE.
+## 0 = пересканировать сразу. Сбрасывается на enter в idle и после каждого
+## rescan'а. См. idle_pile_rescan_sec.
+var _idle_pile_rescan_msec: int = 0
 var _carry_visual: MeshInstance3D = null
 var _knockback := KnockbackState.new()
 ## Время (Time.get_ticks_msec) до которого гном неуязвим после eject'а из
@@ -199,9 +213,9 @@ var _lod_offscreen_cos_exit: float = 0.4
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 
-## Размер cell'а в spatial-grid'е куч ресурсов. ~vision_radius=10м,
-## округлено до 10 для совпадения по решётке. Гном смотрит только 9 cell'ов
-## (3×3 вокруг себя), не всю группу из 100+ куч.
+## Размер cell'а в spatial-grid'е куч ресурсов. Сейчас grid используется
+## глобальным поиском _find_nearest_pile (полный обход keys), но cell-структура
+## оставлена под будущий spiral-search и под старый код _pile_cell.
 const PILE_GRID_CELL_SIZE: float = 10.0
 ## Период обновления pile-grid'а (с). Кучи статичны (RigidBody freeze=false,
 ## но обычно лежат, gnome их таскает по одной), позиции почти не меняются —
@@ -209,9 +223,8 @@ const PILE_GRID_CELL_SIZE: float = 10.0
 const PILE_GRID_REFRESH_INTERVAL: float = 0.5
 
 ## Spatial grid куч: { Vector2i(cell_x, cell_z) → Array of [Vector3 pos,
-## ResourcePile node] }. Заменяет полный обход group resource_pile в
-## _scan_vision (на 126 гномах × 100 куч × 60fps это было 756k проверок/сек).
-## Все гномы читают один глобальный snapshot, refresh ленивый.
+## ResourcePile node] }. Один глобальный snapshot, читается всеми гномами,
+## refresh ленивый раз в PILE_GRID_REFRESH_INTERVAL.
 static var _pile_grid: Dictionary = {}
 static var _pile_grid_time: float = -1000.0
 
@@ -225,8 +238,8 @@ static func _pile_cell(pos: Vector3) -> Vector2i:
 
 
 ## Лениво пересоздаёт _pile_grid из group resource_pile. Зовётся в начале
-## _scan_vision и _world_has_any_pile. Один pass по группе раз в
-## PILE_GRID_REFRESH_INTERVAL глобально.
+## _find_nearest_pile. Один pass по группе раз в PILE_GRID_REFRESH_INTERVAL
+## глобально (общий для всех гномов).
 static func _maybe_refresh_pile_grid(tree: SceneTree) -> void:
 	var now: float = float(Time.get_ticks_msec()) / 1000.0
 	if now - _pile_grid_time < PILE_GRID_REFRESH_INTERVAL:
@@ -278,6 +291,12 @@ func _ready() -> void:
 	# каждые 0.5с с пересчётом физ-режима.
 	_lod_offscreen_cos = cos(deg_to_rad(lod_offscreen_half_angle_deg))
 	_lod_offscreen_cos_exit = cos(deg_to_rad(lod_offscreen_half_angle_deg + 5.0))
+	# Реакция на смену приоритета сбора: гном в COMMUTING_TO_PILE бросает
+	# текущий pile и ищет заново под новый план. Несущие (COMMUTING_TO_BASE)
+	# донесут — кредит важнее чем мгновенная переоценка. Defender'ы тоже
+	# подписываются (extends Gnome), но их state'ы не COMMUTING_TO_PILE,
+	# фильтр в обработчике ничего не делает.
+	EventBus.collection_priority_changed.connect(_on_collection_priority_changed)
 
 
 func _apply_visual() -> void:
@@ -671,25 +690,18 @@ func _tick_searching() -> void:
 		_state = State.COMMUTING_TO_ORB
 		return
 
-	# Шаг 1: глаза — ближайшая НЕ занятая другим гномом куча в vision_radius.
-	var spotted := _scan_vision()
-	if spotted:
-		_assigned_pile = spotted
+	# Шаг 1: ближайший годный pile во ВСЁМ мире (не cap'нуто vision_radius'ом).
+	# Если нашёл — идём прямо к нему. Если не нашёл (пусто или всё claimed) —
+	# в idle: подождать, рассканировать раз в idle_pile_rescan_sec.
+	var pile := _find_nearest_pile()
+	if pile != null:
+		_assigned_pile = pile
 		_wander_target = Vector3.INF
 		_state = State.COMMUTING_TO_PILE
 		return
-
-	# Шаг 2: в мире куч нет → ошиваемся возле базы.
-	if not _world_has_any_pile():
-		_wander_target = Vector3.INF
-		_state = State.IDLE_NEAR_BASE
-		return
-
-	# Шаг 3: патруль — случайная точка в search_radius от anchor'а.
-	var anchor := _camp.deploy_anchor
-	if _wander_target == Vector3.INF or _horizontal_distance(_wander_target) < wander_arrival:
-		_wander_target = _random_point_around(anchor, search_radius)
-	_move_toward_xz(_wander_target)
+	_wander_target = Vector3.INF
+	_idle_pile_rescan_msec = 0  # rescan сразу после входа в idle, потом по расписанию
+	_state = State.IDLE_NEAR_BASE
 
 
 func _tick_commuting_to_pile() -> void:
@@ -712,12 +724,21 @@ func _tick_commuting_to_base() -> void:
 	var anchor := _camp.deploy_anchor
 	_move_toward_xz(anchor)
 	if _horizontal_distance(anchor) <= deposit_distance:
+		# Кредитуем ресурс лагерю ДО _drop_carry — drop сбрасывает _carry_type.
+		# Делаем это здесь, а не в _drop_carry: гном роняет визуал и в смерти,
+		# и при свёртке (RETURNING_TO_TENT) — в этих случаях ресурс теряется
+		# (буквально: упал по дороге). Кредит только на честной доставке.
+		if _carry_type >= 0:
+			_camp.add_resource(_carry_type, 1)
+			ResourceFx.pulse(global_position, ResourcePile.color_for_type(_carry_type))
 		_drop_carry()
-		# Челнок: если pile ещё валиден — снова к нему. Иначе — решаем по миру.
-		if is_instance_valid(_assigned_pile) and _assigned_pile.units > 0:
-			_state = State.COMMUTING_TO_PILE
-		else:
-			_on_pile_lost()
+		# После каждой доставки полный rescan через SEARCHING — гном пере-
+		# выбирает pile под текущий приоритет. Если приоритет не менялся,
+		# тот же pile часто остаётся ближайшим по weighted-dist (челнок
+		# работает естественно). Если игрок только что переключил план —
+		# гном переключается на тип нового приоритета. Стоимость лишнего
+		# поиска ~10мкс, незначима.
+		_on_pile_lost()
 
 
 ## Гном идёт к XpOrb. Касание Area3D орба сработает само — наш job только
@@ -769,20 +790,27 @@ func _scan_orb() -> XpOrb:
 
 
 func _tick_idle_near_base() -> void:
-	# Пока в idle — не сканируем кучи. Камп вернёт нас в SEARCHING при следующей
-	# развёртке, либо появление куч нас не разбудит до этого момента — это ок,
-	# на текущей итерации куч на карте больше не появляется.
-	#
-	# Орбы — другое дело (этап 49): они появляются прямо во время idle, когда
-	# скелеты бьются о палатки/стены. Гном в idle, увидев орб поблизости,
-	# должен побежать его собрать. Без этого XP с волн вокруг лагеря-в-idle
-	# терялся бы.
+	# Орб приоритет (этап 49): появляется прямо во время idle когда скелеты
+	# бьются о лагерь, идти собирать.
 	var orb := _scan_orb()
 	if orb != null:
 		_assigned_orb = orb
 		_wander_target = Vector3.INF
 		_state = State.COMMUTING_TO_ORB
 		return
+
+	# Периодический rescan pile-ов: ловим момент, когда другие гномы освободили
+	# клейм или pile истёк. Без этого гном застрял бы в idle, пока не deploy.
+	var now: int = Time.get_ticks_msec()
+	if now >= _idle_pile_rescan_msec:
+		_idle_pile_rescan_msec = now + int(idle_pile_rescan_sec * 1000.0)
+		var pile := _find_nearest_pile()
+		if pile != null:
+			_assigned_pile = pile
+			_wander_target = Vector3.INF
+			_state = State.COMMUTING_TO_PILE
+			return
+
 	var anchor := _camp.deploy_anchor
 	if _wander_target == Vector3.INF or _horizontal_distance(_wander_target) < wander_arrival:
 		_wander_target = _random_point_around(anchor, idle_radius)
@@ -832,6 +860,15 @@ func _on_pile_lost() -> void:
 	_state = State.SEARCHING
 
 
+## Игрок поменял приоритет сбора. Гном идёт к pile старого приоритета —
+## бросаем, выбираем заново под новый план. Гном с carry в COMMUTING_TO_BASE
+## не трогаем — донесёт текущую единицу, после доставки в _tick_commuting_to_base
+## уже сделает rescan под новый приоритет.
+func _on_collection_priority_changed(_weights: Dictionary) -> void:
+	if _state == State.COMMUTING_TO_PILE:
+		_on_pile_lost()
+
+
 func _move_toward_xz(target: Vector3) -> void:
 	var to_target := target - global_position
 	to_target.y = 0.0
@@ -850,61 +887,49 @@ func _horizontal_distance(target: Vector3) -> float:
 	return d.length()
 
 
-## «Глаза» гнома — ближайшая куча в vision_radius от текущей позиции.
-## Пропускает: пустые кучи, кучи в чужой клейм, замороженные (рука держит).
+## Находит лучший pile с учётом collection_priority лагеря: weighted_dist =
+## real_dist / priority_weight (типы с высоким приоритетом «приближаются»,
+## с нулевым — игнорируются). Без cap'а дистанции — гном «знает» где ресурсы.
+## Пропускает: пустые, замороженные (рука держит), нацеленные другим гномом,
+## с типом приоритета 0.
 ##
-## **Spatial grid** ([Gnome._pile_grid]): вместо полного обхода группы
-## resource_pile (на 126 гномах × 100 куч × 60fps = 756k distance-checks)
-## смотрим только 9 cell'ов (3×3 вокруг гнома). Все гномы читают один
-## глобальный snapshot, refresh ленивый раз в 0.5с — кучи почти статичны,
-## stale-окно несущественно. Снижение ~10× в плотных зонах.
-func _scan_vision() -> ResourcePile:
+## Использует static [Gnome._pile_grid]. Полный обход всех cells O(N pile-ов):
+## на тестовых 30-100 pile × 60 гномов × 60fps это ~360k checks/сек.
+func _find_nearest_pile() -> ResourcePile:
 	Gnome._maybe_refresh_pile_grid(get_tree())
 	var pos := global_position
-	var center_cell := Gnome._pile_cell(pos)
-	var vr_sq: float = vision_radius * vision_radius
 	var nearest: ResourcePile = null
-	var nearest_dist_sq := vr_sq
-	for dx in [-1, 0, 1]:
-		for dz in [-1, 0, 1]:
-			var cell := Vector2i(center_cell.x + dx, center_cell.y + dz)
-			if not Gnome._pile_grid.has(cell):
+	var best_weighted_dist_sq := INF
+	for cell_key in Gnome._pile_grid.keys():
+		var entries: Array = Gnome._pile_grid[cell_key]
+		for entry in entries:
+			var ppos: Vector3 = entry[0]
+			var raw = entry[1]
+			if not is_instance_valid(raw):
 				continue
-			var entries: Array = Gnome._pile_grid[cell]
-			for entry in entries:
-				var ppos: Vector3 = entry[0]
-				var d_sq: float = pos.distance_squared_to(ppos)
-				if d_sq >= nearest_dist_sq:
-					continue
-				# Untyped read до is_instance_valid — иначе typed-cast на
-				# freed-инстанс (взяли из stale-снимка) вылетает с
-				# "previously freed instance".
-				var raw = entry[1]
-				if not is_instance_valid(raw):
-					continue
-				var rp := raw as ResourcePile
-				if rp == null or rp.units <= 0 or rp.freeze:
-					continue
-				if _camp.is_pile_claimed(rp, self):
-					continue
-				nearest_dist_sq = d_sq
-				nearest = rp
+			var rp := raw as ResourcePile
+			if rp == null or rp.units <= 0 or rp.freeze:
+				continue
+			# Priority-фильтр через Camp: weight=0 (или близко) → тип «выключен»,
+			# гном проходит мимо. Так работает план «не собирать камень».
+			var weight: float = _camp.get_collection_priority_weight(int(rp.resource_type))
+			if weight <= 0.001:
+				continue
+			# Эффективная дистанция: distance² / weight². Эквивалентно (d/w)²,
+			# а возведение в квадрат сохраняет монотонность для сравнения.
+			# При weight=0.5 pile «отодвигается» в 4 раза по cost'у; при
+			# weight=2 (если бы были такие веса в нормализованной системе) —
+			# приближается в 4 раза. В нашей нормализации weights ≤ 1, так что
+			# веса всегда «отодвигают» — относительный порядок типов сохраняется.
+			var d_sq: float = pos.distance_squared_to(ppos)
+			var weighted_sq: float = d_sq / (weight * weight)
+			if weighted_sq >= best_weighted_dist_sq:
+				continue
+			if _camp.is_pile_claimed(rp, self):
+				continue
+			best_weighted_dist_sq = weighted_sq
+			nearest = rp
 	return nearest
-
-
-## Анти-livelock: есть ли в мире хоть одна куча с units > 0. Используется
-## только чтобы перевести гнома в IDLE, когда патрулировать бесполезно.
-##
-## Читает _pile_grid (тот же snapshot, что и _scan_vision). Маркер «куча
-## существует и непустая» уже зашит в фильтр grid-builder'а — если grid
-## непустой, значит хоть одна валидная куча есть.
-func _world_has_any_pile() -> bool:
-	Gnome._maybe_refresh_pile_grid(get_tree())
-	# Быстрый путь: пустой grid → ни одной непустой непомёрзшей кучи.
-	# Не проверяем каждую entry — refresh уже отфильтровал по units/freeze.
-	# Stale-погрешность: куча могла опустеть/замёрзнуть после refresh'а; гном
-	# в худшем случае один кадр патрулирует впустую — несущественно.
-	return not Gnome._pile_grid.is_empty()
 
 
 func _random_point_around(center: Vector3, radius: float) -> Vector3:
@@ -915,8 +940,8 @@ func _random_point_around(center: Vector3, radius: float) -> Vector3:
 		center.y,
 		center.z + sin(angle) * dist
 	)
-	# При search_radius=300 и карте ±95 точка часто уходит за пол. Клампим, чтобы
-	# гном не патрулировал в пустоте (и не проваливался при будущих обрывах).
+	# Клампим idle-wander к границам карты — на случай если deploy_anchor
+	# близко к краю и idle_radius уводит за пределы пола.
 	p.x = clampf(p.x, -wander_map_half_extent, wander_map_half_extent)
 	p.z = clampf(p.z, -wander_map_half_extent, wander_map_half_extent)
 	return p
@@ -925,12 +950,19 @@ func _random_point_around(center: Vector3, radius: float) -> Vector3:
 func _pickup_carry() -> void:
 	if _carry_visual:
 		return
+	# Запоминаем тип В МОМЕНТ pickup'а — pile сразу после take_one() мог уйти
+	# в queue_free (units стало 0), к моменту сдачи его уже не достать.
+	if is_instance_valid(_assigned_pile):
+		_carry_type = int(_assigned_pile.resource_type)
 	_carry_visual = MeshInstance3D.new()
 	var box := BoxMesh.new()
 	box.size = carry_visual_size
 	_carry_visual.mesh = box
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = carry_color
+	# Цвет визуала переноса = цвет типа ресурса. Раньше был фикс carry_color
+	# (зелёный), теперь различимо: жёлто-коричневый над гномом → wood,
+	# красно-оранжевый → food и т.д. Игрок видит что таскают.
+	mat.albedo_color = ResourcePile.color_for_type(_carry_type) if _carry_type >= 0 else carry_color
 	_carry_visual.material_override = mat
 	_carry_visual.position = Vector3(0, 1.0, 0)  # над головой гнома
 	add_child(_carry_visual)
@@ -940,3 +972,4 @@ func _drop_carry() -> void:
 	if _carry_visual:
 		_carry_visual.queue_free()
 		_carry_visual = null
+	_carry_type = -1

@@ -67,25 +67,42 @@ func _ready() -> void:
 	destroyed.connect(func() -> void: EventBus.item_destroyed.emit(self))
 
 
+## Дефолтный цвет по типу ресурса. Публичный — используют HUD/Journal/Gnome
+## carry-visual / FX-частицы (`ResourceFx.pulse`). Чтобы не плодить дубли
+## цветов — единственный источник истины в проекте.
+static func color_for_type(t: int) -> Color:
+	match t:
+		ResourceType.WOOD:
+			return Color(0.45, 0.28, 0.15)
+		ResourceType.STONE:
+			return Color(0.55, 0.55, 0.55)
+		ResourceType.IRON:
+			return Color(0.35, 0.38, 0.42)
+		ResourceType.FOOD:
+			return Color(0.85, 0.35, 0.25)
+		_:
+			return Color(0.4, 0.75, 0.3)
+
+
 ## Визуал-defaults по resource_type. Возвращает (color, size, shape).
 ## Используется при `pile_color == BLACK / pile_size == ZERO / pile_shape == AUTO`.
 static func _defaults_for_type(t: int) -> Array:
 	match t:
 		ResourceType.WOOD:
 			# Бревно: коричневый цилиндр, лежит вертикально (высокий-узкий).
-			return [Color(0.45, 0.28, 0.15), Vector3(0.5, 1.4, 0.5), PileShape.CYLINDER]
+			return [color_for_type(t), Vector3(0.5, 1.4, 0.5), PileShape.CYLINDER]
 		ResourceType.STONE:
 			# Каменный блок: серый куб.
-			return [Color(0.55, 0.55, 0.55), Vector3(0.9, 0.7, 0.9), PileShape.BOX]
+			return [color_for_type(t), Vector3(0.9, 0.7, 0.9), PileShape.BOX]
 		ResourceType.IRON:
 			# Куча оружия/доспехов: тёмно-стальной приплюснутый бокс.
-			return [Color(0.35, 0.38, 0.42), Vector3(0.8, 0.4, 0.8), PileShape.BOX]
+			return [color_for_type(t), Vector3(0.8, 0.4, 0.8), PileShape.BOX]
 		ResourceType.FOOD:
 			# Фруктовый куст/ягоды: красно-оранжевая сфера.
-			return [Color(0.85, 0.35, 0.25), Vector3(0.7, 0.7, 0.7), PileShape.SPHERE]
+			return [color_for_type(t), Vector3(0.7, 0.7, 0.7), PileShape.SPHERE]
 		_:
 			# GENERIC — старый зелёный ящик.
-			return [Color(0.4, 0.75, 0.3), Vector3(0.6, 0.6, 0.6), PileShape.BOX]
+			return [color_for_type(t), Vector3(0.6, 0.6, 0.6), PileShape.BOX]
 
 
 func _resolve_visual_params() -> Array:
@@ -199,3 +216,23 @@ func take_one() -> bool:
 		destroyed.emit()
 		queue_free()
 	return true
+
+
+## Полное потребление кучи: возвращает все units разом и уничтожает pile.
+## Используется когда лагерь засчитывает кучу целиком (бросок рукой в
+## anchor-зону). Идемпотентно: повторный вызов на _dying возвращает 0.
+##
+## В отличие от take_one не проверяет `freeze`: caller сам должен убедиться,
+## что рука не держит pile (иначе мы бы вырвали кучу из-под пальцев). Camp
+## делает это перед вызовом.
+func consume_all() -> int:
+	if _dying or is_queued_for_deletion():
+		return 0
+	var amount: int = units
+	if amount <= 0:
+		return 0
+	units = 0
+	_dying = true
+	destroyed.emit()
+	queue_free()
+	return amount

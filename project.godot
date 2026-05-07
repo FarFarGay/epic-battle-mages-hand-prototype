@@ -19,9 +19,10 @@ config/features=PackedStringArray("4.6")
 EventBus="*res://scripts/event_bus.gd"
 LogConfig="*res://scripts/log_config.gd"
 QuestProgress="*res://scripts/quest_progress.gd"
-UpgradeModal="*res://scripts/upgrade_modal.gd"
+JournalPanel="*res://scripts/journal_panel.gd"
 SquadXpFx="*res://scripts/squad_xp_fx.gd"
 XpOrbSpawner="*res://scripts/xp_orb_spawner.gd"
+ResourceFx="*res://scripts/resource_fx.gd"
 
 [display]
 
@@ -88,6 +89,21 @@ camp_toggle={
 complete_quest={
 "deadzone": 0.5,
 "events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":81,"physical_keycode":0,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
+]
+}
+ui_journal={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":74,"physical_keycode":0,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
+]
+}
+gnome_collect={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":67,"physical_keycode":0,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
+]
+}
+gnome_alarm={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":86,"physical_keycode":0,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
 ]
 }
 debug_spawn_100={

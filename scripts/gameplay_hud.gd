@@ -24,19 +24,47 @@ var _update_timer: float = 0.0
 var _squad_level_label: Label
 var _squad_xp_bar: ProgressBar
 var _squad_xp_label: Label  # текст поверх бара
+## Кнопка журнала + бэйдж невыбранных апгрейдов. Тоже программная — и
+## расположение, и счётчик заводить новой ноды в .tscn ради этого нет смысла.
+var _journal_button: Button
+var _journal_badge: Label
+## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
+## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
+var _resource_labels: Dictionary = {}
+## Индикатор режима сбора (WORK/ALARM) — отдельный Label под кнопкой журнала,
+## меняет цвет реактивно на EventBus.collection_mode_changed.
+var _mode_label: Label
+
+## Порядок и метаданные отображения ресурсов в правой панели. Пять типов из
+## ResourcePile.ResourceType, кроме GENERIC (legacy-ящик, не геймплейный).
+const RESOURCE_DISPLAY: Array = [
+	{"type": ResourcePile.ResourceType.WOOD, "label": "дерево", "color": Color(0.45, 0.28, 0.15)},
+	{"type": ResourcePile.ResourceType.STONE, "label": "камень", "color": Color(0.55, 0.55, 0.55)},
+	{"type": ResourcePile.ResourceType.IRON, "label": "железо", "color": Color(0.45, 0.48, 0.55)},
+	{"type": ResourcePile.ResourceType.FOOD, "label": "еда", "color": Color(0.85, 0.35, 0.25)},
+]
 
 
 func _ready() -> void:
 	if not camp_path.is_empty():
 		_camp = get_node_or_null(camp_path) as Camp
 	_build_squad_row()
+	_build_resources_rows()
+	_build_journal_button()
 	_update_counts()
 	# Sync с текущим состоянием Camp (на случай позднего hookup или сцены
 	# с уже накопленным XP). Затем подписываемся на инкременты.
 	if _camp != null:
 		_refresh_squad_bar(_camp.get_squad_xp(), _camp.get_squad_level())
+		_refresh_journal_badge(_camp.get_pending_upgrade_choices())
+		_sync_all_resources()
 	EventBus.squad_xp_changed.connect(_refresh_squad_bar)
 	EventBus.squad_leveled_up.connect(_on_level_up)
+	EventBus.pending_upgrade_choices_changed.connect(_refresh_journal_badge)
+	EventBus.resources_changed.connect(_on_resource_changed)
+	EventBus.collection_mode_changed.connect(_refresh_mode_label)
+	if _camp != null:
+		_refresh_mode_label(_camp.get_collection_mode())
 
 
 ## Строит SquadRow программно и докидывает в существующий VBox правой панели.
@@ -133,3 +161,149 @@ func _on_level_up(_level: int) -> void:
 	var tween := create_tween()
 	tween.tween_property(_squad_xp_bar, "modulate", Color(1.5, 1.5, 1.5, 1.0), 0.08)
 	tween.tween_property(_squad_xp_bar, "modulate", Color.WHITE, 0.2)
+
+
+## Кнопка журнала — крепится к нижнему правому углу HUD'а, под RightPanel.
+## Бэйдж — Label поверх кнопки, виден только когда pending_upgrade_choices > 0.
+## Программно, без правки .tscn.
+func _build_journal_button() -> void:
+	_journal_button = Button.new()
+	_journal_button.text = "📔 журнал [J]"
+	_journal_button.custom_minimum_size = Vector2(150, 36)
+	_journal_button.add_theme_font_size_override("font_size", 14)
+	# Под RightPanel (offset_bottom=240 в .tscn) — оставляю 10px зазор.
+	_journal_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_journal_button.offset_left = -160
+	_journal_button.offset_top = 250
+	_journal_button.offset_right = -10
+	_journal_button.offset_bottom = 286
+	_journal_button.pressed.connect(_on_journal_button_pressed)
+	add_child(_journal_button)
+
+	# Бэйдж: красный кружок с числом в правом верхнем углу кнопки.
+	_journal_badge = Label.new()
+	_journal_badge.text = "0"
+	_journal_badge.custom_minimum_size = Vector2(20, 20)
+	_journal_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_journal_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_journal_badge.add_theme_font_size_override("font_size", 12)
+	_journal_badge.add_theme_color_override("font_color", Color.WHITE)
+	# Бэйдж получает свой StyleBox через PanelContainer-обёртку — но нам
+	# хватит цветного фона через ColorRect под Label'ом.
+	var bg := ColorRect.new()
+	bg.color = Color(0.85, 0.15, 0.15, 1.0)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_journal_badge.add_child(bg)
+	_journal_badge.move_child(bg, 0)  # фон под текст
+	_journal_badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_journal_badge.offset_left = -22
+	_journal_badge.offset_top = -8
+	_journal_badge.offset_right = -2
+	_journal_badge.offset_bottom = 12
+	_journal_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_journal_badge.visible = false
+	_journal_button.add_child(_journal_badge)
+
+
+func _on_journal_button_pressed() -> void:
+	JournalPanel.toggle()
+
+
+## Индикатор режима сбора. Под кнопкой журнала, программно. Зелёный при WORK,
+## красный с маленькой подсказкой клавиши при ALARM. На WORK скрывается —
+## стандартный режим, не требует акцента.
+func _refresh_mode_label(mode: int) -> void:
+	if _mode_label == null:
+		_mode_label = Label.new()
+		_mode_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		_mode_label.offset_left = -160
+		_mode_label.offset_top = 296
+		_mode_label.offset_right = -10
+		_mode_label.offset_bottom = 322
+		_mode_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_mode_label.add_theme_font_size_override("font_size", 13)
+		add_child(_mode_label)
+	# 1 = ALARM, 0 = WORK (Camp.CollectionMode значения).
+	if mode == 1:
+		_mode_label.text = "⚠ тревога [V→C сброс]"
+		_mode_label.add_theme_color_override("font_color", Color(1.0, 0.4, 0.4, 1.0))
+		_mode_label.visible = true
+	else:
+		_mode_label.visible = false
+
+
+func _refresh_journal_badge(count: int) -> void:
+	if _journal_badge == null:
+		return
+	if count <= 0:
+		_journal_badge.visible = false
+	else:
+		_journal_badge.text = "%d" % count
+		_journal_badge.visible = true
+
+
+## Строит ряды счётчиков ресурсов (4 типа: дерево/камень/железо/еда). Та же
+## раскладка что и для гнома/лучника/палаток: цветной квадрат + название +
+## число. Реактивные обновления — через _on_resource_changed; до первой
+## доставки все счётчики «0», тогда они слегка приглушены.
+func _build_resources_rows() -> void:
+	if _vbox == null:
+		return
+	# Тонкая разделительная полоса перед ресурсами — визуально отделяет
+	# «состав отряда» от «склада».
+	var sep := HSeparator.new()
+	sep.add_theme_constant_override("separation", 4)
+	_vbox.add_child(sep)
+
+	for entry in RESOURCE_DISPLAY:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		_vbox.add_child(row)
+
+		var icon := ColorRect.new()
+		icon.custom_minimum_size = Vector2(20, 20)
+		icon.color = entry["color"]
+		row.add_child(icon)
+
+		var name_label := Label.new()
+		name_label.text = entry["label"]
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+		name_label.add_theme_font_size_override("font_size", 14)
+		row.add_child(name_label)
+
+		var count_label := Label.new()
+		count_label.text = "0"
+		count_label.custom_minimum_size = Vector2(40, 0)
+		count_label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1))
+		count_label.add_theme_font_size_override("font_size", 14)
+		count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		row.add_child(count_label)
+
+		_resource_labels[int(entry["type"])] = count_label
+
+
+func _sync_all_resources() -> void:
+	if _camp == null:
+		return
+	for entry in RESOURCE_DISPLAY:
+		var type: int = int(entry["type"])
+		_refresh_resource_label(type, _camp.get_resource(type))
+
+
+func _on_resource_changed(type: int, amount: int) -> void:
+	_refresh_resource_label(type, amount)
+
+
+## Цвет цифры: серый при 0 (склад пуст), белый при >0. Лёгкий feedback что
+## хоть что-то накопилось — без отдельного бэйджа/иконки «есть запас».
+func _refresh_resource_label(type: int, amount: int) -> void:
+	var label: Label = _resource_labels.get(type, null)
+	if label == null:
+		return
+	label.text = "%d" % amount
+	if amount > 0:
+		label.add_theme_color_override("font_color", Color.WHITE)
+	else:
+		label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1))
