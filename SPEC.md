@@ -884,13 +884,13 @@ static func spawn(
 
 **Safe-фильтр (`_safe_score`):** возвращает «избыток» (distance − safe_radius) до ближайшей запретной зоны: живой Camp (radius=`wave_safe_radius=32м`) или POI (radius читается с `poi.safe_radius` — каждый POI имеет свой через `QuestActor.safe_radius`; fallback `poi_safe_radius_fallback=32м`). >=0 → принимаем, <0 → запоминаем как фоллбэк. Используется только для фонового спавна; POI-волны идут из SpawnZone напрямую без safe-фильтра.
 
-**P-рестарт:** в фазе RUNNING повторное P → `kill_all_skeletons` + `Camp.reset_population()` для каждого camp + `_clear_active_poi()` + новый initial-спавн фона. Если игрок стоит на POI и хочет возобновить осаду — сворачивает и разворачивает лагерь (camp_packed → camp_deployed эмитится снова, осада запустится с stage 0).
+**Рестарт кампании (`cheat_start_campaign`):** в фазе RUNNING повторный вызов → `kill_all_skeletons` + `Camp.reset_population()` для каждого camp + `_clear_active_poi()` + новый initial-спавн фона. Если игрок стоит на POI и хочет возобновить осаду — сворачивает и разворачивает лагерь (camp_packed → camp_deployed эмитится снова, осада запустится с stage 0). Раньше висело на P; с 2026-05-08 — кнопка во вкладке «Читы» журнала.
 
-**Force_wave (O):** немедленный `_spawn_poi_wave(stage.skeletons_per_wave)` + перевзвод `_wave_cd`. Без активного POI — игнор с предупреждением «волне некуда идти».
+**Force-wave (`cheat_force_wave`):** немедленный `_spawn_poi_wave(stage.skeletons_per_wave)` + перевзвод `_wave_cd`. Без активного POI — игнор с предупреждением «волне некуда идти». Раньше O, теперь кнопка в «Читах».
 
-**Debug spawn (`[`):** `_spawn_safe_uniform(100)` поверх фона. Не трогает таргет/таймеры — единоразовый дамп.
+**Debug spawn (`cheat_spawn_100`):** `_spawn_safe_uniform(100)` поверх фона. Не трогает таргет/таймеры — единоразовый дамп. Раньше `[`, теперь кнопка.
 
-**Stress test (`]`):** fire-and-forget `EnemySpawner.spawn_uniform(skeleton_scene, 2000)`. Игнорирует safe-зоны и SpawnZone-границы; для замера перфоманса (PerfHud F3).
+**Stress test (`cheat_stress_2000`):** fire-and-forget `EnemySpawner.spawn_uniform(skeleton_scene, 2000)`. Игнорирует safe-зоны и SpawnZone-границы; для замера перфоманса (PerfHud F3). Раньше `]`, теперь кнопка.
 
 **Safe-zone monitor:** раз в 1с считает скелетов в `wave_safe_radius` от `current_center()` каждого лагеря. Лог по фронту с указанием `target/cap` фона.
 
@@ -1772,15 +1772,25 @@ func _refresh_visual() -> void:
 | `hand_action` | RMB | Hand:PhysicalActions (триггер активной способности — slam/flick) |
 | `equip_slam` | 1 | Hand:PhysicalActions (экипировать хлопок) |
 | `equip_flick` | 2 | Hand:PhysicalActions (экипировать щелбан) |
-| `spawn_enemies` | P | WaveDirector (старт/рестарт кампании) |
-| `force_wave` | O | WaveDirector (немедленная волна, сбрасывает таймер) |
 | `camp_toggle` | R | Camp (зажать для развёртки/свёртки) |
 | `complete_quest` | Q | QuestProgress (debug-продвижение прогресса сюжета на 1 шаг) |
-| `ui_journal` | J | JournalPanel (открыть/закрыть журнал — три вкладки: Юниты / Лагерь / План) |
+| `ui_journal` | J | JournalPanel (открыть/закрыть журнал — четыре вкладки: Юниты / Лагерь / План / Читы) |
 | `gnome_collect` | C | Camp.set_collection_mode(WORK) — gatherer'ы возвращаются на сбор |
 | `gnome_alarm` | V | Camp.set_collection_mode(ALARM) — gatherer'ы бегут в палатки (request_return); defender'ы продолжают защищать |
-| `debug_spawn_100` | `[` | WaveDirector (debug-спавн 100 скелетов neutral по зонам, не трогает фазу/таймеры) |
-| `debug_stress_2000` | `]` | WaveDirector (stress-test: спавн 2000 скелетов uniform по карте через async-batched spawn_uniform, для замеров перфоманса в PerfHud) |
+
+**Дебаг-читы вынесены с клавиатуры в JournalPanel → вкладку «Читы»**
+(2026-05-08). Старые actions `spawn_enemies` (P), `force_wave` (O),
+`debug_spawn_100` (`[`), `debug_stress_2000` (`]`) удалены из project.godot
+вместе с `Input.is_action_just_pressed`-чеками в `wave_director.gd:_process`.
+Теперь вкладка «Читы» вызывает публичный API:
+
+| Кнопка | WaveDirector / Camp метод | Эффект |
+|---|---|---|
+| Старт/рестарт волн | `cheat_start_campaign()` | Переход IDLE→RUNNING (initial spawn) или рестарт (kill_all_skeletons + reset_population + сброс активного POI) |
+| Немедленная волна | `cheat_force_wave()` | Спавн POI-волны на активный лагерь, сброс `_wave_cd`. Без активного POI — лог-предупреждение, no-op |
+| +100 скелетов | `cheat_spawn_100()` | `_spawn_safe_uniform(100)` — uniform по safe-зонам, не трогает фазу/таймеры |
+| Stress 2000 скелетов | `cheat_stress_2000()` | `EnemySpawner.spawn_uniform(skeleton_scene, 2000)` — async-batched, для замеров перфоманса |
+| +100 каждого ресурса | `Camp.add_resource(type, 100)` × 4 типа | По 100 единиц wood/stone/iron/food на склад. Каждый эмитит `resources_changed`, HUD/Journal перерисовываются |
 
 Курсор мыши — позиция руки. Системного захвата курсора нет, он движется свободно.
 
@@ -2312,7 +2322,7 @@ func _refresh_visual() -> void:
 | Tower | сигналы `damaged/destroyed`, метод `take_damage(float)` (через `Damageable.register`) | Input actions WASD; `Pushable.try_push` для kinematic-целей; `_push_item` ветка для Item (mass-mediation) |
 | Enemy (база) | сигналы `damaged/destroyed`, методы `take_damage(float)`/`apply_push(Vector3, float)` (Pushable)/`apply_knockback(Vector3, float)`/`set_target(Node3D)`/`set_targets(Array[Node3D])`; виртуальные `_perform_strike(target)`, `_on_state_enter/_on_state_exit`, `_on_knockback`, `_on_destroyed`. Регистрируется в `Damageable` и `Pushable` группах в `_ready` | физика, наследники |
 | Skeleton | (наследует Enemy) | `_target.take_damage(...)` через `Damageable.try_damage`; `ShatterEffect.spawn` на смерть |
-| EnemySpawner | — | `Input "spawn_enemies"`, `Array[PackedScene]` + `target_path` + `spawn_root_path` из `main.tscn` |
+| EnemySpawner | публичные `spawn_at/spawn_group/spawn_uniform/kill_all_skeletons/get_zones`, поле `spawn_y` | вызывается из `WaveDirector` (включая cheat-методы из вкладки «Читы»); `Array[PackedScene]` + `target_path` + `spawn_root_path` из `main.tscn` |
 | Hand | сигналы `grabbed(item: Node3D)/released(item: Node3D, velocity)` (re-emit из PhysicalActions); публичный API: `lock_position(bool)`, `set_locked_position(pos)`, `cursor_world_position()`, `smoothed_velocity()`, `get_grabbable_bodies()/get_magnet_bodies()`, `register_raycast_excluder(Callable)` | активная камера; никаких конкретных game-классов |
 | Hand:PhysicalActions | сигналы `grabbed/released/slammed/flicked(target: Node3D, velocity)`, методы `get_held_item()/is_holding()/find_grab_candidate()/find_flick_target()`, `@export equipped: AbilityType` | Input `hand_grab/hand_action/equip_slam/equip_flick`; Hand через `setup` цепочку. Цели — через `Damageable.is_damageable / Grabbable.is_grabbable / Pushable.try_push`, а не через `is Item / is Enemy` |
 | Hand:SpellActions | сигнал `spell_cast(name, position)` (черновик) | родитель Hand через `setup(hand)` |
@@ -2420,7 +2430,7 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 - `Nodes` — `Performance.OBJECT_NODE_COUNT`. Все ноды в SceneTree.
 - `Skeletons` — счётчик с разбивкой по LOD-уровням `NEAR / MID / FAR`. Распределение даёт визуальное подтверждение, что LOD реально классифицирует врагов по дистанции (не «все NEAR» из-за бага).
 
-Используется в паре с stress-кнопкой `]` (`debug_stress_2000`): спавн 2000 скелетов async-батчами и измерение, во что упирается.
+Используется в паре с cheat-кнопкой «Stress 2000 скелетов» (Журнал → вкладка «Читы», метод `WaveDirector.cheat_stress_2000`): спавн 2000 скелетов async-батчами и измерение, во что упирается. До 2026-05-08 этот же эффект был на keyboard-action `debug_stress_2000` (`]`).
 
 **Структура:** `CanvasLayer → PanelContainer (полупрозрачный фон) → Label`. Position top-left, offset `(10, 10)`. Готово принимать клавишу `F3` через `_unhandled_input` (toggle visibility) — не зарегистрировано в InputMap, потому что debug-инструмент не должен засорять конфиг проекта.
 

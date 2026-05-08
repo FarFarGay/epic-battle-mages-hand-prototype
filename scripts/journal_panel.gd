@@ -14,7 +14,7 @@ extends CanvasLayer
 
 const CAMP_GROUP := &"camp"
 
-enum Tab { UNITS, CAMP, PLAN }
+enum Tab { UNITS, CAMP, PLAN, DEBUG }
 
 ## Preset'ы плана сбора. Главное число — приоритет «фокусного» типа (55), у
 ## остальных 15 — нормализация в Camp.set_collection_priority даст 0.55/0.15/0.15/0.15.
@@ -81,6 +81,7 @@ var _panel: PanelContainer
 var _tab_units_btn: Button
 var _tab_camp_btn: Button
 var _tab_plan_btn: Button
+var _tab_debug_btn: Button
 var _content: VBoxContainer
 var _header_label: Label
 
@@ -199,6 +200,10 @@ func _build_tabs(parent: VBoxContainer) -> void:
 	_tab_plan_btn.pressed.connect(_select_tab.bind(Tab.PLAN))
 	row.add_child(_tab_plan_btn)
 
+	_tab_debug_btn = _make_tab_button("Читы")
+	_tab_debug_btn.pressed.connect(_select_tab.bind(Tab.DEBUG))
+	row.add_child(_tab_debug_btn)
+
 	# Разделитель под вкладками — визуально отделяет хедер от контента.
 	var sep := HSeparator.new()
 	parent.add_child(sep)
@@ -227,8 +232,11 @@ func _refresh() -> void:
 	_tab_units_btn.button_pressed = (_current_tab == Tab.UNITS)
 	_tab_camp_btn.button_pressed = (_current_tab == Tab.CAMP)
 	_tab_plan_btn.button_pressed = (_current_tab == Tab.PLAN)
+	_tab_debug_btn.button_pressed = (_current_tab == Tab.DEBUG)
 	_clear_content()
-	if camp == null:
+	# DEBUG-вкладка частично работает без Camp (cheat-вызовы WaveDirector не
+	# требуют лагеря), поэтому ранний return на отсутствие camp не делаем.
+	if camp == null and _current_tab != Tab.DEBUG:
 		var warn := Label.new()
 		warn.text = "Лагерь не найден."
 		_content.add_child(warn)
@@ -240,6 +248,8 @@ func _refresh() -> void:
 			_build_camp_tab(camp)
 		Tab.PLAN:
 			_build_plan_tab(camp)
+		Tab.DEBUG:
+			_build_debug_tab(camp)
 
 
 func _clear_content() -> void:
@@ -651,3 +661,114 @@ func _on_plan_preset_pressed(weights: Dictionary) -> void:
 	if camp == null:
 		return
 	camp.set_collection_priority(weights)
+
+
+## Вкладка «Читы»: дебаг-кнопки, заменяющие старые keyboard-actions
+## (P/O/[/]) и плюс новый чит «+100 каждого ресурса». Нет авто-disable
+## по состоянию: WaveDirector сам печатает «проигнорировано» если
+## вызов невалиден (нет активного POI и т.п.) — так дизайнер быстрее
+## понимает, в каком стейте находится симуляция.
+func _build_debug_tab(camp: Node) -> void:
+	_header_label.text = "дебаг-читы"
+
+	var wd: Node = get_tree().get_first_node_in_group(WaveDirector.GROUP)
+
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 8)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_content.add_child(list)
+
+	list.add_child(_build_cheat_card(
+		"Старт/рестарт волн",
+		"Фоновый прилив + сброс активного POI. Повторный вызов чистит живых скелетов.",
+		"запустить",
+		wd,
+		func(): wd.cheat_start_campaign(),
+	))
+	list.add_child(_build_cheat_card(
+		"Немедленная волна",
+		"Спавн POI-волны на активный лагерь, сброс таймера. Без активного POI — лог-предупреждение.",
+		"волна",
+		wd,
+		func(): wd.cheat_force_wave(),
+	))
+	list.add_child(_build_cheat_card(
+		"+100 скелетов",
+		"Моментальный спавн 100 скелетов uniform по safe-зонам. Не трогает фазу.",
+		"спавн",
+		wd,
+		func(): wd.cheat_spawn_100(),
+	))
+	list.add_child(_build_cheat_card(
+		"Stress 2000 скелетов",
+		"Async-спавн 2000 скелетов по всему квадрату карты. Для замеров перфоманса в PerfHud.",
+		"стресс-тест",
+		wd,
+		func(): wd.cheat_stress_2000(),
+	))
+	list.add_child(_build_cheat_card(
+		"+100 каждого ресурса",
+		"Накидывает 100 единиц дерева/камня/железа/еды на склад лагеря.",
+		"+100",
+		camp,
+		func(): _grant_all_resources(camp, 100),
+	))
+
+
+## Универсальная карточка чита: заголовок + описание + кнопка. Если target
+## не найден (WaveDirector не загружен / Camp нет) — кнопка disabled.
+func _build_cheat_card(title: String, desc: String, btn_text: String, target: Node, action: Callable) -> PanelContainer:
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 12)
+	card.add_child(hbox)
+
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.add_theme_constant_override("separation", 4)
+	hbox.add_child(info)
+
+	var name_label := Label.new()
+	name_label.text = title
+	name_label.add_theme_font_size_override("font_size", 16)
+	info.add_child(name_label)
+
+	var desc_label := Label.new()
+	desc_label.text = desc
+	desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc_label.add_theme_font_size_override("font_size", 12)
+	desc_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 1.0))
+	desc_label.custom_minimum_size = Vector2(420, 0)
+	info.add_child(desc_label)
+
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(160, 48)
+	btn.add_theme_font_size_override("font_size", 13)
+	hbox.add_child(btn)
+
+	if target == null:
+		btn.text = "недоступно"
+		btn.disabled = true
+		_dim(card, 0.55)
+	else:
+		btn.text = btn_text
+		btn.pressed.connect(action)
+
+	return card
+
+
+## Чит-выдача: amount каждого из 4 типов ресурсов на склад лагеря.
+## Идём через add_resource — он сам эмитит resources_changed на каждый тип,
+## HUD-счётчики и Camp-вкладка журнала перерисуются автоматически.
+func _grant_all_resources(camp: Node, amount: int) -> void:
+	if camp == null:
+		return
+	for type in [
+		ResourcePile.ResourceType.WOOD,
+		ResourcePile.ResourceType.STONE,
+		ResourcePile.ResourceType.IRON,
+		ResourcePile.ResourceType.FOOD,
+	]:
+		camp.add_resource(int(type), amount)

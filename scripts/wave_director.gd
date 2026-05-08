@@ -162,41 +162,53 @@ func _collect_pois_deferred() -> void:
 
 
 func _process(delta: float) -> void:
-	if Input.is_action_just_pressed("spawn_enemies"):
-		_start_campaign()
-		return  # на этом кадре не тикаем — initial spawn уже идёт
-
-	# O — немедленная волна на активный POI. Сбрасывает _wave_cd. Без
-	# активного POI — игнор с предупреждением (волне некуда идти).
-	if Input.is_action_just_pressed("force_wave"):
-		if _active_camp == null or _active_schedule == null or _active_schedule.is_empty():
-			if debug_log and LogConfig.master_enabled:
-				print("[WaveDirector] O проигнорировано — нет активного POI с осадой")
-		else:
-			var stage := _active_schedule.get_stage(_stage_index)
-			if stage != null:
-				_spawn_poi_wave(stage.skeletons_per_wave)
-				_wave_cd = stage.wave_interval
-
-	# [ — debug: моментальный спавн 100 скелетов uniform по safe-зонам.
-	if Input.is_action_just_pressed("debug_spawn_100"):
-		_spawn_safe_uniform(100)
-		if debug_log and LogConfig.master_enabled:
-			print("[WaveDirector] [-debug: спавн 100 скелетов (живых после: %d)" % _live_skeleton_count())
-
-	# ] — stress-test: 2000 скелетов uniform по всему квадрату карты.
-	if Input.is_action_just_pressed("debug_stress_2000"):
-		if _spawner != null and skeleton_scene != null:
-			_spawner.spawn_uniform(skeleton_scene, 2000)
-			if debug_log and LogConfig.master_enabled:
-				print("[WaveDirector] ]-stress: запущен async-спавн 2000 скелетов")
-
 	if _phase == Phase.RUNNING:
 		_tick_background(delta)
 		if _active_camp != null and _active_schedule != null:
 			_tick_active_poi(delta)
 
 	_tick_safe_zone_monitor(delta)
+
+
+# --- Public cheat API (вызывается из JournalPanel вкладки «Читы») ---
+# Раньше каждый из этих хуков висел на keyboard-action (P/O/[/]), но дизайнер
+# вынес дебаг-управление в отдельную UI-вкладку — клавиши освобождены под
+# реальный геймплей, а читы лежат в журнале.
+
+## Старт/рестарт кампании. На первом вызове из IDLE — initial spawn без чистки.
+## На повторном — kill_all_skeletons + reset_population + сброс активного POI.
+func cheat_start_campaign() -> void:
+	_start_campaign()
+
+
+## Немедленная волна на активный POI (сбрасывает _wave_cd). Без активного POI —
+## no-op с предупреждением: волне некуда идти.
+func cheat_force_wave() -> void:
+	if _active_camp == null or _active_schedule == null or _active_schedule.is_empty():
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] cheat_force_wave проигнорировано — нет активного POI с осадой")
+		return
+	var stage := _active_schedule.get_stage(_stage_index)
+	if stage != null:
+		_spawn_poi_wave(stage.skeletons_per_wave)
+		_wave_cd = stage.wave_interval
+
+
+## Моментальный спавн 100 скелетов uniform по safe-зонам. Не трогает фазу/таймеры —
+## можно жать в IDLE.
+func cheat_spawn_100() -> void:
+	_spawn_safe_uniform(100)
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] cheat: спавн 100 скелетов (живых после: %d)" % _live_skeleton_count())
+
+
+## Stress-test: 2000 скелетов uniform по всему квадрату карты, async-батчем.
+## Без safe-фильтра, без SpawnZone-фильтра. Для замеров перфоманса в PerfHud.
+func cheat_stress_2000() -> void:
+	if _spawner != null and skeleton_scene != null:
+		_spawner.spawn_uniform(skeleton_scene, 2000)
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] cheat-stress: запущен async-спавн 2000 скелетов")
 
 
 # --- Старт кампании ---
