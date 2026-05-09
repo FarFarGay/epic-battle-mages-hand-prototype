@@ -32,6 +32,19 @@ const POI_GROUP := &"poi_zone"
 @export var actor_id: StringName
 @export var quest_order: int = 0
 
+@export_group("Journal")
+## Заголовок задания, видимый в Журнале (вкладка «Задания»). Если пусто —
+## журнал покажет fallback "Задание #<order+1>". Отображается во всех трёх
+## состояниях, но locked-карточка скрывает его за «???».
+@export var quest_title: String = ""
+
+## Описание задания: что делать, контекст, цели. Multi-line. Журнал рендерит
+## с word-wrap'ом. В locked-состоянии скрыто. В completed — приглушено.
+## Пока (фаза-прототипа) геймплейного триггера сдачи нет — только описание;
+## продвижение через Журнал → Читы → «Продвинуть квест» или
+## программный `QuestProgress.advance()`.
+@export_multiline var quest_description: String = ""
+
 @export_group("POI zone")
 ## Радиус, в котором лагерь может развернуться вокруг костра. Должен быть
 ## ≥ Camp.deploy_radius (8м), иначе палатки кольцом вылезут за пределы

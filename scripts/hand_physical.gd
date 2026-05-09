@@ -100,6 +100,17 @@ func _ready() -> void:
 	# Re-emit на глобальный EventBus.
 	slammed.connect(func(position: Vector3, radius: float) -> void: EventBus.hand_slammed.emit(position, radius))
 	flicked.connect(func(target: Node3D, velocity: Vector3) -> void: EventBus.hand_flicked.emit(target, velocity))
+	# Смена категории: grab/magnet остаются доступны в любой категории
+	# (игрок может тащить ящик и одновременно кастовать). Только активные
+	# ability — Flick — отпускаем при уходе из PHYSICAL: ПКМ в magic
+	# становится cast'ом фаербола, hold-state Flick'а потерял бы триггер
+	# отпускания и зависнет вечно.
+	_hand.category_changed.connect(_on_hand_category_changed)
+
+
+func _on_hand_category_changed(new_category: int) -> void:
+	if new_category != Hand.Category.PHYSICAL and _flick.is_active():
+		_flick.on_release()
 
 
 func _exit_tree() -> void:
@@ -125,7 +136,9 @@ func _physics_process(_delta: float) -> void:
 	# global_position в нулевой указатель → краш. Чистим _ref в начале тика.
 	if _held != null and not is_instance_valid(_held):
 		_held = null
-	# Магнит и попытка захвата — в физик-кадре, чтобы силы суммировались стабильно.
+	# Grab/magnet работают в любой категории — игрок может тащить ящик
+	# одновременно с кастом фаербола (ЛКМ-граб не конфликтует с магией,
+	# которая использует ПКМ).
 	if _is_grabbing and not _held:
 		_try_grab()
 		if not _held:
@@ -189,19 +202,26 @@ func _get_excluded_rids() -> Array[RID]:
 # --- Ввод ---
 
 func _handle_input() -> void:
-	# Смена экипировки доступна всегда.
+	# Смена экипировки на physical-абилку — переключает Hand на PHYSICAL.
+	# Equip-биндинги слушаются всегда, даже когда категория MAGIC (игрок
+	# нажал 1/2 — переключился обратно в физику).
 	if Input.is_action_just_pressed(ACTION_EQUIP_SLAM):
 		equipped = AbilityType.SLAM
+		_hand.set_active_category(Hand.Category.PHYSICAL)
 	elif Input.is_action_just_pressed(ACTION_EQUIP_FLICK):
 		equipped = AbilityType.FLICK
+		_hand.set_active_category(Hand.Category.PHYSICAL)
 
-	# Триггер активной способности (ПКМ). Источник правды о hold-state — сам подмодуль.
-	if not _any_ability_active():
-		if Input.is_action_just_pressed(ACTION_ACTION):
-			_dispatch_action_press()
-	else:
-		if Input.is_action_just_released(ACTION_ACTION):
-			_dispatch_action_release()
+	# Триггер активной способности (ПКМ) — только в PHYSICAL и только если
+	# рука свободна. Держишь ящик — не slam'ишь и не flick'аешь. В MAGIC
+	# ПКМ слушает HandSpell, у него тоже есть own guard на is_holding.
+	if _hand.active_category == Hand.Category.PHYSICAL and not _hand.is_holding():
+		if not _any_ability_active():
+			if Input.is_action_just_pressed(ACTION_ACTION):
+				_dispatch_action_press()
+		else:
+			if Input.is_action_just_released(ACTION_ACTION):
+				_dispatch_action_release()
 
 	# LMB-грабинг через polling, не через just_pressed/released:
 	# во время flick'а edge-события пропускались бы и _is_grabbing залипало
@@ -352,6 +372,7 @@ func _update_held_position() -> void:
 
 func _update_candidate_highlight() -> void:
 	var candidate: RigidBody3D = null
+	# Подсветка работает в любой категории — игрок может грабить и в магии.
 	if not _held:
 		candidate = _find_closest_grabbable(_hand.get_grabbable_bodies())
 	if candidate == _current_candidate:

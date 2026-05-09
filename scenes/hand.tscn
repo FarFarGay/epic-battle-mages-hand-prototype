@@ -1,10 +1,14 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="Script" path="res://scripts/hand.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hand_physical.gd" id="2"]
 [ext_resource type="Script" path="res://scripts/hand_spell.gd" id="3"]
 [ext_resource type="Script" path="res://scripts/hand_physical_slam.gd" id="4"]
 [ext_resource type="Script" path="res://scripts/hand_physical_flick.gd" id="5"]
+[ext_resource type="Script" path="res://scripts/hand_spell_fireball.gd" id="6"]
+[ext_resource type="PackedScene" path="res://scenes/fireball.tscn" id="7"]
+[ext_resource type="PackedScene" path="res://scenes/burn_patch.tscn" id="8"]
+[ext_resource type="Script" path="res://scripts/hand_spell_firestorm.gd" id="9"]
 
 [sub_resource type="SphereMesh" id="SphereMesh_hand"]
 radius = 0.5
@@ -51,3 +55,13 @@ script = ExtResource("5")
 
 [node name="SpellActions" type="Node" parent="."]
 script = ExtResource("3")
+
+[node name="Fireball" type="Node" parent="SpellActions"]
+script = ExtResource("6")
+burn_patch_scene = ExtResource("8")
+fireball_scene = ExtResource("7")
+
+[node name="Firestorm" type="Node" parent="SpellActions"]
+script = ExtResource("9")
+fireball_scene = ExtResource("7")
+burn_patch_scene = ExtResource("8")

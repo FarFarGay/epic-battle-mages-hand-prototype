@@ -20,6 +20,7 @@ signal destroyed
 @export var hp: float = 100.0
 
 var _material: StandardMaterial3D
+var _dying: bool = false
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 @onready var _shape: CollisionShape3D = $CollisionShape3D
@@ -64,11 +65,12 @@ func set_highlighted(value: bool) -> void:
 
 
 func take_damage(amount: float) -> void:
-	if is_queued_for_deletion() or amount <= 0.0:
+	if _dying or amount <= 0.0:
 		return
 	hp -= amount
 	damaged.emit(amount)
 	if hp <= 0.0:
+		_dying = true
 		destroyed.emit()
 		queue_free()
 

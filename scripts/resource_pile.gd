@@ -25,7 +25,12 @@ const GROUP := &"resource_pile"
 ## используется внешним кодом (UI/HUD/Camp инвентарь) для агрегирования.
 ## GENERIC — старый «зелёный ящик» для обратной совместимости с тем кодом,
 ## который не различает типы.
-enum ResourceType { GENERIC, WOOD, STONE, IRON, FOOD }
+##
+## PAGE — страницы из книги колдовства. Не добываются гномами с pile-зон
+## (или добываются — design-decision позже): тратятся на разблокировку и
+## улучшение заклинаний башни через SpellSystem. Хранятся как обычный
+## ресурс в Camp._resources.
+enum ResourceType { GENERIC, WOOD, STONE, IRON, FOOD, PAGE }
 
 ## Форма pile'а — определяет PrimitiveMesh + CollisionShape3D. По умолчанию
 ## выбирается по resource_type (BOX для большинства, CYLINDER для дерева).
@@ -80,6 +85,8 @@ static func color_for_type(t: int) -> Color:
 			return Color(0.35, 0.38, 0.42)
 		ResourceType.FOOD:
 			return Color(0.85, 0.35, 0.25)
+		ResourceType.PAGE:
+			return Color(0.55, 0.35, 0.85)
 		_:
 			return Color(0.4, 0.75, 0.3)
 
@@ -100,6 +107,9 @@ static func _defaults_for_type(t: int) -> Array:
 		ResourceType.FOOD:
 			# Фруктовый куст/ягоды: красно-оранжевая сфера.
 			return [color_for_type(t), Vector3(0.7, 0.7, 0.7), PileShape.SPHERE]
+		ResourceType.PAGE:
+			# Стопка страниц/книга: фиолетовый приплюснутый бокс.
+			return [color_for_type(t), Vector3(0.55, 0.25, 0.7), PileShape.BOX]
 		_:
 			# GENERIC — старый зелёный ящик.
 			return [color_for_type(t), Vector3(0.6, 0.6, 0.6), PileShape.BOX]
@@ -170,7 +180,7 @@ func _apply_shape() -> void:
 # --- Damageable ---
 
 func take_damage(amount: float) -> void:
-	if _dying or is_queued_for_deletion() or amount <= 0.0:
+	if _dying or amount <= 0.0:
 		return
 	hp -= amount
 	damaged.emit(amount)
@@ -208,7 +218,7 @@ func set_highlighted(value: bool) -> void:
 ## Не отдаёт, если кучу сейчас держит рука (freeze=true) — гном считает
 ## её «занятой» и ищет другую через _on_pile_lost.
 func take_one() -> bool:
-	if _dying or freeze or units <= 0 or is_queued_for_deletion():
+	if _dying or freeze or units <= 0:
 		return false
 	units -= 1
 	if units == 0:
@@ -226,7 +236,7 @@ func take_one() -> bool:
 ## что рука не держит pile (иначе мы бы вырвали кучу из-под пальцев). Camp
 ## делает это перед вызовом.
 func consume_all() -> int:
-	if _dying or is_queued_for_deletion():
+	if _dying:
 		return 0
 	var amount: int = units
 	if amount <= 0:

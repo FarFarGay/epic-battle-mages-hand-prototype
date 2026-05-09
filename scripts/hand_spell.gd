@@ -1,42 +1,99 @@
 class_name HandSpell
 extends Node
-## Категория "Заклинания" руки.
+## Категория «Заклинания» руки. По образцу HandPhysicalActions: слушает
+## equip-биндинг своих заклинаний (3 — Fireball), переключает Hand в
+## active_category=MAGIC, диспатчит ПКМ-каст на активный подмодуль.
 ##
-## ЗАГЛУШКА. Логика будет добавлена в следующих итерациях.
-## Привязка ввода (план): ПКМ или клавиши 1..N — конкретика TBD.
-## Будет зависеть только от родителя (Hand) — позиция и скорость берутся через него.
+## Дочерние узлы:
+##   - Fireball (HandSpellFireball) — баллистический снаряд из Tower с AOE-взрывом.
+##   - Firestorm (HandSpellFirestorm) — серия из N малых фаерболов в зону.
 ##
-## Внешний контракт (черновик):
-##   signal spell_cast(spell_name: String, position: Vector3)
+## Какое заклинание активно — определяется `equipped`. Триггер каста
+## (`hand_action`, ПКМ) реагирует только когда `_hand.active_category == MAGIC`.
+##
+## Архитектурно (унификация рукой и магии — дизайнерское решение 2026-05-03):
+## AOE-заклинания используют ту же универсальную маску, что и Slam
+## (`Layers.MASK_HAND_SLAM` — враги + гномы + башня + палатки + items), и
+## обязаны фильтровать цели через `Layers.is_hand_immune(target)` ПОСЛЕ
+## broad-phase-выборки.
 
-signal spell_cast(spell_name: String, position: Vector3)
+signal spell_cast(spell_name: StringName, position: Vector3)
+
+enum SpellType { FIREBALL, FIRESTORM }
+
+const ACTION_ACTION := &"hand_action"
+const ACTION_EQUIP_FIREBALL := &"equip_fireball"
+const ACTION_EQUIP_FIRESTORM := &"equip_firestorm"
+
+@export var equipped: SpellType = SpellType.FIREBALL:
+	set(value):
+		if equipped == value:
+			return
+		equipped = value
+		if is_inside_tree() and debug_log and LogConfig.master_enabled:
+			print("[Hand:Spell] экипировано: %s" % SpellType.keys()[value])
 
 @export var debug_log: bool = true
 
 var _hand: Hand
 
+@onready var _fireball: HandSpellFireball = $Fireball
+@onready var _firestorm: HandSpellFirestorm = $Firestorm
+
 
 func _ready() -> void:
-	# Заглушка — без активной логики не тикаем.
-	set_process(false)
-	set_physics_process(false)
-	# TODO: загрузить реестр заклинаний (имя → cost / cooldown / scene / эффект).
+	_fireball.spell_cast.connect(spell_cast.emit)
+	_firestorm.spell_cast.connect(spell_cast.emit)
 
 
 ## Координатор Hand вызывает этот метод после собственного _ready, передавая
-## ссылку на руку. До setup активной логики нет (ловить ввод нечем).
+## ссылку на руку. Подмодули получают ссылку через нас же.
 func setup(hand: Hand) -> void:
 	_hand = hand
+	_fireball.setup(_hand, self)
+	_firestorm.setup(_hand, self)
 
 
-# TODO: _process — обработка ввода для заклинаний (ПКМ / клавиши).
-# TODO: cast(spell_name: String) — проверки cooldown/маны → spell_cast.emit + эффект.
-#
-# Архитектурно (унификация рукой и магии — дизайнерское решение 2026-05-03):
-# AOE-заклинания используют ту же универсальную маску, что и Slam
-# (`Layers.MASK_HAND_SLAM` — враги + гномы + башня + палатки + items), и
-# обязаны фильтровать цели через `Layers.is_hand_immune(target)` ПОСЛЕ
-# broad-phase-выборки. Single-target snaplinks (если будут) — через
-# `Layers.MASK_HAND_TARGETS` с тем же иммунити-чеком. Это сохраняет
-# симметрию: одна группа `hand_immune` исключает цель и от physical-
-# действий руки, и от заклинаний.
+func _process(delta: float) -> void:
+	# Тикаем подмодули (cooldown'ы) независимо от категории — иначе после
+	# каста и переключения на физику cooldown «замораживается».
+	_fireball.tick(delta)
+	_firestorm.tick(delta)
+	_handle_input()
+
+
+# --- Ввод ---
+
+func _handle_input() -> void:
+	# Equip-биндинги — переключают Hand в MAGIC и выбирают конкретное
+	# заклинание. Слушаются всегда (даже когда сейчас PHYSICAL).
+	if Input.is_action_just_pressed(ACTION_EQUIP_FIREBALL):
+		equipped = SpellType.FIREBALL
+		_hand.set_active_category(Hand.Category.MAGIC)
+	elif Input.is_action_just_pressed(ACTION_EQUIP_FIRESTORM):
+		equipped = SpellType.FIRESTORM
+		_hand.set_active_category(Hand.Category.MAGIC)
+
+	# Каст слушаем только если рука сейчас в магической категории и
+	# свободна. Держишь предмет — магия не работает (рука занята).
+	if _hand.active_category != Hand.Category.MAGIC:
+		return
+	if _hand.is_holding():
+		return
+
+	if Input.is_action_just_pressed(ACTION_ACTION):
+		_dispatch_cast()
+
+
+func _dispatch_cast() -> void:
+	match equipped:
+		SpellType.FIREBALL:
+			if _fireball.can_trigger():
+				_fireball.on_press()
+			elif debug_log and LogConfig.master_enabled:
+				print("[Hand:Spell] фаербол на кулдауне")
+		SpellType.FIRESTORM:
+			if _firestorm.can_trigger():
+				_firestorm.on_press()
+			elif debug_log and LogConfig.master_enabled:
+				print("[Hand:Spell] шквал на кулдауне")

@@ -23,6 +23,18 @@ signal enemy_destroyed(enemy: Node3D)
 # --- Tower ---
 signal tower_damaged(amount: float)
 signal tower_destroyed
+## Текущий HP башни изменился. HUD рисует hp-bar.
+signal tower_health_changed(current: float, maximum: float)
+## Текущая мана башни изменилась — потрачена касто́м или восстановлена реген'ом.
+## HUD рисует mana-bar.
+signal tower_mana_changed(current: float, maximum: float)
+
+# --- Spell system ---
+## Заклинание разблокировано (через SpellSystem.try_unlock). Журнал
+## перерисовывает вкладку «Заклинания», в будущем — звук/уведомление.
+signal spell_unlocked(id: StringName)
+## Заклинание прокачано на новый уровень. level — уже актуальный (после апгрейда).
+signal spell_upgraded(id: StringName, level: int)
 
 # --- Hand: захват / бросок / способности ---
 signal hand_grabbed(item: Node3D)

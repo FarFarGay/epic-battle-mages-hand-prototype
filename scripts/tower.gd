@@ -8,13 +8,35 @@ extends CharacterBody3D
 ## считаем, что башня в эту сторону не едет — knockback не применяем.
 const MIN_PUSH_VELOCITY := 0.1
 
+## Группа для дискаверинга башни без NodePath. HandSpellFireball спавнит
+## фаербол из позиции башни (Tower не один в сцене теоретически — если
+## когда-то появится мульти-башня, get_first_node_in_group вернёт первого,
+## фаербол всё равно стартует из «какой-то» башни — приемлемо для прототипа).
+const GROUP := &"tower"
+
 signal damaged(amount: float)
 signal destroyed
+## Текущий HP изменился (например, после take_damage). Используется HUD'ом
+## для отрисовки полоски здоровья. Стартовый emit идёт из _ready.
+signal health_changed(current: float, maximum: float)
+## Текущая мана изменилась — потрачена касто́м или восстановлена реген'ом.
+## HUD рисует полоску маны, hand_spell_fireball.gd дёргает try_consume_mana.
+signal mana_changed(current: float, maximum: float)
 
 @export var move_speed: float = 8.0
 @export var gravity: float = 20.0
 @export var mass: float = 10.0
-@export var hp: float = 1000.0
+## Максимум HP. Текущее значение в `hp`, сетится в _ready = max_hp. Урон —
+## через take_damage(amount). Смерть при hp ≤ 0.
+@export var max_hp: float = 1000.0
+
+@export_group("Mana")
+## Максимум маны. Магические действия (Fireball и т.п.) тратят её через
+## try_consume_mana. Физика руки (Slam/Flick/grab) маны не требует.
+@export var max_mana: float = 100.0
+## Скорость регенерации маны, единиц в секунду. 10 даёт ~10с до полного
+## реcтора после 4 кастов фаербола (cost=25 каждый).
+@export var mana_regen_rate: float = 10.0
 
 @export_group("Push Items")
 @export var push_strength: float = 1.0
@@ -40,16 +62,32 @@ var _was_stuck: bool = false
 var _contacts_last: Dictionary = {}
 var _dying: bool = false
 
+## Текущий HP. Init = max_hp в _ready. Меняется только через take_damage.
+var hp: float = 0.0
+## Текущая мана. Init = max_mana в _ready. Регенерится в _physics_process,
+## тратится через try_consume_mana.
+var mana: float = 0.0
+
 @onready var _floor_normal_threshold: float = cos(get_floor_max_angle())
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 
 
 func _ready() -> void:
+	add_to_group(GROUP)
 	Damageable.register(self)
+	hp = max_hp
+	mana = max_mana
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
 	damaged.connect(func(amount: float) -> void: EventBus.tower_damaged.emit(amount))
 	destroyed.connect(func() -> void: EventBus.tower_destroyed.emit())
+	health_changed.connect(func(current: float, maximum: float) -> void: EventBus.tower_health_changed.emit(current, maximum))
+	mana_changed.connect(func(current: float, maximum: float) -> void: EventBus.tower_mana_changed.emit(current, maximum))
+	# Стартовый sync HUD'у: emit'им текущие значения после connect'а — HUD
+	# подписывается на EventBus в своём _ready, поэтому даже если он ready'ится
+	# раньше Tower'а, сначала возьмёт snapshot через get_first_node_in_group.
+	health_changed.emit(hp, max_hp)
+	mana_changed.emit(mana, max_mana)
 
 
 # --- Публичный API ---
@@ -59,6 +97,7 @@ func take_damage(amount: float) -> void:
 		return
 	hp -= amount
 	damaged.emit(amount)
+	health_changed.emit(maxf(hp, 0.0), max_hp)
 	HitFlash.flash(_mesh)
 	if debug_log and LogConfig.master_enabled:
 		print("[Tower] получил %.1f урона, hp=%.1f" % [amount, hp])
@@ -79,11 +118,32 @@ func take_damage(amount: float) -> void:
 		# Не queue_free — game-over UI будет в следующих итерациях.
 
 
+## Пытается списать ману. Возвращает true если хватило (и mana уменьшилась
+## на amount). Иначе false — caller отказывается от действия. Mana не идёт
+## в минус.
+func try_consume_mana(amount: float) -> bool:
+	if amount <= 0.0:
+		return true
+	if _dying or mana < amount:
+		return false
+	mana -= amount
+	mana_changed.emit(mana, max_mana)
+	return true
+
+
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
 		velocity.y -= gravity * delta
 	else:
 		velocity.y = 0.0
+
+	# Регенерация маны: только до max_mana, эмитим только когда реально
+	# изменилось (внутри cap), чтобы не дёргать HUD каждый кадр на full mana.
+	if not _dying and mana < max_mana:
+		var prev: float = mana
+		mana = minf(mana + mana_regen_rate * delta, max_mana)
+		if mana != prev:
+			mana_changed.emit(mana, max_mana)
 
 	var input_dir := Vector2.ZERO
 	input_dir.x = Input.get_axis("move_left", "move_right")

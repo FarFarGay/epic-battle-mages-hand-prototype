@@ -1,0 +1,312 @@
+class_name Fireball
+extends Node3D
+## Снаряд-фаербол. Двухфазная траектория «ракета»:
+##   1. **Boost** — короткий всплеск вверх + чуть вперёд, баллистика с
+##      собственной gravity. Создаёт стартовую дугу из башни.
+##   2. **Homing** — прямой полёт на target_pos с плавным набором скорости
+##      (current_speed += acceleration × delta, кап на max_speed). Чем
+##      ближе к цели, тем быстрее снаряд — эффект «ускоряется перед
+##      попаданием».
+##
+## Не Area3D, не RigidBody — обычный Node3D, симуляция вручную в
+## `_physics_process`. Это упрощает: не нужно настраивать collision_layer/
+## mask для broad-phase коллизий со скелетами (нам нужен только AOE-shape-query
+## в момент взрыва, а не контакт-driven detection).
+##
+## Параметры считает HandSpellFireball через setup() — здесь только
+## симуляция и AOE.
+
+const HIT_PROXIMITY_SQ: float = 0.36  # 0.6м² — взрываемся на подлёте к target
+## Safety lifetime: если что-то пошло не так и снаряд не упал, он не
+## останется в сцене навсегда.
+const SAFETY_LIFETIME: float = 6.0
+
+enum Phase { BOOST, HOMING }
+
+var _target_pos: Vector3
+var _velocity: Vector3
+var _phase: int = Phase.BOOST
+var _current_speed: float = 0.0  # для HOMING-фазы
+
+# Boost-фаза
+var _boost_duration: float
+var _boost_gravity: float
+
+# Homing-фаза
+var _homing_initial_speed: float
+var _homing_acceleration: float
+var _homing_max_speed: float
+## Угол начального drift'а в homing'е (radians). Velocity на старте
+## homing-фазы поворачивается на этот угол вокруг UP относительно
+## desired-direction, затем slerp'ом возвращается к цели через
+## _homing_turn_rate. Создаёт характерный «крюк» в полёте.
+var _homing_drift_angle: float = 0.0
+## Скорость возврата к target-direction (exp-decay rate). 5.0 — за ~0.5с
+## velocity почти совпадает с desired. Меньше — длиннее drift.
+var _homing_turn_rate: float = 5.0
+
+# AOE / damage
+var _damage: float
+var _radius: float
+var _explode_mask: int
+var _knockback_force: float
+var _knockback_lift: float
+var _knockback_duration: float
+var _exploded: bool = false
+var _age: float = 0.0
+
+# Параметры остаточного горения. Передаются HandSpellFireball'ом через
+# setup_burn — отдельным сеттером, чтобы основной setup() не разрастался
+# до 14 параметров. Если scene == null — burn не спавнится.
+var _burn_patch_scene: PackedScene = null
+var _burn_radius: float = 1.5
+var _burn_damage_per_tick: float = 8.0
+var _burn_tick_interval: float = 0.5
+var _burn_duration: float = 3.0
+
+
+## Конфиг ракеты. Вызывает HandSpellFireball.on_press после instantiate'а.
+## Boost-фаза создаёт стартовую дугу (выскакивает из башни вверх + slight
+## forward, gravity пригибает). Homing-фаза тянет напрямую к target с
+## растущей скоростью — current_speed = initial → max через acceleration.
+func setup(
+	launch_pos: Vector3,
+	target_pos: Vector3,
+	boost_duration: float,
+	boost_velocity_up: float,
+	boost_velocity_forward: float,
+	boost_gravity: float,
+	boost_drift_velocity: float,
+	homing_initial_speed: float,
+	homing_acceleration: float,
+	homing_max_speed: float,
+	homing_drift_angle_deg: float,
+	homing_turn_rate: float,
+	damage: float,
+	radius: float,
+	explode_mask: int,
+	knockback_force: float,
+	knockback_lift: float,
+	knockback_duration: float,
+) -> void:
+	global_position = launch_pos
+	_target_pos = target_pos
+	_boost_duration = boost_duration
+	_boost_gravity = boost_gravity
+	_homing_initial_speed = homing_initial_speed
+	_homing_acceleration = homing_acceleration
+	_homing_max_speed = homing_max_speed
+	_homing_turn_rate = homing_turn_rate
+	_damage = damage
+	_radius = radius
+	_explode_mask = explode_mask
+	_knockback_force = knockback_force
+	_knockback_lift = knockback_lift
+	_knockback_duration = knockback_duration
+
+	# Drift-угол homing'а: random ± от заданной амплитуды. Знак случайный —
+	# фаербол уводит то влево, то вправо при каждом касте.
+	_homing_drift_angle = deg_to_rad(randf_range(-homing_drift_angle_deg, homing_drift_angle_deg))
+
+	var dx: float = target_pos.x - launch_pos.x
+	var dz: float = target_pos.z - launch_pos.z
+	var horizontal_dist_sq: float = dx * dx + dz * dz
+	var dir_xz: Vector3 = Vector3(dx, 0.0, dz).normalized() if horizontal_dist_sq > 0.01 else Vector3.ZERO
+	# Стартовая скорость boost'а: вверх + чуть вперёд + случайный sway вбок
+	# (perpendicular к forward через cross UP). Sway даёт «дрожь» при взлёте,
+	# каждый каст уходит чуть в свою сторону. Амплитуда ±boost_drift_velocity.
+	var perp_xz: Vector3 = dir_xz.cross(Vector3.UP).normalized() if dir_xz.length_squared() > 0.01 else Vector3(1.0, 0.0, 0.0)
+	var sway: float = randf_range(-1.0, 1.0) * boost_drift_velocity
+	_velocity = Vector3.UP * boost_velocity_up + dir_xz * boost_velocity_forward + perp_xz * sway
+	_phase = Phase.BOOST
+
+
+## Опциональный конфиг остаточного горения после взрыва. Если scene не
+## передана (или null) — burn не спавнится. Параметры BurnPatch.setup() —
+## один-в-один.
+func setup_burn(scene: PackedScene, radius: float, damage_per_tick: float, tick_interval: float, duration: float) -> void:
+	_burn_patch_scene = scene
+	_burn_radius = radius
+	_burn_damage_per_tick = damage_per_tick
+	_burn_tick_interval = tick_interval
+	_burn_duration = duration
+
+
+func _physics_process(delta: float) -> void:
+	if _exploded:
+		return
+	_age += delta
+	if _age > SAFETY_LIFETIME:
+		# Аварийная очистка: если что-то пошло не так и snaряд завис, не
+		# держим его в сцене вечно. Без AOE — это safety, не нормальный
+		# исход.
+		queue_free()
+		return
+
+	if _phase == Phase.BOOST:
+		# Стартовая дуга: gravity пригибает velocity.y. По истечении
+		# boost_duration — переход в HOMING с initial drift-angle.
+		_velocity.y -= _boost_gravity * delta
+		global_position += _velocity * delta
+		if _age >= _boost_duration:
+			_phase = Phase.HOMING
+			_current_speed = _homing_initial_speed
+			# Стартовое направление homing'а: target-dir повёрнутая на
+			# случайный drift-angle вокруг UP. Фаербол стартует «мимо», и
+			# slerp в loop'е ниже плавно докручивает к цели — характерный
+			# «крюк», который читается как импактный drift.
+			var to_target_init: Vector3 = _target_pos - global_position
+			if to_target_init.length_squared() > 0.001:
+				var desired_init: Vector3 = to_target_init.normalized()
+				var drift_basis := Basis(Vector3.UP, _homing_drift_angle)
+				_velocity = (drift_basis * desired_init) * _current_speed
+	else:
+		# Homing: speed растёт линейно (acceleration), direction плавно
+		# slerp'ится к target. Decay = 1-exp(-rate*dt) даёт frame-rate
+		# independent смягчение. Малый rate (~5) — длинный drift; большой
+		# (~20) — быстрый коррекшен и почти прямой полёт.
+		_current_speed = minf(_current_speed + _homing_acceleration * delta, _homing_max_speed)
+		var to_target: Vector3 = _target_pos - global_position
+		var distance: float = to_target.length()
+		if distance < 0.001:
+			_explode()
+			return
+		var desired_dir: Vector3 = to_target / distance
+		var current_dir: Vector3 = _velocity.normalized() if _velocity.length_squared() > 0.001 else desired_dir
+		var decay: float = 1.0 - exp(-_homing_turn_rate * delta)
+		var new_dir: Vector3 = current_dir.slerp(desired_dir, decay).normalized()
+		_velocity = new_dir * _current_speed
+		global_position += _velocity * delta
+
+	# Ориентация: local +X по направлению velocity. Капля (scale.x>1) и
+	# хвост-партиклы спавнятся через `local_coords=false` в world space —
+	# ориентация нужна только для визуала самого ядра.
+	_orient_along_velocity()
+
+	# Триггер взрыва: либо подлетели к target близко (3D-proximity), либо
+	# пробили target.y вниз (страховка на случай overshoot'а в HOMING).
+	var to_target_3d: Vector3 = _target_pos - global_position
+	if to_target_3d.length_squared() <= HIT_PROXIMITY_SQ:
+		_explode()
+		return
+	if _phase == Phase.HOMING and global_position.y <= _target_pos.y:
+		_explode()
+
+
+func _orient_along_velocity() -> void:
+	var dir_xz: Vector3 = Vector3(_velocity.x, 0.0, _velocity.z)
+	if dir_xz.length_squared() < 0.01:
+		return
+	dir_xz = dir_xz.normalized()
+	var up: Vector3 = Vector3.UP
+	var right: Vector3 = dir_xz.cross(up).normalized()
+	var basis := Basis()
+	basis.x = dir_xz
+	basis.y = up
+	basis.z = right
+	global_transform.basis = basis
+
+
+func _xz_distance_sq(a: Vector3, b: Vector3) -> float:
+	var dx: float = a.x - b.x
+	var dz: float = a.z - b.z
+	return dx * dx + dz * dz
+
+
+## AOE-урон + push в радиусе. По образцу HandPhysicalSlam._perform_slam:
+## broad-phase PhysicsShapeQuery + per-target иммунитет + FAR-fallback по
+## группе SKELETON_GROUP (FAR-скелеты с CollisionShape.disabled=true в
+## broad-phase не попадают).
+func _explode() -> void:
+	if _exploded:
+		return
+	_exploded = true
+	var origin := global_position
+	# Y центра взрыва клампим к target.y — чтобы AOE применялся на земле,
+	# а не в воздухе если шар по proximity сработал чуть раньше.
+	origin.y = _target_pos.y
+
+	var space := get_world_3d().direct_space_state
+	var shape := SphereShape3D.new()
+	shape.radius = _radius
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = shape
+	query.transform = Transform3D(Basis(), origin)
+	query.collision_mask = _explode_mask
+	query.collide_with_bodies = true
+	var results := space.intersect_shape(query, 32)
+
+	var radius_sq: float = _radius * _radius
+	var affected: int = 0
+	for r in results:
+		var collider = r.collider
+		if not Damageable.is_damageable(collider):
+			continue
+		if Layers.is_hand_immune(collider):
+			continue
+		# Horizontal-only distance: взрыв на ground'е, центр капсулы скелета
+		# на y≈0.9 — 3D distance отъедал бы 0.9м horizontal-радиуса.
+		if _xz_distance_sq(collider.global_position, origin) > radius_sq:
+			continue
+		_apply_aoe(collider, origin)
+		affected += 1
+
+	# FAR-fallback: скелеты вне broad-phase (LOD FAR). Тот же паттерн что и
+	# в HandPhysicalSlam._perform_slam.
+	var far_hits: int = 0
+	for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		var skel := n as Skeleton
+		if skel == null:
+			continue
+		if skel.get_lod_level() != Skeleton.LodLevel.FAR:
+			continue
+		if Layers.is_hand_immune(skel):
+			continue
+		if _xz_distance_sq(skel.global_position, origin) > radius_sq:
+			continue
+		_apply_aoe(skel, origin)
+		far_hits += 1
+
+	if LogConfig.master_enabled:
+		print("[Fireball] взрыв @ (%.1f, %.1f, %.1f), задело: %d (FAR: %d)" % [origin.x, origin.y, origin.z, affected + far_hits, far_hits])
+
+	# Визуалы взрыва. Спавним в parent (effects_root, обычно current_scene) —
+	# не в self, иначе на queue_free() ниже визуалы тоже умрут до окончания
+	# tween'а. parent живёт всё время сцены.
+	var fx_root: Node = get_parent()
+	if fx_root != null:
+		AoeVisual.spawn_explosion(fx_root, origin, _radius)
+		# Остаточное горение: статичная зона на месте взрыва, тикает damage
+		# через `_burn_duration` секунд. Спавним только если scene задана —
+		# чтобы можно было выключить burn полностью одним полем (null).
+		if _burn_patch_scene != null:
+			var patch := _burn_patch_scene.instantiate() as BurnPatch
+			if patch != null:
+				fx_root.add_child(patch)
+				patch.global_position = origin
+				patch.setup(
+					_burn_radius,
+					_burn_damage_per_tick,
+					_burn_tick_interval,
+					_burn_duration,
+					_explode_mask,
+				)
+
+	queue_free()
+
+
+func _apply_aoe(target: Node, origin: Vector3) -> void:
+	var to_target: Vector3 = (target as Node3D).global_position - origin
+	var horizontal_dist: float = Vector2(to_target.x, to_target.z).length()
+	var falloff: float = clampf(1.0 - horizontal_dist / _radius, 0.0, 1.0)
+	if falloff <= 0.0:
+		return
+	var horizontal_dir: Vector3 = VecUtil.horizontal(to_target)
+	if horizontal_dir.length_squared() < VecUtil.EPSILON_SQ:
+		horizontal_dir = Vector3.UP
+	else:
+		horizontal_dir = horizontal_dir.normalized() + Vector3.UP * _knockback_lift
+		horizontal_dir = horizontal_dir.normalized()
+	var velocity_change: Vector3 = horizontal_dir * _knockback_force * falloff
+	Pushable.try_push(target, velocity_change, _knockback_duration)
+	Damageable.try_damage(target, _damage * falloff)

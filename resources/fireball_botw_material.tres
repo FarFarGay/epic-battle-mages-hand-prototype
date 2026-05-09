@@ -1,0 +1,107 @@
+[gd_resource type="ShaderMaterial" format=3 uid="uid://pycqyuw0dsoq"]
+
+[ext_resource type="Shader" path="res://resources/fireball_botw.gdshader" id="1"]
+
+[sub_resource type="FastNoiseLite" id="FNL_main"]
+noise_type = 1
+frequency = 0.04
+
+[sub_resource type="NoiseTexture2D" id="NT_main"]
+width = 256
+height = 256
+seamless = true
+noise = SubResource("FNL_main")
+
+[sub_resource type="Gradient" id="Grad_color"]
+offsets = PackedFloat32Array(0, 0.4, 0.7, 1)
+colors = PackedColorArray(0.05, 0.0, 0.0, 1, 0.85, 0.18, 0.02, 1, 1, 0.55, 0.1, 1, 1, 0.95, 0.7, 1)
+
+[sub_resource type="GradientTexture2D" id="GT_color"]
+gradient = SubResource("Grad_color")
+width = 256
+height = 256
+fill_from = Vector2(0, 1)
+fill_to = Vector2(0, 0)
+
+[sub_resource type="FastNoiseLite" id="FNL_random"]
+noise_type = 4
+frequency = 0.1
+
+[sub_resource type="NoiseTexture2D" id="NT_random"]
+width = 256
+height = 256
+seamless = true
+noise = SubResource("FNL_random")
+
+[sub_resource type="Gradient" id="Grad_alpha"]
+offsets = PackedFloat32Array(0, 0.5, 0.85, 1)
+colors = PackedColorArray(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.45, 1, 1, 1, 0)
+
+[sub_resource type="GradientTexture2D" id="GT_alpha"]
+gradient = SubResource("Grad_alpha")
+width = 256
+height = 256
+fill_from = Vector2(0.5, 1)
+fill_to = Vector2(0.5, 0)
+
+[sub_resource type="FastNoiseLite" id="FNL_tail"]
+noise_type = 1
+frequency = 0.06
+
+[sub_resource type="NoiseTexture2D" id="NT_tail"]
+width = 256
+height = 256
+seamless = true
+noise = SubResource("FNL_tail")
+
+[sub_resource type="Gradient" id="Grad_tail_power"]
+offsets = PackedFloat32Array(0, 0.6, 1)
+colors = PackedColorArray(0, 0, 0, 1, 0.4, 0.4, 0.4, 1, 1, 1, 1, 1)
+
+[sub_resource type="GradientTexture2D" id="GT_tail_power"]
+gradient = SubResource("Grad_tail_power")
+width = 256
+height = 256
+fill_from = Vector2(0.5, 1)
+fill_to = Vector2(0.5, 0)
+
+[sub_resource type="FastNoiseLite" id="FNL_vertex"]
+noise_type = 1
+frequency = 0.05
+
+[sub_resource type="NoiseTexture2D" id="NT_vertex"]
+width = 128
+height = 128
+seamless = true
+noise = SubResource("FNL_vertex")
+
+[sub_resource type="Gradient" id="Grad_vertex_power"]
+offsets = PackedFloat32Array(0, 1)
+colors = PackedColorArray(0.2, 0.2, 0.2, 1, 1, 1, 1, 1)
+
+[sub_resource type="GradientTexture2D" id="GT_vertex_power"]
+gradient = SubResource("Grad_vertex_power")
+width = 128
+height = 128
+fill_from = Vector2(0.5, 1)
+fill_to = Vector2(0.5, 0)
+
+[resource]
+render_priority = 0
+shader = ExtResource("1")
+shader_parameter/Speed = Vector2(0.0, 1.2)
+shader_parameter/Emmision_Power = 2.5
+shader_parameter/Twist_Power = 0.5
+shader_parameter/Displace_Power = 0.4
+shader_parameter/Fresnel_Power = 2.5
+shader_parameter/Random_Power = 0.25
+shader_parameter/Fresnel_Color = Color(1, 0.55, 0.1, 1)
+shader_parameter/Tail_Displace_Power = 0.25
+shader_parameter/Noise_Texture = SubResource("NT_main")
+shader_parameter/Coloring_Texture = SubResource("GT_color")
+shader_parameter/UV_Random = SubResource("NT_random")
+shader_parameter/Alpha_Texture = SubResource("GT_alpha")
+shader_parameter/Vertex_Noise_Texture = SubResource("NT_vertex")
+shader_parameter/Vertex_Noise_Power_Texture = SubResource("GT_vertex_power")
+shader_parameter/Tail_Vertex_Noise_Texture = SubResource("NT_tail")
+shader_parameter/Tail_Vertex_Noise_Power_Texture = SubResource("GT_tail_power")

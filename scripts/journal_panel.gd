@@ -14,7 +14,7 @@ extends CanvasLayer
 
 const CAMP_GROUP := &"camp"
 
-enum Tab { UNITS, CAMP, PLAN, DEBUG }
+enum Tab { UNITS, CAMP, PLAN, SPELLS, QUESTS, DEBUG }
 
 ## Preset'ы плана сбора. Главное число — приоритет «фокусного» типа (55), у
 ## остальных 15 — нормализация в Camp.set_collection_priority даст 0.55/0.15/0.15/0.15.
@@ -81,6 +81,8 @@ var _panel: PanelContainer
 var _tab_units_btn: Button
 var _tab_camp_btn: Button
 var _tab_plan_btn: Button
+var _tab_spells_btn: Button
+var _tab_quests_btn: Button
 var _tab_debug_btn: Button
 var _content: VBoxContainer
 var _header_label: Label
@@ -103,6 +105,13 @@ func _ready() -> void:
 	EventBus.camp_buildings_changed.connect(_on_camp_state_changed)
 	# План реактивен на изменение приоритета (другой preset нажат).
 	EventBus.collection_priority_changed.connect(_on_collection_priority_changed)
+	# Задания реактивны на продвижение квеста (любой источник: чит, программный
+	# триггер). При смене активного квеста перерисовываем вкладку.
+	EventBus.quest_advanced.connect(_on_quest_advanced)
+	# Заклинания: реактивно на unlock/upgrade (включая программные касты
+	# в будущем). Перерисовываем вкладку SPELLS если она активна.
+	EventBus.spell_unlocked.connect(_on_spell_changed)
+	EventBus.spell_upgraded.connect(_on_spell_changed)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -200,6 +209,14 @@ func _build_tabs(parent: VBoxContainer) -> void:
 	_tab_plan_btn.pressed.connect(_select_tab.bind(Tab.PLAN))
 	row.add_child(_tab_plan_btn)
 
+	_tab_spells_btn = _make_tab_button("Заклинания")
+	_tab_spells_btn.pressed.connect(_select_tab.bind(Tab.SPELLS))
+	row.add_child(_tab_spells_btn)
+
+	_tab_quests_btn = _make_tab_button("Задания")
+	_tab_quests_btn.pressed.connect(_select_tab.bind(Tab.QUESTS))
+	row.add_child(_tab_quests_btn)
+
 	_tab_debug_btn = _make_tab_button("Читы")
 	_tab_debug_btn.pressed.connect(_select_tab.bind(Tab.DEBUG))
 	row.add_child(_tab_debug_btn)
@@ -232,11 +249,16 @@ func _refresh() -> void:
 	_tab_units_btn.button_pressed = (_current_tab == Tab.UNITS)
 	_tab_camp_btn.button_pressed = (_current_tab == Tab.CAMP)
 	_tab_plan_btn.button_pressed = (_current_tab == Tab.PLAN)
+	_tab_spells_btn.button_pressed = (_current_tab == Tab.SPELLS)
+	_tab_quests_btn.button_pressed = (_current_tab == Tab.QUESTS)
 	_tab_debug_btn.button_pressed = (_current_tab == Tab.DEBUG)
 	_clear_content()
-	# DEBUG-вкладка частично работает без Camp (cheat-вызовы WaveDirector не
-	# требуют лагеря), поэтому ранний return на отсутствие camp не делаем.
-	if camp == null and _current_tab != Tab.DEBUG:
+	# DEBUG/QUESTS работают без Camp (читы дёргают WaveDirector, задания
+	# читают QuestActor'ы со сцены). SPELLS читает SpellSystem-state и Camp
+	# нужен только для afford-чека стоимости — лучше показать карточки
+	# даже без camp, кнопки disable'нутся через can_afford.
+	var camp_optional: bool = _current_tab == Tab.DEBUG or _current_tab == Tab.QUESTS or _current_tab == Tab.SPELLS
+	if camp == null and not camp_optional:
 		var warn := Label.new()
 		warn.text = "Лагерь не найден."
 		_content.add_child(warn)
@@ -248,6 +270,10 @@ func _refresh() -> void:
 			_build_camp_tab(camp)
 		Tab.PLAN:
 			_build_plan_tab(camp)
+		Tab.SPELLS:
+			_build_spells_tab(camp)
+		Tab.QUESTS:
+			_build_quests_tab()
 		Tab.DEBUG:
 			_build_debug_tab(camp)
 
@@ -373,6 +399,7 @@ const RESOURCE_DISPLAY: Dictionary = {
 	ResourcePile.ResourceType.STONE: {"label": "камень", "color": Color(0.55, 0.55, 0.55)},
 	ResourcePile.ResourceType.IRON: {"label": "железо", "color": Color(0.45, 0.48, 0.55)},
 	ResourcePile.ResourceType.FOOD: {"label": "еда", "color": Color(0.85, 0.35, 0.25)},
+	ResourcePile.ResourceType.PAGE: {"label": "страницы", "color": Color(0.55, 0.35, 0.85)},
 }
 
 
@@ -663,6 +690,277 @@ func _on_plan_preset_pressed(weights: Dictionary) -> void:
 	camp.set_collection_priority(weights)
 
 
+## Вкладка «Заклинания»: каталог из SpellSystem.SPELL_CATALOG. Каждое
+## заклинание — карточка с описанием и кнопкой действия:
+##   - locked: «открыть» (списывает unlock_cost через Camp.try_spend);
+##   - unlocked, есть апгрейды: «улучшить → ур. N+1» (списывает upgrade_costs[N]);
+##   - max level: «макс. уровень» (disabled).
+##
+## Параметры текущего уровня показываются в карточке для feedback'а — что
+## именно поменяется после апгрейда. Stats преставлены generic (key/value
+## из level-data), чтобы каталог можно было расширять без правок UI.
+func _build_spells_tab(camp: Node) -> void:
+	_header_label.text = "книга заклинаний"
+
+	var msg := Label.new()
+	msg.text = "Тратьте «страницы» для разблокировки и улучшения заклинаний башни."
+	msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	msg.add_theme_font_size_override("font_size", 12)
+	msg.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 1.0))
+	_content.add_child(msg)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_content.add_child(scroll)
+
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 8)
+	scroll.add_child(list)
+
+	for id in SpellSystem.SPELL_CATALOG.keys():
+		list.add_child(_build_spell_card(camp, id))
+
+
+func _build_spell_card(camp: Node, id: StringName) -> PanelContainer:
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 12)
+	card.add_child(hbox)
+
+	# Цветная иконка-плашка слева — узнаваемый идентификатор заклинания.
+	var data: Dictionary = SpellSystem.get_spell_data(id)
+	var icon := ColorRect.new()
+	icon.custom_minimum_size = Vector2(8, 0)
+	icon.color = data.get("icon_color", Color(0.5, 0.5, 0.7, 1.0))
+	hbox.add_child(icon)
+
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.add_theme_constant_override("separation", 4)
+	hbox.add_child(info)
+
+	var unlocked: bool = SpellSystem.is_unlocked(id)
+	var current_level: int = SpellSystem.get_level(id)
+
+	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", 8)
+	info.add_child(title_row)
+
+	var name_label := Label.new()
+	name_label.text = data.get("name", String(id))
+	name_label.add_theme_font_size_override("font_size", 16)
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(name_label)
+
+	var status_tag := Label.new()
+	status_tag.add_theme_font_size_override("font_size", 12)
+	if unlocked:
+		var max_idx: int = (data.get("levels", []) as Array).size() - 1
+		status_tag.text = "ур. %d / %d" % [current_level, max_idx]
+		status_tag.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0, 1.0))
+	else:
+		status_tag.text = "🔒 закрыто"
+		status_tag.add_theme_color_override("font_color", Color(0.65, 0.65, 0.65, 1.0))
+	title_row.add_child(status_tag)
+
+	var desc_label := Label.new()
+	desc_label.text = data.get("description", "")
+	desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc_label.add_theme_font_size_override("font_size", 12)
+	desc_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 1.0))
+	desc_label.custom_minimum_size = Vector2(380, 0)
+	info.add_child(desc_label)
+
+	# Stats текущего уровня (generic key:value). Скрываем в locked — не
+	# спойлерим, у игрока нет данных пока не открыто.
+	if unlocked:
+		var stats: Dictionary = SpellSystem.get_current_level_data(id)
+		info.add_child(_build_spell_stats_row(stats))
+
+	# Стоимость следующего шага (unlock или upgrade).
+	var cost: Dictionary = data.get("unlock_cost", {}) if not unlocked else SpellSystem.get_next_upgrade_cost(id)
+	if not cost.is_empty():
+		info.add_child(_build_cost_row(camp, cost))
+
+	# Правая кнопка действия. Логика disable'а:
+	# - locked: «открыть», disabled если не хватает или camp нет;
+	# - unlocked + есть апгрейды: «улучшить», disabled аналогично;
+	# - max level: «макс. уровень», disabled.
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(160, 56)
+	btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	btn.add_theme_font_size_override("font_size", 13)
+	hbox.add_child(btn)
+
+	if not unlocked:
+		var affordable: bool = camp != null and camp.can_afford(cost)
+		btn.text = "открыть"
+		if not affordable:
+			btn.disabled = true
+			_dim(card, 0.6)
+		else:
+			btn.pressed.connect(_on_unlock_spell_pressed.bind(id))
+	elif SpellSystem.can_upgrade_further(id):
+		var affordable: bool = camp != null and camp.can_afford(cost)
+		btn.text = "улучшить → ур. %d" % (current_level + 1)
+		if not affordable:
+			btn.disabled = true
+		else:
+			btn.pressed.connect(_on_upgrade_spell_pressed.bind(id))
+	else:
+		btn.text = "макс. уровень"
+		btn.disabled = true
+		_dim(card, 0.85)
+
+	return card
+
+
+## Generic-рендер stats: для каждого ключа level-data рисуем «key: value».
+## Сейчас level-data — Dictionary с float'ами/int'ами (damage/radius/cooldown/...);
+## будут более сложные значения — расширим helper.
+func _build_spell_stats_row(stats: Dictionary) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	for key in stats.keys():
+		var item := Label.new()
+		item.text = "%s: %s" % [str(key), _format_stat(stats[key])]
+		item.add_theme_font_size_override("font_size", 11)
+		item.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0, 1.0))
+		row.add_child(item)
+	return row
+
+
+func _format_stat(v: Variant) -> String:
+	if v is float:
+		return "%.1f" % v
+	return str(v)
+
+
+func _on_unlock_spell_pressed(id: StringName) -> void:
+	SpellSystem.try_unlock(id)
+	# spell_unlocked signal перерисует вкладку через _on_spell_changed.
+
+
+func _on_upgrade_spell_pressed(id: StringName) -> void:
+	SpellSystem.try_upgrade(id)
+
+
+func _on_spell_changed(_id_or_other: Variant = null, _level: int = 0) -> void:
+	if _current_tab == Tab.SPELLS:
+		_refresh()
+
+
+## Вкладка «Задания»: список всех QuestActor'ов со сцены, отсортированный по
+## quest_order. Каждый рендерится карточкой по своему состоянию:
+##   - LOCKED — «???» вместо заголовка/описания, низкая яркость;
+##   - ACTIVE — заголовок + описание, золотой статус-таг;
+##   - COMPLETED — заголовок (приглушено) + описание, зелёный «✓» статус.
+##
+## Контента (списка квестов) пока нет — экспорты на QuestActor'ах пустые,
+## журнал покажет fallback-заголовки. Дизайнер заполняет quest_title /
+## quest_description на каждом QuestActor в редакторе по мере появления
+## квестов; журнал подхватит автоматически без правок кода.
+##
+## Реактивность: подписка на `EventBus.quest_advanced` в `_ready` — при
+## продвижении прогресса (через advance() или чит) активный квест перейдёт
+## в completed, следующий разблокируется, журнал перерисуется.
+func _build_quests_tab() -> void:
+	var actors: Array = QuestProgress.get_actors_sorted()
+	_header_label.text = "выполнено: %d из %d" % [QuestProgress.current_index, actors.size()]
+
+	if actors.is_empty():
+		var warn := Label.new()
+		warn.text = "Нет заданий на сцене."
+		warn.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7, 1.0))
+		_content.add_child(warn)
+		return
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_content.add_child(scroll)
+
+	var list := VBoxContainer.new()
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 8)
+	scroll.add_child(list)
+
+	for actor in actors:
+		list.add_child(_build_quest_card(actor as QuestActor))
+
+
+func _build_quest_card(actor: QuestActor) -> PanelContainer:
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 12)
+	card.add_child(hbox)
+
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.add_theme_constant_override("separation", 4)
+	hbox.add_child(info)
+
+	var state: int = QuestProgress.get_state(actor.quest_order)
+
+	var title_label := Label.new()
+	title_label.add_theme_font_size_override("font_size", 16)
+	info.add_child(title_label)
+
+	var desc_label := Label.new()
+	desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc_label.add_theme_font_size_override("font_size", 12)
+	desc_label.custom_minimum_size = Vector2(420, 0)
+	info.add_child(desc_label)
+
+	var fallback_title: String = actor.quest_title if actor.quest_title != "" else "Задание #%d" % (actor.quest_order + 1)
+
+	var status_label := Label.new()
+	status_label.add_theme_font_size_override("font_size", 13)
+	status_label.custom_minimum_size = Vector2(140, 0)
+	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hbox.add_child(status_label)
+
+	match state:
+		QuestProgress.State.LOCKED:
+			# Скрываем заголовок и описание — игрок не должен видеть будущие
+			# задания, чтобы не спойлерить. Только сам факт «впереди ещё есть».
+			title_label.text = "???"
+			title_label.add_theme_color_override("font_color", Color(0.55, 0.55, 0.55, 1.0))
+			desc_label.text = "Задание ещё не разблокировано."
+			desc_label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1.0))
+			status_label.text = "🔒 закрыто"
+			status_label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1.0))
+			_dim(card, 0.5)
+		QuestProgress.State.ACTIVE:
+			title_label.text = fallback_title
+			title_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4, 1.0))
+			desc_label.text = actor.quest_description if actor.quest_description != "" else "(описание ещё не задано)"
+			desc_label.add_theme_color_override("font_color", Color(0.95, 0.95, 0.95, 1.0))
+			status_label.text = "▶ активно"
+			status_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4, 1.0))
+		QuestProgress.State.COMPLETED:
+			title_label.text = fallback_title
+			title_label.add_theme_color_override("font_color", Color(0.7, 0.85, 0.7, 1.0))
+			desc_label.text = actor.quest_description if actor.quest_description != "" else "(описание ещё не задано)"
+			desc_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7, 1.0))
+			status_label.text = "✓ выполнено"
+			status_label.add_theme_color_override("font_color", Color(0.55, 0.85, 0.55, 1.0))
+			_dim(card, 0.75)
+
+	return card
+
+
+func _on_quest_advanced(_new_index: int) -> void:
+	if _current_tab == Tab.QUESTS:
+		_refresh()
+
+
 ## Вкладка «Читы»: дебаг-кнопки, заменяющие старые keyboard-actions
 ## (P/O/[/]) и плюс новый чит «+100 каждого ресурса». Нет авто-disable
 ## по состоянию: WaveDirector сам печатает «проигнорировано» если
@@ -712,6 +1010,16 @@ func _build_debug_tab(camp: Node) -> void:
 		"+100",
 		camp,
 		func(): _grant_all_resources(camp, 100),
+	))
+	# QuestProgress — autoload, всегда есть. Передаём self как target, чтобы
+	# карточка не disable'илась (логика _build_cheat_card: target == null →
+	# disabled). Сам autoload в качестве target — приемлемо.
+	list.add_child(_build_cheat_card(
+		"Продвинуть квест",
+		"Завершает текущий активный квест и разблокирует следующий. Заменяет старую клавишу Q.",
+		"следующий",
+		QuestProgress,
+		func(): QuestProgress.advance(),
 	))
 
 
@@ -770,5 +1078,6 @@ func _grant_all_resources(camp: Node, amount: int) -> void:
 		ResourcePile.ResourceType.STONE,
 		ResourcePile.ResourceType.IRON,
 		ResourcePile.ResourceType.FOOD,
+		ResourcePile.ResourceType.PAGE,
 	]:
 		camp.add_resource(int(type), amount)

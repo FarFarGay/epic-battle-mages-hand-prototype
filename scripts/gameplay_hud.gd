@@ -24,6 +24,12 @@ var _update_timer: float = 0.0
 var _squad_level_label: Label
 var _squad_xp_bar: ProgressBar
 var _squad_xp_label: Label  # текст поверх бара
+## Tower stats UI: HP-бар и Mana-бар, наверху по центру экрана. Реактивные
+## обновления через EventBus.tower_health_changed / tower_mana_changed.
+var _hp_bar: ProgressBar
+var _hp_label: Label
+var _mana_bar: ProgressBar
+var _mana_label: Label
 ## Кнопка журнала + бэйдж невыбранных апгрейдов. Тоже программная — и
 ## расположение, и счётчик заводить новой ноды в .tscn ради этого нет смысла.
 var _journal_button: Button
@@ -42,12 +48,14 @@ const RESOURCE_DISPLAY: Array = [
 	{"type": ResourcePile.ResourceType.STONE, "label": "камень", "color": Color(0.55, 0.55, 0.55)},
 	{"type": ResourcePile.ResourceType.IRON, "label": "железо", "color": Color(0.45, 0.48, 0.55)},
 	{"type": ResourcePile.ResourceType.FOOD, "label": "еда", "color": Color(0.85, 0.35, 0.25)},
+	{"type": ResourcePile.ResourceType.PAGE, "label": "страницы", "color": Color(0.55, 0.35, 0.85)},
 ]
 
 
 func _ready() -> void:
 	if not camp_path.is_empty():
 		_camp = get_node_or_null(camp_path) as Camp
+	_build_tower_stats()
 	_build_squad_row()
 	_build_resources_rows()
 	_build_journal_button()
@@ -65,6 +73,16 @@ func _ready() -> void:
 	EventBus.collection_mode_changed.connect(_refresh_mode_label)
 	if _camp != null:
 		_refresh_mode_label(_camp.get_collection_mode())
+
+	# Tower stats: подписка на сигналы + начальный sync. Tower может ready'ться
+	# раньше HUD'а — тогда initial emit из его _ready уйдёт «в пустоту»;
+	# берём snapshot напрямую через group lookup.
+	EventBus.tower_health_changed.connect(_refresh_tower_health)
+	EventBus.tower_mana_changed.connect(_refresh_tower_mana)
+	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Tower
+	if tower != null:
+		_refresh_tower_health(tower.hp, tower.max_hp)
+		_refresh_tower_mana(tower.mana, tower.max_mana)
 
 
 ## Строит SquadRow программно и докидывает в существующий VBox правой панели.
@@ -307,3 +325,80 @@ func _refresh_resource_label(type: int, amount: int) -> void:
 		label.add_theme_color_override("font_color", Color.WHITE)
 	else:
 		label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1))
+
+
+## Tower HP/Mana панель сверху по центру. Две полоски с overlay-Label'ами:
+## красный HP сверху, синяя Mana снизу. Обновления через EventBus.
+func _build_tower_stats() -> void:
+	var panel := VBoxContainer.new()
+	panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	# Centered: anchor_top=0, anchor_left=anchor_right=0.5; offset для ширины.
+	var bar_width: int = 240
+	panel.offset_left = -bar_width / 2
+	panel.offset_top = 10
+	panel.offset_right = bar_width / 2
+	panel.offset_bottom = 56
+	panel.add_theme_constant_override("separation", 4)
+	add_child(panel)
+
+	_hp_bar = _make_stat_bar(panel, Color(0.8, 0.15, 0.15, 1.0), bar_width)
+	_hp_label = _make_stat_overlay(_hp_bar, "HP")
+
+	_mana_bar = _make_stat_bar(panel, Color(0.2, 0.5, 0.95, 1.0), bar_width)
+	_mana_label = _make_stat_overlay(_mana_bar, "MP")
+
+
+func _make_stat_bar(parent: Control, fill_color: Color, width: int) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.custom_minimum_size = Vector2(width, 18)
+	bar.show_percentage = false
+	bar.min_value = 0.0
+	bar.max_value = 1.0
+	bar.value = 1.0
+	# Per-bar StyleBoxFlat для fill — иначе все ProgressBar'ы общие
+	# дефолтные стили и не отличаются цветом.
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = fill_color
+	fill.corner_radius_top_left = 2
+	fill.corner_radius_top_right = 2
+	fill.corner_radius_bottom_left = 2
+	fill.corner_radius_bottom_right = 2
+	bar.add_theme_stylebox_override("fill", fill)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.0, 0.0, 0.0, 0.55)
+	bg.corner_radius_top_left = 2
+	bg.corner_radius_top_right = 2
+	bg.corner_radius_bottom_left = 2
+	bg.corner_radius_bottom_right = 2
+	bar.add_theme_stylebox_override("background", bg)
+	parent.add_child(bar)
+	return bar
+
+
+func _make_stat_overlay(bar: ProgressBar, prefix: String) -> Label:
+	var label := Label.new()
+	label.text = prefix + " 0/0"
+	label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_color_override("font_color", Color.WHITE)
+	label.add_theme_font_size_override("font_size", 12)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_child(label)
+	return label
+
+
+func _refresh_tower_health(current: float, maximum: float) -> void:
+	if _hp_bar == null:
+		return
+	_hp_bar.max_value = maxf(maximum, 1.0)
+	_hp_bar.value = clampf(current, 0.0, maximum)
+	_hp_label.text = "HP %d/%d" % [int(round(current)), int(round(maximum))]
+
+
+func _refresh_tower_mana(current: float, maximum: float) -> void:
+	if _mana_bar == null:
+		return
+	_mana_bar.max_value = maxf(maximum, 1.0)
+	_mana_bar.value = clampf(current, 0.0, maximum)
+	_mana_label.text = "MP %d/%d" % [int(round(current)), int(round(maximum))]

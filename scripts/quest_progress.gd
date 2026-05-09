@@ -7,13 +7,20 @@ extends Node
 ## с `quest_order > current_index` — locked (ещё не разблокирован).
 ##
 ## Продвижение прогресса:
-## - debug-вход «Q» (action `complete_quest`) — продвигает на 1 шаг вперёд;
-##   используется до появления нормальной механики сдачи квеста.
-## - программный вызов `advance()` — для будущих геймплейных триггеров.
+## - программный вызов `advance()` — для геймплейных триггеров;
+## - дебаг-кнопка «Продвинуть квест» во вкладке «Читы» Журнала — фоллбэк
+##   до появления нормальной механики сдачи.
 ##
 ## Сигнал о смене состояния идёт через EventBus (`quest_advanced`), чтобы
-## подписчиков (QuestActor, HUD, …) было удобно цеплять без знания о наличии
-## именно этого autoload-а.
+## подписчиков (QuestActor, JournalPanel, HUD, …) было удобно цеплять без
+## знания о наличии именно этого autoload-а.
+##
+## **Каталог квестов хранится на сцене**, не здесь: каждый QuestActor
+## декларирует свои `quest_title` / `quest_description` экспортами. Журнал
+## опрашивает группу `QuestActor.POI_GROUP`, сортирует по `quest_order`,
+## рендерит карточки. Так не дублируем источник истины (сцена+скрипт=пакет).
+
+enum State { LOCKED, ACTIVE, COMPLETED }
 
 var current_index: int = 0
 
@@ -30,6 +37,15 @@ func is_locked(order: int) -> bool:
 	return order > current_index
 
 
+## Состояние квеста как enum — удобнее для UI чем три отдельных проверки.
+func get_state(order: int) -> int:
+	if order < current_index:
+		return State.COMPLETED
+	if order == current_index:
+		return State.ACTIVE
+	return State.LOCKED
+
+
 func advance() -> void:
 	current_index += 1
 	if LogConfig.master_enabled:
@@ -37,6 +53,14 @@ func advance() -> void:
 	EventBus.quest_advanced.emit(current_index)
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("complete_quest"):
-		advance()
+## Helper для UI: все QuestActor'ы со сцены, отсортированные по quest_order
+## (LOCKED/ACTIVE/COMPLETED — все, журнал сам решает как отобразить).
+## Требует доступа к SceneTree — autoload передаёт свой `get_tree()`.
+func get_actors_sorted() -> Array:
+	var actors: Array = []
+	for n in get_tree().get_nodes_in_group(QuestActor.POI_GROUP):
+		if n is QuestActor:
+			actors.append(n)
+	actors.sort_custom(func(a: QuestActor, b: QuestActor) -> bool:
+		return a.quest_order < b.quest_order)
+	return actors

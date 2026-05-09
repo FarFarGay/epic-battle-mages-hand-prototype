@@ -217,13 +217,20 @@ hand_gameplay_prot/
 - `move_speed: float = 8.0` — горизонтальная скорость.
 - `gravity: float = 20.0` — ускорение свободного падения.
 - `mass: float = 10.0` — эффективная масса башни (для сравнения с `Item.mass`).
-- `hp: float = 1000.0` — здоровье. На 0 → `destroyed.emit()` (без queue_free — game-over UI отдельно).
+- `max_hp: float = 1000.0` — максимум здоровья. `var hp` сетится в `_ready = max_hp`. На `hp ≤ 0` → `destroyed.emit()` (без queue_free — game-over UI отдельно). Текущий `hp` эмитится через `health_changed(current, max)` на каждом take_damage.
+- Группа `Mana`:
+  - `max_mana: float = 100.0` — максимум маны. Тратится магическими действиями руки через `try_consume_mana(amount) -> bool`. Физика руки (Slam/Flick/grab) маны не требует.
+  - `mana_regen_rate: float = 10.0` — единиц/сек. В `_physics_process` `mana = min(mana + rate × delta, max_mana)`, эмитит `mana_changed(current, max)` только при реальных изменениях (не дёргает HUD на full mana каждый кадр).
 - Группа `Push Items`: `push_strength: float = 1.0` — множитель импульса при толкании предметов.
 - Группа `Push Enemies`:
   - `enemy_push_speed_factor: float = 1.5` — множитель скорости knockback'а, который башня сообщает kinematic-цели при контакте.
   - `enemy_push_duration: float = 0.2` — длительность knockback'а. Refresh'ится каждый физкадр контакта.
 - `fall_threshold: float = -10.0` — Y, ниже которого «провалились» (используется только в дебаг-логе).
 - `debug_log: bool = true` — событийные логи.
+
+**Группа:** `const GROUP := &"tower"` + `add_to_group(GROUP)` в `_ready`. HandSpellFireball/Firestorm дискаверят башню через `get_first_node_in_group(Tower.GROUP)` — фаербол стартует из её позиции + UP×launch_offset_y.
+
+**Дополнительные сигналы:** `health_changed(current: float, maximum: float)`, `mana_changed(current: float, maximum: float)`. Re-emit на `EventBus.tower_health_changed / tower_mana_changed`. HUD рисует HP/MP полоски сверху по центру.
 
 **Константы и `@onready`:**
 - `MIN_PUSH_VELOCITY := 0.1` — порог компоненты `intended_velocity` в направлении kinematic-цели.
@@ -279,6 +286,12 @@ hand_gameplay_prot/
 - `hand_height: float = 2.5` — просвет между рукой и поверхностью под курсором.
 - `cursor_raycast_mask: int = Layers.MASK_HAND_CURSOR` (`@export_flags_3d_physics`, числовое значение 67 = Terrain + Items + MountedModule) — слои для raycast'а высоты под курсором. На лету в `Hand._raycast_terrain` к маске прибавляется `ACTORS`, если в руке `CampModule` (см. §4.1). Имя точное: маска именно курсорного raycast'а, не «всех terrain-операций». Раньше называлось `terrain_mask`.
 - `debug_log: bool = true` — лог только смены поверхности.
+
+**Категория ввода:**
+- `enum Category { PHYSICAL, MAGIC }`, `var active_category` (default PHYSICAL).
+- `set_active_category(category)` — публичный setter, эмитит `category_changed`. Equip-биндинги (1/2 в HandPhysical, 3/4 в HandSpell) вызывают это для переключения. ЛКМ-граб работает в любой категории; ПКМ — только в активной.
+- `is_holding() -> bool` — общий guard для ПКМ-действий (если рука занята — ни Slam, ни Flick, ни Fireball не триггерятся).
+- См. §5.12 «Магия» для полного контекста.
 
 **Внутреннее состояние:**
 - `_grab_area`, `_magnet_area` — приватные `Area3D`, доступ снаружи закрыт. Подмодули получают тела через `get_grabbable_bodies()` / `get_magnet_bodies()` — Hand не отдаёт ссылку на сами Area, чтобы они не превратились в публичную поверхность.
@@ -1004,7 +1017,7 @@ static func spawn(
 
 **Назначение:** модуль «лагеря» — несколько палаток (`RigidBody3D` с `freeze=true`, см. §5.7.bis) с гномами-жителями. Работает в **двух режимах**, переключается через флаг `start_deployed`:
 
-1. **Mobile (caravan mode, `start_deployed = false`):** в `CARAVAN_FOLLOWING` палатки следуют за башней цепочкой. По зажатию `R` (при неподвижной башне) лагерь разворачивается вокруг текущей позиции башни в кольцо. По повторному зажатию — сворачивается обратно. Этот режим — для основного игрока-башни.
+1. **Mobile (caravan mode, `start_deployed = false`):** в `CARAVAN_FOLLOWING` палатки следуют за башней цепочкой. По зажатию `R` (при неподвижной башне) лагерь разворачивается вокруг текущей позиции башни в кольцо. По повторному зажатию — сворачивается обратно. **Halt-режим (Q):** `caravan_halt_toggle` (Q) переключает флаг `_caravan_halted` — палатки замирают на текущих позициях, башня продолжает кататься по WASD независимо. Гномы IN_TENT едут вместе с палатками (копируют их позицию) → стоят. Defender'ы FOLLOWING_CARAVAN тоже останавливаются у своих slot'ов. R-deploy в halted блокируется. Q ещё раз → караван догоняет башню. Скорость догона capped на `caravan_max_speed = 10.0` м/с (чуть выше Tower.move_speed=8) — exp_decay со скейлом, но шаг ограничен `max_speed × delta`, чтобы при большом разрыве (после halt-resume) не было пропорционального дистанции «рывка». В обычной езде cap не активен (exp-step ≪ max-step).
 
 2. **Static (settlement mode, `start_deployed = true`):** Camp на `_ready` сразу стартует в `DEPLOYED` со своей собственной `global_position` как anchor'ом. Палатки расставлены в кольце вокруг неё, гномы выходят и собирают. R-toggle игнорируется — поселение не сворачивается. Используется для статических лагерей-поселений на POI карты (без следования за башней). `target_path` для такого Camp оставляют пустым.
 
@@ -1645,7 +1658,7 @@ func take_one() -> bool:
 
 ### 5.11 POI/Quest system — POI markers, QuestActor (POI-зона), WaveSchedule, QuestProgress
 
-POI = костёр. Одна нода [QuestActor] совмещает три вещи: квест-выдатчик, визуал костра и параметры **POI-зоны** для геймплея «лагерь + осада» (этап 42). Линейная цепочка сюжетных заданий: 3 POI на карте, прогресс продвигается клавишей `Q` (debug-заглушка до настоящих триггеров завершения).
+POI = костёр. Одна нода [QuestActor] совмещает три вещи: квест-выдатчик, визуал костра и параметры **POI-зоны** для геймплея «лагерь + осада» (этап 42). Линейная цепочка сюжетных заданий: 3 POI на карте, прогресс продвигается через **Журнал → вкладку «Читы» → «Продвинуть квест»** (`QuestProgress.advance()`). Раньше был на клавише Q — освобождена под `caravan_halt_toggle`. Описания заданий (`quest_title`, `quest_description`) хранятся **на самих QuestActor**-нодах сцены, журнал собирает их через группу `POI_GROUP`, вкладка «Задания» рендерит карточки по 3 состояниям (LOCKED / ACTIVE / COMPLETED).
 
 #### POI markers — `scenes/poi_marker.tscn`
 
@@ -1754,7 +1767,182 @@ func _refresh_visual() -> void:
 - `is_active(order)`, `is_completed(order)`, `is_locked(order)` — предикаты для QuestActor.
 - `advance() -> void` — `current_index += 1`, эмит `EventBus.quest_advanced(current_index)`.
 
-**Debug-вход:** `_unhandled_input` ловит `complete_quest` action (Q) → `advance()`. Заглушка до появления настоящих геймплейных триггеров (диалог завершён / предмет принесён / монстр убит).
+**Продвижение прогресса:** через `QuestProgress.advance()`. Дёргается из чита Журнала «Продвинуть квест» (Tab.DEBUG) до появления настоящих геймплейных триггеров (диалог завершён / предмет принесён / монстр убит). Старого `_unhandled_input`-биндинга на Q больше нет — клавиша теперь под halt-режим каравана.
+
+---
+
+### 5.12 Магия — `SpellSystem` autoload, `HandSpell` координатор, заклинания
+
+Система магии — отдельная категория действий руки, параллельная физическим (Slam/Flick). Состоит из трёх слоёв: `SpellSystem` (источник истины о разблокировках/уровнях), `HandSpell`-координатор + подмодули отдельных заклинаний (`HandSpellFireball`, `HandSpellFirestorm`), и runtime-снаряды (`Fireball`, `BurnPatch`, общий `AoeVisual` helper для VFX-взрыва).
+
+#### Hand.Category
+
+`Hand` имеет enum `Category { PHYSICAL, MAGIC }` и поле `active_category` (default PHYSICAL). Equip-биндинги переключают:
+- `equip_slam` (1), `equip_flick` (2) → `PHYSICAL` через `HandPhysicalActions._handle_input`.
+- `equip_fireball` (3), `equip_firestorm` (4) → `MAGIC` через `HandSpell._handle_input`.
+
+Equip-биндинги слушаются всегда, остальной ввод гейтится по категории:
+- ЛКМ-граб — работает в любой категории (можно тащить ящик и параллельно кастовать ПКМ).
+- ПКМ-action в `PHYSICAL` → Slam/Flick; в `MAGIC` → cast активного заклинания.
+- Удерживаемый предмет в руке блокирует ПКМ-действия (и физические, и магические) — рука занята. `Hand.is_holding()` — общий guard.
+- При смене категории на MAGIC активный Flick (если был) принудительно отпускается — иначе hold-state потерял бы кнопку отпускания (ПКМ ушла в каст фаербола).
+
+Сигнал `Hand.category_changed(new_category)` — для подмодулей-слушателей.
+
+#### Tower.mana
+
+Магия списывает ману с **башни** (Tower), не с руки. Tower имеет:
+- `@export var max_mana = 100`, `@export var mana_regen_rate = 10` (ед/сек).
+- `var mana` (current), сетится в `_ready` = `max_mana`, регенится в `_physics_process` до cap'а.
+- `try_consume_mana(amount) -> bool` — атомарно списывает (false если не хватает, не идёт в минус).
+- Сигналы `health_changed(current, max)`, `mana_changed(current, max)` + re-emit на `EventBus.tower_health_changed` / `tower_mana_changed`.
+
+Физические действия руки (Slam/Flick/grab) маны не требуют — это сознательное разделение «лёгкая физика / дорогая магия».
+
+#### SpellSystem (autoload)
+
+`scripts/spell_system.gd`. Источник истины о состоянии магии — какие заклинания разблокированы и на каком уровне прокачки.
+
+**Каталог `SPELL_CATALOG`** — Dictionary `id (StringName) → metadata`:
+- `name`, `description`, `icon_color`.
+- `unlocked_by_default: bool` — открывается на _ready или требует unlock.
+- `unlock_cost: Dictionary` — `ResourceType → amount` (обычно `PAGE` — см. ниже).
+- `levels: Array[Dictionary]` — параметры по уровням. Индекс 0 = базовый (выдаётся при unlock'е), 1+ — после апгрейдов. Поля level-data специфичны для конкретного заклинания (для fireball: `damage`/`radius`/`cooldown`/`mana_cost`/`burn_*`).
+- `upgrade_costs: Array[Dictionary]` — стоимость каждого следующего уровня. `upgrade_costs[i]` — цена перехода `level i → i+1`.
+
+**State:**
+- `_unlocked: Dictionary` (id → true) — инициализируется на `_ready` по `unlocked_by_default`.
+- `_levels: Dictionary` (id → int, 0 = базовый) — присутствует только для разблокированных.
+
+**API:**
+- `is_unlocked(id) -> bool`, `get_level(id) -> int`.
+- `get_spell_data(id) -> Dictionary` (полный каталог-эntry), `get_current_level_data(id) -> Dictionary` (параметры текущего уровня).
+- `can_upgrade_further(id) -> bool`, `get_next_upgrade_cost(id) -> Dictionary`.
+- `try_unlock(id) -> bool`, `try_upgrade(id) -> bool` — списывают ресурсы через `Camp.try_spend()`, эмитят `EventBus.spell_unlocked` / `spell_upgraded`.
+
+Конкретные подмодули руки (`HandSpellFireball`, `HandSpellFirestorm`) при касте читают параметры через `SpellSystem.get_current_level_data(id)` и используют их **поверх @export-fallback'а** — single source of truth для gameplay-балансовых полей.
+
+#### ResourcePile.ResourceType.PAGE
+
+Пятый тип ресурса — «страницы из книги колдовства». Хранятся в общем `Camp._resources` через `add_resource(PAGE, n)`, тратятся на `unlock_cost` и `upgrade_costs` заклинаний через `Camp.try_spend()`. Дефолтный визуал — фиолетовый плоский бокс. На карте PAGE'ы пока **не спавнятся** через ResourceZone — дроп/реворд-механизмы будут добавлены позже; пока пополняются читом «+100 каждого ресурса».
+
+Цвет (фиолетовый `Color(0.55, 0.35, 0.85)`) одной точкой определён в `ResourcePile.color_for_type` и используется в HUD/Journal/burn-patch'ах для консистентного визуального языка магии.
+
+#### HandSpell координатор
+
+`scripts/hand_spell.gd` (extends Node, child of Hand). По образцу `HandPhysicalActions`:
+- Enum `SpellType { FIREBALL, FIRESTORM }`. `equipped` — текущее активное заклинание.
+- В `_handle_input`: ловит equip-биндинги (3/4 → set MAGIC), на ПКМ диспатчит `_dispatch_cast()` если категория MAGIC + `Hand.is_holding() == false`.
+- Подмодули `_fireball`, `_firestorm` живут под HandSpell в `hand.tscn`; setup получает Hand-ссылку, `tick(delta)` вызывается в `_process` независимо от категории (чтобы cooldown'ы тикали даже при переключении на физику).
+- Re-emit `spell_cast(name, position)` от подмодулей.
+
+#### HandSpellFireball — `scripts/hand_spell_fireball.gd`
+
+Однотактное заклинание: один снаряд → один взрыв. Cooldown ≈ 0.4с (скорострельный), параметры fallback'ом в @export'ах.
+
+**`_perform_cast`:**
+1. `SpellSystem.is_unlocked(&"fireball")` — иначе return.
+2. Резолв параметров: `damage / radius / cooldown / mana_cost / burn_*` из `get_current_level_data(&"fireball")` с fallback на @export.
+3. `Tower.try_consume_mana(p_mana_cost)` — иначе return (cooldown НЕ запускается, попытка не «съедается»).
+4. `launch_pos` = Tower + UP × `launch_offset_y`; `target_pos` = `Hand.cursor_world_position()` − `hand_height` (приземление, не плоскость руки).
+5. `_cooldown_remaining = p_cooldown`. Spawn `fireball.tscn` в `effects_root` (current_scene), `setup(...)` + опционально `setup_burn(...)`.
+
+#### HandSpellFirestorm — `scripts/hand_spell_firestorm.gd`
+
+Серия из N малых фаерболов в зону: «огненный шквал». Реюзает `fireball.tscn` как снаряд (та же баллистика/drift/homing) — отличие в gameplay-параметрах (меньший damage/radius per-shot, рассеяние target_pos).
+
+**State-machine в `tick(delta)`:**
+- `_cooldown_remaining` — общий cooldown серии (декрементится всегда).
+- `_shots_remaining` — счётчик невыпущенных шотов; на `_next_shot_in <= 0` запускает `_launch_one()` и сбрасывает таймер на `shot_interval`.
+- `can_trigger() == false` пока серия идёт ИЛИ cooldown активен — нельзя дозаказать в середине серии.
+
+**`_start_volley`:**
+1. Spell-gate (`SpellSystem.is_unlocked(&"firestorm")`).
+2. Резолвит и **фиксирует** параметры серии (`_series_shot_damage / _series_shot_radius / _series_scatter_radius`) — серия летит со старыми параметрами даже если игрок прокачает заклинание во время неё (избегаем середины-серии-смены-балансов).
+3. Atomic mana списание (один раз за всю серию, не per-shot).
+4. Зафиксирует `_volley_target = cursor_world` (игрок может водить курсор во время серии — шквал ложится туда, где было нажатие).
+
+**`_launch_one`:**
+- Random jitter target в круге `scatter_radius` через `(angle, sqrt(randf()) × scatter_radius)` — uniform по площади, не по радиусу.
+- `fireball.setup(...)` с уменьшенным `damage`/`radius` из series-state.
+- Burn-параметры — собственные @export'ы HandSpellFirestorm (не из SpellSystem; меньше fireball'ового burn'а — серия даёт overlap'ы).
+
+**Балансовая зависимость с Fireball:** один шот шквала ≈ одиночный Fireball (damage/radius). Mana_cost фаербола = ~Firestorm.mana_cost / shot_count. Получается: Fireball — равномерный конвейер (DPS ~37), Firestorm — бёрст 4 шота за 0.45с с большим cooldown (DPS ~30, но пик выше).
+
+#### Fireball — `scripts/fireball.gd`, `scenes/fireball.tscn`
+
+Снаряд. Корень — `Node3D` (не RigidBody — broad-phase коллизии при полёте не нужны, AOE-shape-query только в момент взрыва). Содержит SphereMesh-ядро (scale 1.19/0.595/0.595 — капля по local X), GPUParticles3D-хвост (`local_coords=false` — частицы остаются в world space, фаербол улетает быстрее → автоматический «след»), OmniLight3D для glow'а.
+
+**Двухфазная траектория «ракета»:**
+
+1. **Phase.BOOST** (длительность `boost_duration ≈ 0.18с`):
+   - Стартовая velocity = `UP × boost_velocity_up + dir_xz × boost_velocity_forward + perp_xz × random_sway` (random sway создаёт «дрожь» при выстреле — каждый каст уходит чуть в свою сторону).
+   - В `_physics_process`: `velocity.y -= boost_gravity × delta`; `position += velocity × delta`.
+   - Дуга вверх+вперёд из башни, ~1м над launch.
+
+2. **Phase.HOMING** (после boost'а до взрыва):
+   - На переходе: `_velocity = drift_basis × desired_dir × _homing_initial_speed`, где `drift_basis = Basis(UP, random ± homing_drift_angle_deg)` — фаербол стартует «мимо», под случайным углом 0..45° от target. Slerp ниже плавно докручивает к цели — характерный «крюк».
+   - Каждый кадр: `current_dir.slerp(desired_dir, 1 - exp(-homing_turn_rate × delta))` — frame-rate independent поворот к target. `current_speed = min(current_speed + homing_acceleration × delta, homing_max_speed)`. Velocity = new_dir × speed.
+   - Получается: фаербол ныряет вбок, потом плавно докручивает обратно и врезается на максимальной скорости.
+
+**Ориентация Node3D** через `_orient_along_velocity()`: `basis.x = horizontal_velocity_dir`, `basis.y = UP`, `basis.z = perpendicular`. Вытянутая капля и хвост-партиклы выглядят естественно по направлению полёта.
+
+**`_explode()`:**
+- AOE-shape-query (SphereShape `radius`, mask `MASK_HAND_SLAM`) + per-target иммунитет (`Layers.is_hand_immune`) + **horizontal-only distance check** (`_xz_distance_sq` — взрыв на ground'е, центр капсулы скелета на y≈0.9, 3D distance отъедал бы ~0.9м эффективного radius'а).
+- FAR-fallback по `Skeleton.SKELETON_GROUP` (FAR-скелеты с `CollisionShape.disabled=true` в broad-phase не попадают).
+- `_apply_aoe(target)`: linear horizontal falloff `1 - dist/radius`; `Pushable.try_push(target, dir × force × falloff)` + `Damageable.try_damage(target, damage × falloff)`.
+- Visual: `AoeVisual.spawn_explosion(fx_root, origin, radius)` — комбо ядро-вспышки + огненных + дымных partикл (см. ниже).
+- Если задана `_burn_patch_scene` — спавнит `BurnPatch` в эпицентре через `setup_burn`-параметры.
+
+#### BurnPatch — `scripts/burn_patch.gd`, `scenes/burn_patch.tscn`
+
+Статичная зона горения после взрыва. Не двигается, не растёт — пятно фиксированного радиуса на земле, тикает урон каждые `tick_interval` всем damageable в радиусе, через `duration` секунд `queue_free`.
+
+**`_apply_tick`:** PhysicsShapeQuery + per-target иммунитет + horizontal-only distance + FAR-fallback (тот же паттерн что у Fireball._explode и Slam._perform_slam). Урон **без falloff** — внутри зоны равномерно (горение не зависит от дистанции до центра). Knockback не применяется.
+
+Параметры передаются через `setup(radius, damage_per_tick, tick_interval, duration, mask)`.
+
+#### AoeVisual — `scripts/aoe_visual.gd`
+
+`RefCounted`-helper со static-методами. Общие визуалы AOE-удара/взрыва, без ассетов кроме `slam_distortion_material.tres` / `slam_dust_*` (исторически из Slam'а):
+- `spawn_wave(root, pos, radius, duration)` — distortion-сфера расширяется до radius за 0.45с (из Slam-шейдера).
+- `spawn_dust(root, pos)` — GPUParticles3D one_shot пыли (тот же материал что у Slam).
+- `spawn_radius_indicator(root, pos, radius, color, duration)` — solid translucent sphere = radius, fade-out 0.4с (явный «вижу габариты» индикатор).
+- `spawn_explosion(root, pos, radius)` — комбо для взрыва: ядро-вспышка (scale 0 → radius×0.7 → 0 за 0.3с) + огненные partикли (радиальный разлёт жёлтый→красный→прозрачный, 60 шт. lifetime 0.5с) + дымные (up bias, серый→прозрачный, 40 шт. lifetime 1.2с — задерживаются после пламени). Используется `Fireball._explode`.
+
+Slam пока на собственном (с пулом MeshInstance3D) визуале — не трогали работающее. Когда придёт refactor — Slam перейдёт на `AoeVisual.spawn_wave + spawn_dust`.
+
+#### Журнал → вкладка «Заклинания»
+
+`JournalPanel.Tab.SPELLS` (между «План» и «Задания»). `_build_spells_tab(camp)` итерирует `SpellSystem.SPELL_CATALOG`, рендерит карточку на каждое заклинание:
+- **Locked** — «🔒 закрыто», описание скрыто, стоимость `unlock_cost` в страницах, кнопка «открыть» (disabled если `Camp.can_afford(cost) == false`).
+- **Unlocked, есть апгрейды** — «ур. N/M», список stats текущего уровня (generic key:value через `_format_stat`), стоимость следующего уровня, кнопка «улучшить → ур. N+1».
+- **Max level** — «макс. уровень», disabled.
+
+Реактивно через `EventBus.spell_unlocked` / `spell_upgraded`. Stats-формат generic — каталог можно расширять без правок UI (ключи level-data автоматически рендерятся в карточке).
+
+#### Балансовые цифры (на 2026-05-10)
+
+**Fireball (4 уровня, открыт по умолчанию):**
+
+| Уровень | damage | radius | cooldown | mana | burn dmg | burn radius | burn dur |
+|---|---|---|---|---|---|---|---|
+| 0 | 15 | 2.5 | 0.40 | 12 | 8 | 2.0 | 2.5 |
+| 1 | 20 | 2.8 | 0.36 | 11 | 10 | 2.3 | 2.5 |
+| 2 | 26 | 3.1 | 0.32 | 10 | 12 | 2.6 | 3.0 |
+| 3 | 34 | 3.4 | 0.28 | 9 | 14 | 2.9 | 3.5 |
+
+Стоимость апгрейдов: 3 → 6 → 12 страниц.
+
+**Firestorm (3 уровня, открыт по умолчанию):**
+
+| Уровень | shots | interval | dmg/shot | radius | scatter | cooldown | mana |
+|---|---|---|---|---|---|---|---|
+| 0 | 4 | 0.15 | 15 | 2.5 | 2.5 | 2.0 | 50 |
+| 1 | 5 | 0.13 | 20 | 2.8 | 2.8 | 1.8 | 55 |
+| 2 | 6 | 0.11 | 26 | 3.1 | 3.0 | 1.6 | 60 |
+
+Стоимость апгрейдов: 6 → 12 страниц. Burn-параметры серии — собственные @export'ы (`burn_radius=2.0`, `burn_damage_per_tick=8`, `burn_duration=2.5`).
 
 ---
 
@@ -1768,13 +1956,15 @@ func _refresh_visual() -> void:
 | `move_back` | S | Tower |
 | `move_left` | A | Tower |
 | `move_right` | D | Tower |
-| `hand_grab` | LMB | Hand:PhysicalActions (захват/бросок) |
-| `hand_action` | RMB | Hand:PhysicalActions (триггер активной способности — slam/flick) |
-| `equip_slam` | 1 | Hand:PhysicalActions (экипировать хлопок) |
-| `equip_flick` | 2 | Hand:PhysicalActions (экипировать щелбан) |
-| `camp_toggle` | R | Camp (зажать для развёртки/свёртки) |
-| `complete_quest` | Q | QuestProgress (debug-продвижение прогресса сюжета на 1 шаг) |
-| `ui_journal` | J | JournalPanel (открыть/закрыть журнал — четыре вкладки: Юниты / Лагерь / План / Читы) |
+| `hand_grab` | LMB | Hand:PhysicalActions (захват/бросок — работает в любой категории) |
+| `hand_action` | RMB | Hand:PhysicalActions (slam/flick) или Hand:Spell (fireball/firestorm), в зависимости от Hand.active_category |
+| `equip_slam` | 1 | Hand:PhysicalActions (экипировать хлопок) → category PHYSICAL |
+| `equip_flick` | 2 | Hand:PhysicalActions (экипировать щелбан) → category PHYSICAL |
+| `equip_fireball` | 3 | Hand:Spell (экипировать фаербол) → category MAGIC |
+| `equip_firestorm` | 4 | Hand:Spell (экипировать огненный шквал) → category MAGIC |
+| `camp_toggle` | R | Camp (зажать для развёртки/свёртки на POI) |
+| `caravan_halt_toggle` | Q | Camp (toggle halted-режим в CARAVAN_FOLLOWING — палатки замирают, башня катится отдельно) |
+| `ui_journal` | J | JournalPanel (открыть/закрыть журнал — шесть вкладок: Юниты / Лагерь / План / Заклинания / Задания / Читы) |
 | `gnome_collect` | C | Camp.set_collection_mode(WORK) — gatherer'ы возвращаются на сбор |
 | `gnome_alarm` | V | Camp.set_collection_mode(ALARM) — gatherer'ы бегут в палатки (request_return); defender'ы продолжают защищать |
 
@@ -1790,7 +1980,8 @@ func _refresh_visual() -> void:
 | Немедленная волна | `cheat_force_wave()` | Спавн POI-волны на активный лагерь, сброс `_wave_cd`. Без активного POI — лог-предупреждение, no-op |
 | +100 скелетов | `cheat_spawn_100()` | `_spawn_safe_uniform(100)` — uniform по safe-зонам, не трогает фазу/таймеры |
 | Stress 2000 скелетов | `cheat_stress_2000()` | `EnemySpawner.spawn_uniform(skeleton_scene, 2000)` — async-batched, для замеров перфоманса |
-| +100 каждого ресурса | `Camp.add_resource(type, 100)` × 4 типа | По 100 единиц wood/stone/iron/food на склад. Каждый эмитит `resources_changed`, HUD/Journal перерисовываются |
+| +100 каждого ресурса | `Camp.add_resource(type, 100)` × 5 типов | По 100 единиц wood/stone/iron/food/page на склад. Каждый эмитит `resources_changed`, HUD/Journal перерисовываются |
+| Продвинуть квест | `QuestProgress.advance()` | Завершает текущий активный квест (ранее был на клавише Q) |
 
 Курсор мыши — позиция руки. Системного захвата курсора нет, он движется свободно.
 
@@ -2294,6 +2485,27 @@ func _refresh_visual() -> void:
     - Магнит держит y = `_base_y` (точку рождения орба), не центр палатки — орб летит строго горизонтально, без ныряний.
     - `_activate_magnet` правит `monitoring` через `set_deferred` (нельзя менять во время in/out signal-фазы Godot, иначе ошибка-спам).
 
+45. **Магия: фаербол + огненный шквал, прокачка через страницы (2026-05-09…05-10)**.
+    Полностью построил магический слой как параллельный физическому Slam/Flick: новая категория `Hand.Category.MAGIC`, своя экономика (мана у Tower'а), свои подмодули (`HandSpellFireball`, `HandSpellFirestorm`), отдельный ресурс прокачки (`PAGE`), runtime-снаряд `Fireball` с двухфазной траекторией «ракета», статичная зона горения `BurnPatch` после взрыва, и общий VFX-helper `AoeVisual.spawn_explosion`. Все balance-параметры заклинаний централизованы в `SpellSystem.SPELL_CATALOG` (autoload), runtime-подмодули читают через `get_current_level_data(id)` — single source of truth.
+
+    **Sub-задачи / итерации в течение сессии:**
+    - **Унификация take_damage** (start of session): Item остался на `is_queued_for_deletion()` страже от двойного `destroyed.emit()` — было микрооконце между emit и реальным free. Перевёл на `_dying`-флаг как у остальных. ResourcePile упрощён (убрал дублирующий `is_queued_for_deletion` из условий, `_dying` единственный страж).
+    - **Q освобождён** (был на `complete_quest`/QuestProgress.advance debug-вход) — биндинг убран, продвижение квестов теперь через Журнал → Читы → «Продвинуть квест». Заодно добавил вкладку «Задания» в журнал, где `QuestActor` сам декларирует `quest_title` / `quest_description` экспортами; вкладка собирает их через `POI_GROUP`. На освободившийся Q повесил `caravan_halt_toggle`.
+    - **Halt-режим каравана** (Q): `Camp._caravan_halted` флаг, `_update_caravan_follow` ранний return при halted, R-deploy блокируется в halted. Гномов/defender'ов трогать не пришлось — IN_TENT копирует palatka.global_position (стоят), FOLLOWING_CARAVAN ловит slot за стоящими палатками. Дополнительно: `caravan_max_speed = 10` cap для caravan-follow — после halt-resume Tower уехал далеко, exp_decay давал «рывок» пропорционально дистанции. Capped exp_decay (`_exp_decay_capped`) клампит шаг на `max_speed × delta`. В обычной езде cap не активен.
+    - **Hand-категория** (`PHYSICAL` / `MAGIC`): equip 1/2 → PHYSICAL, equip 3/4 → MAGIC. ЛКМ-граб работает в любой категории; ПКМ — только в активной. `is_holding()` блокирует ПКМ-действия (рука занята). При смене категории на MAGIC удерживаемый предмет НЕ дропается (можно тащить ящик и кастовать), но активный Flick принудительно отпускается.
+    - **Tower mana / health сигналы**: `max_mana=100`, `mana_regen_rate=10/сек`, `try_consume_mana(amount)` атомарно. Сигналы `health_changed` / `mana_changed` + re-emit на EventBus. HUD добавил сверху по центру две полоски HP (red) / MP (blue) через `_build_tower_stats` программно (без правок .tscn).
+    - **ResourcePile.ResourceType.PAGE** (5-й тип): фиолетовый. Хранится в `Camp._resources` через общий `add_resource`. Чит «+100 каждого ресурса» расширен до 5 типов.
+    - **SpellSystem autoload** + каталог + API (`is_unlocked / get_level / get_current_level_data / can_upgrade_further / try_unlock / try_upgrade`). Списание ресурсов через `Camp.try_spend()`. Сигналы `spell_unlocked` / `spell_upgraded`. Сейчас в каталоге `&"fireball"` (4 уровня), `&"firestorm"` (3 уровня), `&"meteor"` (заглушка locked, 15 страниц).
+    - **Fireball — снаряд с двухфазной траекторией.** Phase.BOOST (~0.18с): vy=7, gravity=14, slight forward + random sway. Phase.HOMING: каждый кадр slerp velocity к target с `homing_turn_rate`, speed растёт линейно `homing_acceleration` до `homing_max_speed`. На переходе boost→homing — random initial drift-angle (±45°) от target — фаербол стартует «мимо», slerp плавно докручивает обратно. Характерный «крюк» в полёте, очень импактно. Sphere-капля (scale 1.19/0.595/0.595) ориентируется по horizontal velocity. GPUParticles3D-хвост (`local_coords=false`) автоматически отстаёт.
+    - **AoeVisual helper** (`scripts/aoe_visual.gd`, RefCounted): `spawn_explosion(root, pos, radius)` — комбо ядро-вспышка (sphere unshaded scale 0→radius×0.7→0 за 0.3с) + огненные partикли (60 шт, lifetime 0.5с, jet→orange→red→прозрачный) + дымные (40 шт, lifetime 1.2с, up bias, серый→прозрачный). Также есть `spawn_wave / spawn_dust / spawn_radius_indicator` (последний — solid translucent sphere = radius для дизайнерского feedback'а).
+    - **BurnPatch** — статичная зона горения после взрыва. Тикает damage каждые `tick_interval` сек по всем damageable в радиусе через `duration` секунд, потом `queue_free`. **Horizontal-only distance check** (`_xz_distance_sq` вместо 3D) — взрыв на ground, центр капсулы скелета на y≈0.9, 3D-distance отъедал ~0.9м эффективного radius'а. Та же правка применена в `Fireball._explode`.
+    - **Firestorm — шквал**: state-machine с `_shots_remaining` + `_next_shot_in` в `tick(delta)`. На press фиксирует target+параметры серии (избегаем mid-series-смены-балансов), списывает mana один раз, спавнит N фаерболов с задержкой `shot_interval`. Каждый шот — `_volley_target + jitter` в круге `scatter_radius` через `(angle, sqrt(randf()) × scatter_radius)` — uniform по площади. Реюзает `fireball.tscn` как снаряд.
+    - **Журнал → вкладка «Заклинания»**: рендерит карточки SpellSystem.SPELL_CATALOG. Locked → «открыть» с unlock_cost; Unlocked + есть апгрейды → «улучшить → ур. N+1»; Max → disabled. Stats текущего уровня показываются generic key:value (через `_format_stat`) — каталог расширяется без правок UI.
+    - **Балансовый принцип Fireball ≡ один шот Firestorm.** Дизайнер: «фаербол — это одиночный шквал». Параметры выровнены: damage=15, radius=2.5, mana_cost=12 (≈ Firestorm 50/4=12.5). Прокачка фаербола — равномерный конвейер DPS≈37; шквал — бёрст 4 шота за 0.45с с большим cooldown, DPS≈30 но пик выше.
+    - **Визуал**: пробовали два внешних шейдера с godotshaders.com (canvas-fireball, BOTW spatial-fireball). Canvas — спрайтовый, BOTW — требовал 8 текстур (sprite sheet анимации). Финальное решение — простой sphere-капля + GPUParticles3D-хвост без шейдеров: меньшее ядро (~0.5×0.26×0.26м), хвост из 40 partикл lifetime 0.3с, gravity (0,1.5,0) up — пламя восходит. Ориентация по horizontal velocity → хвост уходит точно за траекторией.
+
+    **Архитектурный итог:** магия теперь self-contained подсистема. Добавление нового заклинания = (1) запись в `SPELL_CATALOG`, (2) подмодуль `HandSpellXxx` (или реюз снаряда `Fireball`), (3) узел в `hand.tscn` под `SpellActions`, (4) action `equip_xxx` в project.godot, (5) enum значение в `HandSpell.SpellType` + диспатч в `_dispatch_cast`. Прокачка/мана/UI работают автоматически через SpellSystem-каталог.
+
 ### 7.3 Решённые ошибки
 
 | # | Ошибка | Причина | Исправление |
@@ -2360,6 +2572,10 @@ func _refresh_visual() -> void:
 | `enemy_destroyed` | `(enemy: Node3D)` | `Enemy._ready` re-emit |
 | `tower_damaged` | `(amount: float)` | `Tower._ready` re-emit |
 | `tower_destroyed` | — | `Tower._ready` re-emit |
+| `tower_health_changed` | `(current: float, maximum: float)` | `Tower._ready` re-emit. HUD рисует HP-bar |
+| `tower_mana_changed` | `(current: float, maximum: float)` | `Tower._ready` re-emit. HUD рисует MP-bar |
+| `spell_unlocked` | `(id: StringName)` | `SpellSystem.try_unlock`. Журнал-вкладка «Заклинания» перерисовывает |
+| `spell_upgraded` | `(id: StringName, level: int)` | `SpellSystem.try_upgrade` |
 | `hand_grabbed` | `(item: Node3D)` | `Hand._ready` re-emit |
 | `hand_released` | `(item: Node3D, velocity: Vector3)` | `Hand._ready` re-emit |
 | `hand_slammed` | `(position: Vector3, radius: float)` | `HandPhysicalActions._ready` re-emit |

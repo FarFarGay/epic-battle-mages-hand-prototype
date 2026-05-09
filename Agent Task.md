@@ -13,6 +13,403 @@
 
 # Заметки по работе с проектом (накапливаются)
 
+## Сессия 2026-05-10 — Финал магии: шквал, прокачка, страницы, баланс, SPEC
+
+### Контекст
+Продолжение сессии магии. Добавил Огненный шквал, систему прокачки заклинаний за страницы (новый ResourceType.PAGE), вкладку «Заклинания» в журнал, balance-tuning (radius, drift, mana, скорость), визуал взрыва без шейдеров (3 GPUParticles3D-слоя), фикс horizontal-only distance в AOE. Обновил SPEC.md под новое состояние, коммит и push.
+
+### Главные изменения
+- **`SpellSystem` autoload** (`scripts/spell_system.gd`): каталог `SPELL_CATALOG` (Dictionary id → name/description/levels[]/upgrade_costs[]), state `_unlocked`/`_levels`, API `is_unlocked / get_level / get_current_level_data / can_upgrade_further / try_unlock / try_upgrade`. Списание через `Camp.try_spend()`. Сигналы `EventBus.spell_unlocked` / `spell_upgraded`.
+- **`ResourcePile.ResourceType.PAGE`** — пятый тип, фиолетовый. Чит «+100 каждого ресурса» теперь даёт и страницы.
+- **`HandSpellFirestorm`** (`scripts/hand_spell_firestorm.gd`): state-machine серии, фиксирует параметры на press'е, списывает mana один раз. Реюзает fireball.tscn. Каждый шот таргетит точку в `scatter_radius` через uniform-по-площади jitter.
+- **Журнал → вкладка «Заклинания»** (`Tab.SPELLS`): generic карточки на каждое заклинание из каталога. Locked → unlock_cost + кнопка «открыть»; Unlocked + ↑ → upgrade_cost + кнопка «улучшить»; Max → disabled. Stats формируются автоматически из level-data.
+- **`HandSpell` координатор**: enum `SpellType { FIREBALL, FIRESTORM }`, action `equip_firestorm` (4), диспатч в `_dispatch_cast`.
+- **Visual взрыва — `AoeVisual.spawn_explosion`** (`scripts/aoe_visual.gd`): ядро-вспышка sphere unshaded (tween scale 0→radius×0.7→0) + GPUParticles3D-fire (60шт, 0.5с) + GPUParticles3D-smoke (40шт, 1.2с, up bias). Полностью процедурно, без внешних ассетов. Slam ещё на старом visual'е (с пулом) — оставил.
+- **Balance fixes**:
+  - Fireball/Firestorm radius существенно увеличен (были 3.0/1.5, стали 4.5/2.5 базовых, дальше прокачкой) — раньше «рядом со скелетом не попадало».
+  - **Horizontal-only distance check** в `Fireball._explode` и `BurnPatch._apply_tick`: 3D distance отъедал ~0.9м эффективного radius'а из-за высоты капсулы скелета.
+  - Firestorm @export `burn_radius` 0.8 → 2.0 (был критичный bug — burn-зона шквала не задевала никого).
+  - Дрейф фаербола усилен: `boost_drift_velocity` 1.5→2.8, `homing_drift_angle_deg` 28°→45°, `homing_turn_rate` 5.0→3.5 (длиннее «крюк»).
+  - **Fireball ≡ одиночный shot Firestorm'а** (дизайнерское: «фаербол это одиночный шквал»). damage=15, radius=2.5, mana_cost=12. DPS Fireball ≈ 37 ровно, Firestorm ≈ 30 со взрывом 60 в пик.
+- **Tower mana/health** — в HUD добавлены HP/MP полоски сверху по центру через `_build_tower_stats` программно. Сигналы `tower_health_changed` / `tower_mana_changed` через EventBus. `try_consume_mana` атомарно.
+
+### Главное архитектурно
+- **SpellSystem — single source of truth** для balance-параметров заклинаний. Подмодули руки (HandSpellFireball/Firestorm) читают через `get_current_level_data(id)` с fallback на @export'ы. Прокачка → следующие касты с новыми числами. Серии (Firestorm) фиксируют параметры на press'е чтобы избежать mid-volley-смены-балансов.
+- **Добавление нового заклинания** — 5 шагов: (1) запись в `SPELL_CATALOG`, (2) `HandSpellXxx`-подмодуль (или реюз снаряда), (3) узел в `hand.tscn` под `SpellActions`, (4) `equip_xxx` action в project.godot, (5) enum + диспатч в HandSpell. Прокачка/мана/UI бесплатно через каталог.
+- **AoeVisual helper** — единый VFX-язык для AOE-эффектов руки и магии. Slam пока на собственной (с пулом) реализации, но шаблон готов: при будущем refactor'е переедет на helper.
+- **Horizontal-only distance** для AOE на ground'е. AOE-зоны (Slam, Fireball-explode, BurnPatch) — это «пятна» на земле, distance к target'у нужен horizontal. 3D distance был unintentional «съедатель радиуса» из-за высоты капсулы. Применил везде.
+
+### Что отложено
+- **PAGE на карте**: дроп с врагов / награда за квесты — пока страниц нет в спавне, насыпаются только читом. Дизайнер решает позже.
+- **Slam на AoeVisual.spawn_wave/dust** — refactor отложен. Slam с пулом MeshInstance3D работает, не трогаем.
+- **`&"meteor"` заглушка** в каталоге — locked, 15 страниц. Дизайнер заполнит levels когда придёт время.
+- **HUD-индикатор activity active spell** — какое заклинание сейчас в руке. `Hand.active_category` + `HandSpell.equipped` публичны, gameplay_hud подцепит.
+
+## Сессия 2026-05-09 (5) — Магия: фаербол + категория ввода Hand
+
+### Контекст / запрос геймдизайнера
+HandSpell был заглушкой с TODO. Дизайнер: «теперь магические действия —
+фаербол. Выбрал, ПКМ, шар вылетает из башни по дуге, перед падением
+ускоряется, врезается в землю — урон по области».
+
+### Главные изменения
+- **`hand.gd`**: добавлен `enum Category { PHYSICAL, MAGIC }` и публичный
+  setter `set_active_category(category)` + сигнал `category_changed`.
+  Active category — кто из подмодулей реагирует на ЛКМ/ПКМ. Equip-биндинги
+  (1/2 — physical, 3 — magic) обрабатываются всегда и переключают
+  category. Остальной ввод гейтится по `active_category`.
+- **`hand_physical.gd`**:
+  - Equip 1/2 теперь дополнительно ставят `Hand.Category.PHYSICAL`.
+  - `_handle_input`: ранний return если `active_category != PHYSICAL`
+    (после обработки equip-биндингов).
+  - `_physics_process`: тоже ранний return (страховка для magnet/grab).
+  - `_update_candidate_highlight`: в MAGIC не подсвечивает кандидата.
+  - Подписка на `_hand.category_changed`: при уходе из PHYSICAL с
+    предметом в руке — принудительный `_release()`.
+- **`hand_spell.gd`** переписан в полноценный координатор по образцу
+  `hand_physical.gd`:
+  - `enum SpellType { FIREBALL }`.
+  - Action `equip_fireball` (3) ставит category = MAGIC.
+  - В MAGIC ПКМ диспатчит каст на активный подмодуль.
+  - Подмодуль `Fireball` (HandSpellFireball) — children в hand.tscn.
+- **`hand_spell_fireball.gd`** — новый: cooldown, on_press → spawn fireball
+  с расчётом параметров дуги. Launch — Tower (через `Tower.GROUP`),
+  fallback Hand. Target — `Hand.cursor_world_position()` минус
+  `hand_height` (поверхность земли под курсором, а не плоскость руки).
+- **`fireball.gd`** + **`fireball.tscn`** — снаряд: Node3D + MeshInstance3D
+  (sphere с emission) + OmniLight3D. Симуляция баллистики вручную в
+  `_physics_process` (без RigidBody — не нужны контакт-driven коллизии,
+  только AOE-shape-query на взрыве). После apex (vy<0) применяется
+  `g_dive` > `g_up` — визуально «ускоряется перед падением». При
+  достижении target.y или proximity — `_explode()`: AOE по `MASK_HAND_SLAM`
+  с per-target иммунитетом + FAR-fallback по `Skeleton.SKELETON_GROUP`
+  (паттерн скопирован из `HandPhysicalSlam._perform_slam`).
+- **`tower.gd`**: добавлена `const GROUP := &"tower"` + `add_to_group(GROUP)`
+  в `_ready` — для discovery без NodePath.
+- **`project.godot`**: action `equip_fireball` (keycode 51 = клавиша 3).
+- **`hand.tscn`**: добавлен `Fireball` под `SpellActions`, привязана
+  `fireball_scene` через ExtResource.
+
+### Главное архитектурно
+- **Категория — централизованное состояние Hand**, не state-машина в
+  каждом подмодуле. `Hand.active_category` единая точка истины: гейтят
+  оба координатора, equip-биндинги пишут. Альтернатива (флаг в каждом
+  координаторе) рассинхронилась бы при двустороннем переключении.
+- **Equip-биндинги слушаются всегда**, даже когда категория не «своя».
+  Игрок жмёт 3 в момент когда сейчас PHYSICAL — hand_spell ловит
+  `equip_fireball`, переключает category → MAGIC. Hand_physical
+  `_handle_input` начинается с проверки `equip_slam`/`equip_flick`
+  (тоже всегда) — и если игрок жмёт 1, переключение обратно работает
+  даже из MAGIC.
+- **Принудительный release при уходе из PHYSICAL**: если в руке висит
+  ящик, переключение на магию его роняет. Иначе странный визуал:
+  «магия с ящиком в руке».
+- **Параметры дуги выводятся явно** (не подобраны). Дано
+  `flight_time`, `peak_height_above_launch`, `ascent_fraction`, `target.y`,
+  `launch.y`. Считаем `g_up = 2×peak_h/t_apex²`, `vy_initial = g_up×t_apex`,
+  `g_dive = 2×(peak_h - dy)/t_descent²`. С дефолтами (1.6с, 6м, 0.55)
+  получается `g_dive ≈ 2.25 × g_up` — заметное ускорение, но не
+  телепорт. Дизайнер тюнит export'ы.
+- **Снаряд — обычный Node3D, не RigidBody**. Не нужна broad-phase
+  collision со скелетами в полёте — он бьёт только в AOE при взрыве.
+  Симуляция в `_physics_process` явная: `velocity.y -= g × delta`,
+  `position += velocity × delta`. Меньше physics-overhead на каждый
+  снаряд, проще тюнинг (нет artefactов от RigidBody-интегратора).
+- **AOE один в один как у Slam** — единый паттерн для рук-mode и
+  магии: тот же `MASK_HAND_SLAM`, тот же иммунити-чек через
+  `Layers.is_hand_immune`, тот же FAR-fallback. Это обещание спеки
+  «магия унифицирована с физикой через MASK_HAND_SLAM».
+
+### Дополнение — визуал взрыва (по запросу геймдизайнера)
+Изначально `Fireball._explode` только наносил AOE и делал `queue_free` —
+игрок не видел взрыва и не понимал габаритов. Геймдизайнер: «добавь
+сферу взрыва, чтобы видеть габариты, и разлёт как у удара рукой по земле».
+
+- **Новый helper `aoe_visual.gd`** (RefCounted, static methods) с тремя
+  визуалами:
+  - `spawn_wave(root, pos, radius, duration)` — distortion-сфера
+    (`slam_distortion_material.tres`) расширяется до `radius` за 0.45с
+    с затуханием intensity. Это «волна удара» — тот же визуал, что
+    делает Slam.
+  - `spawn_dust(root, pos)` — GPUParticles3D one_shot (`slam_dust_*`),
+    радиальный разлёт пыли. Тот же что у Slam.
+  - `spawn_radius_indicator(root, pos, radius, color, duration)` —
+    solid translucent оранжевая сфера фиксированного размера = radius,
+    fade-out за 0.4с. Чёткий «вижу габариты»-индикатор поверх волны.
+- `Fireball._explode` зовёт все три на `get_parent()` (effects_root).
+  Spawn'ятся ДО `queue_free()` снаряда — tween'ы привязаны к самим
+  визуалам (parent-сцене), не к фаерболу, переживут его уход.
+- Slam пока оставлен на собственной (с пулом) реализации — не ломаю
+  работающее. Когда придёт время refactor'а, Slam перейдёт на тот же
+  helper (нужно будет вернуть пул в helper для slam'а с cooldown=0.5с,
+  иначе ~2 instance/сек × create_overhead).
+
+**Урон/разлёт уже идентичен slam-паттерну** — `Pushable.try_push`
+с `knockback_force=35` (slam=30), `knockback_lift=0.5` (slam=0.4),
+`knockback_duration=0.4` (=slam). Если разлёт окажется слабее
+визуально — геймдизайнер подкрутит экспорты в инспекторе.
+
+### Что отложено
+- **Огненная окраска dust** — сейчас Fireball использует тот же серый
+  pyl, что и Slam (общий ресурс). Если потребуется — продублировать
+  process+material под огненный градиент (оранжевый→красный→чёрный
+  дым) и передать в `spawn_dust` как параметр.
+- **Визуальный trail** за фаерболом в полёте — кометный хвост из
+  GPUParticles3D. Сейчас только emission на mesh + OmniLight3D.
+- **Звук**: каст, полёт, взрыв. Вся проектная аудиосистема ещё не
+  построена (см. SPEC), фаербол подцепится когда появится.
+- **Mana / cost / global cooldown** для магии. Сейчас только локальный
+  `cooldown` (3.0с) на конкретное заклинание. Когда будет ресурс маны
+  или общая система — добавится в HandSpell._dispatch_cast.
+- **HUD-индикатор активной категории и заклинания**. Иконка магии
+  слева на HUD, рядом с Slam/Flick. `Hand.active_category` уже
+  публичный — gameplay_hud подцепит.
+- **Несколько заклинаний**: щит, телепорт, луч и т.п. Каркас готов —
+  add child под SpellActions, описать как HandSpellFireball, добавить
+  enum-значение и кнопку equip.
+
+## Сессия 2026-05-09 (4) — Capped speed для палаток в caravan-follow
+
+### Контекст / запрос геймдизайнера
+После halt-resume Tower может оказаться далеко (играл WASD пока караван
+стоял). Палатки догоняли через `_exp_decay`, который даёт шаг ∝ дистанции —
+визуально это «рывок-ускорение». Геймдизайнер: «пусть возвращается к башне
+не ускоряясь».
+
+### Главные изменения
+- **`camp.gd`**: новый `@export var caravan_max_speed: float = 10.0` (м/с).
+  Чуть выше Tower.move_speed=8.0 — палатка медленно догоняет, не
+  телепортируется и не выглядит ускоряющейся.
+- Новый static helper **`_exp_decay_capped(current, target, decay,
+  max_speed, delta)`**: тот же exp-шаг, но длина шага клампится на
+  `max_speed × delta`. На малых дистанциях (обычный follow в строю) cap
+  неактивен — поведение идентично `_exp_decay`. На больших разрывах
+  (после halt-resume, выкинутая палатка вне строя) шаг ограничен.
+- **`_update_caravan_follow`** теперь зовёт `_exp_decay_capped` для палаток.
+  `_update_deployed` оставлен на прежнем `_exp_decay` — там дистанция
+  малая (палатка ↔ точка кольца), cap не нужен.
+
+### Главное архитектурно
+- **Гномы-followers (DefenderGnome) trogаt не пришлось**: они уже capped
+  через lerp(`move_speed=1.6` → `caravan_sprint_speed=9.0`) по дистанции
+  до своего slot'а. Без exp-шага вообще — `velocity = dir × speed` с
+  капированной скоростью. Логика «не ускоряется» там уже была.
+- **Гномы IN_TENT** копируют palatka.global_position каждый physics-кадр —
+  получают скорость палатки автоматически. Если палатка теперь догоняет
+  с cap 10 м/с, гномы в ней едут с тем же cap.
+- **Cap > Tower.move_speed обязательно**, иначе палатки никогда не
+  догонят свободно едущую башню. 10 м/с (≈+25% к Tower) — компромисс:
+  заметно медленнее «телепорта» exp_decay при дистанции 30+м, но и не
+  выглядит «ползание».
+- **Проверка не-регрессии в обычной езде**: при part_gap=2.5м, follow_speed=4,
+  кадр 1/60с → exp-step ≈ 0.16м, cap-step = 10×(1/60) ≈ 0.167м. Шаги
+  почти равны → cap практически не активен в обычном follow, видимое
+  поведение не меняется. Активируется только когда дистанция>>part_gap
+  (после halt'а или free-placement).
+
+## Сессия 2026-05-09 (3) — Halt-режим каравана на Q
+
+### Контекст / запрос геймдизайнера
+После освобождения клавиши Q — Q становится «остановить караван».
+Семантика: Tower продолжает кататься по WASD, а караван (палатки+гномы)
+встаёт на текущей точке, **но это НЕ deploy** — палатки остаются в колонне,
+гномы не выходят из палаток, ничего не собирают. Повторное Q — снова
+привязать к Tower, караван продолжает следовать.
+
+### Главные изменения
+- **`project.godot`**: новый action `caravan_halt_toggle` (keycode 81 = Q).
+- **`camp.gd`**: добавлен `var _caravan_halted: bool = false` + публичные
+  `is_caravan_halted()` / `set_caravan_halted(value)` (с idempotency и
+  логированием перехода).
+- **`_handle_halt_input()`** (edge-trigger на Q) подключён в `_process`
+  рядом с `_handle_collection_input`. Только в `State.CARAVAN_FOLLOWING`
+  и не для `start_deployed=true` static-camp'ов (поселения).
+- **`_update_caravan_follow`**: ранний return при `_caravan_halted` — палатки
+  замораживаются на текущих позициях.
+- **`_handle_input`** в `CARAVAN_FOLLOWING` при halted сбрасывает `_deploy_hold`
+  и return — R-deploy блокируется. Игрок должен сначала Q (resume), потом
+  держать R на стационарной башне.
+- **`_start_deploy`**: страховочно сбрасывает `_caravan_halted = false` —
+  если каким-то образом deploy случится из halted (например через будущий
+  программный API), флаг не должен «зависнуть».
+
+### Главное архитектурно
+- **Halted — это флаг внутри CARAVAN_FOLLOWING, не отдельный state**. Можно
+  было сделать `State.HALTED`, но 90% логики идентично CARAVAN_FOLLOWING
+  (гномы IN_TENT, палатки vulnerable, агро-таргет — Tower+палатки).
+  Отличие — только early return в `_update_caravan_follow`. Флаг меньше
+  поверхности изменений и не требует дублирования FSM-кода.
+- **Гномов трогать не пришлось**. `IN_TENT` — `_physics_process` копирует
+  `_home_tent.global_position` каждый кадр; палатка стоит → гном стоит.
+  `FOLLOWING_CARAVAN` defender — `get_chain_target_for_follower` берёт
+  leader_pos = последняя палатка; палатка стоит → defender приходит к
+  своему slot'у за палаткой и затормаживает. Без правок.
+- **Halt блокирует deploy** (R игнорируется). Семантика: «стоп» и «лагерь»
+  это разные намерения, смешивать нельзя — иначе случайное удержание R
+  на остановленном караване развернуло бы лагерь без явного wish'а.
+  Если игрок хочет deploy на месте halt'а — Q (resume) → нажать R на
+  стационарной башне (которая если не двигается, тут же даст stationary).
+- **Tower полностью независим**. WASD у Tower продолжает работать. Halted —
+  именно «отвязать» Camp от Tower-цели; Tower это не знает и не должен.
+
+### Что отложено
+- **HUD-индикатор «караван остановлен»**. `Camp.is_caravan_halted()` уже
+  публичный — gameplay_hud может подцепить и нарисовать иконку. Не сделал,
+  дизайнер не просил.
+- **Сигнал `EventBus.camp_halted_changed(value: bool)`** — если кому-то ещё
+  понадобится реагировать (звук, UI). Сейчас слушателей нет, не добавлял.
+- **Авто-resume при определённых событиях** (например, скелет напал на
+  палатку → халт автоматически снимается). Дизайнер не просил, не делал.
+- **Halt в DEPLOYED** — сейчас игнорируется (палатки и так стоят). Если
+  потребуется «freeze гномов в кольце» — отдельная фича.
+
+## Сессия 2026-05-09 (2) — Вкладка «Задания» в Журнале + освобождение клавиши Q
+
+### Контекст / запрос геймдизайнера
+Q была занята debug-биндингом `complete_quest` (продвижение QuestProgress).
+Дизайнер хочет освободить клавишу под реальный геймплей и заодно подготовить
+**архитектуру** для постановки задач + их описания в журнале — сами квесты
+пока не пишем, но журнал должен уметь их показывать когда появятся.
+
+### Главные изменения
+- **`quest_actor.gd`**: добавил два экспорта в новой группе `Journal` —
+  `quest_title: String` и `quest_description: String` (multiline).
+  Источник истины задания = тот же узел что и POI/костёр/wave_schedule
+  (паттерн «сцена+скрипт=пакет»). Дизайнер заполняет в редакторе на каждом
+  QuestActor когда квест готов; журнал автоматически подхватит.
+- **`quest_progress.gd`**: убрал `_unhandled_input` (Q-биндинг). Добавил
+  `enum State { LOCKED, ACTIVE, COMPLETED }` и `get_state(order) -> int` —
+  одной функцией вместо трёх отдельных is_*-проверок (UI приятнее).
+  Добавил `get_actors_sorted() -> Array` — собирает все QuestActor по
+  группе `POI_GROUP`, сортирует по `quest_order`. Журнал использует.
+- **`project.godot`**: удалил action `complete_quest` целиком.
+- **`journal_panel.gd`**:
+  - Tab enum расширен: `UNITS, CAMP, PLAN, QUESTS, DEBUG`. Кнопка-вкладка
+    «Задания» между «План» и «Читы».
+  - `_build_quests_tab()` — без аргументов (Camp не нужен). Опрашивает
+    `QuestProgress.get_actors_sorted()`, рендерит карточку на каждый
+    QuestActor по его `get_state()`:
+    - LOCKED — заголовок «???», описание скрыто, серая «🔒 закрыто», dim 0.5.
+    - ACTIVE — заголовок жёлтый, описание яркое, «▶ активно».
+    - COMPLETED — заголовок зелёный, описание приглушено, «✓ выполнено», dim 0.75.
+    Если на сцене нет QuestActor'ов — «Нет заданий на сцене».
+    Если `quest_title`/`quest_description` пустые — fallback'и
+    «Задание #N» / «(описание ещё не задано)».
+  - В Tab.DEBUG — шестая кнопка «Продвинуть квест» (фоллбэк замены Q).
+    Дёргает `QuestProgress.advance()`.
+  - Подписка на `EventBus.quest_advanced` в `_ready` — реактивность,
+    при продвижении квеста (откуда угодно) вкладка перерисуется.
+  - `_refresh()`: QUESTS добавлена в `camp_optional` (как DEBUG) — работает
+    без Camp на сцене.
+
+### Главное архитектурно
+- **Источник истины квестов = QuestActor на сцене**, не каталог в коде.
+  Альтернатива (Dictionary в QuestProgress) была бы дублем: и в коде, и
+  в .tscn у QuestActor'ов уже есть `quest_order` + `actor_id` + POI-параметры.
+  Каталог в коде заставил бы ID-mapping через actor_id+order.
+- **Каталог автоматический через группу**. Журнал не знает наперёд сколько
+  QuestActor'ов на сцене — это масштабируется без правок UI: добавил
+  QuestActor в .tscn, заполнил title/description в инспекторе — оно появилось
+  в журнале на следующем open(). Тот же паттерн что у `_build_camp_tab`
+  через `Camp.CAMP_BUILDING_CATALOG` — только источник внешний (узлы),
+  а не внутренний (Dict).
+- **Реактивность через EventBus.quest_advanced**, не polling. Подписка в
+  `_ready`, перерисовка только если `_current_tab == QUESTS` (и журнал
+  открыт — `_refresh()` уже это проверяет). На любое продвижение прогресса
+  (программное, чит, будущий триггер) журнал отрабатывает без явных связей.
+- **State-enum в QuestProgress**: вместо трёх предикатов в UI-коде
+  (`is_completed/is_active/is_locked`) теперь один `get_state(order)` →
+  enum — match-блок в UI читается линейно. Старые предикаты оставлены
+  (используются в QuestActor._refresh_visual), не трогал.
+
+### Что отложено
+- **Триггеры завершения квеста** — пока сдача только через чит. Когда
+  появятся реальные триггеры (диалог завершён, монстр убит, предмет
+  принесён) — добавятся в `QuestActor` или внешних системах, дёргают
+  `QuestProgress.advance()`. Каркас готов.
+- **Награда за квест** — не делал. Когда появится: либо поле `quest_reward`
+  на QuestActor (Dictionary ресурсов / squad-XP / unlock апгрейда), либо
+  отдельный сигнал `EventBus.quest_completed(actor_id)` чтобы Camp/др.
+  системы сами реагировали (Camp.add_resource / grant_upgrade).
+- **SPEC.md упоминает Q как debug-вход** — обновить SPEC.md под новое
+  состояние (Q свободна, продвижение через Журнал → Читы). Отдельный
+  doc-коммит.
+- **Иконка / индикатор «есть активный квест»** в HUD/кнопке журнала —
+  бэйдж как у апгрейдов. Отложил до появления реальных квестов.
+
+## Сессия 2026-05-09 — Унификация идемпотентности take_damage + ревизия known-bugs
+
+### Контекст / запрос геймдизайнера
+Короткая баг-фикс сессия. Прошёл по списку «известных багов» из memory
+(Camp._update_deployed индексы, Skeleton рескан в WINDUP, Tower без queue_free,
+slam_mask=18 литералом). **Все четыре уже починены в предыдущих сессиях** —
+memory устарела, я её обновил. Из оставшегося code-smell-списка взял
+«идемпотентность take_damage» — Item полагался на `is_queued_for_deletion()`,
+остальные на `_dying`-флаг.
+
+### Главные изменения
+- **`item.gd`**: добавил `var _dying: bool = false`, `take_damage` теперь
+  guard'ит на `_dying or amount <= 0.0` и выставляет `_dying = true` ДО
+  `destroyed.emit()` + `queue_free()`. Закрывает микрооконце: между
+  `destroyed.emit` и `queue_free` слушатель сигнала мог в одном кадре
+  передёрнуть `take_damage(item)` — раньше второй раз сэмитил бы destroyed
+  (потому что `is_queued_for_deletion()` ставится только на _следующем_ idle
+  frame, не сразу при `queue_free()`), теперь — ранний return.
+- **`resource_pile.gd`**: убрал дублирующий `is_queued_for_deletion()` из
+  условий `take_damage` / `take_one` / `consume_all`. `_dying` уже надёжно
+  закрывает идемпотентность (выставляется до `queue_free`), а `queue_free`
+  извне на pile никто не делает (грепнул — единственное упоминание
+  `pile.is_queued_for_deletion()` в `camp.gd:1131` это валидность извне, не
+  внутреннее).
+
+### Главное архитектурно
+- **`is_queued_for_deletion()` — НЕ замена `_dying`**. Между `queue_free()`
+  и `is_queued_for_deletion()=true` есть синхронное окно (queue_free
+  планирует deletion на idle frame, флаг `is_queued_for_deletion` ставится
+  ВМЕСТЕ с queue_free, но destroyed.emit зовётся ДО queue_free —
+  значит между destroyed.emit и queue_free нет окна для re-entry. **НО**
+  слушатель destroyed может в обработчике сделать что угодно, в том числе
+  передёрнуть take_damage другого объекта, который потом синхронно нанесёт
+  damage обратно). `_dying`-флаг, выставленный СТРОГО ПЕРЕД destroyed.emit,
+  единственный надёжный re-entry guard. Запомнить.
+- **Унифицированный паттерн смерти Damageable** теперь во всех 6 классах:
+  Tower, CampPart, Enemy(→Skeleton), Gnome(→DefenderGnome), Item, ResourcePile.
+  Шаблон:
+  ```
+  var _dying: bool = false
+  func take_damage(amount: float) -> void:
+      if _dying or amount <= 0.0:
+          return
+      hp -= amount
+      damaged.emit(amount)
+      if hp <= 0.0:
+          _dying = true
+          destroyed.emit()
+          queue_free()  # или set_physics_process(false) для "стенки" Tower
+  ```
+
+### Known-bugs ревизия (всё закрыто в предыдущих сессиях)
+- ✅ `Camp._update_deployed` — `_on_part_destroyed` (camp.gd:1166) синхронно
+  режет `_parts` + `_deployed_targets` + переназначает гномов-сирот.
+- ✅ Skeleton рескан в WINDUP — `_windup_target` защёлкивается в
+  `_on_state_enter(WINDUP)` (skeleton.gd:382), `_perform_strike` бьёт его, не
+  свежий `_cached_target`.
+- ✅ Tower без queue_free на смерть — есть `_dying` +
+  `set_physics_process(false)` + `remove_from_group(Damageable.GROUP)`.
+  OctagonTurret/Hand на Tower не завязаны (грепнул).
+- ✅ `slam_mask=18` / `target_mask=16` / `cursor_raycast_mask=67` — все три
+  теперь через `Layers.MASK_*`.
+
+### Что отложено
+- **Gnome._random_point_around без clamp карты** (search_radius=300 при карте
+  ±195) — потенциальный wander за границы. Skeleton clamp есть.
+- **MountSlot.on_hand_released недетерминирован** при двух близких слотах —
+  выигрывает порядок подписки. Нужен явный приоритет по distance.
+- **find_flick_target дублирует _find_closest_grabbable** в hand_physical.gd —
+  копипаста, объединить в один helper.
+- **enemy_spawner.gd:88 мёртвый код** — `enemy.set_target(_target)` для
+  Skeleton no-op (override `get_active_target`).
+
 ## Сессия 2026-05-08 — Дебаг-читы из клавиатуры в JournalPanel → вкладка «Читы»
 
 ### Контекст / запрос геймдизайнера

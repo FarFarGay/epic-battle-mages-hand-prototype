@@ -3,15 +3,27 @@ extends Node3D
 ## Гигантская рука — координатор. Курсор мыши = позиция руки в мире.
 ## Действия делятся на две категории, каждая в собственном подузле:
 ##   - PhysicalActions (Node, hand_physical.gd) — физика: захват, бросок, магнит, подсветка.
-##   - SpellActions (Node, hand_spell.gd) — заклинания (заглушка).
+##   - SpellActions (Node, hand_spell.gd) — заклинания (Fireball и др).
+##
+## **Активная категория** (`active_category`) определяет, кто из подмодулей
+## реагирует на ввод. Переключается через equip-биндинги: клавиши 1/2
+## ставят PHYSICAL (Slam/Flick), 3 — MAGIC (Fireball). Сами equip-биндинги
+## слушают оба подмодуля — переключаются всегда. Остальной ввод (LMB grab,
+## RMB ability) обрабатывает только активная категория.
 ##
 ## Сама Hand отвечает только за:
 ##   - позиционирование под курсором с учётом высоты поверхности (raycast по физике),
 ##   - сглаженный трекинг скорости,
+##   - хранение active_category и нотификацию при смене,
 ##   - проксирование сигналов категорий наружу для совместимости.
+
+enum Category { PHYSICAL, MAGIC }
 
 signal grabbed(item: Node3D)
 signal released(item: Node3D, velocity: Vector3)
+## Категория сменилась. Слушают подмодули, чтобы корректно реагировать —
+## например, PhysicalActions роняет удержанный предмет на смене на MAGIC.
+signal category_changed(new_category: Category)
 
 const VELOCITY_HISTORY_FRAMES := 6
 const RAY_DISTANCE := 1000.0
@@ -36,6 +48,8 @@ var _velocity_history: Array[Vector3] = []
 var _previous_pos: Vector3
 var _initialized: bool = false
 var _last_surface_label: String = ""
+## Активная категория ввода. PHYSICAL по умолчанию (Slam-equip).
+var active_category: Category = Category.PHYSICAL
 # Если true — Hand не перетаскивает позицию под курсор. Используется
 # подмодулями, когда им нужно временно держать руку в собственном месте
 # (например, PhysicalActions при щелбане крутит руку вокруг цели).
@@ -74,6 +88,26 @@ func _process(delta: float) -> void:
 
 func lock_position(locked: bool) -> void:
 	_position_locked = locked
+
+
+## True если в руке сейчас есть удерживаемый предмет (grab активен).
+## Используется HandPhysicalActions и HandSpell как guard на ПКМ —
+## пока что-то держим, никакие активные действия (Slam/Flick/Fireball)
+## не триггерятся.
+func is_holding() -> bool:
+	return physical_actions != null and physical_actions.is_holding()
+
+
+## Переключает активную категорию ввода. Идемпотентно. Эмитит category_changed,
+## на который PhysicalActions подписан (роняет удержанный предмет при уходе
+## из PHYSICAL — иначе игрок переключился на магию, а в руке торчит ящик).
+func set_active_category(category: Category) -> void:
+	if active_category == category:
+		return
+	active_category = category
+	if debug_log and LogConfig.master_enabled:
+		print("[Hand] категория: %s" % Category.keys()[category])
+	category_changed.emit(category)
 
 
 func cursor_world_position() -> Vector3:

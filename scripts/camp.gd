@@ -162,6 +162,15 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 @export var gnome_chain_jitter: float = 0.7
 ## За этим порогом ведущая палатка перестаёт двигаться (башня «ушла далеко»).
 @export var follow_max_distance: float = 30.0
+## Cap на скорость палатки в caravan-follow (м/с). Без cap'а exp_decay при
+## большой дистанции (Tower ушёл далеко: после halt-resume или free-placement
+## вне строя) даёт пропорциональный дистанции «рывок» — палатка визуально
+## ускоряется. Cap делает движение равномерным: в обычных кадрах exp-step
+## ≪ max_step (палатка близко к цели), cap не активируется; на больших
+## разрывах step клампится — палатка догоняет с постоянной скоростью.
+## Дефолт 10 м/с — чуть выше Tower.move_speed=8, чтобы догонять, но не
+## телепортироваться.
+@export var caravan_max_speed: float = 10.0
 ## Радиус «зоны каравана» — куда игрок может рукой вернуть палатку в строй.
 ## В CARAVAN_FOLLOWING зона измеряется от башни, в DEPLOYED — от _deploy_anchor.
 ## Если игрок аккуратно (тихий release) поставил палатку В этой зоне →
@@ -290,6 +299,16 @@ var _anchor_drop_zone: Area3D = null
 ## Текущий режим сбора (см. CollectionMode). Меняется через set_collection_mode
 ## (хоткеи C / V в _handle_input, или из API). HUD рисует индикатор.
 var _collection_mode: CollectionMode = CollectionMode.WORK
+
+## Караван «остановлен на месте» в State.CARAVAN_FOLLOWING. Палатки не
+## двигаются за башней (`_update_caravan_follow` ранний return), но и не
+## разворачиваются — гномы остаются IN_TENT. Tower продолжает кататься
+## независимо. Toggle через Q (`caravan_halt_toggle`) или
+## `set_caravan_halted(value)`. Имеет смысл только в CARAVAN_FOLLOWING —
+## в DEPLOYED палатки и так стоят, в PACKING_RETURNING ждут гномов.
+## Сбрасывается при _start_deploy (если каким-то образом игрок развернёт),
+## чтобы не остаться в halted после возврата в caravan.
+var _caravan_halted: bool = false
 ## Нормализованные веса приоритета сбора по типам, sum=1.0. Дефолт ставится
 ## в _init_collection_priority из @export'ов. Меняется через set_collection_priority
 ## (Journal-вкладка «План»). Гном читает get_collection_priority_weight.
@@ -700,6 +719,22 @@ func defender_count() -> int:
 		if g is DefenderGnome:
 			n += 1
 	return n
+
+
+## Публичный геттер halted-флага. HUD/Journal могут читать для индикатора.
+func is_caravan_halted() -> bool:
+	return _caravan_halted
+
+
+## Публичный setter — переключает «остановку» каравана. Безопасен в любом
+## состоянии: вне CARAVAN_FOLLOWING вызов no-op (флаг можно ставить в true,
+## но `_update_caravan_follow` для других стейтов и не вызывается). Идемпотентен.
+func set_caravan_halted(value: bool) -> void:
+	if _caravan_halted == value:
+		return
+	_caravan_halted = value
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] караван %s" % ("остановлен" if value else "снова в пути"))
 
 
 ## Считает живые палатки. «Уровень лагеря» в HUD = это число.
@@ -1270,6 +1305,7 @@ func _set_tower_aggro(active: bool) -> void:
 func _process(delta: float) -> void:
 	_handle_input(delta)
 	_handle_collection_input()
+	_handle_halt_input()
 	match _state:
 		State.CARAVAN_FOLLOWING:
 			_update_caravan_follow(delta)
@@ -1356,6 +1392,20 @@ func _handle_collection_input() -> void:
 		set_collection_mode(CollectionMode.ALARM)
 
 
+## Edge-trigger Q — переключает halted-флаг. Только в CARAVAN_FOLLOWING:
+## в DEPLOYED палатки и так стоят, в PACKING_RETURNING — ждём гномов
+## (вмешиваться нельзя, рассинхронит таймер pack'а). Static-camp'ы
+## (start_deployed=true) тоже игнорируют — они никогда не в caravan.
+func _handle_halt_input() -> void:
+	if not Input.is_action_just_pressed("caravan_halt_toggle"):
+		return
+	if start_deployed:
+		return
+	if _state != State.CARAVAN_FOLLOWING:
+		return
+	set_caravan_halted(not _caravan_halted)
+
+
 func _handle_input(delta: float) -> void:
 	# Static-camp (start_deployed=true) не реагирует на R — он не сворачивается.
 	# Поселения на POI остаются развёрнутыми всю игру.
@@ -1371,6 +1421,17 @@ func _handle_input(delta: float) -> void:
 
 	match _state:
 		State.CARAVAN_FOLLOWING:
+			# Halted: deploy заблокирован. Игрок должен сначала возобновить
+			# караван (Q), потом удерживать R на стационарной башне для
+			# развёртки. Иначе семантика «стоп» смешалась бы с deploy и
+			# случайное удержание R на остановленном караване разворачивало
+			# бы лагерь без явного намерения.
+			if _caravan_halted:
+				if _was_holding_stationary and debug_log and LogConfig.master_enabled:
+					print("[Camp] отсчёт прерван (караван остановлен)")
+				_deploy_hold = 0.0
+				_was_holding_stationary = false
+				return
 			# Стационарность башни — необходимое условие. POI-gate (если
 			# require_poi=true) — второе. Оба должны быть true, чтобы
 			# счётчик отсчёта развёртки тикал.
@@ -1462,6 +1523,11 @@ func _find_poi_for_deploy() -> Node3D:
 
 func _start_deploy() -> void:
 	_state = State.DEPLOYED
+	# Страховка: halted имеет смысл только в CARAVAN_FOLLOWING. Если каким-то
+	# образом deploy случился (например, через будущий программный API), флаг
+	# должен обнулиться — иначе после _finalize_pack караван останется халтнут
+	# без явного намерения игрока.
+	_caravan_halted = false
 	# Anchor: позиция POI (если рядом с костром) > позиция башни > собственная.
 	# POI-snap даёт визуально центрированный лагерь на костре, не «рядом с ним
 	# со смещением, где башня случайно остановилась».
@@ -1579,6 +1645,10 @@ func _set_parts_vulnerable(value: bool) -> void:
 func _update_caravan_follow(delta: float) -> void:
 	if _tower == null or _parts.is_empty():
 		return
+	# Halted: палатки замораживаются на текущих позициях, башня едет дальше.
+	# Гномы IN_TENT в каравне и так не двигаются — не нужно их трогать.
+	if _caravan_halted:
+		return
 
 	# Виртуальная цепочка: только палатки, которыми Camp реально может управлять.
 	# Skip'аются: torn_off (живут по физике), in_hand (Hand двигает), вне строя
@@ -1629,7 +1699,7 @@ func _update_caravan_follow(delta: float) -> void:
 		# Ground'а, но математически некорректно).
 		var part_offset_y: float = (part as CampPart).floor_offset_y() if part is CampPart else 0.0
 		target_pos.y = _ground_y_at(part, target_pos) + part_offset_y
-		part.global_position = _exp_decay(part.global_position, target_pos, follow_speed, delta)
+		part.global_position = _exp_decay_capped(part.global_position, target_pos, follow_speed, caravan_max_speed, delta)
 
 
 func _update_deployed(delta: float) -> void:
@@ -1652,6 +1722,19 @@ func _update_deployed(delta: float) -> void:
 ## Покадрово стабильное смягчение к target. decay — log-rate (чем больше, тем быстрее).
 static func _exp_decay(current: Vector3, target: Vector3, decay: float, delta: float) -> Vector3:
 	return target + (current - target) * exp(-decay * delta)
+
+
+## Capped exp_decay: тот же exp-шаг, но длина шага ограничена max_speed × delta.
+## На малых дистанциях (обычный follow в строю) cap неактивен — поведение
+## идентично _exp_decay. На больших разрывах (после halt-resume, выкинутая
+## палатка) шаг ограничен — палатка догоняет равномерно, без визуального
+## ускорения пропорционально дистанции.
+static func _exp_decay_capped(current: Vector3, target: Vector3, decay: float, max_speed: float, delta: float) -> Vector3:
+	var step := (target - current) * (1.0 - exp(-decay * delta))
+	var max_step: float = max_speed * delta
+	if step.length_squared() > max_step * max_step:
+		step = step.normalized() * max_step
+	return current + step
 
 
 ## Y под точкой target_pos через raycast по слою TERRAIN. Если raycast пуст —
