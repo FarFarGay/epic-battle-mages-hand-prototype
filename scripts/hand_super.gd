@@ -33,15 +33,29 @@ enum State { READY, AIMING_PATTERN, AIMING_TARGET, CASTING }
 @export_group("")
 
 @export_group("Carrier (носитель из башни)")
-## Время полёта carrier'а от tower'а до точки разделения.
-@export var carrier_flight_time: float = 0.9
 ## Высота burst-точки НАД _aim_target. Carrier поднимается над землёй,
 ## разделяется тут на маленькие фаерболы, те уже сами падают вниз.
 @export var carrier_burst_height: float = 12.0
-## Гравитация carrier'а (для расчёта параболы). Больше = плоская дуга.
-@export var carrier_gravity: float = 12.0
 ## Вертикальный offset launch'а от Tower'а — как у Fireball'а.
 @export var carrier_launch_offset_y: float = 3.0
+
+## Carrier boost-фаза («оттяг» из башни — короткий вертикальный взлёт +
+## slight forward + sway). Те же параметры что у Fireball, чуть жирнее
+## по vertical-velocity для драматичности.
+@export var carrier_boost_duration: float = 0.22
+@export var carrier_boost_velocity_up: float = 9.0
+@export var carrier_boost_velocity_forward: float = 1.5
+@export var carrier_boost_gravity: float = 12.0
+@export var carrier_boost_drift_velocity: float = 3.5
+
+## Carrier homing-фаза (полёт в burst_pos с drift'ом — «как ракета
+## шатается, потом разрывается»). Скорости меньше чем у обычного
+## fireball'а — carrier тяжёлый, виден дольше.
+@export var carrier_homing_initial_speed: float = 6.0
+@export var carrier_homing_acceleration: float = 30.0
+@export var carrier_homing_max_speed: float = 26.0
+@export_range(0.0, 80.0) var carrier_homing_drift_angle_deg: float = 35.0
+@export_range(1.0, 30.0) var carrier_homing_turn_rate: float = 2.5
 @export_group("")
 
 @export_group("Payload (маленькие снаряды после разделения)")
@@ -307,7 +321,20 @@ func _spawn_carrier(target_pos: Vector3) -> void:
 	if carrier == null:
 		push_error("[Hand:Super] carrier_scene не инстанцируется как SuperCarrier")
 		return
-	carrier.setup(launch_pos, burst_pos, carrier_flight_time, carrier_gravity)
+	carrier.setup(
+		launch_pos,
+		burst_pos,
+		carrier_boost_duration,
+		carrier_boost_velocity_up,
+		carrier_boost_velocity_forward,
+		carrier_boost_gravity,
+		carrier_boost_drift_velocity,
+		carrier_homing_initial_speed,
+		carrier_homing_acceleration,
+		carrier_homing_max_speed,
+		carrier_homing_drift_angle_deg,
+		carrier_homing_turn_rate,
+	)
 	_effects_root.add_child(carrier)
 	# bind ground-target — на burst'е знать, куда payload'ы должны падать.
 	carrier.burst.connect(_on_carrier_burst.bind(target_pos))
