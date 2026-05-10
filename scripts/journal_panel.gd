@@ -14,7 +14,7 @@ extends CanvasLayer
 
 const CAMP_GROUP := &"camp"
 
-enum Tab { UNITS, CAMP, PLAN, SPELLS, QUESTS, DEBUG }
+enum Tab { UNITS, CAMP, PLAN, SPELLS, ARMY, QUESTS, DEBUG }
 
 ## Preset'ы плана сбора. Главное число — приоритет «фокусного» типа (55), у
 ## остальных 15 — нормализация в Camp.set_collection_priority даст 0.55/0.15/0.15/0.15.
@@ -82,6 +82,7 @@ var _tab_units_btn: Button
 var _tab_camp_btn: Button
 var _tab_plan_btn: Button
 var _tab_spells_btn: Button
+var _tab_army_btn: Button
 var _tab_quests_btn: Button
 var _tab_debug_btn: Button
 var _content: VBoxContainer
@@ -213,6 +214,10 @@ func _build_tabs(parent: VBoxContainer) -> void:
 	_tab_spells_btn.pressed.connect(_select_tab.bind(Tab.SPELLS))
 	row.add_child(_tab_spells_btn)
 
+	_tab_army_btn = _make_tab_button("Армия")
+	_tab_army_btn.pressed.connect(_select_tab.bind(Tab.ARMY))
+	row.add_child(_tab_army_btn)
+
 	_tab_quests_btn = _make_tab_button("Задания")
 	_tab_quests_btn.pressed.connect(_select_tab.bind(Tab.QUESTS))
 	row.add_child(_tab_quests_btn)
@@ -250,6 +255,7 @@ func _refresh() -> void:
 	_tab_camp_btn.button_pressed = (_current_tab == Tab.CAMP)
 	_tab_plan_btn.button_pressed = (_current_tab == Tab.PLAN)
 	_tab_spells_btn.button_pressed = (_current_tab == Tab.SPELLS)
+	_tab_army_btn.button_pressed = (_current_tab == Tab.ARMY)
 	_tab_quests_btn.button_pressed = (_current_tab == Tab.QUESTS)
 	_tab_debug_btn.button_pressed = (_current_tab == Tab.DEBUG)
 	_clear_content()
@@ -272,6 +278,8 @@ func _refresh() -> void:
 			_build_plan_tab(camp)
 		Tab.SPELLS:
 			_build_spells_tab(camp)
+		Tab.ARMY:
+			_build_army_tab(camp)
 		Tab.QUESTS:
 			_build_quests_tab()
 		Tab.DEBUG:
@@ -560,7 +568,8 @@ func _on_upgrade_granted(_id: StringName) -> void:
 
 func _on_resources_changed(_type: int, _amount: int) -> void:
 	# Юнит-вкладка от ресурсов не зависит — рефрешим только активную.
-	if _current_tab == Tab.CAMP:
+	# Армия зависит (cost-row + can_recruit disabled-state).
+	if _current_tab == Tab.CAMP or _current_tab == Tab.ARMY:
 		_refresh()
 
 
@@ -867,6 +876,108 @@ func _on_upgrade_spell_pressed(id: StringName) -> void:
 func _on_spell_changed(_id_or_other: Variant = null, _level: int = 0) -> void:
 	if _current_tab == Tab.SPELLS:
 		_refresh()
+
+
+## Вкладка «Армия»: список типов солдат из SoldierSystem.SOLDIER_CATALOG,
+## текущая численность по типам, кнопка «Призвать» (Camp.recruit_soldier).
+##
+## Призыв = конвертация одного gatherer'а в soldier'а. Кнопка disabled если
+## не хватает gatherer'ов или ресурсов (Camp.can_recruit). Реактивно через
+## EventBus.camp_buildings_changed (его эмитит recruit_soldier).
+func _build_army_tab(camp: Node) -> void:
+	if camp == null:
+		_header_label.text = "армия"
+		return
+	_header_label.text = "армия — gatherer'ов: %d, солдат: %d" % [camp.gatherer_count(), camp.soldier_count()]
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_content.add_child(scroll)
+
+	var list := VBoxContainer.new()
+	list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list.add_theme_constant_override("separation", 8)
+	scroll.add_child(list)
+
+	for id in SoldierSystem.SOLDIER_CATALOG.keys():
+		list.add_child(_build_soldier_card(camp, id))
+
+
+func _build_soldier_card(camp: Node, id: StringName) -> Control:
+	var data: Dictionary = SoldierSystem.get_soldier_data(id)
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var info := VBoxContainer.new()
+	info.add_theme_constant_override("separation", 6)
+	card.add_child(info)
+
+	# Заголовок: цветная точка + имя + текущая численность
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 8)
+	info.add_child(header)
+	var swatch := ColorRect.new()
+	swatch.custom_minimum_size = Vector2(14, 14)
+	swatch.color = data.get("icon_color", Color.WHITE)
+	header.add_child(swatch)
+	var title := Label.new()
+	var current_count: int = camp.soldier_count(id)
+	title.text = "%s — %d" % [data.get("name", str(id)), current_count]
+	title.add_theme_font_size_override("font_size", 16)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+
+	# Описание
+	var desc := Label.new()
+	desc.text = data.get("description", "")
+	desc.add_theme_color_override("font_color", Color(0.85, 0.85, 0.95, 0.85))
+	desc.add_theme_font_size_override("font_size", 12)
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.add_child(desc)
+
+	# Stats-row (generic key:value, как у Spell)
+	var stats: Dictionary = data.get("stats", {})
+	if not stats.is_empty():
+		info.add_child(_build_spell_stats_row(stats))
+
+	# Cost-row (если есть)
+	var cost: Dictionary = data.get("cost", {})
+	if not cost.is_empty():
+		info.add_child(_build_cost_row(camp, cost))
+
+	# Кнопка «Призвать» — disabled если can_recruit == false
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(160, 36)
+	btn.add_theme_font_size_override("font_size", 13)
+	var can_recruit: bool = camp.can_recruit(id)
+	if can_recruit:
+		btn.text = "Призвать"
+		_wire_action_button(btn, _on_recruit_pressed.bind(id))
+	else:
+		# Расшифруем причину для UX
+		var has_gatherer: bool = camp.gatherer_count() > 0
+		var has_resources: bool = camp.can_afford(cost)
+		if not has_gatherer:
+			btn.text = "нет свободных гномов"
+		elif not has_resources:
+			btn.text = "не хватает ресурсов"
+		else:
+			btn.text = "недоступно"
+		btn.disabled = true
+		_dim(card, 0.7)
+	info.add_child(btn)
+
+	return card
+
+
+func _on_recruit_pressed(id: StringName) -> void:
+	var camp := _resolve_camp()
+	if camp == null:
+		return
+	camp.recruit_soldier(id)
+	# camp_buildings_changed придёт от Camp, _on_buildings_changed → _refresh.
 
 
 ## Вкладка «Задания»: список всех QuestActor'ов со сцены, отсортированный по

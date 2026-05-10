@@ -720,11 +720,16 @@ func _rebuild_deployed_targets() -> void:
 
 ## Считает живых гномов-собирателей (исключая защитников). Используется HUD'ом.
 func gatherer_count() -> int:
+	# Gatherer = гном НЕ в DEFENDER_GROUP и НЕ в SOLDIER_GROUP. Defender'ы
+	# привязаны к палатке и не собирают; soldier'ы мобилизованы через recruit
+	# и тоже не собирают.
 	var n := 0
 	for g in _gnomes:
 		if not is_instance_valid(g):
 			continue
-		if g is DefenderGnome:
+		if g.is_in_group(DefenderGnome.DEFENDER_GROUP):
+			continue
+		if g.is_in_group(SoldierGnome.SOLDIER_GROUP):
 			continue
 		n += 1
 	return n
@@ -736,8 +741,26 @@ func defender_count() -> int:
 	for g in _gnomes:
 		if not is_instance_valid(g):
 			continue
-		if g is DefenderGnome:
+		if g.is_in_group(DefenderGnome.DEFENDER_GROUP):
 			n += 1
+	return n
+
+
+## Считает живых солдат заданного типа (или всех если type_filter == &"").
+## Используется UI журнала (вкладка «Армия») и squad-системой.
+func soldier_count(type_filter: StringName = &"") -> int:
+	var n := 0
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		if not g.is_in_group(SoldierGnome.SOLDIER_GROUP):
+			continue
+		if type_filter == &"":
+			n += 1
+		else:
+			var s := g as SoldierGnome
+			if s != null and s.soldier_type == type_filter:
+				n += 1
 	return n
 
 
@@ -881,6 +904,91 @@ func available_upgrades() -> Array[StringName]:
 		if not has_upgrade(id):
 			result.append(id)
 	return result
+
+
+## --- Soldiers (мобилизация gatherer'ов) ---
+
+## Найти gatherer'а для мобилизации. Предпочитает IN_TENT (отдыхающего —
+## не отрывает таскающего груз), fallback — любой gatherer. Возвращает null
+## если все гномы — defender'ы или уже soldier'ы.
+func _find_idle_gatherer() -> Gnome:
+	var fallback: Gnome = null
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		if g.is_in_group(DefenderGnome.DEFENDER_GROUP):
+			continue
+		if g.is_in_group(SoldierGnome.SOLDIER_GROUP):
+			continue
+		if fallback == null:
+			fallback = g
+		if g._state == Gnome.State.IN_TENT:
+			return g  # IN_TENT приоритетнее — не отрываем рабочего
+	return fallback
+
+
+## True если игрок может прямо сейчас призвать солдата заданного типа:
+## - id есть в SoldierSystem.SOLDIER_CATALOG
+## - в лагере есть свободный gatherer
+## - на складе хватает ресурсов на cost
+## Используется UI журнала для disabled-состояния кнопки.
+func can_recruit(soldier_type: StringName) -> bool:
+	if SoldierSystem == null:
+		return false
+	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
+	if data.is_empty():
+		return false
+	if not can_afford(data.get("cost", {})):
+		return false
+	return _find_idle_gatherer() != null
+
+
+## Призвать солдата заданного типа. Конвертирует одного gatherer'а в soldier:
+## списывает cost, спавнит сцену из каталога в позиции gatherer'а, удаляет
+## gatherer'а из _gnomes. Возвращает SoldierGnome или null.
+func recruit_soldier(soldier_type: StringName) -> SoldierGnome:
+	if SoldierSystem == null:
+		return null
+	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
+	if data.is_empty():
+		push_warning("Camp.recruit_soldier: неизвестный тип %s" % soldier_type)
+		return null
+	var cost: Dictionary = data.get("cost", {})
+	if not can_afford(cost):
+		return null
+	var gatherer: Gnome = _find_idle_gatherer()
+	if gatherer == null:
+		return null
+	var scene: PackedScene = data.get("scene", null)
+	if scene == null:
+		push_error("Camp.recruit_soldier: scene не задан в каталоге для %s" % soldier_type)
+		return null
+	# Списываем ресурсы атомарно. После try_spend откатиться нельзя — но если
+	# дошли сюда, все проверки выше прошли.
+	if not try_spend(cost):
+		return null
+
+	var soldier := scene.instantiate() as SoldierGnome
+	if soldier == null:
+		push_error("Camp.recruit_soldier: scene не инстанцируется как SoldierGnome")
+		# try_spend уже списал — компенсируем (вернём ресурсы).
+		for type in cost:
+			add_resource(type, int(cost[type]))
+		return null
+	add_child(soldier)
+	soldier.setup_soldier(soldier_type, data.get("stats", {}), self, gatherer.global_position)
+
+	# Удаляем gatherer'а — он стал солдатом. _gnomes сразу же erase, потом
+	# добавляем soldier'а как нового жителя кампа (counts читаются по группам).
+	_gnomes.erase(gatherer)
+	gatherer.queue_free()
+	_gnomes.append(soldier)
+
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] призван %s, gatherer'ов: %d, солдат: %d" % [soldier_type, gatherer_count(), soldier_count()])
+	# Перерисовка UI журнала / HUD'а (счётчики gatherer/defender/soldier).
+	EventBus.camp_buildings_changed.emit()
+	return soldier
 
 
 ## --- Super charge (великая сила) ---
