@@ -157,8 +157,10 @@ func _start_volley() -> void:
 	_series_scatter_radius = float(lvl.get("scatter_radius", scatter_radius))
 
 	var tower := _find_tower()
-	if tower != null and tower is Tower:
-		if not (tower as Tower).try_consume_mana(p_mana_cost):
+	# Контракт: мана-провайдером может быть всё, у чего есть `try_consume_mana`
+	# (сейчас это Tower; не лочим тип на класс).
+	if tower != null and tower.has_method(&"try_consume_mana"):
+		if not tower.try_consume_mana(p_mana_cost):
 			if debug_log and LogConfig.master_enabled:
 				print("[Hand:Spell:Firestorm] не хватает маны (нужно %.0f)" % p_mana_cost)
 			return

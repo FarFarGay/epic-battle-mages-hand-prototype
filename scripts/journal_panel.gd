@@ -373,7 +373,7 @@ func _build_unit_card(camp: Node, id: StringName, pending: int, squad_level: int
 		btn.disabled = true
 	else:
 		btn.text = "выбрать"
-		btn.pressed.connect(_on_unit_upgrade_pressed.bind(id))
+		_wire_action_button(btn, _on_unit_upgrade_pressed.bind(id))
 
 	return card
 
@@ -381,6 +381,21 @@ func _build_unit_card(camp: Node, id: StringName, pending: int, squad_level: int
 ## Притеняет недоступную карточку — слегка прозрачная, легче читать активные.
 func _dim(node: Control, alpha: float) -> void:
 	node.modulate = Color(1, 1, 1, alpha)
+
+
+## Привязка кнопки к действию с защитой от дребезга. Двойной клик до
+## перерисовки UI мог бы списать ресурс/level дважды (Camp.try_build,
+## Camp.grant_upgrade, SpellSystem.try_unlock/try_upgrade проверяют ресурсы
+## внутри, но между двумя кликами в одном кадре первый уже списал —
+## второй увидит «не хватает» и тихо откажет, а если хватит — спишет ещё
+## раз). Disable'им сразу: следующий _refresh пересоздаст карточку.
+func _wire_action_button(btn: Button, callback: Callable) -> void:
+	btn.pressed.connect(func() -> void:
+		if btn.disabled:
+			return
+		btn.disabled = true
+		callback.call()
+	)
 
 
 func _on_unit_upgrade_pressed(id: StringName) -> void:
@@ -473,7 +488,7 @@ func _build_building_card(camp: Node, id: StringName) -> PanelContainer:
 		btn.disabled = true
 	else:
 		btn.text = "построить"
-		btn.pressed.connect(_on_build_pressed.bind(id))
+		_wire_action_button(btn, _on_build_pressed.bind(id))
 
 	return card
 
@@ -803,14 +818,14 @@ func _build_spell_card(camp: Node, id: StringName) -> PanelContainer:
 			btn.disabled = true
 			_dim(card, 0.6)
 		else:
-			btn.pressed.connect(_on_unlock_spell_pressed.bind(id))
+			_wire_action_button(btn, _on_unlock_spell_pressed.bind(id))
 	elif SpellSystem.can_upgrade_further(id):
 		var affordable: bool = camp != null and camp.can_afford(cost)
 		btn.text = "улучшить → ур. %d" % (current_level + 1)
 		if not affordable:
 			btn.disabled = true
 		else:
-			btn.pressed.connect(_on_upgrade_spell_pressed.bind(id))
+			_wire_action_button(btn, _on_upgrade_spell_pressed.bind(id))
 	else:
 		btn.text = "макс. уровень"
 		btn.disabled = true

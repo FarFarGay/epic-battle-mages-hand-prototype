@@ -176,14 +176,23 @@ func _perform_cast() -> void:
 	var p_burn_radius: float = float(lvl.get("burn_radius", burn_radius))
 	var p_burn_duration: float = float(lvl.get("burn_duration", burn_duration))
 
+	# Сначала инстанцируем снаряд: если сцена битая или OOM — выйдем,
+	# не списав ману и не запустив cooldown.
+	var fireball := fireball_scene.instantiate() as Fireball
+	if fireball == null:
+		push_error("[Hand:Spell:Fireball] fireball_scene не инстанцируется как Fireball")
+		return
+
 	var tower := _find_tower()
 	# Mana-gate: если есть Tower и в нём не хватает маны — отказ. Cooldown
 	# не запускается (попытка не «съедается»). Если Tower'а нет (dev-сцена) —
-	# каст всё равно проходит без mana-чека.
-	if tower != null and tower is Tower:
-		if not (tower as Tower).try_consume_mana(p_mana_cost):
+	# каст всё равно проходит без mana-чека. Контракт по `try_consume_mana`
+	# вместо `is Tower` — потенциально мана-провайдером может быть и не Tower.
+	if tower != null and tower.has_method(&"try_consume_mana"):
+		if not tower.try_consume_mana(p_mana_cost):
 			if debug_log and LogConfig.master_enabled:
 				print("[Hand:Spell:Fireball] не хватает маны (нужно %.0f)" % p_mana_cost)
+			fireball.queue_free()
 			return
 	# Launch: вершина башни (если есть), иначе позиция руки. На сцене Tower
 	# всегда есть, fallback — для дев-сцен и для случая «башня уничтожена».
@@ -199,10 +208,6 @@ func _perform_cast() -> void:
 	target_pos.y -= _hand.hand_height
 	_cooldown_remaining = p_cooldown
 
-	var fireball := fireball_scene.instantiate() as Fireball
-	if fireball == null:
-		push_error("[Hand:Spell:Fireball] fireball_scene не инстанцируется как Fireball")
-		return
 	_effects_root.add_child(fireball)
 	fireball.setup(
 		launch_pos,

@@ -790,7 +790,7 @@ func _on_skeleton_attacked_camp(attacker: Node3D, victim: Node3D, _position: Vec
 	var ours: bool = false
 	if victim is CampPart:
 		ours = victim.get_parent() == _camp
-	elif victim is Gnome:
+	elif victim.is_in_group(GNOME_GROUP):
 		ours = _camp.get_gnomes().has(victim)
 	if not ours:
 		return

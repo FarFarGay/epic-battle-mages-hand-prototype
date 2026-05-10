@@ -13,6 +13,47 @@
 
 # Заметки по работе с проектом (накапливаются)
 
+## Сессия 2026-05-10 (2) — Код-ревью и багфиксы
+
+### Контекст
+Геймдизайнер запросил «хорошее код-ревью с последующим багфиксом». Запустил три параллельных Explore-агента (магия+прокачка / архитектура+broad-phase / HUD+UI), кросс-верифицировал находки grep'ом и spot-чтениями (часть была ложноположительной). Реальных проблем оказалось 6, починил все. Парс-чек `--check-only` чистый.
+
+### Найденные и пофикшенные баги
+
+1. **Mana и cooldown списывались ДО валидации `instantiate()`** в `hand_spell_fireball.gd:_perform_cast`. Если `fireball_scene` повреждена и `instantiate()` возвращает null — игрок терял ману и попадал на кд. Фикс: сначала `instantiate()`, при провале — early return; mana и `_cooldown_remaining` устанавливаются после успешного инстанцирования. На провале mana уже после spend'а снаряд `queue_free`'ится. В Firestorm порядок не критичен (instantiate в `_launch_one`, scene валидируется на старте серии в `_start_volley`).
+
+2. **Двойной хит AOE: broad-phase + FAR-fallback** в `Fireball._explode` и `BurnPatch._apply_tick`. Цель, попавшая в `intersect_shape` И в FAR-fallback по группе, получала damage дважды. На практике редко (FAR обычно с `monitoring=false`), но код хрупкий. Фикс: `var affected_set: Array[Node]` после первого прохода, FAR-цикл скипает уже задетых (`if skel in affected_set: continue`). Тот же паттерн в обоих местах.
+
+3. **`is X` нарушения архитектурного правила «cross-cutting через контракты, не типы»** — 6 точек:
+   - `hand_spell_fireball.gd:183` и `hand_spell_firestorm.gd:160`: `tower is Tower` → `tower.has_method(&"try_consume_mana")`. Контракт «мана-провайдера» через duck-typing.
+   - `skeleton.gd:871` (`is Gnome` для приоритета цели), `defender_gnome.gd:793` (`is Gnome` для фильтра «наш гном»), `xp_orb.gd:170` (`is Gnome` для резолва camp'а): добавил **`Gnome.GNOME_GROUP := &"gnome"`**, регистрация в `Gnome._ready` (наследуется DefenderGnome'ом). Все три места перешли на `is_in_group(Gnome.GNOME_GROUP)`.
+   - `skeleton.gd:923` (`is CampPart or (is Gnome and not is DefenderGnome)` для alarm-фильтра): теперь `active.is_in_group(TARGET_GROUP) and not active.is_in_group(DefenderGnome.DEFENDER_GROUP)`. TARGET_GROUP включает палатки в строю + всех гномов; DEFENDER_GROUP — только Defender'ов; разница = «alarm-victim'ы».
+   - `tower.gd:177, 284` (`is Item`) **оставил**: это локальная type-specialization для RigidBody-mediated push (Tower знает Item.mass/freeze/apply_central_impulse), а не cross-cutting через систему. Пара симметрична `Pushable.is_pushable + is CharacterBody3D` для kinematic-ветки.
+
+4. **Дребезг кнопок прокачки в журнале** — повторный клик до перерисовки UI мог дважды списать ресурс. Добавил helper `_wire_action_button(btn, callback)`: lambda на `pressed`, в которой первым же шагом `btn.disabled = true`, потом callback. Применил к 4 кнопкам: unit-upgrade, build, spell-unlock, spell-upgrade. Plan-preset (`set_collection_priority`) не требует — идемпотентен.
+
+5. **Отсутствие `is_instance_valid` для collider'ов в AOE-callback'ах**. Между `intersect_shape` и `_apply_aoe`/`Damageable.try_damage` цель могла умереть. Добавил guard'ы в `Fireball._explode` (перед обращением к `(collider as Node3D).global_position`) и `Fireball._apply_aoe`, и в `BurnPatch._apply_tick`.
+
+6. **Orphan Camp reference в HUD** — `gameplay_hud.gd` в трёх местах (`_ready` x2 и `_refresh_squad_bar`, `_sync_all_resources`) проверял только `_camp != null`, но не валидность инстанса. Если Camp queue_free'нулся, EventBus-коллбек всё ещё мог прийти. Заменил на `is_instance_valid(_camp)` везде.
+
+### Что не было настоящим багом (отфильтрованные FP агентов)
+- «Race condition в Firestorm при смене категории во время серии» — tick'и идут на оба подмодуля всегда (`hand_spell.gd:60-61`), серия завершается корректно по зафиксированному `_volley_target`.
+- «Утечка ссылки `_hand`» — теоретическая, `_hand` живёт со сценой.
+- «`queue_free` vs `free` для UI clear» в JournalPanel — текущая реализация работает, race не воспроизводится.
+- «Двойные `connect` в `_ready` autoload'ов» — `_ready` autoload'а вызывается один раз.
+- «`LogConfig` без null-fallback» — autoload, всегда есть.
+- «`AoeVisual.spawn_wave` утечки» — уже корректно проверяет `is_instance_valid(mesh)` в callback'е tween'а.
+
+### Архитектурно
+- **GNOME_GROUP** — новый постоянный контракт «это гном» (мирный или защитник). Не путается со state-driven SKELETON_TARGET_GROUP (приходит/уходит при IN_TENT/SEARCHING). Использовать когда нужен «вообще гном».
+- **Helper для UI-кнопок** `_wire_action_button` — паттерн для всех будущих кнопок что списывают ресурс или меняют state. Дребезг покрыт автоматически: lambda не пускает повторный клик до `_refresh()` пересоздаст карточку.
+- **Per-target иммунитет в одном AOE** через `affected_set: Array[Node]` — паттерн для любого сочетания broad-phase + group-fallback. В новых заклинаниях AOE копировать.
+- **Mana-spend порядок**: «сначала instantiate, потом списываем» — общий принцип для будущих заклинаний (одиночных). Для серий (Firestorm) проверка scene в `_start_volley` достаточна, mana списывается до launch'ей.
+
+### Метод
+- Для подобного ревью эффективно: 3 параллельных Explore-агента по разным осям (gameplay / архитектура / UI) + кросс-верификация grep'ом для отсева FP. Агенты дали ~14 находок, реальных оказалось 6.
+- `Godot --headless --check-only --quit --path <project>` — быстрый парс-чек после серии правок (исполняемый в `D:\Godot_v4.6.2-stable_win64.exe\Godot_v4.6.2-stable_win64_console.exe` — да, exe лежит внутри одноимённой папки).
+
 ## Сессия 2026-05-10 — Финал магии: шквал, прокачка, страницы, баланс, SPEC
 
 ### Контекст

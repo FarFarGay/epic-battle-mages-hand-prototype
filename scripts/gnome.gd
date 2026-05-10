@@ -36,6 +36,10 @@ signal damaged(amount: float)
 signal destroyed
 
 const SKELETON_TARGET_GROUP := &"skeleton_target"
+## Группа всех гномов (мирные + DefenderGnome'ы наследуются). Используется
+## для cross-cutting'а через контракт «это гном» без `is Gnome` — skeleton'у
+## приоритет цели по гномам, xp_orb'у — резолв camp'а через `body.get_camp()`.
+const GNOME_GROUP := &"gnome"
 
 enum State {
 	IN_TENT,
@@ -272,6 +276,7 @@ func _ready() -> void:
 	visible = false
 	Damageable.register(self)
 	Pushable.register(self)
+	add_to_group(GNOME_GROUP)
 	_knockback.friction = knockback_friction
 	# _effects_root: явный path → ноду; пустой/неразрешённый → fallback на
 	# current_scene. Камп родитель нам НЕ подходит — он мог бы освободиться

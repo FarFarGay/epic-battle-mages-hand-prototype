@@ -78,18 +78,24 @@ func _apply_tick() -> void:
 	var results := space.intersect_shape(query, 32)
 
 	var radius_sq: float = _radius * _radius
+	# Per-target иммунитет в одном тике: цель из broad-phase не должна
+	# повторно прийти из FAR-fallback'а (иначе double damage tick'а).
+	var affected_set: Array[Node] = []
 	var hits: int = 0
 	for r in results:
 		var collider = r.collider
+		if not is_instance_valid(collider):
+			continue
 		if not Damageable.is_damageable(collider):
 			continue
 		if Layers.is_hand_immune(collider):
 			continue
 		# Horizontal-only distance: burn — это пятно на ground'е, центр капсулы
 		# скелета на y≈0.9, 3D distance съедал бы ~0.9м эффективного радиуса.
-		if _xz_distance_sq(collider.global_position, origin) > radius_sq:
+		if _xz_distance_sq((collider as Node3D).global_position, origin) > radius_sq:
 			continue
 		Damageable.try_damage(collider, _damage_per_tick)
+		affected_set.append(collider)
 		hits += 1
 
 	# FAR-fallback по группе скелетов — те же скелеты вне broad-phase, что
@@ -98,6 +104,8 @@ func _apply_tick() -> void:
 	for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		var skel := n as Skeleton
 		if skel == null:
+			continue
+		if skel in affected_set:
 			continue
 		if skel.get_lod_level() != Skeleton.LodLevel.FAR:
 			continue

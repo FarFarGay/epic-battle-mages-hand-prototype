@@ -62,7 +62,7 @@ func _ready() -> void:
 	_update_counts()
 	# Sync с текущим состоянием Camp (на случай позднего hookup или сцены
 	# с уже накопленным XP). Затем подписываемся на инкременты.
-	if _camp != null:
+	if is_instance_valid(_camp):
 		_refresh_squad_bar(_camp.get_squad_xp(), _camp.get_squad_level())
 		_refresh_journal_badge(_camp.get_pending_upgrade_choices())
 		_sync_all_resources()
@@ -71,7 +71,7 @@ func _ready() -> void:
 	EventBus.pending_upgrade_choices_changed.connect(_refresh_journal_badge)
 	EventBus.resources_changed.connect(_on_resource_changed)
 	EventBus.collection_mode_changed.connect(_refresh_mode_label)
-	if _camp != null:
+	if is_instance_valid(_camp):
 		_refresh_mode_label(_camp.get_collection_mode())
 
 	# Tower stats: подписка на сигналы + начальный sync. Tower может ready'ться
@@ -153,7 +153,7 @@ func _update_counts() -> void:
 ## Y = (next_threshold - prev_threshold). На максимальном уровне (curve
 ## исчерпана) — бар на 100%, текст «MAX».
 func _refresh_squad_bar(xp: int, level: int) -> void:
-	if _camp == null or _squad_xp_bar == null:
+	if not is_instance_valid(_camp) or _squad_xp_bar == null:
 		return
 	_squad_level_label.text = "ур. %d" % level
 	var curve: Array = _camp.squad_level_xp_curve
@@ -303,7 +303,7 @@ func _build_resources_rows() -> void:
 
 
 func _sync_all_resources() -> void:
-	if _camp == null:
+	if not is_instance_valid(_camp):
 		return
 	for entry in RESOURCE_DISPLAY:
 		var type: int = int(entry["type"])

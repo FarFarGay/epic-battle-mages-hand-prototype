@@ -167,7 +167,7 @@ func _on_body_entered(body: Node) -> void:
 ## случая. Tower не хранит ссылку на Camp напрямую — итерируем группу
 ## `camp` (1-2 инстанса на карте, дёшево).
 func _resolve_camp_from(body: Node) -> Camp:
-	if body is Gnome:
+	if body.is_in_group(Gnome.GNOME_GROUP):
 		return (body as Gnome).get_camp()
 	if body is CampPart:
 		return body.get_parent() as Camp

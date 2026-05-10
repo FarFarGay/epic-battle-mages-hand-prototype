@@ -868,7 +868,10 @@ func _scan_target() -> Node3D:
 					continue
 				if not node.is_in_group(TARGET_GROUP):
 					continue
-				if node is Gnome:
+				# Приоритет «гном vs прочее» (палатки) — через group, не через
+				# `is Gnome`. Контракт: GNOME_GROUP содержит все гномы (мирных
+				# и Defender'ов). Палатки в TARGET_GROUP, но не в GNOME_GROUP.
+				if node.is_in_group(Gnome.GNOME_GROUP):
 					if d_sq < nearest_gnome_dist_sq:
 						nearest_gnome_dist_sq = d_sq
 						nearest_gnome = node
@@ -917,10 +920,12 @@ func _perform_strike(_target: Node3D) -> void:
 	# отбросит скелета на следующем кадре.
 	var hit: bool = Damageable.try_damage(active, attack_damage)
 	# Alarm-сигнал: только если удар реально прошёл (не по freed/не damageable),
-	# и жертва — палатка или мирный гном. Defender'ы по альму не триггерят
-	# (см. сигнатуру в EventBus). Фильтр по типу здесь дёшев и упрощает
-	# подписчиков — им не нужно отсеивать «бьют скелета об скелета» и пр.
-	if hit and (active is CampPart or (active is Gnome and not active is DefenderGnome)):
+	# и жертва — палатка в строю или мирный гном. Defender'ы alarm не
+	# триггерят (по сигнатуре подписчиков — себя они не «зовут»). Через
+	# группы вместо `is`: TARGET_GROUP содержит палатки в строю + всех гномов
+	# (мирных и Defender'ов); DEFENDER_GROUP — только Defender'ов; разница =
+	# «alarm-victim'ы».
+	if hit and active.is_in_group(TARGET_GROUP) and not active.is_in_group(DefenderGnome.DEFENDER_GROUP):
 		EventBus.skeleton_attacked_camp.emit(self, active, active.global_position)
 	_do_lunge(active)
 

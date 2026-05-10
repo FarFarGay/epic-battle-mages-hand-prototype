@@ -237,18 +237,24 @@ func _explode() -> void:
 	var results := space.intersect_shape(query, 32)
 
 	var radius_sq: float = _radius * _radius
+	# Per-target иммунитет в рамках одного взрыва: цель, прошедшая broad-phase,
+	# не должна повторно прийти из FAR-fallback'а — иначе двойной damage.
+	var affected_set: Array[Node] = []
 	var affected: int = 0
 	for r in results:
 		var collider = r.collider
+		if not is_instance_valid(collider):
+			continue
 		if not Damageable.is_damageable(collider):
 			continue
 		if Layers.is_hand_immune(collider):
 			continue
 		# Horizontal-only distance: взрыв на ground'е, центр капсулы скелета
 		# на y≈0.9 — 3D distance отъедал бы 0.9м horizontal-радиуса.
-		if _xz_distance_sq(collider.global_position, origin) > radius_sq:
+		if _xz_distance_sq((collider as Node3D).global_position, origin) > radius_sq:
 			continue
 		_apply_aoe(collider, origin)
+		affected_set.append(collider)
 		affected += 1
 
 	# FAR-fallback: скелеты вне broad-phase (LOD FAR). Тот же паттерн что и
@@ -257,6 +263,8 @@ func _explode() -> void:
 	for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		var skel := n as Skeleton
 		if skel == null:
+			continue
+		if skel in affected_set:
 			continue
 		if skel.get_lod_level() != Skeleton.LodLevel.FAR:
 			continue
@@ -296,6 +304,8 @@ func _explode() -> void:
 
 
 func _apply_aoe(target: Node, origin: Vector3) -> void:
+	if not is_instance_valid(target):
+		return
 	var to_target: Vector3 = (target as Node3D).global_position - origin
 	var horizontal_dist: float = Vector2(to_target.x, to_target.z).length()
 	var falloff: float = clampf(1.0 - horizontal_dist / _radius, 0.0, 1.0)
