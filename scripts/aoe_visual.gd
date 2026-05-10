@@ -317,6 +317,61 @@ static func spawn_ground_ring(
 	return mesh
 
 
+## Расширяющееся плоское кольцо ПОСТОЯННОЙ толщины: outer_radius растёт
+## линейно от 0 до `max_radius` за `duration`, inner_radius всегда =
+## outer − thickness. Без скейла меша — иначе фронт расплывался бы вширь
+## пропорционально радиусу.
+##
+## Используется как «волна вызова» от башни. Юниты реагируют по мере
+## прохождения фронта через их позицию (Camp.recall_wave_speed).
+static func spawn_expanding_ring(
+	root: Node,
+	pos: Vector3,
+	max_radius: float,
+	duration: float,
+	color: Color = Color(0.4, 0.85, 1.0, 0.95),
+	thickness: float = 0.18,
+) -> void:
+	if root == null or max_radius <= 0.0 or duration <= 0.0:
+		return
+	var torus := TorusMesh.new()
+	torus.outer_radius = thickness
+	torus.inner_radius = 0.001
+	torus.rings = 96
+	torus.ring_segments = 8
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.emission_enabled = true
+	mat.emission = Color(color.r, color.g, color.b, 1.0)
+	mat.emission_energy_multiplier = 2.5
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = torus
+	mesh.material_override = mat
+	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(mesh)
+	mesh.global_position = pos + Vector3.UP * 0.05
+	# Анимация полей самого торус-меша (а не scale): тогда толщина не растёт
+	# вместе с радиусом — ring остаётся «карандашным», как и нужно.
+	var tween := mesh.create_tween()
+	tween.set_parallel(true)
+	tween.tween_method(func(r: float) -> void:
+		if not is_instance_valid(torus):
+			return
+		torus.outer_radius = r + thickness
+		torus.inner_radius = maxf(r, 0.001),
+		0.001, max_radius, duration,
+	).set_trans(Tween.TRANS_LINEAR)
+	tween.tween_property(mat, "albedo_color:a", 0.0, duration).set_trans(Tween.TRANS_LINEAR)
+	tween.set_parallel(false)
+	tween.tween_callback(func() -> void:
+		if is_instance_valid(mesh):
+			mesh.queue_free()
+	)
+
+
 ## Solid translucent sphere фиксированного радиуса — явный «вижу габариты»
 ## визуал. Используется поверх distortion-волны (она тоже расширяется до
 ## radius, но за 0.45с с дисслв-шейдером — границу не видно мгновенно).

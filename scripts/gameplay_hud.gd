@@ -46,8 +46,11 @@ var _resource_labels: Dictionary = {}
 var _mode_label: Label
 ## Панель squad-карточек справа столбиком. Создаётся на первый squad_created
 ## (lazy), убирается на squad_disbanded последнего. Каждая карточка — Control
-## с иконкой типа, счётчиком живых, кнопками команд («Эскорт», «Идти сюда»).
+## с иконкой типа, счётчиком живых, кнопками команд («Эскорт», «Идти сюда»,
+## «Распустить»). Сама панель — VBoxContainer внутри ScrollContainer'а: 6+
+## отрядов перестают вылезать за экран, появляется вертикальный скролл.
 var _squad_panel: VBoxContainer
+var _squad_scroll: ScrollContainer
 ## squad_id → Control карточки. Используется для update/remove на squad_changed.
 var _squad_cards: Dictionary = {}
 ## Кэш ссылки на руку — для toggle_aim_for через HandSquadAim. Lookup по группе.
@@ -95,6 +98,8 @@ func _ready() -> void:
 	EventBus.squad_created.connect(_on_squad_created)
 	EventBus.squad_changed.connect(_on_squad_changed)
 	EventBus.squad_disbanded.connect(_on_squad_disbanded)
+	EventBus.squad_recall_ignored.connect(_on_squad_recall_ignored)
+	EventBus.recall_zone_pulsed.connect(_on_recall_zone_pulsed)
 	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Tower
 	if tower != null:
 		_refresh_tower_health(tower.hp, tower.max_hp)
@@ -150,6 +155,7 @@ func _process(delta: float) -> void:
 	_update_timer -= delta
 	if _update_timer <= 0.0:
 		_update_counts()
+		_update_squad_cards_dynamic()
 		_update_timer = UPDATE_INTERVAL
 
 
@@ -205,6 +211,7 @@ func _on_level_up(_level: int) -> void:
 func _build_journal_button() -> void:
 	_journal_button = Button.new()
 	_journal_button.text = "📔 журнал [J]"
+	_journal_button.focus_mode = Control.FOCUS_NONE
 	_journal_button.custom_minimum_size = Vector2(150, 36)
 	_journal_button.add_theme_font_size_override("font_size", 14)
 	# Под RightPanel (offset_bottom=240 в .tscn) — оставляю 10px зазор.
@@ -446,21 +453,33 @@ func _refresh_super_charge(current: float, maximum: float) -> void:
 
 ## --- Squad cards (правая панель) ---
 
-## Создаёт VBoxContainer для карточек squad'ов справа сверху, lazy — на
-## первый squad_created. Anchored правый-верх, чтобы не конкурировать с
-## tower_stats (top center) и resources (right column).
+## Создаёт ScrollContainer + VBox для карточек squad'ов справа сверху, lazy
+## — на первый squad_created. Anchored правый-верх, чтобы не конкурировать
+## с tower_stats (top center) и resources (right column). ScrollContainer
+## нужен на 6+ отрядов: фиксированная высота не вмещает столько карточек,
+## вертикальный скролл — без обрезки нижних.
 func _ensure_squad_panel() -> void:
 	if _squad_panel != null and is_instance_valid(_squad_panel):
 		return
+	_squad_scroll = ScrollContainer.new()
+	# PRESET_RIGHT_WIDE — anchor_top=0, anchor_bottom=1: контейнер тянется
+	# на всю высоту экрана. Колонка СЛЕВА от RightPanel (та занимает
+	# x∈[-200,-10] из gameplay_hud.tscn): зазор 10px → offset_right=-210,
+	# ширина 220px → offset_left=-430. До этого squad-панель сидела
+	# в том же x-диапазоне что и RightPanel и буквально перекрывала
+	# счётчики ресурсов.
+	_squad_scroll.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+	_squad_scroll.offset_left = -430.0
+	_squad_scroll.offset_top = 80.0
+	_squad_scroll.offset_right = -210.0
+	_squad_scroll.offset_bottom = -20.0
+	_squad_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	add_child(_squad_scroll)
+
 	_squad_panel = VBoxContainer.new()
-	_squad_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	# Отступ: сверху 80px (под HP/MP/super), справа 20px. Ширина 220.
-	_squad_panel.offset_left = -240.0
-	_squad_panel.offset_top = 80.0
-	_squad_panel.offset_right = -20.0
-	_squad_panel.offset_bottom = 600.0
+	_squad_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_squad_panel.add_theme_constant_override("separation", 6)
-	add_child(_squad_panel)
+	_squad_scroll.add_child(_squad_panel)
 
 
 func _on_squad_created(squad: RefCounted) -> void:
@@ -488,6 +507,47 @@ func _on_squad_disbanded(squad: RefCounted) -> void:
 	if card != null and is_instance_valid(card):
 		card.queue_free()
 	_squad_cards.erase(s.id)
+
+
+## Игрок попытался recall'нуть отряд вне зоны — флешим карточку красным
+## modulate'ом. Modulate-tween, без зависимостей. Если карточки нет
+## (squad disbanded между событием и обработчиком) — silent skip.
+func _on_squad_recall_ignored(squad: RefCounted) -> void:
+	var s := squad as Squad
+	if s == null:
+		return
+	var card: Control = _squad_cards.get(s.id)
+	if card == null or not is_instance_valid(card):
+		return
+	var tween := create_tween()
+	tween.tween_property(card, "modulate", Color(1.5, 0.4, 0.4, 1.0), 0.08)
+	tween.tween_property(card, "modulate", Color.WHITE, 0.35)
+
+
+## Q-нажатие → волна вызова: расширяющееся кольцо от башни до границы
+## зоны за `duration`. Тонкий яркий фронт + размытый полупрозрачный тейл
+## (второе кольцо, чуть отстаёт по времени и шире) — даёт визуал «пошёл
+## импульс».
+func _on_recall_zone_pulsed(center: Vector3, radius: float, duration: float) -> void:
+	var scene := get_tree().current_scene
+	# Фронт — тонкий, яркий.
+	AoeVisual.spawn_expanding_ring(
+		scene, center, radius, duration,
+		Color(0.55, 0.9, 1.0, 0.95), 0.14,
+	)
+	# Тейл — спавним с задержкой, чтобы он «лагнул» за фронтом. Шире и
+	# дим — читается как блюр/гало за импульсом.
+	var trail_delay: float = 0.07
+	var t := get_tree().create_timer(trail_delay)
+	t.timeout.connect(func() -> void:
+		# duration уменьшаем на тот же delay — тейл успевает дойти до края
+		# одновременно с фронтом, но всю дорогу остаётся позади.
+		var trail_duration: float = maxf(duration - trail_delay, 0.05)
+		AoeVisual.spawn_expanding_ring(
+			scene, center, radius, trail_duration,
+			Color(0.4, 0.85, 1.0, 0.35), 0.22,
+		)
+	)
 
 
 ## Карточка одного squad'а. PanelContainer с иконкой, счётчиком и двумя
@@ -523,8 +583,14 @@ func _build_squad_card(squad: Squad) -> Control:
 	btn_row.add_theme_constant_override("separation", 4)
 	vbox.add_child(btn_row)
 
+	# focus_mode = NONE на всех squad-кнопках. Без этого Godot Button
+	# по дефолту имеет FOCUS_ALL, и нажатие Space на сфокусированной
+	# (последней кликнутой) кнопке триггерит её pressed-сигнал. То есть
+	# Space — суперудар по дизайну — параллельно «нажимал» «Идти сюда»,
+	# и поверх голотого aim'а супера появлялся голубой ring squad-aim'а.
 	var btn_aim := Button.new()
 	btn_aim.text = "Идти сюда"
+	btn_aim.focus_mode = Control.FOCUS_NONE
 	btn_aim.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	btn_aim.add_theme_font_size_override("font_size", 11)
 	btn_aim.pressed.connect(_on_squad_aim_pressed.bind(squad.id))
@@ -533,11 +599,38 @@ func _build_squad_card(squad: Squad) -> Control:
 
 	var btn_escort := Button.new()
 	btn_escort.text = "За башней"
+	btn_escort.focus_mode = Control.FOCUS_NONE
 	btn_escort.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	btn_escort.add_theme_font_size_override("font_size", 11)
 	btn_escort.pressed.connect(_on_squad_escort_pressed.bind(squad.id))
 	btn_escort.set_meta(&"squad_btn_escort", true)
 	btn_row.add_child(btn_escort)
+
+	var btn_defend := Button.new()
+	btn_defend.text = "Защищать"
+	btn_defend.focus_mode = Control.FOCUS_NONE
+	btn_defend.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn_defend.add_theme_font_size_override("font_size", 11)
+	btn_defend.pressed.connect(_on_squad_defend_pressed.bind(squad.id))
+	btn_defend.set_meta(&"squad_btn_defend", true)
+	btn_row.add_child(btn_defend)
+
+	# Вторая строка: «Распустить» — конвертит солдат обратно в gatherer'ов.
+	# Disabled когда не все юниты в proximity лагеря (Camp.can_dismiss_squad).
+	# Tooltip объясняет, что нужно вернуть в лагерь. Refresh state — в
+	# `_refresh_squad_card` (статика на event-ах) и в `_update_squad_cards_dynamic`
+	# (раз в 0.25с — пока юниты идут к лагерю, кнопка переключится сама).
+	var btn_row2 := HBoxContainer.new()
+	btn_row2.add_theme_constant_override("separation", 4)
+	vbox.add_child(btn_row2)
+	var btn_dismiss := Button.new()
+	btn_dismiss.text = "Распустить"
+	btn_dismiss.focus_mode = Control.FOCUS_NONE
+	btn_dismiss.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn_dismiss.add_theme_font_size_override("font_size", 11)
+	btn_dismiss.pressed.connect(_on_squad_dismiss_pressed.bind(squad.id))
+	btn_dismiss.set_meta(&"squad_btn_dismiss", true)
+	btn_row2.add_child(btn_dismiss)
 
 	_refresh_squad_card(card, squad)
 	return card
@@ -547,26 +640,98 @@ func _refresh_squad_card(card: Control, squad: Squad) -> void:
 	var alive: int = squad.count_alive()
 	var total: int = squad.members.size()
 	var type_name: String = SoldierSystem.get_soldier_data(squad.soldier_type).get("name", str(squad.soldier_type))
+	# Префикс «⚠» когда отряд вне recall-зоны: персистентный визуальный
+	# маркер, что Q-recall его не вернёт. Обновляется и через event-driven
+	# (этот метод), и периодически через _update_squad_cards_dynamic.
+	var out_of_zone: bool = is_instance_valid(_camp) and not _camp.is_squad_in_recall_zone(squad)
+	var prefix: String = "⚠ " if out_of_zone else ""
 	# Title и подсветка кнопок согласно state. Поиск по meta — title-Label
 	# единственный с set_meta(&"squad_title", true).
 	for child in card.find_children("*", "Label", true, false):
 		if child.has_meta(&"squad_title"):
-			child.text = "%s — %d/%d" % [type_name, alive, total]
+			child.text = "%s%s — %d/%d" % [prefix, type_name, alive, total]
+			child.add_theme_color_override("font_color", Color(1.0, 0.55, 0.4, 1.0) if out_of_zone else Color.WHITE)
 	for btn in card.find_children("*", "Button", true, false):
 		if btn.has_meta(&"squad_btn_escort"):
 			btn.button_pressed = squad.state == Squad.State.ESCORTING_TOWER
+			_apply_escort_state(btn, squad)
+		elif btn.has_meta(&"squad_btn_defend"):
+			btn.button_pressed = squad.state == Squad.State.DEFENDING_CAMP
 		elif btn.has_meta(&"squad_btn_aim"):
-			# Подсвечиваем когда HandSquadAim в режиме aim'а на этом squad'е.
+			# Подсвечиваем когда HandSquadAim в режиме aim'а на этом squad'е
+			# ИЛИ когда squad в HOLD-strict-режиме (юниты ещё идут к точке).
 			var hand := _resolve_hand()
-			btn.button_pressed = hand != null and hand.squad_aim != null and hand.squad_aim.is_aiming(squad)
+			var aiming: bool = hand != null and hand.squad_aim != null and hand.squad_aim.is_aiming(squad)
+			btn.button_pressed = aiming or (squad.state == Squad.State.HOLDING_POSITION and squad.is_strict_move())
+		elif btn.has_meta(&"squad_btn_dismiss"):
+			_apply_dismiss_state(btn, squad)
+
+
+## Вычисляется и через _refresh_squad_card (event-ы), и через
+## _update_squad_cards_dynamic (раз в 0.25с — proximity и state лагеря
+## меняются без отдельного сигнала на карточку).
+func _apply_dismiss_state(btn: Button, squad: Squad) -> void:
+	if not is_instance_valid(_camp):
+		btn.disabled = true
+		return
+	var can: bool = _camp.can_dismiss_squad(squad)
+	btn.disabled = not can
+	if can:
+		btn.tooltip_text = "Конвертировать обратно в gatherer'ов на их позиции"
+	elif not _camp.is_deployed():
+		btn.tooltip_text = "Размобилизация только в развёрнутом лагере"
+	else:
+		btn.tooltip_text = "Все юниты должны быть в радиусе лагеря"
+
+
+## True/false-state и tooltip для кнопки «За башней»: гейт по recall-зоне.
+## Если отряд вне зоны — кнопка disabled, объясняем игроку.
+func _apply_escort_state(btn: Button, squad: Squad) -> void:
+	if not is_instance_valid(_camp):
+		btn.disabled = true
+		return
+	var in_zone: bool = _camp.is_squad_in_recall_zone(squad)
+	btn.disabled = not in_zone
+	if in_zone:
+		btn.tooltip_text = "Отряд следует за башней"
+	else:
+		btn.tooltip_text = "Отряд вне зоны вызова — подойдите ближе с башней"
+
+
+## Раз в UPDATE_INTERVAL: подсветка/disabled кнопок, зависящих от мирового
+## state'а (proximity для dismiss, recall-зона для escort). Squad-сигналы
+## это не покрывают: башня и юниты двигаются без эмита. Дёшево — ≤6-12
+## карточек × 2 button.
+func _update_squad_cards_dynamic() -> void:
+	if not is_instance_valid(_camp) or _squad_cards.is_empty():
+		return
+	for squad in _camp.get_squads():
+		var card: Control = _squad_cards.get(squad.id)
+		if card == null or not is_instance_valid(card):
+			continue
+		for btn in card.find_children("*", "Button", true, false):
+			if btn.has_meta(&"squad_btn_dismiss"):
+				_apply_dismiss_state(btn, squad)
+			elif btn.has_meta(&"squad_btn_escort"):
+				_apply_escort_state(btn, squad)
 
 
 func _on_squad_aim_pressed(squad_id: int) -> void:
+	if LogConfig.master_enabled:
+		print("[HUD:SquadAim] кнопка нажата squad_id=%d" % squad_id)
 	var squad: Squad = _resolve_squad_by_id(squad_id)
 	if squad == null:
+		if LogConfig.master_enabled:
+			print("[HUD:SquadAim]   squad не найден (id=%d) — возможно, уже распущен" % squad_id)
 		return
 	var hand := _resolve_hand()
-	if hand == null or hand.squad_aim == null:
+	if hand == null:
+		if LogConfig.master_enabled:
+			print("[HUD:SquadAim]   hand не резолвится — нет узла в группе '%s'" % Hand.HAND_GROUP)
+		return
+	if hand.squad_aim == null:
+		if LogConfig.master_enabled:
+			print("[HUD:SquadAim]   hand.squad_aim == null — координатор не подключён в hand.tscn")
 		return
 	hand.squad_aim.toggle_aim_for(squad)
 	# Обновляем подсветку кнопки.
@@ -579,7 +744,53 @@ func _on_squad_escort_pressed(squad_id: int) -> void:
 	var squad: Squad = _resolve_squad_by_id(squad_id)
 	if squad == null or not is_instance_valid(_camp):
 		return
-	_camp.command_squad_escort(squad)
+	# Гейт по recall-зоне: дублируем UI-disabled на случай race'а.
+	if not _camp.is_squad_in_recall_zone(squad):
+		EventBus.squad_recall_ignored.emit(squad)
+		if LogConfig.master_enabled:
+			print("[HUD:Squad] escort отклонён: отряд вне зоны вызова башни")
+		return
+	# Toggle, как у Q: уже escort → HOLD-soft на текущей позиции.
+	if squad.state == Squad.State.ESCORTING_TOWER:
+		squad.command_hold(_squad_alive_center_or_tower(squad), false)
+	else:
+		_camp.command_squad_escort(squad)
+
+
+## Среднее живых членов squad'а; fallback на башню если членов нет.
+## HUD-локальная версия аналогична Camp._squad_alive_center, но не
+## трогает приватный API лагеря.
+func _squad_alive_center_or_tower(squad: Squad) -> Vector3:
+	var sum: Vector3 = Vector3.ZERO
+	var n: int = 0
+	for m in squad.members:
+		if not is_instance_valid(m):
+			continue
+		sum += m.global_position
+		n += 1
+	if n > 0:
+		return sum / float(n)
+	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Tower
+	if tower != null:
+		return tower.global_position
+	return Vector3.ZERO
+
+
+func _on_squad_defend_pressed(squad_id: int) -> void:
+	var squad: Squad = _resolve_squad_by_id(squad_id)
+	if squad == null or not is_instance_valid(_camp):
+		return
+	_camp.command_squad_defend(squad)
+
+
+func _on_squad_dismiss_pressed(squad_id: int) -> void:
+	var squad: Squad = _resolve_squad_by_id(squad_id)
+	if squad == null or not is_instance_valid(_camp):
+		return
+	# can_dismiss_squad — внутренний guard, но логируем намерение для отладки.
+	if LogConfig.master_enabled:
+		print("[HUD:Squad] dismiss squad_id=%d (can=%s)" % [squad_id, str(_camp.can_dismiss_squad(squad))])
+	_camp.dismiss_squad(squad)
 
 
 func _resolve_squad_by_id(squad_id: int) -> Squad:

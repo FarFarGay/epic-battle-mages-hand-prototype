@@ -86,7 +86,9 @@ func _handle_input() -> void:
 	if _hand.is_holding():
 		return
 
-	if Input.is_action_just_pressed(ACTION_ACTION):
+	# UI-гейт на ПКМ-каст: клик по кнопке HUD'а параллельно кастил бы фаербол
+	# в точку под виджетом. Equip-биндинги клавиатурой выше гейтом не тронуты.
+	if Input.is_action_just_pressed(ACTION_ACTION) and not _hand.is_pointer_over_ui():
 		_dispatch_cast()
 
 

@@ -217,12 +217,18 @@ func _handle_input() -> void:
 		equipped = AbilityType.FLICK
 		_hand.set_active_category(Hand.Category.PHYSICAL)
 
+	# UI-гейт: курсор над виджетом HUD'а ловит мышь, чтобы клик по кнопке
+	# параллельно не хватал предмет под виджетом и не слэмал. Уже-активные
+	# действия (hold-state Flick, удерживаемый предмет) гейтом не трогаются —
+	# их завершение через release должно проходить.
+	var pointer_over_ui: bool = _hand.is_pointer_over_ui()
+
 	# Триггер активной способности (ПКМ) — только в PHYSICAL и только если
 	# рука свободна. Держишь ящик — не slam'ишь и не flick'аешь. В MAGIC
 	# ПКМ слушает HandSpell, у него тоже есть own guard на is_holding.
 	if _hand.active_category == Hand.Category.PHYSICAL and not _hand.is_holding():
 		if not _any_ability_active():
-			if Input.is_action_just_pressed(ACTION_ACTION):
+			if Input.is_action_just_pressed(ACTION_ACTION) and not pointer_over_ui:
 				_dispatch_action_press()
 		else:
 			if Input.is_action_just_released(ACTION_ACTION):
@@ -232,6 +238,12 @@ func _handle_input() -> void:
 	# во время flick'а edge-события пропускались бы и _is_grabbing залипало
 	# (магнит после flick'а тянул бы предметы постоянно).
 	var grab_pressed := Input.is_action_pressed(ACTION_GRAB)
+	# Гейт ТОЛЬКО на старт нового грэба: если уже держим — отпускание над UI
+	# должно сработать (иначе предмет «зависнет» в руке вечно). Поэтому
+	# сначала смотрим: новое нажатие (was_grabbing=false) И курсор над UI →
+	# глушим press, чтобы не подхватить ящик под кнопкой.
+	if pointer_over_ui and not _is_grabbing:
+		grab_pressed = false
 	var was_grabbing := _is_grabbing
 	_is_grabbing = grab_pressed
 	# Во время flick'а рука прицеплена к орбите — не grab'ать и не release'ить.

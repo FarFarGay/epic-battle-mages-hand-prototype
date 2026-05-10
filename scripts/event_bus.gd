@@ -122,6 +122,14 @@ signal squad_created(squad: RefCounted)
 signal squad_changed(squad: RefCounted)
 ## Все члены отряда погибли — UI убирает карточку, Camp снимает ссылку.
 signal squad_disbanded(squad: RefCounted)
+## Игрок попытался recall'нуть отряд (Q или кнопка), но он вне зоны вызова.
+## UI флешит карточку красным; Camp уже залогировал.
+signal squad_recall_ignored(squad: RefCounted)
+## Игрок нажал Q — волна вызова от башни. center = башня, radius = граница
+## зоны, duration = время распространения волны (radius / wave_speed).
+## HUD рисует расширяющееся кольцо за это время; юниты получают команду
+## когда фронт волны до них доходит (Camp scheduling per distance).
+signal recall_zone_pulsed(center: Vector3, radius: float, duration: float)
 
 
 # --- Super spell (великая сила, ковровая бомбардировка) ---

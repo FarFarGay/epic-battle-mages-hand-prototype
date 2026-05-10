@@ -204,6 +204,23 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 ## defenders_per_tent раз — стоят у лагеря и стреляют в скелетов.
 ## Если null — защитники не спавнятся, на их слоты подставятся обычные гномы.
 @export var defender_scene: PackedScene
+## Радиус «лагеря» для размобилизации отряда. Кнопка «Распустить» в HUD
+## активна, только если ВСЕ живые члены отряда в этом радиусе от deploy_anchor.
+## Дизайнерское правило: размобилизация — это лагерное действие, на марше
+## или в эскорте недоступна. Чуть больше deploy_radius (8м) — даёт юниту
+## слот защитника (deploy_radius+~4м снаружи) тоже распуститься.
+@export var dismiss_radius: float = 12.0
+## Радиус «зоны вызова» вокруг башни. Все recall-команды (Q-recall отрядов,
+## кнопка «За башней», R-pack лагеря) гейтятся этой зоной: цели вне радиуса
+## не реагируют. Это даёт игроку:
+##   - оставить лагерь и уйти только с солдатами (R вне зоны → no-pack);
+##   - не вызывать одинокого копейщика через всю карту (Q игнорит дальних).
+@export var recall_zone_radius: float = 20.0
+## Скорость распространения «волны вызова» (м/с). Команда юнитам срабатывает
+## не мгновенно, а когда фронт волны до них долетает: ближний копейщик
+## срывается раньше, дальний — позже. Визуально HUD рисует расширяющееся
+## кольцо. На radius=30, speed=25 → волна доходит до края за 1.2с.
+@export var recall_wave_speed: float = 25.0
 
 @export_group("Collection orders")
 ## Стартовый приоритет сбора по типам ресурсов. Ключи — ResourcePile.ResourceType
@@ -952,12 +969,15 @@ func _find_idle_gatherers(count: int) -> Array[Gnome]:
 
 
 ## True если игрок может прямо сейчас призвать отряд заданного типа:
+## - лагерь развёрнут (recruit — лагерное действие, симметрично dismiss)
 ## - id есть в SoldierSystem.SOLDIER_CATALOG
 ## - в лагере свободных gatherer'ов >= squad_size
 ## - на складе хватает ресурсов на cost
 ## Используется UI журнала для disabled-состояния кнопки.
 func can_recruit_squad(soldier_type: StringName) -> bool:
 	if SoldierSystem == null:
+		return false
+	if not is_deployed():
 		return false
 	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
 	if data.is_empty():
@@ -973,6 +993,10 @@ func can_recruit_squad(soldier_type: StringName) -> bool:
 ## Возвращает Squad или null при провале.
 func recruit_squad(soldier_type: StringName) -> Squad:
 	if SoldierSystem == null:
+		return null
+	if not is_deployed():
+		# Защита от UI-обхода/гонки. Recruit — лагерное действие, в каравне
+		# юниты появляться из ниоткуда не должны (как и dismiss'ить нельзя).
 		return null
 	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
 	if data.is_empty():
@@ -1044,6 +1068,74 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 	return squad
 
 
+## Дебаг-чит: спавнит отряд указанного типа МИМО всех ограничений
+## (deployed-чек, наличие gatherer'ов, cost ресурсов). Юниты появляются
+## кольцом ~2м вокруг центра лагеря (anchor если развёрнут, иначе башня).
+## Вызывается из JournalPanel → «Читы». Возвращает null если тип
+## неизвестен или scene не инстанцируется.
+func cheat_summon_squad(soldier_type: StringName) -> Squad:
+	if SoldierSystem == null:
+		return null
+	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
+	if data.is_empty():
+		push_warning("Camp.cheat_summon_squad: неизвестный тип %s" % soldier_type)
+		return null
+	var scene: PackedScene = data.get("scene", null)
+	if scene == null:
+		push_error("Camp.cheat_summon_squad: scene не задан в каталоге для %s" % soldier_type)
+		return null
+	var squad_size: int = SoldierSystem.get_squad_size(soldier_type)
+	# X/Z — логический центр (anchor / башня / лагерь). Y — берём от самого
+	# Camp'а: он на земле, в отличие от Tower (origin ~3м над землёй) или
+	# anchor'а (наследует POI/tower y, тоже может висеть). Иначе юниты
+	# спавнились бы в воздухе и никуда не падали — squad-positioning
+	# управляет только X/Z, гравитация без принудительного velocity.y не
+	# подтянет вниз.
+	var raw_center: Vector3 = _deploy_anchor if _state == State.DEPLOYED else (
+		_tower.global_position if is_instance_valid(_tower) else global_position
+	)
+	var center := Vector3(raw_center.x, global_position.y, raw_center.z)
+
+	var squad := Squad.new()
+	squad.id = _next_squad_id
+	_next_squad_id += 1
+	squad.soldier_type = soldier_type
+	squad.icon_color = data.get("icon_color", Color.WHITE)
+	squad.command_hold(center)
+
+	var stats: Dictionary = data.get("stats", {})
+	var spawned: int = 0
+	for i in range(squad_size):
+		var soldier := scene.instantiate() as SoldierGnome
+		if soldier == null:
+			push_error("Camp.cheat_summon_squad: scene не инстанцируется как SoldierGnome")
+			continue
+		# Спавн кольцом ~2м вокруг центра — чтобы не наслаивались в одной точке.
+		var angle: float = TAU * float(i) / float(squad_size)
+		var spawn_pos: Vector3 = center + Vector3(cos(angle) * 2.0, 0.0, sin(angle) * 2.0)
+		add_child(soldier)
+		soldier.setup_soldier(soldier_type, stats, self, spawn_pos)
+		_gnomes.append(soldier)
+		squad.add_member(soldier)
+		spawned += 1
+
+	if spawned == 0:
+		return null
+
+	_squads.append(squad)
+	squad.disbanded.connect(_on_squad_disbanded.bind(squad), CONNECT_ONE_SHOT)
+	squad.members_changed.connect(_on_squad_changed.bind(squad))
+	squad.state_changed.connect(_on_squad_changed.bind(squad))
+
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] CHEAT: призван %s (×%d) у центра (%.1f, %.1f, %.1f)" % [
+			str(squad), spawned, center.x, center.y, center.z,
+		])
+	EventBus.camp_buildings_changed.emit()
+	EventBus.squad_created.emit(squad)
+	return squad
+
+
 func _on_squad_disbanded(squad: Squad) -> void:
 	_squads.erase(squad)
 	if debug_log and LogConfig.master_enabled:
@@ -1077,6 +1169,101 @@ func command_squad_escort(squad: Squad) -> void:
 	if not _squads.has(squad):
 		return
 	squad.command_escort()
+
+
+## Команда: squad защищает лагерь (кольцо вокруг anchor'а). Доп. слой обороны
+## поверх штатных DefenderGnome'ов. Доступна и в каравне, но визуально юниты
+## пойдут к башне (fallback в SoldierGnome._resolve_squad_center).
+func command_squad_defend(squad: Squad) -> void:
+	if squad == null:
+		return
+	if not _squads.has(squad):
+		return
+	squad.command_defend()
+
+
+## True если ВСЕ живые члены отряда в зоне dismiss_radius от deploy_anchor.
+## Дополнительно гейтит state DEPLOYED — в каравне/свёртке dismiss запрещён
+## (как и recruit): призыв и размобилизация — лагерные действия. Гном-сцена
+## должна быть задана (иначе конвертить нечего).
+func can_dismiss_squad(squad: Squad) -> bool:
+	if squad == null or not _squads.has(squad):
+		return false
+	if gnome_scene == null:
+		return false
+	if not is_deployed():
+		return false
+	if squad.count_alive() == 0:
+		return false
+	var r_sq: float = dismiss_radius * dismiss_radius
+	for m in squad.members:
+		if not is_instance_valid(m):
+			continue
+		var dx: float = m.global_position.x - _deploy_anchor.x
+		var dz: float = m.global_position.z - _deploy_anchor.z
+		if dx * dx + dz * dz > r_sq:
+			return false
+	return true
+
+
+## True если лагерь сейчас развёрнут (палатки в кольце, anchor валиден).
+## Используется как guard для recruit/dismiss и других «лагерных» действий.
+func is_deployed() -> bool:
+	return _state == State.DEPLOYED
+
+
+## Распустить отряд: каждый солдат конвертируется обратно в gatherer'а на
+## своей текущей позиции. Гейтится через `can_dismiss_squad` — если хоть
+## один член далеко от лагеря, no-op (UI кнопка disabled заранее).
+##
+## Конверсия: spawn нового gatherer'а в позиции солдата → soldier.queue_free
+## + erase из _gnomes. Squad disband'ится через явный `remove_member` (на
+## queue_free destroyed-сигнал не фронтит, авто-чистка в squad не сработала бы).
+##
+## Возвращает true если хоть один солдат конвертирован.
+func dismiss_squad(squad: Squad) -> bool:
+	if not can_dismiss_squad(squad):
+		return false
+	var converted: int = 0
+	for soldier in squad.members.duplicate():
+		if not is_instance_valid(soldier):
+			continue
+		var pos: Vector3 = soldier.global_position
+		var tent: CampPart = _pick_tent_for_new_gatherer()
+		var gatherer := _spawn_one_gnome(gnome_scene, tent, "gatherer")
+		if gatherer != null:
+			gatherer.global_position = pos
+			# В DEPLOYED — сразу выходим в SEARCHING, иначе сидели бы в IN_TENT.
+			# В CARAVAN-фазе оставляем как есть: setup → IN_TENT → старт следующей
+			# свёртки/развёртки выведет наружу нормальным путём.
+			if _state == State.DEPLOYED:
+				gatherer.enter_deployed()
+		_gnomes.erase(soldier)
+		squad.remove_member(soldier)
+		soldier.queue_free()
+		converted += 1
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] отряд %s распущен (%d солдат → gatherer)" % [str(squad), converted])
+	EventBus.camp_buildings_changed.emit()
+	return converted > 0
+
+
+## Палатка для нового gatherer'а: первая с вакансией (occupancy < capacity);
+## fallback — любая живая. Используется в dismiss_squad. Если палаток вообще
+## нет (странный случай — лагерь без CampPart'ов) — null.
+func _pick_tent_for_new_gatherer() -> CampPart:
+	var fallback: CampPart = null
+	for p in _parts:
+		if not (p is CampPart):
+			continue
+		var part := p as CampPart
+		if not is_instance_valid(part):
+			continue
+		if fallback == null:
+			fallback = part
+		if get_tent_occupancy(part) < part.gnomes_per_tent:
+			return part
+	return fallback
 
 
 ## Tower-getter для squad'ов (target_for_member использует tower_pos в эскорт-режиме).
@@ -1660,18 +1847,160 @@ func _handle_collection_input() -> void:
 		set_collection_mode(CollectionMode.ALARM)
 
 
-## Edge-trigger Q — переключает halted-флаг. Только в CARAVAN_FOLLOWING:
-## в DEPLOYED палатки и так стоят, в PACKING_RETURNING — ждём гномов
-## (вмешиваться нельзя, рассинхронит таймер pack'а). Static-camp'ы
-## (start_deployed=true) тоже игнорируют — они никогда не в caravan.
+## Edge-trigger Q. Три независимых эффекта:
+##   1. В CARAVAN_FOLLOWING переключает halted-флаг (caravan stop/resume).
+##   2. Squad-toggle: если хоть один отряд в зоне сейчас в ESCORT — все
+##      escort-отряды тормозятся (HOLD-soft на текущей позиции). Иначе —
+##      все в зоне переключаются в ESCORT.
+##   3. Команда применяется к каждому отряду НЕ мгновенно, а когда «волна
+##      вызова» доходит до его центра (delay = dist / recall_wave_speed).
+##      Визуал — расширяющееся кольцо в HUD. Отряды ВНЕ зоны игнорируются
+##      сразу (волна до них не долетит).
 func _handle_halt_input() -> void:
 	if not Input.is_action_just_pressed("caravan_halt_toggle"):
 		return
-	if start_deployed:
+	if not is_instance_valid(_tower):
 		return
-	if _state != State.CARAVAN_FOLLOWING:
+
+	var origin: Vector3 = _tower.global_position
+	var wave_duration: float = recall_zone_radius / maxf(recall_wave_speed, 0.001)
+	# Pulse'им волну всегда (даже без отрядов) — игроку полезно увидеть
+	# границу зоны для навигации.
+	EventBus.recall_zone_pulsed.emit(origin, recall_zone_radius, wave_duration)
+
+	# Halt-toggle каравана: гейт по recall-зоне + delay по приходу волны.
+	# Если центр каравана вне зоны вызова — Q его не касается вообще:
+	# волна туда не долетит, лагерь не «слышит» приказ. Иначе capture'ом
+	# фиксируем target_halted (на mash'е каждое нажатие имеет свой target)
+	# и применяем когда фронт волны до camp'а доходит.
+	if not start_deployed and _state == State.CARAVAN_FOLLOWING:
+		var camp_center: Vector3 = current_center()
+		var dx_c: float = camp_center.x - origin.x
+		var dz_c: float = camp_center.z - origin.z
+		if dx_c * dx_c + dz_c * dz_c <= recall_zone_radius * recall_zone_radius:
+			var camp_dist: float = sqrt(dx_c * dx_c + dz_c * dz_c)
+			var camp_delay: float = camp_dist / maxf(recall_wave_speed, 0.001)
+			var target_halted: bool = not _caravan_halted
+			if camp_delay <= 0.001:
+				set_caravan_halted(target_halted)
+			else:
+				var t := get_tree().create_timer(camp_delay)
+				t.timeout.connect(func() -> void:
+					set_caravan_halted(target_halted)
+				)
+
+	var any_escorting_in_zone: bool = false
+	var in_zone_squads: Array = []
+	var ignored: int = 0
+	for squad in _squads:
+		if is_squad_in_recall_zone(squad):
+			in_zone_squads.append(squad)
+			if squad.state == Squad.State.ESCORTING_TOWER:
+				any_escorting_in_zone = true
+		else:
+			ignored += 1
+			EventBus.squad_recall_ignored.emit(squad)
+
+	for squad in in_zone_squads:
+		var center: Vector3 = _squad_alive_center(squad)
+		var dist: float = (center - origin).length()
+		var delay: float = dist / maxf(recall_wave_speed, 0.001)
+		if any_escorting_in_zone:
+			if squad.state == Squad.State.ESCORTING_TOWER:
+				_schedule_squad_command(squad, delay, &"hold")
+		else:
+			_schedule_squad_command(squad, delay, &"escort")
+
+	if debug_log and LogConfig.master_enabled and (in_zone_squads.size() + ignored) > 0:
+		var verb: String = "стоп" if any_escorting_in_zone else "вызов"
+		print("[Camp] Q (%s): отрядов в зоне %d, проигнорировано %d, волна %.2fс" % [
+			verb, in_zone_squads.size(), ignored, wave_duration,
+		])
+
+
+## Назначает команду squad'у с задержкой по delay (волна вызова). Если
+## delay≈0 — выполняется немедленно. Если позже — через SceneTree.create_timer.
+## На fire'е проверяет валидность и членство в _squads — squad мог быть
+## disbanded между нажатием Q и приходом волны.
+##
+## kind = &"escort" → command_escort; &"hold" → command_hold(center, false).
+## Center пересчитывается на момент fire'а (не на момент Q-нажатия): юнит
+## мог сдвинуться за это время.
+func _schedule_squad_command(squad: Squad, delay: float, kind: StringName) -> void:
+	if delay <= 0.001:
+		_apply_wave_command(squad, kind)
 		return
-	set_caravan_halted(not _caravan_halted)
+	var timer := get_tree().create_timer(delay)
+	timer.timeout.connect(func() -> void:
+		if not _squads.has(squad):
+			return
+		_apply_wave_command(squad, kind)
+	)
+
+
+func _apply_wave_command(squad: Squad, kind: StringName) -> void:
+	if squad == null or not _squads.has(squad):
+		return
+	if kind == &"escort":
+		squad.command_escort()
+	elif kind == &"hold":
+		squad.command_hold(_squad_alive_center(squad), false)
+
+
+## Среднее живых членов squad'а. Используется для HOLD-soft на Q-стопе и
+## для is_squad_in_recall_zone. Возвращает global_position камп'а если
+## членов нет (deg-fallback, не должно случаться при squad с count_alive > 0).
+func _squad_alive_center(squad: Squad) -> Vector3:
+	var sum: Vector3 = Vector3.ZERO
+	var n: int = 0
+	for m in squad.members:
+		if not is_instance_valid(m):
+			continue
+		sum += m.global_position
+		n += 1
+	if n == 0:
+		return global_position
+	return sum / float(n)
+
+
+## True если центр отряда (среднее живых членов) в `recall_zone_radius` от
+## башни. UI и Q-recall гейтятся этим. Если башня уничтожена — false (нет
+## точки отсчёта, recall невозможен).
+func is_squad_in_recall_zone(squad: Squad) -> bool:
+	if not is_instance_valid(_tower):
+		return false
+	if squad == null or squad.count_alive() == 0:
+		return false
+	var sum: Vector3 = Vector3.ZERO
+	var n: int = 0
+	for m in squad.members:
+		if not is_instance_valid(m):
+			continue
+		sum += m.global_position
+		n += 1
+	if n == 0:
+		return false
+	var center: Vector3 = sum / float(n)
+	var dx: float = center.x - _tower.global_position.x
+	var dz: float = center.z - _tower.global_position.z
+	return dx * dx + dz * dz <= recall_zone_radius * recall_zone_radius
+
+
+## True если башня в зоне вызова от anchor'а развёрнутого лагеря — нужно
+## для R-pack: pack тикает только если игрок не увёл башню слишком далеко.
+## Иначе игрок мог бы свернуть лагерь и заставить палатки нестись через
+## всю карту за башней.
+func is_tower_in_camp_recall_zone() -> bool:
+	if not is_instance_valid(_tower):
+		return false
+	if _state != State.DEPLOYED:
+		# Pack-gate имеет смысл только в DEPLOYED. Для других state'ов
+		# зону трактуем как «в любом случае true» (мы не блокируем то, что
+		# никто и не пытается сделать).
+		return true
+	var dx: float = _tower.global_position.x - _deploy_anchor.x
+	var dz: float = _tower.global_position.z - _deploy_anchor.z
+	return dx * dx + dz * dz <= recall_zone_radius * recall_zone_radius
 
 
 func _handle_input(delta: float) -> void:
@@ -1725,6 +2054,14 @@ func _handle_input(delta: float) -> void:
 				_deploy_hold = 0.0
 				_was_holding_stationary = false
 		State.DEPLOYED:
+			# Pack-gate: башня должна быть в recall-зоне лагеря. Иначе игрок
+			# увёл её далеко и хочет «оставить лагерь» — pack не должен
+			# срабатывать (палатки не понесутся за башней через всю карту).
+			if not is_tower_in_camp_recall_zone():
+				if _pack_hold > 0.0 and debug_log and LogConfig.master_enabled:
+					print("[Camp] отсчёт свёртки прерван (башня вне зоны вызова — лагерь остаётся)")
+				_pack_hold = 0.0
+				return
 			_pack_hold += delta
 			if _pack_hold >= pack_duration:
 				_start_pack()

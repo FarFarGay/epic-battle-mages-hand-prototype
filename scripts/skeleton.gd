@@ -356,6 +356,22 @@ func _ready() -> void:
 	# Сейчас они совпадают, но любая правка маски в .tscn тихо ломала бы первый
 	# кадр всех NEAR-скелетов до первого LOD-перехода (через lod_check_interval).
 	_apply_lod_physics_mode()
+	# Hit-feedback: на каждый damaged-сигнал — короткий scale-punch меша
+	# («подпрыгивает» на удар). Сам сигнал унаследован из Enemy.
+	damaged.connect(_on_self_damaged)
+
+
+## Scale-punch на _mesh — визуальная индикация попадания. Tween создаётся
+## на меше; если скелет умрёт сразу после, mesh queue_free'нется вместе с
+## ним и tween тихо отвалится. Не трогаем shared material (он один на класс)
+## — иначе вспышка цвета затронула бы все 200+ скелетов.
+func _on_self_damaged(_amount: float) -> void:
+	if _mesh == null or not is_instance_valid(_mesh):
+		return
+	var tween := _mesh.create_tween()
+	tween.set_trans(Tween.TRANS_QUAD)
+	tween.tween_property(_mesh, "scale", Vector3.ONE * 1.25, 0.06).set_ease(Tween.EASE_OUT)
+	tween.tween_property(_mesh, "scale", Vector3.ONE, 0.14).set_ease(Tween.EASE_IN)
 
 
 static func _ensure_shared_materials() -> void:

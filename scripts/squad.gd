@@ -13,6 +13,9 @@ extends RefCounted
 ##     в видимых врагов. По дефолту после призыва — на позиции спавна.
 ##   - `ESCORTING_TOWER` — следуют за башней с боковым offset'ом, стреляют
 ##     по пути. Когда башня едет — двигаются с ней; когда стоит — стоят рядом.
+##   - `DEFENDING_CAMP` — кольцо вокруг развёрнутого лагеря, доп. слой обороны
+##     поверх штатных DefenderGnome'ов. Радиус кольца больше (defend ring),
+##     чтобы не стоять прямо на палатках. На свёртке — fallback на эскорт.
 
 signal members_changed
 signal state_changed
@@ -20,7 +23,12 @@ signal state_changed
 ## squad из _squads и эмитнуть squad_disbanded.
 signal disbanded
 
-enum State { HOLDING_POSITION, ESCORTING_TOWER }
+enum State { HOLDING_POSITION, ESCORTING_TOWER, DEFENDING_CAMP }
+
+## Радиус компактного кольца для HOLD/ESCORT — формация «отряд кучкой».
+## DEFENDING_CAMP не использует кольцо: SoldierGnome ведёт wander-патруль
+## по периметру лагеря (см. `SoldierGnome._tick_defend_patrol`).
+const HOLD_RING_RADIUS: float = 1.6
 
 ## Уникальный ID — counter в Camp при создании. Используется UI'ем для
 ## идентификации (карточка → конкретный squad).
@@ -32,6 +40,13 @@ var members: Array[SoldierGnome] = []
 var state: int = State.HOLDING_POSITION
 ## Точка удержания при HOLDING_POSITION. Игнорируется в ESCORTING_TOWER.
 var hold_position: Vector3 = Vector3.ZERO
+## Жёсткий приоритет последней `command_hold`. Пока true — каждый юнит,
+## не дошедший до своего слота, игнорирует бой и марширует к точке.
+## Дойдя — естественно начинает стрелять (per-soldier dist ≤ arrival),
+## флаг squad'а при этом остаётся true (не мешает: дошедшие в нём не
+## участвуют). На `command_escort` сбрасывается. Дизайнерское правило:
+## «точное указание места — четкое указание, всё прерывает».
+var _strict_move: bool = false
 
 
 func _to_string() -> String:
@@ -67,34 +82,66 @@ func count_alive() -> int:
 	return n
 
 
-## Команда: занять точку. Юниты идут туда и стоят, стреляя в видимых врагов.
-func command_hold(pos: Vector3) -> void:
+## Команда: занять точку.
+##   - `strict=true` (дефолт, для «Идти сюда»): юниты маршируют, игнорируя
+##     бой по пути. Дойдя — обычный attack-and-stand.
+##   - `strict=false` (для Q-стопа отряда): мягкий HOLD — юниты фиксируют
+##     позицию вокруг точки, но при враге в leash сразу charge'ятся.
+func command_hold(pos: Vector3, strict: bool = true) -> void:
 	state = State.HOLDING_POSITION
 	hold_position = pos
+	_strict_move = strict
 	state_changed.emit()
 
 
-## Команда: эскорт башни. Юниты идут за башней, стреляют по пути.
+## Команда: эскорт башни. Юниты идут за башней, стреляют по пути (бой
+## приоритетнее перемещения — обычный attack-and-move).
 func command_escort() -> void:
 	state = State.ESCORTING_TOWER
+	_strict_move = false
 	state_changed.emit()
 
 
-## Целевая точка для конкретного юнита в текущем state'е. Squad-controlled
-## движение: каждый soldier в _active_tick спрашивает «куда мне идти?», потом
-## двигается + стреляет.
+## Команда: защищать лагерь. Юниты идут к кольцу defend_ring_radius вокруг
+## anchor'а лагеря и стреляют. Дополнительный слой к штатным DefenderGnome'ам.
+## На свёртке (anchor stale) SoldierGnome fallback'ом считает центром башню —
+## юниты тогда жмутся к башне как мини-эскорт.
+func command_defend() -> void:
+	state = State.DEFENDING_CAMP
+	_strict_move = false
+	state_changed.emit()
+
+
+## True если последняя команда была HOLD и точка считается «точным указанием»
+## — юниты должны сначала дойти, потом включаться в бой.
+func is_strict_move() -> bool:
+	return _strict_move
+
+
+## Удалить члена БЕЗ trigger'а его смерти. Аналог `_on_member_destroyed`,
+## но публичный — нужен на dismiss-конверсии (Camp queue_free'ит солдата
+## без `_die`, destroyed-сигнал не фронтит, и автоматическая чистка не
+## срабатывает). Эмитит members_changed; на пустом списке — disbanded.
+func remove_member(soldier: SoldierGnome) -> void:
+	if not (soldier in members):
+		return
+	members.erase(soldier)
+	members_changed.emit()
+	if members.is_empty():
+		disbanded.emit()
+
+
+## Целевая точка для конкретного юнита в HOLD/ESCORT-режимах: компактное
+## кольцо (1.6м) вокруг резолвнутого center'а. Каждый юнит индексирован в
+## `members` — angle = idx/n × TAU, distribution равномерная.
 ##
-## Distribution внутри отряда — простое: каждый юнит индексирован в `members`,
-## смещение в кольце вокруг центра по этому индексу. Так толпа не сваливается
-## в одну точку, а равномерно распределяется.
-func target_for_member(soldier: SoldierGnome, tower_pos: Vector3) -> Vector3:
-	var center: Vector3 = hold_position if state == State.HOLDING_POSITION else tower_pos
-	# Простейший offset по индексу — кольцо вокруг center. На малом
-	# squad_size=5 углы 72°.
+## DEFENDING_CAMP сюда не приходит — там SoldierGnome сам ведёт wander-патруль
+## по периметру через `_tick_defend_patrol` (центр выбирается динамически,
+## без фиксированных слотов).
+func target_for_member(soldier: SoldierGnome, center: Vector3) -> Vector3:
 	var idx: int = members.find(soldier)
 	if idx < 0:
 		idx = 0
 	var n: int = maxi(members.size(), 1)
 	var angle: float = TAU * float(idx) / float(n)
-	var ring_radius: float = 1.6  # компактное кольцо ~1.6м
-	return center + Vector3(cos(angle) * ring_radius, 0.0, sin(angle) * ring_radius)
+	return center + Vector3(cos(angle) * HOLD_RING_RADIUS, 0.0, sin(angle) * HOLD_RING_RADIUS)

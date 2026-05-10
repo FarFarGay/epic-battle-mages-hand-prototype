@@ -958,10 +958,13 @@ func _build_soldier_card(camp: Node, id: StringName) -> Control:
 		btn.text = "Призвать отряд (×%d)" % squad_size
 		_wire_action_button(btn, _on_recruit_pressed.bind(id))
 	else:
-		# Расшифруем причину для UX
+		# Расшифруем причину для UX. Порядок проверок — от «жёстких» (state)
+		# к «мягким» (нехватка ресурсов): игроку показываем главную причину.
 		var available: int = camp.gatherer_count()
 		var has_resources: bool = camp.can_afford(cost)
-		if available < squad_size:
+		if not camp.is_deployed():
+			btn.text = "только в развёрнутом лагере"
+		elif available < squad_size:
 			btn.text = "гномов: %d / %d" % [available, squad_size]
 		elif not has_resources:
 			btn.text = "не хватает ресурсов"
@@ -1138,6 +1141,13 @@ func _build_debug_tab(camp: Node) -> void:
 		"+100",
 		camp,
 		func(): _grant_all_resources(camp, 100),
+	))
+	list.add_child(_build_cheat_card(
+		"Призвать копейщиков",
+		"Спавнит отряд копейщиков (×5) кольцом вокруг центра лагеря. Без затрат gatherer'ов и ресурсов, без проверки развёрнутости.",
+		"копейщики",
+		camp,
+		func(): camp.cheat_summon_squad(&"pikeman"),
 	))
 	# QuestProgress — autoload, всегда есть. Передаём self как target, чтобы
 	# карточка не disable'илась (логика _build_cheat_card: target == null →

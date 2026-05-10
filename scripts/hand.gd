@@ -131,6 +131,19 @@ func cursor_world_position() -> Vector3:
 	return _last_cursor_world
 
 
+## True если курсор сейчас над non-IGNORE Control'ом (UI ловит/наблюдает мышь).
+## Подмодули вызывают, чтобы не стартовать новые мышинные действия (LMB grab,
+## ПКМ ability/spell/squad-commit) поверх UI: иначе клик по кнопке HUD'а
+## параллельно хватал бы предмет под виджетом. Клавиатурные хоткеи (equip
+## 1/2/3) гейтить НЕ надо — они работают и над UI.
+##
+## Уже-активные действия (магнит на удерживаемом, hold-state Flick'а)
+## продолжаются независимо: гейт срабатывает только на START-нажатии.
+func is_pointer_over_ui() -> bool:
+	var hovered: Control = get_viewport().gui_get_hovered_control()
+	return hovered != null
+
+
 ## Прямой сеттер позиции при locked-режиме. Используется подмодулями (Flick),
 ## которым нужно крутить руку вокруг цели, не разлочивая позицию.
 func set_locked_position(pos: Vector3) -> void:

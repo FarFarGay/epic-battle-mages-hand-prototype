@@ -1426,6 +1426,90 @@ enum State {
 
 ---
 
+### 5.8.2 Армия — `Squad` (RefCounted), `SoldierGnome` (копейщик), `SoldierSystem` (autoload), `HandSquadAim` (aim-координатор)
+
+**Концепция.** Игрок мобилизует gatherer'ов в боевые отряды через `JournalPanel → «Армия»`. Призыв — лагерное действие (доступно только в `State.DEPLOYED`). Размобилизация — обратная конверсия в gatherer'а на текущей позиции, тоже только в лагере. Лучники (DefenderGnome) — НЕ призываются; они только штатные защитники у палаток. Призываются только melee-копейщики.
+
+#### 5.8.2.1 SoldierSystem — каталог типов юнитов
+Autoload-сценарий, аналог SpellSystem. Single source of truth для параметров рекрутируемых юнитов.
+
+`SOLDIER_CATALOG: Dictionary` — id → Dictionary с полями:
+- `name`, `description`, `icon_color`
+- `squad_size: int` — единица призыва (5 для копейщиков). За один recruit-клик конвертится N gatherer'ов в N солдат.
+- `cost: Dictionary` (ResourcePile.ResourceType → amount) — ресурсы за весь отряд.
+- `scene: PackedScene` — что инстанцировать (extends SoldierGnome).
+- `stats: Dictionary` — параметры юнита (hp, enemy_detect_radius, attack_range, damage_min/max, cooldown_min/max, move_speed).
+
+Текущий каталог — только `pikeman`: hp=40, attack_range=2.2м, damage 22..32, cooldown 0.6..1.0с, move_speed=2.2.
+
+#### 5.8.2.2 Squad — RefCounted-сущность
+Не Node. Чистая логическая обёртка: `members: Array[SoldierGnome]`, `state`, `hold_position`, `_strict_move`. Каждый soldier держит ссылку (`_squad`), Camp хранит в `_squads` — пока живы, RefCounted alive.
+
+**States:**
+- `HOLDING_POSITION(pos)` — компактное кольцо (1.6м) вокруг hold_position. Бой в leash-радиусе.
+- `ESCORTING_TOWER` — кольцо вокруг tower.
+- `DEFENDING_CAMP` — wander-патруль по периметру лагеря (НЕ кольцо, см. SoldierGnome._tick_defend_patrol).
+
+`_strict_move: bool` — флаг последнего `command_hold(pos)`. Юнит, не дошедший до своего слота, в этом режиме игнорирует бой («точное указание места — четкое указание, всё прерывает»). На `command_escort/defend` сбрасывается. Per-soldier flag `_strict_arrived_at_slot` снимает блокировку combat'а после первого прибытия — иначе lunge выбрасывал бы из слота, strict снова марш back, юнит дёргался.
+
+API: `command_hold(pos, strict=true)` / `command_escort()` / `command_defend()`. Public `remove_member(soldier)` — для dismiss-конверсии (queue_free без _die не фронтит destroyed-сигнал).
+
+#### 5.8.2.3 SoldierGnome — копейщик
+Подкласс Gnome. Не привязан к палатке. Combat — **5-фазная charge-state machine**:
+
+```
+READY → APPROACH → LUNGE → DRIFT → RECOVERY → READY
+```
+
+- **APPROACH** (`approach_max_speed=4.5`, `approach_accel_time=0.18`) — бежит к цели, скорость линейно с 0 до max, направление пересчитывается каждый кадр (re-aim). При `dist ≤ lunge_trigger_range=3.5м` → LUNGE с фиксированным направлением. Лимит `max_approach_distance=9м` — отмена.
+- **LUNGE** (`lunge_speed=12 м/с`, фикс-дир) — молниеносный рывок. Удар первым кадром в `attack_range=2.2м`. Продолжает лететь `lunge_pass_distance=2.2м` после удара по инерции («протыкает насквозь»).
+- **DRIFT** (`drift_time=0.55с`) — занос. Speed спадает по `pow(t, 0.6)` — медленный начальный спад («занос держит инерцию»).
+- **RECOVERY** (`recovery_time=0.35с`) — стоит, отдыхает, уязвим. После — READY.
+
+Полный цикл: ~1.8с + cooldown 0.6-1.0с ≈ 2.5-3с между ударами.
+
+**Quick-strike при «иди сюда» на врагов:** в strict-march check, если уже есть claimable target в lunge_trigger_range, soldier пропускает арриваль у слота и сразу `_start_charge` — «вбегает в бой» с марша.
+
+**Combat target distribution (1:1):** `_find_target_in_leash` — только незанятые скелеты в `combat_leash_radius=12м` от центра режима. `_is_target_claimed_by_other` считает других солдат в APPROACH/LUNGE/DRIFT (не RECOVERY). Если все цели заняты — null → squad-positioning. Каждый бьёт своего; целей меньше юнитов → лишние стоят в формации.
+
+**Strike feedback:** `_strike_at(target)` → `Damageable.try_damage` → если выжил (`hp > 0`), `Pushable.try_push` с `strike_knockback_speed=5 м/с` Δv в направлении lunge'а на `strike_knockback_duration=0.18с`. Скелета отшатывает на ~0.5-1м, видимый contact.
+
+**Centre-resolve по squad.state** (`_resolve_squad_center`): HOLD → hold_position; ESCORT → tower.global_position; DEFEND → camp.deploy_anchor (fallback на tower если лагерь свёрнут).
+
+**DEFEND wander-patrol:** `_tick_defend_patrol` — каждый юнит независимо берёт случайные точки на окружности `defend_patrol_radius=12м` (как у DefenderGnome.patrol_radius), идёт `defend_patrol_speed=1.2 м/с`. Не использует squad-кольцо — отряд равномерно расходится по периметру. На бой переключается из основного `_active_tick`.
+
+#### 5.8.2.4 HandSquadAim — координатор aim'а «Идти сюда»
+Дочерний узел Hand. Активируется HUD-кнопкой `«Идти сюда»` на squad-card → `Hand.set_active_category(SQUAD_AIM)` → spawn ground-кольца радиусом `aim_ring_radius=3.5м` под курсором. ПКМ — commit точки → `Camp.command_squad_hold(squad, pos)`.
+
+**Hostile-подсветка:** каждый кадр scan'ит SKELETON_GROUP в радиусе кольца. Если найдены живые — кольцо красное (`Color(1.0, 0.25, 0.25, 0.95)`), иначе голубое. Сигнализирует: «кликнешь — отряд вбежит в эту толпу».
+
+UI-гейт на ПКМ: `Hand.is_pointer_over_ui()` — клик по HUD не фиксируется как commit aim'а.
+
+#### 5.8.2.5 Camp API для отрядов
+- `recruit_squad(soldier_type)` — гейтится `is_deployed() + can_afford(cost) + gatherer_count() ≥ squad_size`. Конвертирует gatherer'ов на месте, создаёт Squad.
+- `dismiss_squad(squad)` — гейтится `is_deployed() + ВСЕ члены в `dismiss_radius=12м` от deploy_anchor`. Spawn нового gatherer'а на каждой позиции солдата + queue_free солдата.
+- `command_squad_hold(squad, pos)` / `command_squad_escort(squad)` / `command_squad_defend(squad)`.
+- `cheat_summon_squad(soldier_type)` — мимо всех гейтов, спавн кольцом 2м вокруг центра лагеря (X/Z от anchor/tower, Y от global_position камп'а — иначе спавн в воздухе при tower.y=3).
+
+#### 5.8.2.6 Recall-зона + волна вызова (Q-toggle)
+
+`@export recall_zone_radius=20м`, `recall_wave_speed=25 м/с`. Гейтит:
+- **Q-toggle отрядов:** все отряды в зоне получают `command_escort()` если хоть один сейчас не в ESCORT, иначе `command_hold(center, false)` (HOLD-soft). Отряды вне зоны игнорируются (`EventBus.squad_recall_ignored.emit`).
+- **Q-toggle каравана** (`set_caravan_halted`) — гейтится зоной от camp_center к башне.
+- **Pack (R-hold в DEPLOYED):** `is_tower_in_camp_recall_zone()` — отсчёт прерывается если башня вне зоны от anchor'а. Игрок может «оставить лагерь и уйти только с солдатами».
+
+**Волна:** команда применяется с задержкой `dist / wave_speed` через `get_tree().create_timer(delay)` — ближний копейщик срывается раньше, дальний позже, точно когда фронт волны касается. HUD рисует expanding-ring через `AoeVisual.spawn_expanding_ring` (тонкий фронт `thickness=0.14` + размытый тейл с задержкой 70мс).
+
+**Indication out-of-zone:**
+- Карточка отряда: ⚠ префикс + красноватый цвет title когда вне зоны. Кнопка «За башней» disabled с tooltip'ом. Refresh раз в 0.25с (юниты двигаются без сигналов).
+- На Q: красный flash карточки (`squad_recall_ignored`).
+- Визуал волны: только до границы зоны — out-of-zone отряды визуально «не слышат».
+
+#### 5.8.2.7 HUD squad-cards (правая колонка слева от RightPanel)
+ScrollContainer (PRESET_RIGHT_WIDE: anchor_top=0, anchor_bottom=1) → VBoxContainer с карточками. Lazy-create на первый `EventBus.squad_created`. Каждая карточка: title + 4 кнопки («Идти сюда», «За башней», «Защищать», «Распустить»). Все с `focus_mode = FOCUS_NONE` — иначе Space на сфокусированной кнопке параллельно «нажимал» бы её (помимо cast_super).
+
+---
+
 ### 5.9 ResourcePile — `scenes/resource_pile.tscn`, `scripts/resource_pile.gd`
 
 **Тип корня:** `RigidBody3D` с `class_name ResourcePile`.
@@ -2037,11 +2121,15 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 | `equip_fireball` | 3 | Hand:Spell (экипировать фаербол) → category MAGIC |
 | `equip_firestorm` | 4 | Hand:Spell (экипировать огненный шквал) → category MAGIC |
 | `cast_super` | Space | Hand:Super — старт супер-удара (когда Camp.is_super_ready). В AIMING_TARGET повторное нажатие = бесплатная отмена. |
-| `camp_toggle` | R | Camp (зажать для развёртки/свёртки на POI) |
-| `caravan_halt_toggle` | Q | Camp (toggle halted-режим в CARAVAN_FOLLOWING — палатки замирают, башня катится отдельно) |
-| `ui_journal` | J | JournalPanel (открыть/закрыть журнал — шесть вкладок: Юниты / Лагерь / План / Заклинания / Задания / Читы) |
+| `camp_toggle` | R | Camp (зажать для развёртки/свёртки на POI). В DEPLOYED отсчёт pack'а гейтится `is_tower_in_camp_recall_zone()` — если башня вне `recall_zone_radius` от anchor'а, pack не запускается («оставить лагерь и уйти с солдатами»). |
+| `caravan_halt_toggle` | Q | Composite-команда: (1) toggle halted-режима в CARAVAN_FOLLOWING; (2) squad-recall для всех отрядов в recall-зоне башни (toggle ESCORT/HOLD-soft); (3) спавн волны вызова (expanding-ring визуал, команды применяются по `dist / wave_speed` задержке). Подробнее — §5.8.2.6. |
+| `ui_journal` | J | JournalPanel (открыть/закрыть журнал — семь вкладок: Юниты / Лагерь / План / Заклинания / Армия / Задания / Читы) |
 | `gnome_collect` | C | Camp.set_collection_mode(WORK) — gatherer'ы возвращаются на сбор |
 | `gnome_alarm` | V | Camp.set_collection_mode(ALARM) — gatherer'ы бегут в палатки (request_return); defender'ы продолжают защищать |
+
+**UI-гейт мыше-инпутов:** `Hand.is_pointer_over_ui()` → `get_viewport().gui_get_hovered_control() != null`. Все мыше-зависимые действия (LMB grab в hand_physical, ПКМ ability/spell, ПКМ commit aim'а отряда) гейтятся этим — клик по HUD-кнопке не тригерит параллельный grab/cast/aim под виджетом. Уже-активные действия (release удерживаемого) не трогаются. Клавиатурные хоткеи (equip 1/2/3/4, Space, Q, R) гейтом не покрыты — они работают и над UI.
+
+**Focus_mode HUD-кнопок:** все squad-cards и journal-кнопка имеют `focus_mode = FOCUS_NONE`. Без этого Godot Button по дефолту имеет FOCUS_ALL, и Space на сфокусированной (последней кликнутой) кнопке параллельно триггерит её pressed-сигнал — после клика «Идти сюда» Space одновременно вызывал и super-удар, и активировал squad-aim ring.
 
 **Дебаг-читы вынесены с клавиатуры в JournalPanel → вкладку «Читы»**
 (2026-05-08). Старые actions `spawn_enemies` (P), `force_wave` (O),
@@ -2689,6 +2777,11 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 | `camp_buildings_changed` | — | `Camp.try_build` после успешной постройки. JournalPanel перерисовывает карточки построек (для будущих одноразовых типа watchtower). |
 | `collection_mode_changed` | `(mode: int)` | `Camp.set_collection_mode` (хоткеи C / V). HUD-индикатор «⚠ тревога» / скрыт. |
 | `collection_priority_changed` | `(weights: Dictionary)` | `Camp.set_collection_priority` (preset-кнопки в Journal-вкладке «План»). Гном в `COMMUTING_TO_PILE` → `_on_pile_lost` → перевыбор. |
+| `squad_created` | `(squad: RefCounted)` | `Camp.recruit_squad` / `cheat_summon_squad`. HUD создаёт карточку (lazy-создаёт ScrollContainer-панель если первая). |
+| `squad_changed` | `(squad: RefCounted)` | `Camp._on_squad_changed` — re-emit от `Squad.members_changed` / `state_changed`. HUD перерисовывает карточку. |
+| `squad_disbanded` | `(squad: RefCounted)` | `Camp._on_squad_disbanded` — после потери последнего члена. HUD убирает карточку. |
+| `squad_recall_ignored` | `(squad: RefCounted)` | `Camp._handle_halt_input` — на каждый отряд вне recall-зоны при Q. HUD флешит карточку красным modulate-tween'ом. |
+| `recall_zone_pulsed` | `(center: Vector3, radius: float, duration: float)` | `Camp._handle_halt_input` — на любое нажатие Q. HUD спавнит expanding-ring (тонкий фронт + размытый тейл) через `AoeVisual.spawn_expanding_ring`. |
 
 `ResourcePile.take_one` через шину **не эмитит** (декремент `units` пока не нужен наружу — счётчика ресурсов ещё нет). При появлении HUD-счётчика добавится отдельный сигнал — типизированный как `Node3D`, как и остальные.
 
@@ -2807,11 +2900,19 @@ API: `pulse(world_position: Vector3, color: Color)`. Программно соз
 
 Не реализовано в текущей итерации (на будущее):
 
-- **Магия.** Есть в концепте, в коде её нет.
+- **Магия.** Реализована (Fireball/Firestorm/Super), осталась прокачка через страницы и баланс.
 - **Поворот башни** (мышью или клавишами).
 - **Препятствия / стены.** Сейчас только плоский пол.
-- **HUD** (мана, кулдауны, инвентарь).
 - **Контролируемое сглаживание захвата.** Магнит уже имеет дед-зону у руки и saturation по массе (`min(force, mass × max_accel)`); как следующий шаг — пружина (target velocity → force) могла бы сделать «подлёт» ещё стабильнее, особенно при движении руки.
 - **Звук.** Полностью отсутствует.
 - **Системный курсор.** Видим одновременно с рукой; имеет смысл скрыть/заменить на собственный.
 - **Editor preview цвета Item.** Без `@tool` все ящики в редакторе серые до запуска.
+
+**Армия (Squad/SoldierGnome) — открытые направления:**
+
+- **Distribution внутри отряда.** HOLD/ESCORT-кольцо radius=1.6м тесное на 10+ юнитов. Нужны: динамический радиус от squad_size, или 2 концентрических кольца. (DEFEND wander-патруль уже самостоятельный.)
+- **Spawn-лимиты.** Можно конвертировать всех gatherer'ов в копейщиков, оставить лагерь без сборщиков. Резерв (мин. N gatherer'ов на палатку)?
+- **Гейт призыва через здание-казарму.** Сейчас «Армия» вкладка журнала всегда доступна (когда лагерь развёрнут). В будущем — `Camp.try_build` уже есть для построек.
+- **Второй тип юнита** (опц.). Пока копейщик единственный мобильный класс. Лучник-кочевник с дальним боем (ranged subclass с override `_strike_at` через arrow_scene).
+- **Особо крупные цели.** `_is_target_claimed_by_other` сейчас strict 1:1. Будущие крупные/боссы должны принимать `allow_multi_charge` или иметь capacity-чек (несколько копейщиков на одну цель).
+- **Squad XP / прокачка отрядов.** `SoldierSystem` пока 1 уровень на тип. Если придёт время — `levels[]` как у SpellSystem.

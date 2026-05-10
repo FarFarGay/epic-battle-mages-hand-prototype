@@ -15,12 +15,18 @@ extends Node
 const ACTION_AIM_COMMIT := &"hand_action"  # ПКМ — commit точки
 
 @export_group("Visual")
-## Цвет ground-ring'а под курсором. Голубой — отличается от золотого
-## aim_indicator'а супер-удара и оранжевого warning'а магии.
+## Цвет ground-ring'а под курсором когда враги ВНЕ зоны прицеливания.
+## Голубой — отличается от золотого aim_indicator'а супер-удара и
+## оранжевого warning'а магии.
 @export var aim_ring_color: Color = Color(0.4, 0.85, 1.0, 0.9)
-## Радиус кольца в метрах. Не привязан к squad'у — это маркер «вот здесь
-## будет точка», не AOE.
-@export var aim_ring_radius: float = 1.5
+## Цвет когда внутри зоны есть враги — красный «опасность здесь, отряд
+## пойдёт в бой». Используется как сигнал «это указание цели, не просто
+## точки».
+@export var aim_ring_color_hostile: Color = Color(1.0, 0.25, 0.25, 0.95)
+## Радиус кольца в метрах. Используется и как визуал «куда пойдёт отряд»,
+## и как зона сканирования врагов: если в радиусе кольца есть скелет —
+## кольцо подсвечивается hostile-цветом.
+@export var aim_ring_radius: float = 3.5
 @export var debug_log: bool = true
 
 @export_group("")
@@ -107,10 +113,47 @@ func _process(_delta: float) -> void:
 		var ground: Vector3 = _hand.cursor_world_position()
 		ground.y -= _hand.hand_height
 		_aim_indicator.global_position = ground + Vector3.UP * 0.05
+		# Подсветка hostile когда враги в радиусе кольца — игрок видит, что
+		# это указание цели, а не просто перемещение в пустое место.
+		_set_ring_hostile(_has_enemies_in_aim_zone(ground))
 	# ПКМ — commit точки. Используем Input.is_action_just_pressed: aim mode
-	# единственный listener в этой категории, конфликтов нет.
-	if Input.is_action_just_pressed(ACTION_AIM_COMMIT):
+	# единственный listener в этой категории, конфликтов нет. UI-гейт: если
+	# курсор над виджетом HUD'а, ПКМ — это клик по кнопке, не команда отряду
+	# (иначе клик «За башней» во время aim'а ставил бы юнитов в случайную точку).
+	if Input.is_action_just_pressed(ACTION_AIM_COMMIT) and not _hand.is_pointer_over_ui():
 		_commit_aim()
+
+
+## True если в круге aim_ring_radius вокруг центра есть живой скелет.
+## Идём через SKELETON_GROUP — и NEAR, и FAR-LOD цели засчитываются.
+## Дёшево: ~50 скелетов max × 1 frame, без sqrt.
+func _has_enemies_in_aim_zone(center: Vector3) -> bool:
+	var r_sq: float = aim_ring_radius * aim_ring_radius
+	for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if not is_instance_valid(n):
+			continue
+		var node3d := n as Node3D
+		if node3d == null:
+			continue
+		var dx: float = node3d.global_position.x - center.x
+		var dz: float = node3d.global_position.z - center.z
+		if dx * dx + dz * dz <= r_sq:
+			return true
+	return false
+
+
+## Меняет albedo + emission материала кольца на hostile/neutral.
+## StandardMaterial3D создан в AoeVisual.spawn_ground_ring; мы знаем его
+## структуру и берём через material_override.
+func _set_ring_hostile(hostile: bool) -> void:
+	if not is_instance_valid(_aim_indicator):
+		return
+	var mat := _aim_indicator.material_override as StandardMaterial3D
+	if mat == null:
+		return
+	var c: Color = aim_ring_color_hostile if hostile else aim_ring_color
+	mat.albedo_color = c
+	mat.emission = Color(c.r, c.g, c.b, 1.0)
 
 
 func _commit_aim() -> void:
