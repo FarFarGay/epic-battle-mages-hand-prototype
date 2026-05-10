@@ -55,17 +55,18 @@ const SPELL_CATALOG: Dictionary = {
 	},
 	&"firestorm": {
 		"name": "Огненный шквал",
-		"description": "Серия из 5 малых фаерболов. Вылетают по очереди с короткой задержкой, ложатся в небольшую область вокруг прицела — накрывают плотную группу.",
+		"description": "Серия из 4 малых фаерболов. Вылетают по очереди с короткой задержкой, ложатся в небольшую область вокруг прицела — накрывают плотную группу.",
 		"icon_color": Color(0.9, 0.3, 0.05, 1.0),
 		"unlocked_by_default": true,
 		"unlock_cost": {},
-		# Баланс 2026-05-10: shot_count L0 4→5, shot_damage 15→22, shot_radius
-		# 2.5→3.0, scatter 2.5→2.8. На толпе врагов прежняя версия не
-		# вытягивала, теперь burst заметно жирнее.
+		# Баланс 2026-05-10: shot_count оставлен 4/5/6 (геймдизайнерское
+		# решение — ровно 4 шота на базе). Per-shot стат вырос: damage
+		# 15→22, shot_radius 2.5→3.0, scatter 2.5→2.8. На толпе прежняя
+		# версия не вытягивала; теперь те же 4 шота заметно жирнее.
 		"levels": [
-			{"shot_count": 5, "shot_interval": 0.15, "shot_damage": 22.0, "shot_radius": 3.0, "scatter_radius": 2.8, "cooldown": 2.0, "mana_cost": 50.0},
-			{"shot_count": 6, "shot_interval": 0.13, "shot_damage": 28.0, "shot_radius": 3.2, "scatter_radius": 3.0, "cooldown": 1.8, "mana_cost": 55.0},
-			{"shot_count": 8, "shot_interval": 0.11, "shot_damage": 35.0, "shot_radius": 3.5, "scatter_radius": 3.2, "cooldown": 1.6, "mana_cost": 60.0},
+			{"shot_count": 4, "shot_interval": 0.15, "shot_damage": 22.0, "shot_radius": 3.0, "scatter_radius": 2.8, "cooldown": 2.0, "mana_cost": 50.0},
+			{"shot_count": 5, "shot_interval": 0.13, "shot_damage": 28.0, "shot_radius": 3.2, "scatter_radius": 3.0, "cooldown": 1.8, "mana_cost": 55.0},
+			{"shot_count": 6, "shot_interval": 0.11, "shot_damage": 35.0, "shot_radius": 3.5, "scatter_radius": 3.2, "cooldown": 1.6, "mana_cost": 60.0},
 		],
 		"upgrade_costs": [
 			{ResourcePile.ResourceType.PAGE: 6},
