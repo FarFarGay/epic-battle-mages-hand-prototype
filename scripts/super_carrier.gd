@@ -19,8 +19,10 @@ signal burst(position: Vector3)
 const SAFETY_LIFETIME: float = 4.0  # на случай если что-то пошло не так
 
 @export_group("Visual")
-## Радиус сферы-меша. Больше fireball'а (0.22) — это «носитель», виден издалека.
-@export var visual_scale: float = 2.4
+## Множитель размера mesh'а. Mesh radius=0.4 в .tscn, итоговый = 0.4×scale.
+## По дизайнерскому решению (2026-05-10) carrier должен быть не больше чем в
+## 2 раза больше обычного fireball'а (radius ≈ 0.26). 1.2 → 0.48 (~1.85×).
+@export var visual_scale: float = 1.2
 @export_group("")
 
 var _launch_pos: Vector3 = Vector3.ZERO

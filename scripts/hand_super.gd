@@ -51,8 +51,10 @@ enum State { READY, AIMING_PATTERN, AIMING_TARGET, CASTING }
 @export var payload_radius: float = 7.0
 ## Урон одного payload'а в центре AOE.
 @export var payload_damage: float = 25.0
-## AOE-радиус каждого payload'а.
-@export var payload_radius_aoe: float = 2.5
+## AOE-радиус каждого payload'а. 4.0 — большой нахлёст между соседними
+## взрывами, реально «массовый удар»: цели в эпицентре получают damage от
+## нескольких payload'ов сразу, на краю — один-два.
+@export var payload_radius_aoe: float = 4.0
 ## Mask AOE.
 @export_flags_3d_physics var payload_explode_mask: int = Layers.MASK_HAND_SLAM
 ## Knockback одного payload'а — слабее обычного fireball'а.
@@ -63,6 +65,15 @@ enum State { READY, AIMING_PATTERN, AIMING_TARGET, CASTING }
 ## (по xz). Нулевой — все вылетают строго из burst, ненулевой — небольшой
 ## визуальный «взрыв» точки разделения.
 @export var payload_launch_scatter: float = 1.0
+## Максимальная случайная задержка перед спавном каждого payload'а
+## (секунды). 0 = все вылетают одновременно. >0 = разлёт «вразнобой» с
+## импактами в окне [t, t+max_delay+flight_time]. 0.4 → импакты в ~0.4с
+## друг от друга, ощущение «не одна дробина, а очередь».
+@export var payload_max_delay: float = 0.4
+## Per-payload random multiplier для homing_acceleration / homing_max_speed.
+## Каждый payload получает factor ∈ [1-jitter; 1+jitter]. 0.25 → ±25%, что
+## заметно меняет время полёта между ними (хаотичность).
+@export_range(0.0, 0.6) var payload_speed_jitter: float = 0.25
 @export_group("")
 
 @export_group("Aim indicator")
@@ -303,8 +314,8 @@ func _spawn_carrier(target_pos: Vector3) -> void:
 
 
 func _on_carrier_burst(burst_position: Vector3, ground_target: Vector3) -> void:
-	# Carrier долетел и эмитит сигнал. Spawn'им N payload-фаерболов
-	# одновременно из burst-точки, каждый с собственным jitter'ом target'а.
+	# Carrier долетел и эмитит сигнал. Spawn'им N payload-фаерболов с
+	# random-задержками — импакты ложатся «очередью», а не один-в-один.
 	if fireball_scene == null:
 		push_error("[Hand:Super] fireball_scene не задан")
 		_state = State.READY
@@ -315,46 +326,70 @@ func _on_carrier_burst(burst_position: Vector3, ground_target: Vector3) -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Super] burst @ (%.1f, %.1f, %.1f) → %d payloads" % [burst_position.x, burst_position.y, burst_position.z, payload_count])
 	for i in range(payload_count):
-		# uniform-по-площади distribution в круге payload_radius
-		var angle: float = randf() * TAU
-		var dist: float = sqrt(randf()) * payload_radius
-		var payload_target: Vector3 = ground_target + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
-		# Launch — в burst-точке + scatter (для визуального разлёта)
-		var launch_jitter: Vector3 = Vector3(
-			randf_range(-payload_launch_scatter, payload_launch_scatter),
-			0.0,
-			randf_range(-payload_launch_scatter, payload_launch_scatter),
-		)
-		var payload_launch: Vector3 = burst_position + launch_jitter
-		var fireball := fireball_scene.instantiate() as Fireball
-		if fireball == null:
-			continue
-		_effects_root.add_child(fireball)
-		# Конфиг payload'а: чтобы не было homing-«крюка» (мы целимся в ground
-		# почти-вертикально), drift_angle и turn_rate настроены жёстче чем у
-		# обычного fireball'а. Гравитация в boost'е 0 — payload не теряет
-		# vertical velocity сразу после burst'а.
-		fireball.setup(
-			payload_launch,
-			payload_target,
-			0.05,    # boost_duration — почти 0
-			0.0,    # boost_velocity_up
-			0.0,    # boost_velocity_forward
-			0.0,    # boost_gravity
-			0.0,    # boost_drift_velocity
-			14.0,   # homing_initial_speed
-			55.0,   # homing_acceleration
-			42.0,   # homing_max_speed
-			6.0,    # homing_drift_angle_deg — почти прямо
-			10.0,   # homing_turn_rate — быстрая коррекция
-			payload_damage,
-			payload_radius_aoe,
-			payload_explode_mask,
-			payload_knockback_force,
-			payload_knockback_lift,
-			payload_knockback_duration,
-		)
-	# Carrier отыграл свою роль — серия "запущена". State закрываем,
-	# fireball'ы дальше живут сами.
+		var delay: float = randf() * payload_max_delay if payload_max_delay > 0.0 else 0.0
+		if delay <= 0.0:
+			_spawn_one_payload(burst_position, ground_target)
+		else:
+			# Без await: timer.timeout одноразовый, лямбда захватывает burst-точку.
+			# Carrier к этому моменту уже queue_free'нут, но _effects_root
+			# обычно current_scene и переживёт.
+			get_tree().create_timer(delay).timeout.connect(
+				_spawn_one_payload.bind(burst_position, ground_target),
+				CONNECT_ONE_SHOT,
+			)
+	# Carrier отыграл свою роль — серия запущена. Закрываем state сразу,
+	# fireball'ы дальше живут сами по таймерам.
 	if _state == State.CASTING:
 		_state = State.READY
+
+
+func _spawn_one_payload(burst_position: Vector3, ground_target: Vector3) -> void:
+	# Сцена могла перезагрузиться за время задержки — guard.
+	if not is_instance_valid(_effects_root):
+		return
+	if fireball_scene == null:
+		return
+	# uniform-по-площади distribution в круге payload_radius
+	var angle: float = randf() * TAU
+	var dist: float = sqrt(randf()) * payload_radius
+	var payload_target: Vector3 = ground_target + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+	# Launch — в burst-точке + scatter (для визуального разлёта)
+	var launch_jitter: Vector3 = Vector3(
+		randf_range(-payload_launch_scatter, payload_launch_scatter),
+		0.0,
+		randf_range(-payload_launch_scatter, payload_launch_scatter),
+	)
+	var payload_launch: Vector3 = burst_position + launch_jitter
+
+	var fireball := fireball_scene.instantiate() as Fireball
+	if fireball == null:
+		return
+	_effects_root.add_child(fireball)
+	# Per-payload jitter: разные accel/max_speed дают разные времена полёта
+	# и траектории — импакты «вразнобой» даже если delay одинаковый.
+	var jitter_lo: float = 1.0 - payload_speed_jitter
+	var jitter_hi: float = 1.0 + payload_speed_jitter
+	var accel_factor: float = randf_range(jitter_lo, jitter_hi)
+	var max_speed_factor: float = randf_range(jitter_lo, jitter_hi)
+	# Конфиг payload'а: drift и turn_rate тоже слегка варьируются — каждый
+	# летит немного по-своему, но в целом почти-вертикально.
+	fireball.setup(
+		payload_launch,
+		payload_target,
+		0.05,                                           # boost_duration
+		0.0,                                            # boost_velocity_up
+		0.0,                                            # boost_velocity_forward
+		0.0,                                            # boost_gravity
+		0.0,                                            # boost_drift_velocity
+		14.0,                                           # homing_initial_speed
+		55.0 * accel_factor,                            # homing_acceleration (jittered)
+		42.0 * max_speed_factor,                        # homing_max_speed (jittered)
+		randf_range(4.0, 14.0),                         # homing_drift_angle_deg
+		randf_range(8.0, 14.0),                         # homing_turn_rate
+		payload_damage,
+		payload_radius_aoe,
+		payload_explode_mask,
+		payload_knockback_force,
+		payload_knockback_lift,
+		payload_knockback_duration,
+	)
