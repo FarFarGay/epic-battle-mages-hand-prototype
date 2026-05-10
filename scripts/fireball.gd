@@ -308,7 +308,12 @@ func _apply_aoe(target: Node, origin: Vector3) -> void:
 		return
 	var to_target: Vector3 = (target as Node3D).global_position - origin
 	var horizontal_dist: float = Vector2(to_target.x, to_target.z).length()
-	var falloff: float = clampf(1.0 - horizontal_dist / _radius, 0.0, 1.0)
+	# Falloff: sqrt-curve (раньше linear). Меньше «обрыв» на средней дистанции:
+	# на 50% радиуса остаётся 71% damage'а (vs 50% при linear), на 75% — 50%
+	# (vs 25%). Удар крайней цели всё ещё проседает (на 90% радиуса — 32%),
+	# но уже не «обнуляется» за пределами burn-зоны.
+	var falloff_linear: float = clampf(1.0 - horizontal_dist / _radius, 0.0, 1.0)
+	var falloff: float = sqrt(falloff_linear)
 	if falloff <= 0.0:
 		return
 	var horizontal_dir: Vector3 = VecUtil.horizontal(to_target)

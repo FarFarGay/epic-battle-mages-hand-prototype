@@ -209,7 +209,10 @@ func _perform_slam() -> void:
 func _slam_direction_and_falloff(target_pos: Vector3, origin: Vector3) -> SlamHit:
 	var to_target: Vector3 = target_pos - origin
 	var horizontal_dist := Vector2(to_target.x, to_target.z).length()
-	var falloff: float = clampf(1.0 - horizontal_dist / slam_radius, 0.0, 1.0)
+	# Falloff sqrt-curve: тот же что у fireball'а — единый «маг-feel». На 50%
+	# радиуса остаётся 71% damage'а вместо 50% (linear).
+	var falloff_linear: float = clampf(1.0 - horizontal_dist / slam_radius, 0.0, 1.0)
+	var falloff: float = sqrt(falloff_linear)
 	if falloff <= 0.0:
 		return SlamHit.new(Vector3.UP, 0.0)
 	var horizontal_dir := VecUtil.horizontal(to_target)
