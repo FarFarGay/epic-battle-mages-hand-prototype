@@ -297,13 +297,18 @@ func _draw() -> void:
 						Color(0.4, 1.0, 0.5, flash_alpha), 3.0)
 
 			draw_circle(p, dot_radius_px * dot_scale, color)
-			# Цифра порядка внутри точки (1..N)
+			# Цифра порядка внутри точки (1..N). draw_string принимает позицию
+			# baseline'а — для точного центрирования по вертикали используем
+			# (ascent - descent)/2 как смещение от центра. Без этого «1» сидит
+			# слегка ниже центра (магическое 0.35 не точно для всех шрифтов).
 			var label: String = str(order + 1)
 			var font := ThemeDB.fallback_font
 			var font_size: int = 16
-			var text_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, font_size)
-			draw_string(font, p - text_size / 2.0 + Vector2(0, font_size * 0.35),
-				label, HORIZONTAL_ALIGNMENT_CENTER, -1, font_size, Color(0.1, 0.1, 0.1, 1.0))
+			var text_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+			var ascent: float = font.get_ascent(font_size)
+			var descent: float = font.get_descent(font_size)
+			var label_pos := Vector2(p.x - text_size.x / 2.0, p.y + (ascent - descent) / 2.0)
+			draw_string(font, label_pos, label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.1, 0.1, 0.1, 1.0))
 		else:
 			# Не в sequence — маленькая dim-точка (для ориентации в grid'е).
 			draw_circle(p, dot_radius_px * 0.4, Color(0.4, 0.4, 0.5, 0.5))
