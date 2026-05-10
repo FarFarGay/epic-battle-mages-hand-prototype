@@ -36,6 +36,9 @@ var _aim_indicator: MeshInstance3D = null
 
 
 func _ready() -> void:
+	# _camp пытаемся резолвить тут, но Camp может ещё не быть в группе
+	# (порядок _ready bottom-up — HandSquadAim._ready зовётся до Camp._ready
+	# если Hand-узел стоит выше Camp в main.tscn). Lazy-lookup в _commit_aim.
 	_camp = get_tree().get_first_node_in_group(Camp.CAMP_GROUP) as Camp
 	if not effects_root_path.is_empty():
 		_effects_root = get_node_or_null(effects_root_path)
@@ -70,7 +73,11 @@ func toggle_aim_for(squad: Squad) -> void:
 ## Запуск aim'а. Если уже активен на другом squad'е — сначала отменяем
 ## предыдущий, потом стартуем новый (один aim в один момент времени).
 func start_aim(squad: Squad) -> void:
-	if squad == null or not is_instance_valid(_hand):
+	if squad == null:
+		push_warning("[Hand:SquadAim] start_aim получил null squad")
+		return
+	if not is_instance_valid(_hand):
+		push_warning("[Hand:SquadAim] start_aim — _hand не задан (setup не вызван?)")
 		return
 	if _active_squad != null:
 		cancel_aim()
@@ -79,7 +86,7 @@ func start_aim(squad: Squad) -> void:
 	_hand.set_active_category(Hand.Category.SQUAD_AIM)
 	_spawn_indicator()
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:SquadAim] aim для %s" % str(squad))
+		print("[Hand:SquadAim] aim старт для %s, prev_category=%s" % [str(squad), Hand.Category.keys()[_pre_aim_category]])
 
 
 ## Отмена без команды (повторный клик «Идти сюда» / squad распущен).
@@ -111,10 +118,15 @@ func _commit_aim() -> void:
 		return
 	var ground: Vector3 = _hand.cursor_world_position()
 	ground.y -= _hand.hand_height
-	if _camp != null and is_instance_valid(_camp):
+	# Lazy-resolve: если в _ready Camp ещё не был в группе, пробуем сейчас.
+	if not is_instance_valid(_camp):
+		_camp = get_tree().get_first_node_in_group(Camp.CAMP_GROUP) as Camp
+	if is_instance_valid(_camp):
 		_camp.command_squad_hold(_active_squad, ground)
-	if debug_log and LogConfig.master_enabled:
-		print("[Hand:SquadAim] commit @ (%.1f, %.1f, %.1f)" % [ground.x, ground.y, ground.z])
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:SquadAim] commit %s @ (%.1f, %.1f, %.1f)" % [str(_active_squad), ground.x, ground.y, ground.z])
+	else:
+		push_warning("[Hand:SquadAim] _camp не резолвится — команда не дошла")
 	_finish_aim()
 
 
