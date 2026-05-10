@@ -32,47 +32,51 @@ enum State { READY, AIMING_PATTERN, AIMING_TARGET, CASTING }
 @export_range(0.05, 1.0) var pattern_time_scale: float = 0.15
 @export_group("")
 
-@export_group("Rain (ковровая бомбардировка)")
-## Сколько фаерболов падает с неба за каст.
-@export var rain_shot_count: int = 12
-## Радиус, в котором сыпется дождь (вокруг target_pos игрока).
-@export var rain_radius: float = 7.0
-## Период между шотами в реальных секундах. 0.18 → 12 шотов за ~2.2с.
-@export var rain_shot_interval: float = 0.18
-## Урон одного шота (центр AOE, falloff линейный).
-@export var rain_shot_damage: float = 25.0
-## AOE-радиус каждого шота.
-@export var rain_shot_radius: float = 2.5
-## Высота старта над землёй — фаерболы «падают с неба». 30м даёт читаемое
-## зрелищное падение, не слишком короткое.
-@export var rain_launch_height: float = 30.0
-## Mask AOE — та же что у обычных fireball'ов (Layers.MASK_HAND_SLAM).
-@export_flags_3d_physics var rain_explode_mask: int = Layers.MASK_HAND_SLAM
-## Knockback от каждого шота — слабее обычного fireball'а (12 vs 35),
-## ковёр толкает не «прочь», а «прижимает».
-@export var rain_knockback_force: float = 12.0
-@export var rain_knockback_lift: float = 0.3
-@export var rain_knockback_duration: float = 0.3
-## Telegraph: каждое попадание ковра предваряется ground-маркером за
-## `rain_warning_lead_time` секунд до спавна ракеты. Игрок видит «куда
-## упадёт», шот не выглядит из ниоткуда.
-@export var rain_warning_lead_time: float = 0.35
-## Сколько живёт warning-кольцо в общей сложности (включая flight ракеты).
-## ≈ lead_time + flight_estimate. Если кольцо исчезает раньше импакта —
-## telegraph «обрывается»; если позже — задерживается на земле после взрыва.
-@export var rain_warning_duration: float = 1.0
+@export_group("Carrier (носитель из башни)")
+## Время полёта carrier'а от tower'а до точки разделения.
+@export var carrier_flight_time: float = 0.9
+## Высота burst-точки НАД _aim_target. Carrier поднимается над землёй,
+## разделяется тут на маленькие фаерболы, те уже сами падают вниз.
+@export var carrier_burst_height: float = 12.0
+## Гравитация carrier'а (для расчёта параболы). Больше = плоская дуга.
+@export var carrier_gravity: float = 12.0
+## Вертикальный offset launch'а от Tower'а — как у Fireball'а.
+@export var carrier_launch_offset_y: float = 3.0
+@export_group("")
+
+@export_group("Payload (маленькие снаряды после разделения)")
+## Сколько маленьких снарядов вылетает на burst'е.
+@export var payload_count: int = 12
+## Радиус разлёта payload-target'ов вокруг _aim_target по земле.
+@export var payload_radius: float = 7.0
+## Урон одного payload'а в центре AOE.
+@export var payload_damage: float = 25.0
+## AOE-радиус каждого payload'а.
+@export var payload_radius_aoe: float = 2.5
+## Mask AOE.
+@export_flags_3d_physics var payload_explode_mask: int = Layers.MASK_HAND_SLAM
+## Knockback одного payload'а — слабее обычного fireball'а.
+@export var payload_knockback_force: float = 12.0
+@export var payload_knockback_lift: float = 0.3
+@export var payload_knockback_duration: float = 0.3
+## Случайный разброс launch-позиции каждого payload'а вокруг burst-точки
+## (по xz). Нулевой — все вылетают строго из burst, ненулевой — небольшой
+## визуальный «взрыв» точки разделения.
+@export var payload_launch_scatter: float = 1.0
 @export_group("")
 
 @export_group("Aim indicator")
-## Радиус ground-кольца в фазе AIMING_TARGET, обычно совпадает с rain_radius.
+## Радиус ground-кольца в фазе AIMING_TARGET. Совпадает с payload_radius —
+## показывает зону разлёта payload'ов вокруг точки прицела.
 @export var aim_indicator_radius_match: bool = true
 ## Цвет ring'а в AIMING_TARGET.
 @export var aim_indicator_color: Color = Color(1.0, 0.7, 0.15, 0.95)
-## Цвет warning'а перед каждым shot'ом в CASTING.
-@export var rain_warning_color: Color = Color(1.0, 0.35, 0.15, 0.85)
 @export_group("")
 
 @export_group("Visual / scenes")
+## Сцена носителя (большой снаряд из башни до точки разделения).
+@export var carrier_scene: PackedScene
+## Сцена payload-фаербола. Та же fireball.tscn что и у обычной магии.
 @export var fireball_scene: PackedScene
 @export var pattern_overlay_scene: PackedScene
 ## Куда добавлять снаряды. Если NodePath пуст — current_scene.
@@ -95,9 +99,6 @@ var _pre_super_category: int = Hand.Category.PHYSICAL
 ## ковра». Игрок может ещё подвигать курсором; финальная цель определится
 ## именно нажатием ПКМ в AIMING_TARGET.
 var _aim_target: Vector3 = Vector3.ZERO
-## Серия шотов в CASTING-фазе (счётчик и тайминг).
-var _shots_remaining: int = 0
-var _next_shot_in: float = 0.0
 ## Постоянный ground-ring под курсором в AIMING_TARGET (визуализация
 ## bombing zone). Создаётся в _on_pattern_finished(true), двигается каждый
 ## кадр в _process, освобождается в _commit_rain / _cancel_aim / _finish_super(false).
@@ -116,19 +117,7 @@ func setup(hand: Hand) -> void:
 	_hand = hand
 
 
-func _process(delta: float) -> void:
-	# Серию ковра тикаем независимо от категории — игрок мог уже выйти из
-	# CASTING (state == READY) сразу после первого шота, но ракеты должны
-	# доспавниться по таймингу. Используем _shots_remaining как guard.
-	if _shots_remaining > 0:
-		_next_shot_in -= delta
-		if _next_shot_in <= 0.0:
-			_launch_one_rain_shot()
-			_shots_remaining -= 1
-			_next_shot_in = rain_shot_interval
-			if _shots_remaining <= 0 and _state == State.CASTING:
-				_state = State.READY
-
+func _process(_delta: float) -> void:
 	# AIMING_TARGET: indicator сидит на земле под курсором, обновляется каждый
 	# кадр. Mesh уже выше пола на 0.05м (см. spawn_ground_ring), Y берём из
 	# курсорной точки минус hand_height — это ground под курсором.
@@ -235,7 +224,7 @@ func _spawn_aim_indicator() -> void:
 	_aim_indicator = AoeVisual.spawn_ground_ring(
 		_effects_root,
 		_aim_target,
-		rain_radius if aim_indicator_radius_match else rain_shot_radius,
+		payload_radius if aim_indicator_radius_match else payload_radius_aoe,
 		0.0,
 		aim_indicator_color,
 	)
@@ -248,7 +237,7 @@ func _clear_aim_indicator() -> void:
 
 
 func _commit_rain() -> void:
-	# Игрок нажал ПКМ — ставит ковёр в текущую точку курсора (НЕ заранее
+	# Игрок нажал ПКМ — ставит каст в текущую точку курсора (НЕ заранее
 	# зафиксированную: куда смотрит сейчас, туда и сыпется).
 	var target: Vector3 = _hand.cursor_world_position()
 	target.y -= _hand.hand_height
@@ -257,13 +246,13 @@ func _commit_rain() -> void:
 	# Полное списание шкалы — один каст = один полный ресурс.
 	_camp.consume_super_charge(_camp.get_super_charge_max())
 	_state = State.CASTING
-	_shots_remaining = rain_shot_count
-	_next_shot_in = 0.0  # первый шот сразу
 	super_cast.emit(target)
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:Super] ковёр × %d @ (%.1f, %.1f, %.1f)" % [rain_shot_count, target.x, target.y, target.z])
-	# Категорию возвращаем СРАЗУ — игрок может управлять рукой пока серия
-	# летит. CASTING-фаза держится только для счётчика _shots_remaining.
+		print("[Hand:Super] carrier @ burst-target=(%.1f, %.1f, %.1f)" % [target.x, target.y, target.z])
+	_spawn_carrier(target)
+	# Категорию возвращаем СРАЗУ — игрок может управлять рукой пока carrier
+	# летит и payload'ы падают. CASTING-state держится через _on_carrier_burst
+	# (закроется обратно в READY после burst'а).
 	_finish_super(true)
 
 
@@ -290,68 +279,82 @@ func _finish_super(success: bool) -> void:
 	EventBus.super_cast_finished.emit(success)
 
 
-func _launch_one_rain_shot() -> void:
+func _spawn_carrier(target_pos: Vector3) -> void:
+	if carrier_scene == null:
+		push_error("[Hand:Super] carrier_scene не задан")
+		return
+	if _effects_root == null:
+		return
+	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
+	var launch_pos: Vector3
+	if tower != null:
+		launch_pos = tower.global_position + Vector3.UP * carrier_launch_offset_y
+	else:
+		launch_pos = _hand.global_position
+	var burst_pos: Vector3 = target_pos + Vector3.UP * carrier_burst_height
+	var carrier := carrier_scene.instantiate() as SuperCarrier
+	if carrier == null:
+		push_error("[Hand:Super] carrier_scene не инстанцируется как SuperCarrier")
+		return
+	carrier.setup(launch_pos, burst_pos, carrier_flight_time, carrier_gravity)
+	_effects_root.add_child(carrier)
+	# bind ground-target — на burst'е знать, куда payload'ы должны падать.
+	carrier.burst.connect(_on_carrier_burst.bind(target_pos))
+
+
+func _on_carrier_burst(burst_position: Vector3, ground_target: Vector3) -> void:
+	# Carrier долетел и эмитит сигнал. Spawn'им N payload-фаерболов
+	# одновременно из burst-точки, каждый с собственным jitter'ом target'а.
 	if fireball_scene == null:
 		push_error("[Hand:Super] fireball_scene не задан")
+		_state = State.READY
 		return
-	# Каждый шот таргетит точку в `rain_radius` вокруг _aim_target — uniform
-	# по площади (sqrt-jitter, как Firestorm).
-	var angle: float = randf() * TAU
-	var dist: float = sqrt(randf()) * rain_radius
-	var target_pos: Vector3 = _aim_target + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
-
-	# Telegraph: ground-warning ring появляется в landing point раньше, чем
-	# спавнится ракета. Игрок видит «куда упадёт». Живёт rain_warning_duration —
-	# обычно ≈ lead_time + flight_time, чтобы исчезнуть к моменту импакта.
-	if _effects_root != null:
-		AoeVisual.spawn_ground_ring(
-			_effects_root,
-			target_pos,
-			rain_shot_radius,
-			rain_warning_duration,
-			rain_warning_color,
-		)
-	# Пауза перед фактическим spawn'ом ракеты. await suspend'ит этот вызов,
-	# _process тем временем продолжает decrement _shots_remaining и спавнит
-	# следующие warning'и — серия идёт по rain_shot_interval, а отдельные
-	# ракеты летят с lead-time'ом каждая. Эффективная общая длительность
-	# каста: lead_time + (count - 1) * shot_interval + flight_estimate.
-	if rain_warning_lead_time > 0.0:
-		await get_tree().create_timer(rain_warning_lead_time).timeout
-	# Сцена могла перезагрузиться за время await'а (resume главного меню,
-	# редактор-reload и т.п.). Без guard'а add_child уйдёт в freed-родителя.
 	if not is_instance_valid(_effects_root):
+		_state = State.READY
 		return
-
-	# Стартовая точка — высоко над target. Небольшой horizontal jitter
-	# чтобы фаерболы не падали строго вертикально (читаемее как «дождь»).
-	var launch_jitter: Vector3 = Vector3(randf_range(-2.0, 2.0), 0.0, randf_range(-2.0, 2.0))
-	var launch_pos: Vector3 = target_pos + Vector3.UP * rain_launch_height + launch_jitter
-
-	var fireball := fireball_scene.instantiate() as Fireball
-	if fireball == null:
-		push_error("[Hand:Super] fireball_scene не инстанцируется как Fireball")
-		return
-	_effects_root.add_child(fireball)
-	# Конфиг под «дождь»: короткий boost (фактически не нужен), homing сразу
-	# вертикально вниз. Используем тот же setup-API что у одиночного fireball'а.
-	fireball.setup(
-		launch_pos,
-		target_pos,
-		0.05,    # boost_duration — почти 0
-		0.0,    # boost_velocity_up
-		0.0,    # boost_velocity_forward
-		0.0,    # boost_gravity
-		0.0,    # boost_drift_velocity
-		18.0,   # homing_initial_speed — стартовая
-		60.0,   # homing_acceleration — быстро разгоняется в падении
-		45.0,   # homing_max_speed
-		8.0,    # homing_drift_angle_deg — почти прямо
-		8.0,    # homing_turn_rate — быстрая коррекция
-		rain_shot_damage,
-		rain_shot_radius,
-		rain_explode_mask,
-		rain_knockback_force,
-		rain_knockback_lift,
-		rain_knockback_duration,
-	)
+	if debug_log and LogConfig.master_enabled:
+		print("[Hand:Super] burst @ (%.1f, %.1f, %.1f) → %d payloads" % [burst_position.x, burst_position.y, burst_position.z, payload_count])
+	for i in range(payload_count):
+		# uniform-по-площади distribution в круге payload_radius
+		var angle: float = randf() * TAU
+		var dist: float = sqrt(randf()) * payload_radius
+		var payload_target: Vector3 = ground_target + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+		# Launch — в burst-точке + scatter (для визуального разлёта)
+		var launch_jitter: Vector3 = Vector3(
+			randf_range(-payload_launch_scatter, payload_launch_scatter),
+			0.0,
+			randf_range(-payload_launch_scatter, payload_launch_scatter),
+		)
+		var payload_launch: Vector3 = burst_position + launch_jitter
+		var fireball := fireball_scene.instantiate() as Fireball
+		if fireball == null:
+			continue
+		_effects_root.add_child(fireball)
+		# Конфиг payload'а: чтобы не было homing-«крюка» (мы целимся в ground
+		# почти-вертикально), drift_angle и turn_rate настроены жёстче чем у
+		# обычного fireball'а. Гравитация в boost'е 0 — payload не теряет
+		# vertical velocity сразу после burst'а.
+		fireball.setup(
+			payload_launch,
+			payload_target,
+			0.05,    # boost_duration — почти 0
+			0.0,    # boost_velocity_up
+			0.0,    # boost_velocity_forward
+			0.0,    # boost_gravity
+			0.0,    # boost_drift_velocity
+			14.0,   # homing_initial_speed
+			55.0,   # homing_acceleration
+			42.0,   # homing_max_speed
+			6.0,    # homing_drift_angle_deg — почти прямо
+			10.0,   # homing_turn_rate — быстрая коррекция
+			payload_damage,
+			payload_radius_aoe,
+			payload_explode_mask,
+			payload_knockback_force,
+			payload_knockback_lift,
+			payload_knockback_duration,
+		)
+	# Carrier отыграл свою роль — серия "запущена". State закрываем,
+	# fireball'ы дальше живут сами.
+	if _state == State.CASTING:
+		_state = State.READY

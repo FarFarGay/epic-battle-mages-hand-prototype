@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3]
+[gd_scene load_steps=17 format=3]
 
 [ext_resource type="Script" path="res://scripts/hand.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hand_physical.gd" id="2"]
@@ -11,6 +11,7 @@
 [ext_resource type="Script" path="res://scripts/hand_spell_firestorm.gd" id="9"]
 [ext_resource type="Script" path="res://scripts/hand_super.gd" id="10"]
 [ext_resource type="PackedScene" path="res://scenes/super_pattern_overlay.tscn" id="11"]
+[ext_resource type="PackedScene" path="res://scenes/super_carrier.tscn" id="12"]
 
 [sub_resource type="SphereMesh" id="SphereMesh_hand"]
 radius = 0.5
@@ -70,5 +71,6 @@ burn_patch_scene = ExtResource("8")
 
 [node name="SuperActions" type="Node" parent="."]
 script = ExtResource("10")
+carrier_scene = ExtResource("12")
 fireball_scene = ExtResource("7")
 pattern_overlay_scene = ExtResource("11")
