@@ -49,13 +49,15 @@ enum State { READY, AIMING_PATTERN, AIMING_TARGET, CASTING }
 @export var carrier_boost_drift_velocity: float = 3.5
 
 ## Carrier homing-фаза (полёт в burst_pos с drift'ом — «как ракета
-## шатается, потом разрывается»). Скорости меньше чем у обычного
-## fireball'а — carrier тяжёлый, виден дольше.
-@export var carrier_homing_initial_speed: float = 6.0
-@export var carrier_homing_acceleration: float = 30.0
-@export var carrier_homing_max_speed: float = 26.0
+## шатается, потом разрывается»). Скорости подняты: initial 12, accel 60,
+## max 48 — carrier долетает заметно бодрее, без потери «оттяга» в boost'е.
+@export var carrier_homing_initial_speed: float = 12.0
+@export var carrier_homing_acceleration: float = 60.0
+@export var carrier_homing_max_speed: float = 48.0
 @export_range(0.0, 80.0) var carrier_homing_drift_angle_deg: float = 35.0
-@export_range(1.0, 30.0) var carrier_homing_turn_rate: float = 2.5
+## turn_rate чуть выше (3.5 vs 2.5) — на большей скорости длинный drift
+## уводил бы carrier далеко в сторону, корректировка короче.
+@export_range(1.0, 30.0) var carrier_homing_turn_rate: float = 3.5
 @export_group("")
 
 @export_group("Payload (маленькие снаряды после разделения)")
