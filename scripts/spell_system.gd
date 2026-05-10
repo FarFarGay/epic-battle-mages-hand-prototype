@@ -37,11 +37,15 @@ const SPELL_CATALOG: Dictionary = {
 		"icon_color": Color(1.0, 0.45, 0.1, 1.0),
 		"unlocked_by_default": true,
 		"unlock_cost": {},  # доступен сразу
+		# Баланс 2026-05-10: damage и radius подняты — прежний 15 dmg / 2.5м
+		# радиус давал «слабо если не точно в цель». Теперь 25 / 3.5 (+96%
+		# площадь, +67% damage в эпицентре). Burn-зона расширена до burn_radius
+		# близко к AOE-radius, чтобы краевые цели тоже горели.
 		"levels": [
-			{"damage": 15.0, "radius": 2.5, "cooldown": 0.4, "mana_cost": 12.0, "burn_damage_per_tick": 8.0, "burn_radius": 2.0, "burn_duration": 2.5},
-			{"damage": 20.0, "radius": 2.8, "cooldown": 0.36, "mana_cost": 11.0, "burn_damage_per_tick": 10.0, "burn_radius": 2.3, "burn_duration": 2.5},
-			{"damage": 26.0, "radius": 3.1, "cooldown": 0.32, "mana_cost": 10.0, "burn_damage_per_tick": 12.0, "burn_radius": 2.6, "burn_duration": 3.0},
-			{"damage": 34.0, "radius": 3.4, "cooldown": 0.28, "mana_cost": 9.0, "burn_damage_per_tick": 14.0, "burn_radius": 2.9, "burn_duration": 3.5},
+			{"damage": 25.0, "radius": 3.5, "cooldown": 0.4, "mana_cost": 12.0, "burn_damage_per_tick": 10.0, "burn_radius": 2.8, "burn_duration": 2.5},
+			{"damage": 32.0, "radius": 3.8, "cooldown": 0.36, "mana_cost": 11.0, "burn_damage_per_tick": 13.0, "burn_radius": 3.0, "burn_duration": 2.5},
+			{"damage": 42.0, "radius": 4.2, "cooldown": 0.32, "mana_cost": 10.0, "burn_damage_per_tick": 16.0, "burn_radius": 3.3, "burn_duration": 3.0},
+			{"damage": 55.0, "radius": 4.5, "cooldown": 0.28, "mana_cost": 9.0, "burn_damage_per_tick": 20.0, "burn_radius": 3.5, "burn_duration": 3.5},
 		],
 		"upgrade_costs": [
 			{ResourcePile.ResourceType.PAGE: 3},
@@ -51,14 +55,17 @@ const SPELL_CATALOG: Dictionary = {
 	},
 	&"firestorm": {
 		"name": "Огненный шквал",
-		"description": "Серия из 4 малых фаерболов. Вылетают по очереди с короткой задержкой, ложатся в небольшую область вокруг прицела — накрывают плотную группу.",
+		"description": "Серия из 5 малых фаерболов. Вылетают по очереди с короткой задержкой, ложатся в небольшую область вокруг прицела — накрывают плотную группу.",
 		"icon_color": Color(0.9, 0.3, 0.05, 1.0),
 		"unlocked_by_default": true,
 		"unlock_cost": {},
+		# Баланс 2026-05-10: shot_count L0 4→5, shot_damage 15→22, shot_radius
+		# 2.5→3.0, scatter 2.5→2.8. На толпе врагов прежняя версия не
+		# вытягивала, теперь burst заметно жирнее.
 		"levels": [
-			{"shot_count": 4, "shot_interval": 0.15, "shot_damage": 15.0, "shot_radius": 2.5, "scatter_radius": 2.5, "cooldown": 2.0, "mana_cost": 50.0},
-			{"shot_count": 5, "shot_interval": 0.13, "shot_damage": 20.0, "shot_radius": 2.8, "scatter_radius": 2.8, "cooldown": 1.8, "mana_cost": 55.0},
-			{"shot_count": 6, "shot_interval": 0.11, "shot_damage": 26.0, "shot_radius": 3.1, "scatter_radius": 3.0, "cooldown": 1.6, "mana_cost": 60.0},
+			{"shot_count": 5, "shot_interval": 0.15, "shot_damage": 22.0, "shot_radius": 3.0, "scatter_radius": 2.8, "cooldown": 2.0, "mana_cost": 50.0},
+			{"shot_count": 6, "shot_interval": 0.13, "shot_damage": 28.0, "shot_radius": 3.2, "scatter_radius": 3.0, "cooldown": 1.8, "mana_cost": 55.0},
+			{"shot_count": 8, "shot_interval": 0.11, "shot_damage": 35.0, "shot_radius": 3.5, "scatter_radius": 3.2, "cooldown": 1.6, "mana_cost": 60.0},
 		],
 		"upgrade_costs": [
 			{ResourcePile.ResourceType.PAGE: 6},
