@@ -914,7 +914,8 @@ func _build_soldier_card(camp: Node, id: StringName) -> Control:
 	info.add_theme_constant_override("separation", 6)
 	card.add_child(info)
 
-	# Заголовок: цветная точка + имя + текущая численность
+	# Заголовок: цветная точка + имя + текущая численность (всего солдат
+	# этого типа / squad_size — игрок видит «у меня X лучников, отряд из 5»).
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 8)
 	info.add_child(header)
@@ -924,7 +925,8 @@ func _build_soldier_card(camp: Node, id: StringName) -> Control:
 	header.add_child(swatch)
 	var title := Label.new()
 	var current_count: int = camp.soldier_count(id)
-	title.text = "%s — %d" % [data.get("name", str(id)), current_count]
+	var squad_size: int = SoldierSystem.get_squad_size(id)
+	title.text = "%s — %d в строю (отряд × %d)" % [data.get("name", str(id)), current_count, squad_size]
 	title.add_theme_font_size_override("font_size", 16)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
@@ -947,20 +949,20 @@ func _build_soldier_card(camp: Node, id: StringName) -> Control:
 	if not cost.is_empty():
 		info.add_child(_build_cost_row(camp, cost))
 
-	# Кнопка «Призвать» — disabled если can_recruit == false
+	# Кнопка «Призвать отряд» — disabled если can_recruit_squad == false
 	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(160, 36)
+	btn.custom_minimum_size = Vector2(180, 36)
 	btn.add_theme_font_size_override("font_size", 13)
-	var can_recruit: bool = camp.can_recruit(id)
+	var can_recruit: bool = camp.can_recruit_squad(id)
 	if can_recruit:
-		btn.text = "Призвать"
+		btn.text = "Призвать отряд (×%d)" % squad_size
 		_wire_action_button(btn, _on_recruit_pressed.bind(id))
 	else:
 		# Расшифруем причину для UX
-		var has_gatherer: bool = camp.gatherer_count() > 0
+		var available: int = camp.gatherer_count()
 		var has_resources: bool = camp.can_afford(cost)
-		if not has_gatherer:
-			btn.text = "нет свободных гномов"
+		if available < squad_size:
+			btn.text = "гномов: %d / %d" % [available, squad_size]
 		elif not has_resources:
 			btn.text = "не хватает ресурсов"
 		else:
@@ -976,7 +978,7 @@ func _on_recruit_pressed(id: StringName) -> void:
 	var camp := _resolve_camp()
 	if camp == null:
 		return
-	camp.recruit_soldier(id)
+	camp.recruit_squad(id)
 	# camp_buildings_changed придёт от Camp, _on_buildings_changed → _refresh.
 
 

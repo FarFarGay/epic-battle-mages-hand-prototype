@@ -20,11 +20,18 @@ const ARCHER_SCENE: PackedScene = preload("res://scenes/soldier_archer.tscn")
 
 const SOLDIER_CATALOG: Dictionary = {
 	&"archer": {
-		"name": "Лучник",
-		"description": "Дальняя атака стрелами. Тонкая броня, держится сзади.",
+		"name": "Отряд лучников",
+		"description": "Отряд из 5 лучников. Дальняя атака стрелами, тонкая броня — держатся сзади.",
 		"icon_color": Color(0.4, 0.65, 1.0, 1.0),
-		"cost": {ResourcePile.ResourceType.WOOD: 5, ResourcePile.ResourceType.IRON: 1},
+		# Squad — единица призыва: за один recruit-клик конвертится N gatherer'ов
+		# в N солдат. Если в лагере свободных гномов < squad_size — призыв
+		# невозможен (UI расшифровывает «нужно ≥ N свободных гномов»).
+		"squad_size": 5,
+		# Cost — за весь отряд, не per-soldier. Дизайнер крутит цифры по фану.
+		"cost": {ResourcePile.ResourceType.WOOD: 12, ResourcePile.ResourceType.IRON: 3},
 		"scene": ARCHER_SCENE,
+		# Stats — на одного солдата отряда. Параметры боевого поведения
+		# применяются к каждому SoldierGnome через setup_soldier.
 		"stats": {
 			"hp": 22.0,
 			"attack_radius": 18.0,
@@ -36,6 +43,13 @@ const SOLDIER_CATALOG: Dictionary = {
 		},
 	},
 }
+
+
+## Размер отряда заданного типа (squad_size в каталоге, дефолт 1).
+## Используется Camp.recruit_squad и UI-кнопкой призыва.
+func get_squad_size(id: StringName) -> int:
+	var data: Dictionary = SOLDIER_CATALOG.get(id, {})
+	return int(data.get("squad_size", 1))
 
 
 ## Полная Dictionary'я каталога для id (name, description, cost, stats, scene).
