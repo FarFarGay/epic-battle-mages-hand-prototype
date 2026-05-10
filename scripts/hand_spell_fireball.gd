@@ -175,6 +175,7 @@ func _perform_cast() -> void:
 	var p_burn_dmg: float = float(lvl.get("burn_damage_per_tick", burn_damage_per_tick))
 	var p_burn_radius: float = float(lvl.get("burn_radius", burn_radius))
 	var p_burn_duration: float = float(lvl.get("burn_duration", burn_duration))
+	var p_burn_tick_interval: float = float(lvl.get("burn_tick_interval", burn_tick_interval))
 
 	# Сначала инстанцируем снаряд: если сцена битая или OOM — выйдем,
 	# не списав ману и не запустив cooldown.
@@ -230,7 +231,7 @@ func _perform_cast() -> void:
 		knockback_duration,
 	)
 	if burn_patch_scene != null:
-		fireball.setup_burn(burn_patch_scene, p_burn_radius, p_burn_dmg, burn_tick_interval, p_burn_duration)
+		fireball.setup_burn(burn_patch_scene, p_burn_radius, p_burn_dmg, p_burn_tick_interval, p_burn_duration)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Spell:Fireball] каст @ target=(%.1f, %.1f, %.1f)" % [target_pos.x, target_pos.y, target_pos.z])
 	spell_cast.emit(&"fireball", target_pos)

@@ -135,6 +135,14 @@ var _aim_target: Vector3 = Vector3.ZERO
 ## bombing zone). Создаётся в _on_pattern_finished(true), двигается каждый
 ## кадр в _process, освобождается в _commit_rain / _cancel_aim / _finish_super(false).
 var _aim_indicator: MeshInstance3D = null
+## Балансовые параметры фиксируются на _try_start_cast / _commit_rain — те же
+## значения используются на всех этапах одного каста (QTE → carrier → burst →
+## payloads). Если игрок кастует ещё раз — резолвятся заново. @export'ы — fallback.
+var _resolved_payload_count: int = 0
+var _resolved_payload_damage: float = 0.0
+var _resolved_payload_radius: float = 0.0
+var _resolved_payload_radius_aoe: float = 0.0
+var _resolved_pattern_length: int = 0
 
 
 func _ready() -> void:
@@ -194,6 +202,14 @@ func _try_start_cast() -> void:
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:Super] рука занята — отпусти предмет")
 		return
+	# Резолвим балансовые параметры из SpellSystem с fallback'ом на @export.
+	# Один раз на каст, дальше используются _resolved_*.
+	var lvl: Dictionary = SpellSystem.get_current_level_data(&"super") if SpellSystem != null else {}
+	_resolved_payload_count = int(lvl.get("payload_count", payload_count))
+	_resolved_payload_damage = float(lvl.get("payload_damage", payload_damage))
+	_resolved_payload_radius = float(lvl.get("payload_radius", payload_radius))
+	_resolved_payload_radius_aoe = float(lvl.get("payload_radius_aoe", payload_radius_aoe))
+	_resolved_pattern_length = int(lvl.get("pattern_length", pattern_length))
 	# Запоминаем категорию для возврата (на провале QTE / завершении каста).
 	_pre_super_category = _hand.active_category
 	_hand.set_active_category(Hand.Category.SUPER)
@@ -205,7 +221,7 @@ func _enter_aiming_pattern() -> void:
 	_state = State.AIMING_PATTERN
 	Engine.time_scale = pattern_time_scale
 	_ensure_overlay()
-	_overlay.start_pattern(pattern_length)
+	_overlay.start_pattern(_resolved_pattern_length)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Super] QTE стартовал, time_scale=%.2f" % pattern_time_scale)
 
@@ -256,7 +272,7 @@ func _spawn_aim_indicator() -> void:
 	_aim_indicator = AoeVisual.spawn_ground_ring(
 		_effects_root,
 		_aim_target,
-		payload_radius if aim_indicator_radius_match else payload_radius_aoe,
+		_resolved_payload_radius if aim_indicator_radius_match else _resolved_payload_radius_aoe,
 		0.0,
 		aim_indicator_color,
 	)
@@ -358,12 +374,12 @@ func _on_carrier_burst(burst_position: Vector3, ground_target: Vector3) -> void:
 		_state = State.READY
 		return
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:Super] burst @ (%.1f, %.1f, %.1f) → %d payloads" % [burst_position.x, burst_position.y, burst_position.z, payload_count])
+		print("[Hand:Super] burst @ (%.1f, %.1f, %.1f) → %d payloads" % [burst_position.x, burst_position.y, burst_position.z, _resolved_payload_count])
 	# Воздушный взрыв в точке разделения — core-вспышка + fire/smoke частицы.
 	# Тот же AoeVisual.spawn_explosion что у обычных fireball'ов; payload'ы
 	# сразу же вылетают «из огня».
 	AoeVisual.spawn_explosion(_effects_root, burst_position, carrier_burst_visual_radius)
-	for i in range(payload_count):
+	for i in range(_resolved_payload_count):
 		var delay: float = randf() * payload_max_delay if payload_max_delay > 0.0 else 0.0
 		if delay <= 0.0:
 			_spawn_one_payload(burst_position, ground_target)
@@ -387,9 +403,9 @@ func _spawn_one_payload(burst_position: Vector3, ground_target: Vector3) -> void
 		return
 	if fireball_scene == null:
 		return
-	# uniform-по-площади distribution в круге payload_radius
+	# uniform-по-площади distribution в круге _resolved_payload_radius
 	var angle: float = randf() * TAU
-	var dist: float = sqrt(randf()) * payload_radius
+	var dist: float = sqrt(randf()) * _resolved_payload_radius
 	var payload_target: Vector3 = ground_target + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
 	# Launch — в burst-точке + scatter (для визуального разлёта)
 	var launch_jitter: Vector3 = Vector3(
@@ -424,8 +440,8 @@ func _spawn_one_payload(burst_position: Vector3, ground_target: Vector3) -> void
 		42.0 * max_speed_factor,                        # homing_max_speed (jittered)
 		randf_range(4.0, 14.0),                         # homing_drift_angle_deg
 		randf_range(8.0, 14.0),                         # homing_turn_rate
-		payload_damage,
-		payload_radius_aoe,
+		_resolved_payload_damage,
+		_resolved_payload_radius_aoe,
 		payload_explode_mask,
 		payload_knockback_force,
 		payload_knockback_lift,

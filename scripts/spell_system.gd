@@ -39,11 +39,14 @@ const SPELL_CATALOG: Dictionary = {
 		"unlock_cost": {},  # доступен сразу
 		# Баланс 2026-05-10 (v3): ещё +15% damage поверх v2 (итого ×1.38 от
 		# исходного). Radius/cooldown/mana не трогаем — только урон.
+		# burn_tick_interval теперь в каталоге (раньше был хардкодом @export'а
+		# в hand_spell_fireball.gd). Меньший interval на высоких уровнях =
+		# чаще тики = выше итоговый burn DPS.
 		"levels": [
-			{"damage": 35.0, "radius": 3.5, "cooldown": 0.4, "mana_cost": 12.0, "burn_damage_per_tick": 14.0, "burn_radius": 2.8, "burn_duration": 2.5},
-			{"damage": 44.0, "radius": 3.8, "cooldown": 0.36, "mana_cost": 11.0, "burn_damage_per_tick": 18.0, "burn_radius": 3.0, "burn_duration": 2.5},
-			{"damage": 58.0, "radius": 4.2, "cooldown": 0.32, "mana_cost": 10.0, "burn_damage_per_tick": 22.0, "burn_radius": 3.3, "burn_duration": 3.0},
-			{"damage": 76.0, "radius": 4.5, "cooldown": 0.28, "mana_cost": 9.0, "burn_damage_per_tick": 28.0, "burn_radius": 3.5, "burn_duration": 3.5},
+			{"damage": 35.0, "radius": 3.5, "cooldown": 0.4, "mana_cost": 12.0, "burn_damage_per_tick": 14.0, "burn_radius": 2.8, "burn_duration": 2.5, "burn_tick_interval": 0.5},
+			{"damage": 44.0, "radius": 3.8, "cooldown": 0.36, "mana_cost": 11.0, "burn_damage_per_tick": 18.0, "burn_radius": 3.0, "burn_duration": 2.5, "burn_tick_interval": 0.5},
+			{"damage": 58.0, "radius": 4.2, "cooldown": 0.32, "mana_cost": 10.0, "burn_damage_per_tick": 22.0, "burn_radius": 3.3, "burn_duration": 3.0, "burn_tick_interval": 0.45},
+			{"damage": 76.0, "radius": 4.5, "cooldown": 0.28, "mana_cost": 9.0, "burn_damage_per_tick": 28.0, "burn_radius": 3.5, "burn_duration": 3.5, "burn_tick_interval": 0.4},
 		],
 		"upgrade_costs": [
 			{ResourcePile.ResourceType.PAGE: 3},
@@ -57,17 +60,38 @@ const SPELL_CATALOG: Dictionary = {
 		"icon_color": Color(0.9, 0.3, 0.05, 1.0),
 		"unlocked_by_default": true,
 		"unlock_cost": {},
-		# Баланс 2026-05-10 (v3): shot_damage ещё +15% к v2 (итого 26→30,
-		# 34→39, 42→48). shot_count 4/5/6 без изменений.
+		# Баланс 2026-05-10 (v3): shot_damage и burn-параметры в каталоге.
+		# Раньше burn_* был хардкодом @export'а в hand_spell_firestorm.gd —
+		# не масштабировался по уровню. Теперь идёт через get_current_level_data
+		# и растёт пропорционально direct damage'у. Burn слабее чем у Fireball'а
+		# (Firestorm — массовый damage серией шотов; burn-зон много, но мелкие).
 		"levels": [
-			{"shot_count": 4, "shot_interval": 0.15, "shot_damage": 30.0, "shot_radius": 3.0, "scatter_radius": 2.8, "cooldown": 2.0, "mana_cost": 50.0},
-			{"shot_count": 5, "shot_interval": 0.13, "shot_damage": 39.0, "shot_radius": 3.2, "scatter_radius": 3.0, "cooldown": 1.8, "mana_cost": 55.0},
-			{"shot_count": 6, "shot_interval": 0.11, "shot_damage": 48.0, "shot_radius": 3.5, "scatter_radius": 3.2, "cooldown": 1.6, "mana_cost": 60.0},
+			{"shot_count": 4, "shot_interval": 0.15, "shot_damage": 30.0, "shot_radius": 3.0, "scatter_radius": 2.8, "cooldown": 2.0, "mana_cost": 50.0,
+				"burn_damage_per_tick": 8.0, "burn_radius": 2.0, "burn_duration": 2.0, "burn_tick_interval": 0.5},
+			{"shot_count": 5, "shot_interval": 0.13, "shot_damage": 39.0, "shot_radius": 3.2, "scatter_radius": 3.0, "cooldown": 1.8, "mana_cost": 55.0,
+				"burn_damage_per_tick": 11.0, "burn_radius": 2.2, "burn_duration": 2.0, "burn_tick_interval": 0.5},
+			{"shot_count": 6, "shot_interval": 0.11, "shot_damage": 48.0, "shot_radius": 3.5, "scatter_radius": 3.2, "cooldown": 1.6, "mana_cost": 60.0,
+				"burn_damage_per_tick": 14.0, "burn_radius": 2.4, "burn_duration": 2.5, "burn_tick_interval": 0.45},
 		],
 		"upgrade_costs": [
 			{ResourcePile.ResourceType.PAGE: 6},
 			{ResourcePile.ResourceType.PAGE: 12},
 		],
+	},
+	&"super": {
+		"name": "Великий удар",
+		"description": "Носитель из башни вылетает в воздух над целью и разделяется на серию маленьких фаерболов. Требует полную шкалу великой силы и QTE-паттерн.",
+		"icon_color": Color(1.0, 0.55, 0.15, 1.0),
+		"unlocked_by_default": true,
+		"unlock_cost": {},
+		# Балансовые параметры супер-удара. Прокачка опциональна (пока 1 уровень).
+		# Carrier-параметры (boost/homing/visual_scale) и QTE-параметры
+		# (pattern_length, time_scale) живут @export'ами в hand_super.gd —
+		# это motion/feel, не balance.
+		"levels": [
+			{"payload_count": 12, "payload_damage": 35.0, "payload_radius": 7.0, "payload_radius_aoe": 4.0, "pattern_length": 4},
+		],
+		"upgrade_costs": [],
 	},
 	&"meteor": {
 		"name": "Метеоритный дождь",

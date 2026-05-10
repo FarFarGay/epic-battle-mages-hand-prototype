@@ -97,6 +97,13 @@ var _volley_target: Vector3 = Vector3.ZERO
 var _series_shot_damage: float
 var _series_shot_radius: float
 var _series_scatter_radius: float
+## Burn-параметры серии — раньше были хардкодом @export'а (не масштабировались
+## по уровню). Теперь читаются из SpellSystem.SPELL_CATALOG.firestorm.levels[*]
+## с fallback'ом на @export. Фиксируем на press'е по той же причине.
+var _series_burn_radius: float
+var _series_burn_damage_per_tick: float
+var _series_burn_tick_interval: float
+var _series_burn_duration: float
 
 
 func setup(hand: Hand, coord: HandSpell) -> void:
@@ -155,6 +162,10 @@ func _start_volley() -> void:
 	_series_shot_damage = float(lvl.get("shot_damage", shot_damage))
 	_series_shot_radius = float(lvl.get("shot_radius", shot_radius))
 	_series_scatter_radius = float(lvl.get("scatter_radius", scatter_radius))
+	_series_burn_radius = float(lvl.get("burn_radius", burn_radius))
+	_series_burn_damage_per_tick = float(lvl.get("burn_damage_per_tick", burn_damage_per_tick))
+	_series_burn_tick_interval = float(lvl.get("burn_tick_interval", burn_tick_interval))
+	_series_burn_duration = float(lvl.get("burn_duration", burn_duration))
 
 	var tower := _find_tower()
 	# Контракт: мана-провайдером может быть всё, у чего есть `try_consume_mana`
@@ -219,7 +230,7 @@ func _launch_one() -> void:
 		knockback_duration,
 	)
 	if burn_patch_scene != null:
-		fireball.setup_burn(burn_patch_scene, burn_radius, burn_damage_per_tick, burn_tick_interval, burn_duration)
+		fireball.setup_burn(burn_patch_scene, _series_burn_radius, _series_burn_damage_per_tick, _series_burn_tick_interval, _series_burn_duration)
 
 
 func _find_tower() -> Node3D:
