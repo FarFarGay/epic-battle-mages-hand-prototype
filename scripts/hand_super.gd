@@ -58,6 +58,10 @@ enum State { READY, AIMING_PATTERN, AIMING_TARGET, CASTING }
 ## turn_rate чуть выше (3.5 vs 2.5) — на большей скорости длинный drift
 ## уводил бы carrier далеко в сторону, корректировка короче.
 @export_range(1.0, 30.0) var carrier_homing_turn_rate: float = 3.5
+## Радиус визуала взрыва carrier'а в момент разделения (AoeVisual.spawn_explosion:
+## core-вспышка + fire-партиклы + smoke). Не AOE-урон — чисто визуал. 4м
+## выглядит читаемо на высоте burst'а ≈ ground+12.
+@export var carrier_burst_visual_radius: float = 4.0
 @export_group("")
 
 @export_group("Payload (маленькие снаряды после разделения)")
@@ -354,6 +358,10 @@ func _on_carrier_burst(burst_position: Vector3, ground_target: Vector3) -> void:
 		return
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Super] burst @ (%.1f, %.1f, %.1f) → %d payloads" % [burst_position.x, burst_position.y, burst_position.z, payload_count])
+	# Воздушный взрыв в точке разделения — core-вспышка + fire/smoke частицы.
+	# Тот же AoeVisual.spawn_explosion что у обычных fireball'ов; payload'ы
+	# сразу же вылетают «из огня».
+	AoeVisual.spawn_explosion(_effects_root, burst_position, carrier_burst_visual_radius)
 	for i in range(payload_count):
 		var delay: float = randf() * payload_max_delay if payload_max_delay > 0.0 else 0.0
 		if delay <= 0.0:
