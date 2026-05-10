@@ -37,13 +37,15 @@ const SPELL_CATALOG: Dictionary = {
 		"icon_color": Color(1.0, 0.45, 0.1, 1.0),
 		"unlocked_by_default": true,
 		"unlock_cost": {},  # доступен сразу
-		# Баланс 2026-05-10 (v4): +10% damage поверх v3 (итого ×1.52 от
-		# исходного). Radius/cooldown/mana/burn_tick_interval не трогаем.
+		# Баланс 2026-05-10 (v5): +20% damage поверх v4 (итого ×1.82 от
+		# исходного). Магия должна быть эффективнее луков (DefenderGnome
+		# одновременно ослаблен на симметричные −20%). Radius/cooldown/mana
+		# не трогаем — только урон.
 		"levels": [
-			{"damage": 39.0, "radius": 3.5, "cooldown": 0.4, "mana_cost": 12.0, "burn_damage_per_tick": 15.0, "burn_radius": 2.8, "burn_duration": 2.5, "burn_tick_interval": 0.5},
-			{"damage": 48.0, "radius": 3.8, "cooldown": 0.36, "mana_cost": 11.0, "burn_damage_per_tick": 20.0, "burn_radius": 3.0, "burn_duration": 2.5, "burn_tick_interval": 0.5},
-			{"damage": 64.0, "radius": 4.2, "cooldown": 0.32, "mana_cost": 10.0, "burn_damage_per_tick": 24.0, "burn_radius": 3.3, "burn_duration": 3.0, "burn_tick_interval": 0.45},
-			{"damage": 84.0, "radius": 4.5, "cooldown": 0.28, "mana_cost": 9.0, "burn_damage_per_tick": 31.0, "burn_radius": 3.5, "burn_duration": 3.5, "burn_tick_interval": 0.4},
+			{"damage": 47.0, "radius": 3.5, "cooldown": 0.4, "mana_cost": 12.0, "burn_damage_per_tick": 18.0, "burn_radius": 2.8, "burn_duration": 2.5, "burn_tick_interval": 0.5},
+			{"damage": 58.0, "radius": 3.8, "cooldown": 0.36, "mana_cost": 11.0, "burn_damage_per_tick": 24.0, "burn_radius": 3.0, "burn_duration": 2.5, "burn_tick_interval": 0.5},
+			{"damage": 77.0, "radius": 4.2, "cooldown": 0.32, "mana_cost": 10.0, "burn_damage_per_tick": 29.0, "burn_radius": 3.3, "burn_duration": 3.0, "burn_tick_interval": 0.45},
+			{"damage": 101.0, "radius": 4.5, "cooldown": 0.28, "mana_cost": 9.0, "burn_damage_per_tick": 37.0, "burn_radius": 3.5, "burn_duration": 3.5, "burn_tick_interval": 0.4},
 		],
 		"upgrade_costs": [
 			{ResourcePile.ResourceType.PAGE: 3},
@@ -57,14 +59,14 @@ const SPELL_CATALOG: Dictionary = {
 		"icon_color": Color(0.9, 0.3, 0.05, 1.0),
 		"unlocked_by_default": true,
 		"unlock_cost": {},
-		# Баланс 2026-05-10 (v4): +10% damage поверх v3.
+		# Баланс 2026-05-10 (v5): +20% damage поверх v4.
 		"levels": [
-			{"shot_count": 4, "shot_interval": 0.15, "shot_damage": 33.0, "shot_radius": 3.0, "scatter_radius": 2.8, "cooldown": 2.0, "mana_cost": 50.0,
-				"burn_damage_per_tick": 9.0, "burn_radius": 2.0, "burn_duration": 2.0, "burn_tick_interval": 0.5},
-			{"shot_count": 5, "shot_interval": 0.13, "shot_damage": 43.0, "shot_radius": 3.2, "scatter_radius": 3.0, "cooldown": 1.8, "mana_cost": 55.0,
-				"burn_damage_per_tick": 12.0, "burn_radius": 2.2, "burn_duration": 2.0, "burn_tick_interval": 0.5},
-			{"shot_count": 6, "shot_interval": 0.11, "shot_damage": 53.0, "shot_radius": 3.5, "scatter_radius": 3.2, "cooldown": 1.6, "mana_cost": 60.0,
-				"burn_damage_per_tick": 15.0, "burn_radius": 2.4, "burn_duration": 2.5, "burn_tick_interval": 0.45},
+			{"shot_count": 4, "shot_interval": 0.15, "shot_damage": 40.0, "shot_radius": 3.0, "scatter_radius": 2.8, "cooldown": 2.0, "mana_cost": 50.0,
+				"burn_damage_per_tick": 11.0, "burn_radius": 2.0, "burn_duration": 2.0, "burn_tick_interval": 0.5},
+			{"shot_count": 5, "shot_interval": 0.13, "shot_damage": 52.0, "shot_radius": 3.2, "scatter_radius": 3.0, "cooldown": 1.8, "mana_cost": 55.0,
+				"burn_damage_per_tick": 14.0, "burn_radius": 2.2, "burn_duration": 2.0, "burn_tick_interval": 0.5},
+			{"shot_count": 6, "shot_interval": 0.11, "shot_damage": 64.0, "shot_radius": 3.5, "scatter_radius": 3.2, "cooldown": 1.6, "mana_cost": 60.0,
+				"burn_damage_per_tick": 18.0, "burn_radius": 2.4, "burn_duration": 2.5, "burn_tick_interval": 0.45},
 		],
 		"upgrade_costs": [
 			{ResourcePile.ResourceType.PAGE: 6},
@@ -82,7 +84,7 @@ const SPELL_CATALOG: Dictionary = {
 		# (pattern_length, time_scale) живут @export'ами в hand_super.gd —
 		# это motion/feel, не balance.
 		"levels": [
-			{"payload_count": 12, "payload_damage": 39.0, "payload_radius": 7.0, "payload_radius_aoe": 4.0, "pattern_length": 4},
+			{"payload_count": 12, "payload_damage": 47.0, "payload_radius": 7.0, "payload_radius_aoe": 4.0, "pattern_length": 4},
 		],
 		"upgrade_costs": [],
 	},

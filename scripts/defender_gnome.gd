@@ -42,10 +42,12 @@ extends Gnome
 ## защита продолжает работать.
 @export var attack_cooldown_min: float = 1.0
 @export var attack_cooldown_max: float = 2.0
-## Урон рандомизирован: при skeleton.hp=30 диапазон 25..40 даёт 1-shot kill
-## в ~66% случаев (damage > 30) и 2-shot в остальных. «Чаще за 1 выстрел».
-@export var arrow_damage_min: float = 25.0
-@export var arrow_damage_max: float = 40.0
+## Урон рандомизирован. Баланс v5 (2026-05-10): −20% к диапазону 25..40 →
+## 20..32 (avg 26 vs Fireball L0=47). Магия должна оставаться основным
+## DPS-инструментом, лучник — пассивный backup, 2-shot скелета (hp=30) теперь
+## частый сценарий, 1-shot только при удачном крите (32 dmg).
+@export var arrow_damage_min: float = 20.0
+@export var arrow_damage_max: float = 32.0
 @export var arrow_speed: float = 22.0
 ## Откуда вылетает стрела относительно центра гнома (поднимаем над головой,
 ## чтобы не задеть собственный корпус коллизией стрелы при выстреле).
