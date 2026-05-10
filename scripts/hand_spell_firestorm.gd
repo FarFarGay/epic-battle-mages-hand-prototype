@@ -76,6 +76,17 @@ signal spell_cast(spell_name: StringName, position: Vector3)
 @export var launch_offset_y: float = 3.0
 
 @export_group("")
+
+@export_group("Telegraph")
+## Длительность общего ground-warning'а на центре scatter-зоны (секунды).
+## Должна перекрывать всю серию + flight последнего шота.
+## По умолчанию ≈ shot_count*shot_interval + 0.7с (полёт): 4×0.15+0.7 = 1.3с.
+@export var warning_duration: float = 1.3
+## Цвет warning-кольца. Огненно-оранжевый — единый с Fireball'ом.
+@export var warning_color: Color = Color(1.0, 0.5, 0.15, 0.85)
+@export_group("")
+
+@export_group("")
 @export var effects_root_path: NodePath
 @export var debug_log: bool = true
 
@@ -180,6 +191,14 @@ func _start_volley() -> void:
 	# время серии, но шквал ложится туда, где было нажатие.
 	_volley_target = _hand.cursor_world_position()
 	_volley_target.y -= _hand.hand_height
+
+	# Telegraph: один большой ring на центре scatter-зоны (radius включает
+	# и разброс target'ов, и AOE одного шота — реальную зону «накрытия»).
+	# Per-shot колец не делаем — 4-6 мелких ring'ов нагромождают графику.
+	if _effects_root != null:
+		var scatter_outer: float = _series_scatter_radius + _series_shot_radius
+		AoeVisual.spawn_ground_ring(_effects_root, _volley_target, scatter_outer, warning_duration, warning_color)
+
 	_shots_remaining = p_shot_count
 	_next_shot_in = 0.0  # первый шот в ближайшем tick()
 	_cooldown_remaining = p_cooldown

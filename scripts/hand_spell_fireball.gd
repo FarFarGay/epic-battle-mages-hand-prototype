@@ -116,6 +116,16 @@ signal spell_cast(spell_name: StringName, position: Vector3)
 @export var effects_root_path: NodePath
 @export var debug_log: bool = true
 
+@export_group("Telegraph")
+## Длительность ground-warning'а под точкой удара (секунды). Должна быть
+## ≥ времени полёта фаербола (homing на ~10м занимает ~0.4-0.6с при default
+## speed). 1.0с — с запасом, кольцо угасает к импакту.
+@export var warning_duration: float = 1.0
+## Цвет warning-кольца. Огненно-оранжевый — единый «маг-предупреждающий»
+## цвет; супер-удар отличается оттенком красного.
+@export var warning_color: Color = Color(1.0, 0.5, 0.15, 0.85)
+@export_group("")
+
 var _hand: Hand
 var _coord: HandSpell
 var _cooldown_remaining: float = 0.0
@@ -208,6 +218,11 @@ func _perform_cast() -> void:
 	# реальный ground_y без raycast'а — компенсируем `hand_height`.
 	target_pos.y -= _hand.hand_height
 	_cooldown_remaining = p_cooldown
+
+	# Telegraph: ground-warning под точкой удара. Размер = AOE радиус взрыва,
+	# игрок видит реальную зону поражения. Auto-fade за warning_duration.
+	if _effects_root != null:
+		AoeVisual.spawn_ground_ring(_effects_root, target_pos, p_radius, warning_duration, warning_color)
 
 	_effects_root.add_child(fireball)
 	fireball.setup(
