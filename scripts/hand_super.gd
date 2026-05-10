@@ -95,6 +95,16 @@ enum State { READY, AIMING_PATTERN, AIMING_TARGET, CASTING }
 ## Каждый payload получает factor ∈ [1-jitter; 1+jitter]. 0.25 → ±25%, что
 ## заметно меняет время полёта между ними (хаотичность).
 @export_range(0.0, 0.6) var payload_speed_jitter: float = 0.25
+## Lead-time перед спавном payload'а: ground-warning ring появляется сразу
+## (показывает «куда упадёт»), payload спавнится через этот промежуток.
+## 0 = warning + fireball одновременно (без telegraph'а).
+@export var payload_warning_lead_time: float = 0.3
+## Сколько живёт ground-warning под payload'ом (секунды). ≈ lead_time +
+## flight_time, чтобы кольцо угасало к моменту импакта.
+@export var payload_warning_duration: float = 1.0
+## Цвет warning-кольца под payload'ом. Огненно-красный — отличается от
+## aim_indicator'а (золотой) и читается как «опасно».
+@export var payload_warning_color: Color = Color(1.0, 0.35, 0.15, 0.85)
 @export_group("")
 
 @export_group("Aim indicator")
@@ -407,6 +417,27 @@ func _spawn_one_payload(burst_position: Vector3, ground_target: Vector3) -> void
 	var angle: float = randf() * TAU
 	var dist: float = sqrt(randf()) * _resolved_payload_radius
 	var payload_target: Vector3 = ground_target + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+
+	# Telegraph: ground-warning ring сразу в landing point. Размер = AOE
+	# радиусу одного payload'а, так игрок видит реальную зону поражения.
+	# Ring сам fade'ит за payload_warning_duration (lead + flight).
+	AoeVisual.spawn_ground_ring(
+		_effects_root,
+		payload_target,
+		_resolved_payload_radius_aoe,
+		payload_warning_duration,
+		payload_warning_color,
+	)
+
+	# Lead-time перед фактическим spawn'ом fireball'а — игрок успевает
+	# прочесть warning. await suspend'ит coroutine, остальные payload'ы
+	# спавнятся параллельно (см. callers с random delay).
+	if payload_warning_lead_time > 0.0:
+		await get_tree().create_timer(payload_warning_lead_time).timeout
+	# Сцена могла перезагрузиться за время await'а.
+	if not is_instance_valid(_effects_root):
+		return
+
 	# Launch — в burst-точке + scatter (для визуального разлёта)
 	var launch_jitter: Vector3 = Vector3(
 		randf_range(-payload_launch_scatter, payload_launch_scatter),
