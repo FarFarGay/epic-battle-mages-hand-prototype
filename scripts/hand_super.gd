@@ -69,8 +69,9 @@ enum State { READY, AIMING_PATTERN, AIMING_TARGET, CASTING }
 @export var payload_count: int = 12
 ## Радиус разлёта payload-target'ов вокруг _aim_target по земле.
 @export var payload_radius: float = 7.0
-## Урон одного payload'а в центре AOE.
-@export var payload_damage: float = 25.0
+## Урон одного payload'а в центре AOE. 1.2× scale к balance-проходу
+## 2026-05-10 — пропорционально Fireball L0 30 dmg.
+@export var payload_damage: float = 30.0
 ## AOE-радиус каждого payload'а. 4.0 — большой нахлёст между соседними
 ## взрывами, реально «массовый удар»: цели в эпицентре получают damage от
 ## нескольких payload'ов сразу, на краю — один-два.
