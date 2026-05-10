@@ -40,19 +40,22 @@ class SlamHit:
 
 
 @export_group("Balance")
-@export var slam_radius: float = 5.0
+## Slam — физическая utility-способность («сбить с ног»), не основной
+## damage-инструмент. Магия (Fireball/Firestorm) должна давать больше
+## урона, иначе бесплатный slam с коротким cd обесценивает заклинания.
+## Баланс 2026-05-10: radius 5→3.5 (как Fireball L0), damage 60→25
+## (≤Fireball L0=35, но slam без mana и с сильным knockback'ом),
+## cooldown 0.5→0.7. Knockback не трогаем — это основная роль slam'а.
+@export var slam_radius: float = 3.5
 @export var slam_force: float = 30.0
 @export var slam_lift_factor: float = 0.4
 ## Базовый урон в эпицентре. С линейным falloff'ом fall(d) = 1 − d/radius
 ## фактический урон = slam_damage × fall. На skeleton hp=30:
-##   - d ≤ 2.5м (50% радиуса) → ≥30 dmg, ваншот при прицельном попадании;
-##   - 2.5 < d ≤ 3.75 → 2 удара (средний пояс AOE — туда попадают
-##     коллатеральные скелеты при slam'е по основной цели);
-##   - d > 3.75 → 3+ удара (рим, скелета задело краем визуала).
-## Раньше было 80 — 1-шотовая зона занимала 62% радиуса, и в реальной игре
-## 2-шот почти не возникал (аиминг обычно близко к эпицентру).
-@export var slam_damage: float = 60.0
-@export var slam_cooldown: float = 0.5
+##   - d=0 → 25 dmg, не убивает с одного шлепка (даже в эпицентре);
+##   - 2 шлепка по упавшему врагу = 50 dmg → kill.
+## Slam теперь «оглушил + добил» вместо «прибил с одного раза».
+@export var slam_damage: float = 25.0
+@export var slam_cooldown: float = 0.7
 ## По каким слоям бьёт хлопок (`Layers.MASK_HAND_SLAM = 438` = Items + Actors +
 ## Enemies + CampObstacle + ColdEnemy + FriendlyUnit). Бьёт всех, кого рука
 ## вообще «видит» как мишень: и врагов, и дружественных гномов, и палатки.
