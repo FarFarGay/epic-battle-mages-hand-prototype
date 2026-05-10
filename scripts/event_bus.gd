@@ -114,3 +114,14 @@ signal module_unmounted(module: Node, slot: Node)
 ## Прогресс сюжета продвинулся: new_index = новый QuestProgress.current_index.
 ## Слушают QuestActor (для перекраса) и потенциально HUD.
 signal quest_advanced(new_index: int)
+
+# --- Super spell (великая сила, ковровая бомбардировка) ---
+## Шкала «великой силы» отряда изменилась. Накопление по нанесённому damage'у
+## врагам. value/max = сырые единицы (сейчас 0..100 ≈ 100 hp нанесённого damage).
+signal super_charge_changed(value: float, max_value: float)
+## Игрок начал каст супер-удара (нажат Space, шкала full). UI замораживает
+## мир time_scale=0.15, показывает QTE-паттерн.
+signal super_cast_started
+## QTE завершён. success=true → игрок прицеливается и кастует, шкала спишется
+## полностью; success=false → шкала спишется на половину, мир возвращается.
+signal super_cast_finished(success: bool)

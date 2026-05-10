@@ -17,7 +17,10 @@ extends Node3D
 ##   - хранение active_category и нотификацию при смене,
 ##   - проксирование сигналов категорий наружу для совместимости.
 
-enum Category { PHYSICAL, MAGIC }
+## SUPER — режим «великой силы». Активен пока HandSuper координатор ведёт
+## QTE-паттерн или AIMING. Hand_physical и hand_spell ввод в этом режиме
+## игнорируют (их раннее `if active_category != X: return` срабатывает).
+enum Category { PHYSICAL, MAGIC, SUPER }
 
 signal grabbed(item: Node3D)
 signal released(item: Node3D, velocity: Vector3)
@@ -43,6 +46,7 @@ const RAY_DISTANCE := 1000.0
 @onready var _magnet_area: Area3D = $MagnetArea
 @onready var physical_actions: HandPhysicalActions = $PhysicalActions
 @onready var spell_actions: HandSpell = $SpellActions
+@onready var super_actions: HandSuper = $SuperActions
 
 var _velocity_history: Array[Vector3] = []
 var _previous_pos: Vector3
@@ -71,6 +75,9 @@ func _ready() -> void:
 	physical_actions.released.connect(released.emit)
 	# Заглушка spells: разрешаем ей работать через явный setup, не через get_parent.
 	spell_actions.setup(self)
+	# SUPER — третья ось ввода. setup нужен только чтобы подмодуль получил
+	# ссылку на руку (cursor_world_position, is_holding, set_active_category).
+	super_actions.setup(self)
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
 	grabbed.connect(func(item: Node3D) -> void: EventBus.hand_grabbed.emit(item))

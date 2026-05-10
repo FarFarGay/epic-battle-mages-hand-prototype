@@ -30,6 +30,10 @@ var _hp_bar: ProgressBar
 var _hp_label: Label
 var _mana_bar: ProgressBar
 var _mana_label: Label
+## Шкала «великой силы» — золотая полоска под маной. Когда full —
+## заголовок мигает «ГОТОВО (Space)».
+var _super_bar: ProgressBar
+var _super_label: Label
 ## Кнопка журнала + бэйдж невыбранных апгрейдов. Тоже программная — и
 ## расположение, и счётчик заводить новой ноды в .tscn ради этого нет смысла.
 var _journal_button: Button
@@ -79,10 +83,13 @@ func _ready() -> void:
 	# берём snapshot напрямую через group lookup.
 	EventBus.tower_health_changed.connect(_refresh_tower_health)
 	EventBus.tower_mana_changed.connect(_refresh_tower_mana)
+	EventBus.super_charge_changed.connect(_refresh_super_charge)
 	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Tower
 	if tower != null:
 		_refresh_tower_health(tower.hp, tower.max_hp)
 		_refresh_tower_mana(tower.mana, tower.max_mana)
+	if is_instance_valid(_camp):
+		_refresh_super_charge(_camp.get_super_charge(), _camp.get_super_charge_max())
 
 
 ## Строит SquadRow программно и докидывает в существующий VBox правой панели.
@@ -347,6 +354,13 @@ func _build_tower_stats() -> void:
 	_mana_bar = _make_stat_bar(panel, Color(0.2, 0.5, 0.95, 1.0), bar_width)
 	_mana_label = _make_stat_overlay(_mana_bar, "MP")
 
+	# Великая сила — золотой бар третьим. Высота меньше — это «накопление»,
+	# не run-time ресурс как HP/MP, ему не нужен такой же визуальный вес.
+	_super_bar = _make_stat_bar(panel, Color(1.0, 0.78, 0.18, 1.0), bar_width)
+	_super_bar.custom_minimum_size = Vector2(bar_width, 12)
+	_super_label = _make_stat_overlay(_super_bar, "ВЕЛИКАЯ СИЛА")
+	_super_label.add_theme_font_size_override("font_size", 10)
+
 
 func _make_stat_bar(parent: Control, fill_color: Color, width: int) -> ProgressBar:
 	var bar := ProgressBar.new()
@@ -402,3 +416,18 @@ func _refresh_tower_mana(current: float, maximum: float) -> void:
 	_mana_bar.max_value = maxf(maximum, 1.0)
 	_mana_bar.value = clampf(current, 0.0, maximum)
 	_mana_label.text = "MP %d/%d" % [int(round(current)), int(round(maximum))]
+
+
+## Шкала великой силы. Когда full — лейбл переключается на «ГОТОВО (Space)»
+## и набирает яркость; иначе показывает progress (целые числа, как HP/MP).
+func _refresh_super_charge(current: float, maximum: float) -> void:
+	if _super_bar == null:
+		return
+	_super_bar.max_value = maxf(maximum, 1.0)
+	_super_bar.value = clampf(current, 0.0, maximum)
+	if current >= maximum:
+		_super_label.text = "ГОТОВО (Space)"
+		_super_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.4, 1.0))
+	else:
+		_super_label.text = "ВЕЛИКАЯ СИЛА %d/%d" % [int(round(current)), int(round(maximum))]
+		_super_label.add_theme_color_override("font_color", Color.WHITE)

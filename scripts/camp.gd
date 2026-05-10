@@ -240,6 +240,16 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 @export var kite_threshold_distance: float = 6.0
 @export_group("")
 
+@export_group("Super charge (великая сила)")
+## Полная шкала «великой силы». Накопление 1:1 от нанесённого damage'у врагам
+## (HandSpell, HandPhysical, defender'ы, башня — всё подаёт через
+## EventBus.enemy_damaged). 100 = ~3-4 убитых скелета (hp=30 ea).
+@export var super_charge_max: float = 100.0
+## Доля шкалы, списываемой при провале QTE. 0.5 = «потерял половину» —
+## промежуточная цена за неудачу (полный каст списывает 100%).
+@export_range(0.0, 1.0) var super_charge_fail_penalty: float = 0.5
+@export_group("")
+
 @export_group("")
 @export var debug_log: bool = true
 
@@ -280,6 +290,10 @@ var _squad_level: int = 0
 ## Сколько уровней «висит» в очереди на выбор апгрейда. Игрок может догнать
 ## уровни быстрее чем закрыть модал — тогда модал откроется снова после grant.
 var _pending_upgrade_choices: int = 0
+## Шкала «великой силы». 0..super_charge_max. Накопление через
+## `_on_enemy_damaged` подписку на EventBus.enemy_damaged. Списание полное
+## при успешном супер-касте, частичное (super_charge_fail_penalty) при провале QTE.
+var _super_charge: float = 0.0
 ## Активные апгрейды отряда. DefenderGnome читает has_upgrade(id) на каждом
 ## тике, эффекты применяются динамически (новые защитники после смерти/
 ## reset_population автоматически в курсе).
@@ -359,6 +373,12 @@ func _ready() -> void:
 	# (но всё ещё существующий статикой) Tower-меш. _update_caravan_follow и
 	# stationary-чек уже null-safe, ничего больше делать не нужно.
 	EventBus.tower_destroyed.connect(_on_tower_destroyed)
+
+	# Шкала «великой силы»: накапливается по нанесённому damage'у врагам.
+	# enemy_damaged эмитится re-emit'ом из Enemy.damaged → Skeleton наследует.
+	# 1 hp damage = 1 charge; full bar (super_charge_max) разрешает супер-каст.
+	EventBus.enemy_damaged.connect(_on_enemy_damaged)
+	EventBus.super_charge_changed.emit(_super_charge, super_charge_max)
 
 	# Static-режим: сразу стартуем в DEPLOYED. Anchor = собственная позиция
 	# Camp (не башни, которой нет). Палатки переедут с линии (где их поставил
@@ -861,6 +881,51 @@ func available_upgrades() -> Array[StringName]:
 		if not has_upgrade(id):
 			result.append(id)
 	return result
+
+
+## --- Super charge (великая сила) ---
+
+## Хендлер EventBus.enemy_damaged. amount — фактически нанесённый damage.
+## 1 hp = 1 charge (clamp на max). Когда шкала впервые становится full —
+## слушатели сигнала видят это и могут переключить визуал HUD'а («горит»).
+func _on_enemy_damaged(_enemy: Node3D, amount: float) -> void:
+	if amount <= 0.0:
+		return
+	add_super_charge(amount)
+
+
+## Прирастает к шкале силы. Внешний путь — для случаев когда нужно начислить
+## не через damage (квест-награда, чит). Damage идёт через _on_enemy_damaged.
+func add_super_charge(amount: float) -> void:
+	if amount <= 0.0:
+		return
+	var prev: float = _super_charge
+	_super_charge = clampf(_super_charge + amount, 0.0, super_charge_max)
+	if not is_equal_approx(prev, _super_charge):
+		EventBus.super_charge_changed.emit(_super_charge, super_charge_max)
+
+
+## Текущая шкала и максимум — для HUD'а / SuperSpell координатора.
+func get_super_charge() -> float:
+	return _super_charge
+
+
+func get_super_charge_max() -> float:
+	return super_charge_max
+
+
+## True если шкала full и можно начать каст.
+func is_super_ready() -> bool:
+	return _super_charge >= super_charge_max
+
+
+## Списать шкалу. После успешного каста — `consume_super_charge(super_charge_max)`
+## (полное); после провала QTE — `consume_super_charge(super_charge_max * super_charge_fail_penalty)`.
+func consume_super_charge(amount: float) -> void:
+	if amount <= 0.0:
+		return
+	_super_charge = maxf(_super_charge - amount, 0.0)
+	EventBus.super_charge_changed.emit(_super_charge, super_charge_max)
 
 
 ## Сколько уровней висят в очереди на выбор апгрейда (банк выборов).

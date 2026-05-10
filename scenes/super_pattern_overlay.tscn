@@ -1,0 +1,11 @@
+[gd_scene load_steps=2 format=3 uid="uid://b3sup8r5pat0v"]
+
+[ext_resource type="Script" path="res://scripts/super_pattern_overlay.gd" id="1_super_pattern"]
+
+[node name="SuperPatternOverlay" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 0
+script = ExtResource("1_super_pattern")

@@ -13,6 +13,48 @@
 
 # Заметки по работе с проектом (накапливаются)
 
+## Сессия 2026-05-10 (3) — Супер-удар: ковровая бомбардировка через QTE-паттерн
+
+### Контекст / запрос
+Геймдизайнер: «супер-удар через QTE. Шкала «великой силы» копится за damage по врагам, под маной башни. На full → Space → время замедляется → паттерн из точек → ПКМ-drag нитью по ним → если прошёл, ПКМ ставит в точку каст. Эффект — дождь фаерболов в области».
+
+### Главные изменения
+- **`Camp` — шкала «великой силы»** (`_super_charge`, `super_charge_max=100`). Подписка `EventBus.enemy_damaged` → `add_super_charge(amount)` (1 hp damage = 1 charge). API: `is_super_ready / get_super_charge / get_super_charge_max / consume_super_charge`. `super_charge_fail_penalty=0.5` — половинное списание при провале QTE.
+- **`EventBus`** — три новых сигнала: `super_charge_changed(value, max)`, `super_cast_started`, `super_cast_finished(success: bool)`.
+- **`gameplay_hud`** — третий бар в tower-stats panel (золотой, ниже HP/MP). На `super_charge >= max` лейбл переключается на «ГОТОВО (Space)» жёлтым.
+- **`Hand.Category`** — добавлен `SUPER`. `hand_physical._handle_input` и `hand_spell._handle_input` начинаются с `if active_category == SUPER: return` — весь физический и магический ввод заглушается на время каста (включая equip 1/2/3/4).
+- **`HandSuper` координатор** (`scripts/hand_super.gd`) — child node `SuperActions` под Hand. State machine: `READY → AIMING_PATTERN → AIMING_TARGET → CASTING → READY`.
+  - `READY`: слушает `cast_super` (Space). Гейтит на `Camp.is_super_ready() && !Hand.is_holding()`.
+  - `AIMING_PATTERN`: `Engine.time_scale = 0.15`, спавнит `SuperPatternOverlay`. Ждёт `pattern_finished(success)`.
+  - `AIMING_TARGET`: `time_scale=1`, ПКМ → `_commit_rain` (полное списание шкалы, спавн серии). Space → бесплатная отмена (шкала full сохраняется).
+  - `CASTING`: серия из 12 шотов с `rain_shot_interval=0.18`, спавнит fireball'ы из target+UP×30 + horizontal jitter, баллистика «вертикально вниз с быстрым разгоном».
+- **`SuperPatternOverlay`** (`scripts/super_pattern_overlay.gd` + `scenes/super_pattern_overlay.tscn`) — Control с custom `_draw`. Сетка 3×3 точек, `pattern_length=4` отмечены как путь. ПКМ-зажат → drag-нить через ожидаемую последовательность. Snap-radius 35px на 280px-extent grid. Тайм-аут 8с реальных секунд (под slow-mo ≈ 53с игрового времени), отслеживается через `get_process_delta_time() / Engine.time_scale`. Custom drawing: фейд-фон, точки (зелёные пройденные / золотая текущая / светлые впереди / dim не-в-sequence), нить между пройденными точками, прогресс-бар тайм-аута снизу.
+- **`hand.tscn`** — добавлен `SuperActions` node со скриптом и `pattern_overlay_scene` ExtResource'ом. `Hand.gd` получил `@onready var super_actions: HandSuper = $SuperActions` и `super_actions.setup(self)` в `_ready`.
+- **`project.godot`** — input action `cast_super` на keycode 32 (Space).
+
+### Главное архитектурно
+- **SUPER — третья ось ввода, не часть HandSpell.** Equipped-слот HandSpell держит Fireball/Firestorm; делать Super четвёртым equipped-вариантом значило бы переключение через клавишу + одинаковая ПКМ-семантика. Вместо этого SUPER — отдельный координатор, перехватывает контроль на время каста через `Hand.set_active_category(SUPER)` и возвращает в `_pre_super_category` на завершении. `hand_physical` и `hand_spell` гасятся ранним return на `active_category == SUPER`.
+- **Time scale через `Engine.time_scale`** замораживает физику + AI + всё `_process(delta)` пропорционально, но **CanvasLayer ноды вне scale**. Overlay получает `get_process_delta_time()` уменьшенный на time_scale; делим обратно на `Engine.time_scale` чтобы тайм-аут жил в реальных секундах независимо от slow-mo. `process_mode = PROCESS_MODE_ALWAYS` на CanvasLayer и Overlay — на случай будущей паузы.
+- **Шкала «великой силы» как Camp-state, не Tower**. Concept: «отрядное достижение», как `_squad_xp` (тоже на Camp). Накопление через EventBus.enemy_damaged покрывает любой источник damage'а (рука, магия, защитники, башня). 1 hp damage = 1 charge — простая прозрачная формула, легко понять «убил скелета (30 hp) — 30%». Параметр `super_charge_max` через @export, прокачка через SpellSystem отложена до отдельного коммита.
+- **Pattern overlay рисуется через `_draw()`, не через child Control'ы**. 9 точек — это просто массив локальных Vector2, layout считается в `_grid_pos(idx)` каждый redraw. Нет лишнего scene tree, нет per-dot signal'ов. Custom drawing получился ~50 строк, Control'ы дали бы ~200 строк ради тех же circle+line.
+- **AIMING_TARGET — отдельная фаза от AIMING_PATTERN**. Альтернатива «прошёл паттерн → сразу каст в зафиксированную точку» хуже UX'но: игрок успевает подумать, точка может оказаться не там где целились. С AIMING_TARGET игрок видит руку в реальном времени и кастит ПКМ когда удобно. Также Space в этой фазе — бесплатная отмена (страховка: «передумал, не хочу тратить полную шкалу»).
+- **Per-target иммунитет в rain** не нужен дополнительно — каждый шот это отдельный Fireball._explode, наследует фикс `affected_set` из предыдущей сессии. Между шотами разные взрывы, повторное попадание в одну цель = разный ивент, ОК.
+
+### Что не сделано / отложено
+- **Звук** супер-каста (whoosh time slow, low rumble, fireball impacts × 12). Вся аудио-система ещё не построена.
+- **Прокачка** через SpellSystem — место под `&"super"` id с levels (pattern_length, shot_count, rain_radius) есть, но catalog-entry не написан. Делается отдельным коммитом когда придёт время.
+- **Visual replenish** шкалы — сейчас просто bar в HUD'е. Хотелось бы pulsing-glow когда full, и +N popup как у XP. Можно добавить в SquadXpFx-стиле подписку на EventBus.super_charge_changed.
+- **Кулдаун** между кастами — сейчас нет. Естественный кд = время накопления шкалы (3-4 убитых скелета). Если окажется что игроки спамят (после прокачки damage'а быстрее копят) — добавить min_cooldown между super_cast_finished и следующим start.
+- **Drop-on-super-start** удерживаемого предмета — сейчас просто блокируется (не кастуется если is_holding). Можно добавить «игрок ронит предмет автоматически на каст», но это поведение требует обсуждения.
+- **Удерживаемая ЛКМ при переходе в SUPER** не сбрасывается через `_on_hand_category_changed` — _is_grabbing остаётся true в hand_physical._physics_process. На практике редкий edge-case (игрок держит граб + жмёт Space с full шкалой); _try_start_cast уже гейтит на is_holding. Если проявится — добавить `if new_category == SUPER: _is_grabbing = false` в hand_physical handler.
+
+### Урок про class_cache (важно для будущих сессий)
+**После создания нового файла с `class_name X`** — `--check-only` выдаёт «Could not find type X», даже если файл компилится. Нужно **сначала** прогнать Godot в editor-mode чтобы он зарегистрировал глобальные классы:
+```
+"D:\Godot_v4.6.2-stable_win64.exe\Godot_v4.6.2-stable_win64_console.exe" --headless --quit-after 1 --path "D:/<project>" --editor
+```
+Затем уже обычный `--check-only --quit` будет видеть новые class_name'ы. Это касается и любых grep'ов «как делает type-check проект» — после нового class_name прогонять editor-проход.
+
 ## Сессия 2026-05-10 (2) — Код-ревью и багфиксы
 
 ### Контекст
