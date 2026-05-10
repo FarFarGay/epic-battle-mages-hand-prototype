@@ -268,6 +268,55 @@ static func _spawn_oneshot_particles(root: Node, pos: Vector3, process_mat: Part
 	)
 
 
+## Плоское кольцо на земле фиксированного `radius`. Используется для:
+##   - warning-маркеров (lead time перед падением супер-фаербола);
+##   - постоянного индикатора зоны бомбардировки в AIMING_TARGET (duration<=0
+##     отключает auto-fade и tween'ы — caller сам владеет жизненным циклом).
+## Возвращает MeshInstance3D — caller может двигать его, менять scale, и
+## освободить через queue_free.
+static func spawn_ground_ring(
+	root: Node,
+	pos: Vector3,
+	radius: float,
+	duration: float = 0.6,
+	color: Color = Color(1.0, 0.55, 0.15, 0.95),
+) -> MeshInstance3D:
+	if root == null:
+		return null
+	var torus := TorusMesh.new()
+	torus.outer_radius = radius
+	torus.inner_radius = maxf(radius - 0.18, 0.1)
+	torus.rings = 48
+	torus.ring_segments = 8
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.emission_enabled = true
+	mat.emission = Color(color.r, color.g, color.b, 1.0)
+	mat.emission_energy_multiplier = 2.0
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = torus
+	mesh.material_override = mat
+	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(mesh)
+	mesh.global_position = pos + Vector3.UP * 0.05  # чуть над землёй — без z-fight'а
+	if duration > 0.0:
+		# Auto-fade: pulse-in (sharp) → linear out до queue_free.
+		var tween := mesh.create_tween()
+		# Пульс-открытие: scale 0.85→1.0 за 0.08с
+		mesh.scale = Vector3(0.85, 1.0, 0.85)
+		tween.tween_property(mesh, "scale", Vector3.ONE, 0.08).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		# После пульса — линейный fade alpha до конца duration
+		tween.tween_property(mat, "albedo_color:a", 0.0, maxf(duration - 0.08, 0.05)).set_trans(Tween.TRANS_LINEAR)
+		tween.tween_callback(func() -> void:
+			if is_instance_valid(mesh):
+				mesh.queue_free()
+		)
+	return mesh
+
+
 ## Solid translucent sphere фиксированного радиуса — явный «вижу габариты»
 ## визуал. Используется поверх distortion-волны (она тоже расширяется до
 ## radius, но за 0.45с с дисслв-шейдером — границу не видно мгновенно).

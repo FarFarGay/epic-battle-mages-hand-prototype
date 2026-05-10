@@ -56,6 +56,17 @@ var _cursor_local: Vector2 = Vector2.ZERO
 var _time_remaining: float = 0.0
 ## Активна ли сейчас QTE-сессия. Между finished и след. start — false, ввод игнорируется.
 var _active: bool = false
+## Real-time момент passed для каждой точки sequence (-1 если ещё не пройдена).
+## Используется для hit-flash на 0.4с после прохождения.
+var _hit_flash_at: PackedFloat32Array = PackedFloat32Array()
+## Trail курсора: последние позиции с временем добавления, для fading-нити
+## за курсором. Каждая запись: Vector3(pos.x, pos.y, ts_seconds).
+var _cursor_trail: Array[Vector3] = []
+## Real-time старта QTE — на нём базируется _now(). Time_scale не влияет
+## (Time.get_ticks_msec возвращает реальное время, не game time).
+var _start_msec: int = 0
+const TRAIL_LIFETIME: float = 0.4
+const HIT_FLASH_DURATION: float = 0.45
 
 
 func _ready() -> void:
@@ -82,6 +93,11 @@ func _process(_delta: float) -> void:
 	if _time_remaining <= 0.0:
 		_finish(false, "тайм-аут")
 		return
+	# Чистка trail: записи старше TRAIL_LIFETIME — выбрасываем спереди.
+	# Записи приходят упорядоченно по времени, выходим на первой свежей.
+	var now: float = _now()
+	while _cursor_trail.size() > 0 and now - _cursor_trail[0].z > TRAIL_LIFETIME:
+		_cursor_trail.pop_front()
 	queue_redraw()
 
 
@@ -105,10 +121,22 @@ func start_pattern(pattern_length: int) -> void:
 	_time_remaining = pattern_timeout
 	_active = true
 	visible = true
+	_start_msec = Time.get_ticks_msec()
+	_hit_flash_at = PackedFloat32Array()
+	_hit_flash_at.resize(pattern_length)
+	for i in range(pattern_length):
+		_hit_flash_at[i] = -1.0
+	_cursor_trail.clear()
 	if debug_log and LogConfig.master_enabled:
 		print("[SuperPattern] старт, sequence=%s" % str(_expected_sequence))
 	pattern_started.emit()
 	queue_redraw()
+
+
+## Реальное время с момента старта QTE (секунды). Не зависит от time_scale —
+## используется и для hit-flash, и для cursor-trail.
+func _now() -> float:
+	return float(Time.get_ticks_msec() - _start_msec) / 1000.0
 
 
 func _random_sequence(length: int) -> Array[int]:
@@ -140,6 +168,7 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 	elif event is InputEventMouseMotion and _is_dragging:
 		_cursor_local = get_local_mouse_position()
+		_cursor_trail.append(Vector3(_cursor_local.x, _cursor_local.y, _now()))
 		_check_hit(_cursor_local)
 
 
@@ -185,6 +214,10 @@ func _check_hit(cursor: Vector2) -> void:
 	# Ожидаемая точка
 	var expected_pos: Vector2 = _grid_pos(_expected_sequence[_passed_count])
 	if cursor.distance_squared_to(expected_pos) <= snap_sq:
+		# Помечаем hit-flash на этой (то есть уходящей) точке ДО инкремента,
+		# индекс совпадает с _passed_count.
+		if _passed_count < _hit_flash_at.size():
+			_hit_flash_at[_passed_count] = _now()
 		_passed_count += 1
 		if debug_log and LogConfig.master_enabled:
 			print("[SuperPattern] точка %d пройдена" % _passed_count)
@@ -221,6 +254,7 @@ func _draw() -> void:
 		sequence_set[_expected_sequence[i]] = true
 		sequence_order[_expected_sequence[i]] = i
 
+	var now: float = _now()
 	for idx in range(GRID_SIZE * GRID_SIZE):
 		var p: Vector2 = _grid_pos(idx)
 		if sequence_set.has(idx):
@@ -228,13 +262,41 @@ func _draw() -> void:
 			var passed: bool = order < _passed_count
 			var is_next: bool = order == _passed_count and _passed_count < _expected_sequence.size()
 			var color: Color
+			var halo_color: Color
 			if passed:
 				color = Color(0.3, 0.95, 0.4, 1.0)  # зелёный — пройдено
+				halo_color = Color(0.3, 0.95, 0.4, 0.35)
 			elif is_next:
 				color = Color(1.0, 0.85, 0.2, 1.0)  # золотой — текущая
+				halo_color = Color(1.0, 0.85, 0.2, 0.45)
 			else:
 				color = Color(0.85, 0.85, 0.95, 0.85)  # светло-белый — ещё впереди
-			draw_circle(p, dot_radius_px, color)
+				halo_color = Color(0.85, 0.85, 0.95, 0.18)
+
+			# Halo: 3 концентрических круга с убывающей opacity. Создаёт мягкий
+			# glow без шейдеров. Самый внешний — крупный с малой opacity, ближний
+			# к точке — почти полный.
+			draw_circle(p, dot_radius_px * 2.4, halo_color * Color(1, 1, 1, 0.35))
+			draw_circle(p, dot_radius_px * 1.7, halo_color * Color(1, 1, 1, 0.6))
+			draw_circle(p, dot_radius_px * 1.25, halo_color)
+
+			# Pulse-scale на текущей (is_next) — лёгкий вдох-выдох. Использует
+			# real-time, не зависит от time_scale.
+			var dot_scale: float = 1.0
+			if is_next:
+				dot_scale = 1.0 + 0.12 * sin(now * 6.0)
+
+			# Hit-flash на недавно пройденной: растущий ring с убывающей alpha.
+			if order < _hit_flash_at.size() and _hit_flash_at[order] >= 0.0:
+				var dt: float = now - _hit_flash_at[order]
+				if dt < HIT_FLASH_DURATION:
+					var prog: float = dt / HIT_FLASH_DURATION
+					var flash_radius: float = dot_radius_px * (1.0 + prog * 2.5)
+					var flash_alpha: float = 1.0 - prog
+					draw_arc(p, flash_radius, 0.0, TAU, 32,
+						Color(0.4, 1.0, 0.5, flash_alpha), 3.0)
+
+			draw_circle(p, dot_radius_px * dot_scale, color)
 			# Цифра порядка внутри точки (1..N)
 			var label: String = str(order + 1)
 			var font := ThemeDB.fallback_font
@@ -247,15 +309,37 @@ func _draw() -> void:
 			draw_circle(p, dot_radius_px * 0.4, Color(0.4, 0.4, 0.5, 0.5))
 
 	# 2) Нить — между пройденными точками в порядке + от последней до курсора.
+	# Сначала тёмный shadow (ниже на 2px), сверху основная нить — даёт
+	# глубину и делает её читаемой на любом фоне.
 	if _passed_count > 0:
 		for i in range(1, _passed_count):
 			var a: Vector2 = _grid_pos(_expected_sequence[i - 1])
 			var b: Vector2 = _grid_pos(_expected_sequence[i])
-			draw_line(a, b, Color(1.0, 0.85, 0.2, 0.9), line_thickness_px)
+			draw_line(a + Vector2(0, 2), b + Vector2(0, 2), Color(0.2, 0.1, 0.0, 0.5), line_thickness_px + 1.0)
+			draw_line(a, b, Color(1.0, 0.85, 0.2, 0.95), line_thickness_px)
 		# От последней пройденной до cursor — пока ПКМ зажата
 		if _is_dragging:
 			var last: Vector2 = _grid_pos(_expected_sequence[_passed_count - 1])
-			draw_line(last, _cursor_local, Color(1.0, 0.85, 0.2, 0.6), line_thickness_px * 0.7)
+			draw_line(last + Vector2(0, 2), _cursor_local + Vector2(0, 2), Color(0.2, 0.1, 0.0, 0.4), line_thickness_px * 0.8)
+			draw_line(last, _cursor_local, Color(1.0, 0.85, 0.2, 0.7), line_thickness_px * 0.7)
+
+	# 2.5) Cursor-trail: точки последних позиций cursor с fading opacity.
+	# Создаёт «магический хвост» нити. Точки маленькие, цвет тот же золотой.
+	if _is_dragging and _cursor_trail.size() > 1:
+		for i in range(_cursor_trail.size() - 1):
+			var rec_a: Vector3 = _cursor_trail[i]
+			var rec_b: Vector3 = _cursor_trail[i + 1]
+			var age_a: float = now - rec_a.z
+			if age_a > TRAIL_LIFETIME:
+				continue
+			var alpha: float = 1.0 - (age_a / TRAIL_LIFETIME)
+			# Тонкая линия между соседними trail-точками с fading.
+			draw_line(
+				Vector2(rec_a.x, rec_a.y),
+				Vector2(rec_b.x, rec_b.y),
+				Color(1.0, 0.7, 0.3, alpha * 0.6),
+				line_thickness_px * 0.4,
+			)
 
 	# 3) Прогресс-бар тайм-аута — тонкая полоска снизу overlay'a.
 	var bar_height: float = 4.0

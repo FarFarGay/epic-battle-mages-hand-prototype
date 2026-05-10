@@ -53,6 +53,23 @@ enum State { READY, AIMING_PATTERN, AIMING_TARGET, CASTING }
 @export var rain_knockback_force: float = 12.0
 @export var rain_knockback_lift: float = 0.3
 @export var rain_knockback_duration: float = 0.3
+## Telegraph: каждое попадание ковра предваряется ground-маркером за
+## `rain_warning_lead_time` секунд до спавна ракеты. Игрок видит «куда
+## упадёт», шот не выглядит из ниоткуда.
+@export var rain_warning_lead_time: float = 0.35
+## Сколько живёт warning-кольцо в общей сложности (включая flight ракеты).
+## ≈ lead_time + flight_estimate. Если кольцо исчезает раньше импакта —
+## telegraph «обрывается»; если позже — задерживается на земле после взрыва.
+@export var rain_warning_duration: float = 1.0
+@export_group("")
+
+@export_group("Aim indicator")
+## Радиус ground-кольца в фазе AIMING_TARGET, обычно совпадает с rain_radius.
+@export var aim_indicator_radius_match: bool = true
+## Цвет ring'а в AIMING_TARGET.
+@export var aim_indicator_color: Color = Color(1.0, 0.7, 0.15, 0.95)
+## Цвет warning'а перед каждым shot'ом в CASTING.
+@export var rain_warning_color: Color = Color(1.0, 0.35, 0.15, 0.85)
 @export_group("")
 
 @export_group("Visual / scenes")
@@ -81,6 +98,10 @@ var _aim_target: Vector3 = Vector3.ZERO
 ## Серия шотов в CASTING-фазе (счётчик и тайминг).
 var _shots_remaining: int = 0
 var _next_shot_in: float = 0.0
+## Постоянный ground-ring под курсором в AIMING_TARGET (визуализация
+## bombing zone). Создаётся в _on_pattern_finished(true), двигается каждый
+## кадр в _process, освобождается в _commit_rain / _cancel_aim / _finish_super(false).
+var _aim_indicator: MeshInstance3D = null
 
 
 func _ready() -> void:
@@ -107,6 +128,14 @@ func _process(delta: float) -> void:
 			_next_shot_in = rain_shot_interval
 			if _shots_remaining <= 0 and _state == State.CASTING:
 				_state = State.READY
+
+	# AIMING_TARGET: indicator сидит на земле под курсором, обновляется каждый
+	# кадр. Mesh уже выше пола на 0.05м (см. spawn_ground_ring), Y берём из
+	# курсорной точки минус hand_height — это ground под курсором.
+	if _state == State.AIMING_TARGET and is_instance_valid(_aim_indicator):
+		var ground: Vector3 = _hand.cursor_world_position()
+		ground.y -= _hand.hand_height
+		_aim_indicator.global_position = ground + Vector3.UP * 0.05
 
 	_handle_input()
 
@@ -189,6 +218,7 @@ func _on_pattern_finished(success: bool) -> void:
 		_aim_target = _hand.cursor_world_position()
 		_aim_target.y -= _hand.hand_height
 		_state = State.AIMING_TARGET
+		_spawn_aim_indicator()
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:Super] QTE OK — прицел, ПКМ для каста")
 	else:
@@ -197,12 +227,33 @@ func _on_pattern_finished(success: bool) -> void:
 		_finish_super(false)
 
 
+func _spawn_aim_indicator() -> void:
+	_clear_aim_indicator()
+	if _effects_root == null:
+		return
+	# duration=0 → AoeVisual возвращает mesh без auto-fade, мы сами владеем.
+	_aim_indicator = AoeVisual.spawn_ground_ring(
+		_effects_root,
+		_aim_target,
+		rain_radius if aim_indicator_radius_match else rain_shot_radius,
+		0.0,
+		aim_indicator_color,
+	)
+
+
+func _clear_aim_indicator() -> void:
+	if is_instance_valid(_aim_indicator):
+		_aim_indicator.queue_free()
+	_aim_indicator = null
+
+
 func _commit_rain() -> void:
 	# Игрок нажал ПКМ — ставит ковёр в текущую точку курсора (НЕ заранее
 	# зафиксированную: куда смотрит сейчас, туда и сыпется).
 	var target: Vector3 = _hand.cursor_world_position()
 	target.y -= _hand.hand_height
 	_aim_target = target
+	_clear_aim_indicator()
 	# Полное списание шкалы — один каст = один полный ресурс.
 	_camp.consume_super_charge(_camp.get_super_charge_max())
 	_state = State.CASTING
@@ -221,12 +272,17 @@ func _cancel_aim() -> void:
 	# каста, шкала остаётся нетронутой (QTE прошёл, но ничего не списываем).
 	# Альтернатива «списать половину» — спросим у геймдизайнера если
 	# понадобится. Сейчас бесплатная отмена выгодная UX-страховка.
+	_clear_aim_indicator()
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Super] прицел отменён — шкала сохранена")
 	_finish_super(false)
 
 
 func _finish_super(success: bool) -> void:
+	# На любой выход (success/fail/cancel) — indicator не должен повиснуть.
+	# _commit_rain и _cancel_aim уже зовут _clear_aim_indicator явно, тут
+	# подстраховка для путей, которые могли бы пропустить.
+	_clear_aim_indicator()
 	if _hand.active_category == Hand.Category.SUPER:
 		_hand.set_active_category(_pre_super_category)
 	if _state != State.CASTING:
@@ -243,6 +299,30 @@ func _launch_one_rain_shot() -> void:
 	var angle: float = randf() * TAU
 	var dist: float = sqrt(randf()) * rain_radius
 	var target_pos: Vector3 = _aim_target + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+
+	# Telegraph: ground-warning ring появляется в landing point раньше, чем
+	# спавнится ракета. Игрок видит «куда упадёт». Живёт rain_warning_duration —
+	# обычно ≈ lead_time + flight_time, чтобы исчезнуть к моменту импакта.
+	if _effects_root != null:
+		AoeVisual.spawn_ground_ring(
+			_effects_root,
+			target_pos,
+			rain_shot_radius,
+			rain_warning_duration,
+			rain_warning_color,
+		)
+	# Пауза перед фактическим spawn'ом ракеты. await suspend'ит этот вызов,
+	# _process тем временем продолжает decrement _shots_remaining и спавнит
+	# следующие warning'и — серия идёт по rain_shot_interval, а отдельные
+	# ракеты летят с lead-time'ом каждая. Эффективная общая длительность
+	# каста: lead_time + (count - 1) * shot_interval + flight_estimate.
+	if rain_warning_lead_time > 0.0:
+		await get_tree().create_timer(rain_warning_lead_time).timeout
+	# Сцена могла перезагрузиться за время await'а (resume главного меню,
+	# редактор-reload и т.п.). Без guard'а add_child уйдёт в freed-родителя.
+	if not is_instance_valid(_effects_root):
+		return
+
 	# Стартовая точка — высоко над target. Небольшой horizontal jitter
 	# чтобы фаерболы не падали строго вертикально (читаемее как «дождь»).
 	var launch_jitter: Vector3 = Vector3(randf_range(-2.0, 2.0), 0.0, randf_range(-2.0, 2.0))
