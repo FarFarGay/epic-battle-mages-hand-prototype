@@ -16,7 +16,14 @@ extends Node3D
 
 signal burst(position: Vector3)
 
-const HIT_PROXIMITY_SQ: float = 0.36  # 0.6м² — burst'имся на подлёте к burst_pos
+## Радиус-сред захвата burst-точки: при distance² <= этого — burst.
+## 4.0 (= 2м radius) с запасом — на homing_max_speed=48 шаг ~0.8м/тик,
+## 0.6м-захват пропускал мимо и carrier зацикливался вокруг точки.
+const HIT_PROXIMITY_SQ: float = 4.0
+## Если был ближе чем это — но удалился (overshoot detection ниже),
+## сработает burst немедленно. Комплиментарный к HIT_PROXIMITY_SQ для
+## случаев «прошёл насквозь между кадрами».
+const OVERSHOOT_TRIP_DISTANCE: float = 3.5
 const SAFETY_LIFETIME: float = 6.0
 
 enum Phase { BOOST, HOMING }
@@ -34,6 +41,10 @@ var _phase: int = Phase.BOOST
 var _current_speed: float = 0.0  # для HOMING-фазы
 var _age: float = 0.0
 var _bursted: bool = false
+## Минимальная дистанция до burst_pos за всю жизнь carrier'а. Используется
+## для overshoot detection: если carrier был близко (< OVERSHOOT_TRIP) и
+## начал удаляться — он точно проскочил, burst немедленно.
+var _min_distance_to_target: float = INF
 
 # Параметры — задаются HandSuper в setup(). Не @export'ы здесь — координатор
 # держит их на своей стороне (один источник правды + per-cast tweak).
@@ -133,10 +144,23 @@ func _physics_process(delta: float) -> void:
 
 	_orient_along_velocity()
 
-	# Триггер burst'а: подлетели близко к burst_pos (3D-proximity).
+	# Триггер burst'а — два механизма:
+	#   1. Proximity: distance² ≤ HIT_PROXIMITY_SQ. Радиус ~2м с запасом
+	#      под высокую homing-скорость и физический шаг.
+	#   2. Overshoot: carrier был ближе OVERSHOOT_TRIP_DISTANCE, потом
+	#      начал удаляться. Без этой проверки на больших скоростях carrier
+	#      проскакивал burst-точку между кадрами и зацикливался вокруг неё
+	#      по homing-slerp'у.
 	var to_target_3d: Vector3 = _target_pos - global_position
-	if to_target_3d.length_squared() <= HIT_PROXIMITY_SQ:
+	var distance: float = to_target_3d.length()
+	if distance * distance <= HIT_PROXIMITY_SQ:
 		_do_burst()
+		return
+	if _phase == Phase.HOMING:
+		if distance < _min_distance_to_target:
+			_min_distance_to_target = distance
+		elif _min_distance_to_target < OVERSHOOT_TRIP_DISTANCE:
+			_do_burst()
 
 
 func _orient_along_velocity() -> void:
