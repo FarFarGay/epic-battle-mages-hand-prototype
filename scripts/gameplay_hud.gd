@@ -44,6 +44,14 @@ var _resource_labels: Dictionary = {}
 ## Индикатор режима сбора (WORK/ALARM) — отдельный Label под кнопкой журнала,
 ## меняет цвет реактивно на EventBus.collection_mode_changed.
 var _mode_label: Label
+## Панель squad-карточек справа столбиком. Создаётся на первый squad_created
+## (lazy), убирается на squad_disbanded последнего. Каждая карточка — Control
+## с иконкой типа, счётчиком живых, кнопками команд («Эскорт», «Идти сюда»).
+var _squad_panel: VBoxContainer
+## squad_id → Control карточки. Используется для update/remove на squad_changed.
+var _squad_cards: Dictionary = {}
+## Кэш ссылки на руку — для toggle_aim_for через HandSquadAim. Lookup по группе.
+var _hand: Hand
 
 ## Порядок и метаданные отображения ресурсов в правой панели. Пять типов из
 ## ResourcePile.ResourceType, кроме GENERIC (legacy-ящик, не геймплейный).
@@ -84,6 +92,9 @@ func _ready() -> void:
 	EventBus.tower_health_changed.connect(_refresh_tower_health)
 	EventBus.tower_mana_changed.connect(_refresh_tower_mana)
 	EventBus.super_charge_changed.connect(_refresh_super_charge)
+	EventBus.squad_created.connect(_on_squad_created)
+	EventBus.squad_changed.connect(_on_squad_changed)
+	EventBus.squad_disbanded.connect(_on_squad_disbanded)
 	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Tower
 	if tower != null:
 		_refresh_tower_health(tower.hp, tower.max_hp)
@@ -431,3 +442,157 @@ func _refresh_super_charge(current: float, maximum: float) -> void:
 	else:
 		_super_label.text = "ВЕЛИКАЯ СИЛА %d/%d" % [int(round(current)), int(round(maximum))]
 		_super_label.add_theme_color_override("font_color", Color.WHITE)
+
+
+## --- Squad cards (правая панель) ---
+
+## Создаёт VBoxContainer для карточек squad'ов справа сверху, lazy — на
+## первый squad_created. Anchored правый-верх, чтобы не конкурировать с
+## tower_stats (top center) и resources (right column).
+func _ensure_squad_panel() -> void:
+	if _squad_panel != null and is_instance_valid(_squad_panel):
+		return
+	_squad_panel = VBoxContainer.new()
+	_squad_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	# Отступ: сверху 80px (под HP/MP/super), справа 20px. Ширина 220.
+	_squad_panel.offset_left = -240.0
+	_squad_panel.offset_top = 80.0
+	_squad_panel.offset_right = -20.0
+	_squad_panel.offset_bottom = 600.0
+	_squad_panel.add_theme_constant_override("separation", 6)
+	add_child(_squad_panel)
+
+
+func _on_squad_created(squad: RefCounted) -> void:
+	_ensure_squad_panel()
+	var card := _build_squad_card(squad as Squad)
+	_squad_panel.add_child(card)
+	_squad_cards[(squad as Squad).id] = card
+
+
+func _on_squad_changed(squad: RefCounted) -> void:
+	var s := squad as Squad
+	if s == null:
+		return
+	var card: Control = _squad_cards.get(s.id)
+	if card == null or not is_instance_valid(card):
+		return
+	_refresh_squad_card(card, s)
+
+
+func _on_squad_disbanded(squad: RefCounted) -> void:
+	var s := squad as Squad
+	if s == null:
+		return
+	var card: Control = _squad_cards.get(s.id)
+	if card != null and is_instance_valid(card):
+		card.queue_free()
+	_squad_cards.erase(s.id)
+
+
+## Карточка одного squad'а. PanelContainer с иконкой, счётчиком и двумя
+## кнопками команд. Метаданные ID/refs хранятся через set_meta — потом
+## refresh_squad_card их читает чтобы обновить кнопки/текст.
+func _build_squad_card(squad: Squad) -> Control:
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.set_meta(&"squad_id", squad.id)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 4)
+	card.add_child(vbox)
+
+	# Заголовок: цветной квадрат + имя + счётчик
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 6)
+	vbox.add_child(header)
+	var swatch := ColorRect.new()
+	swatch.custom_minimum_size = Vector2(14, 14)
+	swatch.color = squad.icon_color
+	header.add_child(swatch)
+	var title := Label.new()
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_font_size_override("font_size", 13)
+	title.set_meta(&"squad_title", true)
+	header.add_child(title)
+
+	# Кнопки команд. Назначаем bind через squad-id, в callback резолвим
+	# Camp.get_squads().find(id) — squad-объект мог быть disbanded между
+	# spawn-ом карточки и кликом.
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 4)
+	vbox.add_child(btn_row)
+
+	var btn_aim := Button.new()
+	btn_aim.text = "Идти сюда"
+	btn_aim.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn_aim.add_theme_font_size_override("font_size", 11)
+	btn_aim.pressed.connect(_on_squad_aim_pressed.bind(squad.id))
+	btn_aim.set_meta(&"squad_btn_aim", true)
+	btn_row.add_child(btn_aim)
+
+	var btn_escort := Button.new()
+	btn_escort.text = "За башней"
+	btn_escort.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn_escort.add_theme_font_size_override("font_size", 11)
+	btn_escort.pressed.connect(_on_squad_escort_pressed.bind(squad.id))
+	btn_escort.set_meta(&"squad_btn_escort", true)
+	btn_row.add_child(btn_escort)
+
+	_refresh_squad_card(card, squad)
+	return card
+
+
+func _refresh_squad_card(card: Control, squad: Squad) -> void:
+	var alive: int = squad.count_alive()
+	var total: int = squad.members.size()
+	var type_name: String = SoldierSystem.get_soldier_data(squad.soldier_type).get("name", str(squad.soldier_type))
+	# Title и подсветка кнопок согласно state. Поиск по meta — title-Label
+	# единственный с set_meta(&"squad_title", true).
+	for child in card.find_children("*", "Label", true, false):
+		if child.has_meta(&"squad_title"):
+			child.text = "%s — %d/%d" % [type_name, alive, total]
+	for btn in card.find_children("*", "Button", true, false):
+		if btn.has_meta(&"squad_btn_escort"):
+			btn.button_pressed = squad.state == Squad.State.ESCORTING_TOWER
+		elif btn.has_meta(&"squad_btn_aim"):
+			# Подсвечиваем когда HandSquadAim в режиме aim'а на этом squad'е.
+			var hand := _resolve_hand()
+			btn.button_pressed = hand != null and hand.squad_aim != null and hand.squad_aim.is_aiming(squad)
+
+
+func _on_squad_aim_pressed(squad_id: int) -> void:
+	var squad: Squad = _resolve_squad_by_id(squad_id)
+	if squad == null:
+		return
+	var hand := _resolve_hand()
+	if hand == null or hand.squad_aim == null:
+		return
+	hand.squad_aim.toggle_aim_for(squad)
+	# Обновляем подсветку кнопки.
+	var card: Control = _squad_cards.get(squad_id)
+	if card != null and is_instance_valid(card):
+		_refresh_squad_card(card, squad)
+
+
+func _on_squad_escort_pressed(squad_id: int) -> void:
+	var squad: Squad = _resolve_squad_by_id(squad_id)
+	if squad == null or not is_instance_valid(_camp):
+		return
+	_camp.command_squad_escort(squad)
+
+
+func _resolve_squad_by_id(squad_id: int) -> Squad:
+	if not is_instance_valid(_camp):
+		return null
+	for s in _camp.get_squads():
+		if s.id == squad_id:
+			return s
+	return null
+
+
+func _resolve_hand() -> Hand:
+	if is_instance_valid(_hand):
+		return _hand
+	_hand = get_tree().get_first_node_in_group(Hand.HAND_GROUP) as Hand
+	return _hand

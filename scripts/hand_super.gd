@@ -180,6 +180,10 @@ func _process(_delta: float) -> void:
 
 
 func _handle_input() -> void:
+	# Если рука сейчас в SQUAD_AIM (команду squad'у даём) — Super-каст
+	# заглушаем. На триггере squad'а Super не должен запускаться.
+	if _hand != null and _hand.active_category == Hand.Category.SQUAD_AIM:
+		return
 	match _state:
 		State.READY:
 			if Input.is_action_just_pressed(ACTION_TRIGGER):

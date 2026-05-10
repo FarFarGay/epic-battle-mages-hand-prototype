@@ -20,7 +20,13 @@ extends Node3D
 ## SUPER — режим «великой силы». Активен пока HandSuper координатор ведёт
 ## QTE-паттерн или AIMING. Hand_physical и hand_spell ввод в этом режиме
 ## игнорируют (их раннее `if active_category != X: return` срабатывает).
-enum Category { PHYSICAL, MAGIC, SUPER }
+##
+## SQUAD_AIM — режим прицеливания команды «Идти сюда» для отряда. HandSquadAim
+## координатор перехватывает ПКМ для подтверждения цели. Все остальные
+## категории также гасятся.
+enum Category { PHYSICAL, MAGIC, SUPER, SQUAD_AIM }
+
+const HAND_GROUP := &"hand"
 
 signal grabbed(item: Node3D)
 signal released(item: Node3D, velocity: Vector3)
@@ -47,6 +53,7 @@ const RAY_DISTANCE := 1000.0
 @onready var physical_actions: HandPhysicalActions = $PhysicalActions
 @onready var spell_actions: HandSpell = $SpellActions
 @onready var super_actions: HandSuper = $SuperActions
+@onready var squad_aim: HandSquadAim = $SquadAim
 
 var _velocity_history: Array[Vector3] = []
 var _previous_pos: Vector3
@@ -68,6 +75,7 @@ var _raycast_excluders: Array[Callable] = []
 
 
 func _ready() -> void:
+	add_to_group(HAND_GROUP)
 	_last_cursor_world = global_position
 	# Прокидываем сигналы физического подмодуля наверх — внешние слушатели
 	# могут подключаться к hand.grabbed / hand.released как раньше.
@@ -78,6 +86,8 @@ func _ready() -> void:
 	# SUPER — третья ось ввода. setup нужен только чтобы подмодуль получил
 	# ссылку на руку (cursor_world_position, is_holding, set_active_category).
 	super_actions.setup(self)
+	# SQUAD_AIM — четвёртая ось (команда отряду «Идти сюда»).
+	squad_aim.setup(self)
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
 	grabbed.connect(func(item: Node3D) -> void: EventBus.hand_grabbed.emit(item))

@@ -115,6 +115,15 @@ signal module_unmounted(module: Node, slot: Node)
 ## Слушают QuestActor (для перекраса) и потенциально HUD.
 signal quest_advanced(new_index: int)
 
+# --- Squads / Army (мобилизованные солдаты) ---
+## Отряд создан (recruit_squad) — UI добавляет карточку.
+signal squad_created(squad: RefCounted)
+## Отряд изменился (members_changed / state_changed) — UI перерисовывает карточку.
+signal squad_changed(squad: RefCounted)
+## Все члены отряда погибли — UI убирает карточку, Camp снимает ссылку.
+signal squad_disbanded(squad: RefCounted)
+
+
 # --- Super spell (великая сила, ковровая бомбардировка) ---
 ## Шкала «великой силы» отряда изменилась. Накопление по нанесённому damage'у
 ## врагам. value/max = сырые единицы (сейчас 0..100 ≈ 100 hp нанесённого damage).

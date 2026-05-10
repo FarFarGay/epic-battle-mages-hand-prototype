@@ -294,6 +294,12 @@ var _pending_upgrade_choices: int = 0
 ## `_on_enemy_damaged` подписку на EventBus.enemy_damaged. Списание полное
 ## при успешном супер-касте, частичное (super_charge_fail_penalty) при провале QTE.
 var _super_charge: float = 0.0
+## Активные отряды солдат. Пополняется через recruit_squad, убирается на
+## squad.disbanded (все члены погибли). UI (gameplay_hud) подписан на
+## EventBus.squad_created/changed/disbanded.
+var _squads: Array[Squad] = []
+## Counter для уникального Squad.id — увеличивается при каждом recruit_squad.
+var _next_squad_id: int = 0
 ## Активные апгрейды отряда. DefenderGnome читает has_upgrade(id) на каждом
 ## тике, эффекты применяются динамически (новые защитники после смерти/
 ## reset_population автоматически в курсе).
@@ -962,35 +968,49 @@ func can_recruit_squad(soldier_type: StringName) -> bool:
 	return gatherer_count() >= squad_size
 
 
-## Призвать отряд заданного типа. Конвертирует squad_size gatherer'ов в
-## soldier'ов одним вызовом: списывает cost (за весь отряд), спавнит сцены
-## в позициях gatherer'ов, удаляет gatherer'ов из _gnomes.
-## Возвращает массив спавненных SoldierGnome'ов (пустой при провале).
-func recruit_squad(soldier_type: StringName) -> Array[SoldierGnome]:
-	var result: Array[SoldierGnome] = []
+## Призвать отряд заданного типа. Создаёт Squad-объект и заполняет его
+## squad_size солдатами. Каждый солдат — конвертированный gatherer.
+## Возвращает Squad или null при провале.
+func recruit_squad(soldier_type: StringName) -> Squad:
 	if SoldierSystem == null:
-		return result
+		return null
 	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
 	if data.is_empty():
 		push_warning("Camp.recruit_squad: неизвестный тип %s" % soldier_type)
-		return result
+		return null
 	var cost: Dictionary = data.get("cost", {})
 	if not can_afford(cost):
-		return result
+		return null
 	var squad_size: int = SoldierSystem.get_squad_size(soldier_type)
 	var gatherers: Array[Gnome] = _find_idle_gatherers(squad_size)
 	if gatherers.size() < squad_size:
-		return result
+		return null
 	var scene: PackedScene = data.get("scene", null)
 	if scene == null:
 		push_error("Camp.recruit_squad: scene не задан в каталоге для %s" % soldier_type)
-		return result
+		return null
 	# Списываем cost атомарно. После try_spend rollback'аемся через add_resource
 	# если что-то пойдёт не так дальше (instantiate'ы провалятся).
 	if not try_spend(cost):
-		return result
+		return null
+
+	# Создаём Squad-объект ДО спавна солдат — каждый soldier при setup_soldier
+	# получит ссылку через squad.add_member.
+	var squad := Squad.new()
+	squad.id = _next_squad_id
+	_next_squad_id += 1
+	squad.soldier_type = soldier_type
+	squad.icon_color = data.get("icon_color", Color.WHITE)
+	# Дефолтная команда: HOLDING_POSITION на центре gatherers'ов — там, где
+	# их позвали. Игрок получает «5 лучников стоят и стреляют», без сюрпризов.
+	var center: Vector3 = Vector3.ZERO
+	for g in gatherers:
+		center += g.global_position
+	center /= float(gatherers.size())
+	squad.command_hold(center)
 
 	var stats: Dictionary = data.get("stats", {})
+	var spawned: int = 0
 	for gatherer in gatherers:
 		var soldier := scene.instantiate() as SoldierGnome
 		if soldier == null:
@@ -1001,18 +1021,69 @@ func recruit_squad(soldier_type: StringName) -> Array[SoldierGnome]:
 		_gnomes.erase(gatherer)
 		gatherer.queue_free()
 		_gnomes.append(soldier)
-		result.append(soldier)
+		squad.add_member(soldier)
+		spawned += 1
 
-	if result.is_empty():
+	if spawned == 0:
 		# Полный провал спавна — возвращаем cost.
 		for type in cost:
 			add_resource(type, int(cost[type]))
-		return result
+		return null
+
+	# Регистрируем squad. Подписка на disbanded — сами убираемся когда все
+	# юниты погибли.
+	_squads.append(squad)
+	squad.disbanded.connect(_on_squad_disbanded.bind(squad), CONNECT_ONE_SHOT)
+	squad.members_changed.connect(_on_squad_changed.bind(squad))
+	squad.state_changed.connect(_on_squad_changed.bind(squad))
 
 	if debug_log and LogConfig.master_enabled:
-		print("[Camp] призван отряд %s × %d, gatherer'ов: %d, солдат: %d" % [soldier_type, result.size(), gatherer_count(), soldier_count()])
+		print("[Camp] призван %s, gatherer'ов: %d, солдат: %d" % [str(squad), gatherer_count(), soldier_count()])
 	EventBus.camp_buildings_changed.emit()
-	return result
+	EventBus.squad_created.emit(squad)
+	return squad
+
+
+func _on_squad_disbanded(squad: Squad) -> void:
+	_squads.erase(squad)
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] отряд %s распущен (все погибли)" % str(squad))
+	EventBus.squad_disbanded.emit(squad)
+
+
+func _on_squad_changed(squad: Squad) -> void:
+	EventBus.squad_changed.emit(squad)
+
+
+## Все активные squad'ы. UI читает для построения панели карточек.
+func get_squads() -> Array[Squad]:
+	return _squads
+
+
+## Команда: указать squad'у удерживать точку. UI зовёт когда игрок
+## завершил attack-aim (ПКМ в нужной точке).
+func command_squad_hold(squad: Squad, pos: Vector3) -> void:
+	if squad == null:
+		return
+	if not _squads.has(squad):
+		return
+	squad.command_hold(pos)
+
+
+## Команда: squad переходит в эскорт-режим (следует за башней).
+func command_squad_escort(squad: Squad) -> void:
+	if squad == null:
+		return
+	if not _squads.has(squad):
+		return
+	squad.command_escort()
+
+
+## Tower-getter для squad'ов (target_for_member использует tower_pos в эскорт-режиме).
+func get_tower_position() -> Vector3:
+	if is_instance_valid(_tower):
+		return _tower.global_position
+	return global_position
 
 
 ## --- Super charge (великая сила) ---

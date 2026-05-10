@@ -202,10 +202,10 @@ func _get_excluded_rids() -> Array[RID]:
 # --- Ввод ---
 
 func _handle_input() -> void:
-	# В SUPER-режиме (QTE-каст великой силы) физический ввод полностью
-	# заглушаем — даже equip-переключения. Иначе нажатие «1» в момент QTE
-	# сбросит каст. HandSuper координатор сам вернёт категорию на завершении.
-	if _hand.active_category == Hand.Category.SUPER:
+	# В SUPER / SQUAD_AIM режимах физический ввод полностью заглушаем —
+	# даже equip-переключения. Иначе нажатие «1» во время QTE / aim'а
+	# сбросит каст или цель. Координатор сам вернёт категорию на завершении.
+	if _hand.active_category == Hand.Category.SUPER or _hand.active_category == Hand.Category.SQUAD_AIM:
 		return
 	# Смена экипировки на physical-абилку — переключает Hand на PHYSICAL.
 	# Equip-биндинги слушаются всегда, даже когда категория MAGIC (игрок

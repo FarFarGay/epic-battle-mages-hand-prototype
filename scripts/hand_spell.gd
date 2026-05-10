@@ -65,9 +65,10 @@ func _process(delta: float) -> void:
 # --- Ввод ---
 
 func _handle_input() -> void:
-	# В SUPER-режиме весь магический ввод (equip + cast) заглушаем —
-	# координатор HandSuper сам вернёт категорию на завершении.
-	if _hand.active_category == Hand.Category.SUPER:
+	# В SUPER / SQUAD_AIM режимах весь магический ввод (equip + cast)
+	# заглушаем — соответствующий координатор сам вернёт категорию на
+	# завершении.
+	if _hand.active_category == Hand.Category.SUPER or _hand.active_category == Hand.Category.SQUAD_AIM:
 		return
 	# Equip-биндинги — переключают Hand в MAGIC и выбирают конкретное
 	# заклинание. Слушаются всегда (даже когда сейчас PHYSICAL).

@@ -30,7 +30,13 @@ const SOLDIER_GROUP := &"soldier"
 
 ## Тип солдата из SOLDIER_CATALOG. Ставится в setup_soldier.
 var soldier_type: StringName = &""
+## Ссылка на squad. Назначается Squad.add_member(self). RefCounted —
+## пока хотя бы один член держит ссылку или Camp хранит, объект жив.
+var _squad: Squad = null
 var _attack_cd: float = 0.0
+## Расстояние «прибытия» к squad-target'у. Меньше — стоим (squad-positioning
+## не jitter'ит на под-метровых отклонениях).
+const SQUAD_TARGET_ARRIVAL: float = 0.4
 
 
 func _ready() -> void:
@@ -67,23 +73,46 @@ func setup_soldier(p_type: StringName, stats: Dictionary, p_camp: Camp, position
 	_attack_cd = randf_range(0.0, attack_cooldown_max)  # рандомный стартовый cd — чтобы не залп
 
 
-## Override базового AI — солдат не делает gather/return-логику. Стоит на
-## месте, тикает cd, стреляет в ближайшего скелета в attack_radius'е.
+## Squad назначает себя на add_member. Двусторонняя ссылка нужна юниту
+## чтобы запросить target_for_member и читать squad.state. На смерть юнита
+## squad сам отлавливает destroyed-сигнал и убирает из members'а.
+func set_squad(squad: Squad) -> void:
+	_squad = squad
+
+
+## Override базового AI. Логика «attack-and-move»:
+##   1. Cooldown стрельбы тикает всегда.
+##   2. Если враг в attack_radius'е — останавливаемся, поворачиваемся, стреляем.
+##   3. Иначе двигаемся к squad-target'у (если есть squad) или стоим.
 func _active_tick(delta: float) -> void:
-	# Стоим — обнуляем velocity (Gnome._physics_process сделает move_and_slide
-	# с нулевой скоростью, гном останется на месте; knockback friction всё ещё
-	# работает в супер-тике).
-	velocity = Vector3.ZERO
 	if _attack_cd > 0.0:
 		_attack_cd -= delta
-		return
-	if arrow_scene == null:
-		return
+
 	var target: Node3D = _find_target()
-	if target == null:
+	if target != null:
+		# Враг в radius'е — стоим и стреляем. Squad-движение приостанавливается:
+		# огневой контакт приоритетнее перемещения.
+		velocity = Vector3.ZERO
+		if _attack_cd <= 0.0 and arrow_scene != null:
+			_fire_at(target)
+			_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max)
 		return
-	_fire_at(target)
-	_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max)
+
+	# Нет огневого контакта — двигаемся к squad-target'у (если есть squad).
+	if _squad == null or _camp == null:
+		velocity = Vector3.ZERO
+		return
+	var tower_pos: Vector3 = _camp.get_tower_position() if _camp.has_method(&"get_tower_position") else global_position
+	var goal: Vector3 = _squad.target_for_member(self, tower_pos)
+	var to_goal_xz := Vector3(goal.x - global_position.x, 0.0, goal.z - global_position.z)
+	var dist: float = to_goal_xz.length()
+	if dist <= SQUAD_TARGET_ARRIVAL:
+		velocity = Vector3.ZERO
+		return
+	var dir: Vector3 = to_goal_xz / dist
+	# Поворачиваем юнита по направлению движения.
+	look_at(global_position + dir, Vector3.UP)
+	velocity = dir * move_speed
 
 
 ## Ближайший Skeleton в attack_radius'е. Идёт через SKELETON_GROUP — и NEAR,
