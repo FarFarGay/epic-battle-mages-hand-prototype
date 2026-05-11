@@ -405,8 +405,19 @@ func _tick_active_poi(delta: float) -> void:
 		# переходе стадий, что ломает ощущение нарастающей угрозы.
 		_wave_cd = minf(_wave_cd, next_stage.wave_interval) if next_stage != null else _wave_cd
 		if debug_log and LogConfig.master_enabled and next_stage != null:
-			print("[WaveDirector] stage advance %d→%d (interval=%.0fс, %d скел/волна)" % [
-				_stage_index - 1, _stage_index, next_stage.wave_interval, next_stage.skeletons_per_wave,
+			# Для groups-driven стадий считаем сумму юнитов по всем группам;
+			# для legacy показываем skeletons_per_wave как раньше.
+			var stage_size: String
+			if next_stage.has_groups():
+				var total: int = 0
+				for g in next_stage.groups:
+					if g != null:
+						total += g.total_count()
+				stage_size = "%d групп / %d юнитов" % [next_stage.groups.size(), total]
+			else:
+				stage_size = "%d скел/волна" % next_stage.skeletons_per_wave
+			print("[WaveDirector] stage advance %d→%d (interval=%.0fс, %s)" % [
+				_stage_index - 1, _stage_index, next_stage.wave_interval, stage_size,
 			])
 
 

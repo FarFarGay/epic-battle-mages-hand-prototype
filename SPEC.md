@@ -923,7 +923,9 @@ static func spawn(
 
 WaveStage поддерживает обе модели одновременно:
 - Новая: `groups: Array[CombatGroup]` — если непуст, используется.
-- Legacy: `skeletons_per_wave: int` — fallback когда `groups` пуст. Существующие `wave_schedule_default.tres` без правок продолжают работать.
+- Legacy: `skeletons_per_wave: int` — fallback когда `groups` пуст. WaveStage без `groups` (старые .tres) продолжают работать через legacy-ветку.
+
+Текущий `wave_schedule_default.tres` уже groups-driven (с этапа после Phase A): три стадии «разведка» (1 группа ×5), «давление» (2 группы 5+3, вторая с spread=1.3), «осада» (3 группы 5+4+3, spread'ы 1.0/1.2/1.5). Все группы с `spawn_zone_index=-1` (random live zone) — на единственной SpawnZone это даёт несколько кластеров одновременно в **разных частях зоны** благодаря safe-фильтру (rejection sampling 30 попыток в `_pick_safe_point_in_zone`). Когда дизайнер добавит больше зон вокруг POI — те же группы дадут реальный многофронт с разных сторон без правки расписания.
 
 **Spawn новой модели (`_spawn_groups_wave`):** для каждой CombatGroup → `_spawn_single_group`: резолв SpawnZone через `_resolve_spawn_zone(index)` (запрошенная zone если жива, иначе random fallback), origin = random point в zone, target_part = nearest_part_to(origin), затем итерация по composition с `spawn_group(entry.scene, entry.count, origin, radius)` + `_assign_forced_targets`. Один `consume_wave()` на zone-резолв (не на UnitEntry).
 
