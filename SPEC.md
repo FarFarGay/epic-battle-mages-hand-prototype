@@ -1446,8 +1446,8 @@ Autoload-сценарий, аналог SpellSystem. Single source of truth дл
 Не Node. Чистая логическая обёртка: `members: Array[SoldierGnome]`, `state`, `hold_position`, `_strict_move`. Каждый soldier держит ссылку (`_squad`), Camp хранит в `_squads` — пока живы, RefCounted alive.
 
 **States:**
-- `HOLDING_POSITION(pos)` — компактное кольцо (1.6м) вокруг hold_position. Бой в leash-радиусе.
-- `ESCORTING_TOWER` — кольцо вокруг tower.
+- `HOLDING_POSITION(pos)` — кольцо вокруг hold_position. Бой в leash-радиусе. Радиус адаптивный: `HOLD_RING_RADIUS=1.6м` как floor, выше — `HOLD_RING_MIN_ARC × n / TAU` (минимум 1.3м дуги на юнита, чтобы капсулы не налезали). На squad_size=5 — 1.6м (no-op), на 10 — ~2м, на 15 — ~3.1м.
+- `ESCORTING_TOWER` — то же кольцо, но центр = tower.
 - `DEFENDING_CAMP` — wander-патруль по периметру лагеря (НЕ кольцо, см. SoldierGnome._tick_defend_patrol).
 
 `_strict_move: bool` — флаг последнего `command_hold(pos)`. Юнит, не дошедший до своего слота, в этом режиме игнорирует бой («точное указание места — четкое указание, всё прерывает»). На `command_escort/defend` сбрасывается. Per-soldier flag `_strict_arrived_at_slot` снимает блокировку combat'а после первого прибытия — иначе lunge выбрасывал бы из слота, strict снова марш back, юнит дёргался.
@@ -1455,24 +1455,27 @@ Autoload-сценарий, аналог SpellSystem. Single source of truth дл
 API: `command_hold(pos, strict=true)` / `command_escort()` / `command_defend()`. Public `remove_member(soldier)` — для dismiss-конверсии (queue_free без _die не фронтит destroyed-сигнал).
 
 #### 5.8.2.3 SoldierGnome — копейщик
-Подкласс Gnome. Не привязан к палатке. Combat — **5-фазная charge-state machine**:
+Подкласс Gnome. Не привязан к палатке. Combat — **6-фазная charge-state machine** с anticipation-паузой:
 
 ```
-READY → APPROACH → LUNGE → DRIFT → RECOVERY → READY
+READY → APPROACH → WINDUP → LUNGE → DRIFT → RECOVERY → READY
 ```
 
-- **APPROACH** (`approach_max_speed=4.5`, `approach_accel_time=0.18`) — бежит к цели, скорость линейно с 0 до max, направление пересчитывается каждый кадр (re-aim). При `dist ≤ lunge_trigger_range=3.5м` → LUNGE с фиксированным направлением. Лимит `max_approach_distance=9м` — отмена.
-- **LUNGE** (`lunge_speed=12 м/с`, фикс-дир) — молниеносный рывок. Удар первым кадром в `attack_range=2.2м`. Продолжает лететь `lunge_pass_distance=2.2м` после удара по инерции («протыкает насквозь»).
-- **DRIFT** (`drift_time=0.55с`) — занос. Speed спадает по `pow(t, 0.6)` — медленный начальный спад («занос держит инерцию»).
+- **APPROACH** (`approach_max_speed=3.5`, `approach_accel_time=0.18`) — бежит к цели, скорость линейно с 0 до max, направление пересчитывается каждый кадр (re-aim). При `dist ≤ lunge_trigger_range=4.0м` → WINDUP. Лимит `max_approach_distance=9м` — отмена.
+- **WINDUP** (`LUNGE_WINDUP_DURATION=0.09с`) — статичная coiled-пауза перед взрывом. `velocity = 0`, направление обновляется на последний кадр (за 90мс цель могла сдвинуться). Тело tween'ится в `POSE_WINDUP=(1.3, 0.95, 0.6)` — вид сверху широкий овал поперёк, гном «припал как пружина». Без этой фазы рывок сливался бы с разгоном и читался как «продолжил ускоряться», а не «выстрелил копьём». Anticipation — обязательна даже когда цель уже в упор.
+- **LUNGE** (`lunge_speed=22 м/с`, фикс-дир) — молниеносный рывок (~6× approach_max_speed — резкий разрыв, глаз отделяет lunge от разгона как другое событие). Удар первым кадром в `attack_range=2.2м`. Продолжает лететь `lunge_pass_distance=1.6м` после удара по инерции («протыкает насквозь»). Тело снапает в `POSE_LUNGE=(0.6, 1.0, 1.7)` — extended-стрелка вдоль направления удара.
+- **DRIFT** (`drift_time=0.25с`) — резкое торможение поверх 22 м/с. Speed спадает по `pow(t, 0.6)` — медленный начальный спад («занос держит инерцию»). На входе в DRIFT поза tween'ится обратно в `POSE_NEUTRAL=(1,1,1)` за `POSE_RESTORE_TIME=0.22с`.
 - **RECOVERY** (`recovery_time=0.35с`) — стоит, отдыхает, уязвим. После — READY.
 
-Полный цикл: ~1.8с + cooldown 0.6-1.0с ≈ 2.5-3с между ударами.
+Полный цикл: WINDUP 0.09 + LUNGE ~0.15 + DRIFT 0.25 + RECOVERY 0.35 ≈ 0.85с + cooldown 0.6-1.0с ≈ 1.5-1.85с между ударами.
 
-**Quick-strike при «иди сюда» на врагов:** в strict-march check, если уже есть claimable target в lunge_trigger_range, soldier пропускает арриваль у слота и сразу `_start_charge` — «вбегает в бой» с марша.
+**Squash & stretch.** Tween-переходы между позами через `_tween_pose_to(target, duration)` — параллельно скейлится тело (`_mesh` из Gnome) и `FacingIndicator` (только у Pikeman'а, через `get_node_or_null`). Z-контраст POSE_WINDUP→POSE_LUNGE: 0.6→1.7 ≈ 2.8× — заметный визуальный «взрыв». `_pose_tween` хранится для kill'а старого при следующем переходе (быстрая серия charge'ей не должна перекрывать tween'ами). Хелперы `_enter_drift(d)` / `_enter_recovery(r)` централизуют «state + restore pose» — три места выхода в DRIFT (успешный pass, промах, превышение approach-лимита) и два места выхода в RECOVERY (target died в APPROACH/WINDUP).
 
-**Combat target distribution (1:1):** `_find_target_in_leash` — только незанятые скелеты в `combat_leash_radius=12м` от центра режима. `_is_target_claimed_by_other` считает других солдат в APPROACH/LUNGE/DRIFT (не RECOVERY). Если все цели заняты — null → squad-positioning. Каждый бьёт своего; целей меньше юнитов → лишние стоят в формации.
+**Quick-strike при «иди сюда» на врагов:** в strict-march check, если уже есть claimable target в lunge_trigger_range, soldier пропускает арриваль у слота и сразу `_start_charge` — «вбегает в бой» с марша (через WINDUP).
 
-**Strike feedback:** `_strike_at(target)` → `Damageable.try_damage` → если выжил (`hp > 0`), `Pushable.try_push` с `strike_knockback_speed=5 м/с` Δv в направлении lunge'а на `strike_knockback_duration=0.18с`. Скелета отшатывает на ~0.5-1м, видимый contact.
+**Combat target distribution (1:1):** `_find_target_in_leash` — только незанятые скелеты в `combat_leash_radius=12м` от центра режима. `_is_target_claimed_by_other` считает других солдат в APPROACH/WINDUP/LUNGE/DRIFT (не RECOVERY). Если все цели заняты — null → squad-positioning. Каждый бьёт своего; целей меньше юнитов → лишние стоят в формации.
+
+**Strike feedback:** `_strike_at(target)` → `Damageable.try_damage` → если выжил (`hp > 0`), `Pushable.try_push` с `strike_knockback_speed=8 м/с` Δv в направлении lunge'а на `strike_knockback_duration=0.18с`. Скелета чувствительно отбрасывает — соразмерно «молниеносному» рывку.
 
 **Centre-resolve по squad.state** (`_resolve_squad_center`): HOLD → hold_position; ESCORT → tower.global_position; DEFEND → camp.deploy_anchor (fallback на tower если лагерь свёрнут).
 
@@ -1485,8 +1488,11 @@ READY → APPROACH → LUNGE → DRIFT → RECOVERY → READY
 
 UI-гейт на ПКМ: `Hand.is_pointer_over_ui()` — клик по HUD не фиксируется как commit aim'а.
 
+**Cancel:** Esc (`ui_cancel`) отменяет aim без команды. Повторный клик «Идти сюда» на той же карточке — тоже toggle-cancel.
+
 #### 5.8.2.5 Camp API для отрядов
-- `recruit_squad(soldier_type)` — гейтится `is_deployed() + can_afford(cost) + gatherer_count() ≥ squad_size`. Конвертирует gatherer'ов на месте, создаёт Squad.
+- `recruit_squad(soldier_type)` — гейтится `is_deployed() + can_afford(cost) + gatherer_count() ≥ squad_size + get_recruit_reserve()`. Reserve = `tent_count_alive() × RECRUIT_RESERVE_PER_TENT (=1)` — лагерь оставляет себе минимум 1 сборщика на каждую живую палатку, иначе экономика встанет (дизайнерское правило: армию строим излишком). UI расшифровывает нехватку как «оставьте сборщиков в лагере (нужно ещё N)». `get_recruit_reserve() -> int` — публичный getter, JournalPanel читает его для UX-текста.
+- Конвертирует gatherer'ов на месте, создаёт Squad.
 - `dismiss_squad(squad)` — гейтится `is_deployed() + ВСЕ члены в `dismiss_radius=12м` от deploy_anchor`. Spawn нового gatherer'а на каждой позиции солдата + queue_free солдата.
 - `command_squad_hold(squad, pos)` / `command_squad_escort(squad)` / `command_squad_defend(squad)`.
 - `cheat_summon_squad(soldier_type)` — мимо всех гейтов, спавн кольцом 2м вокруг центра лагеря (X/Z от anchor/tower, Y от global_position камп'а — иначе спавн в воздухе при tower.y=3).

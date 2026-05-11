@@ -49,25 +49,31 @@ const SOLDIER_GROUP := &"soldier"
 ## Скорость движения в фазе разгона (бежит к цели, корректируя направление
 ## каждый кадр). Линейно нарастает с 0 до этого значения за
 ## `approach_accel_time` — даёт «нарастающий бег» без мгновенного rocket-старта.
-@export var approach_max_speed: float = 4.5
+## Намеренно ниже базового move_speed*1.5: чем медленнее разгон, тем сильнее
+## контраст с lunge_speed — рывок читается как «другой режим», не как
+## «соседний кадр ускорения».
+@export var approach_max_speed: float = 3.5
 ## Время нарастания скорости разгона от 0 до approach_max_speed.
 @export var approach_accel_time: float = 0.18
 ## Дистанция до цели, при которой копейщик переходит из разгона в lunge —
-## молниеносный рывок насквозь. Чуть больше attack_range, чтобы lunge
-## всегда захватывал цель в свой пролёт.
-@export var lunge_trigger_range: float = 3.5
-## Скорость молниеносного рывка. Сильно выше approach_max_speed — даёт
-## импактный «вылет копьём». Направление фиксируется в момент перехода
-## APPROACH → LUNGE и больше не меняется (skel может уклониться при
-## удаче — это by-design).
-@export var lunge_speed: float = 12.0
+## молниеносный рывок насквозь. Lunge стартует с заметного расстояния, чтобы
+## визуально читался как «прыжок копьём через зазор», а не «дотянулся в упор».
+@export var lunge_trigger_range: float = 4.0
+## Скорость молниеносного рывка. ~6× approach_max_speed — резкий разрыв
+## делает рывок «lightning»: глаз отделяет lunge от разгона как другое
+## событие, не продолжение разгона. Направление фиксируется в момент
+## перехода APPROACH → LUNGE и больше не меняется (skel может уклониться
+## при удаче — это by-design).
+@export var lunge_speed: float = 22.0
 ## Дистанция, которую копейщик пролетает после удара по инерции lunge'а —
-## визуально «пробил насквозь и ещё несколько шагов».
-@export var lunge_pass_distance: float = 2.2
-## Длительность заноса/торможения после lunge'а. Velocity спадает от
-## lunge_speed до 0 по слегка-skid-кривой (медленный начальный спад,
-## быстрый в конце — «гасит инерцию»).
-@export var drift_time: float = 0.55
+## визуально «пробил насквозь». Короче чем раньше: с высокой скоростью
+## хватает 1.6м чтобы выглядел проколом, дальше — это уже скольжение.
+@export var lunge_pass_distance: float = 1.6
+## Длительность заноса/торможения после lunge'а. Резкое торможение поверх
+## lunge_speed=22 — соглашение «молния попала и закончилась», не «скользит
+## ещё пол-секунды». Velocity спадает от lunge_speed до 0 по slight-skid
+## кривой (медленный начальный спад, быстрый в конце — «гасит инерцию»).
+@export var drift_time: float = 0.25
 ## Пауза «отдышаться» после заноса. Юнит стоит, не ищет цели, не возвращается
 ## в строй. В этой фазе он максимально уязвим — это часть импакт-ритма.
 @export var recovery_time: float = 0.35
@@ -79,25 +85,30 @@ const SOLDIER_GROUP := &"soldier"
 ## ESCORT = башня, DEFEND = anchor лагеря).
 @export var combat_leash_radius: float = 12.0
 ## Knockback на скелета при попадании, если он выжил. Δv в направлении
-## lunge'а — скелета отталкивает на пол-метра-метр, видно столкновение.
-@export var strike_knockback_speed: float = 5.0
+## lunge'а — соразмерен «молниеносному» удару: цель чувствительно
+## отбрасывает, видно столкновение «копьё пробило».
+@export var strike_knockback_speed: float = 8.0
 ## Длительность knockback'а (AI цели заглушен это время).
 @export var strike_knockback_duration: float = 0.18
 @export_group("")
 
 ## Per-soldier combat state machine:
-##   READY → APPROACH → LUNGE → DRIFT → RECOVERY → READY.
+##   READY → APPROACH → WINDUP → LUNGE → DRIFT → RECOVERY → READY.
 ##  - APPROACH: бежит к цели, скорость линейно с 0 до approach_max_speed.
 ##    Direction обновляется каждый кадр — если цель сдвинется, повернёт.
-##    Когда dist ≤ lunge_trigger_range или цель уже в attack_range —
-##    переходит в LUNGE с фиксированным направлением.
+##    Когда dist ≤ lunge_trigger_range — переходит в WINDUP.
+##  - WINDUP: короткая статичная пауза «замаха», тело coiled-позы. Velocity=0,
+##    цель ре-проверяется на валидность, direction обновляется на последний
+##    кадр перед взрывом. Дизайнерская роль: anticipation — глаз ловит
+##    «копейщик согнулся» прежде чем «выстрелил копьём». Без этой фазы
+##    рывок сливается с разгоном и читается как «продолжил ускоряться».
 ##  - LUNGE: молниеносный рывок. Direction зафиксировано на момент входа.
 ##    Удар в первый кадр когда dist ≤ attack_range. Продолжает лететь
 ##    `lunge_pass_distance` метров после удара (пролетает насквозь).
 ##  - DRIFT: занос. Velocity скидывается с lunge_speed по slight ease-in
 ##    кривой — слабый начальный спад «в заносе», потом гасит до нуля.
 ##  - RECOVERY: стоит, отдыхает, уязвим. После — READY.
-enum CombatState { READY, APPROACH, LUNGE, DRIFT, RECOVERY }
+enum CombatState { READY, APPROACH, WINDUP, LUNGE, DRIFT, RECOVERY }
 
 ## Тип солдата из SOLDIER_CATALOG. Ставится в setup_soldier.
 var soldier_type: StringName = &""
@@ -131,9 +142,47 @@ var _approach_elapsed: float = 0.0
 var _post_strike_remaining: float = 0.0
 var _drift_remaining: float = 0.0
 var _recovery_remaining: float = 0.0
+## Таймер WINDUP-фазы — отсчёт до взрыва в LUNGE.
+var _windup_remaining: float = 0.0
 ## Расстояние «прибытия» к squad-target'у. Меньше — стоим (squad-positioning
 ## не jitter'ит на под-метровых отклонениях).
 const SQUAD_TARGET_ARRIVAL: float = 0.4
+
+## Squash & stretch — две выраженные позы вокруг lunge'а. Контраст между
+## ними (особенно по Z) даёт визуальный «всплеск»: глаз чётко отделяет
+## anticipation от взрыва, без этого рывок сливается со скоростью точки
+## по прямой.
+##
+## POSE_WINDUP — coiled: сжат по Z (forward), расширен по X (sideways).
+## Гном «сел и развернулся как пружина», вид сверху — широкий овал поперёк.
+## POSE_LUNGE — extended: вытянут по Z, узкий по X. Вид сверху — длинная
+## стрелка вдоль направления удара. Z-разница (0.6 → 1.7) почти 3× —
+## заметна на капсуле радиуса 0.28м (≈8см контраста по фронту).
+##
+## Y оставляем близко к 1.0 — растяжение по вертикали конфликтовало бы
+## с гравитацией («прыгнул вверх»). Y=0.95 в windup — лёгкая просадка
+## «припал». Volume-preservation приблизительная, точная физика не
+## нужна — это поза, не симуляция.
+const POSE_NEUTRAL: Vector3 = Vector3.ONE
+const POSE_WINDUP: Vector3 = Vector3(1.3, 0.95, 0.6)
+const POSE_LUNGE: Vector3 = Vector3(0.6, 1.0, 1.7)
+
+## Тайминги переходов между позами. WINDUP-ramp длиннее чем lunge-ramp:
+## anticipation должна успеть «прочитаться» (пара кадров наростания + пара
+## кадров на пике), lunge-ramp — быстрый снап «выстрелил».
+const POSE_WINDUP_TIME: float = 0.06
+const POSE_LUNGE_TIME: float = 0.04
+const POSE_RESTORE_TIME: float = 0.22
+
+## Длительность статичной WINDUP-фазы. 90мс ≈ 5-6 кадров на 60fps —
+## хватает чтобы поза успела наступить и быть видимой пару кадров до
+## взрыва. Длиннее — анимация чувствуется как «затянули с ударом»,
+## короче — anticipation не успевает прочитаться.
+const LUNGE_WINDUP_DURATION: float = 0.09
+
+## Активный tween позы — храним чтобы убить старый при следующем переходе
+## (быстрая серия charge'ей: windup → lunge → drift → новый charge).
+var _pose_tween: Tween = null
 
 
 func _ready() -> void:
@@ -272,9 +321,7 @@ func _tick_charge_state(delta: float) -> void:
 		CombatState.APPROACH:
 			# Цель умерла во время разгона — отменяем без штрафа cd.
 			if not is_instance_valid(_charge_target):
-				_combat_state = CombatState.RECOVERY
-				_recovery_remaining = recovery_time
-				velocity = Vector3.ZERO
+				_enter_recovery(recovery_time)
 				return
 			# Re-aim каждый кадр: если цель сдвинулась, корректируем курс.
 			var to_t := Vector3(
@@ -289,20 +336,48 @@ func _tick_charge_state(delta: float) -> void:
 				_approach_elapsed += delta
 				var spd_t: float = clampf(_approach_elapsed / maxf(approach_accel_time, 0.001), 0.0, 1.0)
 				velocity = dir * (approach_max_speed * spd_t)
-			# Триггер lunge: подбежали достаточно близко (или уже в attack_range —
-			# тогда цель буквально перед носом, лunge нужен короткий).
+			# Триггер windup: подбежали достаточно близко — переходим в coiled-позу.
+			# Лunge стартует не отсюда, а из WINDUP-фазы после anticipation-паузы.
 			if dist_t <= lunge_trigger_range:
 				_charge_dir = (to_t / dist_t) if dist_t > 0.001 else _charge_dir
-				_charge_start_pos = global_position
-				_post_strike_remaining = lunge_pass_distance
-				_combat_state = CombatState.LUNGE
-				velocity = _charge_dir * lunge_speed
+				_combat_state = CombatState.WINDUP
+				_windup_remaining = LUNGE_WINDUP_DURATION
+				velocity = Vector3.ZERO
+				_tween_pose_to(POSE_WINDUP, POSE_WINDUP_TIME)
 				return
-			# Превысили лимит разгона без сближения — отменяем атаку.
+			# Превысили лимит разгона без сближения — отменяем атаку (короткий drift).
 			var approach_run: float = global_position.distance_to(_charge_start_pos)
 			if approach_run > max_approach_distance:
-				_combat_state = CombatState.DRIFT
-				_drift_remaining = drift_time * 0.5  # короткий drift на отмене
+				_enter_drift(drift_time * 0.5)
+		CombatState.WINDUP:
+			# Юнит замер в coiled-позе. Velocity жёстко 0 — никаких физических
+			# дрейфов от наследия APPROACH-velocity. Look-at обновляем чтобы
+			# в момент взрыва быть лицом к цели (за 90мс она может сдвинуться).
+			velocity = Vector3.ZERO
+			if not is_instance_valid(_charge_target):
+				# Цель умерла во время замаха — отмена без удара.
+				_enter_recovery(recovery_time)
+				return
+			var to_w := Vector3(
+				_charge_target.global_position.x - global_position.x,
+				0.0,
+				_charge_target.global_position.z - global_position.z,
+			)
+			var dist_w: float = to_w.length()
+			if dist_w > 0.001:
+				var dir_w := to_w / dist_w
+				look_at(global_position + dir_w, Vector3.UP)
+				_charge_dir = dir_w  # фиксируем направление на момент release
+			_windup_remaining -= delta
+			if _windup_remaining <= 0.0:
+				# Взрыв: переход в LUNGE с уже коректным направлением. Snap-tween
+				# на lunge-позу за POSE_LUNGE_TIME (40мс) — это и есть «выстрел».
+				_charge_start_pos = global_position
+				_post_strike_remaining = lunge_pass_distance
+				_has_struck_this_charge = false
+				_combat_state = CombatState.LUNGE
+				velocity = _charge_dir * lunge_speed
+				_tween_pose_to(POSE_LUNGE, POSE_LUNGE_TIME)
 		CombatState.LUNGE:
 			velocity = _charge_dir * lunge_speed
 			if not _has_struck_this_charge:
@@ -318,14 +393,12 @@ func _tick_charge_state(delta: float) -> void:
 			if _has_struck_this_charge:
 				_post_strike_remaining -= lunge_speed * delta
 				if _post_strike_remaining <= 0.0:
-					_combat_state = CombatState.DRIFT
-					_drift_remaining = drift_time
+					_enter_drift(drift_time)
 			else:
 				# Промах в процессе lunge'а: лимит пробега.
 				var lunge_run: float = global_position.distance_to(_charge_start_pos)
 				if lunge_run > lunge_pass_distance + 1.5:
-					_combat_state = CombatState.DRIFT
-					_drift_remaining = drift_time
+					_enter_drift(drift_time)
 		CombatState.DRIFT:
 			_drift_remaining -= delta
 			if _drift_remaining <= 0.0:
@@ -347,8 +420,9 @@ func _tick_charge_state(delta: float) -> void:
 
 
 ## Старт атаки: переход в APPROACH. Скорость стартует с 0 и нарастает
-## линейно за approach_accel_time. Lunge запускается из APPROACH-тика
-## когда дистанция до цели ≤ lunge_trigger_range.
+## линейно за approach_accel_time. Lunge запускается из WINDUP-фазы после
+## APPROACH'а, поэтому даже если цель уже в lunge-range — пропускаем разгон
+## и сразу садимся в coiled-позу (windup).
 func _start_charge(target: Node3D) -> void:
 	_charge_target = target
 	_charge_start_pos = global_position
@@ -364,18 +438,62 @@ func _start_charge(target: Node3D) -> void:
 	if d > 0.001:
 		_charge_dir = to_target / d
 		look_at(global_position + _charge_dir, Vector3.UP)
-	# Если цель уже в lunge-range — пропускаем разгон, сразу lunge.
+	# Если цель уже в lunge-range — пропускаем разгон, сразу в WINDUP (coiled).
+	# Anticipation важна даже в упор: без неё рывок в трёх метрах от цели
+	# выглядит как «дёрнулся вперёд», а не как удар.
 	if d <= lunge_trigger_range:
-		_post_strike_remaining = lunge_pass_distance
-		_combat_state = CombatState.LUNGE
-		velocity = _charge_dir * lunge_speed
+		_combat_state = CombatState.WINDUP
+		_windup_remaining = LUNGE_WINDUP_DURATION
+		velocity = Vector3.ZERO
+		_tween_pose_to(POSE_WINDUP, POSE_WINDUP_TIME)
 	else:
 		_combat_state = CombatState.APPROACH
 		velocity = Vector3.ZERO
 
 
+## Тwееn-переход тела + facing-индикатора к указанной позе за `duration`.
+## Параллельный tween на двух нодах — синхронно. Старый tween (если есть)
+## убивается чтобы не было перекрытия (например быстрый WINDUP→LUNGE
+## не должен ждать завершения windup-ramp'а — он стартует с момента, на
+## котором windup был, и идёт в lunge-pose).
+##
+## FacingIndicator — необязательная нода (только у Pikeman'а, в base Gnome
+## её нет). Через get_node_or_null чтобы не падать на других классах.
+## _mesh — onready из Gnome, MeshInstance3D тела.
+func _tween_pose_to(target: Vector3, duration: float) -> void:
+	if _mesh == null:
+		return
+	if _pose_tween != null and _pose_tween.is_valid():
+		_pose_tween.kill()
+	var facing: Node3D = get_node_or_null(^"FacingIndicator") as Node3D
+	_pose_tween = create_tween()
+	_pose_tween.set_parallel(true)
+	_pose_tween.tween_property(_mesh, "scale", target, duration).set_ease(Tween.EASE_OUT)
+	if facing != null:
+		_pose_tween.tween_property(facing, "scale", target, duration).set_ease(Tween.EASE_OUT)
+
+
+## Переход в DRIFT с заданной длительностью + восстановление позы. Один
+## хелпер, потому что все три места выхода в DRIFT (успешный pass, промах,
+## превышение approach-лимита) должны и state переключить, и позу вернуть.
+func _enter_drift(d: float) -> void:
+	_combat_state = CombatState.DRIFT
+	_drift_remaining = d
+	_tween_pose_to(POSE_NEUTRAL, POSE_RESTORE_TIME)
+
+
+## Переход в RECOVERY (без DRIFT) — для случая «цель умерла в APPROACH'е /
+## WINDUP'е», восстанавливаем нейтральную позу.
+func _enter_recovery(r: float) -> void:
+	_combat_state = CombatState.RECOVERY
+	_recovery_remaining = r
+	velocity = Vector3.ZERO
+	_tween_pose_to(POSE_NEUTRAL, POSE_RESTORE_TIME)
+
+
 ## Принудительный сброс боевого state machine'а (для strict-march override
-## когда игрок указал новую точку командой Hold).
+## когда игрок указал новую точку командой Hold). Поза тоже сбрасывается —
+## без этого юнит мог бы пойти к слоту в windup/lunge-форме.
 func _reset_combat_state() -> void:
 	_combat_state = CombatState.READY
 	_charge_target = null
@@ -383,6 +501,8 @@ func _reset_combat_state() -> void:
 	_post_strike_remaining = 0.0
 	_drift_remaining = 0.0
 	_recovery_remaining = 0.0
+	_windup_remaining = 0.0
+	_tween_pose_to(POSE_NEUTRAL, POSE_RESTORE_TIME)
 
 
 ## Патрульный шаг для DEFENDING_CAMP: каждый юнит самостоятельно выбирает
