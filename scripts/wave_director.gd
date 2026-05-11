@@ -182,16 +182,57 @@ func cheat_start_campaign() -> void:
 
 
 ## Немедленная волна на активный POI (сбрасывает _wave_cd). Без активного POI —
-## no-op с предупреждением: волне некуда идти.
+## no-op с предупреждением: волне некуда идти. Использует ту же ветку
+## (groups / legacy), что и тик: если у стадии есть groups — спавнит
+## многосоставную многофронтовую волну, иначе legacy single-front.
 func cheat_force_wave() -> void:
 	if _active_camp == null or _active_schedule == null or _active_schedule.is_empty():
 		if debug_log and LogConfig.master_enabled:
 			print("[WaveDirector] cheat_force_wave проигнорировано — нет активного POI с осадой")
 		return
 	var stage := _active_schedule.get_stage(_stage_index)
-	if stage != null:
-		_spawn_poi_wave(stage.skeletons_per_wave)
-		_wave_cd = stage.wave_interval
+	if stage == null:
+		return
+	if stage.has_groups():
+		_spawn_groups_wave(stage.groups)
+	else:
+		_spawn_legacy_poi_wave(stage.skeletons_per_wave)
+	_wave_cd = stage.wave_interval
+
+
+## Демо-многофронт: один кластер из каждой живой SpawnZone одновременно,
+## фиксированный состав (5 скелетов на зону). Дизайнер видит как ведут
+## себя defenders при атаке со всех сторон, без необходимости настраивать
+## .tres для теста. Спавн идёт через тот же _spawn_groups_wave-pipeline,
+## просто с автосгенерированным массивом CombatGroup'ов «по одному
+## на зону».
+func cheat_force_multifront_wave() -> void:
+	if _active_camp == null:
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] cheat_force_multifront_wave: нет активного лагеря")
+		return
+	if _spawner == null or skeleton_scene == null:
+		push_warning("[WaveDirector] cheat_force_multifront_wave: spawner или skeleton_scene не заданы")
+		return
+	var zones: Array[SpawnZone] = _spawner.get_zones()
+	var groups: Array[CombatGroup] = []
+	for i in range(zones.size()):
+		var z: SpawnZone = zones[i]
+		if not is_instance_valid(z) or z.waves_left() <= 0:
+			continue
+		var entry := UnitEntry.new()
+		entry.scene = skeleton_scene
+		entry.count = 5
+		var group := CombatGroup.new()
+		group.composition = [entry]
+		group.spawn_zone_index = i
+		group.cluster_spread = 1.0
+		groups.append(group)
+	if groups.is_empty():
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] cheat_force_multifront_wave: нет живых spawn zone")
+		return
+	_spawn_groups_wave(groups)
 
 
 ## Моментальный спавн 100 скелетов uniform по safe-зонам. Не трогает фазу/таймеры —
@@ -346,7 +387,12 @@ func _tick_active_poi(delta: float) -> void:
 	_stage_elapsed += delta
 	_wave_cd -= delta
 	if _wave_cd <= 0.0:
-		_spawn_poi_wave(stage.skeletons_per_wave)
+		# Новая модель — массив CombatGroup'ов (поддерживает многофронт +
+		# композицию). Legacy fallback — одиночный кластер скелетов.
+		if stage.has_groups():
+			_spawn_groups_wave(stage.groups)
+		else:
+			_spawn_legacy_poi_wave(stage.skeletons_per_wave)
 		_wave_cd = stage.wave_interval
 
 	# Stage advance: только если есть следующая стадия. Последняя залипает.
@@ -364,37 +410,26 @@ func _tick_active_poi(delta: float) -> void:
 			])
 
 
-## Спавнит одну POI-волну: группу из count скелетов из случайной живой
-## SpawnZone в сторону палаток активного лагеря.
-func _spawn_poi_wave(count: int) -> void:
+## Legacy single-front POI-волна: группа из `count` скелетов из случайной
+## живой SpawnZone в сторону палаток активного лагеря. Используется для
+## WaveStage без `groups` (старая модель).
+func _spawn_legacy_poi_wave(count: int) -> void:
 	if _spawner == null or _active_camp == null:
 		return
-	# Выбираем зоны с остатком волн. Если все исчерпаны — волна пропускается
-	# (тишина). Это легаси-budget: можно крутить чтобы дизайнер ограничил
-	# «сколько в принципе волн с этой стороны может прилететь».
-	var live_zones: Array[SpawnZone] = []
-	for z in _spawner.get_zones():
-		if is_instance_valid(z) and z.waves_left() > 0:
-			live_zones.append(z)
-	if live_zones.is_empty():
+	var zone: SpawnZone = _pick_random_live_zone()
+	if zone == null:
 		if debug_log and LogConfig.master_enabled:
 			print("[WaveDirector] POI-волна пропущена — нет SpawnZone с остатком")
 		return
-	var zone: SpawnZone = live_zones[randi() % live_zones.size()]
-
 	var origin := _spawner.random_point_in_zone(zone)
 	origin.y = _spawner.spawn_y
-
 	var target_part := _active_camp.nearest_part_to(origin)
 	if target_part == null:
 		if debug_log and LogConfig.master_enabled:
 			print("[WaveDirector] POI-волна пропущена — у лагеря нет живых палаток")
 		return
-
 	var skeletons := _spawner.spawn_group(skeleton_scene, count, origin, wave_group_radius)
-	for enemy in skeletons:
-		if enemy is Skeleton:
-			(enemy as Skeleton).set_forced_target(target_part)
+	_assign_forced_targets(skeletons, target_part)
 	zone.consume_wave()
 	if debug_log and LogConfig.master_enabled:
 		var dist := origin.distance_to(target_part.global_position)
@@ -402,6 +437,100 @@ func _spawn_poi_wave(count: int) -> void:
 			skeletons.size(), zone.name, origin.x, origin.z,
 			_active_camp.name, target_part.name, dist,
 		])
+
+
+## Новая многосоставная волна: каждая [CombatGroup] спавнится отдельным
+## кластером со своей spawn zone (если указана). Многофронт = несколько
+## групп с разными `spawn_zone_index`. Композиция = массив [UnitEntry]'ев
+## с своими scene'ами и количествами — позволяет смешивать типы юнитов
+## в одной группе.
+##
+## Каждая группа консумит одну волну со своей zone'ы (один `consume_wave`
+## на zone-резолв, не на UnitEntry). Это сохраняет старый budget: даже
+## составная группа из 10 скелетов в 2 типах — всё ещё «одна волна»
+## по budget'у zone'ы.
+func _spawn_groups_wave(groups: Array[CombatGroup]) -> void:
+	if _spawner == null or _active_camp == null:
+		return
+	if _active_camp.nearest_part_to(_active_camp.global_position) == null:
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] groups-волна пропущена — у лагеря нет живых палаток")
+		return
+	var spawned_total: int = 0
+	var fronts_fired: int = 0
+	for group in groups:
+		if group == null or group.is_empty():
+			continue
+		if _spawn_single_group(group):
+			spawned_total += group.total_count()
+			fronts_fired += 1
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] groups-волна: %d фронтов, %d юнитов суммарно" % [
+			fronts_fired, spawned_total,
+		])
+
+
+## Спавн одной группы. Возвращает true если хоть что-то заспавнилось.
+## Резолвит spawn zone по индексу из группы или random fallback, тянет
+## origin из zone, ставит forced_target на ближайшую палатку, проходит
+## по композиции и спавнит каждый UnitEntry кластером.
+func _spawn_single_group(group: CombatGroup) -> bool:
+	var zone: SpawnZone = _resolve_spawn_zone(group.spawn_zone_index)
+	if zone == null:
+		return false
+	var origin := _spawner.random_point_in_zone(zone)
+	origin.y = _spawner.spawn_y
+	var target_part := _active_camp.nearest_part_to(origin)
+	if target_part == null:
+		return false
+	var radius: float = wave_group_radius * group.cluster_spread
+	var any_spawned: bool = false
+	for entry in group.composition:
+		if entry == null or entry.scene == null or entry.count <= 0:
+			continue
+		var enemies := _spawner.spawn_group(entry.scene, entry.count, origin, radius)
+		_assign_forced_targets(enemies, target_part)
+		any_spawned = true
+	if any_spawned:
+		zone.consume_wave()
+	return any_spawned
+
+
+## Резолв spawn zone из индекса. Если индекс валиден И zone жива (waves_left
+## > 0) — возвращаем её. Иначе fallback на random live zone (как legacy).
+## Null если вообще нет живых зон.
+func _resolve_spawn_zone(index: int) -> SpawnZone:
+	if _spawner == null:
+		return null
+	var zones: Array[SpawnZone] = _spawner.get_zones()
+	if index >= 0 and index < zones.size():
+		var z: SpawnZone = zones[index]
+		if is_instance_valid(z) and z.waves_left() > 0:
+			return z
+		# Запрошенная zone мёртвая — silent fallback на random
+	return _pick_random_live_zone()
+
+
+## Случайная zone из get_zones() с waves_left() > 0. Null если все мёртвые.
+func _pick_random_live_zone() -> SpawnZone:
+	if _spawner == null:
+		return null
+	var live_zones: Array[SpawnZone] = []
+	for z in _spawner.get_zones():
+		if is_instance_valid(z) and z.waves_left() > 0:
+			live_zones.append(z)
+	if live_zones.is_empty():
+		return null
+	return live_zones[randi() % live_zones.size()]
+
+
+## Назначить forced_target на пачке свежеспавненных юнитов. Сейчас
+## поддерживаем только Skeleton (единственный Enemy-наследник со
+## `set_forced_target`). Будущие типы добавляются здесь же.
+func _assign_forced_targets(enemies: Array, target: Node3D) -> void:
+	for enemy in enemies:
+		if enemy is Skeleton:
+			(enemy as Skeleton).set_forced_target(target)
 
 
 # --- Public API: рантайм-управление budget'ом зон ---

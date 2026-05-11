@@ -1126,6 +1126,13 @@ func _build_debug_tab(camp: Node) -> void:
 		func(): wd.cheat_force_wave(),
 	))
 	list.add_child(_build_cheat_card(
+		"Многофронтовая волна",
+		"Спавнит по 5 скелетов из КАЖДОЙ живой spawn-зоны одновременно. Тест многофронта — defenders не могут стоять на одном фронте.",
+		"многофронт",
+		wd,
+		func(): wd.cheat_force_multifront_wave(),
+	))
+	list.add_child(_build_cheat_card(
 		"+100 скелетов",
 		"Моментальный спавн 100 скелетов uniform по safe-зонам. Не трогает фазу.",
 		"спавн",

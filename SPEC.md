@@ -86,6 +86,8 @@ hand_gameplay_prot/
     ├── quest_actor.gd         — class_name QuestActor (POI-зона + выдатчик квеста: костёр, safe_radius, wave_schedule)
     ├── wave_stage.gd          — class_name WaveStage (Resource): одна стадия осады POI
     ├── wave_schedule.gd       — class_name WaveSchedule (Resource): массив стадий для QuestActor.wave_schedule
+    ├── combat_group.gd        — class_name CombatGroup (Resource): атомарная единица волны (composition + spawn_zone + кластер)
+    ├── unit_entry.gd          — class_name UnitEntry (Resource): пара (scene, count) внутри CombatGroup
     ├── roads.gd               — генератор-меш дорог между POI (orphan, не подключён в main.tscn)
     ├── layers.gd              — class_name Layers (именованные физические слои + маски)
     ├── damageable.gd          — class_name Damageable (group-контракт + try_damage)
@@ -907,18 +909,33 @@ static func spawn(
 **POI-осада (`_tick_active_poi`, активна только если есть `_active_poi`/`_active_schedule`):**
 - На `EventBus.camp_deployed(anchor)`: ищем Camp по anchor (ближайший в `_camps`), POI по anchor (ближайший в `_pois`, sanity-чек ≤5м). Берём `poi.get_wave_schedule()`. Если null/пустое — POI «мирный», только фон.
 - Иначе: `_active_camp / _active_poi / _active_schedule = ...`, `_stage_index=0`, `_stage_elapsed=0`, `_wave_cd = stages[0].wave_interval`.
-- Каждый кадр: `_stage_elapsed += delta`, `_wave_cd -= delta`. Если `_wave_cd ≤ 0` — `_spawn_poi_wave(stage.skeletons_per_wave)`, перевзвод `_wave_cd`.
+- Каждый кадр: `_stage_elapsed += delta`, `_wave_cd -= delta`. Если `_wave_cd ≤ 0` — ветка по `stage.has_groups()`: либо `_spawn_groups_wave(stage.groups)` (новая многосоставная модель), либо `_spawn_legacy_poi_wave(stage.skeletons_per_wave)` (single-front legacy). Перевзвод `_wave_cd`.
 - Stage advance: если `_stage_elapsed ≥ stage.duration` и есть следующая стадия — `_stage_index += 1`, `_stage_elapsed=0`. **Финальная стадия залипает** (продолжает играть пока лагерь не свернут).
 - Sanity: если `_active_camp.has_alive_parts() == false` (палатки разбили в ходе осады) — `_clear_active_poi()`.
 - На `EventBus.camp_packed` — `_clear_active_poi()`. Фон продолжает идти, POI-волны останавливаются.
 
-**Spawn POI-волны (`_spawn_poi_wave`):** ищем SpawnZone-ы с `waves_left() > 0`, выбираем одну (uniform random) и фейерим группу `count` штук в её прямоугольнике, где `count = stage.skeletons_per_wave`. Каждому ставится `forced_target = active_camp.nearest_part_to(origin)`. `consume_wave()` декрементит budget зоны; по исчерпанию зона больше не участвует в волнах (фон остаётся).
+**Боевая группа (CombatGroup) — атомарная единица волны.** Resource в `scripts/combat_group.gd`. Поля:
+- `composition: Array[UnitEntry]` — пары (scene, count). Несколько UnitEntry в группе = разные типы юнитов в одном кластере (например 8 обычных + 3 лучника).
+- `spawn_zone_index: int = -1` — индекс конкретной SpawnZone в `get_zones()`, или -1 для random fallback. Множество групп с разными индексами = многофронт за один залп.
+- `cluster_spread: float = 1.0` — множитель `wave_group_radius` (плотность пачки).
+
+`UnitEntry` (`scripts/unit_entry.gd`) — пара `scene: PackedScene` + `count: int`. Сцена должна быть наследником Enemy (иначе forced_target не назначится).
+
+WaveStage поддерживает обе модели одновременно:
+- Новая: `groups: Array[CombatGroup]` — если непуст, используется.
+- Legacy: `skeletons_per_wave: int` — fallback когда `groups` пуст. Существующие `wave_schedule_default.tres` без правок продолжают работать.
+
+**Spawn новой модели (`_spawn_groups_wave`):** для каждой CombatGroup → `_spawn_single_group`: резолв SpawnZone через `_resolve_spawn_zone(index)` (запрошенная zone если жива, иначе random fallback), origin = random point в zone, target_part = nearest_part_to(origin), затем итерация по composition с `spawn_group(entry.scene, entry.count, origin, radius)` + `_assign_forced_targets`. Один `consume_wave()` на zone-резолв (не на UnitEntry).
+
+**Spawn legacy-модели (`_spawn_legacy_poi_wave`):** одна случайная zone с `waves_left() > 0`, группа `count` скелетов в её прямоугольнике, forced_target = nearest_part_to(origin), consume_wave. Сохраняется для обратной совместимости.
 
 **Safe-фильтр (`_safe_score`):** возвращает «избыток» (distance − safe_radius) до ближайшей запретной зоны: живой Camp (radius=`wave_safe_radius=32м`) или POI (radius читается с `poi.safe_radius` — каждый POI имеет свой через `QuestActor.safe_radius`; fallback `poi_safe_radius_fallback=32м`). >=0 → принимаем, <0 → запоминаем как фоллбэк. Используется только для фонового спавна; POI-волны идут из SpawnZone напрямую без safe-фильтра.
 
 **Рестарт кампании (`cheat_start_campaign`):** в фазе RUNNING повторный вызов → `kill_all_skeletons` + `Camp.reset_population()` для каждого camp + `_clear_active_poi()` + новый initial-спавн фона. Если игрок стоит на POI и хочет возобновить осаду — сворачивает и разворачивает лагерь (camp_packed → camp_deployed эмитится снова, осада запустится с stage 0). Раньше висело на P; с 2026-05-08 — кнопка во вкладке «Читы» журнала.
 
-**Force-wave (`cheat_force_wave`):** немедленный `_spawn_poi_wave(stage.skeletons_per_wave)` + перевзвод `_wave_cd`. Без активного POI — игнор с предупреждением «волне некуда идти». Раньше O, теперь кнопка в «Читах».
+**Force-wave (`cheat_force_wave`):** немедленный спавн волны активной стадии (groups или legacy, по `stage.has_groups()`) + перевзвод `_wave_cd`. Без активного POI — игнор с предупреждением «волне некуда идти». Кнопка во вкладке «Читы».
+
+**Force-multifront-wave (`cheat_force_multifront_wave`):** демо многофронта. Автоматически собирает `Array[CombatGroup]` — по одной группе с 5 скелетов на каждую живую SpawnZone — и спавнит через тот же `_spawn_groups_wave` pipeline. Дизайнер видит как ведут себя defenders при атаке со всех сторон, без необходимости настраивать .tres. Кнопка во вкладке «Читы».
 
 **Debug spawn (`cheat_spawn_100`):** `_spawn_safe_uniform(100)` поверх фона. Не трогает таргет/таймеры — единоразовый дамп. Раньше `[`, теперь кнопка.
 
