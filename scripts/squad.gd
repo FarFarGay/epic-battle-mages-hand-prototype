@@ -25,10 +25,18 @@ signal disbanded
 
 enum State { HOLDING_POSITION, ESCORTING_TOWER, DEFENDING_CAMP }
 
-## Радиус компактного кольца для HOLD/ESCORT — формация «отряд кучкой».
+## Базовый радиус компактного кольца для HOLD/ESCORT — формация «отряд кучкой».
 ## DEFENDING_CAMP не использует кольцо: SoldierGnome ведёт wander-патруль
 ## по периметру лагеря (см. `SoldierGnome._tick_defend_patrol`).
+## На малых отрядах (≤5) — используется как есть. На больших — `target_for_member`
+## раздвигает кольцо до тех пор, пока каждому юниту достаётся ≥ `HOLD_RING_MIN_ARC`
+## метров дуги (иначе капсулы налезают и юниты толкаются на тике).
 const HOLD_RING_RADIUS: float = 1.6
+## Минимум длины дуги на одного юнита (метров). При squad_size=5 и базовом
+## радиусе 1.6м на каждого приходится ~2м — комфортно. На 10+ юнитах радиус
+## нужно увеличить, иначе кольцо тесное. Дуга 1.3м чуть больше диаметра
+## капсулы гнома (~0.56м × 2 + зазор).
+const HOLD_RING_MIN_ARC: float = 1.3
 
 ## Уникальный ID — counter в Camp при создании. Используется UI'ем для
 ## идентификации (карточка → конкретный squad).
@@ -131,9 +139,11 @@ func remove_member(soldier: SoldierGnome) -> void:
 		disbanded.emit()
 
 
-## Целевая точка для конкретного юнита в HOLD/ESCORT-режимах: компактное
-## кольцо (1.6м) вокруг резолвнутого center'а. Каждый юнит индексирован в
-## `members` — angle = idx/n × TAU, distribution равномерная.
+## Целевая точка для конкретного юнита в HOLD/ESCORT-режимах: кольцо вокруг
+## резолвнутого center'а. Радиус адаптивный — `HOLD_RING_RADIUS` как floor,
+## выше — когда на каждого юнита приходится меньше `HOLD_RING_MIN_ARC` метров
+## дуги. На squad_size=5 формула возвращает базовый радиус 1.6м, на 10+
+## раздвигает кольцо чтобы юниты не налезали.
 ##
 ## DEFENDING_CAMP сюда не приходит — там SoldierGnome сам ведёт wander-патруль
 ## по периметру через `_tick_defend_patrol` (центр выбирается динамически,
@@ -143,5 +153,6 @@ func target_for_member(soldier: SoldierGnome, center: Vector3) -> Vector3:
 	if idx < 0:
 		idx = 0
 	var n: int = maxi(members.size(), 1)
+	var radius: float = maxf(HOLD_RING_RADIUS, HOLD_RING_MIN_ARC * float(n) / TAU)
 	var angle: float = TAU * float(idx) / float(n)
-	return center + Vector3(cos(angle) * HOLD_RING_RADIUS, 0.0, sin(angle) * HOLD_RING_RADIUS)
+	return center + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)

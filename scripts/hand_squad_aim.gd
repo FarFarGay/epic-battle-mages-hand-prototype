@@ -13,6 +13,7 @@ extends Node
 ## ввод-системы (hand_physical / hand_spell / hand_super) гасятся ранним return.
 
 const ACTION_AIM_COMMIT := &"hand_action"  # ПКМ — commit точки
+const ACTION_AIM_CANCEL := &"ui_cancel"  # Esc — отмена aim'а (Godot-дефолт)
 
 @export_group("Visual")
 ## Цвет ground-ring'а под курсором когда враги ВНЕ зоны прицеливания.
@@ -116,6 +117,11 @@ func _process(_delta: float) -> void:
 		# Подсветка hostile когда враги в радиусе кольца — игрок видит, что
 		# это указание цели, а не просто перемещение в пустое место.
 		_set_ring_hostile(_has_enemies_in_aim_zone(ground))
+	# Esc — отмена aim'а без команды. UI-гейт не нужен: ui_cancel не должен
+	# использоваться никакой кнопкой HUD'а как клавиатурный shortcut.
+	if Input.is_action_just_pressed(ACTION_AIM_CANCEL):
+		cancel_aim()
+		return
 	# ПКМ — commit точки. Используем Input.is_action_just_pressed: aim mode
 	# единственный listener в этой категории, конфликтов нет. UI-гейт: если
 	# курсор над виджетом HUD'а, ПКМ — это клик по кнопке, не команда отряду

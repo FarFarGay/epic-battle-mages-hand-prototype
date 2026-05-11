@@ -962,10 +962,14 @@ func _build_soldier_card(camp: Node, id: StringName) -> Control:
 		# к «мягким» (нехватка ресурсов): игроку показываем главную причину.
 		var available: int = camp.gatherer_count()
 		var has_resources: bool = camp.can_afford(cost)
+		var reserve: int = camp.get_recruit_reserve()
 		if not camp.is_deployed():
 			btn.text = "только в развёрнутом лагере"
 		elif available < squad_size:
 			btn.text = "гномов: %d / %d" % [available, squad_size]
+		elif available < squad_size + reserve:
+			# Сборщиков хватает на отряд, но не остаётся резерва (≥1 на палатку).
+			btn.text = "оставьте сборщиков в лагере (нужно ещё %d)" % (squad_size + reserve - available)
 		elif not has_resources:
 			btn.text = "не хватает ресурсов"
 		else:

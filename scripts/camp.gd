@@ -968,10 +968,24 @@ func _find_idle_gatherers(count: int) -> Array[Gnome]:
 	return found
 
 
+## Минимум gatherer'ов, которых лагерь оставляет себе при призыве — по одному
+## на каждую живую палатку. Дизайнерское правило: армию строим излишком, нельзя
+## опустошить лагерь и оставить экономику без сборщиков. UI расшифровывает
+## нехватку через `get_recruit_reserve()`.
+const RECRUIT_RESERVE_PER_TENT: int = 1
+
+
+## Сколько gatherer'ов должно остаться в лагере после любого призыва —
+## зависит от числа живых палаток. Падает до 0 если все палатки разрушены
+## (лагерь всё равно не recruit-валиден в этом случае, но getter честный).
+func get_recruit_reserve() -> int:
+	return tent_count_alive() * RECRUIT_RESERVE_PER_TENT
+
+
 ## True если игрок может прямо сейчас призвать отряд заданного типа:
 ## - лагерь развёрнут (recruit — лагерное действие, симметрично dismiss)
 ## - id есть в SoldierSystem.SOLDIER_CATALOG
-## - в лагере свободных gatherer'ов >= squad_size
+## - в лагере свободных gatherer'ов >= squad_size + reserve (по 1 на палатку)
 ## - на складе хватает ресурсов на cost
 ## Используется UI журнала для disabled-состояния кнопки.
 func can_recruit_squad(soldier_type: StringName) -> bool:
@@ -985,7 +999,7 @@ func can_recruit_squad(soldier_type: StringName) -> bool:
 	if not can_afford(data.get("cost", {})):
 		return false
 	var squad_size: int = SoldierSystem.get_squad_size(soldier_type)
-	return gatherer_count() >= squad_size
+	return gatherer_count() >= squad_size + get_recruit_reserve()
 
 
 ## Призвать отряд заданного типа. Создаёт Squad-объект и заполняет его
@@ -1006,6 +1020,10 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 	if not can_afford(cost):
 		return null
 	var squad_size: int = SoldierSystem.get_squad_size(soldier_type)
+	# Дублируем reserve-чек: UI должен был отфильтровать, но если recruit_squad
+	# вызвали мимо (читы / горячая клавиша / гонка) — гейт здесь же.
+	if gatherer_count() < squad_size + get_recruit_reserve():
+		return null
 	var gatherers: Array[Gnome] = _find_idle_gatherers(squad_size)
 	if gatherers.size() < squad_size:
 		return null
