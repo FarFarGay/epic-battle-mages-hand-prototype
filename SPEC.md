@@ -137,7 +137,7 @@ hand_gameplay_prot/
 - **Размеры и позиции:**
   | Узел | Размер | Стартовая позиция | Высота центра |
   |---|---|---|---|
-  | Ground | 400×1×400 | (0, −0.5, 0) | y=−0.5 (верх y=0) |
+  | Ground | 300×1×300 | (0, −0.5, 0) | y=−0.5 (верх y=0) |
   | Tower | 2×6×2 | (0, 3, 0) | y=3 (низ y=0) |
   | Hand | сфера r=0.5 | следует курсору | `surface_y + hand_height` |
   | Item (бокс) | переменный (`item_size`) | произвольно | `size.y / 2` (низ на y=0) |
@@ -723,7 +723,7 @@ if node == null:
   - `wander_speed: float = 1.2` — скорость патруля без цели.
   - `wander_distance_min/max: 5.0/15.0` — диапазон следующей wander-точки.
   - `wander_rest_min/max: 1.0/3.0` — длительность RESTING-фазы.
-  - `wander_map_half_extent: 195.0` — клампа wander-точки в пределах карты 400×400.
+  - `wander_map_half_extent: 145.0` — клампа wander-точки в пределах карты 300×300.
   - `wander_arrival: 0.8` — порог «дошёл».
 - Группа **Strike (физический выпад):**
   - `lunge_speed: float = 8.0` — m/s в момент удара (выше `move_speed`).
@@ -870,7 +870,7 @@ static func spawn(
 - `target_path: NodePath` (`@export_node_path("Node3D")`) — кого ставить в `set_target` базовому Enemy. Skeleton override'ит и `_targets` игнорирует, но для будущих врагов фолбэк остаётся.
 - `spawn_root_path: NodePath` (`@export_node_path("Node")`) — куда добавлять врагов как детей. Пустой → фолбэк на `get_tree().current_scene`.
 - `zone_root_path: NodePath` (`@export_node_path("Node3D")`) — корень узлов `SpawnZone` (см. §5.5.5). Все прямые дети этого узла собираются в `_zones` на _ready и формируют **позитивный фильтр спавна**: `pick_random_pos()` возвращает точку только внутри объединения прямоугольников этих зон (площадно-взвешенно по `size.x · size.y`). Если корень не задан или пуст — фоллбэк на uniform по `±map_half_extent`.
-- `map_half_extent: float = 195.0` — полу-длина карты от центра (карта 400×400). Используется как фоллбэк `pick_random_pos()` при отсутствии зон, и для clamp в `spawn_group/spawn_ring`.
+- `map_half_extent: float = 150.0` — полу-длина карты от центра (карта 300×300). Используется как фоллбэк `pick_random_pos()` при отсутствии зон, и для clamp в `spawn_group/spawn_ring`.
 - `spawn_y: float = 1.0` — Y-координата спавна.
 - `debug_log: bool = true`.
 
@@ -929,7 +929,7 @@ WaveStage поддерживает обе модели одновременно:
 
 **Spawn legacy-модели (`_spawn_legacy_poi_wave`):** одна случайная zone с `waves_left() > 0`, группа `count` скелетов в её прямоугольнике, forced_target = nearest_part_to(origin), consume_wave. Сохраняется для обратной совместимости.
 
-**Safe-фильтр (`_safe_score`):** возвращает «избыток» (distance − safe_radius) до ближайшей запретной зоны: живой Camp (radius=`wave_safe_radius=32м`) или POI (radius читается с `poi.safe_radius` — каждый POI имеет свой через `QuestActor.safe_radius`; fallback `poi_safe_radius_fallback=32м`). >=0 → принимаем, <0 → запоминаем как фоллбэк. Используется только для фонового спавна; POI-волны идут из SpawnZone напрямую без safe-фильтра.
+**Safe-фильтр (`_safe_score`):** возвращает «избыток» (distance − safe_radius) до ближайшей запретной зоны: живой Camp (radius=`wave_safe_radius=32м`) или POI (radius читается с `poi.safe_radius` — каждый POI имеет свой через `QuestActor.safe_radius`; fallback `poi_safe_radius_fallback=32м`). >=0 → принимаем, <0 → запоминаем как фоллбэк. Применяется и к фоновому спавну (`_pick_safe_pos`), и к POI-волнам (`_pick_safe_point_in_zone`) — последнее критично когда SpawnZone перекрывает лагерь (например, одна большая зона размером с карту): без фильтра волна могла бы заспавниться вплотную к палаткам. Если за `wave_position_attempts` (30) попыток safe-точка не найдена — возвращается «лучшая» (с максимальным excess'ом), как страховка.
 
 **Рестарт кампании (`cheat_start_campaign`):** в фазе RUNNING повторный вызов → `kill_all_skeletons` + `Camp.reset_population()` для каждого camp + `_clear_active_poi()` + новый initial-спавн фона. Если игрок стоит на POI и хочет возобновить осаду — сворачивает и разворачивает лагерь (camp_packed → camp_deployed эмитится снова, осада запустится с stage 0). Раньше висело на P; с 2026-05-08 — кнопка во вкладке «Читы» журнала.
 

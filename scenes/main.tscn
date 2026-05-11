@@ -20,7 +20,7 @@
 [ext_resource type="PackedScene" uid="uid://grassfield01" path="res://scenes/grass_field.tscn" id="19_grass_field"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
-size = Vector3(400, 1, 400)
+size = Vector3(300, 1, 300)
 
 [sub_resource type="ShaderMaterial" id="Material_ground"]
 render_priority = 0
@@ -33,7 +33,7 @@ shader_parameter/grass_color_dark = Color(0.18, 0.32, 0.12, 1)
 shader_parameter/grass_color_light = Color(0.45, 0.62, 0.28, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_ground"]
-size = Vector3(400, 1, 400)
+size = Vector3(300, 1, 300)
 
 [node name="Main" type="Node3D" unique_id=462266493]
 
@@ -42,7 +42,7 @@ transform = Transform3D(1, 0, 0, 0, 0.707, 0.707, 0, -0.707, 0.707, 0, 20, 0)
 shadow_enabled = true
 
 [node name="Ground" type="StaticBody3D" parent="." unique_id=1330979093]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 0.43936372, 0, -0.5, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
 collision_mask = 31
 
 [node name="GroundCollision" type="CollisionShape3D" parent="Ground" unique_id=228490940]
@@ -53,13 +53,13 @@ material_override = SubResource("Material_ground")
 mesh = SubResource("BoxMesh_ground")
 
 [node name="Tower" parent="." unique_id=1433079522 instance=ExtResource("1")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 159.14594, 3, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
 
 [node name="CameraRig" parent="." unique_id=1120422055 instance=ExtResource("3")]
 target_path = NodePath("../Tower")
 
 [node name="Hand" parent="." unique_id=1987763939 instance=ExtResource("2")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 164.49461, 2.5, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.34867, 2.5, 0)
 
 [node name="EnemySpawner" type="Node3D" parent="." unique_id=1441766688]
 script = ExtResource("6")
@@ -67,7 +67,7 @@ enemy_scenes = Array[PackedScene]([ExtResource("7")])
 enemy_counts = Array[int]([50])
 target_path = NodePath("../Tower")
 zone_root_path = NodePath("../SpawnZones")
-map_half_extent = 195.0
+map_half_extent = 150.0
 
 [node name="WaveDirector" type="Node" parent="." unique_id=1809479795]
 script = ExtResource("13")
@@ -79,29 +79,20 @@ skeleton_scene = ExtResource("7")
 [node name="Modules" type="Node3D" parent="." unique_id=1539843594]
 
 [node name="OctagonTurret1" parent="Modules" unique_id=1489570836 instance=ExtResource("10")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 167.61478, 0.35, 4)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.46884, 0.35, 4)
 attack_radius = 22.0
 arrow_speed = 30.5
 
 [node name="SpawnZones" type="Node3D" parent="." unique_id=1926494768]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -133.22488)
 
 [node name="SpawnZone1" parent="SpawnZones" unique_id=2016128478 instance=ExtResource("17")]
-transform = Transform3D(6.5315933, 0, 0, 0, 1, 0, 0, 0, 1.6575847, -0.8849716, 0, 127.8065)
+size = Vector2(300, 300)
 wave_count = 20
-skeletons_per_wave = 100
 
 [node name="PointsOfInterest" type="Node3D" parent="." unique_id=1906900233]
 
-[node name="Poi_ESE" parent="PointsOfInterest" unique_id=1479745084 instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 147.60913, 0.3, -0.2122345)
-
-[node name="Actor" parent="PointsOfInterest/Poi_ESE" unique_id=1894827127 instance=ExtResource("16")]
-actor_id = &"ese"
-wave_schedule = ExtResource("18_schedule_default")
-
 [node name="Poi_Heart" parent="PointsOfInterest" unique_id=1859626028 instance=ExtResource("12")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -119.65268, 0.3, -0.3575287)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
 
 [node name="Actor" parent="PointsOfInterest/Poi_Heart" unique_id=1218000003 instance=ExtResource("16")]
 actor_id = &"heart"
@@ -121,16 +112,16 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.28, 0)
 coverage_target_path = NodePath("../Ground/GroundMesh")
 
 [node name="ResourceZone" parent="." unique_id=737445101 instance=ExtResource("18_dp3eg")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 129.47629, 0, 13.417672)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -29.66965, 0, 13.417672)
 
 [node name="ResourceZone2" parent="." unique_id=830205332 instance=ExtResource("18_dp3eg")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 162.1238, -1.9073486e-06, 11.4630785)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.97786, -1.9073486e-06, 11.4630785)
 resource_type = 2
 
 [node name="ResourceZone3" parent="." unique_id=1514561639 instance=ExtResource("18_dp3eg")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 164.16737, 0, -16.741749)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.02143, 0, -16.741749)
 resource_type = 3
 
 [node name="ResourceZone4" parent="." unique_id=1553489164 instance=ExtResource("18_dp3eg")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 131.45955, 0, -15.37766)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -27.68639, 0, -15.37766)
 resource_type = 4

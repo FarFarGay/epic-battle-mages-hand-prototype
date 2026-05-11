@@ -421,7 +421,7 @@ func _spawn_legacy_poi_wave(count: int) -> void:
 		if debug_log and LogConfig.master_enabled:
 			print("[WaveDirector] POI-волна пропущена — нет SpawnZone с остатком")
 		return
-	var origin := _spawner.random_point_in_zone(zone)
+	var origin := _pick_safe_point_in_zone(zone)
 	origin.y = _spawner.spawn_y
 	var target_part := _active_camp.nearest_part_to(origin)
 	if target_part == null:
@@ -478,7 +478,7 @@ func _spawn_single_group(group: CombatGroup) -> bool:
 	var zone: SpawnZone = _resolve_spawn_zone(group.spawn_zone_index)
 	if zone == null:
 		return false
-	var origin := _spawner.random_point_in_zone(zone)
+	var origin := _pick_safe_point_in_zone(zone)
 	origin.y = _spawner.spawn_y
 	var target_part := _active_camp.nearest_part_to(origin)
 	if target_part == null:
@@ -579,6 +579,32 @@ func _pick_safe_pos() -> Vector3:
 
 	if debug_log and LogConfig.master_enabled:
 		print("[WaveDirector] safe-точка не найдена за %d попыток — фоллбэк (excess=%.1fм)" % [wave_position_attempts, best_score])
+	return best_pos
+
+
+## Safe-точка строго внутри одной зоны. Используется POI-волнами: точка
+## кандидата выбирается uniform внутри прямоугольника zone, отбрасывается
+## если попадает в wave_safe_radius от лагеря или safe_radius от POI. До
+## wave_position_attempts попыток — иначе берётся «лучшая» (с максимальным
+## excess'ом). Это страховка от спавна вплотную к палаткам, когда зона
+## перекрывает лагерь (например, одна большая SpawnZone размером с карту).
+func _pick_safe_point_in_zone(zone: SpawnZone) -> Vector3:
+	if zone == null or _spawner == null:
+		return Vector3.ZERO
+	var best_pos := Vector3.ZERO
+	var best_score := -INF
+	for i in range(wave_position_attempts):
+		var candidate := _spawner.random_point_in_zone(zone)
+		var score := _safe_score(candidate)
+		if score >= 0.0:
+			return candidate
+		if score > best_score:
+			best_score = score
+			best_pos = candidate
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] safe-точка в зоне %s не найдена за %d попыток — фоллбэк (excess=%.1fм)" % [
+			zone.name, wave_position_attempts, best_score,
+		])
 	return best_pos
 
 

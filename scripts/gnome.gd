@@ -90,7 +90,7 @@ enum State {
 ## Половина стороны квадратной карты от центра (0,0). Idle wander-точки
 ## клампятся в этих пределах — на случай, если deploy_anchor близко к краю
 ## карты. Должно совпадать со Skeleton.wander_map_half_extent.
-@export var wander_map_half_extent: float = 195.0
+@export var wander_map_half_extent: float = 145.0
 ## Пауза между rescan'ами pile-ов в IDLE_NEAR_BASE. Если все pile-ы были
 ## claim'нуты другими, гном уходит в idle; периодический rescan ловит момент
 ## когда кто-то освободил pile (доставил, забрал последний unit). Без этого
