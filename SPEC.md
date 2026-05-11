@@ -608,6 +608,8 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 - `attack_damage: float = 5.0` — урон цели при атаке.
 - `attack_cooldown: float = 1.0` — секунды между атаками. Тикает всегда (в т.ч. в knockback'е).
 - `attack_windup: float = 0.4` — длительность фазы WINDUP до удара.
+- `attack_windup_point_blank: float = 0.1` — короткий windup, если цель уже глубоко в attack_range на момент входа в WINDUP. См. **Point-blank trigger** ниже.
+- `point_blank_distance_factor: float = 0.7` — доля от `attack_range`, ниже которой замах считается point-blank'ом.
 - `knockback_friction: float = 5.0` — насколько быстро затухает knockback-velocity (lerp-коэф).
 - Группа **Knockback contacts:**
   - `bounce_restitution: float = 0.6` — коэффициент отскока от активной цели при ударе во время knockback'а.
@@ -651,6 +653,8 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
    - Контакт с активной целью → нормали суммируются, после цикла применяется `_bounce_off_target` (elastic-отскок с `bounce_restitution`, считается через **pre-slide** velocity).
    - Контакт с другим `Enemy` → `_push_neighbor`: соседу применяется push **через `Pushable.try_push`**. Минимальный порог `MIN_NEIGHBOR_PUSH_SPEED = 0.5` отсеивает «соскользили вдоль» от «врезались».
    - Self-bounce от цели **не** идёт через Pushable: это собственная реакция инстанса на коллизию, не внешний толчок, и `_on_knockback` дёргать незачем.
+
+**Point-blank trigger.** В `_approach_target` после `_enter_state(WINDUP)` проверяется текущая дистанция до цели: если `dist ≤ attack_range × point_blank_distance_factor` — `_state_timer` переписывается на `attack_windup_point_blank`. Дизайнерское правило: «в упор не нужен полный замах, ткнул сразу». Главная цена для бойцов (Pikeman): после lunge'а они стоят 0.35с в RECOVERY — point-blank windup 0.1с легко перекрывается ответным ударом скелета, оказавшегося в нос. На «крайних» WINDUP'ах (dist ≈ attack_range) point-blank НЕ срабатывает — нормальный замах 0.4с. Применяется ко всем подклассам Enemy.
 
 **Зависимости:** только физика, `Damageable`/`Pushable`/`Layers`/`VecUtil` и наследники. Не знает про Tower, Hand, Item.
 

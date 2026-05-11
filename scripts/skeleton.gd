@@ -409,6 +409,7 @@ func _apply_stat_variance() -> void:
 	hp *= randf_range(1.0 - VARIANCE_HP, 1.0 + VARIANCE_HP)
 	attack_damage *= randf_range(1.0 - VARIANCE_DAMAGE, 1.0 + VARIANCE_DAMAGE)
 	attack_windup *= randf_range(1.0 - VARIANCE_WINDUP, 1.0 + VARIANCE_WINDUP)
+	attack_windup_point_blank *= randf_range(1.0 - VARIANCE_WINDUP, 1.0 + VARIANCE_WINDUP)
 	move_speed *= randf_range(1.0 - VARIANCE_SPEED, 1.0 + VARIANCE_SPEED)
 	attack_cooldown *= randf_range(1.0 - VARIANCE_COOLDOWN, 1.0 + VARIANCE_COOLDOWN)
 

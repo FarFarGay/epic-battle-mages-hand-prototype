@@ -41,6 +41,20 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 @export var attack_damage: float = 5.0
 @export var attack_cooldown: float = 1.0
 @export var attack_windup: float = 0.4
+## Короткий windup для удара в упор. Если цель уже глубоко в attack_range
+## (ближе чем `attack_range × point_blank_distance_factor`) в момент входа
+## в WINDUP — используется этот таймер вместо `attack_windup`. Дизайнерское
+## правило: «в упор не нужен полный замах, ткнул сразу». Геймплейная цена —
+## фаст-бойцы (копейщик) теряют RECOVERY-неуязвимость: после lunge'а они
+## стоят 0.35с, и point-blank windup 0.1с легко перекрывается ответным
+## ударом скелета, оказавшегося в нос.
+@export var attack_windup_point_blank: float = 0.1
+## Доля от `attack_range`, ниже которой замах считается point-blank'ом.
+## 0.7 = когда цель глубже 70% радиуса (т.е. на расстоянии ≤ 0.7 × attack_range
+## от центра). На attack_range=1.5 это значит 1.05м — pikeman после lunge'а
+## оказывается в этой зоне практически всегда. На «крайних» WINDUP'ах
+## (dist ≈ attack_range) point-blank НЕ срабатывает — нормальный замах.
+@export_range(0.1, 1.0) var point_blank_distance_factor: float = 0.7
 ## Замедление knockback-скорости в секунду (lerp coefficient × delta).
 @export var knockback_friction: float = 5.0
 
@@ -230,6 +244,11 @@ func _approach_target(target: Node3D) -> void:
 		velocity.x = 0.0
 		velocity.z = 0.0
 		_enter_state(AttackState.WINDUP)
+		# Point-blank trigger: цель оказалась глубоко в attack_range (не на
+		# границе) → сокращаем windup. _enter_state уже выставил _state_timer
+		# в attack_windup; переписываем после факта.
+		if dist <= attack_range * point_blank_distance_factor:
+			_state_timer = attack_windup_point_blank
 
 
 func _enter_state(new_state: int) -> void:
