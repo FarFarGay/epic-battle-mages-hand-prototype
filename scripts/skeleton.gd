@@ -323,6 +323,7 @@ func _ready() -> void:
 	# Без super._ready() всё это потерялось бы только для скелетов.
 	super._ready()
 	add_to_group(SKELETON_GROUP)
+	_apply_stat_variance()
 	_ensure_shared_materials()
 	if _mesh:
 		# Все скелеты делят два материала на класс — никаких .duplicate() per-instance.
@@ -359,9 +360,66 @@ func _ready() -> void:
 	# Hit-feedback: на каждый damaged-сигнал — короткий scale-punch меша
 	# («подпрыгивает» на удар). Сам сигнал унаследован из Enemy.
 	damaged.connect(_on_self_damaged)
+	# Aggro-on-hit: получили урон → немедленный rescan зрения, минуя
+	# `vision_scan_interval`-тайминг. Без этого pikeman делал бы весь lunge
+	# цикл и улетал в RECOVERY, прежде чем скелет рескан'ит зрение и заметит
+	# атакующего. Скан стоит дёшево (3×3 cell'а из target_grid), и для рескан'а
+	# на каждый удар это никакая нагрузка (≪ 60Гц).
+	damaged.connect(_on_damage_react_aggro)
 
 
 ## Scale-punch на _mesh — визуальная индикация попадания. Tween создаётся
+## Per-spawn variance: ±X% к hp/damage/windup/speed/cooldown. Применяется
+## к загруженным значениям (.tscn override или @export default) ровно один
+## раз на _ready. Дизайнерская цель — defenders не должны автопилот'ить волну
+## по запомненному ритму «windup ровно 0.4с, hp ровно 30». На пачке 200+
+## скелетов разброс параметров создаёт волатильность: какие-то умирают с
+## первого удара, какие-то наносят больший урон, кто-то windup'ит на 0.32с
+## (быстрее чем ожидалось), кто-то на 0.48с.
+##
+## Move_speed разброс меньше (15%) — большее значение «ломало» бы пакетное
+## движение цепочкой (одни далеко обгоняют, других накрывает шлейф). 15%
+## даёт лёгкое расслоение, форма волны остаётся читаемой.
+const VARIANCE_HP: float = 0.20
+const VARIANCE_DAMAGE: float = 0.20
+const VARIANCE_WINDUP: float = 0.20
+const VARIANCE_SPEED: float = 0.15
+const VARIANCE_COOLDOWN: float = 0.15
+
+
+func _apply_stat_variance() -> void:
+	hp *= randf_range(1.0 - VARIANCE_HP, 1.0 + VARIANCE_HP)
+	attack_damage *= randf_range(1.0 - VARIANCE_DAMAGE, 1.0 + VARIANCE_DAMAGE)
+	attack_windup *= randf_range(1.0 - VARIANCE_WINDUP, 1.0 + VARIANCE_WINDUP)
+	move_speed *= randf_range(1.0 - VARIANCE_SPEED, 1.0 + VARIANCE_SPEED)
+	attack_cooldown *= randf_range(1.0 - VARIANCE_COOLDOWN, 1.0 + VARIANCE_COOLDOWN)
+
+
+## Aggro-on-hit: на любой полученный урон рескан'им зрение немедленно и
+## переключаем `_cached_target` на ближайшего видимого гнома. Без этого
+## хука vision-сkан тикал бы по `vision_scan_interval=0.4с`, и pikeman
+## мог сделать lunge → удар → drift → recovery полностью внутри одного
+## scan-интервала, не получив ни секунды внимания скелета.
+##
+## После рескана: следующий AI-tick перепланирует direction на нового
+## target'а (через `_approach_target`). Если скелет был в WINDUP — тот
+## продолжается до strike по `_windup_target` (защёлкнут отдельно), затем
+## COOLDOWN → APPROACH уже к новой цели. Если был knocknock'нут самим
+## ударом — _on_knockback в базе сбросит WINDUP в APPROACH, и переход
+## на нового target'а произойдёт сразу.
+##
+## Vision_scan_timer сбрасываем, чтобы плановый scan не наложился сразу же
+## (например через 50мс) и не подменил нового target'а на «других гномов
+## просто оказавшихся ближе» — даём скелету пол-интервала жить с aggro'м.
+func _on_damage_react_aggro(_amount: float) -> void:
+	if hp <= 0.0:
+		return
+	var new_target := _scan_target()
+	if new_target != null:
+		_cached_target = new_target
+		_vision_scan_timer = vision_scan_interval * _lod_vision_multiplier()
+
+
 ## на меше; если скелет умрёт сразу после, mesh queue_free'нется вместе с
 ## ним и tween тихо отвалится. Не трогаем shared material (он один на класс)
 ## — иначе вспышка цвета затронула бы все 200+ скелетов.

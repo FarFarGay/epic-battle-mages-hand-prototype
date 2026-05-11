@@ -693,6 +693,10 @@ Skeleton не использует `Enemy._targets` — вместо этого 
 - Override `get_active_target()`: возвращает кэш, провалидировав группу/валидность; если устарел — `null` (следующий тик пере-сканирует).
 - В `_ready` → `_vision_scan_timer = randf() * vision_scan_interval` — фазовый сдвиг, чтобы 50 скелетов не сканировали группу в один кадр.
 
+**Aggro-on-hit:** подписка на собственный `damaged`-сигнал → `_on_damage_react_aggro` дёргает `_scan_target` немедленно, минуя 0.4с-тайминг. Без этого pikeman мог сделать весь lunge-цикл (APPROACH/WINDUP/LUNGE/DRIFT/RECOVERY ≈ 0.85с) внутри одного scan-интервала, и скелет успевал отреагировать только когда атакующий уже в безопасности. Стоимость хука — один scan-call на каждый удар (≪ 60Гц), нагрузки ноль. Сценарий: pikeman lunge → strike → push knockback (через `Pushable.try_push` → `apply_knockback` → `_on_knockback` сбрасывает WINDUP→APPROACH) → скелет в APPROACH'е с уже-новым `_cached_target` (pikeman) → следующий AI tick идёт на pikeman'а, который в RECOVERY и не может отбиться. Это и есть «уязвимое окно» бойца.
+
+**Per-spawn variance:** в `_ready` после `super._ready` зовётся `_apply_stat_variance` — ровно один раз умножает hp/damage/windup/move_speed/cooldown на `randf_range(1-X, 1+X)`. Константы: hp/damage/windup ±20%, speed/cooldown ±15%. Дизайнерская цель — defenders не должны автопилот'ить волну по запомненному ритму («windup ровно 0.4с, hp ровно 30»). На пачке 200+ скелетов разброс создаёт волатильность: одни умирают с первого удара, другие наносят больший урон, кто-то windup'ит на 0.32с (быстрее ожидаемого), кто-то на 0.48с. Move_speed разброс меньше — большее значение «ломало» бы пакетное движение цепочкой; 15% даёт лёгкое расслоение, форма волны остаётся читаемой.
+
 **Gotcha (важный паттерн при работе с grid-snapshot'ами):** typed-assignment из Array (`var node: Node3D = entry[1]`) вылетает с `Trying to assign invalid previously freed instance`, если объект уже освобождён — runtime бьёт ошибку **до** проверки `is_instance_valid`. Правильный паттерн:
 ```gdscript
 var raw = entry[1]              # untyped Variant
