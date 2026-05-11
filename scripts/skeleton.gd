@@ -67,12 +67,18 @@ const TARGET_GROUP := &"skeleton_target"
 ## Отдельная от Damageable.GROUP, чтобы HUD не фильтровал по `is Skeleton`.
 const SKELETON_GROUP := &"skeleton"
 
-## Запас по дистанции при валидации цели в `_perform_strike`. Замах длится
-## attack_windup секунд; за это время цель (живой гном) может пройти
-## move_speed × attack_windup ≈ 0.6м. Множитель 1.5 от attack_range покрывает
-## этот сдвиг + капсулу скелета. Если цель ушла дальше — strike мажет
-## (отмена в _perform_strike), вместо «удар на 11м без контакта».
-const WINDUP_TARGET_RANGE_SLACK: float = 1.5
+## Радиус AoE удара: `attack_range × STRIKE_RADIUS_FACTOR`. Strike — это
+## размах конечностью, физически покрывает дугу вокруг скелета, а не
+## точечную линию. Старая single-target логика (бить только `_windup_target`
+## с slack-валидацией) мазала по движущимся целям: pikeman после lunge'а
+## дрейфит из slack'а к моменту STRIKE'а. AoE покрывает кластер целей
+## вокруг скелета — кто стоит рядом, тот и получает.
+##
+## 1.3 = ~1.95м на attack_range=1.5. Покрывает «прямо перед носом» +
+## небольшой запас на дрифт цели. Если цель убежала дальше 1.95м — strike
+## мажет, заслужили дистанцию. Если кластер защитников жмётся к скелету —
+## один STRIKE damage'ит 2-3 одновременно (цена за clustering).
+const STRIKE_RADIUS_FACTOR: float = 1.3
 
 enum WanderPhase { RESTING, WANDERING }
 
@@ -1102,37 +1108,52 @@ func set_forced_target(target: Node3D) -> void:
 
 
 func _perform_strike(_target: Node3D) -> void:
-	# Используем _windup_target (защёлкнут в _on_state_enter(WINDUP)), а не
-	# текущий _cached_target: рескан зрения мог подменить cached на ближайшего
-	# гнома за время замаха, и без этой защиты strike бил бы его на любой
-	# дистанции (Damageable.try_damage без contact-чека). Параметр `_target`,
-	# приходящий из Enemy._ai_step:208, тоже игнорируем — он = текущий
-	# get_active_target(), та же подмена.
-	var active: Node3D = _windup_target
+	# AoE strike: damage'им всех в TARGET_GROUP в радиусе attack_range ×
+	# STRIKE_RADIUS_FACTOR вокруг скелета. _windup_target используем только
+	# для направления self-lunge'а — кого скелет «целил», туда и пройдёт
+	# выпад. Damage применяется ко всем в зоне независимо от lock'а.
+	#
+	# Почему не single-target по _windup_target: его лок задумывался против
+	# «strike по гному за 11м» (без contact-чека через Damageable.try_damage),
+	# но slack-валидация (×1.5) всё равно требовала чтобы цель не уходила
+	# из радиуса. Pikeman после lunge'а драфтит из этого радиуса за 0.4с
+	# замаха, и strike мажет полностью — даже если pikeman всё ещё в melee'е
+	# на 1.8м. AoE решает это физически: размах конечностью, кто рядом, тот
+	# и получил.
+	var locked: Node3D = _windup_target
 	_windup_target = null
-	if active == null or not is_instance_valid(active):
-		return  # Цель сдохла или freed во время замаха — strike мажет.
-	if not active.is_in_group(TARGET_GROUP):
-		return  # Перестала быть целью (палатка torn_off, гном вернулся в IN_TENT).
-	# Distance-валидация: цель не должна была убежать дальше attack_range × slack.
-	# Skeleton'у запрещено бить «в космос» — без этого внезапный спавн волны
-	# гномов в 11м от windup-скелета мог получить мгновенный урон.
-	var d_sq: float = (active.global_position - global_position).length_squared()
-	var max_strike_range: float = attack_range * WINDUP_TARGET_RANGE_SLACK
-	if d_sq > max_strike_range * max_strike_range:
-		return
-	# Урон — до выпада, чтобы логически «удар попал», даже если bounce-off
-	# отбросит скелета на следующем кадре.
-	var hit: bool = Damageable.try_damage(active, attack_damage)
-	# Alarm-сигнал: только если удар реально прошёл (не по freed/не damageable),
-	# и жертва — палатка в строю или мирный гном. Defender'ы alarm не
-	# триггерят (по сигнатуре подписчиков — себя они не «зовут»). Через
-	# группы вместо `is`: TARGET_GROUP содержит палатки в строю + всех гномов
-	# (мирных и Defender'ов); DEFENDER_GROUP — только Defender'ов; разница =
-	# «alarm-victim'ы».
-	if hit and active.is_in_group(TARGET_GROUP) and not active.is_in_group(DefenderGnome.DEFENDER_GROUP):
-		EventBus.skeleton_attacked_camp.emit(self, active, active.global_position)
-	_do_lunge(active)
+	var strike_radius: float = attack_range * STRIKE_RADIUS_FACTOR
+	var strike_radius_sq: float = strike_radius * strike_radius
+	var hits: int = 0
+	var alarm_victim: Node3D = null  # первая палатка/мирный гном среди жертв
+	for n in get_tree().get_nodes_in_group(TARGET_GROUP):
+		if not is_instance_valid(n):
+			continue
+		var node := n as Node3D
+		if node == null:
+			continue
+		var d_sq: float = (node.global_position - global_position).length_squared()
+		if d_sq > strike_radius_sq:
+			continue
+		if Damageable.try_damage(node, attack_damage):
+			hits += 1
+			# Alarm-сигнал триггерим только на палатке/мирном гноме — defender'ы
+			# себя не «зовут». Берём первого, чтобы не спамить EventBus.
+			if alarm_victim == null and not node.is_in_group(DefenderGnome.DEFENDER_GROUP):
+				alarm_victim = node
+	if hits > 0 and alarm_victim != null:
+		EventBus.skeleton_attacked_camp.emit(self, alarm_victim, alarm_victim.global_position)
+	# Self-lunge: направление к locked-target'у если он ещё валиден, иначе
+	# вперёд по текущему look_at. Lunge не зависит от попадания — это движение
+	# тела вперёд после взмаха, даже на промахе.
+	if is_instance_valid(locked):
+		_do_lunge(locked)
+	else:
+		var forward := -transform.basis.z  # local -Z = forward
+		_apply_velocity_change(
+			Vector3(forward.x * lunge_speed, 0.0, forward.z * lunge_speed),
+			lunge_duration,
+		)
 
 
 func _do_lunge(target: Node3D) -> void:
