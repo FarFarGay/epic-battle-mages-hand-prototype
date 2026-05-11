@@ -76,7 +76,11 @@ const SOLDIER_GROUP := &"soldier"
 @export var drift_time: float = 0.25
 ## Пауза «отдышаться» после заноса. Юнит стоит, не ищет цели, не возвращается
 ## в строй. В этой фазе он максимально уязвим — это часть импакт-ритма.
-@export var recovery_time: float = 0.35
+## 0.55с (а не 0.35) — после скелетного point-blank trigger'а и AoE strike'а
+## копейщик нуждается в реальном «окне расплаты»: drift 0.25 + recovery 0.55 =
+## 0.8с уязвимости. Скелетов windup 0.32-0.48с гарантированно успевает в это
+## окно нанести ответный удар.
+@export var recovery_time: float = 0.55
 ## Лимит дистанции разгона: если цель не доступна в lunge-range за столько
 ## метров, копейщик отменяет атаку (drift+recovery, ищет новую цель).
 @export var max_approach_distance: float = 9.0

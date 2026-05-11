@@ -38,7 +38,12 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 @export var move_speed: float = 4.0
 @export var gravity: float = 20.0
 @export var attack_range: float = 1.5
-@export var attack_damage: float = 5.0
+## Базовый damage за один strike. Per-spawn variance ±20% (см. Skeleton.
+## _apply_stat_variance) даёт фактический range 6.4-9.6. 1 удар скелета
+## съедает ~20% pikeman'овского hp=40 → копейщик умирает за 4-5 хитов,
+## делает 1.5-2с цикл атаки → встречает 2-3 ответных AoE-страйка прежде
+## чем убьёт скелета.
+@export var attack_damage: float = 8.0
 @export var attack_cooldown: float = 1.0
 @export var attack_windup: float = 0.4
 ## Короткий windup для удара в упор. Если цель уже глубоко в attack_range

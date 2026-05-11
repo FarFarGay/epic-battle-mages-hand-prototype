@@ -605,7 +605,7 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 - `move_speed: float = 4.0` — горизонтальная скорость передвижения.
 - `gravity: float = 20.0` — ускорение свободного падения.
 - `attack_range: float = 1.5` — на каком расстоянии до цели начинается атака.
-- `attack_damage: float = 5.0` — урон цели при атаке.
+- `attack_damage: float = 8.0` — урон цели при атаке. С variance ±20% в Skeleton — 6.4-9.6 за strike. 1 удар = ~20% pikeman-hp (40), копейщик умирает за 4-5 ответных.
 - `attack_cooldown: float = 1.0` — секунды между атаками. Тикает всегда (в т.ч. в knockback'е).
 - `attack_windup: float = 0.4` — длительность фазы WINDUP до удара.
 - `attack_windup_point_blank: float = 0.1` — короткий windup, если цель уже глубоко в attack_range на момент входа в WINDUP. См. **Point-blank trigger** ниже.
@@ -1484,9 +1484,9 @@ READY → APPROACH → WINDUP → LUNGE → DRIFT → RECOVERY → READY
 - **WINDUP** (`LUNGE_WINDUP_DURATION=0.09с`) — статичная coiled-пауза перед взрывом. `velocity = 0`, направление обновляется на последний кадр (за 90мс цель могла сдвинуться). Тело tween'ится в `POSE_WINDUP=(1.3, 0.95, 0.6)` — вид сверху широкий овал поперёк, гном «припал как пружина». Без этой фазы рывок сливался бы с разгоном и читался как «продолжил ускоряться», а не «выстрелил копьём». Anticipation — обязательна даже когда цель уже в упор.
 - **LUNGE** (`lunge_speed=22 м/с`, фикс-дир) — молниеносный рывок (~6× approach_max_speed — резкий разрыв, глаз отделяет lunge от разгона как другое событие). Удар первым кадром в `attack_range=2.2м`. Продолжает лететь `lunge_pass_distance=1.6м` после удара по инерции («протыкает насквозь»). Тело снапает в `POSE_LUNGE=(0.6, 1.0, 1.7)` — extended-стрелка вдоль направления удара.
 - **DRIFT** (`drift_time=0.25с`) — резкое торможение поверх 22 м/с. Speed спадает по `pow(t, 0.6)` — медленный начальный спад («занос держит инерцию»). На входе в DRIFT поза tween'ится обратно в `POSE_NEUTRAL=(1,1,1)` за `POSE_RESTORE_TIME=0.22с`.
-- **RECOVERY** (`recovery_time=0.35с`) — стоит, отдыхает, уязвим. После — READY.
+- **RECOVERY** (`recovery_time=0.55с`) — стоит, отдыхает, уязвим. Окно расплаты для скелета (точно покрывает его windup 0.32-0.48с после point-blank trigger'а). После — READY.
 
-Полный цикл: WINDUP 0.09 + LUNGE ~0.15 + DRIFT 0.25 + RECOVERY 0.35 ≈ 0.85с + cooldown 0.6-1.0с ≈ 1.5-1.85с между ударами.
+Полный цикл: WINDUP 0.09 + LUNGE ~0.15 + DRIFT 0.25 + RECOVERY 0.55 ≈ 1.05с + cooldown 0.6-1.0с ≈ 1.7-2.05с между ударами.
 
 **Squash & stretch.** Tween-переходы между позами через `_tween_pose_to(target, duration)` — параллельно скейлится тело (`_mesh` из Gnome) и `FacingIndicator` (только у Pikeman'а, через `get_node_or_null`). Z-контраст POSE_WINDUP→POSE_LUNGE: 0.6→1.7 ≈ 2.8× — заметный визуальный «взрыв». `_pose_tween` хранится для kill'а старого при следующем переходе (быстрая серия charge'ей не должна перекрывать tween'ами). Хелперы `_enter_drift(d)` / `_enter_recovery(r)` централизуют «state + restore pose» — три места выхода в DRIFT (успешный pass, промах, превышение approach-лимита) и два места выхода в RECOVERY (target died в APPROACH/WINDUP).
 
