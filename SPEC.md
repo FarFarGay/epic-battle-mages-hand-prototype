@@ -816,7 +816,9 @@ static var _shared_normal_material: StandardMaterial3D
 
 **Зачем target-lock в WINDUP** (этап 47): `_vision_scan_timer` тикает в `_physics_process` независимо от FSM-состояния, поэтому за 0.4с замаха `_cached_target` мог быть подменён ближайшим гномом из 12-метрового vision. До фикса — strike бил по новой цели на любой дистанции (`Damageable.try_damage` без contact-чека → мгновенный урон по цели за 11м). После фикса — strike бьёт того, на кого замахнулся, или мажет, если он ушёл.
 
-**Жизненный цикл (на уровне FSM базы):** APPROACH → WINDUP (`attack_windup` сек, coiled-pose телеграф) → STRIKE (зовётся `_perform_strike`, наносит урон + self-lunge через `_apply_velocity_change`, extended-pose snap с chain restore) → COOLDOWN (`attack_cooldown` сек, тикает даже в knockback'е, поза восстанавливается до нейтрали) → APPROACH.
+**Жизненный цикл (на уровне FSM базы):** APPROACH → WINDUP (`attack_windup` сек, coiled-pose телеграф + slow creep к цели на `windup_creep_speed=1.5 м/с`) → STRIKE (зовётся `_perform_strike`, наносит урон + self-lunge через `_apply_velocity_change`, extended-pose snap с chain restore) → COOLDOWN (`attack_cooldown` сек, тикает даже в knockback'е, поза восстанавливается до нейтрали) → APPROACH.
+
+**WINDUP-creep (`_apply_windup_creep`):** базовый `Enemy._ai_step` зануляет XZ-velocity в WINDUP-ветке — скелет «замирал» на attack_range от цели, и любое боковое движение цели уводило её из удара. Override после `super._ai_step` ставит velocity = `direction_to(_windup_target) × windup_creep_speed` + `look_at` (re-aim каждый тик). За 0.32-0.48с замаха скелет ползёт ~0.5-0.7м, отслеживая позицию цели. Направление берётся к `_windup_target` (не `_cached_target`) — strike будет бить именно его, creep-направление должно совпадать. MID-divisor multiplier ниже умножает и creep-velocity → net distance на skip'аемых кадрах сохраняется.
 
 **Смерть (`_on_destroyed`):**
 - Прячем `MeshInstance3D` (`visible = false`) — труп визуально исчезает.

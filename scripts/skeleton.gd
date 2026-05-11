@@ -2,9 +2,16 @@ class_name Skeleton
 extends Enemy
 ## Простой враг.
 ## Жизненный цикл базового FSM Enemy: APPROACH → WINDUP → STRIKE → COOLDOWN → APPROACH.
-## Skeleton override'ит только конкретику: телеграф замаха (свечение) и сам strike (lunge + damage).
+## Skeleton override'ит только конкретику: телеграф замаха (squash & stretch
+## позой через _mesh.scale) и сам strike (lunge + damage).
 ##
-## Замах телеграфируется красной подсветкой через смену material_override.
+## Замах телеграфируется squash-позой (coiled — скелет «припадает перед
+## прыжком»). Раньше был красный emission через material-swap, но игроком
+## читался как «получил урон»; pose-телеграф однозначнее. См. константы
+## POSE_WINDUP_SKEL / POSE_STRIKE_SKEL и _tween_pose_to ниже. Во время WINDUP
+## скелет также медленно ползёт вперёд (`windup_creep_speed`) — чтобы цель,
+## слегка отошедшая в сторону, не выбегала из зоны удара.
+##
 ## Удар (`_perform_strike`) — это **физический выпад через apply_knockback самому себе**:
 ## скелет реально летит в сторону цели, врезается в неё (тело CharacterBody3D
 ## блокируется тем же CharacterBody3D башни), отскакивает (через
@@ -13,13 +20,20 @@ extends Enemy
 ## бита ENEMIES (см. layers.gd), get_slide_collision не регистрирует
 ## другого скелета как collider. Сделано для перфоманса в плотных кластерах.
 ## Если получает knockback во время замаха — замах отменяется (Enemy._on_knockback
-## сбрасывает FSM в APPROACH).
+## сбрасывает FSM в APPROACH; override в Skeleton также возвращает позу к нейтрали).
 ##
-## Визуал — общеклассовый: два разделяемых StandardMaterial3D (normal/windup)
-## создаются один раз на класс и переиспользуются всеми инстансами скелетов.
-## Это позволяет GPU батчить отрисовку (50 скелетов → ~1 draw call на состояние
-## вместо 50 уникальных материалов). Цвет тела/замаха задан константами ниже,
-## per-instance тонкая настройка не предусмотрена.
+## Визуал — общеклассовый: один разделяемый StandardMaterial3D (normal),
+## создаётся один раз на класс и переиспользуется всеми инстансами скелетов.
+## Это позволяет GPU батчить отрисовку (50 скелетов → ~1 draw call). Цвет
+## тела задан BODY_ALBEDO_COLOR, per-instance тонкая настройка не предусмотрена.
+##
+## Per-spawn variance: в _ready ровно один раз умножаются hp/damage/windup/
+## move_speed/cooldown на randf_range — defenders не должны автопилотить волну
+## по запомненному ритму. См. `_apply_stat_variance`.
+##
+## Aggro-on-hit: на damaged-сигнал немедленный _scan_target (минуя 0.4с-тайминг),
+## переключение _cached_target на ближайшего видимого гнома. Pikeman после
+## lunge'а оказывается ближайшим — следующий AI tick идёт на него в RECOVERY.
 ##
 ## Таргетинг: vision-based. Скелет НЕ ходит за фиксированной целью (башней) —
 ## вместо этого каждый кадр сканирует группу `skeleton_target` (палатки лагеря,
@@ -102,6 +116,13 @@ enum WanderPhase { RESTING, WANDERING }
 @export_group("Strike (физический выпад)")
 @export var lunge_speed: float = 8.0  # m/s в момент удара
 @export var lunge_duration: float = 0.2  # секунды knockback'а на сам выпад
+## Скорость медленного движения вперёд во время WINDUP. Базовый Enemy._ai_step
+## зануляет velocity в WINDUP-ветке, скелет «замирает» на расстоянии удара —
+## цели достаточно слегка отойти, чтобы атака мазала. С creep'ом скелет
+## продолжает «вползать» в цель во время замаха, отслеживает её перемещение
+## и снижает шанс промаха. ≈55% от move_speed=2.7 — заметное движение, но
+## медленнее обычного approach'а (бой читается как замах, не как преследование).
+@export var windup_creep_speed: float = 1.5
 @export_group("")
 
 @export_group("Shatter (рассыпание на смерти)")
@@ -558,6 +579,10 @@ func _ai_step(delta: float) -> void:
 		super._ai_step(delta)
 	else:
 		_wander_tick(delta)
+	# WINDUP-creep: после super (который зануляет velocity в WINDUP-ветке)
+	# даём слабое движение к цели. Без него скелет «замирает» на attack_range,
+	# и движущаяся цель легко уходит из зоны удара. См. `_apply_windup_creep`.
+	_apply_windup_creep()
 	# Boids-style avoidance: только NEAR. MID и FAR пропускаем — на расстоянии
 	# 25м+ от камеры мелкие накладки тимы не читаются, а boids стоит
 	# ~18мкс/call. На 2000 скелетах при divisor=4 в среднем 50-100 NEAR в
@@ -576,6 +601,38 @@ func _ai_step(delta: float) -> void:
 		var mult := float(lod_mid_tick_divisor)
 		velocity.x *= mult
 		velocity.z *= mult
+
+
+## Медленное движение к цели во время WINDUP. Перетирает velocity=0 от
+## базового Enemy._ai_step (его WINDUP-ветка зануляет XZ). Скелет «вползает»
+## в цель за 0.32-0.48с замаха ≈ 0.5-0.7м, отслеживая её перемещение —
+## цель уже не может «постоять рядом и отойти» в момент удара.
+##
+## Direction берётся к `_windup_target` (не к текущему `_cached_target`) —
+## strike будет бить именно его, направление creep'а должно совпадать.
+## Re-aim каждый тик: цель сдвинулась → поза разворачивается на новое
+## направление (squash & stretch локальные оси автоматически следуют).
+##
+## MID-divisor multiplier ниже умножит и creep-velocity → net distance на
+## skip'аемых кадрах сохраняется (так же, как для super-ai velocity).
+func _apply_windup_creep() -> void:
+	if _state != AttackState.WINDUP:
+		return
+	if not is_instance_valid(_windup_target):
+		return
+	var target_pos: Vector3 = _windup_target.global_position
+	var to_target := Vector3(
+		target_pos.x - global_position.x,
+		0.0,
+		target_pos.z - global_position.z,
+	)
+	var dist: float = to_target.length()
+	if dist <= 0.1:
+		return  # уже в эпицентре, не creep
+	var dir := to_target / dist
+	velocity.x = dir.x * windup_creep_speed
+	velocity.z = dir.z * windup_creep_speed
+	look_at(global_position + dir, Vector3.UP)
 
 
 ## Boids-style раздвигание соседей через _skel_grid. Заменяет физическое
@@ -1097,5 +1154,3 @@ func _on_destroyed() -> void:
 	if _effects_root:
 		ShatterEffect.spawn(_effects_root, global_position, shatter_color,
 			shatter_fragment_count, shatter_lifetime)
-
-
