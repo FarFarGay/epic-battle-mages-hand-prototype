@@ -109,13 +109,11 @@ func _refresh_visual() -> void:
 ## где возможно (rejection sampling, до 10 попыток на pile; если не находит —
 ## всё равно ставит в случайную точку, но это редкость при разумных параметрах).
 ##
-## Safe-фильтр (только для WOOD-зон): если на сцене есть WaveDirector (группа
-## `wave_director`) и `resource_type == WOOD` — точки внутри safe-зон лагерей
-## и POI отбрасываются. Логика геймдизайнера: лес — это «глушь», вокруг
-## поселений вырубленный; деревья ближе к лагерю не растут. Камень/железо/еда
-## фильтр не проходят: каменоломня может стоять под защитой лучников, ферма —
-## вокруг лагеря, склад железа — на POI. Только дерево намеренно «загнано»
-## за периметр.
+## **POI-фильтр:** точки внутри круга палаток вокруг костра (radius =
+## `QuestActor.safe_radius`) отбрасываются — кучи там перекрывались бы с
+## палатками. Camp safe-зона и WaveDirector `wave_safe_radius` НЕ фильтруют:
+## дизайнер сам решает на каком расстоянии от лагеря разместить ресурсы,
+## кроме самой плотной зоны костра.
 func _spawn_instances() -> void:
 	if pile_scene == null:
 		push_warning("ResourceZone (%s): pile_scene не задан — пропускаю спавн" % name)
@@ -125,26 +123,26 @@ func _spawn_instances() -> void:
 		root = get_node_or_null(spawn_root_path)
 	if root == null:
 		root = get_tree().current_scene
-	# Safe-фильтр включается только для WOOD. Остальные типы — как раньше:
-	# rejection sampling только по min_spacing, точка где угодно в зоне.
-	# Тип-чек has_method на случай если в группе wave_director окажется не
-	# WaveDirector (тестовый стаб, перепутанные группы) — лучше отключить
-	# safe-фильтр чем падать на is_safe_pos на чужой ноде.
-	var wave_director: Node = null
-	if resource_type == ResourcePile.ResourceType.WOOD:
-		var candidate := get_tree().get_first_node_in_group(&"wave_director")
-		if candidate != null and candidate.has_method("is_safe_pos"):
-			wave_director = candidate
-		elif candidate != null:
-			push_warning("ResourceZone (%s): нода в группе wave_director не имеет is_safe_pos — safe-фильтр отключён" % name)
+	# Снимок POI на момент спавна. Каждый QuestActor добавляется в группу
+	# POI_GROUP в своём _ready (см. quest_actor.gd). К моменту нашего
+	# deferred-спавна все POI на сцене уже зарегистрированы. Хранимая
+	# структура — (position, radius²) на каждый POI: один проход на старте,
+	# на каждый pick — N кучных распознаваний без get_tree() и без allocate.
+	var poi_circles: Array = []
+	for poi in get_tree().get_nodes_in_group(QuestActor.POI_GROUP):
+		if not is_instance_valid(poi):
+			continue
+		var r: float = 12.0
+		if "safe_radius" in poi:
+			r = poi.safe_radius
+		poi_circles.append({
+			"pos": (poi as Node3D).global_position,
+			"r_sq": r * r,
+		})
 	var placed_positions: Array[Vector3] = []
 	var spacing_sq := min_spacing * min_spacing
-	var skipped := 0
 	for i in range(count):
-		var pos: Variant = _pick_position(placed_positions, spacing_sq, wave_director)
-		if pos == null:
-			skipped += 1
-			continue
+		var pos: Vector3 = _pick_position(placed_positions, spacing_sq, poi_circles)
 		var pile := pile_scene.instantiate()
 		# Жёсткий контракт: pile_scene должна давать ResourcePile. Если дизайнер
 		# подменил сцену на другую (Item, ноду без скрипта и т.п.), мы НЕ хотим
@@ -170,19 +168,15 @@ func _spawn_instances() -> void:
 		# Случайная Y-rotation для визуального разнообразия.
 		(pile as Node3D).rotation.y = randf() * TAU
 		placed_positions.append(pos)
-	if skipped > 0:
-		push_warning("ResourceZone (%s, WOOD): %d из %d куч не размещены — кандидаты внутри safe-зон Camp/POI" % [name, skipped, count])
 
 
 ## Случайная точка внутри прямоугольника зоны (с учётом поворота через
-## global_transform) и вне safe-зон (если задан wave_director — только для
-## WOOD-зон, см. _spawn_instances). До 10 попыток найти точку, удовлетворяющую
-## обоим условиям (min_spacing + safe). Возвращает null если ни одна попытка
-## не прошла safe-фильтр — caller считает это пропуском pile'а. Если spacing-
-## фильтр не сработал, но safe-фильтр прошёл — ставим внахлёст (визуальный
-## нахлёст лучше пропуска).
-func _pick_position(placed: Array[Vector3], spacing_sq: float, wave_director: Node) -> Variant:
-	var last_safe_world: Variant = null
+## global_transform). До 10 попыток соблюсти min_spacing И не попасть в
+## круг палаток POI. Если за 10 попыток не нашлось — возвращает последнюю
+## случайную точку (визуальный нахлёст лучше пропуска кучи). На пустом
+## poi_circles POI-чек скипается.
+func _pick_position(placed: Array[Vector3], spacing_sq: float, poi_circles: Array) -> Vector3:
+	var last_world := Vector3.ZERO
 	for attempt in range(10):
 		var local := Vector3(
 			randf_range(-size.x * 0.5, size.x * 0.5),
@@ -197,11 +191,18 @@ func _pick_position(placed: Array[Vector3], spacing_sq: float, wave_director: No
 		# в случайную сторону, иногда вниз сквозь terrain. С +1м гарантированно
 		# приземляется сверху.
 		world.y = global_position.y + 1.0
-		# Safe-фильтр (только если caller передал wave_director): точка не
-		# должна попадать в safe-зону Camp/POI.
-		if wave_director != null and not wave_director.is_safe_pos(world):
+		last_world = world
+		# POI-фильтр: точка в круге костра/палаток — пропускаем. Чек по XZ
+		# (Y игнорируем), сравнение квадратов дистанций — без sqrt.
+		var in_poi_circle := false
+		for circle in poi_circles:
+			var dx: float = world.x - (circle["pos"] as Vector3).x
+			var dz: float = world.z - (circle["pos"] as Vector3).z
+			if dx * dx + dz * dz < (circle["r_sq"] as float):
+				in_poi_circle = true
+				break
+		if in_poi_circle:
 			continue
-		last_safe_world = world
 		if spacing_sq <= 0.0:
 			return world
 		var ok := true
@@ -211,8 +212,4 @@ func _pick_position(placed: Array[Vector3], spacing_sq: float, wave_director: No
 				break
 		if ok:
 			return world
-	# Все 10 попыток либо все unsafe → null (пропуск), либо safe но плотно стоят —
-	# берём последнюю safe (нахлёст ок, safe-нарушение нет).
-	# Для не-WOOD зон wave_director=null, safe-чек не работает, last_safe_world
-	# заполняется на каждой итерации — вернётся последняя случайная точка.
-	return last_safe_world
+	return last_world

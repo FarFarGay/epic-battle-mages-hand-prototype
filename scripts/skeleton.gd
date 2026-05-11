@@ -214,6 +214,21 @@ const TARGET_GRID_REFRESH_INTERVAL: float = 0.4
 static var _target_grid: Dictionary = {}
 static var _target_grid_time: float = -1000.0
 
+## Soft-cap «не больше TARGET_CAP скелетов на одну цель». Дизайнерский: 5
+## скелетов на одного гнома мгновенно его перебивают — не интересно.
+## Распределение приоритета в _scan_target: сначала ищем гнома с
+## load < cap; если все capped — берём палатку (если есть); если палаток
+## тоже нет — берём capped'ого гнома (4-й/5-й скелет всё равно бьёт).
+## Палатки лимиту не подчиняются — здание, может ломаться многими.
+const TARGET_CAP: int = 2
+
+## Snapshot: instance_id цели → сколько скелетов её таргетят (`_cached_target`
+## == эта цель). Заполняется в [_maybe_refresh_target_grid] (один проход
+## по SKELETON_GROUP). Между refresh'ами не обновляется — допускается
+## drift в TARGET_GRID_REFRESH_INTERVAL секунд. Race condition «5 скелетов
+## в один кадр выбрали одного» возможен, но рассасывается через 0.4с.
+static var _target_load: Dictionary = {}
+
 
 ## Возвращает координаты cell'а для произвольной мировой позиции по плоскости XZ.
 static func _grid_cell(pos: Vector3) -> Vector2i:
@@ -226,6 +241,8 @@ static func _grid_cell(pos: Vector3) -> Vector2i:
 ## Лениво пересоздаёт _target_grid из group skeleton_target. Зовётся в
 ## начале _scan_target. Один pass по группе раз в TARGET_GRID_REFRESH_INTERVAL
 ## секунд глобально (вместо одного pass'а на каждый скан каждого скелета).
+## Заодно пересобирает [_target_load] — счётчик «сколько скелетов уже на этой
+## цели» — на одном проходе по SKELETON_GROUP.
 static func _maybe_refresh_target_grid(tree: SceneTree) -> void:
 	var now: float = float(Time.get_ticks_msec()) / 1000.0
 	if now - _target_grid_time < TARGET_GRID_REFRESH_INTERVAL:
@@ -243,6 +260,19 @@ static func _maybe_refresh_target_grid(tree: SceneTree) -> void:
 			_target_grid[cell] = []
 		var entries: Array = _target_grid[cell]
 		entries.append([node.global_position, node])
+	# Параллельно пересобираем _target_load: instance_id цели → сколько
+	# скелетов сейчас её таргетят. Snapshot living значений `_cached_target`
+	# у всех скелетов. Используется в _scan_target для soft-cap'а
+	# (TARGET_CAP скелетов на одну живую цель).
+	_target_load.clear()
+	for n in tree.get_nodes_in_group(SKELETON_GROUP):
+		if not is_instance_valid(n):
+			continue
+		var skel := n as Skeleton
+		if skel == null or not is_instance_valid(skel._cached_target):
+			continue
+		var id: int = skel._cached_target.get_instance_id()
+		_target_load[id] = int(_target_load.get(id, 0)) + 1
 
 ## Размер cell'а в spatial-grid'е скелетов для boids-avoidance. 4м — компромисс
 ## между плотностью cell'ов и cost'ом запросов. 3×3 cell'ов = 12м, что больше
@@ -293,6 +323,25 @@ var _wander_target: Vector3 = Vector3.INF
 var _rest_timer: float = 0.0
 var _cached_target: Node3D = null
 var _vision_scan_timer: float = 0.0
+## Персональный угол approach-кольца вокруг цели. Каждый скелет идёт не в
+## саму точку цели, а в `target_pos + cos/sin × ring_radius`. Разные углы
+## → скелеты окружают цель, не выстраиваются «в линию» по биссектрисе
+## между спавн-точкой и гномом. Обновляется на смене `_cached_target` через
+## [_set_cached_target] — для новой цели свой расклад.
+var _approach_angle: float = 0.0
+## Доля от `attack_range`, на которой скелет «стоит» в кольце атаки. 0.85 =
+## внутри attack_range → достижение angle-goal'а гарантированно даёт
+## WINDUP-чек по дистанции до самой цели. Меньше — плотнее впритык; больше —
+## вылет за attack_range и зависание в approach.
+const APPROACH_RING_FACTOR: float = 0.85
+## Последняя известная позиция цели, исчезнувшей из TARGET_GROUP (без смерти).
+## Скелет идёт к ней, пока не дойдёт ARRIVAL_LAST_KNOWN или не найдёт новую
+## vision-цель. INF = нет точки (обычный wander). Записывается в stale-чеке,
+## сбрасывается на arrival или на смерть цели (queue_free).
+var _last_known_target_pos: Vector3 = Vector3.INF
+## Дистанция «прибыл к последней известной точке». 1.5м — комфортно: скелет
+## визуально дошёл, не дёргается на месте.
+const ARRIVAL_LAST_KNOWN: float = 1.5
 ## Цель, на которую сейчас идёт замах. Защёлкивается в `_on_state_enter(WINDUP)`,
 ## используется в `_perform_strike` вместо текущего `_cached_target` —
 ## иначе рескан зрения внутри 0.4с замаха мог подменить цель на ближайшего
@@ -359,6 +408,9 @@ func _ready() -> void:
 	_wander_phase = WanderPhase.RESTING
 	# Фазовый сдвиг скана: 50 скелетов не должны рескан'ить группу в один кадр.
 	_vision_scan_timer = randf() * vision_scan_interval
+	# Стартовый угол на approach-кольце — рандом. На первой смене цели
+	# (_set_cached_target из _scan_target) обновится; до этого скелет в wander.
+	_approach_angle = randf() * TAU
 	# Фазовый сдвиг LOD-чека по той же причине: 100 distance.distance_to() в
 	# одном кадре — само по себе нагрузка, размазываем по 0..lod_check_interval.
 	_lod_check_timer = randf() * lod_check_interval
@@ -441,8 +493,19 @@ func _on_damage_react_aggro(_amount: float) -> void:
 		return
 	var new_target := _scan_target()
 	if new_target != null:
-		_cached_target = new_target
+		_set_cached_target(new_target)
 		_vision_scan_timer = vision_scan_interval * _lod_vision_multiplier()
+
+
+## Централизованная смена `_cached_target`. На новой цели — новый
+## `_approach_angle`, чтобы скелет занял другую точку в кольце вокруг неё.
+## Если новая цель == старая (рескан вернул то же) — angle не трогаем,
+## не дёргать строй.
+func _set_cached_target(new_target: Node3D) -> void:
+	if new_target == _cached_target:
+		return
+	_cached_target = new_target
+	_approach_angle = randf() * TAU
 
 
 ## на меше; если скелет умрёт сразу после, mesh queue_free'нется вместе с
@@ -584,6 +647,8 @@ func _ai_step(delta: float) -> void:
 		return
 	if get_active_target():
 		super._ai_step(delta)
+	elif _last_known_target_pos != Vector3.INF:
+		_persist_toward_last_known(delta)
 	else:
 		_wander_tick(delta)
 	# WINDUP-creep: после super (который зануляет velocity в WINDUP-ветке)
@@ -617,6 +682,50 @@ func _ai_step(delta: float) -> void:
 ##
 ## Direction берётся к `_windup_target` (не к текущему `_cached_target`) —
 ## strike будет бить именно его, направление creep'а должно совпадать.
+## Override базового `_approach_target`: вместо движения в саму точку цели
+## идём в `target_pos + offset(_approach_angle, ring_radius)` — каждый
+## скелет занимает свой сектор кольца. Без этого 5 скелетов на одной цели
+## стояли бы по прямой линии (биссектриса спавн-точка ↔ цель), все
+## вплотную; теперь — нерегулярный полукруг/круг вокруг гнома.
+##
+## WINDUP-чек по дистанции до **самой цели** (не до offset point'а): когда
+## скелет доходит до своего сектора (внутри attack_range), сразу замах.
+## Если скелет ещё не дошёл, но цель сама шагнула близко (мирный гном
+## мчит обратно к палатке через скелета) — WINDUP всё равно срабатывает
+## по дистанции к target, не по dist до offset.
+##
+## Point-blank shortcut перенесён 1:1 из базового — короткий windup когда
+## цель глубоко в attack_range.
+func _approach_target(target: Node3D) -> void:
+	var target_pos: Vector3 = target.global_position
+	var to_target := Vector3(
+		target_pos.x - global_position.x,
+		0.0,
+		target_pos.z - global_position.z,
+	)
+	var dist_sq: float = to_target.x * to_target.x + to_target.z * to_target.z
+	var attack_range_sq: float = attack_range * attack_range
+	if dist_sq > attack_range_sq:
+		# Идём в свой сектор кольца, а не в саму цель. ring_radius чуть
+		# меньше attack_range → когда добежали — точно в зоне удара.
+		var ring_radius: float = attack_range * APPROACH_RING_FACTOR
+		var goal_x: float = target_pos.x + cos(_approach_angle) * ring_radius
+		var goal_z: float = target_pos.z + sin(_approach_angle) * ring_radius
+		var to_goal := Vector3(goal_x - global_position.x, 0.0, goal_z - global_position.z)
+		var to_goal_len: float = to_goal.length()
+		if to_goal_len > 0.001:
+			velocity.x = (to_goal.x / to_goal_len) * move_speed
+			velocity.z = (to_goal.z / to_goal_len) * move_speed
+	else:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		_enter_state(AttackState.WINDUP)
+		# Point-blank: цель глубоко в attack_range — сокращённый windup.
+		var dist: float = sqrt(dist_sq)
+		if dist <= attack_range * point_blank_distance_factor:
+			_state_timer = attack_windup_point_blank
+
+
 ## Re-aim каждый тик: цель сдвинулась → поза разворачивается на новое
 ## направление (squash & stretch локальные оси автоматически следуют).
 ##
@@ -848,6 +957,27 @@ func _apply_lod_physics_mode() -> void:
 				_collision_shape.disabled = true
 
 
+## Anti-exploit: цель пропала из TARGET_GROUP без смерти (постройку подняли,
+## гном вошёл в палатку...). Скелет продолжает идти к её последней позиции,
+## не «забывает» мгновенно. По прибытии — сбрасывает и переходит в wander.
+## Новая vision-цель (через scan) перебивает этот режим.
+func _persist_toward_last_known(_delta: float) -> void:
+	var to_pos := Vector3(
+		_last_known_target_pos.x - global_position.x,
+		0.0,
+		_last_known_target_pos.z - global_position.z,
+	)
+	var dist: float = to_pos.length()
+	if dist <= ARRIVAL_LAST_KNOWN:
+		_last_known_target_pos = Vector3.INF
+		velocity.x = 0.0
+		velocity.z = 0.0
+		return
+	var dir := to_pos / dist
+	velocity.x = dir.x * move_speed
+	velocity.z = dir.z * move_speed
+
+
 func _wander_tick(delta: float) -> void:
 	match _wander_phase:
 		WanderPhase.RESTING:
@@ -934,11 +1064,24 @@ func _physics_process(delta: float) -> void:
 	# главный пожиратель Physics_Frame. См. профайлер этап 43.
 	var stale := false
 	if _cached_target != null:
-		if not is_instance_valid(_cached_target) or not _cached_target.is_in_group(TARGET_GROUP):
+		if is_instance_valid(_cached_target):
+			if not _cached_target.is_in_group(TARGET_GROUP):
+				# Цель «исчезла» из под удара (постройка поднята в руку, гном
+				# вошёл в палатку и т.п.), но физически жива — запоминаем её
+				# **последнюю позицию** и продолжаем бежать туда. Без этого
+				# игрок мог бы «эксплойтить» подъёмом колокола: скелеты
+				# мгновенно теряли цель и шли в wander.
+				stale = true
+				_last_known_target_pos = _cached_target.global_position
+				_cached_target = null
+		else:
+			# Цель queue_free'нулась (умерла). Сбрасываем «последнюю позицию» —
+			# нет смысла идти к месту мёртвой цели, обычный wander уместнее.
 			stale = true
+			_last_known_target_pos = Vector3.INF
 			_cached_target = null
 	if _vision_scan_timer <= 0.0 or stale:
-		_cached_target = _scan_target()
+		_set_cached_target(_scan_target())
 		_vision_scan_timer = vision_scan_interval * _lod_vision_multiplier()
 
 	# Запоминаем knockback-состояние ДО физ-шага. Тик knockback'а живёт внутри
@@ -1000,6 +1143,8 @@ func _far_step(delta: float) -> void:
 		if not (_state == AttackState.APPROACH and _lod_should_skip_ai_tick()):
 			if get_active_target():
 				super._ai_step(delta)
+			elif _last_known_target_pos != Vector3.INF:
+				_persist_toward_last_known(delta)
 			else:
 				_wander_tick(delta)
 
@@ -1046,10 +1191,20 @@ func _scan_target() -> Node3D:
 	var skel_pos := global_position
 	var skel_cell := Skeleton._grid_cell(skel_pos)
 	var vr_sq: float = vision_radius * vision_radius
-	var nearest_gnome: Node3D = null
-	var nearest_gnome_dist_sq := vr_sq
+	# Два кандидата гнома: «свободный» (load < TARGET_CAP) и любой ближайший
+	# как fallback. Палатки кэшируем отдельно — они без cap'а.
+	var nearest_free_gnome: Node3D = null
+	var nearest_free_gnome_dist_sq := vr_sq
+	var nearest_any_gnome: Node3D = null
+	var nearest_any_gnome_dist_sq := vr_sq
 	var nearest_other: Node3D = null
 	var nearest_other_dist_sq := vr_sq
+	# self не должен считать свою старую цель в load — будем готовиться её
+	# сменить. На случай если других кандидатов нет и swap не должен лишить
+	# нас текущей цели.
+	var self_target_id: int = -1
+	if is_instance_valid(_cached_target):
+		self_target_id = _cached_target.get_instance_id()
 
 	# 3×3 cell'ов вокруг текущей позиции скелета. cell_size=12 = vision_radius,
 	# поэтому 3×3 cell'ов гарантированно покрывает диск vision_radius. Тонкость:
@@ -1083,17 +1238,34 @@ func _scan_target() -> Node3D:
 				# `is Gnome`. Контракт: GNOME_GROUP содержит все гномы (мирных
 				# и Defender'ов). Палатки в TARGET_GROUP, но не в GNOME_GROUP.
 				if node.is_in_group(Gnome.GNOME_GROUP):
-					if d_sq < nearest_gnome_dist_sq:
-						nearest_gnome_dist_sq = d_sq
-						nearest_gnome = node
+					# Любой гном — кандидат «без cap'а» (fallback если все
+					# свободные слоты гномов заняты).
+					if d_sq < nearest_any_gnome_dist_sq:
+						nearest_any_gnome_dist_sq = d_sq
+						nearest_any_gnome = node
+					# Гном со свободным слотом — основной кандидат. Self-load
+					# вычитаем: если эта цель уже наша, не считаем себя — иначе
+					# swap-loop'ы (отдал бы цель ради «свободной», и снова взял).
+					var gnome_id: int = node.get_instance_id()
+					var load: int = int(Skeleton._target_load.get(gnome_id, 0))
+					if gnome_id == self_target_id:
+						load -= 1
+					if load < TARGET_CAP and d_sq < nearest_free_gnome_dist_sq:
+						nearest_free_gnome_dist_sq = d_sq
+						nearest_free_gnome = node
 				else:
 					if d_sq < nearest_other_dist_sq:
 						nearest_other_dist_sq = d_sq
 						nearest_other = node
-	if nearest_gnome != null:
-		return nearest_gnome
+	# Приоритет: свободный гном → палатка → capped'ый гном → forced.
+	# 4-й/5-й скелет на одного гнома не зависают в idle, но идут на палатки
+	# если они в зоне видимости — это распределяет волну по объектам обороны.
+	if nearest_free_gnome != null:
+		return nearest_free_gnome
 	if nearest_other != null:
 		return nearest_other
+	if nearest_any_gnome != null:
+		return nearest_any_gnome
 	# Vision пуст — на forced_target (палатка-якорь для wave-скелетов вне
 	# vision_radius). Гномы в 12м зоне всегда отбирают приоритет.
 	if is_instance_valid(_forced_target) and _forced_target.is_in_group(TARGET_GROUP):

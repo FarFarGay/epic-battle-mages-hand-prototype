@@ -338,6 +338,16 @@ func _on_camp_deployed(anchor: Vector3) -> void:
 			print("[WaveDirector] POI %s мирный (нет wave_schedule) — без осады" % poi.name)
 		return
 
+	# Автостарт кампании на первом деплое осадного POI. Раньше игрок должен
+	# был отдельно жать «Старт кампании» в журнале — мало кто помнил. Теперь:
+	# развернул лагерь у костра с расписанием → фон + осада сами запускаются.
+	# Повторный камп_deployed после рестарта попадает в ветку RUNNING ниже —
+	# кампанию повторно не стартуем.
+	if _phase == Phase.IDLE:
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] автостарт кампании по первому деплою лагеря")
+		_start_campaign()
+
 	_active_camp = camp
 	_active_poi = poi
 	_active_schedule = schedule
@@ -346,8 +356,19 @@ func _on_camp_deployed(anchor: Vector3) -> void:
 	var first_stage := schedule.get_stage(0)
 	_wave_cd = first_stage.wave_interval if first_stage != null else 0.0
 	if debug_log and LogConfig.master_enabled:
-		print("[WaveDirector] осада старт: POI=%s camp=%s stage=0 (interval=%.0fс, %d скел/волна)" % [
-			poi.name, camp.name, _wave_cd, first_stage.skeletons_per_wave if first_stage else 0,
+		var first_size: String
+		if first_stage == null:
+			first_size = "—"
+		elif first_stage.has_groups():
+			var total: int = 0
+			for g in first_stage.groups:
+				if g != null:
+					total += g.total_count()
+			first_size = "%d групп / %d юнитов" % [first_stage.groups.size(), total]
+		else:
+			first_size = "%d скел/волна" % first_stage.skeletons_per_wave
+		print("[WaveDirector] осада старт: POI=%s camp=%s stage=0 (interval=%.0fс, %s)" % [
+			poi.name, camp.name, _wave_cd, first_size,
 		])
 
 
