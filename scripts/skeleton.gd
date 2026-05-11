@@ -47,8 +47,6 @@ extends Enemy
 ## отскоки сломаются.
 
 const BODY_ALBEDO_COLOR := Color(0.88, 0.85, 0.78, 1.0)
-const WINDUP_EMISSION_COLOR := Color(1.0, 0.2, 0.2, 1.0)
-const WINDUP_EMISSION_INTENSITY := 1.5
 ## Группа целей: палатки лагеря и активные гномы. Скелет находит «глазами».
 const TARGET_GROUP := &"skeleton_target"
 ## Группа всех живых скелетов — для перфоманс-HUD (счётчик + LOD-распределение).
@@ -169,7 +167,6 @@ enum WanderPhase { RESTING, WANDERING }
 @export_group("")
 
 static var _shared_normal_material: StandardMaterial3D
-static var _shared_windup_material: StandardMaterial3D
 
 ## Размер cell'а в spatial-grid'е целей. Оптимально ~vision_radius=12м,
 ## округлено до 12 для совпадения по решётке. Скелет на vision-скане
@@ -423,8 +420,15 @@ func _on_damage_react_aggro(_amount: float) -> void:
 ## на меше; если скелет умрёт сразу после, mesh queue_free'нется вместе с
 ## ним и tween тихо отвалится. Не трогаем shared material (он один на класс)
 ## — иначе вспышка цвета затронула бы все 200+ скелетов.
+##
+## Пропускаем feedback во время WINDUP — там pose-tween держит coiled-позу
+## телеграфа удара. Без этой защиты scale-punch (тянет к Vector3.ONE × 1.25 →
+## ONE) перетёр бы coiled-позу и оставил бы скелета в нейтрале до конца
+## замаха — телеграф терялся бы при попадании.
 func _on_self_damaged(_amount: float) -> void:
 	if _mesh == null or not is_instance_valid(_mesh):
+		return
+	if _state == AttackState.WINDUP:
 		return
 	var tween := _mesh.create_tween()
 	tween.set_trans(Tween.TRANS_QUAD)
@@ -432,36 +436,105 @@ func _on_self_damaged(_amount: float) -> void:
 	tween.tween_property(_mesh, "scale", Vector3.ONE, 0.14).set_ease(Tween.EASE_IN)
 
 
+## Squash & stretch как у копейщика — pose-телеграф для WINDUP/STRIKE.
+## Красный emission glow читался как «получил урон»; coiled-поза («припал
+## перед прыжком») — однозначный сигнал «замахивается, ща ударит».
+##
+## POSE_WINDUP_SKEL — скелет приседает и расширяется поперёк (Y=0.75, X=1.2),
+## слегка прижимается по Z (0.85). Вид сверху: широкий приплюснутый овал.
+## POSE_STRIKE_SKEL — вытягивается вперёд (Z=1.45) и вверх (Y=1.1), сужается
+## по X (0.7). Стрелка вдоль удара. Z-контраст windup→strike: 0.85 → 1.45 ≈
+## 1.7× — заметный визуальный «выстрел копьём».
+##
+## Y-разница больше чем у копейщика (0.75 → 1.1) — скелет высокий и тонкий
+## (capsule h=2.0, у копейщика 0.8), вертикальная компонента видна лучше.
+const POSE_NEUTRAL: Vector3 = Vector3.ONE
+const POSE_WINDUP_SKEL: Vector3 = Vector3(1.2, 0.75, 0.85)
+const POSE_STRIKE_SKEL: Vector3 = Vector3(0.7, 1.1, 1.45)
+
+## Тайминги переходов между позами. WINDUP-ramp медленнее чем у копейщика
+## (0.12 vs 0.06) — у скелета вся фаза 0.32-0.48с после variance, есть
+## запас. STRIKE-snap такой же быстрый (0.04с — «выстрел»). Restore идёт в
+## COOLDOWN параллельно self-lunge'у; к середине cooldown'а (1.0с) скелет в
+## нейтрале.
+const POSE_WINDUP_TIME: float = 0.12
+const POSE_STRIKE_TIME: float = 0.04
+const POSE_RESTORE_TIME: float = 0.25
+
+## Активный pose-tween — kill'ается при следующем переходе чтобы не
+## перекрываться (windup→strike не должен ждать завершения windup-ramp'а).
+var _pose_tween: Tween = null
+
+
+## Tween-переход меша к указанной позе за `duration`. Старый pose-tween
+## убивается чтобы новый стартовал с текущего interpolated-значения, а не
+## ждал завершения предыдущего.
+func _tween_pose_to(target: Vector3, duration: float) -> void:
+	if _mesh == null or not is_instance_valid(_mesh):
+		return
+	if _pose_tween != null and _pose_tween.is_valid():
+		_pose_tween.kill()
+	_pose_tween = create_tween()
+	_pose_tween.tween_property(_mesh, "scale", target, duration).set_ease(Tween.EASE_OUT)
+
+
+## Снап в strike-позу + chain restore в нейтраль. Один tween-цепочкой, чтобы
+## restore стартовал сразу после snap'а независимо от того, что происходит с
+## state machine (cooldown тикает в base, STRIKE-state транзитное).
+func _tween_pose_strike() -> void:
+	if _mesh == null or not is_instance_valid(_mesh):
+		return
+	if _pose_tween != null and _pose_tween.is_valid():
+		_pose_tween.kill()
+	_pose_tween = create_tween()
+	_pose_tween.tween_property(_mesh, "scale", POSE_STRIKE_SKEL, POSE_STRIKE_TIME).set_ease(Tween.EASE_OUT)
+	_pose_tween.chain()
+	_pose_tween.tween_property(_mesh, "scale", POSE_NEUTRAL, POSE_RESTORE_TIME).set_ease(Tween.EASE_IN)
+
+
 static func _ensure_shared_materials() -> void:
 	if _shared_normal_material == null:
 		var normal := StandardMaterial3D.new()
 		normal.albedo_color = BODY_ALBEDO_COLOR
 		_shared_normal_material = normal
-	if _shared_windup_material == null:
-		var windup := StandardMaterial3D.new()
-		windup.albedo_color = BODY_ALBEDO_COLOR
-		windup.emission_enabled = true
-		windup.emission = WINDUP_EMISSION_COLOR
-		windup.emission_energy_multiplier = WINDUP_EMISSION_INTENSITY
-		_shared_windup_material = windup
 
 
 func _on_state_enter(new_state: int) -> void:
 	if new_state == AttackState.WINDUP:
-		_set_glow(true)
+		# Squash & stretch вместо color-glow: красный emission читался как
+		# «получил урон». Coiled-поза (как у копейщика) — однозначный сигнал
+		# «замахивается». Поза держится attack_windup секунд (0.32-0.48с после
+		# variance), до перехода в STRIKE.
+		_tween_pose_to(POSE_WINDUP_SKEL, POSE_WINDUP_TIME)
 		# Защёлкиваем цель замаха — strike будет бить её, не текущий cached_target.
 		# get_active_target() возвращает _cached_target (override skeleton'a), а
 		# тот свежий: WINDUP запускается из _approach_target в том же тике, когда
 		# дистанция упала ≤ attack_range, т.е. рескан был только что.
 		_windup_target = get_active_target()
+	elif new_state == AttackState.STRIKE:
+		# Снап в extended-позу (тело вытянуто копьём вперёд) + chain restore.
+		# STRIKE-state транзитное (один тик), но self-lunge через
+		# `_apply_velocity_change` несёт скелета по инерции ~0.2с (lunge_duration),
+		# и extended-pose как раз эту фазу визуализирует. Restore идёт в
+		# COOLDOWN — к середине кулдауна (1.0с) скелет уже в нейтральной позе.
+		_tween_pose_strike()
 
 
-func _on_state_exit(old_state: int) -> void:
-	if old_state == AttackState.WINDUP:
-		_set_glow(false)
-		# _windup_target НЕ обнуляется здесь: STRIKE → _perform_strike читает
-		# его, дальше сам очищает. Если выйти из WINDUP в APPROACH через
-		# _on_knockback (Enemy.gd) — то же самое: следующий WINDUP перезапишет.
+func _on_state_exit(_old_state: int) -> void:
+	# Поза управляется через enter-хуки (WINDUP → coiled, STRIKE → extended
+	# с chain'ом restore). Knockback-сброс WINDUP→APPROACH ловится отдельно
+	# в `_on_knockback` override'е, иначе coiled-поза бы зависла.
+	pass
+
+
+## Override базы Enemy._on_knockback: помимо state-сброса (WINDUP→APPROACH)
+## возвращаем нейтральную позу. Без этого скелет, сбитый из coiled-позы,
+## ходил бы криво до следующей атаки.
+func _on_knockback() -> void:
+	var was_windup: bool = _state == AttackState.WINDUP
+	super._on_knockback()
+	if was_windup:
+		_tween_pose_to(POSE_NEUTRAL, POSE_RESTORE_TIME)
 
 
 ## Override _ai_step: при наличии цели — обычный FSM (super), без цели — wander.
@@ -1026,9 +1099,3 @@ func _on_destroyed() -> void:
 			shatter_fragment_count, shatter_lifetime)
 
 
-func _set_glow(active: bool) -> void:
-	if not _mesh:
-		return
-	# Свап ссылки — никаких чтений/записей свойств материала. Материалы общие,
-	# мутировать их per-state нельзя (поломались бы все остальные скелеты).
-	_mesh.material_override = _shared_windup_material if active else _shared_normal_material

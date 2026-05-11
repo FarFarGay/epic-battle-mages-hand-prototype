@@ -637,7 +637,7 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 
 **Виртуальные хуки:**
 - `_perform_strike(target: Node3D)` — конкретный удар. Подкласс наносит урон и/или делает физический выпад. Вызывается базой ровно один раз в момент `WINDUP → STRIKE`, сразу после которого база сама переводит FSM в `COOLDOWN`.
-- `_on_state_enter(new_state)` / `_on_state_exit(old_state)` — реакция на смену фазы FSM. Типичный кейс — телеграф замаха (Skeleton: подсветка вкл. на enter `WINDUP`, выкл. на exit).
+- `_on_state_enter(new_state)` / `_on_state_exit(old_state)` — реакция на смену фазы FSM. Типичный кейс — телеграф замаха (Skeleton: coiled-pose squash на enter `WINDUP`, extended-pose snap на enter `STRIKE`).
 - `_on_knockback()` — реакция на **внешний** толчок. Базовая реализация: только `WINDUP` сбрасывается в `APPROACH`. `COOLDOWN` намеренно **не** сбрасывается — кулдаун продолжает тикать в `_physics_process` независимо от knockback'а.
 - `_on_destroyed()` — вызывается ровно перед `queue_free` на смерти, после `destroyed.emit`. Подклассы спавнят визуал смерти — он добавляется в `_effects_root` и переживает сам труп.
 
@@ -786,28 +786,37 @@ if node == null:
 
 **Эмерджентное поведение:** скелеты, идущие к одной палатке, формируют не плотный «клин», а арку/полукольцо вокруг неё (avoidance = тяга наружу, target = тяга внутрь, equilibrium на ring'е). Выглядит естественно как RTS-flocking.
 
-**Константы:** `BODY_ALBEDO_COLOR`, `WINDUP_EMISSION_COLOR`, `WINDUP_EMISSION_INTENSITY`. Per-instance тонкая настройка цвета не предусмотрена.
+**Константы:** `BODY_ALBEDO_COLOR`. Per-instance тонкая настройка цвета не предусмотрена.
 
-**Static shared materials (батчинг GPU):**
+**Static shared material (батчинг GPU):**
 
 ```gdscript
 static var _shared_normal_material: StandardMaterial3D
-static var _shared_windup_material: StandardMaterial3D
 ```
 
-Создаются **один раз на класс** через `_ensure_shared_materials()` в первом `_ready`. Все скелеты делят два материала на класс — никаких `.duplicate()` per-instance. Переключение состояния = смена ссылки в `_mesh.material_override` → GPU батчит 50 скелетов в один draw call на состояние.
+Создаётся **один раз на класс** через `_ensure_shared_materials()` в первом `_ready`. Все скелеты делят один материал на класс — никаких `.duplicate()` per-instance. GPU батчит 50 скелетов в один draw call.
 
-**`_ready`:** `super._ready()` (обязателен), затем `_ensure_shared_materials()` и `_mesh.material_override = _shared_normal_material`.
+Раньше был ещё `_shared_windup_material` с красным emission — телеграф WINDUP'а через цвет. Удалён: красная подсветка читалась игроком как «получил урон», а не как «замахивается». Заменён на pose-телеграф (squash & stretch на _mesh.scale, см. ниже).
+
+**`_ready`:** `super._ready()` (обязателен), затем `_apply_stat_variance`, `_ensure_shared_materials()` и `_mesh.material_override = _shared_normal_material`.
 
 **Override'ы базы:**
-- `_on_state_enter(new_state)`: на `AttackState.WINDUP` → `_set_glow(true)` + **защёлкиваем `_windup_target = get_active_target()`** (этап 47). Это лок цели замаха — strike будет бить именно её, а не текущий рескан-результат.
-- `_on_state_exit(old_state)`: на выходе из `WINDUP` → `_set_glow(false)` (включая случай отмены замаха через базовый `_on_knockback`). `_windup_target` НЕ обнуляется здесь — `_perform_strike` сам прочитает и очистит, либо следующий WINDUP перезапишет.
+- `_on_state_enter(new_state)`: на `AttackState.WINDUP` → `_tween_pose_to(POSE_WINDUP_SKEL, POSE_WINDUP_TIME)` (coiled-поза) + **защёлкиваем `_windup_target = get_active_target()`** (этап 47). Лок цели замаха — strike будет бить именно её, а не текущий рескан-результат. На `AttackState.STRIKE` → `_tween_pose_strike()` (snap в extended-позу с chain'ом restore к нейтрали).
+- `_on_state_exit(_old_state)`: ничего — поза управляется через enter-хуки.
+- `_on_knockback()` (override): super сбрасывает WINDUP→APPROACH; если был WINDUP — `_tween_pose_to(POSE_NEUTRAL, POSE_RESTORE_TIME)`, иначе coiled-поза зависла бы.
 - `_perform_strike(_target)` (этап 47, обновлено): использует **`_windup_target`** (защёлкнут на входе в WINDUP), а не текущий `get_active_target()`. Параметр `_target` из `Enemy._ai_step` тоже игнорируется — он = текущий cached. Валидация: жив + в группе + `dist² ≤ (attack_range × WINDUP_TARGET_RANGE_SLACK)²` (slack=1.5, запас на движение цели за `attack_windup`). Если протух — strike отменяется, COOLDOWN тикает обычным образом. Иначе: `Damageable.try_damage(active, attack_damage)` (через контракт, **не** `has_method`/`call`), `EventBus.skeleton_attacked_camp.emit` для CampPart/мирных гномов, `_do_lunge(active)`.
 - `_do_lunge(target)`: считаем горизонтальное направление к цели; **`_apply_velocity_change(dir × lunge_speed, lunge_duration)`**, а не `apply_knockback`. Свой собственный strike через `apply_knockback` дёрнул бы `_on_knockback` хук, который сбил бы только что выставленное состояние.
 
+**Squash & stretch телеграф (как у копейщика):**
+- `POSE_NEUTRAL = (1,1,1)`, `POSE_WINDUP_SKEL = (1.2, 0.75, 0.85)` — coiled, скелет приседает и расширяется поперёк (вид сверху: широкий приплюснутый овал), `POSE_STRIKE_SKEL = (0.7, 1.1, 1.45)` — extended, вытягивается копьём вперёд (Z-контраст windup→strike: 0.85 → 1.45 ≈ 1.7×).
+- Тайминги: `POSE_WINDUP_TIME=0.12с` (медленный ramp в coiled — у скелета вся фаза 0.32-0.48с, есть запас), `POSE_STRIKE_TIME=0.04с` (snap «выстрел»), `POSE_RESTORE_TIME=0.25с` (chain'ом после strike-snap, к середине COOLDOWN'а скелет в нейтрале).
+- `_pose_tween: Tween` хранится для kill'а при следующем переходе (быстрая серия windup'ов не должна перекрываться tween'ами).
+- `_tween_pose_to(target, duration)` — обычный переход. `_tween_pose_strike()` — снап + chain restore одной цепочкой.
+- Hit-feedback (`_on_self_damaged`) — пропускается в WINDUP'е: scale-punch (target=Vector3.ONE×1.25→ONE) перетёр бы coiled-позу и оставил бы скелета в нейтрале до конца замаха, телеграф терялся бы при попадании.
+
 **Зачем target-lock в WINDUP** (этап 47): `_vision_scan_timer` тикает в `_physics_process` независимо от FSM-состояния, поэтому за 0.4с замаха `_cached_target` мог быть подменён ближайшим гномом из 12-метрового vision. До фикса — strike бил по новой цели на любой дистанции (`Damageable.try_damage` без contact-чека → мгновенный урон по цели за 11м). После фикса — strike бьёт того, на кого замахнулся, или мажет, если он ушёл.
 
-**Жизненный цикл (на уровне FSM базы):** APPROACH → WINDUP (`attack_windup` сек, красная подсветка через свап `material_override`) → STRIKE (зовётся `_perform_strike`, наносит урон + self-lunge через `_apply_velocity_change`) → COOLDOWN (`attack_cooldown` сек, тикает даже в knockback'е) → APPROACH.
+**Жизненный цикл (на уровне FSM базы):** APPROACH → WINDUP (`attack_windup` сек, coiled-pose телеграф) → STRIKE (зовётся `_perform_strike`, наносит урон + self-lunge через `_apply_velocity_change`, extended-pose snap с chain restore) → COOLDOWN (`attack_cooldown` сек, тикает даже в knockback'е, поза восстанавливается до нейтрали) → APPROACH.
 
 **Смерть (`_on_destroyed`):**
 - Прячем `MeshInstance3D` (`visible = false`) — труп визуально исчезает.
