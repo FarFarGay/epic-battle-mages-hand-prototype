@@ -39,7 +39,7 @@ const SOLDIER_CATALOG: Dictionary = {
 		# (move_speed для догона), больно бьёт в упор (damage), чаще чем
 		# лучник (cooldown — 1 удар/сек примерно).
 		"stats": {
-			"hp": 40.0,
+			"hp": 30.0,
 			"enemy_detect_radius": 18.0,
 			"attack_range": 2.2,
 			"attack_damage_min": 22.0,

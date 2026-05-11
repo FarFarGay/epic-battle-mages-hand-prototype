@@ -605,7 +605,7 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 - `move_speed: float = 4.0` — горизонтальная скорость передвижения.
 - `gravity: float = 20.0` — ускорение свободного падения.
 - `attack_range: float = 1.5` — на каком расстоянии до цели начинается атака.
-- `attack_damage: float = 8.0` — урон цели при атаке. С variance ±20% в Skeleton — 6.4-9.6 за strike. 1 удар = ~20% pikeman-hp (40), копейщик умирает за 4-5 ответных.
+- `attack_damage: float = 8.0` — урон цели при атаке. С variance ±20% в Skeleton — 6.4-9.6 за strike. 1 удар = ~27% pikeman-hp (30), копейщик умирает за 3-5 ответных.
 - `attack_cooldown: float = 1.0` — секунды между атаками. Тикает всегда (в т.ч. в knockback'е).
 - `attack_windup: float = 0.4` — длительность фазы WINDUP до удара.
 - `attack_windup_point_blank: float = 0.1` — короткий windup, если цель уже глубоко в attack_range на момент входа в WINDUP. См. **Point-blank trigger** ниже.
@@ -1459,7 +1459,7 @@ Autoload-сценарий, аналог SpellSystem. Single source of truth дл
 - `scene: PackedScene` — что инстанцировать (extends SoldierGnome).
 - `stats: Dictionary` — параметры юнита (hp, enemy_detect_radius, attack_range, damage_min/max, cooldown_min/max, move_speed).
 
-Текущий каталог — только `pikeman`: hp=40, attack_range=2.2м, damage 22..32, cooldown 0.6..1.0с, move_speed=2.2.
+Текущий каталог — только `pikeman`: hp=30, attack_range=2.2м, damage 22..32, cooldown 0.6..1.0с, move_speed=2.2.
 
 #### 5.8.2.2 Squad — RefCounted-сущность
 Не Node. Чистая логическая обёртка: `members: Array[SoldierGnome]`, `state`, `hold_position`, `_strict_move`. Каждый soldier держит ссылку (`_squad`), Camp хранит в `_squads` — пока живы, RefCounted alive.
