@@ -13,6 +13,7 @@
 [ext_resource type="PackedScene" path="res://scenes/super_pattern_overlay.tscn" id="11"]
 [ext_resource type="PackedScene" path="res://scenes/super_carrier.tscn" id="12"]
 [ext_resource type="Script" path="res://scripts/hand_squad_aim.gd" id="13"]
+[ext_resource type="Script" path="res://scripts/hand_build_aim.gd" id="14_build"]
 
 [sub_resource type="SphereMesh" id="SphereMesh_hand"]
 radius = 0.5
@@ -78,3 +79,6 @@ pattern_overlay_scene = ExtResource("11")
 
 [node name="SquadAim" type="Node" parent="."]
 script = ExtResource("13")
+
+[node name="BuildAim" type="Node" parent="."]
+script = ExtResource("14_build")

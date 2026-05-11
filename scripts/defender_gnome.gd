@@ -172,6 +172,31 @@ var _alarm_target: Node3D = null
 ## защищает от «фантомного целеуказания» если скелет ушёл из зоны или умер
 ## не от лучника.
 var _alarm_until_msec: int = 0
+## Точка alarm-вызова от сторожевого колокола (WatchBell.bell_alarmed). Если
+## не Vector3.INF — защитник идёт сюда вместо обычного patrol'а, бьёт всё что
+## видит рядом. Сбрасывается на _bell_until_msec истечении или по явному
+## вызову `release_from_bell()` (Camp на bell.destroyed).
+##
+## **Отличие от `_alarm_target`:** alarm_target — конкретный скелет
+## (агрессор у палатки), цель для выстрела. _bell_pos — точка-якорь
+## (позиция колокола), куда защитник идёт; цели для выстрелов потом
+## находит обычным cone-сканом.
+var _bell_pos: Vector3 = Vector3.INF
+var _bell_until_msec: int = 0
+## Ссылка на колокол, к которому ответил защитник. Используется в bell-mode
+## для проверки `has_enemies_in_zone()` — пока в зоне есть скелеты, таймер
+## продлевается (защитник остаётся на посту). Сбрасывается на release_from_bell
+## или истечении таймера.
+var _bell_ref: WatchBell = null
+## Длительность задержки после очищения зоны (последний скелет ушёл/умер).
+## Пока есть скелеты — этот же интервал используется как «постоянное продление»
+## таймера на каждом тике. Дизайн: после боя защитник стоит ещё linger секунд
+## на случай новой волны.
+const BELL_LINGER_SECONDS: float = 8.0
+## Скорость движения к колоколу. Между walk (move_speed=1.6) и
+## sprint (caravan_sprint_speed=9.0). Дизайнерский баланс: alarm-помощь
+## должна быть видимой, но не «телепортом». 4 м/с = заметный бег.
+const BELL_RESPONSE_SPEED: float = 4.0
 ## Знак латерального смещения для escort-точки: -1 (левый борт) или +1
 ## (правый борт). Рандомизируется в _ready, фиксируется на жизнь инстанса —
 ## чтобы защитник не «прыгал» через палатку на каждом тике.
@@ -386,7 +411,86 @@ func _active_tick(delta: float) -> void:
 ##      → sector-патруль (точка на patrol-окружности в направлении цели от лагеря).
 ##   3. Без цели — случайный патруль по периметру.
 ##   4. `_facing` обновляется по результату (цель / patrol-точка / наружу).
+## Вызов от Camp на bell_alarmed: защитник переключается в bell-response
+## режим — идёт к колоколу, бьёт всё видимое рядом. Таймер автоматически
+## продлевается пока в alarm-зоне колокола есть скелеты; когда зона
+## очищена — таймер истекает через [BELL_LINGER_SECONDS] секунд.
+func respond_to_bell(bell: WatchBell) -> void:
+	if bell == null:
+		return
+	_bell_ref = bell
+	_bell_pos = bell.global_position
+	_bell_until_msec = Time.get_ticks_msec() + int(BELL_LINGER_SECONDS * 1000.0)
+
+
+## Явная отмена bell-response (Camp при разрушении колокола).
+## Защитник немедленно возвращается к patrol'у.
+func release_from_bell() -> void:
+	_bell_pos = Vector3.INF
+	_bell_until_msec = 0
+	_bell_ref = null
+
+
+## True если защитник сейчас в bell-response режиме. Пока в alarm-зоне колокола
+## есть скелеты — продлеваем таймер на каждом тике (по сути «работает пока
+## идёт бой»). После очищения зоны таймер истекает естественным образом
+## через BELL_LINGER_SECONDS — защитник стоит ещё linger секунд на случай
+## новой волны.
+func _is_responding_to_bell() -> bool:
+	if _bell_pos == Vector3.INF:
+		return false
+	# Колокол разрушен — release_from_bell должен был сработать (Camp
+	# подписан на bell.destroyed), но страховочно валидируем.
+	if not is_instance_valid(_bell_ref):
+		release_from_bell()
+		return false
+	# Враги в зоне → продлеваем таймер. Этот «постоянный re-trigger» делает
+	# linger-логику простой: защитник остаётся пока бой идёт.
+	if _bell_ref.has_enemies_in_zone():
+		_bell_until_msec = Time.get_ticks_msec() + int(BELL_LINGER_SECONDS * 1000.0)
+	if Time.get_ticks_msec() >= _bell_until_msec:
+		release_from_bell()
+		return false
+	return true
+
+
 func _defender_combat_tick(delta: float) -> void:
+	# Bell-response override: идём к колоколу пока далеко, рядом — обычный
+	# боевой тик (vision-цели, стрельба) уже работает по месту bell'а.
+	# При этом обычный sector-patrol вокруг лагеря выключен — защитник
+	# держит позицию у колокола, не дрейфует обратно.
+	if _is_responding_to_bell():
+		var to_bell: Vector3 = _bell_pos - global_position
+		to_bell.y = 0.0
+		var bell_dist: float = to_bell.length()
+		const BELL_ARRIVAL: float = 2.0
+		if bell_dist > BELL_ARRIVAL:
+			# Бежим к колоколу — средняя скорость (BELL_RESPONSE_SPEED).
+			# Не sprint — дизайнер хочет чтобы alarm-помощь была видимой бегущей
+			# реакцией, а не телепортом.
+			var dir := to_bell / bell_dist
+			velocity.x = dir.x * BELL_RESPONSE_SPEED
+			velocity.z = dir.z * BELL_RESPONSE_SPEED
+			_facing = dir
+			_apply_facing()
+			return
+		# Прибыли — стоим и стреляем. _resolve_target найдёт скелета в
+		# vision-конусе или alarm-target (если был); fall back на обычный
+		# поток ниже не нужен — стрельба та же.
+		var target_at_bell: Node3D = _resolve_target(delta)
+		if target_at_bell != null:
+			_facing = _horizontal_dir_to(target_at_bell.global_position)
+			velocity.x = 0.0
+			velocity.z = 0.0
+			_attack_timer -= delta
+			if _attack_timer <= 0.0:
+				_fire_at(target_at_bell)
+				_attack_timer = randf_range(attack_cooldown_min, attack_cooldown_max)
+		else:
+			velocity.x = 0.0
+			velocity.z = 0.0
+		_apply_facing()
+		return
 	var target: Node3D = _resolve_target(delta)
 
 	if target != null and is_instance_valid(target):

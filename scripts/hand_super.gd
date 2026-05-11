@@ -180,9 +180,11 @@ func _process(_delta: float) -> void:
 
 
 func _handle_input() -> void:
-	# Если рука сейчас в SQUAD_AIM (команду squad'у даём) — Super-каст
-	# заглушаем. На триггере squad'а Super не должен запускаться.
-	if _hand != null and _hand.active_category == Hand.Category.SQUAD_AIM:
+	# Если рука сейчас в SQUAD_AIM / BUILD_AIM (команду squad'у даём / выбираем
+	# точку постройки) — Super-каст заглушаем.
+	if _hand != null and (
+			_hand.active_category == Hand.Category.SQUAD_AIM
+			or _hand.active_category == Hand.Category.BUILD_AIM):
 		return
 	match _state:
 		State.READY:

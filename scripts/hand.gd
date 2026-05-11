@@ -24,7 +24,7 @@ extends Node3D
 ## SQUAD_AIM — режим прицеливания команды «Идти сюда» для отряда. HandSquadAim
 ## координатор перехватывает ПКМ для подтверждения цели. Все остальные
 ## категории также гасятся.
-enum Category { PHYSICAL, MAGIC, SUPER, SQUAD_AIM }
+enum Category { PHYSICAL, MAGIC, SUPER, SQUAD_AIM, BUILD_AIM }
 
 const HAND_GROUP := &"hand"
 
@@ -54,6 +54,7 @@ const RAY_DISTANCE := 1000.0
 @onready var spell_actions: HandSpell = $SpellActions
 @onready var super_actions: HandSuper = $SuperActions
 @onready var squad_aim: HandSquadAim = $SquadAim
+@onready var build_aim: HandBuildAim = $BuildAim
 
 var _velocity_history: Array[Vector3] = []
 var _previous_pos: Vector3
@@ -88,6 +89,8 @@ func _ready() -> void:
 	super_actions.setup(self)
 	# SQUAD_AIM — четвёртая ось (команда отряду «Идти сюда»).
 	squad_aim.setup(self)
+	# BUILD_AIM — пятая ось (интерактивное размещение построек: колокол и т.д.).
+	build_aim.setup(self)
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
 	grabbed.connect(func(item: Node3D) -> void: EventBus.hand_grabbed.emit(item))

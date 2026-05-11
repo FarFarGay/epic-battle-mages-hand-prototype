@@ -78,6 +78,7 @@ const UPGRADE_LONG_DRAW := &"long_draw"
 ## за ресурсы (BUILDING_NEW_TENT можно строить многократно). См.
 ## CAMP_BUILDING_CATALOG ниже.
 const BUILDING_NEW_TENT := &"new_tent"
+const BUILDING_WATCH_BELL := &"watch_bell"
 
 ## Каталог апгрейдов отряда — id → отображаемые поля. JournalPanel читает
 ## name/description/level чтобы построить карточки. Эффекты применяются на
@@ -123,6 +124,22 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 		},
 		"deployed_only": true,
 		"repeatable": true,
+	},
+	BUILDING_WATCH_BELL: {
+		"name": "Сторожевой колокол",
+		"description": "Гном-сторож замечает врагов в радиусе и зовёт двух защитников из лагеря. Колокол можно поставить где угодно — например, у источника ресурсов.",
+		"cost": {
+			ResourcePile.ResourceType.WOOD: 12,
+			ResourcePile.ResourceType.IRON: 5,
+		},
+		"deployed_only": true,
+		"repeatable": true,
+		"requires_gatherer": true,
+		"requires_aim": true,
+		# Preview-радиус aim-кольца. Совпадает с WatchBell.alarm_radius (7.5м).
+		# Если синхронизировать со сценой нужно динамически — в будущем
+		# прочитаем из инстанса при aim_start; пока константа достаточна.
+		"aim_radius": 7.5,
 	},
 }
 
@@ -204,6 +221,15 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 ## defenders_per_tent раз — стоят у лагеря и стреляют в скелетов.
 ## Если null — защитники не спавнятся, на их слоты подставятся обычные гномы.
 @export var defender_scene: PackedScene
+## Сцена сторожевого колокола (WatchBell). Спавнится через BUILDING_WATCH_BELL.
+## Если null — постройка watch_bell молча провалится.
+@export var watch_bell_scene: PackedScene
+## Радиус «зоны строительства» от центра развёрнутого лагеря. Постройки,
+## требующие интерактивного выбора места (флаг `requires_aim` в каталоге),
+## не ставятся за пределами этого круга. Преимущественно для сторожевого
+## колокола: 30м даёт прикрыть и палатки, и ближайшие ResourceZone, но не
+## весь плейн. Дизайнер тюнит в инспекторе.
+@export var build_radius: float = 30.0
 ## Радиус «лагеря» для размобилизации отряда. Кнопка «Распустить» в HUD
 ## активна, только если ВСЕ живые члены отряда в этом радиусе от deploy_anchor.
 ## Дизайнерское правило: размобилизация — это лагерное действие, на марше
@@ -291,6 +317,10 @@ var _pack_elapsed: float = 0.0
 var _last_target_pos: Vector3 = Vector3.INF
 ## Гномы лагеря — gnomes_per_tent × количество палаток. Создаются в _ready.
 var _gnomes: Array[Gnome] = []
+## Активные сторожевые колокола, построенные через [BUILDING_WATCH_BELL].
+## Camp подписан на каждый на `bell_alarmed` (диспатч защитников) и `destroyed`
+## (респавн gatherer'а на месте). Удаляются на destroy.
+var _bells: Array[WatchBell] = []
 ## Бездомные гномы (выкинутые из палатки), идут за караваном в общей цепочке
 ## за палатками. Порядок = порядок регистрации (раньше eject'нутые — ближе к
 ## палаткам). Слот в цепочке = индекс в массиве. Регистрируются из
@@ -1419,7 +1449,59 @@ func can_build_reason(id: StringName) -> String:
 		return "неизвестная постройка"
 	if data.get("deployed_only", false) and _state != State.DEPLOYED:
 		return "только в развёрнутом лагере"
+	# requires_gatherer: проверка наличия свободного gatherer'а на момент
+	# вызова. Списывается уже в try_build после успешного try_spend, до
+	# _apply_building — это часть «оплаты» постройки.
+	if data.get("requires_gatherer", false) and _find_free_gatherer() == null:
+		return "нужен 1 свободный гном"
 	return ""
+
+
+## True если world-точка в радиусе [build_radius] от центра развёрнутого
+## лагеря. Используется HandBuildAim'ом (визуал + блок ПКМ вне зоны) и
+## Camp.try_build (страховочная валидация). В свёрнутом лагере (нет
+## _deploy_anchor) всегда false — постройки доступны только в DEPLOYED.
+func is_in_build_zone(world_pos: Vector3) -> bool:
+	if _state != State.DEPLOYED:
+		return false
+	var dx: float = world_pos.x - _deploy_anchor.x
+	var dz: float = world_pos.z - _deploy_anchor.z
+	return (dx * dx + dz * dz) <= (build_radius * build_radius)
+
+
+## Текущий центр зоны строительства (для визуального индикатора). В DEPLOYED —
+## _deploy_anchor; в других состояниях — Vector3.INF (sentinel «нет зоны»).
+func build_zone_center() -> Vector3:
+	if _state != State.DEPLOYED:
+		return Vector3.INF
+	return _deploy_anchor
+
+
+## Ищет первого живого gatherer'а (Gnome без DEFENDER_GROUP). null если нет.
+## Используется в can_build_reason / try_build для построек с требованием
+## «1 гном» как часть стоимости.
+func _find_free_gatherer() -> Gnome:
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		if g.is_in_group(DefenderGnome.DEFENDER_GROUP):
+			continue
+		return g
+	return null
+
+
+## Изымает одного gatherer'а из лагеря (queue_free). Используется как часть
+## стоимости постройки. Возвращает true если изъят, false если не нашёлся.
+func _consume_gatherer() -> bool:
+	var g := _find_free_gatherer()
+	if g == null:
+		return false
+	# Если гном сидел в палатке, ничего особого делать не нужно — Gnome
+	# сам не подписан на палатку, queue_free убирает его из дерева, IN_TENT
+	# state молча истечёт с инстансом.
+	_gnomes.erase(g)
+	g.queue_free()
+	return true
 
 
 ## Атомарная попытка построить. Проверяет состояние → ресурсы → списывает →
@@ -1433,7 +1515,7 @@ func can_build_reason(id: StringName) -> String:
 ## единственный handler (новая палатка) почти не падает (instantiate() мог бы
 ## не сработать только при null tent_scene, но это уже отлавливается на первом
 ## вызове в _ready).
-func try_build(id: StringName) -> Dictionary:
+func try_build(id: StringName, params: Dictionary = {}) -> Dictionary:
 	var reason := can_build_reason(id)
 	if reason != "":
 		return {"success": false, "reason": reason}
@@ -1445,7 +1527,16 @@ func try_build(id: StringName) -> Dictionary:
 		# Race с другим вызовом try_build в один кадр — теоретически возможно,
 		# фактически в одном потоке нет; страхуем чтобы не разойтись с can_afford.
 		return {"success": false, "reason": "не хватает ресурсов"}
-	if not _apply_building(id):
+	# Гном-стоимость списывается ПОСЛЕ ресурсов, ПЕРЕД apply'ем. Если до сюда
+	# дошли, can_build_reason уже проверил _find_free_gatherer — но между
+	# can_build_reason и сюда теоретически gatherer мог умереть (race с
+	# волной скелетов). Проверяем ещё раз, на провале — rollback ресурсов.
+	if data.get("requires_gatherer", false):
+		if not _consume_gatherer():
+			for type in cost:
+				add_resource(type, int(cost[type]))
+			return {"success": false, "reason": "нужен 1 свободный гном"}
+	if not _apply_building(id, params):
 		push_error("Camp.try_build: apply провалился для id=%s после успешного списания" % id)
 		return {"success": false, "reason": "ошибка постройки"}
 	if debug_log and LogConfig.master_enabled:
@@ -1458,12 +1549,143 @@ func try_build(id: StringName) -> Dictionary:
 ## внутри try_build) — каждая постройка получит свой _build_X метод с
 ## специфичными параметрами (палатки, башни, апгрейды). Возвращает true на
 ## успех, false при ошибке инстанцирования.
-func _apply_building(id: StringName) -> bool:
+func _apply_building(id: StringName, params: Dictionary) -> bool:
 	match id:
 		BUILDING_NEW_TENT:
 			return _build_new_tent()
+		BUILDING_WATCH_BELL:
+			return _build_watch_bell(params)
 	push_error("Camp._apply_building: нет handler для id=%s" % id)
 	return false
+
+
+## Эффект BUILDING_WATCH_BELL: спавнит WatchBell в `params.position`, привязывает
+## уже-изъятого gatherer'а как гарнизон (флаг — на destroy респавним), подписывает
+## Camp на alarm/destroyed сигналы. Если позиция не задана — fail.
+func _build_watch_bell(params: Dictionary) -> bool:
+	if watch_bell_scene == null:
+		push_warning("Camp: watch_bell_scene не задан, постройка колокола невозможна")
+		return false
+	var pos: Vector3 = params.get("position", Vector3.INF)
+	if pos == Vector3.INF:
+		push_warning("Camp._build_watch_bell: position не задана")
+		return false
+	# Страховочная валидация зоны (HandBuildAim уже фильтрует ПКМ вне zone,
+	# но через скрипт можно вызвать с любой position). Вне build_radius — fail.
+	if not is_in_build_zone(pos):
+		push_warning("Camp._build_watch_bell: position вне build_radius — отказ")
+		return false
+	var bell := watch_bell_scene.instantiate() as WatchBell
+	if bell == null:
+		push_error("Camp._build_watch_bell: scene не инстанцируется как WatchBell")
+		return false
+	# Якорь в current_scene чтобы пережить возможный queue_free Camp'а
+	# (на P-restart Camp.reset_population колокол НЕ удаляет — это автономное
+	# здание, не часть лагеря; см. _bells).
+	get_tree().current_scene.add_child(bell)
+	bell.global_position = pos
+	# Маркер «гном внутри» — мы уже его queue_free'нули, физически отдельного
+	# инстанса нет. На destroy респавним нового gatherer'а на месте колокола.
+	bell.set_garrison(bell)  # self-ref как truthy маркер
+	bell.bell_alarmed.connect(_on_bell_alarmed)
+	bell.destroyed.connect(_on_bell_destroyed.bind(bell))
+	_bells.append(bell)
+	return true
+
+
+## Скелет вошёл в alarm-зону колокола. Помощь = 2 ближайших к колоколу
+## защитника из лагеря. Защитники сами управляют таймером (продлевают
+## пока в зоне есть враги; release после linger-периода после очищения,
+## см. DefenderGnome.BELL_LINGER_SECONDS). Явный release происходит на
+## bell.destroyed (см. _on_bell_destroyed).
+const BELL_RESPONSE_COUNT: int = 2
+
+func _on_bell_alarmed(world_pos: Vector3) -> void:
+	# Резолв колокола обратно по позиции — Camp хранит _bells, ищем тот,
+	# чья global_position совпадает (epsilon для float). Альтернатива —
+	# передавать bell в сигнале, но Vector3 проще для будущих внешних слушателей.
+	var bell: WatchBell = null
+	for b in _bells:
+		if not is_instance_valid(b):
+			continue
+		if b.global_position.distance_squared_to(world_pos) < 0.01:
+			bell = b
+			break
+	if bell == null:
+		return
+	var defenders: Array = []
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		if not g.is_in_group(DefenderGnome.DEFENDER_GROUP):
+			continue
+		defenders.append(g)
+	if defenders.is_empty():
+		if debug_log and LogConfig.master_enabled:
+			print("[Camp:Bell] alarm @ (%.1f, %.1f) — нет живых защитников" % [world_pos.x, world_pos.z])
+		return
+	# Сортируем по дистанции до колокола (xz). Берём первые N.
+	defenders.sort_custom(func(a: Node3D, b2: Node3D) -> bool:
+		var da: float = (a.global_position - world_pos).length_squared()
+		var db: float = (b2.global_position - world_pos).length_squared()
+		return da < db
+	)
+	var n: int = mini(BELL_RESPONSE_COUNT, defenders.size())
+	for i in range(n):
+		var d := defenders[i] as DefenderGnome
+		if d != null:
+			d.respond_to_bell(bell)
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp:Bell] alarm @ (%.1f, %.1f) — %d защитник(а) на помощь" % [
+			world_pos.x, world_pos.z, n,
+		])
+
+
+## Колокол разрушен. Спавним gatherer'а на его позиции (как «гном выскочил из
+## развалин»), он бежит в лагерь по обычному gatherer-flow'у (RETURNING_TO_TENT
+## → IN_TENT). По дороге его могут убить — это часть дизайна.
+func _on_bell_destroyed(bell: WatchBell) -> void:
+	_bells.erase(bell)
+	# Отзываем защитников, бегущих к этому колоколу — они освобождаются и
+	# возвращаются к своим палаткам (обычный patrol). Используем сам факт
+	# что defender в bell-mode со своим _bell_pos рядом с уничтоженным
+	# колоколом (упрощение: release всем, кто отвечал; защитники с
+	# `_bell_pos == INF` — no-op).
+	for g in _gnomes:
+		if is_instance_valid(g) and g is DefenderGnome:
+			(g as DefenderGnome).release_from_bell()
+	if bell.get_garrison() == null:
+		return
+	if gnome_scene == null:
+		return
+	var spawn_pos: Vector3 = bell.global_position
+	# Выбираем палатку-«дом» для нового gatherer'а — first alive part. Если
+	# лагерь свернут или нет палаток, gnome всё равно создаём, но без home_tent
+	# он зависнет (gatherer-flow ожидает _home_tent). Лучше fail-fast в этом
+	# случае, чтобы не плодить «зомби-гнома».
+	var tent: Node3D = null
+	for p in _parts:
+		# tent_count_alive в Camp использует только is_instance_valid —
+		# уничтоженные палатки queue_free'нутся и выпадают из _parts через
+		# _on_part_destroyed (см. Camp подписку на CampPart.destroyed).
+		if is_instance_valid(p):
+			tent = p
+			break
+	if tent == null:
+		if debug_log and LogConfig.master_enabled:
+			print("[Camp:Bell] разрушен, но палаток нет — гном не возрождён")
+		return
+	var gnome := _spawn_one_gnome(gnome_scene, tent, "gatherer") as Gnome
+	if gnome == null:
+		return
+	gnome.global_position = spawn_pos
+	# В DEPLOYED новый gatherer должен искать ресурс / бежать в палатку;
+	# enter_deployed() ставит его в SEARCHING. На пути в лагерь его могут
+	# убить — это часть дизайна (вырвался из развалин, бежит домой).
+	if _state == State.DEPLOYED:
+		gnome.enter_deployed()
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp:Bell] разрушен, гном-сторож выжил и бежит в лагерь")
 
 
 ## Эффект BUILDING_NEW_TENT: спавнит новую палатку и заселяет её жителями

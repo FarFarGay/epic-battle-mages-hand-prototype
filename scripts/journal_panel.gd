@@ -538,9 +538,20 @@ func _on_build_pressed(id: StringName) -> void:
 	var camp := _resolve_camp()
 	if camp == null:
 		return
-	# Кнопка нажимаема только когда can_build_reason пуст и can_afford true,
-	# поэтому try_build здесь должен почти всегда успешно вернуть. Если нет —
-	# Camp сам залогирует через push_error / debug_log.
+	var data: Dictionary = Camp.CAMP_BUILDING_CATALOG.get(id, {})
+	# requires_aim — интерактивный выбор точки. Журнал закрываем, игрок
+	# направляет курсором, ПКМ подтверждает (см. HandBuildAim). try_build
+	# вызовется уже из HandBuildAim._commit_aim — здесь не дёргаем.
+	if data.get("requires_aim", false):
+		var hand := get_tree().get_first_node_in_group(Hand.HAND_GROUP) as Hand
+		if hand == null or hand.build_aim == null:
+			push_warning("[Journal] requires_aim: Hand/build_aim не резолвится")
+			return
+		close()
+		hand.build_aim.start_aim(id)
+		return
+	# Обычные постройки (палатка): прямой try_build. Кнопка нажимаема только
+	# когда can_build_reason пуст и can_afford true, try_build должен пройти.
 	camp.try_build(id)
 	# resources_changed / camp_buildings_changed эмитятся внутри try_build,
 	# наши хендлеры подхватят и перерисуют.

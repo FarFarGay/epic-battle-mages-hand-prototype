@@ -13,6 +13,85 @@
 
 # Заметки по работе с проектом (накапливаются)
 
+## Сессия 2026-05-12 — Watch Bell + AI скелетов + автостарт волн + ресурсы
+
+Длинная сессия с тремя независимыми темами; коммитим двумя порциями:
+*(A) AI/spawn quality-of-life* и *(B) Сторожевой колокол*.
+
+### A. AI скелетов: soft-cap 2 на 1 + хаотичный строй + anti-exploit
+
+**Запрос:** «скелеты должны атаковать не линией, а кольцом; не больше 2 на одного гнома».
+
+- **Soft-cap «не больше 2 на цель»** (`TARGET_CAP=2`):
+  - Static `Skeleton._target_load: Dictionary[instance_id → count]` пересобирается в `_maybe_refresh_target_grid` (раз в 0.4с глобально, на одном проходе по `SKELETON_GROUP`).
+  - В `_scan_target` приоритет: **free гном** (load < cap) → **палатка/здание** → **capped гном** (fallback) → forced_target. Self-load вычитается, чтобы не было swap-loop'а («отдал ради свободного → снова взял»).
+  - Палатки/колокол cap'у не подчиняются (здания).
+- **Approach-кольцо** вокруг цели — каждый скелет имеет персональный `_approach_angle: float` (random в `_ready`, обновляется на смене `_cached_target` через helper `_set_cached_target`). Override `_approach_target`: идёт не в `target.global_position`, а в `target_pos + cos/sin × attack_range × 0.85`. WINDUP-чек по дистанции до самой цели (не до offset point'а). Без override 5 скелетов на одной цели стояли бы в линию по биссектрисе спавн-точка↔цель.
+- **Anti-exploit «подъём постройки = скелет в wander»**: цель пропала из TARGET_GROUP но **физически жива** (постройка поднята в руку, гном вошёл в палатку) → запоминаем `_last_known_target_pos` и продолжаем идти туда через `_persist_toward_last_known(delta)` пока не дойдём 1.5м (ARRIVAL_LAST_KNOWN). Различение по `is_instance_valid`: queue_free'нутая цель → `_last_known_target_pos = INF` (нет смысла идти к месту мёртвой). И в `_ai_step` (NEAR/MID), и в `_far_step` (FAR).
+
+### B. Сторожевой колокол
+
+**Запрос:** «постройка, ставится в радиусе строй-зоны, замечает врагов и зовёт 2 защитников из лагеря. Скелеты её могут разрушить — гном из неё выскакивает и бежит в лагерь (по дороге могут убить)».
+
+#### Структура
+- **`scripts/watch_bell.gd` + `scenes/watch_bell.tscn`** — Node3D + Damageable + столб (CylinderMesh) + золотая сфера (SphereMesh с emission). Area3D `AlarmArea` (SphereShape3D radius=7.5м, collision_mask = ENEMIES=16) — body_entered/body_exited считают скелетов через group-check; `bell_alarmed(world_pos)` эмитится с alarm_cooldown=0.5с. `_enemies_in_zone` экспортируется через `has_enemies_in_zone()` — защитники используют для продления linger-таймера. hp=60. Группы: `SKELETON_TARGET_GROUP` (как палатки) + `WATCH_BELL_GROUP` (для pickup-сканов).
+- **`Camp.CAMP_BUILDING_CATALOG.BUILDING_WATCH_BELL`** — cost: 12 wood + 5 iron + 1 гном (`requires_gatherer`). Флаги `requires_aim: true` (интерактивный выбор места) + `aim_radius: 7.5` (preview-кольцо).
+- **`Camp.build_radius: float = 30.0`** — `@export` радиус зоны строительства от `_deploy_anchor`. Helper `is_in_build_zone(pos)` + `build_zone_center()`. Только в `State.DEPLOYED`.
+
+#### Pipeline постройки
+1. **Журнал → «Лагерь»** → карточка «Построить». Если `requires_aim` — JournalPanel закрывает себя и зовёт `Hand.build_aim.start_aim(id)`. Иначе — прямой `try_build(id)`.
+2. **`HandBuildAim`** (`scripts/hand_build_aim.gd`) — координатор aim-режима. `Hand.Category.BUILD_AIM` (5-я ось ввода, гейты добавлены в hand_physical/spell/super). Спавнит два кольца через `AoeVisual.spawn_ground_ring`: большое голубое (build_zone, статика вокруг _deploy_anchor) + маленькое жёлтое (preview alarm-зоны под курсором). На каждый кадр перекрашивает preview в красный, если курсор вне build_zone (`_set_ring_color`).
+3. **ПКМ (`hand_action`)** → `_commit_aim` → `Camp.try_build(id, {"position": ground})`. Камп списывает ресурсы атомарно (rollback if `_consume_gatherer` провалился после spend), spawn'ит bell в current_scene, подписывает Camp на `bell_alarmed` + `destroyed`. Lazy-resolve `_camp` в `_spawn_indicator` (HandBuildAim._ready может вызваться раньше Camp._ready).
+
+#### Pickup-relocate (ЛКМ)
+- **ЛКМ в PHYSICAL когда рука пуста**: `HandBuildAim.try_pickup_at_cursor()` сканит `WATCH_BELL_GROUP` в радиусе `PICKUP_RADIUS=1.5м` от cursor.ground. Если bell найден — `start_relocate(bell)`. Перехват сделан в hand_physical через `_hand.build_aim.try_pickup_at_cursor()` в начале ЛКМ-обработки.
+- **`start_relocate(bell)`** ≡ start_aim, но устанавливает `_relocating_bell`, `_aim_radius = bell.alarm_radius`, и зовёт `bell.set_carried(true)` (визуал скрывает, AlarmArea.monitoring=false, выпадает из SKELETON_TARGET_GROUP, `_enemies_in_zone=0`).
+- **`_commit_aim` (relocate)**: bell.global_position = ground (если в build_zone), `set_carried(false)`. **Esc**: `_finish_aim` восстанавливает позицию (set_carried(false) только, без сдвига).
+- **Hover-подсветка**: `HandBuildAim._process` каждый кадр (когда aim не активен) сканит `WATCH_BELL_GROUP`, у ближайшего bell в PICKUP_RADIUS зажигает `set_highlighted(true)`, у остальных гасит. По образцу CampPart — per-instance dup материала, тогл emission boost. Дизайнерское правило: «все pickup-объекты подсвечиваются».
+
+#### Alarm + защитники
+- **Скелет в alarm-зоне** → `WatchBell` инкрементит счётчик и эмитит `bell_alarmed(pos)`.
+- **Camp слушает** → находит **2 ближайших к pos** живых defender'а, зовёт `respond_to_bell(bell)`.
+- **`DefenderGnome.respond_to_bell(bell)`** хранит `_bell_pos`, `_bell_ref`, `_bell_until_msec = now + BELL_LINGER_SECONDS (8с)`. В `_defender_combat_tick` ветка `_is_responding_to_bell()`:
+  - Пока `bell.has_enemies_in_zone()` → продлеваем `_bell_until_msec` (по сути «бой идёт, не уходи»).
+  - При `dist > 2м` к колоколу — бегу со скоростью `BELL_RESPONSE_SPEED=4.0м/с` (между walk=1.6 и sprint=9.0). Дизайнерское: помощь видимая, не телепорт.
+  - Прибыв → стой и стреляй (через обычный `_resolve_target` который найдёт alarm-target или cone-цели).
+- **Авто-release**: после очищения зоны (`has_enemies_in_zone()` false) таймер истекает через BELL_LINGER_SECONDS=8с → `_bell_pos = INF` → обычный patrol.
+
+#### Destroy → respawn gatherer
+- **bell.hp ≤ 0** → `_die()` → emit `destroyed` → `Camp._on_bell_destroyed`.
+- Camp: 1) `release_from_bell()` всем defender'ам (вернутся к патрулю). 2) Spawn нового gatherer'а на месте колокола через `_spawn_one_gnome(gnome_scene, first_alive_tent, "gatherer")`. В DEPLOYED `gnome.enter_deployed()` → бежит к home_tent по обычному gatherer-flow'у. По дороге его могут убить — by design.
+
+### C. WaveDirector — автостарт + лог stage_advance
+
+- **Автостарт кампании по первому деплою**: до этого игрок должен был отдельно жать «Старт волн» в журнале → читы. Многие забывали. Теперь в `_on_camp_deployed`: если `_phase == IDLE` — зовём `_start_campaign()` (только-старт-ветка, без kill_all_skeletons). Повторные деплои (после рестарта) фаза уже RUNNING → автостарт скипается, обычный flow.
+- **Лог `stage advance`** в `_tick_active_poi` показывал `next_stage.skeletons_per_wave` — игнорируется в groups-driven стадиях. Теперь ветка: `has_groups()` → «N групп / M юнитов», иначе legacy «N скел/волна». То же в `_on_camp_deployed` стартовом логе.
+
+### D. ResourceZone — POI-фильтр только
+
+- **Запрос:** «не должны кучи спавниться в круге палаток вокруг костра, но Camp-safe-зону не учитываем — дизайнер сам решает».
+- Убран `is_safe_pos`-фильтр через WaveDirector (был только для WOOD). Вместо него: per-`_spawn_instances` снимок POI (позиция + `safe_radius²`) → в `_pick_position` точки в POI-круге проматываются `continue`'ом. 10 попыток, fallback на последнюю случайную точку (нахлёст / попадание в POI-круг — редкость при разумной зоне). Все типы ресурсов одинаково — больше нет специал-кейса WOOD.
+
+### Архитектурно
+
+- **5-я ось ввода в Hand (`Category.BUILD_AIM`)** — расширение паттерна SQUAD_AIM. Каждая ось гейтит в hand_physical/spell/super через ранний return по `active_category != PHYSICAL/MAGIC/SUPER`. При добавлении 6-й (Demolish? Repair?) — тот же шаблон.
+- **Сторожевой колокол ≠ tent.** Не следует за караваном, не входит в Camp._parts, не свёртывается. Это **автономное здание** в `current_scene`. Camp хранит `_bells: Array[WatchBell]` как трекинг для alarm-диспатча и destroy-cleanup.
+- **PICKUP-relocate через scan, не Grabbable.** Я НЕ регистрировал колокол через `Grabbable.register` — иначе обычный Hand-grab pipeline (физический lift, follow cursor) попытался бы его поднять как RigidBody. Вместо этого специальный try_pickup_at_cursor вызывается из hand_physical при ЛКМ press, и если bell в радиусе — переключаемся в BuildAim вместо grab'а.
+- **«Постройка пропала из видимости» ≠ «цель умерла».** В Skeleton различаем через `is_instance_valid` ДО `is_in_group` чека. Anti-exploit `_last_known_target_pos` срабатывает только в первом случае; во втором (queue_free) сбрасываем INF, чтобы wander работал.
+
+### Что НЕ сделано / отложено
+
+- **Подсветка не-WatchBell объектов** через тот же scan-механизм — пока Cleanup'ом. CampPart/Item подсвечиваются собственным механизмом Hand'а (`_update_candidate_highlight` через Grabbable). WatchBell отдельно. Если будут другие не-Grabbable pickup-объекты — расширить `_update_bell_highlight` в общий `_update_pickup_highlight` (или вынести в Hand).
+- **Звуки колокола** (alarm bing, hit thud, destroy crash) — аудио-системы нет.
+- **Визуал «гном внутри»** — сейчас просто маркер `set_garrison(self)`. Если будет визуальный «outline гнома в колоколе» — добавить child MeshInstance3D в watch_bell.tscn.
+- **Гарантия места для колокола (не на палатке)** — currently он спавнится в .y палатки, может оверлепить визуально. Добавить min-distance чек к palатк'ам в `Camp.is_in_build_zone` если будут плохие случаи.
+
+### Метод
+- Парс-чек после каждой логической группы (5+ раз за сессию). Все чистые.
+- Editor-pass прогнал после новых `class_name` (WatchBell, HandBuildAim) для регистрации class_cache — без него `--check-only` ругался бы «Could not find type».
+- Багфикс по логу дизайнера: `Camp._on_bell_destroyed: Nonexistent function 'is_alive'` — я писал несуществующий метод, у CampPart нет `is_alive()`. Достаточно `is_instance_valid(p)` (разрушенные palатки queue_free'нутся и выпадают из `_parts` через `_on_part_destroyed`-подписку Camp'а).
+- UID конфликт: я придумал `uid://b5kw1qhf9y2pq` для watch_bell.tscn, Godot выдал warning. Убрал uid из .tscn и из ext_resource — Godot ссылается по path, .uid файл для .tscn не создаётся (только для .gd/shader).
+
 ## Сессия 2026-05-11 (2) — Карта 300×300, лагерь в центре, safe-фильтр в POI-волнах
 
 ### Контекст / запрос
