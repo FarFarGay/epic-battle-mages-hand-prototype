@@ -76,6 +76,11 @@ var _log_material: StandardMaterial3D
 ## визуальную «икоту»: дым на кадр пропадает и стартует заново. amount_ratio
 ## масштабирует уже существующий пул без перезапуска.
 var _smoke_amount_max: int = 14
+## True если лагерь сейчас развёрнут на этом POI (anchor в safe_radius).
+## Драйвер «горения» костра — пока флаг true, _refresh_visual гонит active.
+## Завязки на quest-state нет: костёр горит просто потому что у его костра
+## стоит лагерь, независимо от того, открыт ли тут квест.
+var _is_camp_deployed_here: bool = false
 
 
 func _ready() -> void:
@@ -87,6 +92,26 @@ func _ready() -> void:
 	if _smoke_particles != null:
 		_smoke_amount_max = maxi(_smoke_particles.amount, 1)
 	EventBus.quest_advanced.connect(_on_quest_advanced)
+	EventBus.camp_deployed.connect(_on_camp_deployed)
+	EventBus.camp_packed.connect(_on_camp_packed)
+	_refresh_visual()
+
+
+## Лагерь развернулся где-то на сцене. Если anchor в нашем safe_radius —
+## это наш костёр, поджигаем. Иначе — игнор (это другой POI).
+func _on_camp_deployed(anchor: Vector3) -> void:
+	if not is_within_safe_radius(anchor):
+		return
+	_is_camp_deployed_here = true
+	_refresh_visual()
+
+
+## Лагерь свёрнут. Camp в проекте один, поэтому camp_packed без аргументов —
+## однозначно «свёрнут наш лагерь». Гасим костёр (если не completed).
+func _on_camp_packed() -> void:
+	if not _is_camp_deployed_here:
+		return
+	_is_camp_deployed_here = false
 	_refresh_visual()
 
 
@@ -127,9 +152,14 @@ func _clone_log_material() -> void:
 
 
 func _refresh_visual() -> void:
+	# Completed имеет приоритет над лагерем: задание выполнено = «отгоревший»
+	# костёр (зелёный след) даже если игрок снова поставил тут лагерь.
+	# Иначе — горит ровно когда лагерь развёрнут именно на этом POI; квест
+	# active без лагеря костёр НЕ зажигает (раньше зажигал, но дизайнерская
+	# семантика «костёр = очаг лагеря»: нет лагеря — нет очага).
 	if QuestProgress.is_completed(quest_order):
 		_apply_completed()
-	elif QuestProgress.is_active(quest_order):
+	elif _is_camp_deployed_here:
 		_apply_active()
 	else:
 		_apply_locked()
