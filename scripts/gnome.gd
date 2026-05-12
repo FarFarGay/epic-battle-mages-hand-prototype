@@ -931,27 +931,38 @@ func _move_toward_xz(target: Vector3) -> void:
 
 
 ## Возвращает следующую точку, к которой нужно двигаться: либо waypoint
-## NavAgent'а, либо сам goal (если nav недоступен / цель близко / уже
-## пришли). Подклассы используют через `_move_toward_xz` автоматически.
+## NavAgent'а, либо сам goal (если nav недоступен / цель близко / waypoint
+## слишком близко к текущей позиции). Подклассы используют через
+## `_move_toward_xz` автоматически.
 func _resolve_path_step(goal: Vector3) -> Vector3:
 	if _nav_agent == null:
 		return goal
-	# На близких целях path-расчёт даёт «дрожащий» next_position (агент
-	# мгновенно перепрыгивает waypoint'ы); прямой подход проще и стабильнее.
+	# На близких целях path-расчёт даёт «дрожащий» next_position — идём прямо.
 	var goal_xz := Vector2(goal.x - global_position.x, goal.z - global_position.z)
 	if goal_xz.length_squared() <= NAV_DIRECT_RADIUS * NAV_DIRECT_RADIUS:
 		return goal
-	var delta: float = get_physics_process_delta_time()
-	_nav_set_throttle = maxf(_nav_set_throttle - delta, 0.0)
-	# Сбрасываем target если цель сменилась (≥0.5м) или прошёл throttle interval.
-	var target_changed: bool = (_nav_last_target - goal).length_squared() > 0.25
-	if _nav_set_throttle <= 0.0 or target_changed:
-		_nav_agent.target_position = goal
-		_nav_last_target = goal
-		_nav_set_throttle = NAV_SET_INTERVAL
+	# Set target каждый кадр без throttle'а: NavAgent сам кэширует и не
+	# пересчитывает path если goal не сильно изменился. Старый throttle
+	# с `get_physics_process_delta_time()` ломался когда метод вызывался
+	# не из _physics_process (delta=0 → throttle никогда не истекал).
+	_nav_agent.target_position = goal
+	_nav_last_target = goal
+	# Safety: если NavAgent ещё не успел построить path или цель недостижима,
+	# is_navigation_finished()=true → next_path_position часто возвращает
+	# текущую позицию агента. Тогда _move_toward_xz вычислит velocity=0 и
+	# гном застывает. Fallback на прямой goal — пусть упрётся в стену, чем
+	# стоит столбом.
 	if _nav_agent.is_navigation_finished():
 		return goal
-	return _nav_agent.get_next_path_position()
+	var next_pos: Vector3 = _nav_agent.get_next_path_position()
+	# Дополнительный safety: waypoint слишком близко к текущей позиции
+	# (< 0.2м по горизонтали) → агент считает что мы «дошли» до waypoint'а,
+	# но дальше path ещё не advance'ил. Идём прямо к goal как fallback,
+	# physics-slide вытолкнет нас по стене если стоит на пути.
+	var to_next := Vector2(next_pos.x - global_position.x, next_pos.z - global_position.z)
+	if to_next.length_squared() < 0.04:
+		return goal
+	return next_pos
 
 
 func _horizontal_distance(target: Vector3) -> float:

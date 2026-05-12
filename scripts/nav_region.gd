@@ -26,14 +26,25 @@ func _ready() -> void:
 	call_deferred("rebake")
 	# Глобальная нотификация на bake — гномы/скелеты сбросят `_nav_last_target`
 	# и на следующем _resolve_path_step переcalc'нут path через новый navmesh.
-	bake_finished.connect(func() -> void: EventBus.navmesh_baked.emit())
+	bake_finished.connect(_on_bake_finished)
 
 
-## Async re-bake. Вызывать после спавна/удаления статической геометрии
-## (палисад-line, новая палатка). Возвращает сразу — bake идёт в фоновом
-## потоке, навмеш обновится через ~100-300мс.
+func _on_bake_finished() -> void:
+	var polys: int = -1
+	if navigation_mesh != null:
+		polys = navigation_mesh.get_polygon_count()
+	if LogConfig.master_enabled:
+		print("[NavRegion] bake finished, polygons=%d" % polys)
+	EventBus.navmesh_baked.emit()
+
+
+## Re-bake. Вызывать после спавна/удаления статической геометрии
+## (палисад-line, новая палатка). Sync bake (on_thread=false) — async вариант
+## в `--headless` режиме давал polygons=0 из NavigationServer thread'а;
+## sync blocking 100-200мс на main thread'е терпимо, и navmesh гарантированно
+## готов к моменту возврата.
 func rebake() -> void:
 	if navigation_mesh == null:
 		push_warning("[NavRegion] navigation_mesh не задан — bake пропущен")
 		return
-	bake_navigation_mesh(true)
+	bake_navigation_mesh(false)

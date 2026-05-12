@@ -119,6 +119,11 @@ func _ready() -> void:
 	Damageable.register(self)
 	Pushable.register(self)
 	Grabbable.register(self)
+	# Источник геометрии для NavMesh — палатки вырезают участки навмеша,
+	# гномы и скелеты обходят. При перемещении палатки (drag рукой) navmesh
+	# не пересчитывается до следующего try_build / явного rebake — это OK,
+	# палатки в каравне обычно стабильны, а гномы используют slide-collisions.
+	add_to_group(&"navmesh_source")
 	## Soft-release: рука не применяет impulse при тихом release; CampPart
 	## считает release с velocity > 0 «броском», а с velocity == 0 — «поставил».
 	add_to_group(Layers.HAND_SOFT_RELEASE_GROUP)

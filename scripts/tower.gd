@@ -75,6 +75,8 @@ var mana: float = 0.0
 func _ready() -> void:
 	add_to_group(GROUP)
 	Damageable.register(self)
+	# Источник геометрии для NavMesh — башня препятствие, гномы её обходят.
+	add_to_group(&"navmesh_source")
 	hp = max_hp
 	mana = max_mana
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.

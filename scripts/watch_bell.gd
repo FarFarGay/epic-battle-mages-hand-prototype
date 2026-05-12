@@ -73,6 +73,8 @@ func _ready() -> void:
 	Damageable.register(self)
 	add_to_group(SKELETON_TARGET_GROUP)
 	add_to_group(WATCH_BELL_GROUP)
+	# Источник геометрии для NavMesh (колокол — небольшое препятствие).
+	add_to_group(&"navmesh_source")
 	# Hover-подсветка через общий сканер в Hand. Группа PICKUP_HIGHLIGHT_GROUP
 	# собирает все non-Grabbable pickup-объекты — колокол, будущие постройки
 	# с relocate'ом, интерактивные предметы. Hand сам управляет set_highlighted.

@@ -37,6 +37,9 @@ var _destroyed: bool = false
 func _ready() -> void:
 	Damageable.register(self)
 	add_to_group(SKELETON_TARGET_GROUP)
+	# Источник геометрии для NavMesh bake'а — стена должна вырезать кусок
+	# навмеша, чтобы гномы и скелеты-обходники её огибали.
+	add_to_group(&"navmesh_source")
 	# Дублируем материал per-instance для hover-эффекта.
 	if _mesh != null and _mesh.material_override is StandardMaterial3D:
 		var src := _mesh.material_override as StandardMaterial3D
