@@ -1619,10 +1619,13 @@ func try_build_palisade_line(vertices: Array) -> Dictionary:
 		if count <= 0:
 			continue
 		var step: Vector3 = dir.normalized() * segment_length
-		# Yaw сегмента: ось длины сегмента — X (BoxMesh.size.x), направление
-		# pair'а — это и есть требуемое направление X-оси сегмента.
-		# `look_at` смотрит -Z, нам нужно X → поворот yaw = atan2(dir.x, dir.z).
-		var rot_y: float = atan2(dir.x, dir.z)
+		# Yaw сегмента: локальная ось +X (длина BoxMesh.size.x) должна быть
+		# направлена вдоль dir. В Godot после rotation.y = θ локальный +X
+		# отображается в (cos θ, 0, -sin θ). Чтобы это совпало с dir = (dx, 0, dz):
+		# cos θ = dx, sin θ = -dz → θ = atan2(-dz, dx). Иначе сегменты встают
+		# перпендикулярно линии и между ними остаются дыры размером с длину
+		# сегмента.
+		var rot_y: float = atan2(-dir.z, dir.x)
 		# Распределяем count сегментов начиная с a + step/2 (центр первого
 		# сегмента на полпути от a) с шагом step.
 		for j in range(count):

@@ -357,7 +357,10 @@ func _update_brush_active_preview(cursor: Vector3) -> void:
 	if count <= 0:
 		return
 	var step: Vector3 = dir.normalized() * _brush_segment_length
-	var rot_y: float = atan2(dir.x, dir.z)
+	# Yaw: локальная ось +X сегмента (длина BoxMesh) должна идти вдоль dir.
+	# См. камп.gd:try_build_palisade_line — та же формула должна быть в
+	# preview, иначе preview расходится со spawn'ом.
+	var rot_y: float = atan2(-dir.z, dir.x)
 	# Проверка валидности: все сегменты в build_zone.
 	var all_in_zone: bool = true
 	for j in range(count):
@@ -384,7 +387,7 @@ func _spawn_committed_preview_segments(a: Vector3, b: Vector3) -> void:
 	if count <= 0:
 		return
 	var step: Vector3 = dir.normalized() * _brush_segment_length
-	var rot_y: float = atan2(dir.x, dir.z)
+	var rot_y: float = atan2(-dir.z, dir.x)
 	for j in range(count):
 		var center: Vector3 = a + step * (float(j) + 0.5)
 		var seg := _make_preview_segment(center, rot_y, brush_committed_color)
