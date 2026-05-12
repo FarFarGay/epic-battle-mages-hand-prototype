@@ -48,6 +48,15 @@ const COLD_ENEMY := 1 << 7       # 128 — bit 7 = layer 8
 ## только визуально скелет проходит сквозь гнома (а не упирается).
 const FRIENDLY_UNIT := 1 << 8    # 256 — bit 8 = layer 9
 
+## Палисад (стены, столбики). Отдельный слой ОТ [CAMP_OBSTACLE] нужен чтобы
+## развязать: Tower и CampPart должны упираться в палисад, но не друг в друга.
+## Палисад имеет ОБА слоя одновременно (collision_layer = CAMP_OBSTACLE |
+## PALISADE_OBSTACLE = 544) — Skeleton (MASK_SKELETON включает CAMP_OBSTACLE)
+## блокируется им как палаткой, рука/магия (MASK_HAND_SLAM) — задевает.
+## Tower и CampPart маскируют только PALISADE_OBSTACLE → блокируются стеной
+## но не друг другом.
+const PALISADE_OBSTACLE := 1 << 9   # 512 — bit 9 = layer 10
+
 # Композитные маски — собирай через OR из именованных битов.
 
 ## Hand cursor raycast: пол + предметы + смонтированные модули. Под цели

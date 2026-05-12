@@ -125,3 +125,4 @@ gnome_alarm={
 3d_physics/layer_7="MountedModule"
 3d_physics/layer_8="ColdEnemy"
 3d_physics/layer_9="FriendlyUnit"
+3d_physics/layer_10="PalisadeObstacle"

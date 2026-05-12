@@ -2697,7 +2697,8 @@ func _update_caravan_follow(delta: float) -> void:
 		# Ground'а, но математически некорректно).
 		var part_offset_y: float = (part as CampPart).floor_offset_y() if part is CampPart else 0.0
 		target_pos.y = _ground_y_at(part, target_pos) + part_offset_y
-		part.global_position = _exp_decay_capped(part.global_position, target_pos, follow_speed, caravan_max_speed, delta)
+		var step_pos := _exp_decay_capped(part.global_position, target_pos, follow_speed, caravan_max_speed, delta)
+		_move_part_kinematic(part, step_pos)
 
 
 func _update_deployed(delta: float) -> void:
@@ -2712,7 +2713,8 @@ func _update_deployed(delta: float) -> void:
 			var cp := part as CampPart
 			if not cp.is_in_caravan() or cp.is_in_hand():
 				continue
-		part.global_position = _exp_decay(part.global_position, _deployed_targets[i], follow_speed, delta)
+		var step_pos := _exp_decay(part.global_position, _deployed_targets[i], follow_speed, delta)
+		_move_part_kinematic(part, step_pos)
 
 
 # --- Helpers ---
@@ -2720,6 +2722,32 @@ func _update_deployed(delta: float) -> void:
 ## Покадрово стабильное смягчение к target. decay — log-rate (чем больше, тем быстрее).
 static func _exp_decay(current: Vector3, target: Vector3, decay: float, delta: float) -> Vector3:
 	return target + (current - target) * exp(-decay * delta)
+
+
+## Двигает PhysicsBody3D (палатку) к target_pos с проверкой collision'ов через
+## PhysicsServer3D.body_test_motion. Палатка — RigidBody3D с freeze=true,
+## позиционируется kinematic-стилем (direct global_position assignment). Без
+## body_test_motion она бы сквозила палисады (collision detection не работает
+## для прямого присвоения координат). С test_motion: если на пути препятствие,
+## останавливаемся на safe-fraction motion'а, иначе доезжаем до target.
+static func _move_part_kinematic(part: Node3D, target_pos: Vector3) -> void:
+	var body := part as PhysicsBody3D
+	if body == null:
+		part.global_position = target_pos
+		return
+	var motion: Vector3 = target_pos - part.global_position
+	if motion.length_squared() < 1e-6:
+		return
+	var params := PhysicsTestMotionParameters3D.new()
+	params.from = part.global_transform
+	params.motion = motion
+	var result := PhysicsTestMotionResult3D.new()
+	var collided: bool = PhysicsServer3D.body_test_motion(body.get_rid(), params, result)
+	if collided:
+		var safe: float = result.get_collision_safe_fraction()
+		part.global_position += motion * safe
+	else:
+		part.global_position = target_pos
 
 
 ## Capped exp_decay: тот же exp-шаг, но длина шага ограничена max_speed × delta.

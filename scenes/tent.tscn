@@ -14,7 +14,7 @@ albedo_color = Color(0.45, 0.3, 0.18, 1)
 [node name="Tent" type="RigidBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
 collision_layer = 32
-collision_mask = 17
+collision_mask = 529
 mass = 8.0
 linear_damp = 2.0
 angular_damp = 2.5
