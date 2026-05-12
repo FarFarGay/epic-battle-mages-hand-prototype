@@ -668,4 +668,4 @@ func _strike_at(target: Node3D) -> void:
 	if alive:
 		Pushable.try_push(target, _charge_dir * strike_knockback_speed, strike_knockback_duration)
 	if debug_log and LogConfig.master_enabled:
-		print("[SoldierPikeman:%s] удар по %s (dmg=%.1f, alive=%s)" % [name, target.name, damage, str(alive)])
+		print("[SoldierGnome:%s] удар по %s (dmg=%.1f, alive=%s)" % [name, target.name, damage, str(alive)])

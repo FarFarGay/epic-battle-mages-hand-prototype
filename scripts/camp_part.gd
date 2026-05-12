@@ -142,6 +142,17 @@ func _ready() -> void:
 	## Hand-события: грэб ставит in_hand-флаг, release решает «бросок vs поставил».
 	EventBus.hand_grabbed.connect(_on_hand_grabbed)
 	EventBus.hand_released.connect(_on_hand_released)
+	# Явная отписка на free. EventBus — autoload, без disconnect фантомные
+	# Callable'ы оставались бы до GC. Палатки уничтожаются скелетами в матче
+	# (×4 палатки), эффект мелкий, но систематический.
+	tree_exiting.connect(_disconnect_eventbus)
+
+
+func _disconnect_eventbus() -> void:
+	if EventBus.hand_grabbed.is_connected(_on_hand_grabbed):
+		EventBus.hand_grabbed.disconnect(_on_hand_grabbed)
+	if EventBus.hand_released.is_connected(_on_hand_released):
+		EventBus.hand_released.disconnect(_on_hand_released)
 
 
 ## Half-height палатки (от центра до низа). Используется Camp'ом и

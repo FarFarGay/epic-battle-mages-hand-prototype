@@ -556,13 +556,14 @@ func _pick_random_live_zone() -> SpawnZone:
 	return live_zones[randi() % live_zones.size()]
 
 
-## Назначить forced_target на пачке свежеспавненных юнитов. Сейчас
-## поддерживаем только Skeleton (единственный Enemy-наследник со
-## `set_forced_target`). Будущие типы добавляются здесь же.
+## Назначить forced_target на пачке свежеспавненных юнитов. Duck-typing
+## по `set_forced_target` — любой Enemy-наследник, определивший этот метод,
+## получит цель. Skeleton сейчас единственный, но добавление skeleton-archer
+## или другого типа врага не требует правок здесь.
 func _assign_forced_targets(enemies: Array, target: Node3D) -> void:
 	for enemy in enemies:
-		if enemy is Skeleton:
-			(enemy as Skeleton).set_forced_target(target)
+		if enemy.has_method(&"set_forced_target"):
+			enemy.set_forced_target(target)
 
 
 # --- Public API: рантайм-управление budget'ом зон ---

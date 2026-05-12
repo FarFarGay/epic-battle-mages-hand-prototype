@@ -63,6 +63,10 @@ var _destroyed: bool = false
 ## опускается на body_exited (только для нод в SKELETON_GROUP). Используется
 ## защитниками в bell-mode: пока > 0, бой не закончен → не отзывают.
 var _enemies_in_zone: int = 0
+## True пока bell «в руке» (Hand BuildAim relocate). Защитники в bell-mode
+## проверяют через [is_carried] и отпускаются, чтобы не стоять до linger'а
+## пока bell физически не на сцене.
+var _carried: bool = false
 
 
 func _ready() -> void:
@@ -99,6 +103,7 @@ func set_highlighted(value: bool) -> void:
 ## визуал прячем, alarm отключаем, target-группу снимаем (скелеты больше
 ## не выберут как цель). На end_relocate всё восстанавливаем.
 func set_carried(carried: bool) -> void:
+	_carried = carried
 	visible = not carried
 	if _alarm_area != null:
 		_alarm_area.monitoring = not carried
@@ -115,6 +120,12 @@ func set_carried(carried: bool) -> void:
 ## таймер; когда false → таймер истекает → возврат к патрулю.
 func has_enemies_in_zone() -> bool:
 	return _enemies_in_zone > 0
+
+
+## True если bell сейчас «в руке» (relocate). Защитники должны отпустить
+## bell-mode на время — иначе стояли бы до истечения linger-таймера.
+func is_carried() -> bool:
+	return _carried
 
 
 func _process(delta: float) -> void:

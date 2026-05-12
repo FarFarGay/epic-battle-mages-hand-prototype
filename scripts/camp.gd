@@ -1646,14 +1646,14 @@ func _on_bell_alarmed(world_pos: Vector3) -> void:
 ## → IN_TENT). По дороге его могут убить — это часть дизайна.
 func _on_bell_destroyed(bell: WatchBell) -> void:
 	_bells.erase(bell)
-	# Отзываем защитников, бегущих к этому колоколу — они освобождаются и
-	# возвращаются к своим палаткам (обычный patrol). Используем сам факт
-	# что defender в bell-mode со своим _bell_pos рядом с уничтоженным
-	# колоколом (упрощение: release всем, кто отвечал; защитники с
-	# `_bell_pos == INF` — no-op).
+	# Отзываем только тех защитников, кто отвечал НА ЭТОТ КОНКРЕТНЫЙ bell.
+	# Если на сцене несколько колоколов, разрушение одного не должно сбрасывать
+	# защитников, отвечающих на другой.
 	for g in _gnomes:
 		if is_instance_valid(g) and g is DefenderGnome:
-			(g as DefenderGnome).release_from_bell()
+			var d := g as DefenderGnome
+			if d.is_responding_to_bell(bell):
+				d.release_from_bell()
 	if bell.get_garrison() == null:
 		return
 	if gnome_scene == null:

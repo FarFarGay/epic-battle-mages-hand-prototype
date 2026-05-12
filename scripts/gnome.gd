@@ -302,6 +302,17 @@ func _ready() -> void:
 	# подписываются (extends Gnome), но их state'ы не COMMUTING_TO_PILE,
 	# фильтр в обработчике ничего не делает.
 	EventBus.collection_priority_changed.connect(_on_collection_priority_changed)
+	# Явная отписка на free. EventBus — autoload (жив всю сессию), без
+	# disconnect фантомные Callable'ы накапливались бы до GC; на 100+ гномах
+	# за матч это сотни мёртвых подписок.
+	tree_exiting.connect(_disconnect_eventbus)
+
+
+## Очистка глобальных подписок EventBus. Подклассы override'ят и зовут super,
+## чтобы добавить отписки от своих сигналов.
+func _disconnect_eventbus() -> void:
+	if EventBus.collection_priority_changed.is_connected(_on_collection_priority_changed):
+		EventBus.collection_priority_changed.disconnect(_on_collection_priority_changed)
 
 
 func _apply_visual() -> void:

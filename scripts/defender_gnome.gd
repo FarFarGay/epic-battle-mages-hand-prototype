@@ -229,6 +229,9 @@ func _ready() -> void:
 	# лагерь» НЕТ (на карте сейчас один Camp; если станет несколько —
 	# добавить чек `_camp.get_squad_level() == new_level` в хендлере).
 	EventBus.squad_leveled_up.connect(_on_squad_leveled_up)
+	# tree_exiting → _disconnect_eventbus подключается в Gnome._ready (super).
+	# Здесь override _disconnect_eventbus, чтобы добавить отписку от наших
+	# defender-specific сигналов поверх Gnome'овской очистки.
 	# Бросок монетки: левый борт vs правый. Несколько защитников одной палатки
 	# в среднем распределятся 50/50 (для 3 — может выйти 2:1, это OK).
 	_escort_lateral_sign = -1.0 if randf() < 0.5 else 1.0
@@ -247,6 +250,14 @@ func _on_squad_leveled_up(_level: int) -> void:
 	tween.set_trans(Tween.TRANS_QUAD)
 	tween.tween_property(_mesh, "scale", Vector3.ONE * 1.3, 0.12).set_ease(Tween.EASE_OUT)
 	tween.tween_property(_mesh, "scale", Vector3.ONE, 0.18).set_ease(Tween.EASE_IN)
+
+
+func _disconnect_eventbus() -> void:
+	super._disconnect_eventbus()
+	if EventBus.skeleton_attacked_camp.is_connected(_on_skeleton_attacked_camp):
+		EventBus.skeleton_attacked_camp.disconnect(_on_skeleton_attacked_camp)
+	if EventBus.squad_leveled_up.is_connected(_on_squad_leveled_up):
+		EventBus.squad_leveled_up.disconnect(_on_squad_leveled_up)
 
 
 ## Лагерь развернулся — защитник выходит из палатки. Базовый enter_deployed
@@ -444,6 +455,12 @@ func _is_responding_to_bell() -> bool:
 	if not is_instance_valid(_bell_ref):
 		release_from_bell()
 		return false
+	# Bell поднят игроком (relocate) — alarm-зона отключена, has_enemies_in_zone
+	# всегда вернёт 0. Без явного отпускания защитник бы стоял до истечения
+	# linger-таймера (8с) у пустого места. Освобождаем сразу.
+	if _bell_ref.is_carried():
+		release_from_bell()
+		return false
 	# Враги в зоне → продлеваем таймер. Этот «постоянный re-trigger» делает
 	# linger-логику простой: защитник остаётся пока бой идёт.
 	if _bell_ref.has_enemies_in_zone():
@@ -452,6 +469,13 @@ func _is_responding_to_bell() -> bool:
 		release_from_bell()
 		return false
 	return true
+
+
+## True если защитник сейчас в response-режиме на конкретный bell.
+## Camp использует для адресной отвязки на разрушении одного из колоколов
+## (без задевания тех, кто отвечает на другой bell).
+func is_responding_to_bell(bell: WatchBell) -> bool:
+	return bell != null and _bell_ref == bell
 
 
 func _defender_combat_tick(delta: float) -> void:
