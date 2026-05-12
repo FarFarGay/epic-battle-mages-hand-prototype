@@ -1620,10 +1620,18 @@ func try_build_palisade_line(vertices: Array) -> Dictionary:
 		var length: float = dir.length()
 		if length < 0.5:
 			continue  # слишком короткий отрезок — пропускаем
-		var count: int = int(floor(length / segment_length))
+		# count = ceil(length / segment_length): на длине 8.5м с segment_length=2
+		# было бы 4 сегмента и 0.5м хвост; теперь 5 сегментов с шагом 1.7м,
+		# соседние перекрываются на 0.3м. На углах post'у на vertex'е остаётся
+		# закрывать только разворот направления, а не дробный хвост.
+		var count: int = int(ceil(length / segment_length))
 		if count <= 0:
 			continue
-		var step: Vector3 = dir.normalized() * segment_length
+		# step = length / count: равномерное распределение от a до b. Длина шага
+		# ≤ segment_length, сегменты перекрываются (или касаются впритык при
+		# точном кратном).
+		var step_length: float = length / float(count)
+		var step: Vector3 = dir.normalized() * step_length
 		# Yaw сегмента: локальная ось +X (длина BoxMesh.size.x) должна быть
 		# направлена вдоль dir. В Godot после rotation.y = θ локальный +X
 		# отображается в (cos θ, 0, -sin θ). Чтобы это совпало с dir = (dx, 0, dz):

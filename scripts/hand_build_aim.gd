@@ -353,13 +353,15 @@ func _update_brush_active_preview(cursor: Vector3) -> void:
 	if length < BRUSH_MIN_SEGMENT_LENGTH:
 		# Курсор слишком близко к last_vertex — preview пустой.
 		return
-	var count: int = int(floor(length / _brush_segment_length))
+	# ceil вместо floor + равномерный шаг — см. камп.gd:try_build_palisade_line.
+	# Preview должен совпадать со spawn'ом, иначе игрок видит одно, получает
+	# другое.
+	var count: int = int(ceil(length / _brush_segment_length))
 	if count <= 0:
 		return
-	var step: Vector3 = dir.normalized() * _brush_segment_length
+	var step_length: float = length / float(count)
+	var step: Vector3 = dir.normalized() * step_length
 	# Yaw: локальная ось +X сегмента (длина BoxMesh) должна идти вдоль dir.
-	# См. камп.gd:try_build_palisade_line — та же формула должна быть в
-	# preview, иначе preview расходится со spawn'ом.
 	var rot_y: float = atan2(-dir.z, dir.x)
 	# Проверка валидности: все сегменты в build_zone.
 	var all_in_zone: bool = true
@@ -383,10 +385,12 @@ func _spawn_committed_preview_segments(a: Vector3, b: Vector3) -> void:
 	var length: float = dir.length()
 	if length < BRUSH_MIN_SEGMENT_LENGTH:
 		return
-	var count: int = int(floor(length / _brush_segment_length))
+	# ceil + равномерный шаг — синхронно со spawn'ом в Camp.
+	var count: int = int(ceil(length / _brush_segment_length))
 	if count <= 0:
 		return
-	var step: Vector3 = dir.normalized() * _brush_segment_length
+	var step_length: float = length / float(count)
+	var step: Vector3 = dir.normalized() * step_length
 	var rot_y: float = atan2(-dir.z, dir.x)
 	for j in range(count):
 		var center: Vector3 = a + step * (float(j) + 0.5)
