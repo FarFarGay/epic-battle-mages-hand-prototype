@@ -13,6 +13,68 @@
 
 # Заметки по работе с проектом (накапливаются)
 
+## Сессия 2026-05-12 (2) — Ревизия архитектуры + санитарный заход
+
+### Контекст / запрос
+Геймдизайнер: «проект разросся, давай полную ревизию кода и архитектуры». Запустил 5 параллельных Explore-агентов по доменам (Hand-pipeline, Camp/Gnome/юниты, Combat/WaveDirector, UI/EventBus/Journal, контракты/инфраструктура). Свёл findings в приоритизированный отчёт, прошёлся «санитарным заходом» по красным/жёлтым пунктам.
+
+### Что закрыли (3 коммита)
+
+#### `65ec7e4` — fix: bell race + EventBus утечки + duck-typing forced_target
+- **WaveDirector._assign_forced_targets**: `is Skeleton` → `enemy.has_method(&"set_forced_target")`. Будущие Enemy-наследники получают forced_target без правок WaveDirector.
+- **WatchBell.is_carried() + set_carried учитывает флаг**: добавил геттер. **DefenderGnome._is_responding_to_bell** теперь отпускает bell-mode если `_bell_ref.is_carried()` — был баг: при relocate колокола во время response защитник стоял на месте до истечения linger-таймера (8с), потому что `has_enemies_in_zone()` возвращал 0 при `monitoring=false`.
+- **Camp._on_bell_destroyed**: адресный `release_from_bell` только тем defender'ам, у кого `is_responding_to_bell(bell) == true`. Был баг: разрушение одного из нескольких колоколов сбрасывало bell-mode у защитников, отвечающих на ДРУГОЙ bell.
+- **DefenderGnome.is_responding_to_bell(bell)**: новый публичный API — Camp использует для адресной отвязки.
+- **tree_exiting → _disconnect_eventbus**: добавлен в `Gnome._ready` (чистит collection_priority_changed), `DefenderGnome._ready` (override зовёт super + чистит skeleton_attacked_camp + squad_leveled_up), `CampPart._ready` (чистит hand_grabbed + hand_released). Object-to-Object Godot чистит на free автоматически, но EventBus — autoload (жив всю сессию), фантомные Callable'ы накапливались до GC; на 100+ гномах за матч — сотни мёртвых подписок.
+- **SoldierGnome лог**: `[SoldierPikeman:%s]` → `[SoldierGnome:%s]` (копипаст из имени сцены).
+
+#### `7149ec7` — refactor: target spatial-grid из Skeleton в Enemy
+- **Enemy.gd** теперь владеет: `TARGET_GROUP = &"skeleton_target"` (имя оставлено для совместимости с .tscn'ами), `TARGET_GRID_CELL_SIZE`, `TARGET_GRID_REFRESH_INTERVAL`, `static _target_grid`, `static _target_grid_time`, `static _grid_cell(pos)`, `static _maybe_refresh_target_grid(tree) -> bool`. `_maybe_refresh_target_grid` теперь **возвращает bool** — `true` если refresh случился.
+- **Skeleton.gd**: убраны дублирующие константы и static var'ы. Bare ссылки на `TARGET_GROUP` в коде Skeleton'а резолвятся через наследование в `Enemy.TARGET_GROUP`. Сделал явный комментарий чтобы будущие читатели понимали почему bare-ref работает.
+- **_target_load** остался в Skeleton (Skeleton-specific soft-cap по `_cached_target`). Refresh — новый метод `_refresh_target_load(tree)`, вызывается синхронно с grid'ом: `if Enemy._maybe_refresh_target_grid(tree): Skeleton._refresh_target_load(tree)`. Так grid и load всегда snapshot одного тика.
+- **Зачем**: будущий skeleton-archer (extends Enemy, не Skeleton — потому что AI у лучника другой, FAR-LOD и approach-ring к нему не применимы) получает grid даром. Без этого пришлось бы или дублировать grid-логику, или extend'ить весь Skeleton.gd (1350 строк).
+
+#### `bfe677c` — refactor: единая hover-подсветка через PICKUP_HIGHLIGHT_GROUP
+- **Hand.PICKUP_HIGHLIGHT_GROUP = &"pickup_highlight"** + `Hand.PICKUP_HIGHLIGHT_RADIUS = 1.5м` + `Hand._update_pickup_highlight()` (вызывается из `Hand._process`). Один сканер: ищет ближайший Node3D в группе в радиусе от `cursor.ground`, на нём `set_highlighted(true)`, на остальных в группе — `false`. Активен только в PHYSICAL без `is_holding()` и без активного build_aim.
+- **WatchBell._ready**: `add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)`. Это вся интеграция.
+- **HandBuildAim._update_bell_highlight удалён** — был per-тип сканер по WATCH_BELL_GROUP, дублировал общую логику. PICKUP_RADIUS остался в HandBuildAim для `try_pickup_at_cursor` (ЛКМ-pickup радиус совпадает с highlight-радиусом — игрок видит подсветку, видит и точку действия).
+- **Grabbable RB (Item / ResourcePile)** НЕ затронуты — продолжают подсвечиваться через `HandPhysicalActions._update_candidate_highlight` (overlap-based от руки, не дистанция-от-курсора). Это **другая семантика** и не сливается с PICKUP_HIGHLIGHT. Когда придёт момент унифицировать обе — можно. Сейчас две разных семантики — две системы.
+- **Зачем**: следующий non-Grabbable pickup-объект (рычаг, ящик-с-action, флаг-маркер) — `add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)` + `set_highlighted(bool)`, всё.
+
+### Что отбросили после перепроверки
+
+Cleanup-агент пометил 3 пункта как «мёртвые», но при проверке они **активны / запланированы** — НЕ трогал:
+- **Layer 8 ColdEnemy** — DefenderGnome `TARGET_MASK = ENEMIES | COLD_ENEMY` (line 130, 738 defender_gnome.gd), `MASK_HAND_TARGETS / MASK_HAND_SLAM / MASK_FRIENDLY_PROJECTILE` все включают COLD_ENEMY. Удаление сломало бы видение защитников.
+- **Arrow.gd `Layers.compose` вместо литералов** — в `arrow.gd` НЕТ присвоений `collision_layer/mask`. Они в `.tscn`. Cleanup-агент перепутал .gd с .tscn.
+- **`super_cast_started/finished` мёртвые сигналы** — задокументированы в SPEC.md:2797 и Agent Task.md:283 как запланированный API для QTE-экрана/звука. Удалять нельзя.
+
+UI-агент пометил **#5 JournalPanel ловит ввод когда visible=false** как баг — на самом деле гард `if not visible: return` в `_refresh()` уже есть (line 251). `_unhandled_input` не «срабатывает каждый кадр», а только на input event. Агент пропустил guard.
+
+### Архитектурно
+
+- **Минимальный «один путь» вместо абстракции**. Пример: target_grid в Enemy. Не делал абстрактный `VisionGrid` класс с конфигурируемой группой — Enemy просто владеет одной statically-shared структурой для одной группы целей. Если когда-то понадобятся разные группы для разных Enemy-типов (skeleton ловит skeleton_target, archer ловит archer_target) — тогда параметризуем. Сейчас одно поведение, одно имя, один path.
+- **Duck-typing для расширяемости WaveDirector**. `has_method(&"set_forced_target")` лучше чем виртуальный no-op в Enemy: новые типы добавляются без правок Enemy. Cost'а нет — `has_method` копеечный.
+- **Группа PICKUP_HIGHLIGHT_GROUP — расширение паттерна Damageable/Pushable/Grabbable, но НЕ контракт.** Простая группа + ad-hoc метод `set_highlighted`. Это не RefCounted-контракт с register/is_X-API — потому что highlight по сути один callback и одна группа, нет двух разных проявлений (как у Damageable где есть `take_damage`, `is_damageable`, register-в-группу). Если потребуется (например, тип-фильтр или ещё хук) — конвертируем в полный контракт. Не плодим абстракцию вперёд.
+- **EventBus disconnect**: подписки в `_ready` через autoload-объект (EventBus жив сессию) → tree_exiting обязателен. Лучше делать в base-классе (Gnome) с виртуальным override в подклассах (DefenderGnome зовёт super._disconnect_eventbus). Назвать одинаково — единый паттерн.
+
+### Что НЕ сделано / отложено (преждевременные рефакторы по решению геймдизайнера)
+
+- Разделить `camp.gd` (2597 строк) на 8 файлов по зонам ответственности.
+- Разделить `skeleton.gd` (1350) на ai/combat/movement.
+- Разделить `journal_panel.gd` (1243): autoload-UI на state-layer + view-layer в main.tscn.
+- Унифицировать sprint-логику `_move_toward` в Gnome/DefenderGnome/SoldierGnome (3 копии).
+- `AbilityBase` класс для Slam/Flick/Fireball/Firestorm/Super.
+- `BallisticConfig` struct для setup() Fireball/SuperCarrier (16/12 параметров).
+- Унифицировать `_build_*_card` паттерны в JournalPanel (4 копии).
+
+Все они «работают, не растут сейчас» — оставлены до момента, когда долг даст конкретный симптом или блокирует фичу.
+
+### Метод
+
+- 5 параллельных Explore-агентов на разные домены. Каждый возвращал отчёт в формате «sticky points / дублирование / риски регрессий / low-hanging fruit / большие рефакторы». Свёл в один общий приоритезированный отчёт перед началом работы.
+- **Критично перепроверять рекомендации агентов**. Из 11 cleanup-пунктов 3 оказались неактуальны (Layer 8 активный, Arrow литералы в .tscn, super_cast зарезервированы). UI-агент пропустил visible-guard. **Trust but verify** — `git diff`/`grep` после рекомендаций спасает от ложных правок.
+- Parse-check через `godot --headless --path . --quit-after 1` — полный compile-pass проекта вместо --check-only --script (тот не разрешает autoload-зависимости). Каждый коммит — отдельная логическая группа, parse-check между ними.
+
 ## Сессия 2026-05-12 — Watch Bell + AI скелетов + автостарт волн + ресурсы
 
 Длинная сессия с тремя независимыми темами; коммитим двумя порциями:

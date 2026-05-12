@@ -466,6 +466,7 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 **Подсветка кандидата (`_update_candidate_highlight`):**
 - Каждый кадр ищет `_find_closest_grabbable(_hand.get_grabbable_bodies())`, пока `_held == null`.
 - На фронте — `_current_candidate.set_highlighted(false)` / `candidate.set_highlighted(true)` (через `has_method` — защита от Grabbable без подсветки).
+- Семантика: «рука рядом с предметом» (overlap-based через GrabArea). Для **non-Grabbable** pickup-объектов (постройки с relocate, интерактивные объекты — будут расти) действует отдельный сканер `Hand._update_pickup_highlight` по группе `Hand.PICKUP_HIGHLIGHT_GROUP = &"pickup_highlight"` (см. ниже). Семантика того сканера — «курсор рядом с объектом» (`PICKUP_HIGHLIGHT_RADIUS = 1.5м` от cursor.ground), и он активен только в PHYSICAL без активного aim'а. Новый non-Grabbable pickup-объект интегрируется через `add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)` + `set_highlighted(bool)`, без правок Hand.
 
 **`_exit_tree`:** если `_held != null` — `_release()`. Без этого предмет остался бы `freeze=true` в мире после уничтожения руки.
 
@@ -683,13 +684,15 @@ Skeleton не использует `Enemy._targets` — вместо этого 
 
 **Приоритет: гномы > палатки.** Скелеты «голодные», охотятся на существ. Если в радиусе хоть один живой гном (любого типа — собиратель или защитник), идём к ближайшему гному, палатки игнорируются. Палатка берётся целью только когда гномов в зоне нет (например, на свёртке лагеря все попрятались). Защитники-лучники у периметра лагеря «перехватывают агро» — wave-скелеты переключаются на них как только подходят на 12м к лагерю, прежде чем добежать до палаток.
 
-**`forced_target: Node3D` — fallback aggro-точка для wave-скелетов.** WaveDirector назначает её через `set_forced_target(palatка)` сразу после `spawn_group`. В `_scan_target` используется только если весь vision пуст — это «направление движения» для скелетов, заспавненных в 50м+ от лагеря (vision только 12м, без forced они wander бесцельно). Когда волна доходит до 12м зоны — vision захватывает гномов на периметре, и приоритет переключает скелета на ближайшего гнома.
+**`forced_target: Node3D` — fallback aggro-точка для wave-скелетов.** WaveDirector назначает её через `set_forced_target(palatка)` сразу после `spawn_group`. Резолв через duck-typing (`enemy.has_method(&"set_forced_target")`) — любой будущий Enemy-наследник (skeleton-archer и т.д.), определивший метод, получит цель без правок WaveDirector. В `_scan_target` используется только если весь vision пуст — это «направление движения» для скелетов, заспавненных в 50м+ от лагеря (vision только 12м, без forced они wander бесцельно). Когда волна доходит до 12м зоны — vision захватывает гномов на периметре, и приоритет переключает скелета на ближайшего гнома.
 
-**Spatial grid целей (главный perf-фикс на 290+ скелетах × 144 цели):** наивный скан `get_nodes_in_group("skeleton_target")` каждым скелетом × ~5000 сканов/сек × 144 элементов = **~720k distance-checks/сек** = ~12-15мс из 20мс physics_ms. Заменён на статический spatial grid:
-- `static var _target_grid: Dictionary = {}` — `Vector2i(cell_x, cell_z) → Array of [Vector3 pos, Node3D node]`. Глобальный для всех скелетов.
+**Spatial grid целей (главный perf-фикс на 290+ скелетах × 144 цели):** наивный скан `get_nodes_in_group("skeleton_target")` каждым скелетом × ~5000 сканов/сек × 144 элементов = **~720k distance-checks/сек** = ~12-15мс из 20мс physics_ms. Заменён на статический spatial grid. **Живёт в `Enemy.gd`** — generic vision-инфраструктура для любого Enemy-наследника (skeleton-archer и т.д. получают grid даром через наследование):
+- `static var _target_grid: Dictionary = {}` (в `Enemy`) — `Vector2i(cell_x, cell_z) → Array of [Vector3 pos, Node3D node]`. Глобальный для всех Enemy.
+- `Enemy.TARGET_GROUP = &"skeleton_target"` (имя группы оставлено для совместимости с .tscn'ами).
 - `TARGET_GRID_CELL_SIZE = 12.0` (= `vision_radius`). 3×3 cell'ов вокруг скелета гарантированно покрывают vision-диск.
-- `TARGET_GRID_REFRESH_INTERVAL = 0.4с`. Все скелеты читают один глобальный snapshot. Stale-границы: гном двигается ≤0.64м за 0.4с (move_speed=1.6 × 0.4) — для vision_radius=12 неотличимо. Палатки и большинство гномов в зоне атаки стоят на месте — тоже неотличимо.
-- `_maybe_refresh_target_grid(tree)` — ленивый pass по группе раз в 0.4с globally, в начале каждого скана. Один pass на 144 цели вместо 5000 pass'ов.
+- `TARGET_GRID_REFRESH_INTERVAL = 0.4с`. Все враги читают один глобальный snapshot. Stale-границы: гном двигается ≤0.64м за 0.4с (move_speed=1.6 × 0.4) — для vision_radius=12 неотличимо. Палатки и большинство гномов в зоне атаки стоят на месте — тоже неотличимо.
+- `Enemy._maybe_refresh_target_grid(tree) -> bool` — ленивый pass по группе раз в 0.4с globally, в начале каждого скана. Возвращает `true` если refresh случился — конкретные классы могут на том же тике обновлять свои per-class метрики.
+- `Skeleton._refresh_target_load(tree)` — Skeleton-specific soft-cap-снапшот `_target_load[instance_id]`, обновляется синхронно с grid'ом (когда `Enemy._maybe_refresh_target_grid` вернул `true`). Остался в Skeleton, потому что зависит от `_cached_target` именно Skeleton'а.
 - `_scan_target` теперь читает 9 cell'ов (3×3) вокруг своей cell-позиции. Каждый cell — Array из ~5-15 элементов в плотной Camp-зоне, 0 в пустой. Итого ~50 distance-checks вместо 144 на скан, **редукция ×3**.
 
 **Cache + throttle поверх grid'а:**
