@@ -216,6 +216,24 @@ var _lod_offscreen_cos: float = 0.5
 var _lod_offscreen_cos_exit: float = 0.4
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
+## NavAgent для path-following вокруг палисадов / палаток / башни. Все
+## методы движения (`_move_toward_xz`) идут через [_resolve_path_step] —
+## он возвращает либо следующий waypoint пути, либо сам goal если nav-агент
+## не активен или цель уже достигнута. Если ноды нет (наследник не привязал)
+## — pathfinding отключён, гном идёт прямо.
+@onready var _nav_agent: NavigationAgent3D = $NavigationAgent3D if has_node("NavigationAgent3D") else null
+## Кэш последнего set_target'а — чтобы не сбрасывать path-расчёт каждым
+## кадром на тот же target (NavigationAgent делает re-path под капотом
+## при set_target_position).
+var _nav_last_target: Vector3 = Vector3.INF
+## Throttle на set_target_position. Цель может «дрожать» (например anchor
+## каравана пересчитывается каждый кадр) — без throttle'а path-расчёт
+## молотит на пустом месте.
+var _nav_set_throttle: float = 0.0
+const NAV_SET_INTERVAL: float = 0.2
+## Если цель в этом радиусе от текущей позиции — pathfinding выключен,
+## идём прямо. Дёрганья на близких целях не нужны.
+const NAV_DIRECT_RADIUS: float = 1.5
 
 ## Размер cell'а в spatial-grid'е куч ресурсов. Сейчас grid используется
 ## глобальным поиском _find_nearest_pile (полный обход keys), но cell-структура
@@ -886,7 +904,11 @@ func _on_collection_priority_changed(_weights: Dictionary) -> void:
 
 
 func _move_toward_xz(target: Vector3) -> void:
-	var to_target := target - global_position
+	# Pathfinding-обёртка: вместо прямого движения к target идём к следующей
+	# точке пути из NavAgent. На близких целях (≤ NAV_DIRECT_RADIUS) и без
+	# nav-агента — fallback на прямое движение.
+	var step_target: Vector3 = _resolve_path_step(target)
+	var to_target := step_target - global_position
 	to_target.y = 0.0
 	if to_target.length_squared() < VecUtil.EPSILON_SQ:
 		velocity.x = 0.0
@@ -895,6 +917,30 @@ func _move_toward_xz(target: Vector3) -> void:
 	var dir := to_target.normalized()
 	velocity.x = dir.x * move_speed
 	velocity.z = dir.z * move_speed
+
+
+## Возвращает следующую точку, к которой нужно двигаться: либо waypoint
+## NavAgent'а, либо сам goal (если nav недоступен / цель близко / уже
+## пришли). Подклассы используют через `_move_toward_xz` автоматически.
+func _resolve_path_step(goal: Vector3) -> Vector3:
+	if _nav_agent == null:
+		return goal
+	# На близких целях path-расчёт даёт «дрожащий» next_position (агент
+	# мгновенно перепрыгивает waypoint'ы); прямой подход проще и стабильнее.
+	var goal_xz := Vector2(goal.x - global_position.x, goal.z - global_position.z)
+	if goal_xz.length_squared() <= NAV_DIRECT_RADIUS * NAV_DIRECT_RADIUS:
+		return goal
+	var delta: float = get_physics_process_delta_time()
+	_nav_set_throttle = maxf(_nav_set_throttle - delta, 0.0)
+	# Сбрасываем target если цель сменилась (≥0.5м) или прошёл throttle interval.
+	var target_changed: bool = (_nav_last_target - goal).length_squared() > 0.25
+	if _nav_set_throttle <= 0.0 or target_changed:
+		_nav_agent.target_position = goal
+		_nav_last_target = goal
+		_nav_set_throttle = NAV_SET_INTERVAL
+	if _nav_agent.is_navigation_finished():
+		return goal
+	return _nav_agent.get_next_path_position()
 
 
 func _horizontal_distance(target: Vector3) -> float:

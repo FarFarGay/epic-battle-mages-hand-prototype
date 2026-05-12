@@ -18,6 +18,7 @@
 [ext_resource type="PackedScene" path="res://scenes/resource_zone.tscn" id="18_dp3eg"]
 [ext_resource type="Resource" uid="uid://bj8ej7jf1bubo" path="res://resources/wave_schedule_default.tres" id="18_schedule_default"]
 [ext_resource type="PackedScene" uid="uid://grassfield01" path="res://scenes/grass_field.tscn" id="19_grass_field"]
+[ext_resource type="Script" path="res://scripts/nav_region.gd" id="20_nav"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(300, 1, 300)
@@ -35,11 +36,24 @@ shader_parameter/grass_color_light = Color(0.45, 0.62, 0.28, 1)
 [sub_resource type="BoxMesh" id="BoxMesh_ground"]
 size = Vector3(300, 1, 300)
 
+[sub_resource type="NavigationMesh" id="NavMesh_main"]
+geometry_collision_mask = 33
+geometry_parsed_geometry_type = 1
+agent_radius = 0.5
+agent_height = 1.7
+agent_max_climb = 0.3
+cell_size = 0.25
+cell_height = 0.25
+
 [node name="Main" type="Node3D" unique_id=462266493]
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1155419915]
 transform = Transform3D(1, 0, 0, 0, 0.707, 0.707, 0, -0.707, 0.707, 0, 20, 0)
 shadow_enabled = true
+
+[node name="NavigationRegion3D" type="NavigationRegion3D" parent="." unique_id=918273456 groups=["nav_region"]]
+navigation_mesh = SubResource("NavMesh_main")
+script = ExtResource("20_nav")
 
 [node name="Ground" type="StaticBody3D" parent="." unique_id=1330979093]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)

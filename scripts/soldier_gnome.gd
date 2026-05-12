@@ -586,12 +586,24 @@ func _resolve_squad_center() -> Vector3:
 ## (унаследованные exports из Gnome). Это даёт «строй идёт спокойно, отстающие
 ## догоняют бегом» — критично для эскорта подвижной башни и для быстрого
 ## исполнения команды «Идти сюда» через всю карту.
+##
+## Pathfinding: путь к финальной цели (`global_position + to_goal_xz`) идёт
+## через [Gnome._resolve_path_step] — обходит стены/палатки. Скорость
+## sprint'а считается от **финальной** дистанции, не от шага path'а:
+## юнит не должен замедляться на промежуточных waypoint'ах.
 func _move_toward(to_goal_xz: Vector3, dist: float) -> void:
-	var dir: Vector3 = to_goal_xz / dist
-	look_at(global_position + dir, Vector3.UP)
+	var final_goal: Vector3 = global_position + to_goal_xz
+	var step_target: Vector3 = _resolve_path_step(final_goal)
+	var step_dir: Vector3 = step_target - global_position
+	step_dir.y = 0.0
+	if step_dir.length_squared() < VecUtil.EPSILON_SQ:
+		velocity = Vector3.ZERO
+		return
+	step_dir = step_dir.normalized()
+	look_at(global_position + step_dir, Vector3.UP)
 	var t: float = clampf(dist / maxf(caravan_full_sprint_distance, 0.001), 0.0, 1.0)
 	var speed: float = lerpf(move_speed, caravan_sprint_speed, t)
-	velocity = dir * speed
+	velocity = step_dir * speed
 
 
 ## Цель в `enemy_detect_radius`е + охранной зоне (`combat_leash_radius` от

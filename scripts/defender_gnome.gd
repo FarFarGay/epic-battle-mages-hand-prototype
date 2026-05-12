@@ -740,8 +740,10 @@ func _pick_patrol_point(anchor: Vector3, angle: float) -> Vector3:
 ## Локальный аналог Gnome._move_toward_xz, но с произвольной скоростью:
 ## защитник патрулирует медленнее (patrol_speed), а Gnome.move_speed
 ## остаётся для возврата в палатку (через унаследованный _tick_returning).
+## Pathfinding-обёртка через [Gnome._resolve_path_step] — обходит стены.
 func _step_toward(target: Vector3, speed: float) -> void:
-	var to_target: Vector3 = target - global_position
+	var step_target: Vector3 = _resolve_path_step(target)
+	var to_target: Vector3 = step_target - global_position
 	to_target.y = 0.0
 	if to_target.length_squared() < VecUtil.EPSILON_SQ:
 		velocity.x = 0.0

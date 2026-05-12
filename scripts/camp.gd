@@ -1694,8 +1694,20 @@ func try_build_palisade_line(vertices: Array) -> Dictionary:
 			posts += 1
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp:Palisade] построено %d сегментов + %d столбиков" % [built, posts])
+	# Re-bake NavMesh — палисад добавил препятствия на слое CAMP_OBSTACLE,
+	# гномам нужен новый путь вокруг. Async, гномы продолжают по старому
+	# пути ≈100-300мс пока bake не закончится.
+	_rebake_navmesh()
 	EventBus.camp_buildings_changed.emit()
 	return {"success": true, "reason": "", "segments_built": built}
+
+
+## Зовёт async re-bake у NavigationRegion3D в сцене. Если region не найден
+## (например, в dev-scene без navmesh'а) — silent skip.
+func _rebake_navmesh() -> void:
+	var region: NavRegionBaker = get_tree().get_first_node_in_group(&"nav_region") as NavRegionBaker
+	if region != null:
+		region.rebake()
 
 
 ## Эффект BUILDING_WATCH_BELL: спавнит WatchBell в `params.position`, привязывает
