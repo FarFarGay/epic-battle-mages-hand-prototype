@@ -1,0 +1,30 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/palisade_segment.gd" id="1_palisade"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_post"]
+size = Vector3(0.4, 1.5, 0.4)
+
+[sub_resource type="StandardMaterial3D" id="Material_wood"]
+albedo_color = Color(0.36, 0.24, 0.13, 1)
+roughness = 0.9
+emission_enabled = false
+emission = Color(0.95, 0.55, 0.1, 1)
+emission_energy_multiplier = 0.0
+
+[sub_resource type="BoxShape3D" id="BoxShape_post"]
+size = Vector3(0.4, 1.5, 0.4)
+
+[node name="PalisadePost" type="StaticBody3D"]
+collision_layer = 32
+collision_mask = 0
+script = ExtResource("1_palisade")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
+mesh = SubResource("BoxMesh_post")
+material_override = SubResource("Material_wood")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
+shape = SubResource("BoxShape_post")

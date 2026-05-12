@@ -243,6 +243,11 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 ## BUILDING_PALISADE / try_build_palisade_line. Если null — постройка молча
 ## провалится.
 @export var palisade_segment_scene: PackedScene
+## Сцена столбика частокола — короткий 0.4×1.5×0.4 столбик. Спавнится на
+## каждом vertex'е ломаной для перекрытия углов и дробных хвостов. Тот же
+## скрипт что и сегмент (общий hp/damage/группы). Если null — стыки
+## остаются открытыми.
+@export var palisade_post_scene: PackedScene
 ## Радиус «зоны строительства» от центра развёрнутого лагеря. Постройки,
 ## требующие интерактивного выбора места (флаг `requires_aim` в каталоге),
 ## не ставятся за пределами этого круга. Преимущественно для сторожевого
@@ -1665,8 +1670,22 @@ func try_build_palisade_line(vertices: Array) -> Dictionary:
 		inst.global_position = seg["pos"]
 		inst.rotation.y = seg["rot_y"]
 		built += 1
+	# Corner-posts: на каждом vertex'е спавним короткий столбик. Закрывает
+	# треугольную щель на внешней стороне углов (соседние сегменты под разным
+	# углом не стыкуются плотно) и дробные хвосты (последний сегмент линии
+	# может кончаться раньше vertex'а на ≤ segment_length метров — пустота
+	# заглушается постом). Бесплатные — игрок уже платит per-segment.
+	var posts: int = 0
+	if palisade_post_scene != null:
+		for v in vertices:
+			var post: Node3D = palisade_post_scene.instantiate() as Node3D
+			if post == null:
+				continue
+			parent.add_child(post)
+			post.global_position = Vector3(v.x, _deploy_anchor.y, v.z)
+			posts += 1
 	if debug_log and LogConfig.master_enabled:
-		print("[Camp:Palisade] построено %d сегментов" % built)
+		print("[Camp:Palisade] построено %d сегментов + %d столбиков" % [built, posts])
 	EventBus.camp_buildings_changed.emit()
 	return {"success": true, "reason": "", "segments_built": built}
 
