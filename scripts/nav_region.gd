@@ -1,5 +1,7 @@
-class_name NavRegionBaker
 extends NavigationRegion3D
+## Без `class_name` — иначе class_cache требует editor-pass перед --check-only
+## (см. memory `reference_godot_class_cache`). Camp.gd зовёт `rebake()` через
+## duck-typing (has_method), типизация не нужна.
 ## Тонкая обёртка над [NavigationRegion3D] с двумя задачами:
 ##   1. Первичный async bake при загрузке сцены (без него navmesh пуст и
 ##      `NavigationAgent3D.get_next_path_position` возвращает текущую позицию).

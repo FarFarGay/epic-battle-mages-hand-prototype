@@ -1703,10 +1703,12 @@ func try_build_palisade_line(vertices: Array) -> Dictionary:
 
 
 ## Зовёт async re-bake у NavigationRegion3D в сцене. Если region не найден
-## (например, в dev-scene без navmesh'а) — silent skip.
+## (например, в dev-scene без navmesh'а) — silent skip. Duck-typing через
+## has_method, чтобы не таскать class_name NavRegionBaker — class_cache
+## после нового class_name требует editor-pass, иначе «Could not find type».
 func _rebake_navmesh() -> void:
-	var region: NavRegionBaker = get_tree().get_first_node_in_group(&"nav_region") as NavRegionBaker
-	if region != null:
+	var region: Node = get_tree().get_first_node_in_group(&"nav_region")
+	if region != null and region.has_method(&"rebake"):
 		region.rebake()
 
 

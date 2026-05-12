@@ -36,3 +36,10 @@ cast_shadow = 0
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -0.3)
 mesh = SubResource("BoxMesh_facing")
 cast_shadow = 0
+
+[node name="NavigationAgent3D" type="NavigationAgent3D" parent="."]
+path_desired_distance = 0.5
+target_desired_distance = 0.5
+radius = 0.4
+height = 1.5
+avoidance_enabled = false
