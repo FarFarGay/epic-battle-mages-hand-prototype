@@ -473,7 +473,13 @@ func _build_building_card(camp: Node, id: StringName) -> PanelContainer:
 
 	# Строка цены: иконки ресурсов + числа. Подсвечиваем красным то, чего
 	# не хватает — игрок сразу видит что собирать дальше.
-	info.add_child(_build_cost_row(camp, data.get("cost", {})))
+	# Brush-mode постройки имеют cost_per_segment (не фиксированный total) —
+	# показываем его с суффиксом «/сегмент» для понятности.
+	var is_brush: bool = data.get("brush_mode", false)
+	if is_brush:
+		info.add_child(_build_cost_row(camp, data.get("cost_per_segment", {}), "/сегмент"))
+	else:
+		info.add_child(_build_cost_row(camp, data.get("cost", {})))
 
 	# Правая колонка: кнопка построить. Состояние и текст определяются
 	# can_build_reason + can_afford. Полный disabled — если нельзя по
@@ -485,6 +491,17 @@ func _build_building_card(camp: Node, id: StringName) -> PanelContainer:
 	hbox.add_child(btn)
 
 	var reason: String = camp.can_build_reason(id)
+	# Brush-постройки: can_afford проверяется уже после рисования линии — здесь
+	# только state-проверка (deployed_only). Кнопка просто «рисовать».
+	if is_brush:
+		if reason != "":
+			btn.text = reason
+			btn.disabled = true
+			_dim(card, 0.55)
+		else:
+			btn.text = "рисовать"
+			_wire_action_button(btn, _on_build_pressed.bind(id))
+		return card
 	var cost: Dictionary = data.get("cost", {})
 	var affordable: bool = camp.can_afford(cost)
 	if reason != "":
@@ -503,14 +520,18 @@ func _build_building_card(camp: Node, id: StringName) -> PanelContainer:
 
 ## Строка стоимости: для каждого типа ресурса в cost — цветной квадратик +
 ## «текущий/требуется». Красный текст если нехватка по этому типу.
-func _build_cost_row(camp: Node, cost: Dictionary) -> HBoxContainer:
+func _build_cost_row(camp: Node, cost: Dictionary, suffix: String = "") -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 
 	for type in cost:
 		var amount_required: int = int(cost[type])
 		var amount_have: int = camp.get_resource(type)
-		var enough: bool = amount_have >= amount_required
+		# С suffix'ом «/сегмент» (brush-mode) количество — это per-unit стоимость,
+		# а не total. Поэтому НЕ сравниваем «have/required» — игрок видит
+		# «2/сегмент» как формат «X wood за каждый» без enough-проверки.
+		var per_unit: bool = not suffix.is_empty()
+		var enough: bool = per_unit or amount_have >= amount_required
 
 		var item := HBoxContainer.new()
 		item.add_theme_constant_override("separation", 4)
@@ -523,7 +544,10 @@ func _build_cost_row(camp: Node, cost: Dictionary) -> HBoxContainer:
 		item.add_child(icon)
 
 		var label := Label.new()
-		label.text = "%d/%d" % [amount_have, amount_required]
+		if per_unit:
+			label.text = "%d%s" % [amount_required, suffix]
+		else:
+			label.text = "%d/%d" % [amount_have, amount_required]
 		label.add_theme_font_size_override("font_size", 12)
 		if enough:
 			label.add_theme_color_override("font_color", Color(0.9, 0.9, 0.9, 1.0))
@@ -539,6 +563,16 @@ func _on_build_pressed(id: StringName) -> void:
 	if camp == null:
 		return
 	var data: Dictionary = Camp.CAMP_BUILDING_CATALOG.get(id, {})
+	# brush_mode — polyline-кисть (частокол). Журнал закрываем, игрок рисует
+	# ломаную ЛКМ, ПКМ — построить, Esc — отмена. См. HandBuildAim.start_brush.
+	if data.get("brush_mode", false):
+		var hand_b := get_tree().get_first_node_in_group(Hand.HAND_GROUP) as Hand
+		if hand_b == null or hand_b.build_aim == null:
+			push_warning("[Journal] brush_mode: Hand/build_aim не резолвится")
+			return
+		close()
+		hand_b.build_aim.start_brush(id)
+		return
 	# requires_aim — интерактивный выбор точки. Журнал закрываем, игрок
 	# направляет курсором, ПКМ подтверждает (см. HandBuildAim). try_build
 	# вызовется уже из HandBuildAim._commit_aim — здесь не дёргаем.

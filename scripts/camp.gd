@@ -79,6 +79,7 @@ const UPGRADE_LONG_DRAW := &"long_draw"
 ## CAMP_BUILDING_CATALOG ниже.
 const BUILDING_NEW_TENT := &"new_tent"
 const BUILDING_WATCH_BELL := &"watch_bell"
+const BUILDING_PALISADE := &"palisade"
 
 ## Каталог апгрейдов отряда — id → отображаемые поля. JournalPanel читает
 ## name/description/level чтобы построить карточки. Эффекты применяются на
@@ -140,6 +141,20 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 		# Если синхронизировать со сценой нужно динамически — в будущем
 		# прочитаем из инстанса при aim_start; пока константа достаточна.
 		"aim_radius": 7.5,
+	},
+	BUILDING_PALISADE: {
+		"name": "Деревянный частокол",
+		"description": "Дешёвые сегменты стены 2м длиной. Скелеты ломают их, но тратят на это время — защитники успевают стрелять. Рисуй ломаную линию: ЛКМ ставит точки, ПКМ — построить, Esc — отмена.",
+		# brush_mode → стоимость per-segment, total зависит от длины линии.
+		# UI рисует «N wood / сегмент» вместо обычного total.
+		"cost_per_segment": {ResourcePile.ResourceType.WOOD: 2},
+		"deployed_only": true,
+		"repeatable": true,
+		"brush_mode": true,
+		# Длина одного сегмента в метрах. Совпадает с BoxMesh.size.x в
+		# palisade_segment.tscn (2м). Polyline AB длиной N разбивается на
+		# floor(N / segment_length) сегментов.
+		"segment_length": 2.0,
 	},
 }
 
@@ -224,6 +239,10 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 ## Сцена сторожевого колокола (WatchBell). Спавнится через BUILDING_WATCH_BELL.
 ## Если null — постройка watch_bell молча провалится.
 @export var watch_bell_scene: PackedScene
+## Сцена сегмента деревянного частокола. Спавнится множественно через
+## BUILDING_PALISADE / try_build_palisade_line. Если null — постройка молча
+## провалится.
+@export var palisade_segment_scene: PackedScene
 ## Радиус «зоны строительства» от центра развёрнутого лагеря. Постройки,
 ## требующие интерактивного выбора места (флаг `requires_aim` в каталоге),
 ## не ставятся за пределами этого круга. Преимущественно для сторожевого
@@ -1557,6 +1576,96 @@ func _apply_building(id: StringName, params: Dictionary) -> bool:
 			return _build_watch_bell(params)
 	push_error("Camp._apply_building: нет handler для id=%s" % id)
 	return false
+
+
+## Атомарная попытка построить ломаную из сегментов частокола вдоль массива
+## vertex'ов. Polyline-аналог [try_build] для brush-mode построек.
+##
+## Vertices — точки в мировых координатах (XZ, Y игнорируется — все сегменты
+## ставятся на земле через _deploy_anchor.y). Между каждой парой соседних
+## vertex'ов рассчитывается N сегментов = floor(length / segment_length),
+## ставятся равномерно с поворотом перпендикулярно сегменту.
+##
+## Атомарность: сначала считаем total_cost, проверяем `can_afford` + все
+## сегменты в build_zone, потом списываем и спавним. Частичная постройка
+## исключена: либо всё, либо ничего (с понятной reason).
+##
+## Возвращает Dictionary { success: bool, reason: String, segments_built: int }.
+func try_build_palisade_line(vertices: Array) -> Dictionary:
+	var data: Dictionary = CAMP_BUILDING_CATALOG.get(BUILDING_PALISADE, {})
+	if data.is_empty() or not data.get("brush_mode", false):
+		return {"success": false, "reason": "палисад не в каталоге", "segments_built": 0}
+	if _state != State.DEPLOYED:
+		return {"success": false, "reason": "только в развёрнутом лагере", "segments_built": 0}
+	if vertices.size() < 2:
+		return {"success": false, "reason": "линия слишком короткая", "segments_built": 0}
+	if palisade_segment_scene == null:
+		return {"success": false, "reason": "palisade scene не задан", "segments_built": 0}
+
+	# Считаем позиции и rotation'ы всех будущих сегментов. Линия разбивается на
+	# pairs vertex'ов; каждая pair — на N сегментов вдоль направления pair'а.
+	var segment_length: float = float(data.get("segment_length", 2.0))
+	var segments: Array = []  # каждый элемент: {pos: Vector3, rot_y: float}
+	for i in range(vertices.size() - 1):
+		var a: Vector3 = vertices[i]
+		var b: Vector3 = vertices[i + 1]
+		a.y = _deploy_anchor.y
+		b.y = _deploy_anchor.y
+		var dir: Vector3 = b - a
+		var length: float = dir.length()
+		if length < 0.5:
+			continue  # слишком короткий отрезок — пропускаем
+		var count: int = int(floor(length / segment_length))
+		if count <= 0:
+			continue
+		var step: Vector3 = dir.normalized() * segment_length
+		# Yaw сегмента: ось длины сегмента — X (BoxMesh.size.x), направление
+		# pair'а — это и есть требуемое направление X-оси сегмента.
+		# `look_at` смотрит -Z, нам нужно X → поворот yaw = atan2(dir.x, dir.z).
+		var rot_y: float = atan2(dir.x, dir.z)
+		# Распределяем count сегментов начиная с a + step/2 (центр первого
+		# сегмента на полпути от a) с шагом step.
+		for j in range(count):
+			var center: Vector3 = a + step * (float(j) + 0.5)
+			segments.append({"pos": center, "rot_y": rot_y})
+
+	if segments.is_empty():
+		return {"success": false, "reason": "линия слишком короткая", "segments_built": 0}
+
+	# Все сегменты должны быть в build_zone — иначе откатываем ВСЁ.
+	for seg in segments:
+		if not is_in_build_zone(seg["pos"]):
+			return {"success": false, "reason": "часть линии вне зоны строительства", "segments_built": 0}
+
+	# Total cost = N × cost_per_segment.
+	var cost_per: Dictionary = data.get("cost_per_segment", {})
+	var total_cost: Dictionary = {}
+	for type in cost_per:
+		total_cost[type] = int(cost_per[type]) * segments.size()
+	if not can_afford(total_cost):
+		return {"success": false, "reason": "не хватает ресурсов", "segments_built": 0}
+	if not try_spend(total_cost):
+		# Race — теоретически между can_afford и try_spend; в однопоточном
+		# Godot не случится, но страховка.
+		return {"success": false, "reason": "не хватает ресурсов", "segments_built": 0}
+
+	# Spawn'им. На этом этапе всё списано, провалов быть не должно — если
+	# instantiate падает, логируем (но мы уже за деньги).
+	var built: int = 0
+	var parent: Node = get_tree().current_scene
+	for seg in segments:
+		var inst := palisade_segment_scene.instantiate() as PalisadeSegment
+		if inst == null:
+			push_error("Camp.try_build_palisade_line: scene не инстанцируется как PalisadeSegment")
+			continue
+		parent.add_child(inst)
+		inst.global_position = seg["pos"]
+		inst.rotation.y = seg["rot_y"]
+		built += 1
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp:Palisade] построено %d сегментов" % built)
+	EventBus.camp_buildings_changed.emit()
+	return {"success": true, "reason": "", "segments_built": built}
 
 
 ## Эффект BUILDING_WATCH_BELL: спавнит WatchBell в `params.position`, привязывает

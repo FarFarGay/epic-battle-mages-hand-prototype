@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/camp.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/gnome.tscn" id="2"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" path="res://scripts/mount_slot.gd" id="4"]
 [ext_resource type="PackedScene" path="res://scenes/defender_gnome.tscn" id="5"]
 [ext_resource type="PackedScene" path="res://scenes/watch_bell.tscn" id="6_bell"]
+[ext_resource type="PackedScene" path="res://scenes/palisade_segment.tscn" id="7_palisade"]
 
 [node name="Camp" type="Node3D"]
 script = ExtResource("1")
@@ -13,6 +14,7 @@ tent_scene = ExtResource("3")
 gnome_scene = ExtResource("2")
 defender_scene = ExtResource("5")
 watch_bell_scene = ExtResource("6_bell")
+palisade_segment_scene = ExtResource("7_palisade")
 
 [node name="CenterMountSlot" type="Node3D" parent="."]
 script = ExtResource("4")

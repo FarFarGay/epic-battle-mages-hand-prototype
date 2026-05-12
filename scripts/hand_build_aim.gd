@@ -23,6 +23,16 @@ const ACTION_AIM_CANCEL := &"ui_cancel"
 ## Цвет большого круга зоны строительства (вокруг лагеря). Полупрозрачный
 ## голубой — отличается от preview-кольца постройки и aim-ring'а squad'а.
 @export var build_zone_color: Color = Color(0.45, 0.75, 1.0, 0.55)
+## Цвет preview-сегмента в активной части ломаной (от последнего vertex'а к
+## курсору) когда сегмент в build_zone. Полупрозрачный зелёный — «строится сюда».
+@export var brush_preview_color_valid: Color = Color(0.3, 0.9, 0.3, 0.55)
+## Цвет preview когда хотя бы один сегмент текущего отрезка вне build_zone.
+## Игрок видит «ПКМ не сработает».
+@export var brush_preview_color_invalid: Color = Color(0.9, 0.3, 0.3, 0.65)
+## Цвет уже зафиксированных vertex-пар (от vertex_i к vertex_{i+1}).
+## Чуть бледнее зелёного активного — игрок видит «эта часть уже подтверждена».
+@export var brush_committed_color: Color = Color(0.5, 0.85, 0.5, 0.45)
+
 @export var debug_log: bool = true
 
 @export_group("")
@@ -51,6 +61,34 @@ const RELOCATE_SENTINEL: StringName = &"<relocate>"
 ## [Hand.PICKUP_HIGHLIGHT_RADIUS] — игрок видит подсветку, видит и точку
 ## действия. 1.5м комфортно — попадать пиксель-в-пиксель не нужно.
 const PICKUP_RADIUS: float = 1.5
+
+# --- Brush-mode (polyline editor для частокола и подобных) ---
+## Если true — мы в brush-режиме, polyline editor активен. ЛКМ ставит
+## vertex'ы ломаной, preview-сегменты следуют курсору, ПКМ — построить,
+## Esc — отмена.
+var _brush_mode: bool = false
+## Зафиксированные точки ломаной (мировые позиции, Y клампится к anchor.y).
+var _brush_vertices: Array[Vector3] = []
+## Длина одного сегмента в метрах. Читается из catalog'а на start_brush.
+var _brush_segment_length: float = 2.0
+## Стоимость одного сегмента (Dict ResourceType → amount). Используется
+## для preview-счётчика (через лог) и для info-feed (если добавим UI).
+var _brush_cost_per_segment: Dictionary = {}
+## Building id, из которого читали параметры — для commit'а зовём
+## правильный method у Camp.
+var _brush_building: StringName = &""
+## Preview-сегменты для УЖЕ зафиксированных vertex-пар (от vertex_i к
+## vertex_{i+1}). Создаются один раз при добавлении vertex'а, не пересчитываются
+## каждый кадр. На cancel/commit — очищаются.
+var _brush_committed_meshes: Array[MeshInstance3D] = []
+## Preview-сегменты для активной части (от последнего vertex'а к курсору).
+## Пересоздаются каждый кадр в _update_brush_active_preview — курсор движется.
+var _brush_active_meshes: Array[MeshInstance3D] = []
+## Анти-spam: жёсткий лимит вершин в одной ломаной. 20 = ~38 сегментов × 2м =
+## линия длиной 76м, перекрывает разумную «оборонную стену».
+const BRUSH_MAX_VERTICES: int = 20
+## Минимальная длина отрезка для постройки сегмента. Короче — игнорируется.
+const BRUSH_MIN_SEGMENT_LENGTH: float = 0.5
 
 
 func _ready() -> void:
@@ -119,7 +157,53 @@ func is_aiming(building_id: StringName) -> bool:
 
 
 func is_aiming_any() -> bool:
-	return _active_building != &""
+	return _active_building != &"" or _brush_mode
+
+
+## Стартует polyline-режим для brush-постройки (частокол и подобные). UI
+## (JournalPanel) зовёт когда игрок кликает карточку с `brush_mode: true` в
+## CAMP_BUILDING_CATALOG. ЛКМ ставит vertex'ы ломаной, ПКМ — построить, Esc —
+## отмена.
+func start_brush(building_id: StringName) -> void:
+	if not is_instance_valid(_hand):
+		push_warning("[Hand:BuildAim] start_brush — _hand не задан")
+		return
+	if is_aiming_any():
+		cancel_aim()
+	var data: Dictionary = Camp.CAMP_BUILDING_CATALOG.get(building_id, {})
+	if not data.get("brush_mode", false):
+		push_warning("[Hand:BuildAim] start_brush: %s не brush_mode" % building_id)
+		return
+	if not is_instance_valid(_camp):
+		_camp = get_tree().get_first_node_in_group(Camp.CAMP_GROUP) as Camp
+	_brush_mode = true
+	_brush_building = building_id
+	_brush_vertices = []
+	_brush_segment_length = float(data.get("segment_length", 2.0))
+	_brush_cost_per_segment = data.get("cost_per_segment", {})
+	_pre_aim_category = _hand.active_category
+	_hand.set_active_category(Hand.Category.BUILD_AIM)
+	_spawn_build_zone_only_indicator()
+	if debug_log and LogConfig.master_enabled:
+		print("[Hand:BuildAim] brush-старт %s, segment_length=%.1f" % [
+			building_id, _brush_segment_length,
+		])
+
+
+## Спавнит ТОЛЬКО большой круг build-zone (без preview-кольца под курсором
+## как в обычном aim'е — у brush'а свой preview через сегменты).
+func _spawn_build_zone_only_indicator() -> void:
+	_clear_indicator()
+	if _effects_root == null:
+		_effects_root = get_tree().current_scene
+	if not is_instance_valid(_camp):
+		_camp = get_tree().get_first_node_in_group(Camp.CAMP_GROUP) as Camp
+	if is_instance_valid(_camp):
+		var zone_center: Vector3 = _camp.build_zone_center()
+		if zone_center != Vector3.INF:
+			_build_zone_indicator = AoeVisual.spawn_ground_ring(
+				_effects_root, zone_center, _camp.build_radius, 0.0, build_zone_color,
+			)
 
 
 ## Toggle: если aim активен на этой постройке → cancel. Иначе → start.
@@ -155,6 +239,11 @@ func start_aim(building_id: StringName) -> void:
 
 
 func cancel_aim() -> void:
+	if _brush_mode:
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:BuildAim:Brush] отмена ломаной")
+		_finish_brush()
+		return
 	if _active_building == &"":
 		return
 	if debug_log and LogConfig.master_enabled:
@@ -163,6 +252,10 @@ func cancel_aim() -> void:
 
 
 func _process(_delta: float) -> void:
+	# Brush-режим (частокол) — polyline editor.
+	if _brush_mode:
+		_process_brush()
+		return
 	# Hover-подсветка обрабатывается в Hand._update_pickup_highlight через
 	# общую группу PICKUP_HIGHLIGHT_GROUP — здесь только aim-индикатор.
 	if _active_building == &"":
@@ -180,6 +273,203 @@ func _process(_delta: float) -> void:
 		return
 	if Input.is_action_just_pressed(ACTION_AIM_COMMIT) and not _hand.is_pointer_over_ui():
 		_commit_aim()
+
+
+# --- Brush-mode (polyline editor) ---
+
+const ACTION_BRUSH_VERTEX := &"hand_grab"  # ЛКМ ставит vertex'ы
+
+## Brush-процесс: обновляет preview активной части (от last_vertex к курсору),
+## слушает ЛКМ/ПКМ/Esc.
+func _process_brush() -> void:
+	if not is_instance_valid(_hand):
+		return
+	var cursor: Vector3 = _hand.cursor_world_position()
+	cursor.y -= _hand.hand_height
+	_update_brush_active_preview(cursor)
+	if Input.is_action_just_pressed(ACTION_AIM_CANCEL):
+		cancel_aim()
+		return
+	if Input.is_action_just_pressed(ACTION_AIM_COMMIT) and not _hand.is_pointer_over_ui():
+		_commit_brush()
+		return
+	if Input.is_action_just_pressed(ACTION_BRUSH_VERTEX) and not _hand.is_pointer_over_ui():
+		_add_brush_vertex(cursor)
+
+
+## Добавляет vertex в ломаную. Если это первая точка — просто сохраняем
+## (нет committed-segment'ов от него до предыдущей). Иначе считаем сегменты
+## от last_vertex до новой точки и спавним committed-preview'ы.
+func _add_brush_vertex(cursor: Vector3) -> void:
+	if _brush_vertices.size() >= BRUSH_MAX_VERTICES:
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:BuildAim:Brush] лимит вершин (%d) — ПКМ строит или Esc отменяет" % BRUSH_MAX_VERTICES)
+		return
+	# Y клампим к anchor — все сегменты на земле лагеря.
+	var anchor: Vector3 = _camp.build_zone_center() if is_instance_valid(_camp) else Vector3.ZERO
+	if anchor == Vector3.INF:
+		anchor = Vector3.ZERO
+	var pt: Vector3 = Vector3(cursor.x, anchor.y, cursor.z)
+	if _brush_vertices.is_empty():
+		_brush_vertices.append(pt)
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:BuildAim:Brush] vertex 1 @ (%.1f, %.1f)" % [pt.x, pt.z])
+		return
+	var last: Vector3 = _brush_vertices[-1]
+	if (last - pt).length() < BRUSH_MIN_SEGMENT_LENGTH:
+		# Слишком близко к последнему vertex'у — игнорируем, чтобы не плодить
+		# vertex'ы один-в-один.
+		return
+	_brush_vertices.append(pt)
+	# Перерисовываем committed-preview между last и pt.
+	_spawn_committed_preview_segments(last, pt)
+	if debug_log and LogConfig.master_enabled:
+		print("[Hand:BuildAim:Brush] vertex %d @ (%.1f, %.1f)" % [
+			_brush_vertices.size(), pt.x, pt.z,
+		])
+
+
+## Пересчитывает preview активной части (от last_vertex'а до курсора).
+## Каждый кадр уничтожает старые active-preview'ы и спавнит новые. Дёшево
+## при <10 сегментах в активной части.
+func _update_brush_active_preview(cursor: Vector3) -> void:
+	# Очистка старых.
+	for m in _brush_active_meshes:
+		if is_instance_valid(m):
+			m.queue_free()
+	_brush_active_meshes.clear()
+	if _brush_vertices.is_empty():
+		# Ещё не поставили первый vertex — показываем «фантомный сегмент»
+		# в точке курсора (горизонтально, дефолтная ориентация). Подсказка:
+		# «ЛКМ поставит первую точку».
+		var seg := _make_preview_segment(cursor, 0.0, brush_preview_color_valid)
+		if seg != null:
+			_brush_active_meshes.append(seg)
+		return
+	var last: Vector3 = _brush_vertices[-1]
+	var pt: Vector3 = Vector3(cursor.x, last.y, cursor.z)
+	var dir: Vector3 = pt - last
+	var length: float = dir.length()
+	if length < BRUSH_MIN_SEGMENT_LENGTH:
+		# Курсор слишком близко к last_vertex — preview пустой.
+		return
+	var count: int = int(floor(length / _brush_segment_length))
+	if count <= 0:
+		return
+	var step: Vector3 = dir.normalized() * _brush_segment_length
+	var rot_y: float = atan2(dir.x, dir.z)
+	# Проверка валидности: все сегменты в build_zone.
+	var all_in_zone: bool = true
+	for j in range(count):
+		var center: Vector3 = last + step * (float(j) + 0.5)
+		if not is_instance_valid(_camp) or not _camp.is_in_build_zone(center):
+			all_in_zone = false
+			break
+	var color: Color = brush_preview_color_valid if all_in_zone else brush_preview_color_invalid
+	for j in range(count):
+		var center: Vector3 = last + step * (float(j) + 0.5)
+		var seg := _make_preview_segment(center, rot_y, color)
+		if seg != null:
+			_brush_active_meshes.append(seg)
+
+
+## Спавнит committed-preview между двумя vertex'ами (от vertex_i к vertex_{i+1}).
+## Постоянные до cancel/commit — игрок видит уже зафиксированную часть.
+func _spawn_committed_preview_segments(a: Vector3, b: Vector3) -> void:
+	var dir: Vector3 = b - a
+	var length: float = dir.length()
+	if length < BRUSH_MIN_SEGMENT_LENGTH:
+		return
+	var count: int = int(floor(length / _brush_segment_length))
+	if count <= 0:
+		return
+	var step: Vector3 = dir.normalized() * _brush_segment_length
+	var rot_y: float = atan2(dir.x, dir.z)
+	for j in range(count):
+		var center: Vector3 = a + step * (float(j) + 0.5)
+		var seg := _make_preview_segment(center, rot_y, brush_committed_color)
+		if seg != null:
+			_brush_committed_meshes.append(seg)
+
+
+## Создаёт один preview-сегмент: BoxMesh с прозрачным материалом нужного
+## цвета. Размер согласован с palisade_segment.tscn (2 × 1.5 × 0.3).
+func _make_preview_segment(pos: Vector3, rot_y: float, color: Color) -> MeshInstance3D:
+	if _effects_root == null:
+		_effects_root = get_tree().current_scene
+	if _effects_root == null:
+		return null
+	var mesh := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(_brush_segment_length, 1.5, 0.3)
+	mesh.mesh = box
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.emission_enabled = true
+	mat.emission = Color(color.r, color.g, color.b, 1.0)
+	mat.emission_energy_multiplier = 0.4
+	mesh.material_override = mat
+	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_effects_root.add_child(mesh)
+	mesh.global_position = pos + Vector3.UP * 0.75  # центр меша на 0.75м — над землёй
+	mesh.rotation.y = rot_y
+	return mesh
+
+
+## ПКМ — построить ломаную. К существующим vertex'ам добавляется текущая
+## позиция курсора как последняя точка (если курсор дальше MIN от last).
+## Атомарный try_build_palisade_line — либо всё, либо ничего.
+func _commit_brush() -> void:
+	if not is_instance_valid(_hand) or not is_instance_valid(_camp):
+		_finish_brush()
+		return
+	# Добавляем cursor как последний vertex (если он валиден и достаточно
+	# далеко от last). Это даёт игроку «закрытие» ломаной одним ПКМ'ом без
+	# лишнего ЛКМ-клика.
+	var cursor: Vector3 = _hand.cursor_world_position()
+	cursor.y -= _hand.hand_height
+	var anchor: Vector3 = _camp.build_zone_center()
+	if anchor == Vector3.INF:
+		anchor = Vector3.ZERO
+	cursor.y = anchor.y
+	var final_vertices: Array[Vector3] = _brush_vertices.duplicate()
+	if not final_vertices.is_empty():
+		var last: Vector3 = final_vertices[-1]
+		if (last - cursor).length() >= BRUSH_MIN_SEGMENT_LENGTH:
+			final_vertices.append(cursor)
+	if final_vertices.size() < 2:
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:BuildAim:Brush] недостаточно vertex'ов для постройки (нужно ≥2)")
+		_finish_brush()
+		return
+	var result: Dictionary = _camp.try_build_palisade_line(final_vertices)
+	if debug_log and LogConfig.master_enabled:
+		print("[Hand:BuildAim:Brush] commit → %s/%s/segments=%d" % [
+			"success" if result.get("success", false) else "fail",
+			str(result.get("reason", "")),
+			int(result.get("segments_built", 0)),
+		])
+	_finish_brush()
+
+
+## Cleanup и возврат категории. Зовётся и из _commit_brush, и из cancel_aim.
+func _finish_brush() -> void:
+	_brush_mode = false
+	_brush_building = &""
+	_brush_vertices.clear()
+	for m in _brush_committed_meshes:
+		if is_instance_valid(m):
+			m.queue_free()
+	_brush_committed_meshes.clear()
+	for m in _brush_active_meshes:
+		if is_instance_valid(m):
+			m.queue_free()
+	_brush_active_meshes.clear()
+	_clear_indicator()
+	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
+		_hand.set_active_category(_pre_aim_category)
 
 
 ## Меняет albedo + emission материала кольца — синхронно с aim_indicator
