@@ -22,6 +22,9 @@ func _ready() -> void:
 	# Без defer'а первичный bake может пройти до того как Camp._ready
 	# заспавнил палатки, и navmesh не учтёт их как препятствия.
 	call_deferred("rebake")
+	# Глобальная нотификация на bake — гномы/скелеты сбросят `_nav_last_target`
+	# и на следующем _resolve_path_step переcalc'нут path через новый navmesh.
+	bake_finished.connect(func() -> void: EventBus.navmesh_baked.emit())
 
 
 ## Async re-bake. Вызывать после спавна/удаления статической геометрии

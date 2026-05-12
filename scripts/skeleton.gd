@@ -401,6 +401,23 @@ func _ready() -> void:
 	# атакующего. Скан стоит дёшево (3×3 cell'а из target_grid), и для рескан'а
 	# на каждый удар это никакая нагрузка (≪ 60Гц).
 	damaged.connect(_on_damage_react_aggro)
+	# NavMesh re-bake → пересчёт path-decision для текущей цели.
+	# Без этого _should_path_around остаётся stale: стена появилась, но
+	# скелет всё ещё думает что обходит/ломает по старому состоянию карты.
+	EventBus.navmesh_baked.connect(_on_navmesh_baked)
+	tree_exiting.connect(_disconnect_skeleton_eventbus)
+
+
+func _on_navmesh_baked() -> void:
+	# Пересчёт hybrid-decision на следующем тике (через _set_cached_target),
+	# а пока — синхронно по текущей цели если она есть.
+	if is_instance_valid(_cached_target):
+		_recompute_path_decision()
+
+
+func _disconnect_skeleton_eventbus() -> void:
+	if EventBus.navmesh_baked.is_connected(_on_navmesh_baked):
+		EventBus.navmesh_baked.disconnect(_on_navmesh_baked)
 
 
 ## Scale-punch на _mesh — визуальная индикация попадания. Tween создаётся
@@ -481,6 +498,18 @@ const DETOUR_THRESHOLD: float = 2.0
 ## false — идёт прямо. Пересчитывается на смене цели через [_recompute_path_decision].
 var _should_path_around: bool = false
 @onready var _nav_agent: NavigationAgent3D = $NavigationAgent3D if has_node("NavigationAgent3D") else null
+
+## Stuck-detector для приоритизации препятствия. Если скелет идёт к гному и
+## упирается в стену (физически не движется ≥STUCK_DURATION секунд) — он
+## переключает цель на ближайшую `skeleton_target` ноду в радиусе
+## STUCK_OBSTACLE_RADIUS (обычно это и есть стена, в которую упёрся).
+## Атакует её, ломает, проходит. На следующем _scan_target throttle'е
+## снова видит гнома, идёт к нему. «Пробирается внутрь» по сценарию.
+const STUCK_DISPLACEMENT_THRESHOLD: float = 0.03
+const STUCK_DURATION: float = 0.6
+const STUCK_OBSTACLE_RADIUS: float = 2.0
+var _stuck_last_pos: Vector3 = Vector3.INF
+var _stuck_timer: float = 0.0
 
 
 ## Решение «обходить или ломать»: считаем длину NavMesh-пути и сравниваем
@@ -1121,6 +1150,84 @@ func _physics_process(delta: float) -> void:
 	if was_knockback_active and not _knockback.is_active():
 		_mid_phys_tick_counter = 0
 		_far_phys_tick_counter = 0
+
+	# Stuck-detection: если скелет в APPROACH с активной целью, но физически
+	# не движется ≥STUCK_DURATION — упёрся в стену по пути к гному (стена
+	# не его текущий target). Переключаемся на ближайшее препятствие в
+	# skeleton_target-радиусе — атакуем стену, пробьём, пойдём дальше.
+	_tick_stuck_detection(work_delta)
+
+
+## Stuck-проверка: накапливаем время «стоит на месте» в APPROACH, на
+## превышении порога находим ближайший skeleton_target в радиусе и
+## переключаемся на него. Сбрасываемся как только реально двигаемся /
+## не в APPROACH / в knockback'е.
+func _tick_stuck_detection(work_delta: float) -> void:
+	# Только в APPROACH с реальной целью. WINDUP/STRIKE/COOLDOWN не считают —
+	# скелет намеренно стоит. Knockback не считаем — не наша воля.
+	if _state != AttackState.APPROACH or _cached_target == null or _knockback.is_active():
+		_stuck_timer = 0.0
+		_stuck_last_pos = global_position
+		return
+	if _stuck_last_pos == Vector3.INF:
+		_stuck_last_pos = global_position
+		return
+	var displacement: float = Vector2(
+		global_position.x - _stuck_last_pos.x,
+		global_position.z - _stuck_last_pos.z,
+	).length()
+	_stuck_last_pos = global_position
+	if displacement >= STUCK_DISPLACEMENT_THRESHOLD:
+		_stuck_timer = 0.0
+		return
+	_stuck_timer += work_delta
+	if _stuck_timer < STUCK_DURATION:
+		return
+	# Превышение — ищем ближайшее препятствие. Используем существующий
+	# spatial-grid целей (Enemy._target_grid) — 3×3 cell'а вокруг скелета,
+	# среди них любая нода skeleton_target в радиусе.
+	var obstacle: Node3D = _find_nearest_obstacle(STUCK_OBSTACLE_RADIUS)
+	if obstacle != null and obstacle != _cached_target:
+		_set_cached_target(obstacle)
+		if LogConfig.master_enabled:
+			print("[Skeleton] упёрся → переключаюсь на %s" % obstacle.name)
+	_stuck_timer = 0.0
+
+
+## Ищет ближайший skeleton_target в горизонтальном радиусе вокруг скелета.
+## Использует [Enemy._target_grid] — нет лишних group-сканов. Возвращает
+## null если в радиусе ничего нет (тогда stuck остаётся, на следующем
+## кадре попробуем снова — может разойдёмся со стеной через slide).
+func _find_nearest_obstacle(radius: float) -> Node3D:
+	Enemy._maybe_refresh_target_grid(get_tree())
+	var pos: Vector3 = global_position
+	var skel_cell := Enemy._grid_cell(pos)
+	var r_sq: float = radius * radius
+	var nearest: Node3D = null
+	var nearest_sq: float = r_sq
+	for dx in [-1, 0, 1]:
+		for dz in [-1, 0, 1]:
+			var cell := Vector2i(skel_cell.x + dx, skel_cell.y + dz)
+			if not Enemy._target_grid.has(cell):
+				continue
+			var entries: Array = Enemy._target_grid[cell]
+			for entry in entries:
+				var raw = entry[1]
+				if not is_instance_valid(raw):
+					continue
+				var node := raw as Node3D
+				if node == null:
+					continue
+				if not node.is_in_group(TARGET_GROUP):
+					continue
+				var d_sq: float = Vector2(
+					node.global_position.x - pos.x,
+					node.global_position.z - pos.z,
+				).length_squared()
+				if d_sq < nearest_sq:
+					nearest_sq = d_sq
+					nearest = node
+	return nearest
 
 
 ## «Холодный» физический шаг для FAR-скелетов: AI считает velocity (через те

@@ -320,10 +320,19 @@ func _ready() -> void:
 	# подписываются (extends Gnome), но их state'ы не COMMUTING_TO_PILE,
 	# фильтр в обработчике ничего не делает.
 	EventBus.collection_priority_changed.connect(_on_collection_priority_changed)
+	# NavMesh re-bake → сбрасываем кэш `_nav_last_target`, иначе set_target_position
+	# с тем же goal'ом игнорируется и старый невалидный path остаётся.
+	EventBus.navmesh_baked.connect(_on_navmesh_baked)
 	# Явная отписка на free. EventBus — autoload (жив всю сессию), без
 	# disconnect фантомные Callable'ы накапливались бы до GC; на 100+ гномах
 	# за матч это сотни мёртвых подписок.
 	tree_exiting.connect(_disconnect_eventbus)
+
+
+func _on_navmesh_baked() -> void:
+	# Sentinel-сброс — на следующем _resolve_path_step set_target_position
+	# уйдёт заново и NavAgent пересчитает путь по обновлённому navmesh'у.
+	_nav_last_target = Vector3.INF
 
 
 ## Очистка глобальных подписок EventBus. Подклассы override'ят и зовут super,
@@ -331,6 +340,8 @@ func _ready() -> void:
 func _disconnect_eventbus() -> void:
 	if EventBus.collection_priority_changed.is_connected(_on_collection_priority_changed):
 		EventBus.collection_priority_changed.disconnect(_on_collection_priority_changed)
+	if EventBus.navmesh_baked.is_connected(_on_navmesh_baked):
+		EventBus.navmesh_baked.disconnect(_on_navmesh_baked)
 
 
 func _apply_visual() -> void:

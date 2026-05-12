@@ -132,6 +132,15 @@ signal squad_recall_ignored(squad: RefCounted)
 signal recall_zone_pulsed(center: Vector3, radius: float, duration: float)
 
 
+# --- Navigation ---
+## Эмитится когда NavigationRegion3D закончил async re-bake (новые препятствия
+## учтены, path-запросы вернут актуальные пути). Слушают агенты с NavAgent3D
+## чтобы сбросить кэш `_nav_last_target` — без этого `set_target_position`
+## с тем же goal'ом игнорируется и старый (невалидный после изменения карты)
+## path не пересчитывается.
+signal navmesh_baked
+
+
 # --- Super spell (великая сила, ковровая бомбардировка) ---
 ## Шкала «великой силы» отряда изменилась. Накопление по нанесённому damage'у
 ## врагам. value/max = сырые единицы (сейчас 0..100 ≈ 100 hp нанесённого damage).
