@@ -536,15 +536,21 @@ func _on_recall_zone_pulsed(center: Vector3, radius: float, duration: float) -> 
 		Color(0.55, 0.9, 1.0, 0.95), 0.14,
 	)
 	# Тейл — спавним с задержкой, чтобы он «лагнул» за фронтом. Шире и
-	# дим — читается как блюр/гало за импульсом.
+	# дим — читается как блюр/гало за импульсом. WeakRef на scene вместо
+	# прямого capture — на смену сцены до timeout'а Godot 4.6 печатает
+	# «Lambda capture at index 0 was freed».
 	var trail_delay: float = 0.07
+	var scene_ref: WeakRef = weakref(scene)
 	var t := get_tree().create_timer(trail_delay)
 	t.timeout.connect(func() -> void:
+		var s: Node = scene_ref.get_ref()
+		if s == null:
+			return
 		# duration уменьшаем на тот же delay — тейл успевает дойти до края
 		# одновременно с фронтом, но всю дорогу остаётся позади.
 		var trail_duration: float = maxf(duration - trail_delay, 0.05)
 		AoeVisual.spawn_expanding_ring(
-			scene, center, radius, trail_duration,
+			s, center, radius, trail_duration,
 			Color(0.4, 0.85, 1.0, 0.35), 0.22,
 		)
 	)

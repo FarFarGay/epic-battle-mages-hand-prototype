@@ -365,8 +365,13 @@ func _spawn_slam_dust(pos: Vector3) -> void:
 	particles.emitting = true
 
 	# Чистим через таймер. lifetime + небольшой запас на anim'у scale_curve до 0.
+	# WeakRef обходит Godot 4.6 «Lambda capture at index 0 was freed» — при
+	# смене сцены / manual free particles до timeout'а engine печатает warning
+	# до входа в лямбду, гард is_instance_valid не успевает.
 	var cleanup_delay: float = SLAM_DUST_LIFETIME + 0.2
+	var particles_ref: WeakRef = weakref(particles)
 	_hand.get_tree().create_timer(cleanup_delay).timeout.connect(func() -> void:
-		if is_instance_valid(particles):
-			particles.queue_free()
+		var p: Node = particles_ref.get_ref()
+		if p != null:
+			p.queue_free()
 	)

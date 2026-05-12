@@ -51,12 +51,18 @@ static func spawn(
 		fragments.append(body)
 
 	# Один общий таймер на пачку — дешевле, чем Tween на каждый фрагмент.
+	# WeakRef'ы вместо прямых ссылок — иначе Godot 4.6 печатает «Lambda
+	# capture at index 0 was freed» когда фрагмент queue_free'нут до
+	# timeout'а (внешний обрыв: смена сцены, manual free, и т.п.). is_instance_valid
+	# гард внутри лямбды НЕ помогает — engine печатает warning ДО входа в тело.
+	var frag_refs: Array[WeakRef] = []
+	for f in fragments:
+		frag_refs.append(weakref(f))
 	var timer := parent.get_tree().create_timer(lifetime)
 	timer.timeout.connect(func() -> void:
-		for f in fragments:
-			# is_inside_tree() гасит сценарий «scene выгрузили, фрагменты freed,
-			# а timer пережил смену сцены» — без этого upcoming queue_free лишний.
-			if is_instance_valid(f) and f.is_inside_tree():
+		for r in frag_refs:
+			var f: Node = r.get_ref()
+			if f != null and f.is_inside_tree():
 				f.queue_free()
 	)
 

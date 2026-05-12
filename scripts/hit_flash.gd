@@ -52,15 +52,21 @@ static func flash(mesh: MeshInstance3D, duration: float = FLASH_DURATION) -> voi
 	var tree := mesh.get_tree()
 	if tree == null:
 		return
+	# WeakRef вместо прямого capture mesh — иначе на смерти меша до истечения
+	# таймера Godot 4.6 печатает «Lambda capture at index 0 was freed» (engine
+	# проверяет capture ДО входа в тело лямбды; is_instance_valid гард не
+	# успевает). На скелетах/палатках смерть mid-flash штатна.
+	var mesh_ref: WeakRef = weakref(mesh)
 	var timer := tree.create_timer(duration)
 	timer.timeout.connect(func() -> void:
-		if not is_instance_valid(mesh):
+		var m: MeshInstance3D = mesh_ref.get_ref()
+		if m == null:
 			return
 		# Только последний таймер восстанавливает — иначе он стёр бы свежую
 		# вспышку, инициированную позднее (за время duration пришёл новый удар).
-		if int(mesh.get_meta(_TOKEN_KEY, 0)) != token:
+		if int(m.get_meta(_TOKEN_KEY, 0)) != token:
 			return
-		mesh.material_override = mesh.get_meta(_ORIGINAL_KEY, null)
-		mesh.remove_meta(_ORIGINAL_KEY)
-		mesh.remove_meta(_TOKEN_KEY)
+		m.material_override = m.get_meta(_ORIGINAL_KEY, null)
+		m.remove_meta(_ORIGINAL_KEY)
+		m.remove_meta(_TOKEN_KEY)
 	)

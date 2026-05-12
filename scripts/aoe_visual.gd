@@ -57,16 +57,50 @@ static func spawn_wave(root: Node, pos: Vector3, radius: float, duration: float 
 	tween.tween_property(mesh, "scale", Vector3.ONE * target_scale, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.tween_method(_set_param.bind(mat, "intensity"), 1.0, 0.0, duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
 	tween.tween_method(_set_param.bind(mat, "ripple_time"), 0.0, 1.0, duration).set_trans(Tween.TRANS_LINEAR)
-	tween.finished.connect(func() -> void:
-		if is_instance_valid(mesh):
-			mesh.queue_free()
-	)
+	_queue_free_on_tween_finished(tween, mesh)
 
 
 static func _set_param(value: float, mat: ShaderMaterial, param_name: String) -> void:
 	if mat == null or not is_instance_valid(mat):
 		return
 	mat.set_shader_parameter(param_name, value)
+
+
+## Lambda-helper: queue_free node на timeout таймера, БЕЗ Godot 4.6 warning'а
+## «Lambda capture at index 0 was freed». Capture lambda — WeakRef
+## (RefCounted), который сам не free'ится с queue_free Node'а; внутри получаем
+## ref через get_ref(). Используется во всех spawn_* функциях этого модуля
+## для cleanup'а через SceneTreeTimer.
+static func _schedule_queue_free(tree: SceneTree, node: Node, delay: float) -> void:
+	var node_ref: WeakRef = weakref(node)
+	tree.create_timer(delay).timeout.connect(func() -> void:
+		var n: Node = node_ref.get_ref()
+		if n != null:
+			n.queue_free()
+	)
+
+
+## То же что [_schedule_queue_free], но для Tween.finished / tween_callback.
+## Tween живёт пока инстанс жив; на finished — пробуем queue_free node через
+## WeakRef.
+static func _queue_free_on_tween_callback(tween: Tween, node: Node) -> void:
+	var node_ref: WeakRef = weakref(node)
+	tween.tween_callback(func() -> void:
+		var n: Node = node_ref.get_ref()
+		if n != null:
+			n.queue_free()
+	)
+
+
+## Аналог [_queue_free_on_tween_callback] для tween.finished сигнала (когда
+## tween — parallel и нет tween_callback хвоста). WeakRef капчит mesh.
+static func _queue_free_on_tween_finished(tween: Tween, node: Node) -> void:
+	var node_ref: WeakRef = weakref(node)
+	tween.finished.connect(func() -> void:
+		var n: Node = node_ref.get_ref()
+		if n != null:
+			n.queue_free()
+	)
 
 
 ## Пыль одним залпом — GPUParticles3D one_shot, explosiveness=1.0
@@ -94,10 +128,7 @@ static func spawn_dust(root: Node, pos: Vector3) -> void:
 	root.add_child(particles)
 	particles.global_position = pos
 	particles.emitting = true
-	root.get_tree().create_timer(DUST_LIFETIME + 0.2).timeout.connect(func() -> void:
-		if is_instance_valid(particles):
-			particles.queue_free()
-	)
+	_schedule_queue_free(root.get_tree(), particles, DUST_LIFETIME + 0.2)
 
 
 ## Полноценный взрыв: ядро-вспышка (sphere) + огненные частицы (быстрые,
@@ -138,10 +169,7 @@ static func _explosion_core(root: Node, pos: Vector3, radius: float) -> void:
 	var tween := mesh.create_tween()
 	tween.tween_property(mesh, "scale", peak_scale, 0.1).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.tween_property(mesh, "scale", Vector3.ZERO, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	tween.tween_callback(func() -> void:
-		if is_instance_valid(mesh):
-			mesh.queue_free()
-	)
+	_queue_free_on_tween_callback(tween, mesh)
 
 
 ## Огненные частицы: радиальный разлёт ярко-оранжевых quad-billboards,
@@ -262,10 +290,7 @@ static func _spawn_oneshot_particles(root: Node, pos: Vector3, process_mat: Part
 	root.add_child(particles)
 	particles.global_position = pos
 	particles.emitting = true
-	root.get_tree().create_timer(lifetime + 0.3).timeout.connect(func() -> void:
-		if is_instance_valid(particles):
-			particles.queue_free()
-	)
+	_schedule_queue_free(root.get_tree(), particles, lifetime + 0.3)
 
 
 ## Плоское кольцо на земле фиксированного `radius`. Используется для:
@@ -310,10 +335,7 @@ static func spawn_ground_ring(
 		tween.tween_property(mesh, "scale", Vector3.ONE, 0.08).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 		# После пульса — линейный fade alpha до конца duration
 		tween.tween_property(mat, "albedo_color:a", 0.0, maxf(duration - 0.08, 0.05)).set_trans(Tween.TRANS_LINEAR)
-		tween.tween_callback(func() -> void:
-			if is_instance_valid(mesh):
-				mesh.queue_free()
-		)
+		_queue_free_on_tween_callback(tween, mesh)
 	return mesh
 
 
@@ -366,10 +388,7 @@ static func spawn_expanding_ring(
 	).set_trans(Tween.TRANS_LINEAR)
 	tween.tween_property(mat, "albedo_color:a", 0.0, duration).set_trans(Tween.TRANS_LINEAR)
 	tween.set_parallel(false)
-	tween.tween_callback(func() -> void:
-		if is_instance_valid(mesh):
-			mesh.queue_free()
-	)
+	_queue_free_on_tween_callback(tween, mesh)
 
 
 ## Solid translucent sphere фиксированного радиуса — явный «вижу габариты»
@@ -402,7 +421,4 @@ static func spawn_radius_indicator(root: Node, pos: Vector3, radius: float, colo
 	mesh.scale = Vector3.ONE * (radius / sphere.radius)
 	var tween := mesh.create_tween()
 	tween.tween_property(mat, "albedo_color:a", 0.0, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	tween.tween_callback(func() -> void:
-		if is_instance_valid(mesh):
-			mesh.queue_free()
-	)
+	_queue_free_on_tween_callback(tween, mesh)
