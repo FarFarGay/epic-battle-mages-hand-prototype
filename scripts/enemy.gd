@@ -32,6 +32,61 @@ signal destroyed
 
 const MIN_NEIGHBOR_PUSH_SPEED := 0.5
 
+## Группа целей врагов: то, что любой Enemy ищет для атаки (палатки, гномы,
+## колокол, башня). Любой Enemy-наследник (Skeleton, в будущем skeleton-archer
+## и т.д.) делит одну группу и один spatial-grid через [_target_grid].
+const TARGET_GROUP := &"skeleton_target"
+## Размер cell'а в spatial-grid'е. 12м — компромисс между плотностью cell'ов и
+## cost'ом запросов. Совпадает с типовым vision_radius — 3×3 cell'ов гарантированно
+## покрывают диск vision'а.
+const TARGET_GRID_CELL_SIZE: float = 12.0
+## Период обновления spatial-grid'а целей (с). Все враги читают один глобальный
+## snapshot. Stale-границы: цели двигаются ≤2м/с × 0.4с = 0.8м — не отличимо
+## от шума движения.
+const TARGET_GRID_REFRESH_INTERVAL: float = 0.4
+
+## Spatial grid: { Vector2i(cell_x, cell_z) -> Array of [Vector3 pos, Node3D node] }.
+## Глобальный для всех Enemy-наследников, обновляется лениво при первом скане
+## после TARGET_GRID_REFRESH_INTERVAL. Заменяет полный обход group skeleton_target
+## (~144 элементов × 5000 сканов/сек = 720k distance-checks/сек) на 9-cell
+## lookup (~10-50 элементов на скан в зоне Camp, 0 в пустой зоне).
+static var _target_grid: Dictionary = {}
+static var _target_grid_time: float = -1000.0
+
+
+## Возвращает координаты cell'а для произвольной мировой позиции по плоскости XZ.
+static func _grid_cell(pos: Vector3) -> Vector2i:
+	return Vector2i(
+		int(floor(pos.x / TARGET_GRID_CELL_SIZE)),
+		int(floor(pos.z / TARGET_GRID_CELL_SIZE)),
+	)
+
+
+## Лениво пересоздаёт _target_grid из group TARGET_GROUP. Зовётся в начале
+## скана у любого Enemy-наследника. Один pass по группе раз в
+## TARGET_GRID_REFRESH_INTERVAL секунд глобально (вместо одного pass'а на каждый
+## скан каждого врага). Возвращает true если refresh случился — конкретные
+## классы могут на этом же тике обновлять свои per-class метрики
+## (например, [Skeleton._target_load]).
+static func _maybe_refresh_target_grid(tree: SceneTree) -> bool:
+	var now: float = float(Time.get_ticks_msec()) / 1000.0
+	if now - _target_grid_time < TARGET_GRID_REFRESH_INTERVAL:
+		return false
+	_target_grid_time = now
+	_target_grid.clear()
+	for n in tree.get_nodes_in_group(TARGET_GROUP):
+		if not is_instance_valid(n):
+			continue
+		var node := n as Node3D
+		if node == null:
+			continue
+		var cell := _grid_cell(node.global_position)
+		if not _target_grid.has(cell):
+			_target_grid[cell] = []
+		var entries: Array = _target_grid[cell]
+		entries.append([node.global_position, node])
+	return true
+
 enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 
 @export var hp: float = 30.0

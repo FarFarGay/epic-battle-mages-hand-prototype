@@ -62,7 +62,8 @@ extends Enemy
 
 const BODY_ALBEDO_COLOR := Color(0.88, 0.85, 0.78, 1.0)
 ## Группа целей: палатки лагеря и активные гномы. Скелет находит «глазами».
-const TARGET_GROUP := &"skeleton_target"
+## TARGET_GROUP перенесён в Enemy.gd (общий для всех Enemy-наследников). Bare
+## ссылки `TARGET_GROUP` ниже резолвятся в Enemy.TARGET_GROUP через наследование.
 ## Группа всех живых скелетов — для перфоманс-HUD (счётчик + LOD-распределение).
 ## Отдельная от Damageable.GROUP, чтобы HUD не фильтровал по `is Skeleton`.
 const SKELETON_GROUP := &"skeleton"
@@ -197,22 +198,9 @@ static var _shared_normal_material: StandardMaterial3D
 
 ## Размер cell'а в spatial-grid'е целей. Оптимально ~vision_radius=12м,
 ## округлено до 12 для совпадения по решётке. Скелет на vision-скане
-## смотрит только 9 cell'ов (3×3 вокруг себя), не всю группу из 144 целей.
-const TARGET_GRID_CELL_SIZE: float = 12.0
-## Период обновления spatial-grid'а целей (с). Все скелеты смотрят один
-## глобальный snapshot. Stale-границы: гнома двигается ≤1.6м/с × 0.4с = 0.64м,
-## палатки и большинство гномов в зоне атаки стоят на месте — тоже
-## неотличимо. На быстро-движущихся целях (защитники-патрулеры на 1.0м/с)
-## позиция в snapshot'е может отставать на полметра — ок для вижн-фильтра.
-const TARGET_GRID_REFRESH_INTERVAL: float = 0.4
-
-## Spatial grid: { Vector2i(cell_x, cell_z) -> Array of [Vector3 pos, Node3D node] }.
-## Глобальный для всех скелетов, обновляется лениво при первом скане после
-## TARGET_GRID_REFRESH_INTERVAL. Заменяет полный обход group skeleton_target
-## (144 элементов × 5000 сканов/сек = 720k distance-checks/сек) на 9-cell
-## lookup (~10-50 элементов на скан в зоне Camp, 0 в пустой зоне).
-static var _target_grid: Dictionary = {}
-static var _target_grid_time: float = -1000.0
+## Spatial grid целей и его refresh — в Enemy.gd ([Enemy._target_grid],
+## [Enemy._maybe_refresh_target_grid]). Skeleton параллельно поддерживает
+## per-target load (см. ниже).
 
 ## Soft-cap «не больше TARGET_CAP скелетов на одну цель». Дизайнерский: 5
 ## скелетов на одного гнома мгновенно его перебивают — не интересно.
@@ -223,47 +211,18 @@ static var _target_grid_time: float = -1000.0
 const TARGET_CAP: int = 2
 
 ## Snapshot: instance_id цели → сколько скелетов её таргетят (`_cached_target`
-## == эта цель). Заполняется в [_maybe_refresh_target_grid] (один проход
-## по SKELETON_GROUP). Между refresh'ами не обновляется — допускается
-## drift в TARGET_GRID_REFRESH_INTERVAL секунд. Race condition «5 скелетов
-## в один кадр выбрали одного» возможен, но рассасывается через 0.4с.
+## == эта цель). Обновляется параллельно с [Enemy._target_grid] — на тех же
+## TARGET_GRID_REFRESH_INTERVAL тиках (см. [_refresh_target_load]). Между
+## refresh'ами не обновляется — допускается drift на интервал. Race condition
+## «5 скелетов в один кадр выбрали одного» возможен, но рассасывается за 0.4с.
 static var _target_load: Dictionary = {}
 
 
-## Возвращает координаты cell'а для произвольной мировой позиции по плоскости XZ.
-static func _grid_cell(pos: Vector3) -> Vector2i:
-	return Vector2i(
-		int(floor(pos.x / TARGET_GRID_CELL_SIZE)),
-		int(floor(pos.z / TARGET_GRID_CELL_SIZE)),
-	)
-
-
-## Лениво пересоздаёт _target_grid из group skeleton_target. Зовётся в
-## начале _scan_target. Один pass по группе раз в TARGET_GRID_REFRESH_INTERVAL
-## секунд глобально (вместо одного pass'а на каждый скан каждого скелета).
-## Заодно пересобирает [_target_load] — счётчик «сколько скелетов уже на этой
-## цели» — на одном проходе по SKELETON_GROUP.
-static func _maybe_refresh_target_grid(tree: SceneTree) -> void:
-	var now: float = float(Time.get_ticks_msec()) / 1000.0
-	if now - _target_grid_time < TARGET_GRID_REFRESH_INTERVAL:
-		return
-	_target_grid_time = now
-	_target_grid.clear()
-	for n in tree.get_nodes_in_group(TARGET_GROUP):
-		if not is_instance_valid(n):
-			continue
-		var node := n as Node3D
-		if node == null:
-			continue
-		var cell := _grid_cell(node.global_position)
-		if not _target_grid.has(cell):
-			_target_grid[cell] = []
-		var entries: Array = _target_grid[cell]
-		entries.append([node.global_position, node])
-	# Параллельно пересобираем _target_load: instance_id цели → сколько
-	# скелетов сейчас её таргетят. Snapshot living значений `_cached_target`
-	# у всех скелетов. Используется в _scan_target для soft-cap'а
-	# (TARGET_CAP скелетов на одну живую цель).
+## Обновляет _target_load одним проходом по SKELETON_GROUP. Зовётся когда
+## [Enemy._maybe_refresh_target_grid] обновил grid — синхронно, чтобы load
+## не отставал от grid'а. load Skeleton-specific (по `_cached_target`),
+## поэтому остаётся в Skeleton, а не в Enemy.
+static func _refresh_target_load(tree: SceneTree) -> void:
 	_target_load.clear()
 	for n in tree.get_nodes_in_group(SKELETON_GROUP):
 		if not is_instance_valid(n):
@@ -1168,7 +1127,7 @@ func get_active_target() -> Node3D:
 
 ## Сам скан — ближайшая в vision_radius из группы skeleton_target.
 ##
-## **Spatial grid** ([Skeleton._target_grid]): вместо полного обхода группы
+## **Spatial grid** ([Enemy._target_grid]): вместо полного обхода группы
 ## (144 целей × 5000 сканов/сек = 720k distance-checks) скелет смотрит только
 ## 9 cell'ов (3×3 вокруг себя). На карте 400×400 при vision_radius=12 и
 ## cell_size=12 в 9 cell'ах суммарно ~10-50 целей в плотной Camp-зоне и 0 в
@@ -1187,9 +1146,12 @@ func get_active_target() -> Node3D:
 ## приоритет переключает скелета на ближайшего гнома (агро-перехват
 ## защитниками — естественное поведение).
 func _scan_target() -> Node3D:
-	Skeleton._maybe_refresh_target_grid(get_tree())
+	# Grid и load обновляются синхронно: load Skeleton-specific, поэтому
+	# вызывается только когда Enemy реально пересобрал grid.
+	if Enemy._maybe_refresh_target_grid(get_tree()):
+		Skeleton._refresh_target_load(get_tree())
 	var skel_pos := global_position
-	var skel_cell := Skeleton._grid_cell(skel_pos)
+	var skel_cell := Enemy._grid_cell(skel_pos)
 	var vr_sq: float = vision_radius * vision_radius
 	# Два кандидата гнома: «свободный» (load < TARGET_CAP) и любой ближайший
 	# как fallback. Палатки кэшируем отдельно — они без cap'а.
@@ -1213,9 +1175,9 @@ func _scan_target() -> Node3D:
 	for dx in [-1, 0, 1]:
 		for dz in [-1, 0, 1]:
 			var cell := Vector2i(skel_cell.x + dx, skel_cell.y + dz)
-			if not Skeleton._target_grid.has(cell):
+			if not Enemy._target_grid.has(cell):
 				continue
-			var entries: Array = Skeleton._target_grid[cell]
+			var entries: Array = Enemy._target_grid[cell]
 			for entry in entries:
 				var pos: Vector3 = entry[0]
 				var d_sq: float = skel_pos.distance_squared_to(pos)
