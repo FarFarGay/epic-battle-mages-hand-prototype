@@ -460,11 +460,55 @@ func _on_damage_react_aggro(_amount: float) -> void:
 ## `_approach_angle`, чтобы скелет занял другую точку в кольце вокруг неё.
 ## Если новая цель == старая (рескан вернул то же) — angle не трогаем,
 ## не дёргать строй.
+##
+## Также: пересчитываем hybrid-pathfinding decision (`_should_path_around`).
+## Скелет обходит стены если путь вокруг них ≤ DETOUR_THRESHOLD × прямой
+## дистанции; иначе идёт прямо и ломает (стена = отвлечение по дизайну).
 func _set_cached_target(new_target: Node3D) -> void:
 	if new_target == _cached_target:
 		return
 	_cached_target = new_target
 	_approach_angle = randf() * TAU
+	_recompute_path_decision()
+
+
+## Множитель «обходить если путь ≤ X × прямой дистанции». 2.0 = готов
+## пройти вдвое дальше ради обхода. Длинная закрытая стена (path → ∞)
+## не проходит порог → скелет ломает. Короткий заборчик у ресурса —
+## проходит → скелет обходит.
+const DETOUR_THRESHOLD: float = 2.0
+## True если скелет на текущей цели решил обходить стены через path,
+## false — идёт прямо. Пересчитывается на смене цели через [_recompute_path_decision].
+var _should_path_around: bool = false
+@onready var _nav_agent: NavigationAgent3D = $NavigationAgent3D if has_node("NavigationAgent3D") else null
+
+
+## Решение «обходить или ломать»: считаем длину NavMesh-пути и сравниваем
+## с прямой дистанцией. Если NavMesh ещё не bake'нут (пустой path) или
+## цель invalid — fallback на прямое движение.
+func _recompute_path_decision() -> void:
+	if _nav_agent == null or not is_instance_valid(_cached_target):
+		_should_path_around = false
+		return
+	var map_rid: RID = _nav_agent.get_navigation_map()
+	if map_rid == RID():
+		_should_path_around = false
+		return
+	var from_pos: Vector3 = global_position
+	var to_pos: Vector3 = _cached_target.global_position
+	var direct: float = Vector2(to_pos.x - from_pos.x, to_pos.z - from_pos.z).length()
+	if direct < 0.01:
+		_should_path_around = false
+		return
+	var path: PackedVector3Array = NavigationServer3D.map_get_path(map_rid, from_pos, to_pos, true)
+	if path.size() < 2:
+		# NavMesh не нашёл путь (цель в obstacle / map не bake'нут) — идём прямо.
+		_should_path_around = false
+		return
+	var path_length: float = 0.0
+	for i in range(path.size() - 1):
+		path_length += (path[i + 1] - path[i]).length()
+	_should_path_around = path_length <= direct * DETOUR_THRESHOLD
 
 
 ## на меше; если скелет умрёт сразу после, mesh queue_free'нется вместе с
@@ -670,7 +714,21 @@ func _approach_target(target: Node3D) -> void:
 		var ring_radius: float = attack_range * APPROACH_RING_FACTOR
 		var goal_x: float = target_pos.x + cos(_approach_angle) * ring_radius
 		var goal_z: float = target_pos.z + sin(_approach_angle) * ring_radius
-		var to_goal := Vector3(goal_x - global_position.x, 0.0, goal_z - global_position.z)
+		var goal: Vector3 = Vector3(goal_x, target_pos.y, goal_z)
+		# Hybrid pathfinding: если на смене цели было решено обходить
+		# (_should_path_around), идём по next waypoint NavAgent'а. Иначе
+		# напрямую в ring-точку — упрёмся в стену и будем её ломать
+		# (стена в skeleton_target → STRIKE damage'нет её на следующем тике).
+		var step_target: Vector3 = goal
+		if _should_path_around and _nav_agent != null:
+			_nav_agent.target_position = goal
+			if not _nav_agent.is_navigation_finished():
+				step_target = _nav_agent.get_next_path_position()
+		var to_goal := Vector3(
+			step_target.x - global_position.x,
+			0.0,
+			step_target.z - global_position.z,
+		)
 		var to_goal_len: float = to_goal.length()
 		if to_goal_len > 0.001:
 			velocity.x = (to_goal.x / to_goal_len) * move_speed

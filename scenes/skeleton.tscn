@@ -22,3 +22,10 @@ shape = SubResource("CapsuleShape3D_skel")
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 mesh = SubResource("CapsuleMesh_skel")
 cast_shadow = 0
+
+[node name="NavigationAgent3D" type="NavigationAgent3D" parent="."]
+path_desired_distance = 0.6
+target_desired_distance = 1.2
+radius = 0.4
+height = 2.0
+avoidance_enabled = false
