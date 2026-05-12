@@ -47,8 +47,9 @@ var _relocating_bell: WatchBell = null
 ## Сентинель building_id для режима relocate. Не из CAMP_BUILDING_CATALOG.
 const RELOCATE_SENTINEL: StringName = &"<relocate>"
 ## Радиус «захвата» колокола от точки курсора. ЛКМ в пределах этого
-## радиуса от любого колокола → start_relocate. 1.5м комфортно — игрок
-## не должен попадать пиксель-в-пиксель.
+## радиуса от любого колокола → start_relocate. Совпадает с
+## [Hand.PICKUP_HIGHLIGHT_RADIUS] — игрок видит подсветку, видит и точку
+## действия. 1.5м комфортно — попадать пиксель-в-пиксель не нужно.
 const PICKUP_RADIUS: float = 1.5
 
 
@@ -58,41 +59,6 @@ func _ready() -> void:
 
 func setup(hand: Hand) -> void:
 	_hand = hand
-
-
-## Обновляет highlight у ближайшего колокола в pickup-радиусе. У всех
-## остальных колоколов гасит. Зовётся каждый кадр, когда aim не активен и
-## рука в PHYSICAL не держит ничего. Скан O(N) по WATCH_BELL_GROUP — обычно
-## <5 колоколов, дёшево.
-func _update_bell_highlight() -> void:
-	if not is_instance_valid(_hand):
-		return
-	if _hand.is_holding() or _hand.active_category != Hand.Category.PHYSICAL:
-		# Никакого hover-highlight'а — гасим всё на всякий случай.
-		for n in get_tree().get_nodes_in_group(WatchBell.WATCH_BELL_GROUP):
-			if is_instance_valid(n):
-				(n as WatchBell).set_highlighted(false)
-		return
-	var cursor: Vector3 = _hand.cursor_world_position()
-	cursor.y -= _hand.hand_height
-	var r_sq: float = PICKUP_RADIUS * PICKUP_RADIUS
-	var hovered: WatchBell = null
-	var best_sq: float = r_sq
-	for n in get_tree().get_nodes_in_group(WatchBell.WATCH_BELL_GROUP):
-		if not is_instance_valid(n):
-			continue
-		var bell := n as WatchBell
-		if bell == null:
-			continue
-		var dx: float = bell.global_position.x - cursor.x
-		var dz: float = bell.global_position.z - cursor.z
-		var d_sq: float = dx * dx + dz * dz
-		if d_sq <= best_sq:
-			best_sq = d_sq
-			hovered = bell
-	for n in get_tree().get_nodes_in_group(WatchBell.WATCH_BELL_GROUP):
-		if is_instance_valid(n):
-			(n as WatchBell).set_highlighted(n == hovered)
 
 
 ## Hand.physical вызывает в обработке ЛКМ-press (ACTION_GRAB). Если в радиусе
@@ -197,12 +163,9 @@ func cancel_aim() -> void:
 
 
 func _process(_delta: float) -> void:
-	# Hover-подсветка колокола: даже когда aim не активен, рука в PHYSICAL
-	# при наведении на bell зажигает у него emission. По образцу
-	# Hand.physical._update_candidate_highlight, но для колоколов отдельно
-	# (они не Grabbable).
+	# Hover-подсветка обрабатывается в Hand._update_pickup_highlight через
+	# общую группу PICKUP_HIGHLIGHT_GROUP — здесь только aim-индикатор.
 	if _active_building == &"":
-		_update_bell_highlight()
 		return
 	var ground: Vector3 = _hand.cursor_world_position()
 	ground.y -= _hand.hand_height

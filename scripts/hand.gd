@@ -27,6 +27,17 @@ extends Node3D
 enum Category { PHYSICAL, MAGIC, SUPER, SQUAD_AIM, BUILD_AIM }
 
 const HAND_GROUP := &"hand"
+## Группа Node3D-объектов с публичным `set_highlighted(bool)`, которые
+## подсвечиваются при наведении курсора руки (hover). Используется для
+## non-Grabbable pickup-объектов: колокол (relocate), будущие постройки и
+## интерактивные предметы. Grabbable RigidBody3D имеют свою подсветку
+## через [HandPhysicalActions._update_candidate_highlight] (overlap-based, не
+## дистанция-от-курсора) — там сохраняется текущая семантика «рука рядом
+## с предметом». Здесь — «курсор рядом с объектом».
+const PICKUP_HIGHLIGHT_GROUP := &"pickup_highlight"
+## Радиус hover-highlight'а для PICKUP_HIGHLIGHT_GROUP. Игроку комфортно —
+## не нужно попадать пиксель-в-пиксель.
+const PICKUP_HIGHLIGHT_RADIUS: float = 1.5
 
 signal grabbed(item: Node3D)
 signal released(item: Node3D, velocity: Vector3)
@@ -102,6 +113,45 @@ func _process(delta: float) -> void:
 	if not _position_locked:
 		global_position = _last_cursor_world
 	_track_velocity(delta)
+	_update_pickup_highlight()
+
+
+## Сканер hover-подсветки для всех Node3D в [PICKUP_HIGHLIGHT_GROUP]. Один
+## ближайший к курсору (в радиусе [PICKUP_HIGHLIGHT_RADIUS]) зажигается через
+## `set_highlighted(true)`, остальные гасятся. Активен только в PHYSICAL при
+## свободной руке и без активного aim'а (build/squad/super). Любой новый
+## pickup-объект (рычаг, ящик-с-action, и т.д.) автоматически работает —
+## достаточно `add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)` и метода
+## `set_highlighted(bool)`.
+func _update_pickup_highlight() -> void:
+	var allow: bool = active_category == Category.PHYSICAL and not is_holding()
+	if allow and build_aim != null and build_aim.is_aiming_any():
+		allow = false
+	if not allow:
+		for n in get_tree().get_nodes_in_group(PICKUP_HIGHLIGHT_GROUP):
+			if is_instance_valid(n) and n.has_method(&"set_highlighted"):
+				n.set_highlighted(false)
+		return
+	var cursor: Vector3 = _last_cursor_world
+	cursor.y -= hand_height
+	var r_sq: float = PICKUP_HIGHLIGHT_RADIUS * PICKUP_HIGHLIGHT_RADIUS
+	var hovered: Node3D = null
+	var best_sq: float = r_sq
+	for n in get_tree().get_nodes_in_group(PICKUP_HIGHLIGHT_GROUP):
+		if not is_instance_valid(n):
+			continue
+		var node := n as Node3D
+		if node == null:
+			continue
+		var dx: float = node.global_position.x - cursor.x
+		var dz: float = node.global_position.z - cursor.z
+		var d_sq: float = dx * dx + dz * dz
+		if d_sq <= best_sq:
+			best_sq = d_sq
+			hovered = node
+	for n in get_tree().get_nodes_in_group(PICKUP_HIGHLIGHT_GROUP):
+		if is_instance_valid(n) and n.has_method(&"set_highlighted"):
+			n.set_highlighted(n == hovered)
 
 
 # --- Публичный API для подмодулей ---

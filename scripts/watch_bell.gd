@@ -73,6 +73,10 @@ func _ready() -> void:
 	Damageable.register(self)
 	add_to_group(SKELETON_TARGET_GROUP)
 	add_to_group(WATCH_BELL_GROUP)
+	# Hover-подсветка через общий сканер в Hand. Группа PICKUP_HIGHLIGHT_GROUP
+	# собирает все non-Grabbable pickup-объекты — колокол, будущие постройки
+	# с relocate'ом, интерактивные предметы. Hand сам управляет set_highlighted.
+	add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
 	if _alarm_area != null:
 		_alarm_area.body_entered.connect(_on_alarm_body_entered)
 		_alarm_area.body_exited.connect(_on_alarm_body_exited)
