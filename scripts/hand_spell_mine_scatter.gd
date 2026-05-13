@@ -1,17 +1,15 @@
 class_name HandSpellMineScatter
 extends Node
-## Магическая мин-бомбардировка. Tower выстреливает carrier в небо, тот
-## burst'ит над целью, оттуда россыпью падают мины. После приземления и
-## arming-delay'я мины ждут жертв (любых — friendly-fire ON).
+## Магическая мин-бомбардировка. Tower кидает carrier-«сумку с минами»
+## по дуге, тот лопается в апексе ПО ПУТИ (не над целью), и осколки-мины
+## разлетаются дальше — с инерцией carrier'а вперёд + outward-разлётом
+## + индивидуальной аркой до земли. После приземления и arming-delay'я
+## мины ждут жертв. Friendly-fire ON.
 ##
-## Реюзает [SuperCarrier] как доставочный снаряд (carrier→burst→payload).
-## Отличия от супер-удара: нет QTE, тратит ману (не super-charge), меньшие
-## масштабы (5 мин против 6 фаерболов, ниже carrier-altitude).
-##
-## Payload не падает «по диагонали с burst-точки», а спавнится прямо НАД
-## точкой приземления (одна точка на каждую мину, выбирается uniform в круге
-## scatter_radius). Initial velocity = 0, гравитация Mine сама опускает
-## её на землю. Проще математики, мины ложатся точно куда задумано.
+## Принципиально не повторяет Super: у Super carrier → boost-up → homing-to-target,
+## осколки сыпятся ВЕРТИКАЛЬНО над target'ом (удар сверху). Здесь — high-arc
+## ballistic, burst в АПЕКСЕ, осколки получают часть инерции и разлетаются
+## ШИРЕ цели. Ощущение «бросил жменю» вместо «точечная бомбардировка».
 ##
 ## Параметры читаются из SpellSystem.SPELL_CATALOG.mine_scatter с
 ## fallback'ом на @export.
@@ -23,31 +21,39 @@ signal spell_cast(spell_name: StringName, position: Vector3)
 ## небольшой кластер, но не настолько много чтобы превратить заклинание
 ## в кнопку «уничтожить всё».
 @export var mine_count: int = 5
-## Радиус разброса мин вокруг точки прицела (uniform в круге через sqrt(rand)).
+## Радиус разброса мин вокруг точки прицела. На деле итоговый разлёт зависит
+## от inertia carrier'а + outward + случайных арок — этот параметр сейчас
+## используется как ориентир для telegraph-кольца, не как hard-cap.
 @export var scatter_radius: float = 5.0
 @export var mine_damage: float = 30.0
 @export var mine_aoe_radius: float = 1.8
 @export var cooldown: float = 4.0
 @export var mana_cost: float = 40.0
 
-@export_group("Carrier delivery (tuned-down vs Super)")
+@export_group("Carrier (ballistic high-arc)")
 ## Высота старта carrier'а относительно Tower'а.
 @export var carrier_launch_offset_y: float = 3.0
-## Высота burst-точки над землёй (где carrier лопается и рассыпает мины).
-## Меньше чем у Super (там 18-25м) — мины падают быстрее, заклинание
-## ощутимее как «точечная атака».
-@export var carrier_burst_height: float = 9.0
-@export var carrier_boost_duration: float = 0.15
-@export var carrier_boost_velocity_up: float = 9.0
-@export var carrier_boost_velocity_forward: float = 4.0
-@export var carrier_boost_gravity: float = 12.0
-@export var carrier_boost_drift_velocity: float = 2.0
-@export var carrier_homing_initial_speed: float = 14.0
-@export var carrier_homing_acceleration: float = 40.0
-@export var carrier_homing_max_speed: float = 28.0
-@export var carrier_homing_drift_angle_deg: float = 25.0
-@export var carrier_homing_turn_rate: float = 4.0
-@export var carrier_burst_visual_radius: float = 2.5
+## Желаемая скорость carrier'а при старте. Влияет на дальность и крутизну
+## арки: чем меньше — тем выше арка (high_arc-формула фиксирует угол через
+## v²/g для нужного R). 14 м/с даёт читаемый лоб на 14-25м дистанций.
+@export var carrier_launch_speed: float = 14.0
+## Радиус визуальной вспышки в момент burst'а (AoeVisual.spawn_explosion).
+@export var carrier_burst_visual_radius: float = 1.8
+
+@export_group("Mine ejection (как разлетаются осколки от burst-точки)")
+## Доля скорости carrier'а в момент burst'а, передаваемая каждой мине вперёд.
+## 0.4 = осколки сохраняют ~40% инерции carrier'а и продолжают «лететь» в ту
+## же сторону, разлёт получается продольный (читается как «вытряхнул из мешка»).
+@export var inertia_factor: float = 0.4
+## Базовая величина outward-разлёта (в плоскости XZ), м/с. Направление —
+## случайное (TAU). Каждая мина уникальна.
+@export var outward_speed_min: float = 2.5
+@export var outward_speed_max: float = 5.5
+## Боковой up-boost, м/с. Создаёт «вспух» осколков перед падением — видно
+## что они летят, а не падают. Минимум >0, иначе мины сразу под действием
+## carrier-vy.y < 0 рухнут.
+@export var up_boost_min: float = 1.5
+@export var up_boost_max: float = 3.5
 
 @export_group("Visual")
 @export var carrier_scene: PackedScene
@@ -147,55 +153,47 @@ func _spawn_carrier(target_pos: Vector3) -> void:
 		launch_pos = tower.global_position + Vector3.UP * carrier_launch_offset_y
 	else:
 		launch_pos = _hand.global_position
-	var burst_pos: Vector3 = target_pos + Vector3.UP * carrier_burst_height
-	var carrier := carrier_scene.instantiate() as SuperCarrier
+	var carrier := carrier_scene.instantiate() as MineCarrier
 	if carrier == null:
-		push_error("[Hand:Spell:MineScatter] carrier_scene не инстанцируется как SuperCarrier")
+		push_error("[Hand:Spell:MineScatter] carrier_scene не инстанцируется как MineCarrier")
 		return
-	# add_child ДО setup — see hand_super.gd для контекста (global_position
-	# требует ноду в SceneTree).
+	# add_child ДО setup — global_position требует ноду в SceneTree.
 	_effects_root.add_child(carrier)
-	carrier.setup(
-		launch_pos,
-		burst_pos,
-		carrier_boost_duration,
-		carrier_boost_velocity_up,
-		carrier_boost_velocity_forward,
-		carrier_boost_gravity,
-		carrier_boost_drift_velocity,
-		carrier_homing_initial_speed,
-		carrier_homing_acceleration,
-		carrier_homing_max_speed,
-		carrier_homing_drift_angle_deg,
-		carrier_homing_turn_rate,
-	)
-	carrier.burst.connect(_on_carrier_burst.bind(target_pos))
+	carrier.setup(launch_pos, target_pos, carrier_launch_speed)
+	carrier.burst.connect(_on_carrier_burst)
 
 
-func _on_carrier_burst(burst_position: Vector3, ground_target: Vector3) -> void:
+## Срабатывает в АПЕКСЕ carrier'а (vy переходит из + в −). Не над target'ом,
+## а на пол-пути в воздухе. Осколки получают часть инерции carrier'а вперёд
+## (`inertia_factor`) + случайный outward-разлёт в плоскости XZ + лёгкий
+## up-boost. Дальше Mine.gravity сама опускает их на землю — каждая мина
+## ложится своей точкой, без хардкода точек приземления.
+func _on_carrier_burst(burst_position: Vector3, carrier_velocity: Vector3) -> void:
 	if not is_instance_valid(_effects_root):
 		return
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:Spell:MineScatter] burst @ (%.1f, %.1f, %.1f) → %d мин" % [
-			burst_position.x, burst_position.y, burst_position.z, _series_mine_count,
+		print("[Hand:Spell:MineScatter] burst @ (%.1f, %.1f, %.1f) v=(%.1f, %.1f, %.1f) → %d мин" % [
+			burst_position.x, burst_position.y, burst_position.z,
+			carrier_velocity.x, carrier_velocity.y, carrier_velocity.z,
+			_series_mine_count,
 		])
-	# Воздушный взрыв в точке разделения — визуальный feedback что carrier
-	# отыграл. Размер скромнее чем у Super.
 	AoeVisual.spawn_explosion(_effects_root, burst_position, carrier_burst_visual_radius)
+	# Forward inertia всем минам одна и та же (часть carrier-скорости).
+	# Это сохраняет «направленность» разлёта — осколки в ту же сторону что
+	# летел carrier.
+	var inertia: Vector3 = carrier_velocity * inertia_factor
+	# Y-компонент carrier'а в момент апекса ≈ 0, так что inertia в основном
+	# горизонтальная — отлично подходит для «броска».
 	for i in range(_series_mine_count):
-		# Каждая мина — отдельная точка приземления в круге scatter_radius.
-		# uniform-в-круге через sqrt(rand) (иначе центр перенасыщен).
 		var angle: float = randf() * TAU
-		var r: float = sqrt(randf()) * _series_scatter_radius
-		var landing_xz: Vector3 = ground_target + Vector3(cos(angle) * r, 0.0, sin(angle) * r)
-		# Спавн ПРЯМО НАД landing-точкой на высоте burst'а. Initial velocity = 0,
-		# Mine.gravity опустит её ровно вниз. Проще чем рассчитывать траекторию
-		# от burst-центра наружу — нет недолётов/перелётов.
-		var spawn: Vector3 = Vector3(landing_xz.x, burst_position.y, landing_xz.z)
-		_spawn_one_mine(spawn)
+		var outward_speed: float = randf_range(outward_speed_min, outward_speed_max)
+		var outward: Vector3 = Vector3(cos(angle) * outward_speed, 0.0, sin(angle) * outward_speed)
+		var up_boost: float = randf_range(up_boost_min, up_boost_max)
+		var mine_velocity: Vector3 = inertia + outward + Vector3.UP * up_boost
+		_spawn_one_mine(burst_position, mine_velocity)
 
 
-func _spawn_one_mine(spawn_pos: Vector3) -> void:
+func _spawn_one_mine(spawn_pos: Vector3, initial_velocity: Vector3) -> void:
 	if not is_instance_valid(_effects_root):
 		return
 	var mine := mine_scene.instantiate() as Mine
@@ -204,10 +202,10 @@ func _spawn_one_mine(spawn_pos: Vector3) -> void:
 		return
 	_effects_root.add_child(mine)
 	# Прокидываем series-параметры в инстанс (override @export-дефолтов
-	# из mine.tscn). Mine.setup ставит позицию + velocity (нулевая).
+	# из mine.tscn). Mine.setup ставит позицию + начальную velocity.
 	mine.damage = _series_mine_damage
 	mine.aoe_radius = _series_mine_aoe_radius
-	mine.setup(spawn_pos, Vector3.ZERO)
+	mine.setup(spawn_pos, initial_velocity)
 
 
 func _find_tower() -> Node3D:
