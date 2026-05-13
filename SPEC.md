@@ -692,6 +692,7 @@ Skeleton не использует `Enemy._targets` — вместо этого 
 **Spatial grid целей (главный perf-фикс на 290+ скелетах × 144 цели):** наивный скан `get_nodes_in_group("skeleton_target")` каждым скелетом × ~5000 сканов/сек × 144 элементов = **~720k distance-checks/сек** = ~12-15мс из 20мс physics_ms. Заменён на статический spatial grid. **Живёт в `Enemy.gd`** — generic vision-инфраструктура для любого Enemy-наследника (skeleton-archer и т.д. получают grid даром через наследование):
 - `static var _target_grid: Dictionary = {}` (в `Enemy`) — `Vector2i(cell_x, cell_z) → Array of [Vector3 pos, Node3D node]`. Глобальный для всех Enemy.
 - `Enemy.TARGET_GROUP = &"skeleton_target"` (имя группы оставлено для совместимости с .tscn'ами).
+- `Enemy.MELEE_ONLY_TARGET_GROUP = &"melee_only_target"` (2026-05-13) — sub-маркер для целей, которые melee-Enemy должны ломать, а ranged игнорировать. Сейчас в группе только `PalisadeSegment` (плюс к `TARGET_GROUP`). `SkeletonArcher._rescan_target` пропускает узлы в этой группе. Расширяется через `add_to_group(Enemy.MELEE_ONLY_TARGET_GROUP)` на новых типах разрушаемой инфраструктуры (ворота, баррикады).
 - `TARGET_GRID_CELL_SIZE = 12.0` (= `vision_radius`). 3×3 cell'ов вокруг скелета гарантированно покрывают vision-диск.
 - `TARGET_GRID_REFRESH_INTERVAL = 0.4с`. Все враги читают один глобальный snapshot. Stale-границы: гном двигается ≤0.64м за 0.4с (move_speed=1.6 × 0.4) — для vision_radius=12 неотличимо. Палатки и большинство гномов в зоне атаки стоят на месте — тоже неотличимо.
 - `Enemy._maybe_refresh_target_grid(tree) -> bool` — ленивый pass по группе раз в 0.4с globally, в начале каждого скана. Возвращает `true` если refresh случился — конкретные классы могут на том же тике обновлять свои per-class метрики.
@@ -915,11 +916,15 @@ static func spawn(
 
 **Резолв цели** (`_resolve_target`): scan-кэш → `_forced_target` (от WaveDirector) → `get_active_target()` базы (Tower от EnemySpawner). Везде `is_instance_valid` проверки — цели queue_free'аются между сканами.
 
+**`MELEE_ONLY_TARGET_GROUP` фильтр** (2026-05-13): в `_rescan_target` пропускаются цели в группе `Enemy.MELEE_ONLY_TARGET_GROUP = &"melee_only_target"`. Сейчас в группе только `PalisadeSegment` (он также в `SKELETON_TARGET_GROUP` — melee-скелет ломает стену чтобы пройти, но archer должен игнорировать — стрелять в стену бесполезно, цели за ней). Будущие ворота / баррикады / разрушаемая инфраструктура: `add_to_group(Enemy.MELEE_ONLY_TARGET_GROUP)`.
+
 **Контракт WaveDirector** — `set_forced_target(target)` имплементирован зеркально к Skeleton'у. WaveDirector duck-types через `has_method`, новые Enemy-типы расширяют без правок диспетчера.
 
 **Группы:** Damageable, Pushable (через `Enemy._ready`). НЕ в `SKELETON_GROUP` (melee-only: target_load для soft-cap, skel_grid для boids).
 
-**Зависимости:** `Enemy` (база), `Arrow` (тип стрелы), `EventBus`, `LogConfig`. `arrow_scene` должна инстанцироваться как `Arrow`-наследник — иначе `push_warning` и стрела не спавнится.
+**Смерть — `_on_destroyed` override** (2026-05-14): прячет `_mesh` (через `$MeshInstance3D`) и спавнит `ShatterEffect` в `_effects_root` (тот же модуль что у Skeleton'а). Параметры: `shatter_fragment_count=5` (меньше чем 7 у melee — тушка тоньше), `shatter_lifetime=2.0`, `shatter_color = Color(0.45, 0.2, 0.65)` (под фиолетовый albedo тушки). Без этого override'а archer тихо queue_free'ался — не читалось как «убил».
+
+**Зависимости:** `Enemy` (база), `Arrow` (тип стрелы), `ShatterEffect`, `EventBus`, `LogConfig`. `arrow_scene` должна инстанцироваться как `Arrow`-наследник — иначе `push_warning` и стрела не спавнится.
 
 #### 5.5.3.1 EnemyArrow — `scenes/enemy_arrow.tscn`
 
