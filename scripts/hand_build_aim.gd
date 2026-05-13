@@ -32,6 +32,9 @@ const ACTION_AIM_CANCEL := &"ui_cancel"
 ## Цвет уже зафиксированных vertex-пар (от vertex_i к vertex_{i+1}).
 ## Чуть бледнее зелёного активного — игрок видит «эта часть уже подтверждена».
 @export var brush_committed_color: Color = Color(0.5, 0.85, 0.5, 0.45)
+## Цвет active-preview когда vertex-лимит достигнут (BRUSH_MAX_VERTICES).
+## Жёлто-оранжевый = «больше не добавишь, нажми ПКМ для постройки».
+@export var brush_preview_color_max: Color = Color(0.95, 0.7, 0.15, 0.7)
 
 @export var debug_log: bool = true
 
@@ -84,6 +87,14 @@ var _brush_committed_meshes: Array[MeshInstance3D] = []
 ## Preview-сегменты для активной части (от последнего vertex'а к курсору).
 ## Пересоздаются каждый кадр в _update_brush_active_preview — курсор движется.
 var _brush_active_meshes: Array[MeshInstance3D] = []
+## Счётчик уже зафиксированных сегментов (накапливается в _add_brush_vertex
+## при спавне committed-preview). Используется для total-cost label'а —
+## считать длины committed-пар каждый кадр было бы лишним.
+var _brush_committed_segments_count: int = 0
+## Floating Label3D с подсказкой «N сегментов · M wood». Спавнится в
+## start_brush, обновляется каждый кадр в _update_brush_active_preview,
+## удаляется в _finish_brush.
+var _brush_cost_label: Label3D = null
 ## Анти-spam: жёсткий лимит вершин в одной ломаной. 20 = ~38 сегментов × 2м =
 ## линия длиной 76м, перекрывает разумную «оборонную стену».
 const BRUSH_MAX_VERTICES: int = 20
@@ -179,11 +190,13 @@ func start_brush(building_id: StringName) -> void:
 	_brush_mode = true
 	_brush_building = building_id
 	_brush_vertices = []
+	_brush_committed_segments_count = 0
 	_brush_segment_length = float(data.get("segment_length", 2.0))
 	_brush_cost_per_segment = data.get("cost_per_segment", {})
 	_pre_aim_category = _hand.active_category
 	_hand.set_active_category(Hand.Category.BUILD_AIM)
 	_spawn_build_zone_only_indicator()
+	_spawn_brush_cost_label()
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:BuildAim] brush-старт %s, segment_length=%.1f" % [
 			building_id, _brush_segment_length,
@@ -302,6 +315,9 @@ func _process_brush() -> void:
 ## от last_vertex до новой точки и спавним committed-preview'ы.
 func _add_brush_vertex(cursor: Vector3) -> void:
 	if _brush_vertices.size() >= BRUSH_MAX_VERTICES:
+		# Visual feedback за счёт цвета active-preview происходит в
+		# _update_brush_active_preview (brush_preview_color_max). Здесь
+		# только лог для дизайнера.
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:BuildAim:Brush] лимит вершин (%d) — ПКМ строит или Esc отменяет" % BRUSH_MAX_VERTICES)
 		return
@@ -321,11 +337,14 @@ func _add_brush_vertex(cursor: Vector3) -> void:
 		# vertex'ы один-в-один.
 		return
 	_brush_vertices.append(pt)
-	# Перерисовываем committed-preview между last и pt.
-	_spawn_committed_preview_segments(last, pt)
+	# Перерисовываем committed-preview между last и pt. Возвращает count
+	# спавненных сегментов — копим в _brush_committed_segments_count для
+	# total-cost label'а.
+	var committed_count: int = _spawn_committed_preview_segments(last, pt)
+	_brush_committed_segments_count += committed_count
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:BuildAim:Brush] vertex %d @ (%.1f, %.1f)" % [
-			_brush_vertices.size(), pt.x, pt.z,
+		print("[Hand:BuildAim:Brush] vertex %d @ (%.1f, %.1f), +%d сегментов" % [
+			_brush_vertices.size(), pt.x, pt.z, committed_count,
 		])
 
 
@@ -370,25 +389,36 @@ func _update_brush_active_preview(cursor: Vector3) -> void:
 		if not is_instance_valid(_camp) or not _camp.is_in_build_zone(center):
 			all_in_zone = false
 			break
-	var color: Color = brush_preview_color_valid if all_in_zone else brush_preview_color_invalid
+	var at_max: bool = _brush_vertices.size() >= BRUSH_MAX_VERTICES
+	var color: Color
+	if at_max:
+		color = brush_preview_color_max
+	elif all_in_zone:
+		color = brush_preview_color_valid
+	else:
+		color = brush_preview_color_invalid
 	for j in range(count):
 		var center: Vector3 = last + step * (float(j) + 0.5)
 		var seg := _make_preview_segment(center, rot_y, color)
 		if seg != null:
 			_brush_active_meshes.append(seg)
+	# Total-cost label рядом с курсором. count = active-сегменты под
+	# курсором (если активная часть валидна), плюс committed уже зафиксированы.
+	_update_brush_cost_label(cursor, count, all_in_zone, at_max)
 
 
 ## Спавнит committed-preview между двумя vertex'ами (от vertex_i к vertex_{i+1}).
 ## Постоянные до cancel/commit — игрок видит уже зафиксированную часть.
-func _spawn_committed_preview_segments(a: Vector3, b: Vector3) -> void:
+## Возвращает count спавненных сегментов (для total-cost подсчёта).
+func _spawn_committed_preview_segments(a: Vector3, b: Vector3) -> int:
 	var dir: Vector3 = b - a
 	var length: float = dir.length()
 	if length < BRUSH_MIN_SEGMENT_LENGTH:
-		return
+		return 0
 	# ceil + равномерный шаг — синхронно со spawn'ом в Camp.
 	var count: int = int(ceil(length / _brush_segment_length))
 	if count <= 0:
-		return
+		return 0
 	var step_length: float = length / float(count)
 	var step: Vector3 = dir.normalized() * step_length
 	var rot_y: float = atan2(-dir.z, dir.x)
@@ -397,6 +427,85 @@ func _spawn_committed_preview_segments(a: Vector3, b: Vector3) -> void:
 		var seg := _make_preview_segment(center, rot_y, brush_committed_color)
 		if seg != null:
 			_brush_committed_meshes.append(seg)
+	return count
+
+
+## Спавнит Label3D с подсказкой total-cost. Зовётся в start_brush.
+## Позиция обновляется каждый кадр в _update_brush_cost_label.
+func _spawn_brush_cost_label() -> void:
+	if _brush_cost_label != null and is_instance_valid(_brush_cost_label):
+		_brush_cost_label.queue_free()
+	if _effects_root == null:
+		_effects_root = get_tree().current_scene
+	_brush_cost_label = Label3D.new()
+	_brush_cost_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_brush_cost_label.no_depth_test = true
+	_brush_cost_label.fixed_size = true
+	_brush_cost_label.pixel_size = 0.005
+	_brush_cost_label.text = "0 сегментов"
+	_brush_cost_label.modulate = brush_preview_color_valid
+	_effects_root.add_child(_brush_cost_label)
+
+
+## Обновляет текст и цвет cost-label'а. Total = committed + active. Cost =
+## total × cost_per_segment. Цвет:
+##   - green: валидно и хватает ресурсов
+##   - red: вне build_zone ИЛИ не хватает ресурсов
+##   - yellow: достигнут лимит вершин (max-feedback)
+func _update_brush_cost_label(cursor: Vector3, active_count: int, all_in_zone: bool, at_max: bool) -> void:
+	if _brush_cost_label == null or not is_instance_valid(_brush_cost_label):
+		return
+	# Label над курсором, чтобы не закрывал preview-сегменты под ним.
+	_brush_cost_label.global_position = cursor + Vector3.UP * 1.8
+	var total: int = _brush_committed_segments_count + active_count
+	# Cost подсчитываем по словарю (обычно один ресурс — wood, но может быть и больше).
+	var cost_lines: Array[String] = []
+	var can_afford_total: bool = true
+	for type in _brush_cost_per_segment:
+		var per: int = int(_brush_cost_per_segment[type])
+		var total_cost: int = per * total
+		cost_lines.append("%d %s" % [total_cost, _resource_short_name(type)])
+		if is_instance_valid(_camp) and _camp.get_resource(type) < total_cost:
+			can_afford_total = false
+	var cost_str: String = " · ".join(cost_lines) if not cost_lines.is_empty() else ""
+	var suffix: String = ""
+	if at_max:
+		suffix = " · лимит"
+	_brush_cost_label.text = "%d сегмент%s%s%s" % [
+		total,
+		_plural_segments(total),
+		(" · " + cost_str) if not cost_str.is_empty() else "",
+		suffix,
+	]
+	if at_max:
+		_brush_cost_label.modulate = brush_preview_color_max
+	elif not all_in_zone or not can_afford_total:
+		_brush_cost_label.modulate = brush_preview_color_invalid
+	else:
+		_brush_cost_label.modulate = brush_preview_color_valid
+
+
+## Короткое имя ресурса для UI. Не таскаем словарь RESOURCE_DISPLAY из
+## JournalPanel — здесь нужны только базовые.
+func _resource_short_name(type: int) -> String:
+	match type:
+		ResourcePile.ResourceType.WOOD: return "wood"
+		ResourcePile.ResourceType.STONE: return "stone"
+		ResourcePile.ResourceType.IRON: return "iron"
+		ResourcePile.ResourceType.FOOD: return "food"
+		ResourcePile.ResourceType.PAGE: return "page"
+		_: return "?"
+
+
+## Русское склонение «сегмент / сегмента / сегментов». Без отдельной библиотеки.
+func _plural_segments(n: int) -> String:
+	var mod10: int = n % 10
+	var mod100: int = n % 100
+	if mod10 == 1 and mod100 != 11:
+		return ""
+	if mod10 >= 2 and mod10 <= 4 and (mod100 < 10 or mod100 >= 20):
+		return "а"
+	return "ов"
 
 
 ## Создаёт один preview-сегмент: BoxMesh с прозрачным материалом нужного
@@ -466,6 +575,7 @@ func _finish_brush() -> void:
 	_brush_mode = false
 	_brush_building = &""
 	_brush_vertices.clear()
+	_brush_committed_segments_count = 0
 	for m in _brush_committed_meshes:
 		if is_instance_valid(m):
 			m.queue_free()
@@ -474,6 +584,9 @@ func _finish_brush() -> void:
 		if is_instance_valid(m):
 			m.queue_free()
 	_brush_active_meshes.clear()
+	if is_instance_valid(_brush_cost_label):
+		_brush_cost_label.queue_free()
+	_brush_cost_label = null
 	_clear_indicator()
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
 		_hand.set_active_category(_pre_aim_category)
