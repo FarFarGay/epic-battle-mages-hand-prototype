@@ -360,6 +360,10 @@ func _spawn_carrier(target_pos: Vector3) -> void:
 	if carrier == null:
 		push_error("[Hand:Super] carrier_scene не инстанцируется как SuperCarrier")
 		return
+	# add_child ДО setup — setup делает `global_position = launch_pos`, который
+	# требует ноду в SceneTree (иначе returns Transform3D() и позиция не ставится,
+	# warning «!is_inside_tree() is true»).
+	_effects_root.add_child(carrier)
 	carrier.setup(
 		launch_pos,
 		burst_pos,
@@ -374,7 +378,6 @@ func _spawn_carrier(target_pos: Vector3) -> void:
 		carrier_homing_drift_angle_deg,
 		carrier_homing_turn_rate,
 	)
-	_effects_root.add_child(carrier)
 	# bind ground-target — на burst'е знать, куда payload'ы должны падать.
 	carrier.burst.connect(_on_carrier_burst.bind(target_pos))
 
