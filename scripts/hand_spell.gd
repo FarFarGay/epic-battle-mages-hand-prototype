@@ -19,11 +19,12 @@ extends Node
 
 signal spell_cast(spell_name: StringName, position: Vector3)
 
-enum SpellType { FIREBALL, FIRESTORM }
+enum SpellType { FIREBALL, FIRESTORM, MINE_SCATTER }
 
 const ACTION_ACTION := &"hand_action"
 const ACTION_EQUIP_FIREBALL := &"equip_fireball"
 const ACTION_EQUIP_FIRESTORM := &"equip_firestorm"
+const ACTION_EQUIP_MINE_SCATTER := &"equip_mine_scatter"
 
 @export var equipped: SpellType = SpellType.FIREBALL:
 	set(value):
@@ -39,11 +40,13 @@ var _hand: Hand
 
 @onready var _fireball: HandSpellFireball = $Fireball
 @onready var _firestorm: HandSpellFirestorm = $Firestorm
+@onready var _mine_scatter: HandSpellMineScatter = $MineScatter
 
 
 func _ready() -> void:
 	_fireball.spell_cast.connect(spell_cast.emit)
 	_firestorm.spell_cast.connect(spell_cast.emit)
+	_mine_scatter.spell_cast.connect(spell_cast.emit)
 
 
 ## Координатор Hand вызывает этот метод после собственного _ready, передавая
@@ -52,6 +55,7 @@ func setup(hand: Hand) -> void:
 	_hand = hand
 	_fireball.setup(_hand, self)
 	_firestorm.setup(_hand, self)
+	_mine_scatter.setup(_hand, self)
 
 
 func _process(delta: float) -> void:
@@ -59,6 +63,7 @@ func _process(delta: float) -> void:
 	# каста и переключения на физику cooldown «замораживается».
 	_fireball.tick(delta)
 	_firestorm.tick(delta)
+	_mine_scatter.tick(delta)
 	_handle_input()
 
 
@@ -78,6 +83,9 @@ func _handle_input() -> void:
 		_hand.set_active_category(Hand.Category.MAGIC)
 	elif Input.is_action_just_pressed(ACTION_EQUIP_FIRESTORM):
 		equipped = SpellType.FIRESTORM
+		_hand.set_active_category(Hand.Category.MAGIC)
+	elif Input.is_action_just_pressed(ACTION_EQUIP_MINE_SCATTER):
+		equipped = SpellType.MINE_SCATTER
 		_hand.set_active_category(Hand.Category.MAGIC)
 
 	# Каст слушаем только если рука сейчас в магической категории и
@@ -105,3 +113,8 @@ func _dispatch_cast() -> void:
 				_firestorm.on_press()
 			elif debug_log and LogConfig.master_enabled:
 				print("[Hand:Spell] шквал на кулдауне")
+		SpellType.MINE_SCATTER:
+			if _mine_scatter.can_trigger():
+				_mine_scatter.on_press()
+			elif debug_log and LogConfig.master_enabled:
+				print("[Hand:Spell] минное-рассевание на кулдауне")

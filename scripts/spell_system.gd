@@ -99,6 +99,22 @@ const SPELL_CATALOG: Dictionary = {
 		],
 		"upgrade_costs": [],
 	},
+	&"mine_scatter": {
+		"name": "Минное рассеивание",
+		"description": "Башня запускает в небо снаряд, тот рассыпает над целью N мин. Мины приземляются, ждут жертв — рвут любого в радиусе (включая своих). Стратегическое оружие зоны контроля.",
+		"icon_color": Color(0.8, 0.3, 0.2, 1.0),
+		"unlocked_by_default": true,
+		"unlock_cost": {},
+		"levels": [
+			{"mine_count": 5, "scatter_radius": 5.0, "mine_damage": 30.0, "mine_aoe_radius": 1.8, "cooldown": 4.0, "mana_cost": 40.0},
+			{"mine_count": 6, "scatter_radius": 5.5, "mine_damage": 36.0, "mine_aoe_radius": 2.0, "cooldown": 3.6, "mana_cost": 42.0},
+			{"mine_count": 7, "scatter_radius": 6.0, "mine_damage": 44.0, "mine_aoe_radius": 2.2, "cooldown": 3.2, "mana_cost": 44.0},
+		],
+		"upgrade_costs": [
+			{ResourcePile.ResourceType.PAGE: 6},
+			{ResourcePile.ResourceType.PAGE: 12},
+		],
+	},
 }
 
 ## id → true: разблокированные заклинания. Инициализируется в _ready по

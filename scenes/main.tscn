@@ -18,7 +18,15 @@
 [ext_resource type="PackedScene" path="res://scenes/resource_zone.tscn" id="18_dp3eg"]
 [ext_resource type="Resource" uid="uid://bj8ej7jf1bubo" path="res://resources/wave_schedule_default.tres" id="18_schedule_default"]
 [ext_resource type="PackedScene" uid="uid://grassfield01" path="res://scenes/grass_field.tscn" id="19_grass_field"]
-[ext_resource type="Script" path="res://scripts/nav_region.gd" id="20_nav"]
+[ext_resource type="Script" uid="uid://ca4r3f6w4pm3w" path="res://scripts/nav_region.gd" id="20_nav"]
+
+[sub_resource type="NavigationMesh" id="NavMesh_main"]
+geometry_collision_mask = 33
+geometry_source_geometry_mode = 1
+geometry_source_group_name = &"navmesh_source"
+cell_size = 0.5
+agent_radius = 0.4
+agent_max_climb = 0.5
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(300, 1, 300)
@@ -35,18 +43,6 @@ shader_parameter/grass_color_light = Color(0.45, 0.62, 0.28, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_ground"]
 size = Vector3(300, 1, 300)
-
-[sub_resource type="NavigationMesh" id="NavMesh_main"]
-geometry_collision_mask = 33
-geometry_parsed_geometry_type = 2
-geometry_source_geometry_mode = 1
-geometry_source_group_name = &"navmesh_source"
-agent_radius = 0.4
-agent_height = 1.5
-agent_max_climb = 0.5
-agent_max_slope = 45.0
-cell_size = 0.5
-cell_height = 0.25
 
 [node name="Main" type="Node3D" unique_id=462266493]
 
@@ -118,6 +114,7 @@ wave_schedule = ExtResource("18_schedule_default")
 
 [node name="Camp" parent="." unique_id=745402752 instance=ExtResource("8")]
 target_path = NodePath("../Tower")
+tent_count = 3
 
 [node name="PerfHud" parent="." unique_id=2138312601 instance=ExtResource("11")]
 
