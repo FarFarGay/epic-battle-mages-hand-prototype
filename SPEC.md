@@ -1151,7 +1151,7 @@ WaveStage поддерживает обе модели одновременно:
   - `require_poi: bool = true` — если true, deploy возможен только когда башня в радиусе [QuestActor.safe_radius] хотя бы одной POI-зоны (группа `poi_zone`). Hold R вне POI игнорируется. Anchor лагеря защёлкивается на POI.global_position (а не на tower) — палатки кольцом строятся симметрично вокруг костра. false — старое поведение «deploy где угодно». Для отладки.
 - Группа **Gnomes:**
   - `gnome_scene: PackedScene` — сцена обычного гнома-собирателя.
-  - `defender_scene: PackedScene` — сцена защитника-лучника (DefenderGnome). Camp читает `CampPart.defenders_per_tent` и `gnomes_per_tent`, спавнит `defenders_per_tent` защитников и `(gnomes_per_tent − defenders_per_tent)` собирателей на каждую палатку. Дефолт 7 жителей: 3 защитника + 4 собирателя.
+  - `defender_scene: PackedScene` — сцена защитника-лучника (DefenderGnome). Camp читает `CampPart.defenders_per_tent` и `gnomes_per_tent`, спавнит `defenders_per_tent` защитников и `(gnomes_per_tent − defenders_per_tent)` собирателей на каждую палатку. Дефолт 4 жителя: 1 защитник + 3 собирателя.
 - `debug_log: bool = true`.
 
 **Публичный API (используется WaveDirector'ом и HUD'ом):**

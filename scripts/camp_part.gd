@@ -35,10 +35,10 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 
 ## Сколько гномов живёт в этой палатке. Camp читает это значение в своём
 ## _spawn_gnomes() и инстанцирует gnome_scene нужное количество раз.
-@export var gnomes_per_tent: int = 7
+@export var gnomes_per_tent: int = 4
 
 ## Сколько из gnomes_per_tent — защитники-лучники (DefenderGnome).
-## Остальные — собиратели (Gnome). Дефолт 7 жителей: 1 защитник + 6 собирателей.
+## Остальные — собиратели (Gnome). Дефолт 4 жителя: 1 защитник + 3 собирателя.
 @export var defenders_per_tent: int = 1
 
 @export_group("Tear-off (физический отрыв от каравана)")
