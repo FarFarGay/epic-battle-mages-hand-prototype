@@ -52,6 +52,15 @@ extends Enemy
 ## жизнь, балансится количеством и темпом стрельбы.
 @export var arrow_inaccuracy_radius: float = 1.5
 
+@export_group("Shatter (распад на осколки на смерти)")
+## Сколько RB-фрагментов спавнить в момент гибели. Меньше чем у Skeleton (7) —
+## лучник тоньше, естественно осыпается мельче.
+@export var shatter_fragment_count: int = 5
+@export var shatter_lifetime: float = 2.0
+## Цвет осколков. Дефолт — тёмно-фиолетовый под цвет тушки archer'а
+## (albedo в .tscn ≈ Color(0.45, 0.2, 0.65)).
+@export var shatter_color: Color = Color(0.45, 0.2, 0.65, 1.0)
+
 @export_group("Debug")
 @export var debug_log: bool = false
 
@@ -61,6 +70,8 @@ var _projectiles_root: Node = null
 var _cached_target: Node3D = null
 var _scan_timer: float = 0.0
 var _forced_target: Node3D = null
+
+@onready var _mesh: MeshInstance3D = $MeshInstance3D
 
 
 func _ready() -> void:
@@ -221,3 +232,15 @@ func _perform_strike(target: Node3D) -> void:
 ## вызывает через has_method, не зная типа.
 func set_forced_target(target: Node3D) -> void:
 	_forced_target = target
+
+
+## Override Enemy._on_destroyed: прячем тело и спавним RB-осколки через
+## ShatterEffect (тот же модуль что у Skeleton'а). Без этого override'а
+## archer просто исчезал на смерти — визуально не читалось как «убил».
+## Осколки живут в _effects_root, переживают queue_free archer'а.
+func _on_destroyed() -> void:
+	if _mesh != null:
+		_mesh.visible = false
+	if _effects_root != null:
+		ShatterEffect.spawn(_effects_root, global_position, shatter_color,
+			shatter_fragment_count, shatter_lifetime)
