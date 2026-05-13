@@ -1,0 +1,42 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/skeleton_archer.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_arrow.tscn" id="2"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_archer"]
+radius = 0.35
+height = 1.9
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_archer"]
+radius = 0.35
+height = 1.9
+
+[sub_resource type="StandardMaterial3D" id="Material_archer"]
+albedo_color = Color(0.45, 0.2, 0.65, 1)
+emission_enabled = true
+emission = Color(0.3, 0.1, 0.5, 1)
+emission_energy_multiplier = 0.35
+
+[node name="SkeletonArcher" type="CharacterBody3D"]
+collision_layer = 16
+collision_mask = 39
+script = ExtResource("1")
+hp = 20.0
+move_speed = 2.4
+attack_range = 14.0
+attack_damage = 0.0
+attack_cooldown = 1.8
+attack_windup = 0.7
+attack_windup_point_blank = 0.7
+attack_radius_max = 14.0
+attack_radius_min = 8.0
+vision_radius = 18.0
+arrow_scene = ExtResource("2")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("CapsuleShape3D_archer")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+mesh = SubResource("CapsuleMesh_archer")
+material_override = SubResource("Material_archer")
+cast_shadow = 0

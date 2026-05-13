@@ -5,6 +5,7 @@
 [ext_resource type="Script" uid="uid://fqose6y31knl" path="res://scripts/combat_group.gd" id="3_group"]
 [ext_resource type="Script" uid="uid://j0tr35r42ex5" path="res://scripts/unit_entry.gd" id="4_entry"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="5_skel"]
+[ext_resource type="PackedScene" path="res://scenes/skeleton_archer.tscn" id="6_archer"]
 
 [sub_resource type="Resource" id="Entry_skel_5"]
 script = ExtResource("4_entry")
@@ -24,6 +25,12 @@ scene = ExtResource("5_skel")
 count = 3
 metadata/_custom_type_script = "uid://j0tr35r42ex5"
 
+[sub_resource type="Resource" id="Entry_archer_2"]
+script = ExtResource("4_entry")
+scene = ExtResource("6_archer")
+count = 2
+metadata/_custom_type_script = "uid://j0tr35r42ex5"
+
 [sub_resource type="Resource" id="Group_recon_a"]
 script = ExtResource("3_group")
 composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_5")])
@@ -40,7 +47,7 @@ metadata/_custom_type_script = "uid://fqose6y31knl"
 
 [sub_resource type="Resource" id="Group_pressure_b"]
 script = ExtResource("3_group")
-composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_3")])
+composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_3"), SubResource("Entry_archer_2")])
 spawn_zone_index = -1
 cluster_spread = 1.3
 metadata/_custom_type_script = "uid://fqose6y31knl"
@@ -61,7 +68,7 @@ metadata/_custom_type_script = "uid://fqose6y31knl"
 
 [sub_resource type="Resource" id="Group_siege_c"]
 script = ExtResource("3_group")
-composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_3")])
+composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_3"), SubResource("Entry_archer_2")])
 spawn_zone_index = -1
 cluster_spread = 1.5
 metadata/_custom_type_script = "uid://fqose6y31knl"

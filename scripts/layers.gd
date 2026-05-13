@@ -115,6 +115,15 @@ const MASK_TERRAIN_ONLY := TERRAIN                              # 1
 ## в стрелах, по аналогии со Slam.
 const MASK_FRIENDLY_PROJECTILE := TERRAIN | ENEMIES | COLD_ENEMY  # 145
 
+## Стрела вражеского снаряда (skeleton-archer): пол + дружественные цели + палисад.
+## Зеркало MASK_FRIENDLY_PROJECTILE с инверсией стороны: бьёт Tower (ACTORS),
+## палатки/колокол (CAMP_OBSTACLE), смонтированные модули, гномов/защитников
+## (FRIENDLY_UNIT), Squad-юнитов. Палисад блокирует стрелу физически —
+## стена даёт укрытие. Высокие арки баллистики могут перелетать через
+## palisade_segment.height=1.5м (зависит от angle/speed) — это by design,
+## частокол не абсолютная защита.
+const MASK_HOSTILE_PROJECTILE := TERRAIN | ACTORS | CAMP_OBSTACLE | MOUNTED_MODULE | FRIENDLY_UNIT | PALISADE_OBSTACLE  # 869
+
 
 ## Группа-маркер: цель исключена из всех hand-actions (slam, flick, grab,
 ## magnet) и магии. Включи через editor (Node → Groups → Add «hand_immune»)
