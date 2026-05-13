@@ -30,13 +30,9 @@ signal spell_cast(spell_name: StringName, position: Vector3)
 @export var cooldown: float = 4.0
 @export var mana_cost: float = 40.0
 
-@export_group("Carrier (ballistic high-arc)")
+@export_group("Carrier (ballistic fixed-angle)")
 ## Высота старта carrier'а относительно Tower'а.
 @export var carrier_launch_offset_y: float = 3.0
-## Желаемая скорость carrier'а при старте. Влияет на дальность и крутизну
-## арки: чем меньше — тем выше арка (high_arc-формула фиксирует угол через
-## v²/g для нужного R). 14 м/с даёт читаемый лоб на 14-25м дистанций.
-@export var carrier_launch_speed: float = 14.0
 ## Радиус визуальной вспышки в момент burst'а (AoeVisual.spawn_explosion).
 @export var carrier_burst_visual_radius: float = 1.8
 
@@ -159,7 +155,7 @@ func _spawn_carrier(target_pos: Vector3) -> void:
 		return
 	# add_child ДО setup — global_position требует ноду в SceneTree.
 	_effects_root.add_child(carrier)
-	carrier.setup(launch_pos, target_pos, carrier_launch_speed)
+	carrier.setup(launch_pos, target_pos)
 	carrier.burst.connect(_on_carrier_burst)
 
 

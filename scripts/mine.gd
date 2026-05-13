@@ -45,6 +45,7 @@ enum Phase { FALLING, ARMING, ARMED }
 @export var debug_log: bool = false
 
 @onready var _trigger_area: Area3D = $TriggerArea
+@onready var _trail: GPUParticles3D = get_node_or_null("Trail") as GPUParticles3D
 
 var _phase: int = Phase.FALLING
 var _velocity: Vector3 = Vector3.ZERO
@@ -63,6 +64,10 @@ func _ready() -> void:
 	_trigger_area.collision_mask = trigger_mask
 	_trigger_area.monitoring = false  # включится после ARMING
 	_trigger_area.body_entered.connect(_on_body_entered)
+	# Трейл включён во время FALLING — мина «летит как ракета». На приземлении
+	# выключаем emitting, оставшиеся частицы фейдятся через свой lifetime.
+	if _trail != null:
+		_trail.emitting = true
 
 
 func _physics_process(delta: float) -> void:
@@ -75,6 +80,9 @@ func _physics_process(delta: float) -> void:
 				_velocity = Vector3.ZERO
 				_phase = Phase.ARMING
 				_arming_timer = arming_delay
+				# Трейл гасим — мина приземлилась, ракета «остыла».
+				if _trail != null:
+					_trail.emitting = false
 				if debug_log and LogConfig.master_enabled:
 					print("[Mine] приземлилась @ (%.1f, %.1f), arming %.1fс" % [
 						global_position.x, global_position.z, arming_delay,

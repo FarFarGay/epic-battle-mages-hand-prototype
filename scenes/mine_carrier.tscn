@@ -1,4 +1,4 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://scripts/mine_carrier.gd" id="1"]
 
@@ -10,9 +10,46 @@ height = 0.55
 albedo_color = Color(0.35, 0.25, 0.2, 1)
 emission_enabled = true
 emission = Color(1.0, 0.4, 0.15, 1)
-emission_energy_multiplier = 0.5
+emission_energy_multiplier = 0.8
 metallic = 0.4
 roughness = 0.5
+
+[sub_resource type="StandardMaterial3D" id="MAT_trail_carrier"]
+transparency = 1
+shading_mode = 0
+billboard_mode = 1
+billboard_keep_scale = true
+albedo_color = Color(1, 0.45, 0.1, 1)
+emission_enabled = true
+emission = Color(1, 0.45, 0.1, 1)
+emission_energy_multiplier = 2.5
+
+[sub_resource type="QuadMesh" id="QM_trail_carrier"]
+material = SubResource("MAT_trail_carrier")
+size = Vector2(0.35, 0.35)
+
+[sub_resource type="Gradient" id="G_trail_carrier"]
+offsets = PackedFloat32Array(0, 0.4, 1)
+colors = PackedColorArray(1, 0.7, 0.25, 1, 1, 0.25, 0.05, 0.7, 0.3, 0.05, 0, 0)
+
+[sub_resource type="GradientTexture1D" id="GT_trail_carrier"]
+gradient = SubResource("G_trail_carrier")
+
+[sub_resource type="Curve" id="C_trail_scale_carrier"]
+_data = [Vector2(0, 1), 0.0, 0.0, 0, 0, Vector2(1, 0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="CurveTexture" id="CT_trail_scale_carrier"]
+curve = SubResource("C_trail_scale_carrier")
+
+[sub_resource type="ParticleProcessMaterial" id="PPM_trail_carrier"]
+emission_shape = 1
+emission_sphere_radius = 0.1
+gravity = Vector3(0, 1.5, 0)
+initial_velocity_min = 0.0
+initial_velocity_max = 0.6
+scale_curve = SubResource("CT_trail_scale_carrier")
+color_ramp = SubResource("GT_trail_carrier")
 
 [node name="MineCarrier" type="Node3D"]
 script = ExtResource("1")
@@ -22,3 +59,10 @@ transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0, 0)
 mesh = SubResource("CapsuleMesh_carrier")
 material_override = SubResource("Material_carrier")
 cast_shadow = 0
+
+[node name="Trail" type="GPUParticles3D" parent="."]
+amount = 50
+lifetime = 0.35
+process_material = SubResource("PPM_trail_carrier")
+draw_pass_1 = SubResource("QM_trail_carrier")
+visibility_aabb = AABB(-15, -15, -15, 30, 30, 30)
