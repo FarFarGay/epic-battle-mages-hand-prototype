@@ -1677,6 +1677,11 @@ func try_build_palisade_line(vertices: Array) -> Dictionary:
 		parent.add_child(inst)
 		inst.global_position = seg["pos"]
 		inst.rotation.y = seg["rot_y"]
+		# При разрушении сегмента — debounced re-bake. Без этого скелеты
+		# пробивают дыру в стене, но navmesh остаётся целым → гномы и сами
+		# скелеты не видят новый проход. Debounce 0.3с защищает от шквала
+		# (волна ломает 5 сегментов в одном кадре → 1 bake, не 5).
+		inst.destroyed.connect(_on_palisade_segment_destroyed)
 		built += 1
 	# Corner-posts: на каждом vertex'е спавним короткий столбик. Закрывает
 	# треугольную щель на внешней стороне углов (соседние сегменты под разным
@@ -1710,6 +1715,25 @@ func _rebake_navmesh() -> void:
 	var region: Node = get_tree().get_first_node_in_group(&"nav_region")
 	if region != null and region.has_method(&"rebake"):
 		region.rebake()
+
+
+## Debounced rebake — несколько разрушений палисадов в одном кадре дают
+## один bake через 0.3с. Без debounce'а волна на 5 сегментов давала бы
+## 5 sync bake'ов = 0.5-1.5с лагов.
+var _palisade_rebake_pending: bool = false
+const PALISADE_REBAKE_DEBOUNCE: float = 0.3
+
+
+func _on_palisade_segment_destroyed() -> void:
+	if _palisade_rebake_pending:
+		return
+	_palisade_rebake_pending = true
+	get_tree().create_timer(PALISADE_REBAKE_DEBOUNCE).timeout.connect(_do_palisade_rebake)
+
+
+func _do_palisade_rebake() -> void:
+	_palisade_rebake_pending = false
+	_rebake_navmesh()
 
 
 ## Эффект BUILDING_WATCH_BELL: спавнит WatchBell в `params.position`, привязывает

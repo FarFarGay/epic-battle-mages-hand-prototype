@@ -232,8 +232,11 @@ var _nav_last_target: Vector3 = Vector3.INF
 var _nav_set_throttle: float = 0.0
 const NAV_SET_INTERVAL: float = 0.2
 ## Если цель в этом радиусе от текущей позиции — pathfinding выключен,
-## идём прямо. Дёрганья на близких целях не нужны.
-const NAV_DIRECT_RADIUS: float = 1.5
+## идём прямо. Дёрганья на близких целях не нужны. 0.5м — узкая dead-zone
+## когда гном впритык к pile/палатке (NavAgent на таких расстояниях
+## возвращает waypoint = текущая позиция). 1.5м было слишком много —
+## позволяло проходить сквозь тонкую стенку если goal был за ней в 1.4м.
+const NAV_DIRECT_RADIUS: float = 0.5
 
 ## Размер cell'а в spatial-grid'е куч ресурсов. Сейчас grid используется
 ## глобальным поиском _find_nearest_pile (полный обход keys), но cell-структура
