@@ -37,6 +37,9 @@ var _destroyed: bool = false
 func _ready() -> void:
 	Damageable.register(self)
 	add_to_group(SKELETON_TARGET_GROUP)
+	# Маркер «только для melee». Лучники и будущие ranged враги пропускают
+	# палисад в скане — стрелять в стену бесполезно, цель должна быть «живой».
+	add_to_group(Enemy.MELEE_ONLY_TARGET_GROUP)
 	# Источник геометрии для NavMesh bake'а — стена должна вырезать кусок
 	# навмеша, чтобы гномы и скелеты-обходники её огибали.
 	add_to_group(&"navmesh_source")

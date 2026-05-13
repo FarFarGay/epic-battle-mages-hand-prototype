@@ -26,6 +26,10 @@ signal hit(target: Node, position: Vector3)
 @export var gravity: float = 6.0
 ## Секунды до автоматического queue_free, если стрела не попала.
 @export var lifetime: float = 4.0
+## Логирует трассу стрелы (setup-параметры + что и где зацепилось). Дефолт
+## false — включается на конкретной сцене (например, enemy_arrow.tscn) для
+## диагностики проблем с попаданием.
+@export var debug_log: bool = false
 
 @onready var _hit_area: Area3D = $HitArea
 
@@ -45,6 +49,14 @@ func setup(source_position: Vector3, target_position: Vector3) -> void:
 	global_position = source_position
 	_velocity = _compute_launch_velocity(source_position, target_position)
 	_orient_along_velocity()
+	if debug_log and LogConfig.master_enabled:
+		var d_h: float = Vector2(target_position.x - source_position.x, target_position.z - source_position.z).length()
+		print("[Arrow:setup] src=(%.1f,%.2f,%.1f) tgt=(%.1f,%.2f,%.1f) d_h=%.1fм dy=%.2fм v=%.1fм/с initV=(%.1f,%.2f,%.1f)" % [
+			source_position.x, source_position.y, source_position.z,
+			target_position.x, target_position.y, target_position.z,
+			d_h, target_position.y - source_position.y, speed,
+			_velocity.x, _velocity.y, _velocity.z,
+		])
 
 
 ## Решение баллистической задачи: source, target, фиксированный |v| = speed,
@@ -91,6 +103,8 @@ func _physics_process(delta: float) -> void:
 		return
 	_life += delta
 	if _life >= lifetime:
+		if debug_log and LogConfig.master_enabled:
+			print("[Arrow:timeout] life=%.2fс pos=(%.1f,%.2f,%.1f)" % [_life, global_position.x, global_position.y, global_position.z])
 		queue_free()
 		return
 	_velocity.y -= gravity * delta
@@ -105,6 +119,13 @@ func _on_body_entered(body: Node) -> void:
 	# Если попали в Damageable (скелет) — наносим урон. В terrain — просто
 	# исчезаем. Kill credit идёт через EventBus.enemy_destroyed → XpOrbSpawner
 	# (autoload), поэтому стрела сама про XP ничего не знает (этап 49).
+	if debug_log and LogConfig.master_enabled:
+		var groups: Array = body.get_groups()
+		print("[Arrow:hit] body=%s layer=%d groups=%s damageable=%s pos=(%.1f,%.2f,%.1f)" % [
+			body.name, body.collision_layer if body is CollisionObject3D else -1,
+			str(groups), Damageable.is_damageable(body),
+			global_position.x, global_position.y, global_position.z,
+		])
 	if Damageable.is_damageable(body):
 		Damageable.try_damage(body, damage)
 		hit.emit(body, global_position)

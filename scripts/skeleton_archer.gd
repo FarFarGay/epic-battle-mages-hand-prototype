@@ -158,6 +158,10 @@ func _rescan_target() -> void:
 				var node := raw as Node3D
 				if node == null:
 					continue
+				# Skip melee-only цели (палисад, будущие стены/ворота). Они есть
+				# в TARGET_GROUP для melee-ломаемости, но стрелять в них бесполезно.
+				if node.is_in_group(Enemy.MELEE_ONLY_TARGET_GROUP):
+					continue
 				var d_sq: float = (node.global_position - here).length_squared()
 				if d_sq < best_d_sq:
 					best_d_sq = d_sq

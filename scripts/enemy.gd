@@ -36,6 +36,11 @@ const MIN_NEIGHBOR_PUSH_SPEED := 0.5
 ## колокол, башня). Любой Enemy-наследник (Skeleton, в будущем skeleton-archer
 ## и т.д.) делит одну группу и один spatial-grid через [_target_grid].
 const TARGET_GROUP := &"skeleton_target"
+## Sub-маркер «только для melee». Цели в этой группе всё ещё есть в TARGET_GROUP
+## (melee-скелет их ломает чтобы пройти), но ranged-враги (SkeletonArcher и
+## будущие) их игнорируют — стрелять в палисад/ворота бесполезно. Помечает
+## себя сама сущность через `add_to_group(MELEE_ONLY_TARGET_GROUP)`.
+const MELEE_ONLY_TARGET_GROUP := &"melee_only_target"
 ## Размер cell'а в spatial-grid'е. 12м — компромисс между плотностью cell'ов и
 ## cost'ом запросов. Совпадает с типовым vision_radius — 3×3 cell'ов гарантированно
 ## покрывают диск vision'а.
