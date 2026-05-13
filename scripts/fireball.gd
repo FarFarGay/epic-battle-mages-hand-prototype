@@ -21,6 +21,12 @@ const HIT_PROXIMITY_SQ: float = 0.36  # 0.6м² — взрываемся на п
 ## останется в сцене навсегда.
 const SAFETY_LIFETIME: float = 6.0
 
+## Эмитится в _explode перед queue_free. Используется коллерами, которым
+## нужно спавнить что-то на месте удара (например, HandSpellMineScatter
+## ставит Mine'у в точке приземления). origin — позиция взрыва, radius —
+## радиус AOE (для подсказки про зону действия).
+signal hit(origin: Vector3, radius: float)
+
 enum Phase { BOOST, HOMING }
 
 var _target_pos: Vector3
@@ -278,6 +284,10 @@ func _explode() -> void:
 	if LogConfig.master_enabled:
 		print("[Fireball] взрыв @ (%.1f, %.1f, %.1f), задело: %d (FAR: %d)" % [origin.x, origin.y, origin.z, affected + far_hits, far_hits])
 
+	# Сигнал для коллеров, которые спавнят что-то на месте удара (Mine
+	# Scatter использует — ставит Mine'у в origin). Эмитим ДО visual'ов
+	# и queue_free, чтобы слушатель видел консистентное состояние.
+	hit.emit(origin, _radius)
 	# Визуалы взрыва. Спавним в parent (effects_root, обычно current_scene) —
 	# не в self, иначе на queue_free() ниже визуалы тоже умрут до окончания
 	# tween'а. parent живёт всё время сцены.

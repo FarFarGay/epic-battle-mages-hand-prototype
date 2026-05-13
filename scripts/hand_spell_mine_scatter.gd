@@ -1,18 +1,22 @@
 class_name HandSpellMineScatter
 extends Node
-## Магическая мин-бомбардировка. Прямой залп из башни: N мин-ракет
-## вылетают серией со stagger'ом, каждая по своей баллистической дуге
-## в свою точку приземления в круге scatter_radius. После приземления
-## и arming-delay'я мины ждут жертв. Friendly-fire ON.
+## Магическая мин-бомбардировка. Прямой залп из башни: N мин-снарядов
+## с **Fireball-баллистикой** (boost → homing) вылетают серией со
+## stagger'ом, каждый летит в свою точку приземления в круге scatter_radius.
+## На impact'е снаряд "explодит" БЕЗ урона, на его месте появляется Mine.
+## После arming-delay'я мины ждут жертв. Friendly-fire ON.
 ##
-## Без промежуточного carrier'а — каждая мина сама является ракетой со
-## своим trail'ом и собственной баллистикой. Дизайнерское решение 2026-05-14:
-## carrier-сумка стала посредником без геймплейной ценности, прямой залп
-## визуально динамичнее (multi-rocket-launcher feel) и архитектурно проще.
+## Реюзает `Fireball` как доставочный снаряд (тот же `fireball.gd` script,
+## тот же flight code что у Firestorm) с двумя отличиями:
+##   1. Используется отдельная сцена `mine_projectile.tscn` — поменьше и
+##      приглушеннее визуально, чтоб не путать с обычным фаерболом.
+##   2. damage=0, explode_mask=0, knockback=0, burn_scene=null —
+##      Fireball.gd на impact'е не наносит урона, только эмитит `hit`
+##      сигнал и спавнит explosion-VFX. Слушатель (этот класс) на hit'е
+##      ставит `Mine` в impact-точке.
 ##
 ## Stagger между запусками (`shot_interval` ~60мс) — серия «тра-та-та»,
-## а не одновременное «пуф». Landing-точки выбираются в `_cast` заранее
-## (массив `_landing_points`), на каждом tick'е стреляется следующая.
+## а не одновременный залп.
 ##
 ## Параметры читаются из SpellSystem.SPELL_CATALOG.mine_scatter с
 ## fallback'ом на @export.
@@ -20,10 +24,9 @@ extends Node
 signal spell_cast(spell_name: StringName, position: Vector3)
 
 @export_group("Scatter")
-## Сколько мин в залпе. ~5 — покрывает кластер, не превращает заклинание
-## в кнопку «уничтожить всё».
+## Сколько мин в залпе.
 @export var mine_count: int = 5
-## Радиус разброса landing-точек uniform-в-круге (через sqrt(rand)).
+## Радиус разброса landing-точек uniform-в-круге.
 @export var scatter_radius: float = 5.0
 @export var mine_damage: float = 30.0
 @export var mine_aoe_radius: float = 1.8
@@ -31,32 +34,35 @@ signal spell_cast(spell_name: StringName, position: Vector3)
 @export var mana_cost: float = 40.0
 
 @export_group("Volley")
-## Высота старта мины относительно Tower (точка запуска). Над Tower'ом,
-## чтоб ракета визуально вылетала с верхушки.
+## Высота старта снаряда относительно Tower.
 @export var launch_offset_y: float = 3.0
-## Задержка между запусками мин в серии. 0.06с = «тра-та-та» 5 ракет
-## за 0.3с — слышная серия. 0 = одновременный залп.
+## Задержка между запусками в серии. 0.06с = «тра-та-та».
 @export var shot_interval: float = 0.06
 
-@export_group("Ballistic")
-## Угол старта в градусах. 55° = читаемая высокая дуга, мина видимо
-## арки́рует. Скорость подбирается под landing-точку.
-@export_range(20.0, 80.0) var launch_angle_deg: float = 55.0
-## Up-boost — мелкий компонент vy поверх ballistic-решения. Создаёт
-## разнообразие арок: одинаковые landing-точки + разный up_boost = разные
-## пики и времена полёта. 0 = одинаковые арки.
-@export var up_boost_min: float = 0.0
-@export var up_boost_max: float = 1.5
+@export_group("Projectile flight (как у Firestorm — boost + homing)")
+## Параметры boost-фазы (стартовая дуга).
+@export var boost_duration: float = 0.18
+@export var boost_velocity_up: float = 7.0
+@export var boost_velocity_forward: float = 3.0
+@export var boost_gravity: float = 14.0
+@export var boost_drift_velocity: float = 2.8
 
-## Должны совпадать с Mine.gd-дефолтами — для расчёта баллистики.
-@export var mine_gravity: float = 22.0
-@export var mine_ground_y: float = 0.05
+## Параметры homing-фазы (полёт в landing-точку).
+@export var homing_initial_speed: float = 8.0
+@export var homing_acceleration: float = 100.0
+@export var homing_max_speed: float = 55.0
+@export_range(0.0, 80.0) var homing_drift_angle_deg: float = 45.0
+@export_range(1.0, 30.0) var homing_turn_rate: float = 3.5
 
 @export_group("Visual")
+## Снаряд-доставщик. Должен быть Fireball-наследником (использует
+## fireball.gd script). Дефолт — `mine_projectile.tscn` (поменьше и
+## приглушеннее обычного фаербола, чтоб игрок отличал).
+@export var projectile_scene: PackedScene
+## Сцена мины, которая ставится на impact-точке.
 @export var mine_scene: PackedScene
 
 @export_group("Telegraph")
-## Длительность жёлтого warning-кольца на земле в зоне scatter'а.
 @export var warning_duration: float = 0.9
 @export var warning_color: Color = Color(1.0, 0.55, 0.1, 0.7)
 
@@ -68,18 +74,15 @@ var _hand: Hand
 var _coord: HandSpell
 var _effects_root: Node = null
 var _cooldown_remaining: float = 0.0
-## Зафиксированные параметры серии (читаем из SpellSystem на press'е,
-## используем до конца серии — апгрейд во время залпа не меняет уже
-## стартовавший каст).
+## Зафиксированные параметры серии — серия летит со старыми параметрами
+## даже если игрок прокачает заклинание во время неё.
 var _series_mine_count: int
 var _series_scatter_radius: float
 var _series_mine_damage: float
 var _series_mine_aoe_radius: float
-## Очередь landing-точек на текущую серию. Каждый shot вытаскивает одну,
-## считает velocity и спавнит мину.
+## Очередь landing-точек: каждая — целевая позиция одного снаряда серии.
 var _landing_queue: Array[Vector3] = []
-## Время до следующего выстрела в серии (sec). На press ставится 0 —
-## первый выстрел сразу на ближайшем tick'е.
+## Время до следующего выстрела в серии.
 var _next_shot_in: float = 0.0
 
 
@@ -97,7 +100,6 @@ func is_active() -> bool:
 
 
 func can_trigger() -> bool:
-	# Нельзя дозаказать серию, пока текущая не отстрелялась И пока cooldown идёт.
 	return _cooldown_remaining <= 0.0 and _landing_queue.is_empty()
 
 
@@ -108,18 +110,20 @@ func on_press() -> void:
 func tick(delta: float) -> void:
 	if _cooldown_remaining > 0.0:
 		_cooldown_remaining = maxf(_cooldown_remaining - delta, 0.0)
-	# Серия активна? Стреляем следующую мину когда таймер ≤ 0.
 	if _landing_queue.size() > 0:
 		_next_shot_in -= delta
 		if _next_shot_in <= 0.0:
 			var landing: Vector3 = _landing_queue.pop_front()
-			_launch_one_mine(landing)
+			_launch_one_projectile(landing)
 			_next_shot_in = shot_interval
 
 
 func _cast() -> void:
 	if mine_scene == null:
 		push_error("[Hand:Spell:MineScatter] mine_scene не задан")
+		return
+	if projectile_scene == null:
+		push_error("[Hand:Spell:MineScatter] projectile_scene не задан")
 		return
 	if SpellSystem != null and not SpellSystem.is_unlocked(&"mine_scatter"):
 		if debug_log and LogConfig.master_enabled:
@@ -144,8 +148,6 @@ func _cast() -> void:
 	target_pos.y -= _hand.hand_height
 	_cooldown_remaining = p_cooldown
 
-	# Telegraph — кольцо на земле в зоне scatter'а. Длительность ≈ время
-	# полёта самой дальней ракеты + arming_delay (~1с).
 	if _effects_root != null:
 		AoeVisual.spawn_ground_ring(_effects_root, target_pos, _series_scatter_radius, warning_duration, warning_color)
 
@@ -154,13 +156,9 @@ func _cast() -> void:
 	for i in range(_series_mine_count):
 		var angle: float = randf() * TAU
 		var r: float = sqrt(randf()) * _series_scatter_radius
-		var landing: Vector3 = Vector3(
-			target_pos.x + cos(angle) * r,
-			mine_ground_y,
-			target_pos.z + sin(angle) * r,
-		)
+		var landing: Vector3 = target_pos + Vector3(cos(angle) * r, 0.0, sin(angle) * r)
 		_landing_queue.append(landing)
-	_next_shot_in = 0.0  # первая ракета на ближайшем tick'е
+	_next_shot_in = 0.0
 
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Spell:MineScatter] залп × %d → центр (%.1f, %.1f), R=%.1fм" % [
@@ -169,10 +167,9 @@ func _cast() -> void:
 	spell_cast.emit(&"mine_scatter", target_pos)
 
 
-## Стреляет одну мину из башни в конкретную landing-точку. Считает
-## баллистику под фиксированный launch_angle, скорость подгоняется
-## под расстояние. Up_boost даёт лёгкое разнообразие траекторий.
-func _launch_one_mine(landing: Vector3) -> void:
+## Стреляет один Fireball-снаряд из башни в landing-точку. Без damage'а —
+## на impact'е будет спавн Mine'ы через hit-signal.
+func _launch_one_projectile(landing: Vector3) -> void:
 	if not is_instance_valid(_effects_root):
 		return
 	var launch_pos: Vector3
@@ -181,70 +178,40 @@ func _launch_one_mine(landing: Vector3) -> void:
 		launch_pos = tower.global_position + Vector3.UP * launch_offset_y
 	else:
 		launch_pos = _hand.global_position
-	var up_boost: float = randf_range(up_boost_min, up_boost_max)
-	var velocity: Vector3 = _compute_arc_velocity(launch_pos, landing, up_boost)
-	_spawn_mine_at(launch_pos, velocity)
+	var fireball := projectile_scene.instantiate() as Fireball
+	if fireball == null:
+		push_error("[Hand:Spell:MineScatter] projectile_scene не инстанцируется как Fireball")
+		return
+	_effects_root.add_child(fireball)
+	fireball.setup(
+		launch_pos,
+		landing,
+		boost_duration,
+		boost_velocity_up,
+		boost_velocity_forward,
+		boost_gravity,
+		boost_drift_velocity,
+		homing_initial_speed,
+		homing_acceleration,
+		homing_max_speed,
+		homing_drift_angle_deg,
+		homing_turn_rate,
+		0.0,    # damage = 0 — мы не наносим урон на impact'е (только Mine ставим)
+		0.5,    # radius — небольшой для shape-query (всё равно damage=0, не важен)
+		0,      # explode_mask = 0 — никого не сканируем при взрыве
+		0.0,    # knockback_force
+		0.0,    # knockback_lift
+		0.0,    # knockback_duration
+	)
+	# Подключаем hit-сигнал — на impact'е спавним Mine.
+	fireball.hit.connect(_on_projectile_hit, CONNECT_ONE_SHOT)
 
 
-## Обратная баллистика при фиксированном launch_angle + up_boost.
-## Решает для скорости v так, чтобы из source с initial velocity
-## (v·cos(α)·dir_h + (v·sin(α) + up_boost)·UP) попасть в target.
-##
-## Уравнения:
-##   y(t) = source.y + (v·sin(α) + up_boost)·t − ½·g·t²
-##   x(t), z(t): source + v·cos(α)·dir_h·t
-## Из x_target = source.x + v·cos(α)·dir_h.x·t  →  t = d / (v·cos(α))
-## Подставляя в y:
-##   target.y = source.y + (v·sin(α) + up_boost)·d/(v·cos(α)) − ½·g·(d/(v·cos(α)))²
-##   target.y = source.y + d·tan(α) + (up_boost·d)/(v·cos(α)) − g·d² / (2·v²·cos²(α))
-##
-## Это квадратное уравнение относительно (1/v). Решение:
-##   Пусть u = 1/v. Тогда:
-##   g·d²/(2·cos²(α))·u² − (up_boost·d/cos(α))·u − (source.y + d·tan(α) − target.y) = 0
-##   Если up_boost = 0, упрощается до v² = g·d² / (2·cos²(α)·(d·tan(α) − dy)).
-func _compute_arc_velocity(source: Vector3, target: Vector3, up_boost: float) -> Vector3:
-	var to_target := target - source
-	var horizontal := Vector3(to_target.x, 0.0, to_target.z)
-	var d := horizontal.length()
-	var dy := to_target.y
-	var angle: float = deg_to_rad(launch_angle_deg)
-	var cos_a: float = cos(angle)
-	var sin_a: float = sin(angle)
-	var dir_h: Vector3 = Vector3.RIGHT if d < 0.0001 else horizontal / d
-	if d < 0.0001:
-		# Цель прямо под source — стреляем тупо вниз. Не должно случаться.
-		return Vector3.DOWN * 14.0
-	# Решаем квадратное уравнение для u = 1/v:
-	#   A·u² + B·u + C = 0
-	# где A = g·d²/(2·cos²(α)), B = -up_boost·d/cos(α), C = -(source.y + d·tan(α) - target.y).
-	# Реальные корни → берём положительный, v = 1/u.
-	var tan_a: float = sin_a / cos_a if cos_a > 0.0001 else 1000.0
-	var A: float = mine_gravity * d * d / (2.0 * cos_a * cos_a)
-	var B: float = -up_boost * d / cos_a
-	var C: float = -(source.y + d * tan_a - target.y)
-	# C > 0 ⇔ target ниже линии запуска под углом α (нормальный случай).
-	# Если C ≤ 0, target выше «потолка» — фоллбэк: фиксированная v=20.
-	if C <= 0.0:
-		return dir_h * 20.0 * cos_a + Vector3.UP * (20.0 * sin_a + up_boost)
-	var disc: float = B * B - 4.0 * A * (-C)  # формула с C на правой стороне: A·u² + B·u = C
-	# (= B² + 4·A·C — учётом знака C при переносе)
-	# Проще явно: A·u² + B·u + C = 0, discriminant = B² − 4·A·C. Тут C перенесён, переписываю:
-	# A·u² + B·u + C = 0 (стандарт), disc = B² − 4·A·C.
-	disc = B * B - 4.0 * A * C
-	if disc < 0.0:
-		return dir_h * 20.0 * cos_a + Vector3.UP * (20.0 * sin_a + up_boost)
-	var sqrt_disc: float = sqrt(disc)
-	# Положительный корень u (положительная v нужна).
-	var u1: float = (-B + sqrt_disc) / (2.0 * A)
-	var u2: float = (-B - sqrt_disc) / (2.0 * A)
-	var u: float = max(u1, u2)
-	if u <= 0.0001:
-		return dir_h * 20.0 * cos_a + Vector3.UP * (20.0 * sin_a + up_boost)
-	var v: float = 1.0 / u
-	return dir_h * v * cos_a + Vector3.UP * (v * sin_a + up_boost)
-
-
-func _spawn_mine_at(spawn_pos: Vector3, initial_velocity: Vector3) -> void:
+## Срабатывает в момент когда Fireball.gd достиг target'а и вызвал
+## _explode. Сигнал эмитится ДО queue_free, координаты — точка взрыва.
+## Спавним Mine ровно там — она моментально окажется на земле и пойдёт
+## в ARMING.
+func _on_projectile_hit(origin: Vector3, _radius: float) -> void:
 	if not is_instance_valid(_effects_root):
 		return
 	var mine := mine_scene.instantiate() as Mine
@@ -254,9 +221,9 @@ func _spawn_mine_at(spawn_pos: Vector3, initial_velocity: Vector3) -> void:
 	_effects_root.add_child(mine)
 	mine.damage = _series_mine_damage
 	mine.aoe_radius = _series_mine_aoe_radius
-	# Передаём gravity тоже (на случай если spell настроен под повышенную).
-	mine.gravity = mine_gravity
-	mine.setup(spawn_pos, initial_velocity)
+	# Initial velocity = 0: мина появляется на земле и сразу идёт в FALLING-фазу,
+	# которая моментально транзитится в ARMING (y уже ≤ ground_y).
+	mine.setup(origin, Vector3.ZERO)
 
 
 func _find_tower() -> Node3D:

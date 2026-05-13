@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3]
+[gd_scene load_steps=21 format=3]
 
 [ext_resource type="Script" path="res://scripts/hand.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hand_physical.gd" id="2"]
@@ -16,6 +16,7 @@
 [ext_resource type="Script" path="res://scripts/hand_build_aim.gd" id="14_build"]
 [ext_resource type="Script" path="res://scripts/hand_spell_mine_scatter.gd" id="15_mine_spell"]
 [ext_resource type="PackedScene" path="res://scenes/mine.tscn" id="16_mine_scene"]
+[ext_resource type="PackedScene" path="res://scenes/mine_projectile.tscn" id="17_mine_proj"]
 
 [sub_resource type="SphereMesh" id="SphereMesh_hand"]
 radius = 0.5
@@ -75,6 +76,7 @@ burn_patch_scene = ExtResource("8")
 
 [node name="MineScatter" type="Node" parent="SpellActions"]
 script = ExtResource("15_mine_spell")
+projectile_scene = ExtResource("17_mine_proj")
 mine_scene = ExtResource("16_mine_scene")
 
 [node name="SuperActions" type="Node" parent="."]

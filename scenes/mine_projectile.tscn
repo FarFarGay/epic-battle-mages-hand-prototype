@@ -1,0 +1,74 @@
+[gd_scene load_steps=11 format=3]
+
+[ext_resource type="Script" path="res://scripts/fireball.gd" id="1"]
+
+[sub_resource type="SphereMesh" id="SM_core_mine_proj"]
+radius = 0.12
+height = 0.24
+radial_segments = 12
+rings = 6
+
+[sub_resource type="StandardMaterial3D" id="MAT_core_mine_proj"]
+shading_mode = 0
+albedo_color = Color(0.85, 0.35, 0.15, 1)
+emission_enabled = true
+emission = Color(0.95, 0.4, 0.15, 1)
+emission_energy_multiplier = 3.5
+
+[sub_resource type="StandardMaterial3D" id="MAT_trail_mine_proj"]
+transparency = 1
+shading_mode = 0
+billboard_mode = 1
+billboard_keep_scale = true
+albedo_color = Color(0.9, 0.4, 0.12, 1)
+emission_enabled = true
+emission = Color(0.9, 0.4, 0.12, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="QuadMesh" id="QM_trail_mine_proj"]
+material = SubResource("MAT_trail_mine_proj")
+size = Vector2(0.18, 0.18)
+
+[sub_resource type="Gradient" id="G_trail_mine_proj"]
+offsets = PackedFloat32Array(0, 0.4, 1)
+colors = PackedColorArray(0.95, 0.55, 0.2, 1, 0.9, 0.25, 0.05, 0.7, 0.25, 0.05, 0, 0)
+
+[sub_resource type="GradientTexture1D" id="GT_trail_mine_proj"]
+gradient = SubResource("G_trail_mine_proj")
+
+[sub_resource type="Curve" id="C_trail_scale_mine_proj"]
+_data = [Vector2(0, 1), 0.0, 0.0, 0, 0, Vector2(1, 0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="CurveTexture" id="CT_trail_scale_mine_proj"]
+curve = SubResource("C_trail_scale_mine_proj")
+
+[sub_resource type="ParticleProcessMaterial" id="PPM_trail_mine_proj"]
+emission_shape = 1
+emission_sphere_radius = 0.05
+gravity = Vector3(0, 1.2, 0)
+initial_velocity_min = 0.0
+initial_velocity_max = 0.4
+scale_curve = SubResource("CT_trail_scale_mine_proj")
+color_ramp = SubResource("GT_trail_mine_proj")
+
+[node name="MineProjectile" type="Node3D"]
+script = ExtResource("1")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(0.6, 0, 0, 0, 0.3, 0, 0, 0, 0.3, 0, 0, 0)
+cast_shadow = 0
+mesh = SubResource("SM_core_mine_proj")
+material_override = SubResource("MAT_core_mine_proj")
+
+[node name="Trail" type="GPUParticles3D" parent="."]
+amount = 30
+lifetime = 0.25
+process_material = SubResource("PPM_trail_mine_proj")
+draw_pass_1 = SubResource("QM_trail_mine_proj")
+visibility_aabb = AABB(-15, -15, -15, 30, 30, 30)
+
+[node name="Light" type="OmniLight3D" parent="."]
+light_color = Color(0.95, 0.45, 0.18, 1)
+light_energy = 1.8
+omni_range = 5.0
