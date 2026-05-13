@@ -75,7 +75,7 @@ var _brush_vertices: Array[Vector3] = []
 ## Длина одного сегмента в метрах. Читается из catalog'а на start_brush.
 var _brush_segment_length: float = 2.0
 ## Стоимость одного сегмента (Dict ResourceType → amount). Используется
-## для preview-счётчика (через лог) и для info-feed (если добавим UI).
+## для affordability-проверки — если total_cost > наличия, preview краснеет.
 var _brush_cost_per_segment: Dictionary = {}
 ## Building id, из которого читали параметры — для commit'а зовём
 ## правильный method у Camp.
@@ -88,13 +88,9 @@ var _brush_committed_meshes: Array[MeshInstance3D] = []
 ## Пересоздаются каждый кадр в _update_brush_active_preview — курсор движется.
 var _brush_active_meshes: Array[MeshInstance3D] = []
 ## Счётчик уже зафиксированных сегментов (накапливается в _add_brush_vertex
-## при спавне committed-preview). Используется для total-cost label'а —
+## при спавне committed-preview). Используется для affordability-проверки —
 ## считать длины committed-пар каждый кадр было бы лишним.
 var _brush_committed_segments_count: int = 0
-## Floating Label3D с подсказкой «N сегментов · M wood». Спавнится в
-## start_brush, обновляется каждый кадр в _update_brush_active_preview,
-## удаляется в _finish_brush.
-var _brush_cost_label: Label3D = null
 ## Анти-spam: жёсткий лимит вершин в одной ломаной. 20 = ~38 сегментов × 2м =
 ## линия длиной 76м, перекрывает разумную «оборонную стену».
 const BRUSH_MAX_VERTICES: int = 20
@@ -196,7 +192,6 @@ func start_brush(building_id: StringName) -> void:
 	_pre_aim_category = _hand.active_category
 	_hand.set_active_category(Hand.Category.BUILD_AIM)
 	_spawn_build_zone_only_indicator()
-	_spawn_brush_cost_label()
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:BuildAim] brush-старт %s, segment_length=%.1f" % [
 			building_id, _brush_segment_length,
@@ -389,22 +384,29 @@ func _update_brush_active_preview(cursor: Vector3) -> void:
 		if not is_instance_valid(_camp) or not _camp.is_in_build_zone(center):
 			all_in_zone = false
 			break
+	# Affordability: total = committed + active. Если хоть одного ресурса не
+	# хватает на полный план — весь blueprint краснеет (и активный, и
+	# committed). Это единственный сигнал «не построится» — label убран.
+	var total: int = _brush_committed_segments_count + count
+	var can_afford: bool = _can_afford_total(total)
 	var at_max: bool = _brush_vertices.size() >= BRUSH_MAX_VERTICES
-	var color: Color
-	if at_max:
-		color = brush_preview_color_max
-	elif all_in_zone:
-		color = brush_preview_color_valid
+	var active_color: Color
+	if not all_in_zone or not can_afford:
+		active_color = brush_preview_color_invalid
+	elif at_max:
+		active_color = brush_preview_color_max
 	else:
-		color = brush_preview_color_invalid
+		active_color = brush_preview_color_valid
 	for j in range(count):
 		var center: Vector3 = last + step * (float(j) + 0.5)
-		var seg := _make_preview_segment(center, rot_y, color)
+		var seg := _make_preview_segment(center, rot_y, active_color)
 		if seg != null:
 			_brush_active_meshes.append(seg)
-	# Total-cost label рядом с курсором. count = active-сегменты под
-	# курсором (если активная часть валидна), плюс committed уже зафиксированы.
-	_update_brush_cost_label(cursor, count, all_in_zone, at_max)
+	# Committed сегменты держат свой цвет, но краснеют синхронно — это часть
+	# того же blueprint'а. Перекраска копеечная (≤ ~38 мешей).
+	var committed_color: Color = brush_committed_color if can_afford else brush_preview_color_invalid
+	for m in _brush_committed_meshes:
+		_apply_color_to_mesh(m, committed_color)
 
 
 ## Спавнит committed-preview между двумя vertex'ами (от vertex_i к vertex_{i+1}).
@@ -430,82 +432,31 @@ func _spawn_committed_preview_segments(a: Vector3, b: Vector3) -> int:
 	return count
 
 
-## Спавнит Label3D с подсказкой total-cost. Зовётся в start_brush.
-## Позиция обновляется каждый кадр в _update_brush_cost_label.
-func _spawn_brush_cost_label() -> void:
-	if _brush_cost_label != null and is_instance_valid(_brush_cost_label):
-		_brush_cost_label.queue_free()
-	if _effects_root == null:
-		_effects_root = get_tree().current_scene
-	_brush_cost_label = Label3D.new()
-	_brush_cost_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	_brush_cost_label.no_depth_test = true
-	_brush_cost_label.fixed_size = true
-	_brush_cost_label.pixel_size = 0.005
-	_brush_cost_label.text = "0 сегментов"
-	_brush_cost_label.modulate = brush_preview_color_valid
-	_effects_root.add_child(_brush_cost_label)
-
-
-## Обновляет текст и цвет cost-label'а. Total = committed + active. Cost =
-## total × cost_per_segment. Цвет:
-##   - green: валидно и хватает ресурсов
-##   - red: вне build_zone ИЛИ не хватает ресурсов
-##   - yellow: достигнут лимит вершин (max-feedback)
-func _update_brush_cost_label(cursor: Vector3, active_count: int, all_in_zone: bool, at_max: bool) -> void:
-	if _brush_cost_label == null or not is_instance_valid(_brush_cost_label):
-		return
-	# Label над курсором, чтобы не закрывал preview-сегменты под ним.
-	_brush_cost_label.global_position = cursor + Vector3.UP * 1.8
-	var total: int = _brush_committed_segments_count + active_count
-	# Cost подсчитываем по словарю (обычно один ресурс — wood, но может быть и больше).
-	var cost_lines: Array[String] = []
-	var can_afford_total: bool = true
+## Хватает ли ресурсов на total сегментов. Итерация по словарю стоимости —
+## обычно один ресурс (wood), но может быть и больше.
+func _can_afford_total(total: int) -> bool:
+	if total <= 0:
+		return true
+	if not is_instance_valid(_camp):
+		return true
 	for type in _brush_cost_per_segment:
 		var per: int = int(_brush_cost_per_segment[type])
-		var total_cost: int = per * total
-		cost_lines.append("%d %s" % [total_cost, _resource_short_name(type)])
-		if is_instance_valid(_camp) and _camp.get_resource(type) < total_cost:
-			can_afford_total = false
-	var cost_str: String = " · ".join(cost_lines) if not cost_lines.is_empty() else ""
-	var suffix: String = ""
-	if at_max:
-		suffix = " · лимит"
-	_brush_cost_label.text = "%d сегмент%s%s%s" % [
-		total,
-		_plural_segments(total),
-		(" · " + cost_str) if not cost_str.is_empty() else "",
-		suffix,
-	]
-	if at_max:
-		_brush_cost_label.modulate = brush_preview_color_max
-	elif not all_in_zone or not can_afford_total:
-		_brush_cost_label.modulate = brush_preview_color_invalid
-	else:
-		_brush_cost_label.modulate = brush_preview_color_valid
+		if _camp.get_resource(type) < per * total:
+			return false
+	return true
 
 
-## Короткое имя ресурса для UI. Не таскаем словарь RESOURCE_DISPLAY из
-## JournalPanel — здесь нужны только базовые.
-func _resource_short_name(type: int) -> String:
-	match type:
-		ResourcePile.ResourceType.WOOD: return "wood"
-		ResourcePile.ResourceType.STONE: return "stone"
-		ResourcePile.ResourceType.IRON: return "iron"
-		ResourcePile.ResourceType.FOOD: return "food"
-		ResourcePile.ResourceType.PAGE: return "page"
-		_: return "?"
-
-
-## Русское склонение «сегмент / сегмента / сегментов». Без отдельной библиотеки.
-func _plural_segments(n: int) -> String:
-	var mod10: int = n % 10
-	var mod100: int = n % 100
-	if mod10 == 1 and mod100 != 11:
-		return ""
-	if mod10 >= 2 and mod10 <= 4 and (mod100 < 10 or mod100 >= 20):
-		return "а"
-	return "ов"
+## Перекраска уже созданного preview-меша. Используется для committed-сегментов:
+## цвет blueprint'а меняется на красный при недостатке ресурсов синхронно с
+## активной частью.
+func _apply_color_to_mesh(mesh: MeshInstance3D, color: Color) -> void:
+	if not is_instance_valid(mesh):
+		return
+	var mat := mesh.material_override as StandardMaterial3D
+	if mat == null:
+		return
+	mat.albedo_color = color
+	mat.emission = Color(color.r, color.g, color.b, 1.0)
 
 
 ## Создаёт один preview-сегмент: BoxMesh с прозрачным материалом нужного
@@ -584,9 +535,6 @@ func _finish_brush() -> void:
 		if is_instance_valid(m):
 			m.queue_free()
 	_brush_active_meshes.clear()
-	if is_instance_valid(_brush_cost_label):
-		_brush_cost_label.queue_free()
-	_brush_cost_label = null
 	_clear_indicator()
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
 		_hand.set_active_category(_pre_aim_category)
