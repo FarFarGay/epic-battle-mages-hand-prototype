@@ -157,14 +157,17 @@ hand_gameplay_prot/
 | 7 | MountedModule | `CampModule` в момент монтажа в слот (динамически переключается с ITEMS) | Hand.GrabArea, Hand.cursor_raycast — иначе игрок не сможет снять модуль с башни обратно. Tower **не** сканирует — иначе touching-контакт «башня снизу, модуль на ней» давал бы ложные wall-collision'ы |
 | 8 | ColdEnemy | **зарезервированный, на 2026-05-02 не используется**. Раньше FAR-LOD скелеты лежали на нём (`collision_layer=COLD_ENEMY, mask=0`), но broad-phase BVH всё равно индексировал AABB 2000 движущихся скелетов → 25+мс на physics_ms. Сейчас FAR-скелеты полностью исключаются из broad-phase через `CollisionShape3D.disabled = true` (см. §5.5.2), а слам ловит их вторым проходом по `Skeleton.SKELETON_GROUP` с distance²-фильтром. Бит COLD_ENEMY ещё включён в `MASK_HAND_TARGETS / MASK_HAND_SLAM / MASK_FRIENDLY_PROJECTILE` исторически — это no-op (никто на этом слое не лежит). Слой оставлен на случай повторного использования для других «исключаемых» сущностей | Hand.GrabArea, Slam, Arrow (все — no-op в текущей реализации) |
 | 9 | FriendlyUnit | `Gnome`, `DefenderGnome` — отдельный от ACTORS, чтобы скелеты могли блокироваться об башню (ACTORS в `MASK_SKELETON`) и при этом **физически проходить сквозь гномов** (FRIENDLY_UNIT не в `MASK_SKELETON`) | Hand.GrabArea / Slam — теперь **смотрят** на FRIENDLY_UNIT (изменение 2026-05-03, унификация рукой и магии: рука одинаково действует на врагов и на гномов). Arrow на FRIENDLY_UNIT не смотрит — стрелы дружественные, по гномам не бьют |
+| 10 | PalisadeObstacle | `PalisadeSegment`, `PalisadePost` — **dual-layer**: `collision_layer = CAMP_OBSTACLE \| PALISADE_OBSTACLE = 544`. Отдельный слой нужен чтобы развязать «упирается в стену» от «упирается в палатку»: Tower и CampPart маскируют PALISADE_OBSTACLE → блокируются стеной, но **не друг другом** (CampPart не в их собственной маске). Skeleton (MASK_SKELETON включает CAMP_OBSTACLE) блокируется стеной как палаткой через бит CAMP_OBSTACLE. Hand-slam/магия (MASK_HAND_SLAM включает CAMP_OBSTACLE) задевают стену | Tower (mask=575), CampPart (mask=529). NavMesh.geometry_collision_mask=33 баков'ит через бит CAMP_OBSTACLE. |
 
 В коде GDScript маски берутся именованными константами из `Layers`; в `.tscn` Godot хранит ints, поэтому там — литералы (значения должны соответствовать `Layers.MASK_*`).
 
 **Маски тел (актуальные значения):**
 - `Item`, `Ground`, `ResourcePile`: `Layers.MASK_ALL_GAMEPLAY = 31` (Terrain + Items + Actors + Projectiles + Enemies) — взаимодействуют со всем «обычным», но **не с CampObstacle**: палатки намеренно не блокируют ящики/кучи.
-- `Tower`: `15` (Terrain + Items + Actors + Projectiles, **без ENEMIES**) — башня **не процессит контакты со скелетами** в `move_and_slide`. Раньше было 31, но Tower сама движется (CharacterBody3D), и в плотном кластере 100+ скелетов вокруг неё каждый m_a_s обходил все skel-Tower пары → отдельные миллисекунды physics_ms. Скелеты по-прежнему обнаруживают Tower как препятствие (Tower.layer=ACTORS в MASK_SKELETON), упираются и получают bounce-off на lunge. Только сама Tower сквозит толпу не тормозясь — это разумно (тяжёлая башня, скелеты лёгкие).
+- `Tower`: `575` = `Terrain + Items + Actors + Projectiles + CampObstacle + PalisadeObstacle` (15 + 32 + 512). С 2026-05-13 башня **упирается в палатки своего лагеря и в палисад**. Раньше было 15 (без ENEMIES для перф-причин, без CAMP_OBSTACLE для удобства движения). После добавления палисада дизайнер запросил «башня не должна сквозить караван и стены»: добавили CAMP_OBSTACLE (палатки на нём) и новый PALISADE_OBSTACLE. Скелеты по-прежнему сквозят (бит ENEMIES не в маске Tower).
 - `Skeleton`: `Layers.MASK_SKELETON = 39` (Terrain + Items + Actors + CampObstacle, **без ENEMIES**) — скелеты **проходят сквозь друг друга** (perf-фикс на 400+ кластерах: skel-skel пары были главным пожирателем broad-phase + slide-iterations об соседей). Цена: `Enemy._push_neighbor` lunge-domino не работает (slide-collision между скелетами не регистрируется). Восстановление — через group+dist push, по аналогии со Slam-fallback. Визуально лечится через `_apply_neighbor_avoidance` (boids-style раздвигание, см. §5.5.2).
-- `Gnome` / `DefenderGnome`: `collision_layer = Layers.FRIENDLY_UNIT = 256`, `collision_mask = Layers.TERRAIN = 1` — гномы видят только пол. Не блокируются скелетами, не толкают друг друга, проходят сквозь Tower и Item. Урон по гномам приходит через `Damageable.try_damage` — раньше только от STRIKE скелета, с 2026-05-03 ещё и от Slam/Flick (рука стала «вездесущей» по дизайнерскому решению, см. §4.1.bis). Push от Slam применяется через `Pushable.try_push` → `gnome.apply_push` (knockback-механизм гнома, AI глушится на `slam_knockback_duration`).
+- `Gnome` / `DefenderGnome`: `collision_layer = Layers.FRIENDLY_UNIT = 256`, `collision_mask = Layers.TERRAIN = 1` — гномы видят только пол. Не блокируются скелетами, не толкают друг друга, проходят сквозь Tower и Item, **физически проходят сквозь палисад тоже** (PALISADE_OBSTACLE не в маске). Обход стен у гномов — через **NavMesh-pathfinding** (см. §5.13), не через физический slide. Если pathfinding провалился (близкая цель, направление NAV_DIRECT_RADIUS) — гном пройдёт сквозь стену. Это by-design: гномы лёгкие, физика их не должна тормозить, маршрут диктует NavAgent. Урон по гномам приходит через `Damageable.try_damage` — раньше только от STRIKE скелета, с 2026-05-03 ещё и от Slam/Flick (рука стала «вездесущей» по дизайнерскому решению, см. §4.1.bis). Push от Slam применяется через `Pushable.try_push` → `gnome.apply_push` (knockback-механизм гнома, AI глушится на `slam_knockback_duration`).
+- `Tent` (CampPart): `collision_layer = CAMP_OBSTACLE = 32`, `collision_mask = 529` = `Terrain + Enemies + PalisadeObstacle` (17 + 512). Палатки блокируются землёй, скелетами (которые их атакуют) и палисадом — но **не друг другом** (CAMP_OBSTACLE не в маске). С 2026-05-13 добавлен PALISADE_OBSTACLE: палатки в каравне упираются в стены. Поскольку Tent — `RigidBody3D` с `freeze=true` (позиционируется прямым присвоением `global_position`), обычный collision-check не срабатывает; Camp использует [Camp._move_part_kinematic] через `PhysicsServer3D.body_test_motion` (см. §5.7).
+- `PalisadeSegment` / `PalisadePost`: `collision_layer = CAMP_OBSTACLE \| PALISADE_OBSTACLE = 544`, `collision_mask = 0` — стены сами никого не сканируют, только присутствуют как препятствие. Группы: `skeleton_target` (скелеты атакуют как палатку), `navmesh_source` (NavMesh бакает как препятствие).
 - Shatter-фрагменты: `Layers.MASK_TERRAIN_ONLY = 1` — падают на пол, проходят сквозь тела и друг друга.
 - **FAR-LOD Skeleton (динамически):** `collision_layer = 0, collision_mask = 0`, плюс `CollisionShape3D.disabled = true` — полностью вне broad-phase. Slam достаёт через group-fallback (см. §5.2.1).
 
@@ -705,6 +708,21 @@ Skeleton не использует `Enemy._targets` — вместо этого 
 **Aggro-on-hit:** подписка на собственный `damaged`-сигнал → `_on_damage_react_aggro` дёргает `_scan_target` немедленно, минуя 0.4с-тайминг. Без этого pikeman мог сделать весь lunge-цикл (APPROACH/WINDUP/LUNGE/DRIFT/RECOVERY ≈ 0.85с) внутри одного scan-интервала, и скелет успевал отреагировать только когда атакующий уже в безопасности. Стоимость хука — один scan-call на каждый удар (≪ 60Гц), нагрузки ноль. Сценарий: pikeman lunge → strike → push knockback (через `Pushable.try_push` → `apply_knockback` → `_on_knockback` сбрасывает WINDUP→APPROACH) → скелет в APPROACH'е с уже-новым `_cached_target` (pikeman) → следующий AI tick идёт на pikeman'а, который в RECOVERY и не может отбиться. Это и есть «уязвимое окно» бойца.
 
 **Per-spawn variance:** в `_ready` после `super._ready` зовётся `_apply_stat_variance` — ровно один раз умножает hp/damage/windup/move_speed/cooldown на `randf_range(1-X, 1+X)`. Константы: hp/damage/windup ±20%, speed/cooldown ±15%. Дизайнерская цель — defenders не должны автопилот'ить волну по запомненному ритму («windup ровно 0.4с, hp ровно 30»). На пачке 200+ скелетов разброс создаёт волатильность: одни умирают с первого удара, другие наносят больший урон, кто-то windup'ит на 0.32с (быстрее ожидаемого), кто-то на 0.48с. Move_speed разброс меньше — большее значение «ломало» бы пакетное движение цепочкой; 15% даёт лёгкое расслоение, форма волны остаётся читаемой.
+
+**Hybrid pathfinding (2026-05-13):** скелет на каждой смене цели решает «обходить или ломать» через NavMesh:
+- `NavigationAgent3D` как child node (в `skeleton.tscn`, `avoidance_enabled=false`).
+- `_should_path_around: bool` — кэшированное решение на текущей цели.
+- В `_set_cached_target(new)` → `_recompute_path_decision()`: считаем `direct = horizontal distance до цели`, `path_length = NavigationServer3D.map_get_path(map, from, to, true)` (синхронный query). Решение: `_should_path_around = path_length ≤ direct × DETOUR_THRESHOLD (2.0)`.
+- Если path пустой (нет маршрута через NavMesh — цель за закрытой стеной) или path > 2× → идём прямо к ring-goal (упрёмся в стену → она в `skeleton_target` → STRIKE damage'нет).
+- Если path ≤ 2× → в `_approach_target` используем `_nav_agent.get_next_path_position()` вместо direct ring-goal.
+- На `EventBus.navmesh_baked` (NavMesh пересчитан после постройки/разрушения палисада) → `_recompute_path_decision()` синхронно по текущей цели (без ожидания следующего vision_scan).
+
+**Stuck-detection (2026-05-13):** если скелет в APPROACH с целью **физически не двигается** ≥0.6с (displacement < 0.03м/тик), он упёрся в стену не-своего-target'а (target=гном за стеной). В `_tick_stuck_detection`:
+- Сравниваем текущую `global_position` с предыдущим тиком.
+- На превышении STUCK_DURATION ищем ближайший `skeleton_target` в радиусе 2м (через `Enemy._target_grid`, без отдельного group-скана) → если найден и ≠ cached → `_set_cached_target(obstacle)`.
+- Стена в attack_range → следующий тик WINDUP → STRIKE → ломает. Сценарий «пробирается внутрь».
+
+Skip-условия: не в APPROACH, нет цели, в knockback'е — счётчик сбрасывается.
 
 **Gotcha (важный паттерн при работе с grid-snapshot'ами):** typed-assignment из Array (`var node: Node3D = entry[1]`) вылетает с `Trying to assign invalid previously freed instance`, если объект уже освобождён — runtime бьёт ошибку **до** проверки `is_instance_valid`. Правильный паттерн:
 ```gdscript
@@ -1271,8 +1289,25 @@ Camp хранит пул ресурсов и API списания. Гном на
 Параллельный каталог `CAMP_BUILDING_CATALOG` отдельно от `UPGRADE_CATALOG`: апгрейды отряда — за уровни (XP-driven), постройки — за ресурсы. Дизайнер: «У лагеря нет источника XP. Это постройка за ресурсы».
 
 - `BUILDING_NEW_TENT` — новая палатка в кольце лагеря. Cost: 20 wood + 10 stone + 5 food. `deployed_only: true` (строится только в `State.DEPLOYED` — дизайнерское правило 2026-05-08, изменено с прежнего «только в свёрнутом»). `repeatable: true`.
-- `try_build(id) -> {success, reason}` — атомарно: `can_build_reason` (state) → `can_afford` → `try_spend` → `_apply_building`. Эмитит `camp_buildings_changed`.
+- `BUILDING_WATCH_BELL` — сторожевой колокол с alarm-зоной и гарнизоном из 1 gatherer'а. Cost: 12 wood + 5 iron + 1 gatherer. Флаги `requires_aim: true`, `aim_radius: 7.5` (interactive ПКМ-выбор позиции через HandBuildAim). Скелеты атакуют как палатку (`skeleton_target`), при разрушении гарнизонный gatherer спавнится на месте и бежит в лагерь.
+- `BUILDING_PALISADE` — деревянный частокол через polyline-кисть. Не single-aim, а **brush-mode** (флаг `brush_mode: true`). Стоимость `cost_per_segment: {WOOD: 2}` — total зависит от длины линии. `segment_length: 2.0`. Игрок: ЛКМ ставит vertex'ы ломаной, preview обновляется каждый кадр (committed-сегменты + active от last_vertex к курсору + total-cost label у курсора), ПКМ — построить, Esc — отмена. См. `HandBuildAim` brush-mode и `Camp.try_build_palisade_line`.
+- `try_build(id) -> {success, reason}` — атомарно: `can_build_reason` (state) → `can_afford` → `try_spend` → `_apply_building`. Эмитит `camp_buildings_changed`. Для **brush-mode** построек идёт через отдельный путь `try_build_palisade_line(vertices)` — see below.
 - `_build_new_tent`: вызывает извлечённый `_spawn_one_tent()` (общий с инициализацией), ставит палатку на `_deploy_anchor`, дёргает `_rebuild_deployed_targets()` (кольцо пересчитывается на N+1 слотов), спавнит гномов, дёргает `enter_deployed()` на новых.
+
+#### Палисад (brush-mode постройка, 2026-05-13)
+
+**`Camp.try_build_palisade_line(vertices: Array)`** — атомарный batch для polyline-кисти:
+1. Между каждой парой соседних vertex'ов: `count = ceil(length / segment_length)` (потолок, не floor — иначе дробные хвосты у vertex'ов).
+2. `step = length / count` — **равномерное распределение**: сегменты могут перекрываться на 0-30% длины, но концы линии совпадают с vertex'ами без зазоров.
+3. Yaw сегмента = `atan2(-dir.z, dir.x)` — локальная ось +X (длина BoxMesh) совпадает с направлением линии.
+4. Все сегменты должны быть в build_zone (Camp.is_in_build_zone) — иначе fail без списания.
+5. Total cost = N × cost_per_segment, атомарный try_spend.
+6. Spawn `PalisadeSegment` × N + `PalisadePost` × vertices.size() (короткие столбики 0.4×1.5×0.4 на стыках, закрывают треугольные щели на углах + дробные хвосты).
+7. На спавне каждого segment'а: `inst.destroyed.connect(_on_palisade_segment_destroyed)` — при разрушении сегмента скелетами триггерится **debounced re-bake** NavMesh (см. ниже).
+
+**Re-bake debounce.** Множественные разрушения в одном кадре (волна ломает 5 сегментов одновременно) → один bake через 0.3с после первого destroy. Флаг `_palisade_rebake_pending` блокирует повторные таймеры в окне. Без debounce'а на длинной волне получали бы 5 sync bake'ов = 0.5-1.5с лагов.
+
+**`Camp._move_part_kinematic(part, target_pos)`** — collision-aware движение для палаток (2026-05-13). Палатки — `RigidBody3D` с `freeze=true`, позиционируются прямым присвоением `global_position` (kinematic-стиль). Этот режим игнорирует collision_mask палатки. Чтобы палатка упиралась в палисад (PALISADE_OBSTACLE в её mask=529), используется `PhysicsServer3D.body_test_motion` + `get_collision_safe_fraction()` — палатка двигается только на safe-часть motion'а. Вызывается из `_update_caravan_follow` и `_update_deployed` после `_exp_decay`-смягчения.
 
 #### Anchor drop zone (бросок ресурса рукой)
 
@@ -1372,6 +1407,15 @@ enum State {
 **Carry-тип** (`_carry_type: int`) — записывается в `_pickup_carry` из `_assigned_pile.resource_type` ДО возможного `queue_free` pile'а (units → 0); сбрасывается в `_drop_carry`. Цвет carry-визуала — `ResourcePile.color_for_type(_carry_type)`. Кредит в `_tick_commuting_to_base` происходит ТОЛЬКО на честной доставке (по `deposit_distance` к anchor'у); смерть гнома и `RETURNING_TO_TENT` дропают carry без кредита (буквально «уронил по дороге»).
 
 **Зависимости:** типы `Camp` (через ссылку из `setup`, читает `deploy_anchor`, `is_pile_claimed`) и `ResourcePile`. Не знает Tower/Hand/Skeleton.
+
+**Pathfinding через NavigationAgent3D (2026-05-13).** Гном имеет `NavigationAgent3D` как child (`avoidance_enabled=false`, `path_desired_distance=0.5`, `target_desired_distance=0.5`, `radius=0.4`). Все методы движения проходят через `_move_toward_xz(target)` → `_resolve_path_step(target)`:
+- На целях > `NAV_DIRECT_RADIUS=0.5м` ставит `_nav_agent.target_position = goal`, возвращает `get_next_path_position()`.
+- На целях ≤ 0.5м → fallback на прямое движение (dead-zone когда впритык).
+- Если `is_navigation_finished()` → возвращает goal напрямую (path не построен или агент дошёл).
+- Если waypoint < 0.2м от агента → возвращает goal (safety: NavAgent на свежем set_target иногда возвращает текущую позицию).
+- На `EventBus.navmesh_baked` сбрасывает `_nav_last_target = INF` — следующий `_resolve_path_step` set'нет target снова → NavAgent пересчитает path по обновлённому navmesh.
+
+Tent/Tower/Watch Bell/палисад в группе `navmesh_source` бакаются как препятствия — гномы автоматически их обходят. **DefenderGnome и SoldierGnome имеют свои `NavigationAgent3D` инстансы** (defender_gnome.tscn и soldier_pikeman.tscn — самостоятельные сцены, не наследуют gnome.tscn) — они тоже получают pathfinding через унаследованный `_resolve_path_step`.
 
 ---
 
@@ -2146,6 +2190,52 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 **Defender (лучник) — для сравнения, не магия:**
 
 `arrow_damage` рандом из `20.0..32.0` (avg 26), `attack_cooldown` 1.0..2.0с (avg 1.5с) → ~17 DPS. `base_inaccuracy_radius=1.5м` падает по логарифмической кривой через `experience_half_shots`.
+
+---
+
+### 5.13 NavMesh и Pathfinding — `scripts/nav_region.gd`
+
+Добавлен 2026-05-13 для палисадной системы — гномы должны обходить стены, скелеты решать «обходить или ломать». Реализован через Godot `NavigationServer3D` + `NavigationRegion3D` + `NavigationAgent3D` на каждом подвижном агенте.
+
+#### Архитектура
+
+**NavigationRegion3D** в `main.tscn` с `class_name`-less скриптом `nav_region.gd`. Параметры NavMesh (sub_resource):
+- `geometry_source_geometry_mode = 1` (`SOURCE_GEOMETRY_GROUPS_WITH_CHILDREN`) — **критично**. Default mode (`ROOT_NODE_CHILDREN`) сканирует только детей NavRegion'а — Ground/Tower/палатки/палисады на одном уровне с ним → bake возвращал 0 polygons. Group-based позволяет источникам быть где угодно в сцене.
+- `geometry_source_group_name = "navmesh_source"`.
+- `geometry_collision_mask = 33` (TERRAIN | CAMP_OBSTACLE). Палисад на dual-layer `CAMP_OBSTACLE | PALISADE_OBSTACLE` (544) — бит CAMP_OBSTACLE покрывает.
+- `agent_height = 1.5`, `agent_radius = 0.4`, `agent_max_climb = 0.5`, `cell_size = 0.5`, `cell_height = 0.5`.
+
+**Группа `navmesh_source`** — источники геометрии. Регистрируются:
+- Ground: через `groups=["navmesh_source"]` в `main.tscn` node-data.
+- CampPart (палатки), WatchBell, PalisadeSegment, PalisadePost, Tower — через `add_to_group(&"navmesh_source")` в их `_ready`.
+
+#### Жизненный цикл
+
+**Первичный bake** (на загрузке сцены): `NavRegionBaker._ready` → `call_deferred("rebake")` — defer до конца кадра, чтобы Camp успел спавнить палатки. Без defer'а первичный bake мог пройти до спавна палаток и не учесть их как препятствия.
+
+**`rebake()`**: вызывает `bake_navigation_mesh(false)` (**sync**, on_thread=false). Async bake в `--headless` стабильно давал `polygons=0`; sync блокирует main thread 100-300мс, что приемлемо для одноразовой операции.
+
+**Триггеры re-bake:**
+- `Camp.try_build_palisade_line` — после спавна всех сегментов (один bake на всю линию, не per-сегмент).
+- `Camp._on_palisade_segment_destroyed` — на разрушении сегмента, через **debounced timer** (0.3с): множественные разрушения в кадре дают один bake.
+
+**Сигнал `EventBus.navmesh_baked`** эмитится из `NavRegionBaker._on_bake_finished` после async/sync завершения. Слушают:
+- `Gnome._on_navmesh_baked` → `_nav_last_target = INF` (на следующем `_resolve_path_step` set_target_position сработает с новой геометрией).
+- `Skeleton._on_navmesh_baked` → `_recompute_path_decision()` синхронно по текущей цели (пересчёт hybrid-decision сразу, без ожидания vision_scan).
+
+#### Агенты
+
+**Gnome / DefenderGnome / SoldierGnome:** `NavigationAgent3D` как child node, `avoidance_enabled=false`. Гномы используют ТОЛЬКО path-following (waypoint-based), не local avoidance (на сценах 100+ гномов avoidance давал бы перф-cost без значимой пользы). См. §5.8.
+
+**Skeleton:** `NavigationAgent3D` тоже как child, но используется **только в гибрид-режиме** (`_should_path_around=true`). Когда false (стена закрыта / обход > 2× прямого) — идёт прямо. См. §5.5.
+
+**Перф:** на 200+ скелетах с throttled `_set_cached_target` (~раз в 0.4с/LOD-multiplier на скелет) `NavigationServer3D.map_get_path` вызывается ~50-100 раз/сек. Godot NavServer обрабатывает sync без видимых лагов. На 100+ гномах `set_target_position` каждый кадр без throttle (NavAgent сам кэширует path при том же target).
+
+#### Известные ограничения
+
+- **Перемещение палаток рукой** (release в build-zone) — NavMesh не пересчитывается. Гномы продолжают использовать старый path вокруг бывшей позиции палатки. На практике редкий кейс; если станет проблемой — добавить `_rebake_navmesh()` в `CampPart._on_hand_released` хук.
+- **WatchBell relocate** (pickup-relocate через build_aim) — также без re-bake'а. Тот же подход.
+- **Гномы не блокируются физически палисадом** (mask=TERRAIN only). Если pathfinding провалился (близкая цель в 0.5м dead-zone) — гном пройдёт сквозь стену. Это by-design (гномы лёгкие, физика не должна тормозить толпы).
 
 ---
 
