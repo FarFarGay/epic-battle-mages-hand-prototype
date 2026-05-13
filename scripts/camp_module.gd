@@ -91,7 +91,7 @@ func detach_from_slot() -> void:
 # --- Виртуалы для подклассов ---
 
 ## Подкласс начинает свою работу (стрельба, аура и т. д.).
-func _on_mounted(_slot: Node) -> void:
+func _on_mounted(_p_slot: Node) -> void:
 	pass
 
 

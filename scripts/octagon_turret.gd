@@ -68,7 +68,7 @@ func _apply_visual() -> void:
 
 # --- Mount lifecycle ---
 
-func _on_mounted(_slot: Node) -> void:
+func _on_mounted(_p_slot: Node) -> void:
 	# Сбрасываем таймер на «свежий» интервал, чтобы первый выстрел не вылетел
 	# сразу при монтаже (ощущается как «выстрел в момент клика»).
 	_fire_timer = randf_range(fire_interval_min, fire_interval_max)

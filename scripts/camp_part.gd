@@ -394,7 +394,7 @@ func apply_push(velocity_change: Vector3, _duration: float) -> void:
 ## **Гномов сам tear-off НЕ выкидывает** — они вылетают порциями на каждом
 ## ударе через _on_body_entered → _eject_in_tent_gnomes. Если палатку
 ## разнесёт по hp раньше, чем все вылезут, _destroy выпустит оставшихся.
-func _become_torn_off(impact_velocity: Vector3, apply_impulse: bool) -> void:
+func _become_torn_off(impact_velocity: Vector3, do_impulse: bool) -> void:
 	_torn_off = true
 	freeze = false
 	# RB после freeze→false иногда остаётся спящим — будим явно, чтобы
@@ -405,7 +405,7 @@ func _become_torn_off(impact_velocity: Vector3, apply_impulse: bool) -> void:
 	# здесь не аффектят покоящуюся палатку.
 	linear_damp = torn_off_linear_damp
 	angular_damp = torn_off_angular_damp
-	if apply_impulse:
+	if do_impulse:
 		apply_central_impulse(impact_velocity * push_velocity_factor * mass)
 	var torque_dir := Vector3(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0), randf_range(-1.0, 1.0))
 	if torque_dir.length_squared() > 0.0:

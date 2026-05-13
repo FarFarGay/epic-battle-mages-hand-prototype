@@ -25,7 +25,7 @@ var _elapsed: float = 0.0
 var _next_tick_at: float = 0.0
 var _ticks_done: int = 0
 
-@onready var _disk: MeshInstance3D = $Disk if has_node("Disk") else null
+@onready var _disk: MeshInstance3D = get_node_or_null("Disk") as MeshInstance3D
 
 
 func setup(

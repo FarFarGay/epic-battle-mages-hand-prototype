@@ -43,7 +43,6 @@ const GRID_SIZE: int = 3
 @export var debug_log: bool = true
 
 ## Все 9 точек grid'а в локальных координатах overlay-Control.
-var _points: PackedVector2Array = PackedVector2Array()
 ## Индексы точек (0..8) в порядке прохождения. Длина = pattern_length из start_pattern().
 var _expected_sequence: Array[int] = []
 ## Сколько точек уже пройдено (0..pattern_length). При успехе == pattern_length.
@@ -302,13 +301,13 @@ func _draw() -> void:
 			# (ascent - descent)/2 как смещение от центра. Без этого «1» сидит
 			# слегка ниже центра (магическое 0.35 не точно для всех шрифтов).
 			var label: String = str(order + 1)
-			var font := ThemeDB.fallback_font
+			var num_font := ThemeDB.fallback_font
 			var font_size: int = 16
-			var text_size: Vector2 = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-			var ascent: float = font.get_ascent(font_size)
-			var descent: float = font.get_descent(font_size)
+			var text_size: Vector2 = num_font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+			var ascent: float = num_font.get_ascent(font_size)
+			var descent: float = num_font.get_descent(font_size)
 			var label_pos := Vector2(p.x - text_size.x / 2.0, p.y + (ascent - descent) / 2.0)
-			draw_string(font, label_pos, label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.1, 0.1, 0.1, 1.0))
+			draw_string(num_font, label_pos, label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.1, 0.1, 0.1, 1.0))
 		else:
 			# Не в sequence — маленькая dim-точка (для ориентации в grid'е).
 			draw_circle(p, dot_radius_px * 0.4, Color(0.4, 0.4, 0.5, 0.5))

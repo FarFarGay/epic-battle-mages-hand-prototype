@@ -379,7 +379,7 @@ var _active_upgrades: Array[StringName] = []
 ## выключен и невидим — «центра лагеря» не существует. На развёртке слот
 ## переезжает в anchor и активируется; на свёртке — выключается, что
 ## размонтирует всё что на нём стояло (модуль остаётся лежать на земле).
-@onready var _center_slot: MountSlot = $CenterMountSlot if has_node("CenterMountSlot") else null
+@onready var _center_slot: MountSlot = get_node_or_null("CenterMountSlot") as MountSlot
 ## Area3D в центре развёрнутого лагеря, ловит брошенные рукой ResourcePile.
 ## Создаётся в _ready, monitoring=false. На _start_deploy ставится на anchor
 ## и включается; на _start_pack — выключается. Polling каждый кадр через
@@ -541,14 +541,14 @@ func _spawn_gnomes() -> void:
 		var part := tent as CampPart
 		var total: int = part.gnomes_per_tent
 		# defenders_per_tent клампим до total — защитников не больше жителей.
-		var defender_count: int = clampi(part.defenders_per_tent, 0, total)
-		var gatherer_count: int = total - defender_count
+		var defender_n: int = clampi(part.defenders_per_tent, 0, total)
+		var gatherer_n: int = total - defender_n
 		# Сначала защитники (если их сцена задана), потом собиратели.
 		# Каждый получает позицию палатки + setup(camp, tent) — гном привязан
 		# именно к этой палатке (RETURNING_TO_TENT идёт сюда же).
-		for i in range(defender_count):
+		for i in range(defender_n):
 			_spawn_one_gnome(defender_scene, tent, "defender")
-		for i in range(gatherer_count):
+		for i in range(gatherer_n):
 			_spawn_one_gnome(gnome_scene, tent, "gatherer")
 
 
@@ -1890,14 +1890,14 @@ func _build_new_tent() -> bool:
 		_rebuild_deployed_targets()
 	if tent is CampPart:
 		var part := tent as CampPart
-		var defender_count: int = clampi(part.defenders_per_tent, 0, part.gnomes_per_tent)
-		var gatherer_count: int = part.gnomes_per_tent - defender_count
+		var defender_n: int = clampi(part.defenders_per_tent, 0, part.gnomes_per_tent)
+		var gatherer_n: int = part.gnomes_per_tent - defender_n
 		var new_gnomes: Array[Gnome] = []
-		for i in range(defender_count):
+		for i in range(defender_n):
 			var g := _spawn_one_gnome(defender_scene, tent, "defender")
 			if g != null:
 				new_gnomes.append(g)
-		for i in range(gatherer_count):
+		for i in range(gatherer_n):
 			var g := _spawn_one_gnome(gnome_scene, tent, "gatherer")
 			if g != null:
 				new_gnomes.append(g)
@@ -2000,8 +2000,8 @@ func set_collection_mode(mode: int) -> void:
 	_collection_mode = mode
 	EventBus.collection_mode_changed.emit(mode)
 	if debug_log and LogConfig.master_enabled:
-		var name: String = "WORK" if mode == CollectionMode.WORK else "ALARM"
-		print("[Camp] режим сбора: %s" % name)
+		var mode_label: String = "WORK" if mode == CollectionMode.WORK else "ALARM"
+		print("[Camp] режим сбора: %s" % mode_label)
 	if _state != State.DEPLOYED:
 		return
 	for g in _gnomes:

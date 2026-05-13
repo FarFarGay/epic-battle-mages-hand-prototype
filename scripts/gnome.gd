@@ -221,7 +221,7 @@ var _lod_offscreen_cos_exit: float = 0.4
 ## он возвращает либо следующий waypoint пути, либо сам goal если nav-агент
 ## не активен или цель уже достигнута. Если ноды нет (наследник не привязал)
 ## — pathfinding отключён, гном идёт прямо.
-@onready var _nav_agent: NavigationAgent3D = $NavigationAgent3D if has_node("NavigationAgent3D") else null
+@onready var _nav_agent: NavigationAgent3D = get_node_or_null("NavigationAgent3D") as NavigationAgent3D
 ## Кэш последнего set_target'а — чтобы не сбрасывать path-расчёт каждым
 ## кадром на тот же target (NavigationAgent делает re-path под капотом
 ## при set_target_position).
@@ -229,7 +229,6 @@ var _nav_last_target: Vector3 = Vector3.INF
 ## Throttle на set_target_position. Цель может «дрожать» (например anchor
 ## каравана пересчитывается каждый кадр) — без throttle'а path-расчёт
 ## молотит на пустом месте.
-var _nav_set_throttle: float = 0.0
 const NAV_SET_INTERVAL: float = 0.2
 ## Если цель в этом радиусе от текущей позиции — pathfinding выключен,
 ## идём прямо. Дёрганья на близких целях не нужны. 0.5м — узкая dead-zone
@@ -667,9 +666,9 @@ func _tick_following_caravan() -> void:
 	var now_msec: int = Time.get_ticks_msec()
 	if now_msec >= _next_tent_vacancy_check_msec:
 		_next_tent_vacancy_check_msec = now_msec + 1000 + (randi() % 500)
-		var t: CampPart = _camp.find_tent_with_vacancy_for(self)
-		if t != null:
-			_claim_tent_as_home(t)
+		var vacant_tent: CampPart = _camp.find_tent_with_vacancy_for(self)
+		if vacant_tent != null:
+			_claim_tent_as_home(vacant_tent)
 			return
 	var target: Vector3 = _camp.get_chain_target_for_follower(self)
 	var to_target := target - global_position

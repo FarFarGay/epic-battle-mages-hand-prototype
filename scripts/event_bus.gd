@@ -11,6 +11,11 @@ extends Node
 ## Аргументы типизированы как Node3D / Node (а не как Item/Enemy/...) — чтобы
 ## EventBus как autoload не зависел от конкретных геймплейных классов.
 ## Слушатели сами кастуют по необходимости (или работают на уровне Node3D).
+##
+## @warning_ignore_start("unused_signal") — все сигналы здесь объявлены, но
+## emit'аются из других скриптов (паттерн event-bus). GDScript warning «declared
+## but never used in the class» — false-positive для этого паттерна.
+@warning_ignore_start("unused_signal")
 
 # --- Item ---
 signal item_damaged(item: Node3D, amount: float)
@@ -151,3 +156,5 @@ signal super_cast_started
 ## QTE завершён. success=true → игрок прицеливается и кастует, шкала спишется
 ## полностью; success=false → шкала спишется на половину, мир возвращается.
 signal super_cast_finished(success: bool)
+
+@warning_ignore_restore("unused_signal")

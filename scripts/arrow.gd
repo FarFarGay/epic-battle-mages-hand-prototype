@@ -56,7 +56,8 @@ func _compute_launch_velocity(source: Vector3, target: Vector3) -> Vector3:
 	var d := horizontal.length()
 	var dy := to_target.y
 	if d < 0.0001:
-		return Vector3(0.0, signf(dy) * speed if absf(dy) > 0.0 else speed, 0.0)
+		var dir_y: float = signf(dy) if absf(dy) > 0.0 else 1.0
+		return Vector3(0.0, dir_y * speed, 0.0)
 	var v2 := speed * speed
 	var v4 := v2 * v2
 	var disc := v4 - gravity * (gravity * d * d + 2.0 * dy * v2)

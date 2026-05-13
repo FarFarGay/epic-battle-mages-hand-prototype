@@ -359,9 +359,9 @@ func _build_tower_stats() -> void:
 	panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	# Centered: anchor_top=0, anchor_left=anchor_right=0.5; offset для ширины.
 	var bar_width: int = 240
-	panel.offset_left = -bar_width / 2
+	panel.offset_left = -bar_width / 2.0
 	panel.offset_top = 10
-	panel.offset_right = bar_width / 2
+	panel.offset_right = bar_width / 2.0
 	panel.offset_bottom = 56
 	panel.add_theme_constant_override("separation", 4)
 	add_child(panel)

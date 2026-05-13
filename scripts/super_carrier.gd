@@ -55,7 +55,7 @@ var _homing_max_speed: float
 var _homing_drift_angle: float = 0.0
 var _homing_turn_rate: float
 
-@onready var _mesh: MeshInstance3D = $MeshInstance3D if has_node("MeshInstance3D") else null
+@onready var _mesh: MeshInstance3D = get_node_or_null("MeshInstance3D") as MeshInstance3D
 
 
 func _ready() -> void:
@@ -131,11 +131,11 @@ func _physics_process(delta: float) -> void:
 		# slerp'ится к burst_pos. Decay = 1-exp(-rate*dt) — frame-rate independent.
 		_current_speed = minf(_current_speed + _homing_acceleration * delta, _homing_max_speed)
 		var to_target: Vector3 = _target_pos - global_position
-		var distance: float = to_target.length()
-		if distance < 0.001:
+		var dist: float = to_target.length()
+		if dist < 0.001:
 			_do_burst()
 			return
-		var desired_dir: Vector3 = to_target / distance
+		var desired_dir: Vector3 = to_target / dist
 		var current_dir: Vector3 = _velocity.normalized() if _velocity.length_squared() > 0.001 else desired_dir
 		var decay: float = 1.0 - exp(-_homing_turn_rate * delta)
 		var new_dir: Vector3 = current_dir.slerp(desired_dir, decay).normalized()
@@ -170,11 +170,11 @@ func _orient_along_velocity() -> void:
 	dir_xz = dir_xz.normalized()
 	var up: Vector3 = Vector3.UP
 	var right: Vector3 = dir_xz.cross(up).normalized()
-	var basis := Basis()
-	basis.x = dir_xz
-	basis.y = up
-	basis.z = right
-	global_transform.basis = basis
+	var tx_basis := Basis()
+	tx_basis.x = dir_xz
+	tx_basis.y = up
+	tx_basis.z = right
+	global_transform.basis = tx_basis
 
 
 func _do_burst() -> void:

@@ -659,10 +659,10 @@ func _build_plan_tab(camp: Node) -> void:
 	_content.add_child(list)
 
 	for preset in PLAN_PRESETS:
-		list.add_child(_build_plan_preset_card(camp, preset, current))
+		list.add_child(_build_plan_preset_card(preset, current))
 
 
-func _build_plan_preset_card(camp: Node, preset: Dictionary, current: Dictionary) -> PanelContainer:
+func _build_plan_preset_card(preset: Dictionary, current: Dictionary) -> PanelContainer:
 	var card := PanelContainer.new()
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
@@ -851,7 +851,7 @@ func _build_spell_card(camp: Node, id: StringName) -> PanelContainer:
 		info.add_child(_build_spell_stats_row(stats))
 
 	# Стоимость следующего шага (unlock или upgrade).
-	var cost: Dictionary = data.get("unlock_cost", {}) if not unlocked else SpellSystem.get_next_upgrade_cost(id)
+	var cost: Dictionary = SpellSystem.get_next_upgrade_cost(id) if unlocked else (data.get("unlock_cost", {}) as Dictionary)
 	if not cost.is_empty():
 		info.add_child(_build_cost_row(camp, cost))
 

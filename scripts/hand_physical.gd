@@ -98,7 +98,7 @@ func _ready() -> void:
 	_slam.slammed.connect(slammed.emit)
 	_flick.flicked.connect(flicked.emit)
 	# Re-emit на глобальный EventBus.
-	slammed.connect(func(position: Vector3, radius: float) -> void: EventBus.hand_slammed.emit(position, radius))
+	slammed.connect(func(slam_pos: Vector3, radius: float) -> void: EventBus.hand_slammed.emit(slam_pos, radius))
 	flicked.connect(func(target: Node3D, velocity: Vector3) -> void: EventBus.hand_flicked.emit(target, velocity))
 	# Смена категории: grab/magnet остаются доступны в любой категории
 	# (игрок может тащить ящик и одновременно кастовать). Только активные

@@ -202,7 +202,7 @@ func _ready() -> void:
 ## Stats — Dictionary с ключами hp / enemy_detect_radius / attack_range / damage_min /
 ## damage_max / cooldown_min / cooldown_max / move_speed. Отсутствующие ключи —
 ## оставляют @export-дефолты.
-func setup_soldier(p_type: StringName, stats: Dictionary, p_camp: Camp, position: Vector3) -> void:
+func setup_soldier(p_type: StringName, stats: Dictionary, p_camp: Camp, spawn_pos: Vector3) -> void:
 	soldier_type = p_type
 	hp = float(stats.get("hp", hp))
 	enemy_detect_radius = float(stats.get("enemy_detect_radius", enemy_detect_radius))
@@ -213,7 +213,7 @@ func setup_soldier(p_type: StringName, stats: Dictionary, p_camp: Camp, position
 	attack_cooldown_max = float(stats.get("attack_cooldown_max", attack_cooldown_max))
 	if stats.has("move_speed"):
 		move_speed = float(stats.move_speed)
-	global_position = position
+	global_position = spawn_pos
 	# Базовая Gnome-инициализация. home_tent=null — солдат не привязан.
 	# setup() вызывает _enter_in_tent внутри, поэтому ниже принудительно
 	# выходим в outside-режим (visible, в группе skeleton_target, _state свой).

@@ -200,11 +200,11 @@ func _orient_along_velocity() -> void:
 	dir_xz = dir_xz.normalized()
 	var up: Vector3 = Vector3.UP
 	var right: Vector3 = dir_xz.cross(up).normalized()
-	var basis := Basis()
-	basis.x = dir_xz
-	basis.y = up
-	basis.z = right
-	global_transform.basis = basis
+	var tx_basis := Basis()
+	tx_basis.x = dir_xz
+	tx_basis.y = up
+	tx_basis.z = right
+	global_transform.basis = tx_basis
 
 
 func _xz_distance_sq(a: Vector3, b: Vector3) -> float:

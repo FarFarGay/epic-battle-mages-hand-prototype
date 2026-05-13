@@ -497,7 +497,7 @@ const DETOUR_THRESHOLD: float = 2.0
 ## True если скелет на текущей цели решил обходить стены через path,
 ## false — идёт прямо. Пересчитывается на смене цели через [_recompute_path_decision].
 var _should_path_around: bool = false
-@onready var _nav_agent: NavigationAgent3D = $NavigationAgent3D if has_node("NavigationAgent3D") else null
+@onready var _nav_agent: NavigationAgent3D = get_node_or_null("NavigationAgent3D") as NavigationAgent3D
 
 ## Stuck-detector для приоритизации препятствия. Если скелет идёт к гному и
 ## упирается в стену (физически не движется ≥STUCK_DURATION секунд) — он
@@ -858,9 +858,9 @@ func _apply_neighbor_avoidance() -> void:
 	var max_avoid: float = move_speed * neighbor_avoidance_strength
 	var mag: float = sqrt(push_x * push_x + push_z * push_z)
 	if mag > max_avoid:
-		var scale: float = max_avoid / mag
-		push_x *= scale
-		push_z *= scale
+		var clamp_scale: float = max_avoid / mag
+		push_x *= clamp_scale
+		push_z *= clamp_scale
 	velocity.x += push_x
 	velocity.z += push_z
 
@@ -1374,10 +1374,10 @@ func _scan_target() -> Node3D:
 					# вычитаем: если эта цель уже наша, не считаем себя — иначе
 					# swap-loop'ы (отдал бы цель ради «свободной», и снова взял).
 					var gnome_id: int = node.get_instance_id()
-					var load: int = int(Skeleton._target_load.get(gnome_id, 0))
+					var gnome_load: int = int(Skeleton._target_load.get(gnome_id, 0))
 					if gnome_id == self_target_id:
-						load -= 1
-					if load < TARGET_CAP and d_sq < nearest_free_gnome_dist_sq:
+						gnome_load -= 1
+					if gnome_load < TARGET_CAP and d_sq < nearest_free_gnome_dist_sq:
 						nearest_free_gnome_dist_sq = d_sq
 						nearest_free_gnome = node
 				else:

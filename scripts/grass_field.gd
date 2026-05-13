@@ -138,6 +138,6 @@ func _spawn_one_chunk(rng: RandomNumberGenerator, origin: Vector3, chunk_size: V
 		var lz: float = rng.randf_range(-half_z, half_z)
 		var size_mul: float = blade_scale * rng.randf_range(1.0 - blade_scale_variance, 1.0 + blade_scale_variance)
 		var rot_y: float = rng.randf() * TAU
-		var basis := Basis().rotated(Vector3.UP, rot_y).scaled(Vector3.ONE * size_mul)
-		var t := Transform3D(basis, Vector3(lx, 0.0, lz))
+		var tx_basis := Basis().rotated(Vector3.UP, rot_y).scaled(Vector3.ONE * size_mul)
+		var t := Transform3D(tx_basis, Vector3(lx, 0.0, lz))
 		mm.set_instance_transform(i, t)
