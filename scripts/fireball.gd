@@ -27,6 +27,12 @@ const SAFETY_LIFETIME: float = 6.0
 ## радиус AOE (для подсказки про зону действия).
 signal hit(origin: Vector3, radius: float)
 
+## Тип импакт-VFX. false (дефолт) — полный fire-explosion (spawn_explosion):
+## ядро + огненные частицы + дым. true — серая пыль (spawn_dust) без огня.
+## Mine Scatter использует true: мины врезаются в землю, не взрываются —
+## визуально это «пуф пыли», не «бах огня».
+@export var impact_uses_dust: bool = false
+
 enum Phase { BOOST, HOMING }
 
 var _target_pos: Vector3
@@ -293,7 +299,10 @@ func _explode() -> void:
 	# tween'а. parent живёт всё время сцены.
 	var fx_root: Node = get_parent()
 	if fx_root != null:
-		AoeVisual.spawn_explosion(fx_root, origin, _radius)
+		if impact_uses_dust:
+			AoeVisual.spawn_dust(fx_root, origin)
+		else:
+			AoeVisual.spawn_explosion(fx_root, origin, _radius)
 		# Остаточное горение: статичная зона на месте взрыва, тикает damage
 		# через `_burn_duration` секунд. Спавним только если scene задана —
 		# чтобы можно было выключить burn полностью одним полем (null).

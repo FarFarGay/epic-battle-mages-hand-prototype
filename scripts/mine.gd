@@ -45,13 +45,30 @@ enum Phase { FALLING, ARMING, ARMED }
 ## что рядом, не только то что её активировало. Включает Tower и постройки —
 ## friendly fire by design (дизайнерское решение 2026-05-13).
 @export_flags_3d_physics var aoe_damage_mask: int = Layers.ENEMIES | Layers.COLD_ENEMY | Layers.FRIENDLY_UNIT | Layers.ACTORS | Layers.CAMP_OBSTACLE | Layers.PALISADE_OBSTACLE
+
+@export_group("Visual")
+## Скорость мигания в ARMED-фазе (циклы в секунду × 2π → радиан/сек).
+## 8.0 ≈ 1.27 циклов/сек — заметно но не агрессивно. Только в ARMED:
+## в FALLING/ARMING мина не мигает (не сбивает игрока).
+@export var armed_blink_rate: float = 8.0
+## Множитель пика emission во время мигания: emission_energy = base × (1 + pulse × peak).
+## pulse колеблется 0..1, поэтому на пике emission = base × (1 + peak), в минимуме = base.
+@export var armed_blink_peak: float = 3.0
+
+@export_group("")
 @export var debug_log: bool = false
 
 @onready var _trigger_area: Area3D = $TriggerArea
+@onready var _mesh: MeshInstance3D = $MeshInstance3D
 
 var _phase: int = Phase.FALLING
 var _velocity: Vector3 = Vector3.ZERO
 var _arming_timer: float = 0.0
+## Per-instance дубликат материала. Без duplicate'а мигание у одной мины
+## мигало бы у всех (StandardMaterial3D шарится между инстансами сцены).
+var _material: StandardMaterial3D = null
+var _base_emission_energy: float = 0.6
+var _blink_timer: float = 0.0
 
 
 ## Зовётся спавнером сразу после instantiate+add_child. Задаёт стартовую
@@ -66,6 +83,13 @@ func _ready() -> void:
 	_trigger_area.collision_mask = trigger_mask
 	_trigger_area.monitoring = false  # включится после ARMING
 	_trigger_area.body_entered.connect(_on_body_entered)
+	# Per-instance дубликат материала для независимого мигания. Запоминаем
+	# базовый emission_energy_multiplier — основа для пульсации в ARMED.
+	if _mesh != null and _mesh.material_override is StandardMaterial3D:
+		var src := _mesh.material_override as StandardMaterial3D
+		_base_emission_energy = src.emission_energy_multiplier
+		_material = src.duplicate() as StandardMaterial3D
+		_mesh.material_override = _material
 
 
 func _physics_process(delta: float) -> void:
@@ -90,7 +114,12 @@ func _physics_process(delta: float) -> void:
 				if debug_log and LogConfig.master_enabled:
 					print("[Mine] вооружена @ (%.1f, %.1f)" % [global_position.x, global_position.z])
 		Phase.ARMED:
-			pass
+			# Мигание emission'а — сигнал «я вооружена». sin(t) ∈ [-1,1] → pulse ∈ [0,1].
+			# emission_energy = base × (1 + pulse × peak), от base до base × (1 + peak).
+			_blink_timer += delta
+			if _material != null:
+				var pulse: float = sin(_blink_timer * armed_blink_rate) * 0.5 + 0.5
+				_material.emission_energy_multiplier = _base_emission_energy * (1.0 + pulse * armed_blink_peak)
 
 
 func _on_body_entered(_body: Node) -> void:
@@ -120,5 +149,11 @@ func _explode() -> void:
 		print("[Mine:explode] @ (%.1f, %.1f, %.1f) hit=%d targets, damage=%.0f r=%.1f" % [
 			global_position.x, global_position.y, global_position.z, hit_count, damage, aoe_radius,
 		])
+	# Взрыв-VFX: полный fire-explosion (отличается от приземления — мина именно
+	# сдетонировала, не «прилетела с пылью»). Спавним в parent (current_scene),
+	# чтоб эффект пережил queue_free сам ой мины.
+	var fx_root: Node = get_parent()
+	if fx_root != null:
+		AoeVisual.spawn_explosion(fx_root, global_position, aoe_radius)
 	exploded.emit(global_position)
 	queue_free()

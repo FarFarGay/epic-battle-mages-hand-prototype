@@ -54,6 +54,7 @@ color_ramp = SubResource("GT_trail_mine_proj")
 
 [node name="MineProjectile" type="Node3D"]
 script = ExtResource("1")
+impact_uses_dust = true
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 transform = Transform3D(0.6, 0, 0, 0, 0.3, 0, 0, 0, 0.3, 0, 0, 0)
