@@ -37,19 +37,18 @@ signal spell_cast(spell_name: StringName, position: Vector3)
 @export var carrier_burst_visual_radius: float = 1.8
 
 @export_group("Mine ejection (как разлетаются осколки от burst-точки)")
-## Доля скорости carrier'а в момент burst'а, передаваемая каждой мине вперёд.
-## 0.4 = осколки сохраняют ~40% инерции carrier'а и продолжают «лететь» в ту
-## же сторону, разлёт получается продольный (читается как «вытряхнул из мешка»).
-@export var inertia_factor: float = 0.4
-## Базовая величина outward-разлёта (в плоскости XZ), м/с. Направление —
-## случайное (TAU). Каждая мина уникальна.
-@export var outward_speed_min: float = 2.5
-@export var outward_speed_max: float = 5.5
-## Боковой up-boost, м/с. Создаёт «вспух» осколков перед падением — видно
-## что они летят, а не падают. Минимум >0, иначе мины сразу под действием
-## carrier-vy.y < 0 рухнут.
-@export var up_boost_min: float = 1.5
-@export var up_boost_max: float = 3.5
+## Up-boost, м/с — начальная вертикальная скорость каждой мины при выбросе
+## из burst-точки. Создаёт визуальный «вспух»: мины сначала чуть подлетают,
+## потом падают. Без этого мины из burst'а просто рушатся под carrier-vy=0.
+@export var up_boost_min: float = 1.0
+@export var up_boost_max: float = 2.5
+
+## ВАЖНО: должны совпадать с Mine.gd-дефолтами. Используются для
+## баллистического расчёта (откуда падать, чтобы попасть в landing-точку).
+## Если игрок переопределит Mine.gravity per-instance — координация
+## приземления съедет.
+@export var mine_gravity: float = 14.0
+@export var mine_ground_y: float = 0.05
 
 @export_group("Visual")
 @export var carrier_scene: PackedScene
@@ -75,6 +74,10 @@ var _series_mine_count: int
 var _series_scatter_radius: float
 var _series_mine_damage: float
 var _series_mine_aoe_radius: float
+## Точка прицела на земле в момент press'а. Зафиксирована — даже если игрок
+## уводит курсор во время полёта carrier'а, scatter ложится туда где было
+## нажатие. Используется в _on_carrier_burst для расчёта landing-точек мин.
+var _series_ground_target: Vector3 = Vector3.ZERO
 
 
 func setup(hand: Hand, coord: HandSpell) -> void:
@@ -131,6 +134,7 @@ func _cast() -> void:
 
 	var target_pos: Vector3 = _hand.cursor_world_position()
 	target_pos.y -= _hand.hand_height
+	_series_ground_target = target_pos
 	_cooldown_remaining = p_cooldown
 
 	# Telegraph — кольцо на земле в зоне scatter'а. Дольше чем у фаербола —
@@ -159,33 +163,51 @@ func _spawn_carrier(target_pos: Vector3) -> void:
 	carrier.burst.connect(_on_carrier_burst)
 
 
-## Срабатывает в АПЕКСЕ carrier'а (vy переходит из + в −). Не над target'ом,
-## а на пол-пути в воздухе. Осколки получают часть инерции carrier'а вперёд
-## (`inertia_factor`) + случайный outward-разлёт в плоскости XZ + лёгкий
-## up-boost. Дальше Mine.gravity сама опускает их на землю — каждая мина
-## ложится своей точкой, без хардкода точек приземления.
-func _on_carrier_burst(burst_position: Vector3, carrier_velocity: Vector3) -> void:
+## Срабатывает в АПЕКСЕ carrier'а (vy переходит из + в −). Для каждой мины
+## выбираем точку приземления (uniform в круге scatter_radius вокруг
+## ground_target) и считаем initial velocity которая туда довезёт за
+## время свободного падения с up_boost'ом.
+##
+## Time-of-flight выводится из вертикальной баллистики:
+##   y_landing = y_burst + vy·t − ½·g·t²  →  t = (vy + √(vy² + 2g·(y_burst − y_landing))) / g
+## Горизонтальная скорость: vx = (x_landing − x_burst) / t, vz аналогично.
+## Up_boost маленький — даёт «выскок из жмени», не сильно меняет t.
+func _on_carrier_burst(burst_position: Vector3, _carrier_velocity: Vector3) -> void:
 	if not is_instance_valid(_effects_root):
 		return
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:Spell:MineScatter] burst @ (%.1f, %.1f, %.1f) v=(%.1f, %.1f, %.1f) → %d мин" % [
-			burst_position.x, burst_position.y, burst_position.z,
-			carrier_velocity.x, carrier_velocity.y, carrier_velocity.z,
-			_series_mine_count,
+		print("[Hand:Spell:MineScatter] burst @ (%.1f, %.1f, %.1f) → %d мин" % [
+			burst_position.x, burst_position.y, burst_position.z, _series_mine_count,
 		])
 	AoeVisual.spawn_explosion(_effects_root, burst_position, carrier_burst_visual_radius)
-	# Forward inertia всем минам одна и та же (часть carrier-скорости).
-	# Это сохраняет «направленность» разлёта — осколки в ту же сторону что
-	# летел carrier.
-	var inertia: Vector3 = carrier_velocity * inertia_factor
-	# Y-компонент carrier'а в момент апекса ≈ 0, так что inertia в основном
-	# горизонтальная — отлично подходит для «броска».
+	# ground_target = середина scatter-круга (где центр приземления). Берём
+	# его из приcrieда (он у нас уже зафиксирован в _series_*, но также
+	# равен burst_position.xz сдвинутому на оставшееся горизонтальное
+	# расстояние). Прост вариант: используем _last_target_pos, который
+	# зафиксирован в _cast'е. (Зафиксируем явно.)
+	var ground_target: Vector3 = _series_ground_target
 	for i in range(_series_mine_count):
 		var angle: float = randf() * TAU
-		var outward_speed: float = randf_range(outward_speed_min, outward_speed_max)
-		var outward: Vector3 = Vector3(cos(angle) * outward_speed, 0.0, sin(angle) * outward_speed)
+		var r: float = sqrt(randf()) * _series_scatter_radius
+		var landing: Vector3 = Vector3(
+			ground_target.x + cos(angle) * r,
+			mine_ground_y,
+			ground_target.z + sin(angle) * r,
+		)
 		var up_boost: float = randf_range(up_boost_min, up_boost_max)
-		var mine_velocity: Vector3 = inertia + outward + Vector3.UP * up_boost
+		# Решаем time-of-flight: положение по y от burst.y с initial vy=up_boost
+		# и гравитацией mine_gravity, до landing.y (=mine_ground_y).
+		var dy_b_to_l: float = burst_position.y - landing.y  # положительно — burst выше landing
+		var disc: float = up_boost * up_boost + 2.0 * mine_gravity * dy_b_to_l
+		if disc < 0.0:
+			# Не должно случаться (burst выше landing всегда), но защита.
+			disc = 0.0
+		var t: float = (up_boost + sqrt(disc)) / mine_gravity
+		if t < 0.01:
+			t = 0.01  # защита от деления на 0 при вырожденных случаях
+		var vx: float = (landing.x - burst_position.x) / t
+		var vz: float = (landing.z - burst_position.z) / t
+		var mine_velocity: Vector3 = Vector3(vx, up_boost, vz)
 		_spawn_one_mine(burst_position, mine_velocity)
 
 
