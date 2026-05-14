@@ -444,6 +444,14 @@ const DRAG_SPRING_DAMPING: float = 40.0
 const DRAG_TILT_PER_VELOCITY: float = 0.0006
 const DRAG_TILT_MAX: float = 0.25
 
+## Подъём target-слота (px) при hover'е во время drag'а. Знак зависит от
+## положения target'а относительно source'а: target слева от source →
+## поднимается (отрицательное Y), target справа → опускается. Так игрок
+## видит куда поедет displaced-карта после drop'а.
+const DRAG_HOVER_LIFT: float = 16.0
+## Скорость анимации лифта (1/сек). exp-decay для frame-rate independence.
+const DRAG_HOVER_LIFT_DECAY: float = 18.0
+
 
 func _on_slot_gui_input(event: InputEvent, slot_idx: int) -> void:
 	if event is InputEventMouseButton:
@@ -522,9 +530,11 @@ func _start_drag(slot_idx: int) -> void:
 		hand.ui_drag_active = true
 
 
-## Каждый кадр (в _process) — spring-damper физика к курсору, tilt от velocity.
+## Каждый кадр (в _process) — spring-damper физика к курсору, tilt от velocity,
+## плюс анимация подъёма target-слота при hover'е.
 func _process_drag_physics(delta: float) -> void:
 	if _drag_state.is_empty():
+		_update_slot_lifts(delta, -1)
 		return
 	var ghost: Control = _drag_state.ghost
 	if not is_instance_valid(ghost):
@@ -544,6 +554,56 @@ func _process_drag_physics(delta: float) -> void:
 	# Tilt: x-velocity → rotation. Clamp чтоб карта не делала сальто на резком махе.
 	var tilt: float = clampf(velocity.x * DRAG_TILT_PER_VELOCITY, -DRAG_TILT_MAX, DRAG_TILT_MAX)
 	ghost.rotation = tilt
+	# Подсветка target-слота через лифт.
+	var hover_idx: int = _detect_hover_target_idx(mouse_pos)
+	_update_slot_lifts(delta, hover_idx)
+
+
+## Детектит индекс draggable-слота под курсором. -1 если не над слотом или
+## над source'ом (себя не выделяем).
+func _detect_hover_target_idx(mouse_pos: Vector2) -> int:
+	if _drag_state.is_empty():
+		return -1
+	var source_idx: int = int(_drag_state.get("source_idx", -1))
+	for i in range(_slot_assignments.size()):
+		var slot: Dictionary = _action_slots[i]
+		if not slot.draggable:
+			continue
+		if i == source_idx:
+			continue
+		var panel: PanelContainer = slot.panel
+		var rect := Rect2(panel.global_position, panel.size)
+		if rect.has_point(mouse_pos):
+			return i
+	return -1
+
+
+## Анимирует panel.position.y для каждого слота. hover_idx — индекс целевого
+## слота (или -1 = нет). Знак лифта зависит от позиции target'а относительно
+## source'а: target слева от source → лифт вверх, target справа → лифт вниз.
+##
+## Position.y устанавливаем напрямую — HBoxContainer не сортирует children
+## каждый кадр, наша override сохраняется между sort-event'ами. На любом
+## resize / child-change container пересортирует и обнулит y; нас это
+## устраивает (action bar статичный, изменения структуры не предполагаются).
+func _update_slot_lifts(delta: float, hover_idx: int) -> void:
+	var source_idx: int = int(_drag_state.get("source_idx", -1))
+	for i in range(_action_slots.size()):
+		var slot: Dictionary = _action_slots[i]
+		var panel: PanelContainer = slot.panel
+		var target_lift: float = 0.0
+		if i == hover_idx and source_idx >= 0 and i != source_idx:
+			# Target слева от source — поднимается вверх (отрицательное Y);
+			# target справа — опускается вниз. Игрок видит куда уйдёт displaced
+			# карта после swap'а (source поедет на target'овое место).
+			if i < source_idx:
+				target_lift = -DRAG_HOVER_LIFT
+			else:
+				target_lift = DRAG_HOVER_LIFT
+		var current_lift: float = panel.position.y
+		# exp-decay: frame-rate independent сглаживание к target_lift.
+		var alpha: float = 1.0 - exp(-DRAG_HOVER_LIFT_DECAY * delta)
+		panel.position.y = lerpf(current_lift, target_lift, alpha)
 
 
 ## Финализирует drag — детектит target-слот под курсором, swap _slot_assignments
