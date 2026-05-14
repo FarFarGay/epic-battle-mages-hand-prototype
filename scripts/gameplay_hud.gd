@@ -310,16 +310,15 @@ func _build_defender_card() -> void:
 	_squad_panel.move_child(card, 0)
 
 
-## «На защиту» — стартует BuildAim для DefenseMarker. Игрок ЛКМ-drag'ом
-## задаёт origin + направление обстрела; на commit 3 ближайших защитников
-## идут на слоты. Если Camp.can_build_reason fail'ит (свёрнут, нет ресурсов)
-## — try_build вернёт fail внутри, aim просто прекратится без эффекта.
+## «На защиту» — тактическая команда (не постройка). Стартует direction-aim
+## для линии обороны: ЛКМ-drag задаёт origin + направление, на release
+## защитники идут на формацию через Camp.place_defense_formation. Бесплатно.
 func _on_defender_defend_pressed() -> void:
 	var hand := _resolve_hand()
 	if hand == null or hand.build_aim == null:
 		push_warning("[HUD:Defender] hand/build_aim не резолвится")
 		return
-	hand.build_aim.start_aim(Camp.BUILDING_DEFENSE_MARKER)
+	hand.build_aim.start_defense_formation_aim()
 
 
 ## «Патруль» — отзывает всех защитников с маркеров (Camp.disband_all_defense_markers).

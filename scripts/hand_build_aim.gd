@@ -57,11 +57,12 @@ var _build_zone_indicator: MeshInstance3D = null
 ## вместо try_build сдвигает позицию этого инстанса. На finish — колокол
 ## возвращается на исходное место (отмена) или остаётся где переставили.
 var _relocating_bell: WatchBell = null
-## Direction-aim режим (для построек с `requires_drag_direction`).
-## ЛКМ-зажим в build_zone задаёт origin → drag показывает превью направления →
-## ЛКМ-release commit'ит с origin + facing_dir. Сейчас используется для
-## DefenseMarker. _direction_origin = INF до press'а; после press'а — позиция.
-var _direction_aim: bool = false
+## Direction-aim режим (drag-направление: ЛКМ-зажим → origin → drag → release).
+## _direction_aim_mode определяет что вызвать на commit:
+##   "" — выкл, обычный single-point aim.
+##   "defense_formation" — команда Camp.place_defense_formation (не постройка).
+## _direction_origin = INF до press'а; после press'а — позиция.
+var _direction_aim_mode: String = ""
 var _direction_origin: Vector3 = Vector3.INF
 ## Визуал линии направления — стрелка от origin к курсору во время drag'а.
 var _direction_arrow: MeshInstance3D = null
@@ -242,14 +243,36 @@ func start_aim(building_id: StringName) -> void:
 	_active_building = building_id
 	var data: Dictionary = Camp.CAMP_BUILDING_CATALOG.get(building_id, {})
 	_aim_radius = float(data.get("aim_radius", 0.0))
-	_direction_aim = bool(data.get("requires_drag_direction", false))
+	_direction_aim_mode = ""  # обычный single-point aim
 	_direction_origin = Vector3.INF
 	_pre_aim_category = _hand.active_category
 	_hand.set_active_category(Hand.Category.BUILD_AIM)
 	_spawn_indicator()
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:BuildAim] aim старт для %s, radius=%.1f, direction=%s, prev_category=%s" % [
-			building_id, _aim_radius, _direction_aim, Hand.Category.keys()[_pre_aim_category],
+		print("[Hand:BuildAim] aim старт для %s, radius=%.1f, prev_category=%s" % [
+			building_id, _aim_radius, Hand.Category.keys()[_pre_aim_category],
+		])
+
+
+## Запуск direction-aim'а для приказа «занять линию обороны». Это НЕ постройка
+## (нет cost, нет catalog'а), а тактическая команда — аналог «Идти сюда» для
+## squad'ов копейщиков. На commit вызывает Camp.place_defense_formation.
+func start_defense_formation_aim() -> void:
+	if not is_instance_valid(_hand):
+		push_warning("[Hand:BuildAim] start_defense_formation_aim — _hand не задан")
+		return
+	if _active_building != &"":
+		cancel_aim()
+	_active_building = &"_defense_formation"  # маркер активного состояния, не из каталога
+	_aim_radius = 1.5
+	_direction_aim_mode = "defense_formation"
+	_direction_origin = Vector3.INF
+	_pre_aim_category = _hand.active_category
+	_hand.set_active_category(Hand.Category.BUILD_AIM)
+	_spawn_indicator()
+	if LogConfig.master_enabled:
+		print("[Hand:BuildAim] defense-formation aim старт, prev_category=%s" % [
+			Hand.Category.keys()[_pre_aim_category],
 		])
 
 
@@ -277,7 +300,7 @@ func _process(_delta: float) -> void:
 	ground.y -= _hand.hand_height
 	# Direction-aim — отдельный flow с ЛКМ-зажимом для origin'а и release'ом
 	# для commit'а. Превью включает стрелку от origin к курсору.
-	if _direction_aim:
+	if _direction_aim_mode != "":
 		_process_direction_aim(ground)
 		return
 	if is_instance_valid(_aim_indicator):
@@ -375,27 +398,40 @@ func _commit_direction_aim(ground: Vector3) -> void:
 	var facing: Vector3 = Vector3.FORWARD
 	if to_cursor.length_squared() > 0.0001:
 		facing = to_cursor.normalized()
-	# Очистим стрелку.
+	# Очистим стрелку до dispatch'а — на любом исходе она больше не нужна.
 	if is_instance_valid(_direction_arrow):
 		_direction_arrow.queue_free()
 	_direction_arrow = null
 	_direction_origin = Vector3.INF
-	# Пробуем построить.
+	# Резолвим Camp.
 	if not is_instance_valid(_camp):
 		_camp = get_tree().get_first_node_in_group(Camp.CAMP_GROUP) as Camp
-	if is_instance_valid(_camp):
-		var result: Dictionary = _camp.try_build(_active_building, {
-			"position": origin,
-			"facing_dir": facing,
-		})
-		if LogConfig.master_enabled:
-			print("[Hand:BuildAim] direction-commit %s @ (%.1f, %.1f) face=(%.2f, %.2f) → %s / %s" % [
-				_active_building, origin.x, origin.z, facing.x, facing.z,
-				"success" if result.get("success", false) else "FAIL",
-				str(result.get("reason", "")),
-			])
-	else:
+	if not is_instance_valid(_camp):
 		push_warning("[Hand:BuildAim] _camp не резолвится — commit прерван")
+		_finish_aim()
+		return
+	# Dispatch по типу direction-aim'а.
+	match _direction_aim_mode:
+		"defense_formation":
+			var ok: bool = _camp.place_defense_formation(origin, facing)
+			if LogConfig.master_enabled:
+				print("[Hand:BuildAim] defense-commit @ (%.1f, %.1f) face=(%.2f, %.2f) → %s" % [
+					origin.x, origin.z, facing.x, facing.z,
+					"OK" if ok else "FAIL",
+				])
+		_:
+			# Legacy: построек с direction-aim сейчас нет, но если появятся —
+			# идут через try_build с params.
+			var result: Dictionary = _camp.try_build(_active_building, {
+				"position": origin,
+				"facing_dir": facing,
+			})
+			if LogConfig.master_enabled:
+				print("[Hand:BuildAim] direction-commit %s @ (%.1f, %.1f) → %s / %s" % [
+					_active_building, origin.x, origin.z,
+					"success" if result.get("success", false) else "FAIL",
+					str(result.get("reason", "")),
+				])
 	_finish_aim()
 
 
@@ -719,7 +755,7 @@ func _finish_aim() -> void:
 		_direction_arrow.queue_free()
 	_direction_arrow = null
 	_direction_origin = Vector3.INF
-	_direction_aim = false
+	_direction_aim_mode = ""
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
 		_hand.set_active_category(_pre_aim_category)
 	_active_building = &""

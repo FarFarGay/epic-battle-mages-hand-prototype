@@ -79,7 +79,6 @@ const UPGRADE_LONG_DRAW := &"long_draw"
 ## CAMP_BUILDING_CATALOG ниже.
 const BUILDING_NEW_TENT := &"new_tent"
 const BUILDING_WATCH_BELL := &"watch_bell"
-const BUILDING_DEFENSE_MARKER := &"defense_marker"
 const BUILDING_PALISADE := &"palisade"
 
 ## Каталог апгрейдов отряда — id → отображаемые поля. JournalPanel читает
@@ -142,22 +141,6 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 		# Если синхронизировать со сценой нужно динамически — в будущем
 		# прочитаем из инстанса при aim_start; пока константа достаточна.
 		"aim_radius": 7.5,
-	},
-	BUILDING_DEFENSE_MARKER: {
-		"name": "Линия обороны",
-		"description": "Маркер боевой позиции. 3 ближайших защитника бросают патруль и идут на линию, обращённую в указанную сторону. В формации стреляют с полной точностью; свободные защитники — с дебафом.",
-		"cost": {
-			ResourcePile.ResourceType.WOOD: 6,
-			ResourcePile.ResourceType.IRON: 2,
-		},
-		"deployed_only": true,
-		"repeatable": true,
-		# requires_aim + requires_drag_direction: HandBuildAim запускается в
-		# директивном режиме — ЛКМ задаёт origin, drag задаёт facing_dir,
-		# release commit'ит. См. HandBuildAim.start_direction_aim.
-		"requires_aim": true,
-		"requires_drag_direction": true,
-		"aim_radius": 1.5,  # визуальный радиус слот-кольца на превью
 	},
 	BUILDING_PALISADE: {
 		"name": "Деревянный частокол",
@@ -1604,8 +1587,6 @@ func _apply_building(id: StringName, params: Dictionary) -> bool:
 			return _build_new_tent()
 		BUILDING_WATCH_BELL:
 			return _build_watch_bell(params)
-		BUILDING_DEFENSE_MARKER:
-			return _build_defense_marker(params)
 	push_error("Camp._apply_building: нет handler для id=%s" % id)
 	return false
 
@@ -1763,34 +1744,37 @@ func _do_palisade_rebake() -> void:
 	_rebake_navmesh()
 
 
-## Эффект BUILDING_DEFENSE_MARKER: спавнит DefenseMarker в `params.position`
-## с направлением `params.facing_dir`. Назначает 3 ближайших свободных
-## (не на тревоге, не уже-в-формации) защитников на слоты маркера.
-## На marker.destroyed — освобождает их обратно.
-func _build_defense_marker(params: Dictionary) -> bool:
+## Прямой приказ «занять линию обороны». Не постройка — тактический маркер,
+## аналог «Иди сюда» для squad'ов, но в рамках лагеря (для defender'ов).
+## Без cost, без can_build_reason, без try_spend. Минимальные ограничения:
+## лагерь должен быть DEPLOYED и position в build_zone.
+##
+## Спавнит DefenseMarker, назначает 3 ближайших свободных защитника. На
+## marker.destroyed — освобождает их обратно.
+func place_defense_formation(world_pos: Vector3, facing: Vector3) -> bool:
+	if _state != State.DEPLOYED:
+		if LogConfig.master_enabled:
+			print("[Camp] defense formation отменена — лагерь не развёрнут")
+		return false
+	if not is_in_build_zone(world_pos):
+		if LogConfig.master_enabled:
+			print("[Camp] defense formation отменена — вне build_radius")
+		return false
 	if defense_marker_scene == null:
 		push_warning("Camp: defense_marker_scene не задан")
 		return false
-	var pos: Vector3 = params.get("position", Vector3.INF)
-	if pos == Vector3.INF:
-		push_warning("Camp._build_defense_marker: position не задана")
-		return false
-	if not is_in_build_zone(pos):
-		push_warning("Camp._build_defense_marker: position вне build_radius — отказ")
-		return false
-	var facing: Vector3 = params.get("facing_dir", Vector3.FORWARD)
 	var marker := defense_marker_scene.instantiate() as DefenseMarker
 	if marker == null:
-		push_error("Camp._build_defense_marker: scene не инстанцируется как DefenseMarker")
+		push_error("Camp.place_defense_formation: scene не инстанцируется как DefenseMarker")
 		return false
 	get_tree().current_scene.add_child(marker)
-	marker.setup(pos, facing)
+	marker.setup(world_pos, facing)
 	marker.destroyed.connect(_on_defense_marker_destroyed.bind(marker))
 	_defense_markers.append(marker)
 	_assign_defenders_to_marker(marker)
 	if LogConfig.master_enabled:
-		print("[Camp] DefenseMarker построен @ (%.1f, %.1f) face=(%.2f, %.2f), markers=%d" % [
-			pos.x, pos.z, facing.x, facing.z, _defense_markers.size(),
+		print("[Camp] Defense formation @ (%.1f, %.1f) face=(%.2f, %.2f), markers=%d" % [
+			world_pos.x, world_pos.z, facing.x, facing.z, _defense_markers.size(),
 		])
 	return true
 
