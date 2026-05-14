@@ -444,13 +444,13 @@ const DRAG_SPRING_DAMPING: float = 40.0
 const DRAG_TILT_PER_VELOCITY: float = 0.0006
 const DRAG_TILT_MAX: float = 0.25
 
-## Подъём target-слота (px) при hover'е во время drag'а. Знак зависит от
-## положения target'а относительно source'а: target слева от source →
-## поднимается (отрицательное Y), target справа → опускается. Так игрок
-## видит куда поедет displaced-карта после drop'а.
-const DRAG_HOVER_LIFT: float = 16.0
-## Скорость анимации лифта (1/сек). exp-decay для frame-rate independence.
-const DRAG_HOVER_LIFT_DECAY: float = 18.0
+## Боковой сдвиг target-слота (px) при hover'е во время drag'а. Target
+## «отъезжает» в сторону противоположную source'у — освобождая место
+## для drag-карты. Target слева от source → сдвиг влево (−X), target
+## справа → сдвиг вправо (+X). Игрок видит куда уйдёт displaced.
+const DRAG_HOVER_SHIFT: float = 20.0
+## Скорость анимации сдвига (1/сек). exp-decay для frame-rate independence.
+const DRAG_HOVER_SHIFT_DECAY: float = 18.0
 
 
 func _on_slot_gui_input(event: InputEvent, slot_idx: int) -> void:
@@ -578,32 +578,34 @@ func _detect_hover_target_idx(mouse_pos: Vector2) -> int:
 	return -1
 
 
-## Анимирует panel.position.y для каждого слота. hover_idx — индекс целевого
-## слота (или -1 = нет). Знак лифта зависит от позиции target'а относительно
-## source'а: target слева от source → лифт вверх, target справа → лифт вниз.
+## Анимирует panel.position.x для каждого слота. hover_idx — индекс целевого
+## слота (или -1 = нет). Target «отъезжает» в сторону, противоположную
+## source'у (освобождает место): target слева → сдвигается ещё левее,
+## target справа → ещё правее.
 ##
-## Position.y устанавливаем напрямую — HBoxContainer не сортирует children
+## Position.x устанавливаем напрямую — HBoxContainer не сортирует children
 ## каждый кадр, наша override сохраняется между sort-event'ами. На любом
-## resize / child-change container пересортирует и обнулит y; нас это
-## устраивает (action bar статичный, изменения структуры не предполагаются).
+## resize / child-change container пересортирует и обнулит x; устраивает
+## (action bar статичный).
 func _update_slot_lifts(delta: float, hover_idx: int) -> void:
 	var source_idx: int = int(_drag_state.get("source_idx", -1))
 	for i in range(_action_slots.size()):
 		var slot: Dictionary = _action_slots[i]
 		var panel: PanelContainer = slot.panel
-		var target_lift: float = 0.0
+		var target_shift: float = 0.0
 		if i == hover_idx and source_idx >= 0 and i != source_idx:
-			# Target слева от source — поднимается вверх (отрицательное Y);
-			# target справа — опускается вниз. Игрок видит куда уйдёт displaced
-			# карта после swap'а (source поедет на target'овое место).
+			# Target слева от source → сдвиг влево; target справа → сдвиг вправо.
+			# Карта «отъезжает в сторону», освобождая место для drag-card.
 			if i < source_idx:
-				target_lift = -DRAG_HOVER_LIFT
+				target_shift = -DRAG_HOVER_SHIFT
 			else:
-				target_lift = DRAG_HOVER_LIFT
-		var current_lift: float = panel.position.y
-		# exp-decay: frame-rate independent сглаживание к target_lift.
-		var alpha: float = 1.0 - exp(-DRAG_HOVER_LIFT_DECAY * delta)
-		panel.position.y = lerpf(current_lift, target_lift, alpha)
+				target_shift = DRAG_HOVER_SHIFT
+		var current_shift: float = panel.position.x
+		# exp-decay: frame-rate independent сглаживание.
+		var alpha: float = 1.0 - exp(-DRAG_HOVER_SHIFT_DECAY * delta)
+		panel.position.x = lerpf(current_shift, target_shift, alpha)
+		# Y возвращаем к 0 на случай если был лифтом в предыдущей версии.
+		panel.position.y = 0.0
 
 
 ## Финализирует drag — детектит target-слот под курсором, swap _slot_assignments
