@@ -149,6 +149,14 @@ const DEFENDER_GROUP := &"defender"
 ## сканами — если она валидна и в радиусе, не пересканируем.
 const TARGET_SCAN_INTERVAL: float = 0.25
 
+## Радиус «личного пространства»: враги ближе этой дистанции игнорируют
+## cone-фильтр и считаются видимыми независимо от направления `_facing`.
+## Нужно для формации — без этого скелет, подошедший сзади/сбоку маркера,
+## оставался невидим защитнику (Skeleton не emit'ит alarm на удар по
+## защитнику, см. _perform_strike), хотя бил его в упор. С 4м защитник
+## успевает развернуться и отстреляться до следующего удара скелета.
+const PROXIMITY_OVERRIDE_RADIUS: float = 4.0
+
 var _attack_timer: float = 0.0
 var _projectiles_root: Node = null
 var _patrol_target: Vector3 = Vector3.INF
@@ -738,11 +746,14 @@ func _resolve_target(delta: float) -> Node3D:
 		# Cheap-валидация cone-цели — если вышла из конуса/радиуса, инвалидируем
 		# не дожидаясь throttle'а. _cached_target тут уже null или живой
 		# (см. cleanup выше) — без is_instance_valid внутри.
+		# Proximity-bypass: цель ближе PROXIMITY_OVERRIDE_RADIUS остаётся
+		# актуальной даже вне конуса (симметрично _scan_cone).
 		var stale: bool = false
 		if _cached_target != null:
-			if global_position.distance_to(_cached_target.global_position) > cone_vision_radius:
+			var cached_dist: float = global_position.distance_to(_cached_target.global_position)
+			if cached_dist > cone_vision_radius:
 				stale = true
-			elif not _is_in_cone(_cached_target.global_position):
+			elif cached_dist > PROXIMITY_OVERRIDE_RADIUS and not _is_in_cone(_cached_target.global_position):
 				stale = true
 		if stale:
 			_cached_target = null
@@ -893,7 +904,10 @@ func _scan_cone() -> Node3D:
 		if d > cone_vision_radius:
 			continue
 		# Cone-фильтр: dot(forward, dir_to_target) >= cos(half_angle).
-		if not _is_in_cone(node.global_position):
+		# Proximity-bypass: враг ближе PROXIMITY_OVERRIDE_RADIUS видим независимо
+		# от направления — защитник «чувствует» угрозу в упор, не надо смотреть
+		# на неё спецом (особенно критично в формации с фиксированным facing).
+		if d > PROXIMITY_OVERRIDE_RADIUS and not _is_in_cone(node.global_position):
 			continue
 		# Score = dist × (1 + aimers × penalty). Penalty=0 → чистая дистанция
 		# (старое поведение). Penalty=0.5 → каждый уже-стрелок на цели
