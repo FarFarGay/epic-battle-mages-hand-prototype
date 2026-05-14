@@ -1217,6 +1217,12 @@ func _recruit_defenders(soldier_type: StringName, data: Dictionary) -> void:
 		add_child(defender)
 		defender.global_position = gatherer.global_position
 		defender.setup(self, tent)
+		# КРИТИЧНО: setup() через override _enter_in_tent гонит DefenderGnome'а
+		# в FOLLOWING_CARAVAN — там _active_tick идёт в caravan-ветку и
+		# игнорирует _assigned_marker. Без enter_deployed() рекрутированный
+		# защитник назначался в формацию, но не шёл на слот.
+		# Рекрут гейтится is_deployed(), поэтому enter_deployed безопасен.
+		defender.enter_deployed()
 		defender.destroyed.connect(_on_gnome_destroyed.bind(defender))
 		_gnomes.erase(gatherer)
 		gatherer.queue_free()
