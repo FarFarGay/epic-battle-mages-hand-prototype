@@ -241,6 +241,10 @@ func _build_defender_card() -> void:
 	_ensure_squad_panel()
 	var card := PanelContainer.new()
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# IGNORE на корпусе карточки — иначе тело PanelContainer ловит hover
+	# и Hand считает курсор «над UI» по всей карточке. Кнопки внутри
+	# остаются STOP (дефолт) и продолжают принимать клики.
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	# Лёгкий красный border чтоб визуально отличать от squad-cards копейщиков.
 	var card_box := StyleBoxFlat.new()
 	card_box.bg_color = Color(0.08, 0.08, 0.1, 0.78)
@@ -255,12 +259,14 @@ func _build_defender_card() -> void:
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(vbox)
 
 	# Header — цветной квадратик (как у squad'ов копейщиков) + название
 	# с динамическим счётчиком, апдейтится в _refresh_defender_card.
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 6)
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(header)
 	var swatch := ColorRect.new()
 	swatch.custom_minimum_size = Vector2(14, 14)
@@ -287,6 +293,7 @@ func _build_defender_card() -> void:
 	#   защитники возвращаются к свободному патрулю.
 	var btn_row := HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", 4)
+	btn_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(btn_row)
 
 	var btn_defend := Button.new()
@@ -1174,11 +1181,17 @@ func _ensure_squad_panel() -> void:
 	_squad_scroll.offset_right = -210.0
 	_squad_scroll.offset_bottom = -20.0
 	_squad_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	# IGNORE на wrapper'е: ScrollContainer по дефолту STOP и ловит hover
+	# в своём rect (полоса в полэкрана справа), из-за чего Hand считал
+	# курсор «над UI» и блокировал каст. Кнопки внутри карточек остаются
+	# STOP (дефолт) и продолжают принимать клики.
+	_squad_scroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_squad_scroll)
 
 	_squad_panel = VBoxContainer.new()
 	_squad_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_squad_panel.add_theme_constant_override("separation", 6)
+	_squad_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_squad_scroll.add_child(_squad_panel)
 
 
@@ -1263,14 +1276,19 @@ func _build_squad_card(squad: Squad) -> Control:
 	var card := PanelContainer.new()
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.set_meta(&"squad_id", squad.id)
+	# IGNORE на wrapper'ах — иначе тело карточки ловит hover и Hand
+	# блокирует каст по всей правой панели. Кнопки внутри остаются STOP.
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(vbox)
 
 	# Заголовок: цветной квадрат + имя + счётчик
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 6)
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(header)
 	var swatch := ColorRect.new()
 	swatch.custom_minimum_size = Vector2(14, 14)
@@ -1287,6 +1305,7 @@ func _build_squad_card(squad: Squad) -> Control:
 	# spawn-ом карточки и кликом.
 	var btn_row := HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", 4)
+	btn_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(btn_row)
 
 	# focus_mode = NONE на всех squad-кнопках. Без этого Godot Button
@@ -1328,6 +1347,7 @@ func _build_squad_card(squad: Squad) -> Control:
 	# (раз в 0.25с — пока юниты идут к лагерю, кнопка переключится сама).
 	var btn_row2 := HBoxContainer.new()
 	btn_row2.add_theme_constant_override("separation", 4)
+	btn_row2.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(btn_row2)
 	var btn_dismiss := Button.new()
 	btn_dismiss.text = "Распустить"
