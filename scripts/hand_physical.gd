@@ -221,15 +221,9 @@ func _handle_input() -> void:
 			or _hand.active_category == Hand.Category.SQUAD_AIM \
 			or _hand.active_category == Hand.Category.BUILD_AIM:
 		return
-	# Смена экипировки на physical-абилку — переключает Hand на PHYSICAL.
-	# Equip-биндинги слушаются всегда, даже когда категория MAGIC (игрок
-	# нажал 1/2 — переключился обратно в физику).
-	if Input.is_action_just_pressed(ACTION_EQUIP_SLAM):
-		equipped = AbilityType.SLAM
-		_hand.set_active_category(Hand.Category.PHYSICAL)
-	elif Input.is_action_just_pressed(ACTION_EQUIP_FLICK):
-		equipped = AbilityType.FLICK
-		_hand.set_active_category(Hand.Category.PHYSICAL)
+	# Equip-биндинги (клавиши 1/2/3/4/5) теперь слушаются в GameplayHud
+	# через slot-mapping — позволяет drag-and-drop переназначение в action-bar'е.
+	# HandPhysical только меняет equipped когда HUD дёргает напрямую.
 
 	# UI-гейт: курсор над виджетом HUD'а ловит мышь, чтобы клик по кнопке
 	# параллельно не хватал предмет под виджетом и не слэмал. Уже-активные

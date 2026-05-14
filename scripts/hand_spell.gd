@@ -91,15 +91,9 @@ func _handle_input() -> void:
 		return
 	# Equip-биндинги — переключают Hand в MAGIC и выбирают конкретное
 	# заклинание. Слушаются всегда (даже когда сейчас PHYSICAL).
-	if Input.is_action_just_pressed(ACTION_EQUIP_FIREBALL):
-		equipped = SpellType.FIREBALL
-		_hand.set_active_category(Hand.Category.MAGIC)
-	elif Input.is_action_just_pressed(ACTION_EQUIP_FIRESTORM):
-		equipped = SpellType.FIRESTORM
-		_hand.set_active_category(Hand.Category.MAGIC)
-	elif Input.is_action_just_pressed(ACTION_EQUIP_MINE_SCATTER):
-		equipped = SpellType.MINE_SCATTER
-		_hand.set_active_category(Hand.Category.MAGIC)
+	# Equip-биндинги (3/4/5) — теперь в GameplayHud через slot-mapping
+	# (см. action-bar drag-and-drop). HandSpell только слушает ACTION_ACTION
+	# для каста.
 
 	# Каст слушаем только если рука сейчас в магической категории и
 	# свободна. Держишь предмет — магия не работает (рука занята).

@@ -13,23 +13,59 @@ const UPDATE_INTERVAL: float = 0.25
 ## меняются в течение секунды-двух, надо обновлять плавно).
 const ACTION_BAR_UPDATE_INTERVAL: float = 0.1
 
-## Описание слотов action bar'а. Порядок = layout слева направо.
-## category + type — куда смотреть, чтоб определить «активен ли слот».
-## color — цвет иконки (потом заменим спрайтами).
-const ACTION_BAR_SLOTS: Array = [
-	{"key": "1", "name": "Хлоп", "category_str": "PHYSICAL", "type": 0,
-		"color": Color(0.85, 0.85, 0.9)},   # Slam
-	{"key": "2", "name": "Щелб", "category_str": "PHYSICAL", "type": 1,
-		"color": Color(0.7, 0.8, 0.85)},    # Flick
-	{"key": "3", "name": "Огонь", "category_str": "MAGIC", "type": 0,
-		"color": Color(1.0, 0.45, 0.1)},    # Fireball
-	{"key": "4", "name": "Шквал", "category_str": "MAGIC", "type": 1,
-		"color": Color(0.9, 0.3, 0.05)},    # Firestorm
-	{"key": "5", "name": "Мины", "category_str": "MAGIC", "type": 2,
-		"color": Color(0.8, 0.3, 0.2)},     # Mine Scatter
-	{"key": "␣", "name": "Удар", "category_str": "SUPER", "type": -1,
-		"color": Color(1.0, 0.55, 0.15)},   # Super
+## Метаданные всех способностей, которые могут стоять в слотах action bar'а.
+## Ключ = ability_id (StringName). Каждая запись описывает куда смотреть
+## (category + type) для подсветки и cooldown'а, и как заклинание выглядит
+## (color, name).
+##
+## Super не в этой таблице — он не draggable, особняком (см. ACTION_BAR_FIXED_SUPER).
+const ABILITY_META: Dictionary = {
+	&"slam": {
+		"name": "Хлоп", "color": Color(0.85, 0.85, 0.9),
+		"category_str": "PHYSICAL", "type": 0,
+	},
+	&"flick": {
+		"name": "Щелб", "color": Color(0.7, 0.8, 0.85),
+		"category_str": "PHYSICAL", "type": 1,
+	},
+	&"fireball": {
+		"name": "Огонь", "color": Color(1.0, 0.45, 0.1),
+		"category_str": "MAGIC", "type": 0,
+	},
+	&"firestorm": {
+		"name": "Шквал", "color": Color(0.9, 0.3, 0.05),
+		"category_str": "MAGIC", "type": 1,
+	},
+	&"mine_scatter": {
+		"name": "Мины", "color": Color(0.8, 0.3, 0.2),
+		"category_str": "MAGIC", "type": 2,
+	},
+}
+
+## Названия equip-actions в InputMap, в порядке слотов 1..5. Используется
+## для центрального диспатча в HUD (раньше каждая способность слушала свой
+## action; теперь HUD слушает все и резолвит через slot-assignments).
+const SLOT_EQUIP_ACTIONS: Array[StringName] = [
+	&"equip_slam",          # клавиша 1
+	&"equip_flick",         # клавиша 2
+	&"equip_fireball",      # клавиша 3
+	&"equip_firestorm",     # клавиша 4
+	&"equip_mine_scatter",  # клавиша 5
 ]
+
+## Стартовая раскладка слотов. Игрок может пересобрать через drag-and-drop.
+## Сохранение в файл — TODO (пока сбрасывается на дефолт при рестарте).
+const ACTION_BAR_DEFAULT_ASSIGNMENT: Array[StringName] = [
+	&"slam", &"flick", &"fireball", &"firestorm", &"mine_scatter",
+]
+
+## Super — фиксированный 6-й слот, не draggable. Имеет свою клавишу (Space)
+## и свою семантику (QTE, charge-bar), бессмысленно ремапить.
+const ACTION_BAR_FIXED_SUPER: Dictionary = {
+	"key": "␣", "name": "Удар",
+	"color": Color(1.0, 0.55, 0.15),
+	"category_str": "SUPER", "type": -1,
+}
 
 @export_node_path("Camp") var camp_path: NodePath
 
@@ -80,11 +116,17 @@ var _hand: Hand
 ## Структура: HBoxContainer со слотами; per-slot Control'ы хранятся в
 ## _action_slots для update'а на тике.
 var _action_bar: HBoxContainer
-## Per-slot Control'ы для обновления. Индекс совпадает с ACTION_BAR_SLOTS.
-## Каждый элемент — Dictionary { panel, icon, key_label, name_label,
-## border_stylebox } для тогглинга highlight'а и cooldown'а.
+## Per-slot Control'ы для обновления. Каждый — Dictionary {panel, stylebox,
+## icon, key_label, name_label, slot_idx, draggable}. Индекс 0..4 — обычные
+## (draggable), 5 — Super (fixed).
 var _action_slots: Array = []
 var _action_bar_update_timer: float = 0.0
+## Текущая раскладка: индекс слота → ability_id (StringName из ABILITY_META).
+## Меняется через drag-and-drop. По дефолту = ACTION_BAR_DEFAULT_ASSIGNMENT.
+var _slot_assignments: Array[StringName] = []
+## State перетаскивания. null когда не активно; иначе Dictionary с ghost-
+## картой, source slot idx, физическими параметрами (pos, velocity).
+var _drag_state: Dictionary = {}
 
 ## Порядок и метаданные отображения ресурсов в правой панели. Пять типов из
 ## ResourcePile.ResourceType, кроме GENERIC (legacy-ящик, не геймплейный).
@@ -182,25 +224,25 @@ func _build_squad_row() -> void:
 	_squad_xp_bar.add_child(_squad_xp_label)
 
 
-## Action bar по дну экрана. Diablo-style: горизонтальный ряд слотов
-## с иконкой + клавишей + cooldown-dimming + active highlight. Биндинги
-## фиксированные (drag-reassign — будущее), для каждого слота — описание
-## в ACTION_BAR_SLOTS.
+## Action bar по дну экрана. Diablo-style: горизонтальный ряд слотов,
+## слоты 1..5 — draggable (можно переназначить через ЛКМ-drag), слот 6 (Super) —
+## фиксированный.
 ##
 ## Структура: CenterContainer (anchor BOTTOM, center horizontally) →
-## PanelContainer (фон бара) → HBoxContainer (ряд слотов). Каждый слот
-## — PanelContainer (для StyleBox-рамки) с VBox внутри: ColorRect-иконка +
-## key Label.
+## PanelContainer (фон бара) → HBoxContainer (ряд слотов). Каждый слот —
+## PanelContainer (для StyleBox-рамки) с VBox: ColorRect-иконка + key/name.
 ##
 ## Update'ы — `_update_action_bar` каждые ACTION_BAR_UPDATE_INTERVAL (0.1с):
 ## active highlight (золотая рамка вокруг текущей equipped способности),
-## cooldown-dim (alpha 0.4 если can_trigger=false).
+## cooldown-dim (~0.35× если can_trigger=false).
 func _build_action_bar() -> void:
+	_slot_assignments = ACTION_BAR_DEFAULT_ASSIGNMENT.duplicate()
+
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	center.offset_bottom = -16  # отступ от низа экрана
 	center.offset_top = -84     # высота bar'а ≈ 68px + запас
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.mouse_filter = Control.MOUSE_FILTER_PASS
 	add_child(center)
 
 	var bar_panel := PanelContainer.new()
@@ -214,22 +256,26 @@ func _build_action_bar() -> void:
 	bar_stylebox.content_margin_top = 4
 	bar_stylebox.content_margin_bottom = 4
 	bar_panel.add_theme_stylebox_override("panel", bar_stylebox)
-	bar_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar_panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	center.add_child(bar_panel)
 
 	_action_bar = HBoxContainer.new()
 	_action_bar.add_theme_constant_override("separation", 6)
-	_action_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_action_bar.mouse_filter = Control.MOUSE_FILTER_PASS
 	bar_panel.add_child(_action_bar)
 
 	_action_slots.clear()
-	for slot_def in ACTION_BAR_SLOTS:
-		_action_slots.append(_build_action_slot(slot_def))
+	# Draggable слоты 0..4 — ability_id из _slot_assignments.
+	for i in range(_slot_assignments.size()):
+		_action_slots.append(_build_action_slot(i, true))
+	# Фиксированный Super-слот (индекс 5).
+	_action_slots.append(_build_action_slot(_slot_assignments.size(), false))
 
 
-## Один слот action bar'а. Возвращает Dictionary с ссылками на child'ы для
-## update'а: { panel, panel_stylebox, icon, ... }.
-func _build_action_slot(slot_def: Dictionary) -> Dictionary:
+## Один слот action bar'а. slot_idx — место в _action_slots; draggable=true
+## для 0..4 (используют _slot_assignments[idx] как ability_id), false для
+## Super (использует ACTION_BAR_FIXED_SUPER).
+func _build_action_slot(slot_idx: int, draggable: bool) -> Dictionary:
 	var slot_panel := PanelContainer.new()
 	var slot_stylebox := StyleBoxFlat.new()
 	slot_stylebox.bg_color = Color(0.12, 0.12, 0.15, 0.95)
@@ -237,7 +283,10 @@ func _build_action_slot(slot_def: Dictionary) -> Dictionary:
 	slot_stylebox.set_border_width_all(2)
 	slot_stylebox.set_corner_radius_all(3)
 	slot_panel.add_theme_stylebox_override("panel", slot_stylebox)
-	slot_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Slot panel ловит mouse-input (PASS) — нужно чтобы _on_slot_input
+	# срабатывал на ЛКМ-зажиме. Bar и center — PASS (пропускают сквозь
+	# к слотам и дальше, чтоб ПКМ в мир работала).
+	slot_panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	_action_bar.add_child(slot_panel)
 
 	var vbox := VBoxContainer.new()
@@ -245,55 +294,74 @@ func _build_action_slot(slot_def: Dictionary) -> Dictionary:
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	slot_panel.add_child(vbox)
 
-	# Icon — ColorRect 48x48 квадрат с цветом из slot_def. Потом заменим
-	# спрайтами (когда художник нарисует), сейчас цвет = достаточный
-	# отличительный признак.
 	var icon := ColorRect.new()
-	icon.color = slot_def.color
 	icon.custom_minimum_size = Vector2(48, 48)
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(icon)
 
-	# Key + Name на одной строке снизу.
 	var bottom := HBoxContainer.new()
 	bottom.add_theme_constant_override("separation", 4)
 	bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(bottom)
 
 	var key_label := Label.new()
-	key_label.text = slot_def.key
 	key_label.add_theme_color_override("font_color", Color(1, 1, 0.8, 1))
 	key_label.add_theme_font_size_override("font_size", 12)
 	bottom.add_child(key_label)
 
 	var name_label := Label.new()
-	name_label.text = slot_def.name
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	name_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9, 1))
 	name_label.add_theme_font_size_override("font_size", 10)
 	bottom.add_child(name_label)
 
-	return {
-		"def": slot_def,
+	# Draggable-слот ловит ЛКМ-зажим для начала drag'а. Super не draggable
+	# (нет смысла ремапить — у него своя клавиша Space).
+	if draggable:
+		slot_panel.gui_input.connect(_on_slot_gui_input.bind(slot_idx))
+
+	var slot: Dictionary = {
+		"slot_idx": slot_idx,
+		"draggable": draggable,
 		"panel": slot_panel,
 		"stylebox": slot_stylebox,
 		"icon": icon,
 		"key_label": key_label,
 		"name_label": name_label,
 	}
+	# Первичное заполнение иконки/текстов.
+	_refresh_slot_visuals(slot)
+	return slot
 
 
-## Tick-обновление action bar'а: highlight активного слота + cooldown-dim.
-## Дёргается из _process каждые ACTION_BAR_UPDATE_INTERVAL.
+## Обновляет иконку/текст слота из _slot_assignments (или ACTION_BAR_FIXED_SUPER
+## для Super). Зовётся при build'е и после swap'а через drag-and-drop.
+func _refresh_slot_visuals(slot: Dictionary) -> void:
+	var slot_idx: int = slot.slot_idx
+	var meta: Dictionary
+	var key_text: String
+	if slot.draggable:
+		var ability_id: StringName = _slot_assignments[slot_idx]
+		meta = ABILITY_META.get(ability_id, {})
+		key_text = "%d" % (slot_idx + 1)
+	else:
+		meta = ACTION_BAR_FIXED_SUPER
+		key_text = ACTION_BAR_FIXED_SUPER.key
+	(slot.icon as ColorRect).color = meta.get("color", Color.WHITE)
+	(slot.key_label as Label).text = key_text
+	(slot.name_label as Label).text = meta.get("name", "—")
+
+
+## Tick-обновление: highlight активного + cooldown-dim. Дёргается каждые
+## ACTION_BAR_UPDATE_INTERVAL.
 func _update_action_bar() -> void:
 	var hand := _resolve_hand()
 	for slot in _action_slots:
-		var def: Dictionary = slot.def
-		var is_active: bool = _slot_is_active(hand, def)
-		var is_ready: bool = _slot_is_ready(hand, def)
+		var meta: Dictionary = _slot_meta(slot)
+		var is_active: bool = _meta_is_active(hand, meta)
+		var is_ready: bool = _meta_is_ready(hand, meta)
 
-		# Active border: золотая рамка, иначе серая.
 		var stylebox: StyleBoxFlat = slot.stylebox
 		if is_active:
 			stylebox.border_color = Color(1.0, 0.85, 0.2, 1.0)
@@ -302,46 +370,254 @@ func _update_action_bar() -> void:
 			stylebox.border_color = Color(0.3, 0.3, 0.35, 1)
 			stylebox.set_border_width_all(2)
 
-		# Cooldown dim: иконка тускнеет если способность недоступна.
 		var icon: ColorRect = slot.icon
-		var base_color: Color = def.color
+		var base_color: Color = meta.get("color", Color.WHITE)
 		if is_ready:
 			icon.color = base_color
 		else:
 			icon.color = Color(base_color.r * 0.35, base_color.g * 0.35, base_color.b * 0.35, 1.0)
 
 
-func _slot_is_active(hand: Hand, def: Dictionary) -> bool:
+## Центральный input-handler: ловит equip-клавиши (1..5) и дёргает Hand
+## соответственно slot-маппингу. Раньше каждая способность слушала свой
+## action; теперь HUD — single dispatcher, что позволяет drag-and-drop
+## переназначение.
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		for i in range(SLOT_EQUIP_ACTIONS.size()):
+			if Input.is_action_just_pressed(SLOT_EQUIP_ACTIONS[i]):
+				_equip_slot(i)
+				return
+	# ЛКМ-отпускание во время drag'а — финализируем. Ловим именно
+	# в _unhandled_input, не в _on_slot_gui_input, чтобы поймать отпускание
+	# даже если курсор уехал за пределы слотов.
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed and not _drag_state.is_empty():
+			_finish_drag()
+			get_viewport().set_input_as_handled()
+
+
+## Дёргает Hand в зависимости от того, какая способность сейчас в slot_idx.
+## Эквивалент того что раньше делали ACTION_EQUIP_* в HandPhysical/HandSpell.
+func _equip_slot(slot_idx: int) -> void:
+	if slot_idx < 0 or slot_idx >= _slot_assignments.size():
+		return
+	var ability_id: StringName = _slot_assignments[slot_idx]
+	var meta: Dictionary = ABILITY_META.get(ability_id, {})
+	if meta.is_empty():
+		return
+	var hand := _resolve_hand()
 	if hand == null:
+		return
+	match meta.category_str:
+		"PHYSICAL":
+			if hand.physical_actions != null:
+				hand.physical_actions.equipped = meta.type
+				hand.set_active_category(Hand.Category.PHYSICAL)
+		"MAGIC":
+			if hand.spell_actions != null:
+				hand.spell_actions.equipped = meta.type
+				hand.set_active_category(Hand.Category.MAGIC)
+
+
+## --- Drag-and-drop переназначение слотов ---
+##
+## ЛКМ-зажим на draggable-слот → спавн ghost-карты в CanvasLayer'е, ghost
+## следует за курсором по spring-damper физике (выглядит как «карта плавает
+## за рукой», не приклеена). Отпустил над другим слотом → swap _slot_assignments,
+## refresh визуала. Отпустил вне — restore исходного слота.
+##
+## Slot panel ловит ЛКМ через gui_input (mouse_filter=PASS).
+## set_input_as_handled() блокирует прохождение клика в мир (иначе ЛКМ
+## на слоте параллельно бы пытался grab'нуть предмет под HUD'ом).
+
+const DRAG_SPRING_STIFFNESS: float = 60.0
+const DRAG_SPRING_DAMPING: float = 12.0
+## Множитель тильта (rad на 1 м/с горизонтальной velocity). 0.002 даёт
+## заметный «крен» при быстром движении, не слишком ломая читабельность.
+const DRAG_TILT_PER_VELOCITY: float = 0.002
+const DRAG_TILT_MAX: float = 0.35
+
+
+func _on_slot_gui_input(event: InputEvent, slot_idx: int) -> void:
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+			if _drag_state.is_empty():
+				_start_drag(slot_idx)
+				# Блокируем прохождение клика в мир — иначе Hand попытается
+				# grab'нуть предмет под action-bar'ом.
+				get_viewport().set_input_as_handled()
+
+
+## Спавнит ghost-карту над курсором, прячет иконку источника. Карта далее
+## двигается через _process_drag_physics.
+func _start_drag(slot_idx: int) -> void:
+	if slot_idx < 0 or slot_idx >= _slot_assignments.size():
+		return
+	var ability_id: StringName = _slot_assignments[slot_idx]
+	var meta: Dictionary = ABILITY_META.get(ability_id, {})
+	if meta.is_empty():
+		return
+
+	# Ghost-карта: маленький Panel с иконкой и обводкой. Размер близок к слоту
+	# (~56×64), точно угадывать не надо — пользователь смотрит на цвет/имя.
+	var ghost := PanelContainer.new()
+	var ghost_box := StyleBoxFlat.new()
+	ghost_box.bg_color = Color(0.15, 0.15, 0.2, 0.95)
+	ghost_box.border_color = Color(1.0, 0.85, 0.2, 1.0)
+	ghost_box.set_border_width_all(2)
+	ghost_box.set_corner_radius_all(4)
+	ghost.add_theme_stylebox_override("panel", ghost_box)
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# pivot в центре для tilt-rotation'а.
+	ghost.custom_minimum_size = Vector2(56, 64)
+	add_child(ghost)
+	ghost.pivot_offset = ghost.size / 2.0
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 2)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ghost.add_child(vbox)
+
+	var icon := ColorRect.new()
+	icon.color = meta.color
+	icon.custom_minimum_size = Vector2(48, 48)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(icon)
+
+	var name_label := Label.new()
+	name_label.text = meta.name
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.add_theme_color_override("font_color", Color(0.95, 0.95, 1.0, 1))
+	name_label.add_theme_font_size_override("font_size", 10)
+	vbox.add_child(name_label)
+
+	var mouse_pos: Vector2 = get_viewport().get_mouse_position()
+	var initial_pos: Vector2 = mouse_pos - ghost.custom_minimum_size / 2.0
+	ghost.position = initial_pos
+
+	_drag_state = {
+		"source_idx": slot_idx,
+		"ghost": ghost,
+		"pos": initial_pos,
+		"velocity": Vector2.ZERO,
+	}
+
+	# Источник: тускнеет + меняет name на «...» как индикатор «эту карту тащат».
+	var source_slot: Dictionary = _action_slots[slot_idx]
+	(source_slot.icon as ColorRect).color = Color(0.2, 0.2, 0.25, 0.5)
+	(source_slot.name_label as Label).text = "..."
+
+
+## Каждый кадр (в _process) — spring-damper физика к курсору, tilt от velocity.
+func _process_drag_physics(delta: float) -> void:
+	if _drag_state.is_empty():
+		return
+	var ghost: Control = _drag_state.ghost
+	if not is_instance_valid(ghost):
+		_drag_state.clear()
+		return
+	var mouse_pos: Vector2 = get_viewport().get_mouse_position()
+	var target_pos: Vector2 = mouse_pos - ghost.size / 2.0
+	# Spring: a = (target - pos) * stiffness - velocity * damping
+	var current_pos: Vector2 = _drag_state.pos
+	var velocity: Vector2 = _drag_state.velocity
+	var acc: Vector2 = (target_pos - current_pos) * DRAG_SPRING_STIFFNESS - velocity * DRAG_SPRING_DAMPING
+	velocity += acc * delta
+	current_pos += velocity * delta
+	_drag_state.pos = current_pos
+	_drag_state.velocity = velocity
+	ghost.position = current_pos
+	# Tilt: x-velocity → rotation. Clamp чтоб карта не делала сальто на резком махе.
+	var tilt: float = clampf(velocity.x * DRAG_TILT_PER_VELOCITY, -DRAG_TILT_MAX, DRAG_TILT_MAX)
+	ghost.rotation = tilt
+
+
+## Финализирует drag — детектит target-слот под курсором, swap _slot_assignments
+## если попали в другой draggable-слот. Иначе восстанавливает source-слот.
+func _finish_drag() -> void:
+	if _drag_state.is_empty():
+		return
+	var ghost: Control = _drag_state.get("ghost")
+	var source_idx: int = int(_drag_state.get("source_idx", -1))
+	_drag_state.clear()
+
+	if source_idx < 0:
+		if is_instance_valid(ghost):
+			ghost.queue_free()
+		return
+
+	# Детект target-слота: проходим по _action_slots, ищем тот, чьё global_rect
+	# содержит mouse_pos. Только draggable-слоты считаются target'ом — Super
+	# нельзя ремапить.
+	var mouse_pos: Vector2 = get_viewport().get_mouse_position()
+	var target_idx: int = -1
+	for i in range(_slot_assignments.size()):
+		var slot: Dictionary = _action_slots[i]
+		if not slot.draggable:
+			continue
+		var panel: PanelContainer = slot.panel
+		var rect := Rect2(panel.global_position, panel.size)
+		if rect.has_point(mouse_pos):
+			target_idx = i
+			break
+
+	if target_idx >= 0 and target_idx != source_idx:
+		# Swap ability_id'ов между двумя слотами.
+		var tmp: StringName = _slot_assignments[source_idx]
+		_slot_assignments[source_idx] = _slot_assignments[target_idx]
+		_slot_assignments[target_idx] = tmp
+		_refresh_slot_visuals(_action_slots[source_idx])
+		_refresh_slot_visuals(_action_slots[target_idx])
+	else:
+		# Нет валидного target'а — восстанавливаем визуал исходного слота.
+		_refresh_slot_visuals(_action_slots[source_idx])
+
+	if is_instance_valid(ghost):
+		ghost.queue_free()
+
+
+## Резолв meta-данных слота: для draggable — из _slot_assignments, для Super —
+## ACTION_BAR_FIXED_SUPER.
+func _slot_meta(slot: Dictionary) -> Dictionary:
+	if slot.draggable:
+		var ability_id: StringName = _slot_assignments[slot.slot_idx]
+		return ABILITY_META.get(ability_id, {})
+	return ACTION_BAR_FIXED_SUPER
+
+
+func _meta_is_active(hand: Hand, meta: Dictionary) -> bool:
+	if hand == null or meta.is_empty():
 		return false
-	match def.category_str:
+	match meta.get("category_str", ""):
 		"PHYSICAL":
 			return hand.active_category == Hand.Category.PHYSICAL \
 				and hand.physical_actions != null \
-				and int(hand.physical_actions.equipped) == int(def.type)
+				and int(hand.physical_actions.equipped) == int(meta.type)
 		"MAGIC":
 			return hand.active_category == Hand.Category.MAGIC \
 				and hand.spell_actions != null \
-				and int(hand.spell_actions.equipped) == int(def.type)
+				and int(hand.spell_actions.equipped) == int(meta.type)
 		"SUPER":
 			return hand.active_category == Hand.Category.SUPER
 	return false
 
 
-func _slot_is_ready(hand: Hand, def: Dictionary) -> bool:
-	if hand == null:
+func _meta_is_ready(hand: Hand, meta: Dictionary) -> bool:
+	if hand == null or meta.is_empty():
 		return true
-	match def.category_str:
+	match meta.get("category_str", ""):
 		"PHYSICAL":
 			if hand.physical_actions == null:
 				return true
-			return hand.physical_actions.is_ability_ready(int(def.type))
+			return hand.physical_actions.is_ability_ready(int(meta.type))
 		"MAGIC":
 			if hand.spell_actions == null:
 				return true
-			return hand.spell_actions.is_spell_ready(int(def.type))
+			return hand.spell_actions.is_spell_ready(int(meta.type))
 		"SUPER":
-			# Super готов когда шкала full. Camp.is_super_ready — single source.
 			if _camp != null and is_instance_valid(_camp):
 				return _camp.is_super_ready()
 			return true
@@ -358,6 +634,8 @@ func _process(delta: float) -> void:
 	if _action_bar_update_timer <= 0.0:
 		_update_action_bar()
 		_action_bar_update_timer = ACTION_BAR_UPDATE_INTERVAL
+	# Физика ghost-карты — каждый кадр, не throttled (чем плавнее, тем приятнее).
+	_process_drag_physics(delta)
 
 
 func _update_counts() -> void:
