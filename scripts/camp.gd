@@ -831,6 +831,22 @@ func defender_count() -> int:
 	return n
 
 
+## Считает защитников, назначенных на DefenseMarker (формация). Используется
+## HUD'ом для отображения «в строю: M» — игрок понимает, сколько ещё свободно
+## под новый маркер (каждое «На защиту» забирает 3 ближайших свободных).
+func defenders_in_formation_count() -> int:
+	var n := 0
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		var def := g as DefenderGnome
+		if def == null:
+			continue
+		if def.is_in_formation_slot():
+			n += 1
+	return n
+
+
 ## Считает живых солдат заданного типа (или всех если type_filter == &"").
 ## Используется UI журнала (вкладка «Армия») и squad-системой.
 func soldier_count(type_filter: StringName = &"") -> int:
@@ -1216,6 +1232,105 @@ func _recruit_defenders(soldier_type: StringName, data: Dictionary) -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] призваны защитники (×%d), всего: %d" % [spawned, defender_count()])
 	EventBus.camp_buildings_changed.emit()
+
+
+## Размер «партии» расформирования защитников. Симметрично squad_size при
+## рекруте (3 = 1 squad). UI-кнопка «Расформировать» отзывает столько за клик.
+const DEFENDER_DISBAND_BATCH: int = 3
+## Доля возврата ресурсов рекрута при расформировании. 0.5 = половина wood/iron
+## возвращается на склад. Дизайнерское решение (2026-05-15): рекрут не должен
+## быть «безответным» — игрок боится тратить gnome'ов на дорогих защитников,
+## если их нельзя откатить. 50% — компромисс: возврат есть, но потеря
+## ощутимая (нельзя бесконечно туда-сюда оптимизировать).
+const DEFENDER_DISBAND_REFUND_RATIO: float = 0.5
+
+
+## True если игрок может прямо сейчас расформировать защитника (кнопка
+## активна). Достаточно одного защитника — расформируем сколько есть.
+## Лагерь должен быть DEPLOYED — конвертация в gatherer'а без палатки
+## бессмысленна.
+func can_disband_defenders() -> bool:
+	return is_deployed() and defender_count() > 0
+
+
+## Расформировать партию защитников: до DEFENDER_DISBAND_BATCH ближайших к
+## центру лагеря конвертируются обратно в gatherer'ов. Если защитник был на
+## маркере или отвечал на колокол — освобождаем перед конвертацией.
+##
+## Приоритет: сначала свободные (не в формации), потом из формации. Игрок
+## таким образом сохраняет активную защиту, расформировывая «лишних».
+##
+## Refund: 50% от cost рекрута, пропорционально числу расформированных.
+## Для 3 защитников из cost {WOOD:6, IRON:4} возвращается 3 wood + 2 iron.
+## Возвращает количество расформированных (0 если кнопку нажали мимо гейта).
+func disband_defender_squad() -> int:
+	if not can_disband_defenders():
+		return 0
+	# Собираем кандидатов; сортируем сначала по «не в формации», потом по
+	# дистанции до anchor'а. Так первые 3 — это «свободные ближайшие», что
+	# минимально ломает текущую оборону.
+	var candidates: Array[DefenderGnome] = []
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		var def := g as DefenderGnome
+		if def != null:
+			candidates.append(def)
+	if candidates.is_empty():
+		return 0
+	var center: Vector3 = _deploy_anchor
+	candidates.sort_custom(func(a: DefenderGnome, b: DefenderGnome) -> bool:
+		var a_in: bool = a.is_in_formation_slot()
+		var b_in: bool = b.is_in_formation_slot()
+		if a_in != b_in:
+			return not a_in  # не-в-формации идут первыми
+		var da: float = (Vector3(a.global_position.x, center.y, a.global_position.z) - center).length_squared()
+		var db: float = (Vector3(b.global_position.x, center.y, b.global_position.z) - center).length_squared()
+		return da < db
+	)
+	var n: int = mini(candidates.size(), DEFENDER_DISBAND_BATCH)
+	var converted: int = 0
+	for i in range(n):
+		var def: DefenderGnome = candidates[i]
+		if not is_instance_valid(def):
+			continue
+		# Отвязка от маркера/колокола обязательна — иначе после queue_free
+		# у маркера останется висячая ссылка через slot_idx, у колокола —
+		# зачёт «отвечает». release_*_from_* идемпотентны (no-op если не
+		# был назначен), безопасны для unconditional-вызова.
+		def.release_from_marker()
+		def.release_from_bell()
+		var pos: Vector3 = def.global_position
+		var tent: CampPart = _pick_tent_for_new_gatherer()
+		if tent == null:
+			continue
+		var gatherer := _spawn_one_gnome(gnome_scene, tent, "gatherer")
+		if gatherer != null:
+			gatherer.global_position = pos
+			# В DEPLOYED — сразу выходим в SEARCHING (симметрично dismiss_squad).
+			# Без этого новый gatherer сидел бы IN_TENT и не работал бы.
+			if _state == State.DEPLOYED:
+				gatherer.enter_deployed()
+		_gnomes.erase(def)
+		def.queue_free()
+		converted += 1
+
+	# Refund пропорционально converted. Округление floor — игрок не получает
+	# за остатки (1 защитник: 6×0.5×1/3 = 1 wood, 4×0.5×1/3 = 0.67 → 0 iron).
+	if converted > 0 and SoldierSystem != null:
+		var data: Dictionary = SoldierSystem.get_soldier_data(&"defender")
+		var cost: Dictionary = data.get("cost", {})
+		var squad_size: int = SoldierSystem.get_squad_size(&"defender")
+		if squad_size > 0:
+			for type in cost:
+				var refund_amt: int = int(float(cost[type]) * DEFENDER_DISBAND_REFUND_RATIO * float(converted) / float(squad_size))
+				if refund_amt > 0:
+					add_resource(type, refund_amt)
+
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] расформированы защитники (×%d), осталось: %d" % [converted, defender_count()])
+	EventBus.camp_buildings_changed.emit()
+	return converted
 
 
 ## Сколько юнитов указанного типа сейчас в лагере. Универсальный геттер для

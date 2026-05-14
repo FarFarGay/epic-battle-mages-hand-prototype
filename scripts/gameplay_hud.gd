@@ -132,6 +132,7 @@ var _drag_state: Dictionary = {}
 ## EventBus.squad_leveled_up.
 var _defender_card_count_label: Label
 var _defender_card_level_label: Label
+var _defender_card_disband_btn: Button
 
 ## Порядок и метаданные отображения ресурсов в правой панели. Пять типов из
 ## ResourcePile.ResourceType, кроме GENERIC (legacy-ящик, не геймплейный).
@@ -288,7 +289,8 @@ func _build_defender_card() -> void:
 
 	# Кнопки команд:
 	# «На защиту» → стартует BuildAim для DefenseMarker (drag-direction), игрок
-	#   ставит линию обороны → 3 ближайших защитников идут в формацию.
+	#   ставит линию обороны → 3 ближайших СВОБОДНЫХ защитников идут в формацию.
+	#   Повторный клик создаёт второй маркер (вторую линию обороны) — следующие 3.
 	# «Патруль» → отзывает всех с маркеров (destroy всех DefenseMarker'ов),
 	#   защитники возвращаются к свободному патрулю.
 	var btn_row := HBoxContainer.new()
@@ -311,6 +313,23 @@ func _build_defender_card() -> void:
 	btn_patrol.add_theme_font_size_override("font_size", 11)
 	btn_patrol.pressed.connect(_on_defender_patrol_pressed)
 	btn_row.add_child(btn_patrol)
+
+	# Второй ряд кнопок: «Расформировать» — отзывает 3 защитников обратно в
+	# собирателей с компенсацией 50% ресурсов рекрута. Симметрично «Распустить»
+	# на squad-карточках копейщиков.
+	var btn_row2 := HBoxContainer.new()
+	btn_row2.add_theme_constant_override("separation", 4)
+	btn_row2.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(btn_row2)
+
+	_defender_card_disband_btn = Button.new()
+	_defender_card_disband_btn.text = "Расформировать (×3)"
+	_defender_card_disband_btn.focus_mode = Control.FOCUS_NONE
+	_defender_card_disband_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_defender_card_disband_btn.add_theme_font_size_override("font_size", 11)
+	_defender_card_disband_btn.tooltip_text = "Возвращает до 3 защитников в собирателей. Возврат: 50% ресурсов рекрута."
+	_defender_card_disband_btn.pressed.connect(_on_defender_disband_pressed)
+	btn_row2.add_child(_defender_card_disband_btn)
 
 	# Вставляем первой — защитники всегда выше soldier-squad'ов в списке.
 	_squad_panel.add_child(card)
@@ -337,16 +356,37 @@ func _on_defender_patrol_pressed() -> void:
 	_camp.disband_all_defense_markers()
 
 
-## Обновляет текст карточки защитников. Дёргается из _update_counts (0.25с).
+## «Расформировать» — отзывает 3 ближайших к лагерю защитников (приоритет:
+## не в формации) обратно в собирателей. Возвращает 50% ресурсов рекрута
+## пропорционально числу расформированных (за 3 защитников из cost {6,4} —
+## 3 wood + 2 iron). Гейтится `can_disband_defenders()`: лагерь развёрнут
+## И defender_count > 0.
+func _on_defender_disband_pressed() -> void:
+	if _camp == null or not is_instance_valid(_camp):
+		return
+	_camp.disband_defender_squad()
+
+
+## Обновляет текст карточки защитников + disabled-флаг «Расформировать»-кнопки.
+## Дёргается из _update_counts (0.25с).
+##
+## Лейбл показывает «N (в строю: M)» чтобы игрок понимал, сколько защитников
+## свободно под следующий маркер обороны (каждое «На защиту» забирает 3).
 func _refresh_defender_card() -> void:
 	if _defender_card_count_label == null:
 		return
 	if _camp == null or not is_instance_valid(_camp):
 		_defender_card_count_label.text = "Защитники — —"
 		_defender_card_level_label.text = "ур. 0"
+		if _defender_card_disband_btn != null:
+			_defender_card_disband_btn.disabled = true
 		return
-	_defender_card_count_label.text = "Защитники — %d" % _camp.defender_count()
+	var total: int = _camp.defender_count()
+	var in_formation: int = _camp.defenders_in_formation_count()
+	_defender_card_count_label.text = "Защитники — %d (в строю: %d)" % [total, in_formation]
 	_defender_card_level_label.text = "ур. %d" % _camp.get_squad_level()
+	if _defender_card_disband_btn != null:
+		_defender_card_disband_btn.disabled = not _camp.can_disband_defenders()
 
 
 ## Action bar по дну экрана. Diablo-style: горизонтальный ряд слотов,
