@@ -79,6 +79,7 @@ const UPGRADE_LONG_DRAW := &"long_draw"
 ## CAMP_BUILDING_CATALOG ниже.
 const BUILDING_NEW_TENT := &"new_tent"
 const BUILDING_WATCH_BELL := &"watch_bell"
+const BUILDING_DEFENSE_MARKER := &"defense_marker"
 const BUILDING_PALISADE := &"palisade"
 
 ## Каталог апгрейдов отряда — id → отображаемые поля. JournalPanel читает
@@ -141,6 +142,22 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 		# Если синхронизировать со сценой нужно динамически — в будущем
 		# прочитаем из инстанса при aim_start; пока константа достаточна.
 		"aim_radius": 7.5,
+	},
+	BUILDING_DEFENSE_MARKER: {
+		"name": "Линия обороны",
+		"description": "Маркер боевой позиции. 3 ближайших защитника бросают патруль и идут на линию, обращённую в указанную сторону. В формации стреляют с полной точностью; свободные защитники — с дебафом.",
+		"cost": {
+			ResourcePile.ResourceType.WOOD: 6,
+			ResourcePile.ResourceType.IRON: 2,
+		},
+		"deployed_only": true,
+		"repeatable": true,
+		# requires_aim + requires_drag_direction: HandBuildAim запускается в
+		# директивном режиме — ЛКМ задаёт origin, drag задаёт facing_dir,
+		# release commit'ит. См. HandBuildAim.start_direction_aim.
+		"requires_aim": true,
+		"requires_drag_direction": true,
+		"aim_radius": 1.5,  # визуальный радиус слот-кольца на превью
 	},
 	BUILDING_PALISADE: {
 		"name": "Деревянный частокол",
@@ -239,6 +256,9 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 ## Сцена сторожевого колокола (WatchBell). Спавнится через BUILDING_WATCH_BELL.
 ## Если null — постройка watch_bell молча провалится.
 @export var watch_bell_scene: PackedScene
+## Сцена маркера обороны (DefenseMarker). Спавнится через BUILDING_DEFENSE_MARKER.
+## Если null — постройка молча fail'ит на _build_defense_marker (push_warning).
+@export var defense_marker_scene: PackedScene
 ## Сцена сегмента деревянного частокола. Спавнится множественно через
 ## BUILDING_PALISADE / try_build_palisade_line. Если null — постройка молча
 ## провалится.
@@ -345,6 +365,11 @@ var _gnomes: Array[Gnome] = []
 ## Camp подписан на каждый на `bell_alarmed` (диспатч защитников) и `destroyed`
 ## (респавн gatherer'а на месте). Удаляются на destroy.
 var _bells: Array[WatchBell] = []
+## Активные маркеры обороны, построенные через BUILDING_DEFENSE_MARKER.
+## На спавн маркера: 3 ближайших защитника назначаются на слоты (через
+## defender.assign_to_marker). На marker.destroyed: все назначенные
+## освобождаются (release_from_marker), возвращаются к свободному патрулю.
+var _defense_markers: Array[DefenseMarker] = []
 ## Бездомные гномы (выкинутые из палатки), идут за караваном в общей цепочке
 ## за палатками. Порядок = порядок регистрации (раньше eject'нутые — ближе к
 ## палаткам). Слот в цепочке = индекс в массиве. Регистрируются из
@@ -1579,6 +1604,8 @@ func _apply_building(id: StringName, params: Dictionary) -> bool:
 			return _build_new_tent()
 		BUILDING_WATCH_BELL:
 			return _build_watch_bell(params)
+		BUILDING_DEFENSE_MARKER:
+			return _build_defense_marker(params)
 	push_error("Camp._apply_building: нет handler для id=%s" % id)
 	return false
 
@@ -1734,6 +1761,76 @@ func _on_palisade_segment_destroyed() -> void:
 func _do_palisade_rebake() -> void:
 	_palisade_rebake_pending = false
 	_rebake_navmesh()
+
+
+## Эффект BUILDING_DEFENSE_MARKER: спавнит DefenseMarker в `params.position`
+## с направлением `params.facing_dir`. Назначает 3 ближайших свободных
+## (не на тревоге, не уже-в-формации) защитников на слоты маркера.
+## На marker.destroyed — освобождает их обратно.
+func _build_defense_marker(params: Dictionary) -> bool:
+	if defense_marker_scene == null:
+		push_warning("Camp: defense_marker_scene не задан")
+		return false
+	var pos: Vector3 = params.get("position", Vector3.INF)
+	if pos == Vector3.INF:
+		push_warning("Camp._build_defense_marker: position не задана")
+		return false
+	if not is_in_build_zone(pos):
+		push_warning("Camp._build_defense_marker: position вне build_radius — отказ")
+		return false
+	var facing: Vector3 = params.get("facing_dir", Vector3.FORWARD)
+	var marker := defense_marker_scene.instantiate() as DefenseMarker
+	if marker == null:
+		push_error("Camp._build_defense_marker: scene не инстанцируется как DefenseMarker")
+		return false
+	get_tree().current_scene.add_child(marker)
+	marker.setup(pos, facing)
+	marker.destroyed.connect(_on_defense_marker_destroyed.bind(marker))
+	_defense_markers.append(marker)
+	_assign_defenders_to_marker(marker)
+	return true
+
+
+## Подбирает [DefenseMarker.SLOT_COUNT] ближайших защитников к позиции маркера,
+## ещё не назначенных в формацию, и привязывает их. Свободные = те у кого
+## is_in_formation_slot() == false. Если защитников меньше нужного — занимаем
+## сколько есть, остальные слоты остаются пустыми.
+func _assign_defenders_to_marker(marker: DefenseMarker) -> void:
+	# Собираем кандидатов: живые defender'ы без assignment'а.
+	var candidates: Array[DefenderGnome] = []
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		var def := g as DefenderGnome
+		if def == null:
+			continue
+		if def.is_in_formation_slot():
+			continue
+		candidates.append(def)
+	# Сортируем по дистанции до маркера (XZ). Берём первые SLOT_COUNT.
+	var mp: Vector3 = marker.global_position
+	candidates.sort_custom(func(a: DefenderGnome, b: DefenderGnome) -> bool:
+		var da: float = (Vector3(a.global_position.x, mp.y, a.global_position.z) - mp).length_squared()
+		var db: float = (Vector3(b.global_position.x, mp.y, b.global_position.z) - mp).length_squared()
+		return da < db
+	)
+	var n: int = mini(candidates.size(), DefenseMarker.SLOT_COUNT)
+	for i in range(n):
+		candidates[i].assign_to_marker(marker, i)
+
+
+## Marker queue_free'нулся (или destroy()'нулся явно). Освобождаем
+## всех защитников, которые на нём были — обратно к свободному патрулю.
+func _on_defense_marker_destroyed(marker: DefenseMarker) -> void:
+	_defense_markers.erase(marker)
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		var def := g as DefenderGnome
+		if def == null:
+			continue
+		if def._assigned_marker == marker:
+			def.release_from_marker()
 
 
 ## Эффект BUILDING_WATCH_BELL: спавнит WatchBell в `params.position`, привязывает

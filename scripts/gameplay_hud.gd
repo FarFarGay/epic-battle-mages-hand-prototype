@@ -127,6 +127,11 @@ var _slot_assignments: Array[StringName] = []
 ## State перетаскивания. null когда не активно; иначе Dictionary с ghost-
 ## картой, source slot idx, физическими параметрами (pos, velocity).
 var _drag_state: Dictionary = {}
+## Постоянная карточка отряда защитников (нижний-левый угол). Иконка + счётчик
+## живых + уровень отряда. Обновляется на _update_counts (0.25с) и
+## EventBus.squad_leveled_up.
+var _defender_card_count_label: Label
+var _defender_card_level_label: Label
 
 ## Порядок и метаданные отображения ресурсов в правой панели. Пять типов из
 ## ResourcePile.ResourceType, кроме GENERIC (legacy-ящик, не геймплейный).
@@ -147,6 +152,7 @@ func _ready() -> void:
 	_build_resources_rows()
 	_build_journal_button()
 	_build_action_bar()
+	_build_defender_card()
 	_update_counts()
 	# Sync с текущим состоянием Camp (на случай позднего hookup или сцены
 	# с уже накопленным XP). Затем подписываемся на инкременты.
@@ -222,6 +228,81 @@ func _build_squad_row() -> void:
 	_squad_xp_label.add_theme_font_size_override("font_size", 11)
 	_squad_xp_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_squad_xp_bar.add_child(_squad_xp_label)
+
+
+## Постоянная карточка отряда защитников в нижнем-левом углу.
+## Иконка-квадрат (красный, цвет DefenderGnome) + счётчик живых + уровень
+## отряда (из Camp.get_squad_level). Обновляется на тике 0.25с
+## (_update_counts) и на сигналах squad_leveled_up.
+##
+## По образцу squad-cards справа, но статичная: всегда видна, не зависит
+## от наличия отрядов копейщиков. Защитники в лагере есть всегда (минимум
+## 1 на палатку) — карточка не имеет «пустого» состояния.
+func _build_defender_card() -> void:
+	var card_root := PanelContainer.new()
+	card_root.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	# Offset от низа: над action bar'ом + небольшой зазор. Action bar
+	# сидит на ~84px от низа; даём ещё 20px зазора + высота самой карточки.
+	card_root.offset_left = 12
+	card_root.offset_right = 152
+	card_root.offset_bottom = -100
+	card_root.offset_top = -180
+	card_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var card_box := StyleBoxFlat.new()
+	card_box.bg_color = Color(0.08, 0.08, 0.1, 0.78)
+	card_box.border_color = Color(0.7, 0.2, 0.2, 0.9)
+	card_box.set_border_width_all(2)
+	card_box.set_corner_radius_all(4)
+	card_box.content_margin_left = 8
+	card_box.content_margin_right = 8
+	card_box.content_margin_top = 6
+	card_box.content_margin_bottom = 6
+	card_root.add_theme_stylebox_override("panel", card_box)
+	add_child(card_root)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 4)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card_root.add_child(vbox)
+
+	# Top row: icon + count.
+	var top_row := HBoxContainer.new()
+	top_row.add_theme_constant_override("separation", 8)
+	top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(top_row)
+
+	var icon := ColorRect.new()
+	icon.color = Color(0.78, 0.2, 0.2, 1.0)  # цвет DefenderGnome
+	icon.custom_minimum_size = Vector2(40, 40)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	top_row.add_child(icon)
+
+	_defender_card_count_label = Label.new()
+	_defender_card_count_label.text = "—"
+	_defender_card_count_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+	_defender_card_count_label.add_theme_font_size_override("font_size", 22)
+	_defender_card_count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	top_row.add_child(_defender_card_count_label)
+
+	# Bottom row: level.
+	_defender_card_level_label = Label.new()
+	_defender_card_level_label.text = "Защитники"
+	_defender_card_level_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9, 1))
+	_defender_card_level_label.add_theme_font_size_override("font_size", 12)
+	vbox.add_child(_defender_card_level_label)
+
+
+## Обновляет текст карточки защитников. Дёргается из _update_counts (0.25с)
+## и на squad_leveled_up (event-driven для мгновенной реакции).
+func _refresh_defender_card() -> void:
+	if _defender_card_count_label == null:
+		return
+	if _camp == null or not is_instance_valid(_camp):
+		_defender_card_count_label.text = "—"
+		_defender_card_level_label.text = "Защитники"
+		return
+	_defender_card_count_label.text = "%d" % _camp.defender_count()
+	_defender_card_level_label.text = "Защитники · ур. %d" % _camp.get_squad_level()
 
 
 ## Action bar по дну экрана. Diablo-style: горизонтальный ряд слотов,
@@ -744,6 +825,7 @@ func _update_counts() -> void:
 	_gnome_count_label.text = "%d" % _camp.gatherer_count()
 	_defender_count_label.text = "%d" % _camp.defender_count()
 	_tent_count_label.text = "%d" % _camp.tent_count_alive()
+	_refresh_defender_card()
 
 
 ## Обновление squad-бара. Вызывается на каждом инкременте XP (через

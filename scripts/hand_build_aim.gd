@@ -57,6 +57,14 @@ var _build_zone_indicator: MeshInstance3D = null
 ## вместо try_build сдвигает позицию этого инстанса. На finish — колокол
 ## возвращается на исходное место (отмена) или остаётся где переставили.
 var _relocating_bell: WatchBell = null
+## Direction-aim режим (для построек с `requires_drag_direction`).
+## ЛКМ-зажим в build_zone задаёт origin → drag показывает превью направления →
+## ЛКМ-release commit'ит с origin + facing_dir. Сейчас используется для
+## DefenseMarker. _direction_origin = INF до press'а; после press'а — позиция.
+var _direction_aim: bool = false
+var _direction_origin: Vector3 = Vector3.INF
+## Визуал линии направления — стрелка от origin к курсору во время drag'а.
+var _direction_arrow: MeshInstance3D = null
 ## Сентинель building_id для режима relocate. Не из CAMP_BUILDING_CATALOG.
 const RELOCATE_SENTINEL: StringName = &"<relocate>"
 ## Радиус «захвата» колокола от точки курсора. ЛКМ в пределах этого
@@ -232,17 +240,16 @@ func start_aim(building_id: StringName) -> void:
 	if _active_building != &"":
 		cancel_aim()
 	_active_building = building_id
-	# Берём радиус из catalog'а (если есть). Для WatchBell его пишем как
-	# alarm_radius — отдельное поле в catalog'е, не из инстанса постройки
-	# (тот ещё не создан). Дефолт 0 — без preview-кольца.
 	var data: Dictionary = Camp.CAMP_BUILDING_CATALOG.get(building_id, {})
 	_aim_radius = float(data.get("aim_radius", 0.0))
+	_direction_aim = bool(data.get("requires_drag_direction", false))
+	_direction_origin = Vector3.INF
 	_pre_aim_category = _hand.active_category
 	_hand.set_active_category(Hand.Category.BUILD_AIM)
 	_spawn_indicator()
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:BuildAim] aim старт для %s, radius=%.1f, prev_category=%s" % [
-			building_id, _aim_radius, Hand.Category.keys()[_pre_aim_category],
+		print("[Hand:BuildAim] aim старт для %s, radius=%.1f, direction=%s, prev_category=%s" % [
+			building_id, _aim_radius, _direction_aim, Hand.Category.keys()[_pre_aim_category],
 		])
 
 
@@ -264,16 +271,17 @@ func _process(_delta: float) -> void:
 	if _brush_mode:
 		_process_brush()
 		return
-	# Hover-подсветка обрабатывается в Hand._update_pickup_highlight через
-	# общую группу PICKUP_HIGHLIGHT_GROUP — здесь только aim-индикатор.
 	if _active_building == &"":
 		return
 	var ground: Vector3 = _hand.cursor_world_position()
 	ground.y -= _hand.hand_height
+	# Direction-aim — отдельный flow с ЛКМ-зажимом для origin'а и release'ом
+	# для commit'а. Превью включает стрелку от origin к курсору.
+	if _direction_aim:
+		_process_direction_aim(ground)
+		return
 	if is_instance_valid(_aim_indicator):
 		_aim_indicator.global_position = ground + Vector3.UP * 0.05
-		# Перекрашиваем preview-кольцо в invalid когда курсор вне зоны строй-
-		# ки — игрок видит «здесь ПКМ не сработает».
 		var in_zone: bool = is_instance_valid(_camp) and _camp.is_in_build_zone(ground)
 		_set_ring_color(_aim_indicator, aim_ring_color if in_zone else aim_ring_color_invalid)
 	if Input.is_action_just_pressed(ACTION_AIM_CANCEL):
@@ -281,6 +289,111 @@ func _process(_delta: float) -> void:
 		return
 	if Input.is_action_just_pressed(ACTION_AIM_COMMIT) and not _hand.is_pointer_over_ui():
 		_commit_aim()
+
+
+## Direction-aim flow:
+##   1. До press'а — кольцо едет за курсором, ЛКМ задаёт origin.
+##   2. После press'а — origin зафиксирован, стрелка показывает направление
+##      от origin к курсору. Перекрашивается invalid если origin вне зоны.
+##   3. ЛКМ release → commit с {position: origin, facing_dir: cursor - origin}.
+##   4. Esc → отмена.
+func _process_direction_aim(ground: Vector3) -> void:
+	if Input.is_action_just_pressed(ACTION_AIM_CANCEL):
+		cancel_aim()
+		return
+	# Pre-press: кольцо едет за курсором, ждём ЛКМ.
+	if _direction_origin == Vector3.INF:
+		if is_instance_valid(_aim_indicator):
+			_aim_indicator.global_position = ground + Vector3.UP * 0.05
+			var in_zone_pre: bool = is_instance_valid(_camp) and _camp.is_in_build_zone(ground)
+			_set_ring_color(_aim_indicator, aim_ring_color if in_zone_pre else aim_ring_color_invalid)
+		# ЛКМ press вне UI и в build_zone → фиксируем origin.
+		if Input.is_action_just_pressed(ACTION_BRUSH_VERTEX) and not _hand.is_pointer_over_ui():
+			if is_instance_valid(_camp) and _camp.is_in_build_zone(ground):
+				_direction_origin = ground
+				_spawn_direction_arrow()
+		return
+	# После press'а — обновляем стрелку origin → cursor.
+	if is_instance_valid(_aim_indicator):
+		_aim_indicator.global_position = _direction_origin + Vector3.UP * 0.05
+	_update_direction_arrow(ground)
+	# Release ЛКМ → commit.
+	if Input.is_action_just_released(ACTION_BRUSH_VERTEX):
+		_commit_direction_aim(ground)
+
+
+## Спавнит mesh-стрелку для drag-превью. Тонкая прямоугольная полоса
+## с эмиссией, ориентируется в `_update_direction_arrow`.
+func _spawn_direction_arrow() -> void:
+	if not is_instance_valid(_effects_root):
+		_effects_root = get_tree().current_scene
+	if _direction_arrow != null and is_instance_valid(_direction_arrow):
+		_direction_arrow.queue_free()
+	_direction_arrow = MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(0.15, 0.05, 1.0)  # x=толщина, z=длина (масштабируем)
+	_direction_arrow.mesh = box
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 0.85, 0.3, 0.8)
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.85, 0.3, 1.0)
+	mat.emission_energy_multiplier = 0.8
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_direction_arrow.material_override = mat
+	_direction_arrow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_effects_root.add_child(_direction_arrow)
+
+
+## Каждый кадр обновляет позицию/масштаб/ориентацию стрелки от _direction_origin
+## к текущему курсору. Длина = horizontal-дистанция; ось +Z (вперёд).
+func _update_direction_arrow(ground: Vector3) -> void:
+	if not is_instance_valid(_direction_arrow):
+		return
+	var to_cursor: Vector3 = ground - _direction_origin
+	to_cursor.y = 0.0
+	var d: float = to_cursor.length()
+	if d < 0.05:
+		_direction_arrow.visible = false
+		return
+	_direction_arrow.visible = true
+	var dir: Vector3 = to_cursor / d
+	# Центр стрелки — посередине между origin и cursor, чуть над землёй.
+	var mid: Vector3 = _direction_origin + to_cursor * 0.5 + Vector3.UP * 0.05
+	_direction_arrow.global_position = mid
+	# Ориентация: локальный +Z должен смотреть от origin к cursor. look_at
+	# смотрит -Z на target, поэтому ставим target позади mid.
+	_direction_arrow.look_at(mid - dir, Vector3.UP)
+	# Длина по Z: BoxMesh.size.z = 1, масштабируем scale.z = d.
+	_direction_arrow.scale = Vector3(1.0, 1.0, d)
+
+
+func _commit_direction_aim(ground: Vector3) -> void:
+	var origin: Vector3 = _direction_origin
+	var to_cursor: Vector3 = ground - origin
+	to_cursor.y = 0.0
+	var facing: Vector3 = Vector3.FORWARD
+	if to_cursor.length_squared() > 0.0001:
+		facing = to_cursor.normalized()
+	# Очистим стрелку.
+	if is_instance_valid(_direction_arrow):
+		_direction_arrow.queue_free()
+	_direction_arrow = null
+	_direction_origin = Vector3.INF
+	# Пробуем построить.
+	if not is_instance_valid(_camp):
+		_camp = get_tree().get_first_node_in_group(Camp.CAMP_GROUP) as Camp
+	if is_instance_valid(_camp):
+		var result: Dictionary = _camp.try_build(_active_building, {
+			"position": origin,
+			"facing_dir": facing,
+		})
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:BuildAim] direction-commit %s @ (%.1f, %.1f) face=(%.2f, %.2f) → %s" % [
+				_active_building, origin.x, origin.z, facing.x, facing.z,
+				"success" if result.get("success", false) else "fail",
+			])
+	_finish_aim()
 
 
 # --- Brush-mode (polyline editor) ---
@@ -594,14 +707,16 @@ func _commit_aim() -> void:
 
 
 func _finish_aim() -> void:
-	# Если был relocate, не commit'нутый (cancel через Esc) — возвращаем
-	# колокол на место (set_carried(false) восстанавливает visible/alarm).
-	# Если commit прошёл — _relocating_bell уже null'ится в _commit_aim.
 	if _relocating_bell != null:
 		if is_instance_valid(_relocating_bell):
 			_relocating_bell.set_carried(false)
 		_relocating_bell = null
 	_clear_indicator()
+	if is_instance_valid(_direction_arrow):
+		_direction_arrow.queue_free()
+	_direction_arrow = null
+	_direction_origin = Vector3.INF
+	_direction_aim = false
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
 		_hand.set_active_category(_pre_aim_category)
 	_active_building = &""

@@ -167,6 +167,18 @@ var _vision_cone_cos: float = 0.5
 ## бьёт по нашему лагерю. Имеет приоритет над cone-сканом: лучник
 ## разворачивается на неё, даже если она за спиной. null = тревоги нет.
 var _alarm_target: Node3D = null
+## Защитник назначен на DefenseMarker (формация обороны). Camp выставляет
+## на спавне маркера через [assign_to_marker]; сбрасывается на маркер.destroyed
+## (через Camp) или явным [release_from_marker]. Формация имеет приоритет
+## ниже bell-alarm'а: на тревогу защитник всё равно уходит, после очистки
+## возвращается в слот.
+var _assigned_marker: DefenseMarker = null
+var _assigned_slot_idx: int = -1
+## Скорость подхода к слоту формации. Между patrol_speed=1 и sprint=9 —
+## марш не торопливый, но и не прогулка.
+const FORMATION_MARCH_SPEED: float = 3.0
+## Дистанция до слота, на которой считаем что защитник «в формации».
+const FORMATION_ARRIVAL: float = 0.5
 ## Time.get_ticks_msec() до которого alarm считается актуальным. По истечении
 ## без ре-триггера сигналом — _alarm_target сбрасывается в null. Хорошо
 ## защищает от «фантомного целеуказания» если скелет ушёл из зоны или умер
@@ -478,6 +490,38 @@ func is_responding_to_bell(bell: WatchBell) -> bool:
 	return bell != null and _bell_ref == bell
 
 
+## Camp назначает защитника на маркер обороны. Защитник идёт к слоту
+## (`marker.get_slot_position(slot_idx)`), встаёт лицом в `marker.facing_dir`,
+## оттуда отстреливается. Bell-alarm имеет приоритет — на тревогу защитник
+## уходит от формации, после очистки возвращается.
+func assign_to_marker(marker: DefenseMarker, slot_idx: int) -> void:
+	_assigned_marker = marker
+	_assigned_slot_idx = slot_idx
+
+
+## Camp вызывает на marker.destroyed или явной отмене. Защитник возвращается
+## к свободному патрулю (с дебафом).
+func release_from_marker() -> void:
+	_assigned_marker = null
+	_assigned_slot_idx = -1
+
+
+## True если защитник назначен на валидный (живой) маркер.
+func is_in_formation_slot() -> bool:
+	return is_instance_valid(_assigned_marker) and _assigned_slot_idx >= 0
+
+
+## True если защитник физически в своём слоте (приземлился, готов стрелять).
+## Используется для применения «in-formation» режима стат vs дебафа.
+func is_at_formation_slot() -> bool:
+	if not is_in_formation_slot():
+		return false
+	var slot_pos: Vector3 = _assigned_marker.get_slot_position(_assigned_slot_idx)
+	var to_slot: Vector3 = slot_pos - global_position
+	to_slot.y = 0.0
+	return to_slot.length() <= FORMATION_ARRIVAL
+
+
 func _defender_combat_tick(delta: float) -> void:
 	# Bell-response override: идём к колоколу пока далеко, рядом — обычный
 	# боевой тик (vision-цели, стрельба) уже работает по месту bell'а.
@@ -515,6 +559,15 @@ func _defender_combat_tick(delta: float) -> void:
 			velocity.z = 0.0
 		_apply_facing()
 		return
+
+	# Formation override: assigned-to-marker защитник идёт к слоту и стоит
+	# лицом в marker.facing_dir. Bell имел приоритет выше — на тревогу
+	# защитник всё равно уходит. Свободные защитники (без assignment) идут
+	# по обычной ветке ниже.
+	if is_in_formation_slot():
+		_tick_formation_slot(delta)
+		return
+
 	var target: Node3D = _resolve_target(delta)
 
 	if target != null and is_instance_valid(target):
@@ -562,6 +615,53 @@ func _defender_combat_tick(delta: float) -> void:
 		else:
 			_facing = _outward_facing()
 
+	_apply_facing()
+
+
+## Тик защитника в формации (assigned_marker). Логика:
+##   1. Если ещё далеко от слота — марш на FORMATION_MARCH_SPEED, лицом
+##      по ходу. Не стреляет (идёт занять позицию).
+##   2. В слоте — стоит лицом в marker.facing_dir, _resolve_target ищет
+##      врага в конусе зрения. Стреляет с baseline-статами (без debuff'а
+##      free-patrol'а).
+##
+## Если marker queue_free'нулся между тиками — release_from_marker и обычная
+## ветка свободного патруля сработает в следующем кадре.
+func _tick_formation_slot(delta: float) -> void:
+	if not is_instance_valid(_assigned_marker):
+		release_from_marker()
+		velocity.x = 0.0
+		velocity.z = 0.0
+		return
+	var slot_pos: Vector3 = _assigned_marker.get_slot_position(_assigned_slot_idx)
+	var to_slot: Vector3 = slot_pos - global_position
+	to_slot.y = 0.0
+	var slot_dist: float = to_slot.length()
+	if slot_dist > FORMATION_ARRIVAL:
+		var dir: Vector3 = to_slot / slot_dist
+		velocity.x = dir.x * FORMATION_MARCH_SPEED
+		velocity.z = dir.z * FORMATION_MARCH_SPEED
+		_facing = dir
+		_apply_facing()
+		return
+	# Прибыл — стоим лицом в направлении обстрела, стреляем по vision-цели.
+	velocity.x = 0.0
+	velocity.z = 0.0
+	_facing = _assigned_marker.facing_dir
+	var target: Node3D = _resolve_target(delta)
+	if target != null and is_instance_valid(target):
+		# Поворот к цели только если она в vision-конусе (которое ориентировано
+		# на _facing = facing_dir). _resolve_target уже фильтрует через cone,
+		# значит target в нужном секторе. Доворачиваем для точной стрельбы.
+		_facing = _horizontal_dir_to(target.global_position)
+		var dist: float = global_position.distance_to(target.global_position)
+		if dist <= effective_attack_radius():
+			_attack_timer -= delta
+			if _attack_timer <= 0.0:
+				_fire_at(target)
+				_attack_timer = randf_range(attack_cooldown_min, attack_cooldown_max)
+	else:
+		_attack_timer = maxf(_attack_timer - delta, 0.0)
 	_apply_facing()
 
 
@@ -934,13 +1034,31 @@ func _on_skeleton_attacked_camp(attacker: Node3D, victim: Node3D, _position: Vec
 		print("[DefenderGnome:%s] тревога: %s атакует %s (dist=%.1fм)" % [name, attacker.name, victim.name, dist])
 
 
-## Текущий радиус разброса с учётом опыта. Логарифмическая кривая:
-## новичок имеет base, ветеран — асимптотически 0. После experience_half_shots
-## разброс падает вдвое, после 2× — на 2/3, после 9× — на 90%.
+## Множитель разброса при свободном патруле (вне формации, не на тревоге).
+## 2.5× — заметная просадка точности, стимул выстраивать формации.
+const WANDERING_INACCURACY_MULT: float = 2.5
+## Множитель attack_radius при свободном патруле. Защитник «не настроен»,
+## стреляет с короткой дистанции — соответственно реагирует позже.
+const WANDERING_RANGE_MULT: float = 0.6
+
+
+## True если защитник сейчас в режиме «свободного патруля»: не назначен на
+## DefenseMarker И не отвечает на bell. В таком состоянии получает дебаф
+## точности и дальности. В формации или на тревоге — стандартные стат.
+func is_wandering() -> bool:
+	return not is_in_formation_slot() and not _is_responding_to_bell()
+
+
+## Текущий радиус разброса с учётом опыта и режима. Логарифмическая кривая
+## опыта: новичок имеет base, ветеран — асимптотически 0. Свободный патруль
+## добавляет множитель WANDERING_INACCURACY_MULT.
 func current_inaccuracy_radius() -> float:
 	if base_inaccuracy_radius <= 0.0 or experience_half_shots <= 0:
 		return base_inaccuracy_radius
-	return base_inaccuracy_radius / (1.0 + float(_shots_fired) / float(experience_half_shots))
+	var base: float = base_inaccuracy_radius / (1.0 + float(_shots_fired) / float(experience_half_shots))
+	if is_wandering():
+		return base * WANDERING_INACCURACY_MULT
+	return base
 
 
 ## Сколько выстрелов сделал этот защитник — для HUD'а / прокачки / дебага.
@@ -948,13 +1066,15 @@ func get_shots_fired() -> int:
 	return _shots_fired
 
 
-## Эффективный радиус стрельбы с учётом активных squad-апгрейдов. long_draw
-## добавляет camp.upgrade_long_draw_bonus метров к базовому attack_radius.
-## Используется и в боевом тике (DEPLOYED+CARAVAN), и в alarm-логике.
+## Эффективный радиус стрельбы с учётом long_draw-апгрейда и wandering-debuf'а.
+## Свободный патруль режет дистанцию до WANDERING_RANGE_MULT×.
 func effective_attack_radius() -> float:
+	var r: float = attack_radius
 	if _camp != null and is_instance_valid(_camp) and _camp.has_upgrade(Camp.UPGRADE_LONG_DRAW):
-		return attack_radius + _camp.upgrade_long_draw_bonus
-	return attack_radius
+		r += _camp.upgrade_long_draw_bonus
+	if is_wandering():
+		r *= WANDERING_RANGE_MULT
+	return r
 
 
 func _fire_at(target: Node3D) -> void:
