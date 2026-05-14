@@ -360,7 +360,10 @@ func _build_action_bar() -> void:
 	center.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	center.offset_bottom = -16  # отступ от низа экрана
 	center.offset_top = -84     # высота bar'а ≈ 68px + запас
-	center.mouse_filter = Control.MOUSE_FILTER_PASS
+	# IGNORE — этот wrapper тянется на всю ширину экрана. С PASS он бы попадал
+	# в gui_get_hovered_control() и Hand.is_pointer_over_ui() блокировал бы
+	# каст заклинаний над всей нижней полосой экрана.
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(center)
 
 	var bar_panel := PanelContainer.new()
@@ -374,12 +377,14 @@ func _build_action_bar() -> void:
 	bar_stylebox.content_margin_top = 4
 	bar_stylebox.content_margin_bottom = 4
 	bar_panel.add_theme_stylebox_override("panel", bar_stylebox)
-	bar_panel.mouse_filter = Control.MOUSE_FILTER_PASS
+	# IGNORE — bar_panel шире слотов из-за padding'а. Промежутки (margins
+	# и separation между слотами) не должны блокировать каст.
+	bar_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	center.add_child(bar_panel)
 
 	_action_bar = HBoxContainer.new()
 	_action_bar.add_theme_constant_override("separation", 6)
-	_action_bar.mouse_filter = Control.MOUSE_FILTER_PASS
+	_action_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar_panel.add_child(_action_bar)
 
 	_action_slots.clear()
