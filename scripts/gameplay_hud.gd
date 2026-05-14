@@ -230,79 +230,71 @@ func _build_squad_row() -> void:
 	_squad_xp_bar.add_child(_squad_xp_label)
 
 
-## Постоянная карточка отряда защитников в нижнем-левом углу.
-## Иконка-квадрат (красный, цвет DefenderGnome) + счётчик живых + уровень
-## отряда (из Camp.get_squad_level). Обновляется на тике 0.25с
-## (_update_counts) и на сигналах squad_leveled_up.
+## Постоянная карточка отряда защитников. Живёт в _squad_panel (там же где
+## карточки копейщиков), всегда первая в списке. По стилю — копия soldier
+## squad card'ы (PanelContainer + header swatch + title), без action-buttons:
+## защитники не отзываются командами, они живут в палатках.
 ##
-## По образцу squad-cards справа, но статичная: всегда видна, не зависит
-## от наличия отрядов копейщиков. Защитники в лагере есть всегда (минимум
-## 1 на палатку) — карточка не имеет «пустого» состояния.
+## Обновление текста — _refresh_defender_card на тике 0.25с (_update_counts).
 func _build_defender_card() -> void:
-	var card_root := PanelContainer.new()
-	card_root.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	# Offset от низа: над action bar'ом + небольшой зазор. Action bar
-	# сидит на ~84px от низа; даём ещё 20px зазора + высота самой карточки.
-	card_root.offset_left = 12
-	card_root.offset_right = 152
-	card_root.offset_bottom = -100
-	card_root.offset_top = -180
-	card_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Гарантируем что _squad_panel создан до добавления нашей карточки.
+	_ensure_squad_panel()
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# Лёгкий красный border чтоб визуально отличать от squad-cards копейщиков.
 	var card_box := StyleBoxFlat.new()
 	card_box.bg_color = Color(0.08, 0.08, 0.1, 0.78)
 	card_box.border_color = Color(0.7, 0.2, 0.2, 0.9)
 	card_box.set_border_width_all(2)
 	card_box.set_corner_radius_all(4)
-	card_box.content_margin_left = 8
-	card_box.content_margin_right = 8
-	card_box.content_margin_top = 6
-	card_box.content_margin_bottom = 6
-	card_root.add_theme_stylebox_override("panel", card_box)
-	add_child(card_root)
+	card_box.content_margin_left = 6
+	card_box.content_margin_right = 6
+	card_box.content_margin_top = 4
+	card_box.content_margin_bottom = 4
+	card.add_theme_stylebox_override("panel", card_box)
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
-	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card_root.add_child(vbox)
+	card.add_child(vbox)
 
-	# Top row: icon + count.
-	var top_row := HBoxContainer.new()
-	top_row.add_theme_constant_override("separation", 8)
-	top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(top_row)
-
-	var icon := ColorRect.new()
-	icon.color = Color(0.78, 0.2, 0.2, 1.0)  # цвет DefenderGnome
-	icon.custom_minimum_size = Vector2(40, 40)
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	top_row.add_child(icon)
-
+	# Header — цветной квадратик (как у squad'ов копейщиков) + название
+	# с динамическим счётчиком, апдейтится в _refresh_defender_card.
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 6)
+	vbox.add_child(header)
+	var swatch := ColorRect.new()
+	swatch.custom_minimum_size = Vector2(14, 14)
+	swatch.color = Color(0.78, 0.2, 0.2, 1.0)  # цвет DefenderGnome
+	header.add_child(swatch)
 	_defender_card_count_label = Label.new()
-	_defender_card_count_label.text = "—"
-	_defender_card_count_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
-	_defender_card_count_label.add_theme_font_size_override("font_size", 22)
-	_defender_card_count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	top_row.add_child(_defender_card_count_label)
+	_defender_card_count_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_defender_card_count_label.add_theme_font_size_override("font_size", 13)
+	_defender_card_count_label.text = "Защитники — —"
+	header.add_child(_defender_card_count_label)
 
-	# Bottom row: level.
+	# Sub-row с уровнем отряда (squad_level из Camp). Меньшим шрифтом,
+	# приглушённым цветом — как «подпись».
 	_defender_card_level_label = Label.new()
-	_defender_card_level_label.text = "Защитники"
-	_defender_card_level_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9, 1))
-	_defender_card_level_label.add_theme_font_size_override("font_size", 12)
+	_defender_card_level_label.text = "ур. 0"
+	_defender_card_level_label.add_theme_color_override("font_color", Color(0.75, 0.75, 0.8, 1))
+	_defender_card_level_label.add_theme_font_size_override("font_size", 11)
 	vbox.add_child(_defender_card_level_label)
 
+	# Вставляем первой — защитники всегда выше soldier-squad'ов в списке.
+	_squad_panel.add_child(card)
+	_squad_panel.move_child(card, 0)
 
-## Обновляет текст карточки защитников. Дёргается из _update_counts (0.25с)
-## и на squad_leveled_up (event-driven для мгновенной реакции).
+
+## Обновляет текст карточки защитников. Дёргается из _update_counts (0.25с).
 func _refresh_defender_card() -> void:
 	if _defender_card_count_label == null:
 		return
 	if _camp == null or not is_instance_valid(_camp):
-		_defender_card_count_label.text = "—"
-		_defender_card_level_label.text = "Защитники"
+		_defender_card_count_label.text = "Защитники — —"
+		_defender_card_level_label.text = "ур. 0"
 		return
-	_defender_card_count_label.text = "%d" % _camp.defender_count()
-	_defender_card_level_label.text = "Защитники · ур. %d" % _camp.get_squad_level()
+	_defender_card_count_label.text = "Защитники — %d" % _camp.defender_count()
+	_defender_card_level_label.text = "ур. %d" % _camp.get_squad_level()
 
 
 ## Action bar по дну экрана. Diablo-style: горизонтальный ряд слотов,
