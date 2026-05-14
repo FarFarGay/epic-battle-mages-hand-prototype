@@ -969,7 +969,10 @@ func _build_soldier_card(camp: Node, id: StringName) -> Control:
 	swatch.color = data.get("icon_color", Color.WHITE)
 	header.add_child(swatch)
 	var title := Label.new()
-	var current_count: int = camp.soldier_count(id)
+	# get_recruit_count диспатчит по gnome_class каталога: для &"defender" →
+	# defender_count(), для остальных → soldier_count(id). Без этого defender-
+	# карточка показывала бы 0 даже когда защитники в лагере есть.
+	var current_count: int = camp.get_recruit_count(id)
 	var squad_size: int = SoldierSystem.get_squad_size(id)
 	title.text = "%s — %d в строю (отряд × %d)" % [data.get("name", str(id)), current_count, squad_size]
 	title.add_theme_font_size_override("font_size", 16)

@@ -3,10 +3,17 @@ extends Node
 ## `SoldierSystem`. Симметрично SpellSystem — single source of truth для
 ## параметров рекрутируемых юнитов.
 ##
-## Дизайнерское решение: лучники как мобильный отряд НЕ призываются —
-## только штатные DefenderGnome'ы у палаток (camp-bound). Игрок призывает
-## только melee-юнитов — копейщиков, которые лезут в ближний бой,
-## дополняя дальнобойных защитников периметра.
+## Дизайнерское решение: melee-юниты (копейщики) призываются как Squad — с
+## командной системой (идти/защищать/за башней). Защитники (DefenderGnome,
+## лучники) с 2026-05-15 ТОЖЕ призываются через меню, но **не образуют
+## Squad** — присоединяются к общему пулу защитников лагеря, распределяются
+## по палаткам round-robin'ом, управляются как штатные defender'ы (cone-vision,
+## bell-alarm, DefenseMarker'ы). Это даёт игроку рост периметра без отдельного
+## контроля «отряда».
+##
+## Диспетч по типу gnome_class в каталоге: пустое поле (или отсутствует) —
+## SoldierGnome flow (Squad); &"defender" — DefenderGnome flow (без Squad,
+## tent-bound).
 ##
 ## Каталог декларативный — id → Dictionary с полями:
 ##   - `name`, `description`, `icon_color`
@@ -22,8 +29,27 @@ extends Node
 ## добавим `levels[]` как у SpellSystem.
 
 const PIKEMAN_SCENE: PackedScene = preload("res://scenes/soldier_pikeman.tscn")
+const DEFENDER_SCENE: PackedScene = preload("res://scenes/defender_gnome.tscn")
 
 const SOLDIER_CATALOG: Dictionary = {
+	&"defender": {
+		"name": "Отряд защитников",
+		"description": "Отряд из 3 лучников. Привязаны к палаткам, патрулируют периметр, реагируют на тревогу. В формации точность выше.",
+		"icon_color": Color(0.78, 0.2, 0.2, 1.0),
+		# 3 свободных gatherer'а конвертятся в 3 защитников и распределяются
+		# round-robin по живым палаткам (`Camp._recruit_defenders`).
+		"squad_size": 3,
+		# Cost — за весь отряд. Дерево + железо (древки + наконечники стрел).
+		# Дешевле копейщиков по абсолюту, но дороже per-юнит — лучник ценнее.
+		"cost": {ResourcePile.ResourceType.WOOD: 6, ResourcePile.ResourceType.IRON: 4},
+		"scene": DEFENDER_SCENE,
+		# Маркер для Camp.recruit_squad — диспатч в _recruit_defenders вместо
+		# обычного SoldierGnome-flow. Defender'ы используют свои @export'ы
+		# (cone_vision_radius, attack_radius, inaccuracy и т.д.), runtime-stats
+		# из каталога не применяются — поэтому stats пустой.
+		"gnome_class": &"defender",
+		"stats": {},
+	},
 	&"pikeman": {
 		"name": "Отряд копейщиков",
 		"description": "Отряд из 5 копейщиков. Ближний бой, толстая броня — врываются в скелетов копьём.",

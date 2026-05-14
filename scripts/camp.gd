@@ -1067,6 +1067,9 @@ func can_recruit_squad(soldier_type: StringName) -> bool:
 ## Призвать отряд заданного типа. Создаёт Squad-объект и заполняет его
 ## squad_size солдатами. Каждый солдат — конвертированный gatherer.
 ## Возвращает Squad или null при провале.
+##
+## Диспатч по gnome_class из каталога: &"defender" → DefenderGnome flow
+## (без Squad, round-robin по палаткам), иначе → SoldierGnome flow (Squad).
 func recruit_squad(soldier_type: StringName) -> Squad:
 	if SoldierSystem == null:
 		return null
@@ -1077,6 +1080,11 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
 	if data.is_empty():
 		push_warning("Camp.recruit_squad: неизвестный тип %s" % soldier_type)
+		return null
+	if data.get("gnome_class", &"") == &"defender":
+		_recruit_defenders(soldier_type, data)
+		# Defender-flow не возвращает Squad — defender'ы присоединяются к
+		# общему пулу (DEFENDER_GROUP), не группируются как отряд.
 		return null
 	var cost: Dictionary = data.get("cost", {})
 	if not can_afford(cost):
@@ -1146,6 +1154,83 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 	EventBus.camp_buildings_changed.emit()
 	EventBus.squad_created.emit(squad)
 	return squad
+
+
+## Defender-вариант рекрута: конвертит N gatherer'ов в N DefenderGnome'ов и
+## распределяет их round-robin по живым палаткам. В отличие от SoldierGnome-
+## flow не создаёт Squad-объект — защитники работают индивидуально через
+## tent-привязку, DEFENDER_GROUP и AI (cone-vision/bell-alarm/DefenseMarker).
+##
+## Все гейты (deployed, can_afford, gatherer_count + reserve) валидируются
+## здесь же — мимо UI вызов (читы/гонка) безопасен. На любой ошибке после
+## try_spend — rollback ресурсов через add_resource.
+func _recruit_defenders(soldier_type: StringName, data: Dictionary) -> void:
+	var cost: Dictionary = data.get("cost", {})
+	if not can_afford(cost):
+		return
+	var squad_size: int = SoldierSystem.get_squad_size(soldier_type)
+	if gatherer_count() < squad_size + get_recruit_reserve():
+		return
+	var gatherers: Array[Gnome] = _find_idle_gatherers(squad_size)
+	if gatherers.size() < squad_size:
+		return
+	var scene: PackedScene = data.get("scene", null)
+	if scene == null:
+		push_error("Camp._recruit_defenders: scene не задан в каталоге для %s" % soldier_type)
+		return
+	# Список живых палаток — round-robin'им новых защитников между ними,
+	# чтобы периметр рос равномерно. Если все палатки умерли (но gatherer'ы
+	# почему-то ещё есть) — призыв отменяется: бездомных защитников не плодим.
+	var tents: Array = []
+	for p in _parts:
+		if is_instance_valid(p):
+			tents.append(p)
+	if tents.is_empty():
+		return
+	if not try_spend(cost):
+		return
+
+	var spawned: int = 0
+	for i in range(gatherers.size()):
+		var gatherer: Gnome = gatherers[i]
+		var tent: Node3D = tents[i % tents.size()]
+		var defender := scene.instantiate() as DefenderGnome
+		if defender == null:
+			push_error("Camp._recruit_defenders: scene не инстанцируется как DefenderGnome")
+			continue
+		add_child(defender)
+		defender.global_position = gatherer.global_position
+		defender.setup(self, tent)
+		defender.destroyed.connect(_on_gnome_destroyed.bind(defender))
+		_gnomes.erase(gatherer)
+		gatherer.queue_free()
+		_gnomes.append(defender)
+		spawned += 1
+
+	if spawned == 0:
+		# Все instantiate'ы провалились — rollback cost'а.
+		for type in cost:
+			add_resource(type, int(cost[type]))
+		return
+
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] призваны защитники (×%d), всего: %d" % [spawned, defender_count()])
+	EventBus.camp_buildings_changed.emit()
+
+
+## Сколько юнитов указанного типа сейчас в лагере. Универсальный геттер для
+## UI журнала: для defender-каталога считает defender_count(), для остальных —
+## soldier_count(id). Без него UI пришлось бы branch'ить по gnome_class в
+## журнале — а это деталь реализации каталога, журнал не должен в неё лезть.
+func get_recruit_count(soldier_type: StringName) -> int:
+	if SoldierSystem == null:
+		return 0
+	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
+	if data.is_empty():
+		return 0
+	if data.get("gnome_class", &"") == &"defender":
+		return defender_count()
+	return soldier_count(soldier_type)
 
 
 ## Дебаг-чит: спавнит отряд указанного типа МИМО всех ограничений
