@@ -1788,6 +1788,10 @@ func _build_defense_marker(params: Dictionary) -> bool:
 	marker.destroyed.connect(_on_defense_marker_destroyed.bind(marker))
 	_defense_markers.append(marker)
 	_assign_defenders_to_marker(marker)
+	if LogConfig.master_enabled:
+		print("[Camp] DefenseMarker построен @ (%.1f, %.1f) face=(%.2f, %.2f), markers=%d" % [
+			pos.x, pos.z, facing.x, facing.z, _defense_markers.size(),
+		])
 	return true
 
 
@@ -1817,6 +1821,10 @@ func _assign_defenders_to_marker(marker: DefenseMarker) -> void:
 	var n: int = mini(candidates.size(), DefenseMarker.SLOT_COUNT)
 	for i in range(n):
 		candidates[i].assign_to_marker(marker, i)
+	if LogConfig.master_enabled:
+		print("[Camp] DefenseMarker assignment: %d из %d свободных защитников назначено (нужно %d)" % [
+			n, candidates.size(), DefenseMarker.SLOT_COUNT,
+		])
 
 
 ## Массово отзывает всех защитников с маркеров — destroy всех DefenseMarker'ов.

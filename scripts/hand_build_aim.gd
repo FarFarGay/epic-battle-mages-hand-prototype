@@ -388,11 +388,14 @@ func _commit_direction_aim(ground: Vector3) -> void:
 			"position": origin,
 			"facing_dir": facing,
 		})
-		if debug_log and LogConfig.master_enabled:
-			print("[Hand:BuildAim] direction-commit %s @ (%.1f, %.1f) face=(%.2f, %.2f) → %s" % [
+		if LogConfig.master_enabled:
+			print("[Hand:BuildAim] direction-commit %s @ (%.1f, %.1f) face=(%.2f, %.2f) → %s / %s" % [
 				_active_building, origin.x, origin.z, facing.x, facing.z,
-				"success" if result.get("success", false) else "fail",
+				"success" if result.get("success", false) else "FAIL",
+				str(result.get("reason", "")),
 			])
+	else:
+		push_warning("[Hand:BuildAim] _camp не резолвится — commit прерван")
 	_finish_aim()
 
 
