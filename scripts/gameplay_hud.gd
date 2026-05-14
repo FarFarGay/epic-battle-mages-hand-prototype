@@ -329,6 +329,12 @@ func _build_action_slot(slot_idx: int, draggable: bool) -> Dictionary:
 		"icon": icon,
 		"key_label": key_label,
 		"name_label": name_label,
+		# rest_x — layout-позиция от HBoxContainer, кешируется после первого
+		# sort'а (см. _cache_slot_rest_positions). Хочется анимировать сдвиг
+		# вокруг неё: panel.position.x = rest_x + shift. Иначе HBox каждый
+		# sort обнулял бы наше смещение.
+		"rest_x": 0.0,
+		"rest_cached": false,
 	}
 	# Первичное заполнение иконки/текстов.
 	_refresh_slot_visuals(slot)
@@ -578,33 +584,46 @@ func _detect_hover_target_idx(mouse_pos: Vector2) -> int:
 	return -1
 
 
-## Анимирует panel.position.x для каждого слота. hover_idx — индекс целевого
-## слота (или -1 = нет). Target «отъезжает» в сторону, противоположную
-## source'у (освобождает место): target слева → сдвигается ещё левее,
-## target справа → ещё правее.
-##
-## Position.x устанавливаем напрямую — HBoxContainer не сортирует children
-## каждый кадр, наша override сохраняется между sort-event'ами. На любом
-## resize / child-change container пересортирует и обнулит x; устраивает
-## (action bar статичный).
+## Кеширует layout-позицию слотов (rest_x). Должна быть вызвана ПОСЛЕ первого
+## sort'а HBoxContainer'а, иначе все .position.x = 0. Гард по panel.size.x > 0
+## — до sort'а размер тоже 0, после sort'а size становится реальным.
+func _cache_slot_rest_positions() -> void:
+	for slot in _action_slots:
+		if slot.rest_cached:
+			continue
+		var panel: PanelContainer = slot.panel
+		if panel.size.x <= 0.0:
+			# HBox ещё не сортировал. Попробуем в следующий тик.
+			continue
+		slot.rest_x = panel.position.x
+		slot.rest_cached = true
+
+
+## Анимирует panel.position.x вокруг rest_x. hover_idx — индекс target-слота
+## (или -1 если нет hover'а). Target «отъезжает» в сторону, противоположную
+## source'у: target слева от source → сдвиг влево (rest_x - shift), target
+## справа → сдвиг вправо (rest_x + shift). Освобождает место для drag-карты.
 func _update_slot_lifts(delta: float, hover_idx: int) -> void:
+	_cache_slot_rest_positions()
 	var source_idx: int = int(_drag_state.get("source_idx", -1))
 	for i in range(_action_slots.size()):
 		var slot: Dictionary = _action_slots[i]
+		# Пока rest-позиция не закеширована (HBox не сортировал ещё) — не
+		# трогаем .position.x, чтобы не перебить layout.
+		if not slot.rest_cached:
+			continue
 		var panel: PanelContainer = slot.panel
-		var target_shift: float = 0.0
+		var rest_x: float = slot.rest_x
+		var shift: float = 0.0
 		if i == hover_idx and source_idx >= 0 and i != source_idx:
-			# Target слева от source → сдвиг влево; target справа → сдвиг вправо.
-			# Карта «отъезжает в сторону», освобождая место для drag-card.
 			if i < source_idx:
-				target_shift = -DRAG_HOVER_SHIFT
+				shift = -DRAG_HOVER_SHIFT
 			else:
-				target_shift = DRAG_HOVER_SHIFT
-		var current_shift: float = panel.position.x
-		# exp-decay: frame-rate independent сглаживание.
+				shift = DRAG_HOVER_SHIFT
+		var target_x: float = rest_x + shift
+		var current_x: float = panel.position.x
 		var alpha: float = 1.0 - exp(-DRAG_HOVER_SHIFT_DECAY * delta)
-		panel.position.x = lerpf(current_shift, target_shift, alpha)
-		# Y возвращаем к 0 на случай если был лифтом в предыдущей версии.
+		panel.position.x = lerpf(current_x, target_x, alpha)
 		panel.position.y = 0.0
 
 
