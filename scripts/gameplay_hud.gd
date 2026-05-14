@@ -280,9 +280,55 @@ func _build_defender_card() -> void:
 	_defender_card_level_label.add_theme_font_size_override("font_size", 11)
 	vbox.add_child(_defender_card_level_label)
 
+	# Кнопки команд:
+	# «На защиту» → стартует BuildAim для DefenseMarker (drag-direction), игрок
+	#   ставит линию обороны → 3 ближайших защитников идут в формацию.
+	# «Патруль» → отзывает всех с маркеров (destroy всех DefenseMarker'ов),
+	#   защитники возвращаются к свободному патрулю.
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 4)
+	vbox.add_child(btn_row)
+
+	var btn_defend := Button.new()
+	btn_defend.text = "На защиту"
+	btn_defend.focus_mode = Control.FOCUS_NONE
+	btn_defend.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn_defend.add_theme_font_size_override("font_size", 11)
+	btn_defend.pressed.connect(_on_defender_defend_pressed)
+	btn_row.add_child(btn_defend)
+
+	var btn_patrol := Button.new()
+	btn_patrol.text = "Патруль"
+	btn_patrol.focus_mode = Control.FOCUS_NONE
+	btn_patrol.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn_patrol.add_theme_font_size_override("font_size", 11)
+	btn_patrol.pressed.connect(_on_defender_patrol_pressed)
+	btn_row.add_child(btn_patrol)
+
 	# Вставляем первой — защитники всегда выше soldier-squad'ов в списке.
 	_squad_panel.add_child(card)
 	_squad_panel.move_child(card, 0)
+
+
+## «На защиту» — стартует BuildAim для DefenseMarker. Игрок ЛКМ-drag'ом
+## задаёт origin + направление обстрела; на commit 3 ближайших защитников
+## идут на слоты. Если Camp.can_build_reason fail'ит (свёрнут, нет ресурсов)
+## — try_build вернёт fail внутри, aim просто прекратится без эффекта.
+func _on_defender_defend_pressed() -> void:
+	var hand := _resolve_hand()
+	if hand == null or hand.build_aim == null:
+		push_warning("[HUD:Defender] hand/build_aim не резолвится")
+		return
+	hand.build_aim.start_aim(Camp.BUILDING_DEFENSE_MARKER)
+
+
+## «Патруль» — отзывает всех защитников с маркеров (Camp.disband_all_defense_markers).
+## Маркеры уничтожаются, ассигнованные защитники освобождаются и возвращаются
+## к свободному патрулю (с дебафом — стимул выстраивать заново когда нужно).
+func _on_defender_patrol_pressed() -> void:
+	if _camp == null or not is_instance_valid(_camp):
+		return
+	_camp.disband_all_defense_markers()
 
 
 ## Обновляет текст карточки защитников. Дёргается из _update_counts (0.25с).

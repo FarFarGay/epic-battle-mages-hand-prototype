@@ -1819,6 +1819,21 @@ func _assign_defenders_to_marker(marker: DefenseMarker) -> void:
 		candidates[i].assign_to_marker(marker, i)
 
 
+## Массово отзывает всех защитников с маркеров — destroy всех DefenseMarker'ов.
+## Каждый marker.destroy() триггерит _on_defense_marker_destroyed, который
+## освобождает assigned-защитников. По сигналу destroyed маркер queue_free'нется.
+##
+## Вызывается из HUD «Патруль»-кнопки. Сам список _defense_markers очищается
+## через chain _on_defense_marker_destroyed.erase(marker).
+func disband_all_defense_markers() -> void:
+	# Копируем список — destroy() триггерит _on_defense_marker_destroyed,
+	# который erase'ит из _defense_markers (модификация во время итерации).
+	var snapshot: Array[DefenseMarker] = _defense_markers.duplicate()
+	for marker in snapshot:
+		if is_instance_valid(marker):
+			marker.destroy()
+
+
 ## Marker queue_free'нулся (или destroy()'нулся явно). Освобождаем
 ## всех защитников, которые на нём были — обратно к свободному патрулю.
 func _on_defense_marker_destroyed(marker: DefenseMarker) -> void:
