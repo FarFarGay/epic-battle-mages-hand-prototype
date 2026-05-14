@@ -83,6 +83,18 @@ var _magnet_target_name: String = ""
 @onready var _flick: HandPhysicalFlick = $Flick
 
 
+## Готова ли способность к триггеру. Slam имеет cooldown; Flick — hold-action
+## без cooldown'а (всегда «ready», даже когда удерживается). ActionBar дёргает
+## для тусклой подсветки.
+func is_ability_ready(type: int) -> bool:
+	match type:
+		AbilityType.SLAM:
+			return _slam.can_trigger()
+		AbilityType.FLICK:
+			return true  # нет cooldown'а — всегда нажимаемо
+	return true
+
+
 func _ready() -> void:
 	_hand = get_parent() as Hand
 	if not _hand:

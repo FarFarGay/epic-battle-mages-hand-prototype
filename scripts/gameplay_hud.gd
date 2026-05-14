@@ -9,6 +9,27 @@ extends CanvasLayer
 ## без таймера, мгновенный feedback на убийство.
 
 const UPDATE_INTERVAL: float = 0.25
+## Период обновления action bar'а — чаще чем общий counter (cooldown'ы
+## меняются в течение секунды-двух, надо обновлять плавно).
+const ACTION_BAR_UPDATE_INTERVAL: float = 0.1
+
+## Описание слотов action bar'а. Порядок = layout слева направо.
+## category + type — куда смотреть, чтоб определить «активен ли слот».
+## color — цвет иконки (потом заменим спрайтами).
+const ACTION_BAR_SLOTS: Array = [
+	{"key": "1", "name": "Хлоп", "category_str": "PHYSICAL", "type": 0,
+		"color": Color(0.85, 0.85, 0.9)},   # Slam
+	{"key": "2", "name": "Щелб", "category_str": "PHYSICAL", "type": 1,
+		"color": Color(0.7, 0.8, 0.85)},    # Flick
+	{"key": "3", "name": "Огонь", "category_str": "MAGIC", "type": 0,
+		"color": Color(1.0, 0.45, 0.1)},    # Fireball
+	{"key": "4", "name": "Шквал", "category_str": "MAGIC", "type": 1,
+		"color": Color(0.9, 0.3, 0.05)},    # Firestorm
+	{"key": "5", "name": "Мины", "category_str": "MAGIC", "type": 2,
+		"color": Color(0.8, 0.3, 0.2)},     # Mine Scatter
+	{"key": "␣", "name": "Удар", "category_str": "SUPER", "type": -1,
+		"color": Color(1.0, 0.55, 0.15)},   # Super
+]
 
 @export_node_path("Camp") var camp_path: NodePath
 
@@ -55,6 +76,15 @@ var _squad_scroll: ScrollContainer
 var _squad_cards: Dictionary = {}
 ## Кэш ссылки на руку — для toggle_aim_for через HandSquadAim. Lookup по группе.
 var _hand: Hand
+## Action bar в нижней части экрана. Программно собирается в _build_action_bar.
+## Структура: HBoxContainer со слотами; per-slot Control'ы хранятся в
+## _action_slots для update'а на тике.
+var _action_bar: HBoxContainer
+## Per-slot Control'ы для обновления. Индекс совпадает с ACTION_BAR_SLOTS.
+## Каждый элемент — Dictionary { panel, icon, key_label, name_label,
+## border_stylebox } для тогглинга highlight'а и cooldown'а.
+var _action_slots: Array = []
+var _action_bar_update_timer: float = 0.0
 
 ## Порядок и метаданные отображения ресурсов в правой панели. Пять типов из
 ## ResourcePile.ResourceType, кроме GENERIC (legacy-ящик, не геймплейный).
@@ -74,6 +104,7 @@ func _ready() -> void:
 	_build_squad_row()
 	_build_resources_rows()
 	_build_journal_button()
+	_build_action_bar()
 	_update_counts()
 	# Sync с текущим состоянием Camp (на случай позднего hookup или сцены
 	# с уже накопленным XP). Затем подписываемся на инкременты.
@@ -151,12 +182,182 @@ func _build_squad_row() -> void:
 	_squad_xp_bar.add_child(_squad_xp_label)
 
 
+## Action bar по дну экрана. Diablo-style: горизонтальный ряд слотов
+## с иконкой + клавишей + cooldown-dimming + active highlight. Биндинги
+## фиксированные (drag-reassign — будущее), для каждого слота — описание
+## в ACTION_BAR_SLOTS.
+##
+## Структура: CenterContainer (anchor BOTTOM, center horizontally) →
+## PanelContainer (фон бара) → HBoxContainer (ряд слотов). Каждый слот
+## — PanelContainer (для StyleBox-рамки) с VBox внутри: ColorRect-иконка +
+## key Label.
+##
+## Update'ы — `_update_action_bar` каждые ACTION_BAR_UPDATE_INTERVAL (0.1с):
+## active highlight (золотая рамка вокруг текущей equipped способности),
+## cooldown-dim (alpha 0.4 если can_trigger=false).
+func _build_action_bar() -> void:
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	center.offset_bottom = -16  # отступ от низа экрана
+	center.offset_top = -84     # высота bar'а ≈ 68px + запас
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(center)
+
+	var bar_panel := PanelContainer.new()
+	var bar_stylebox := StyleBoxFlat.new()
+	bar_stylebox.bg_color = Color(0.08, 0.08, 0.1, 0.75)
+	bar_stylebox.border_color = Color(0.25, 0.25, 0.3, 0.9)
+	bar_stylebox.set_border_width_all(1)
+	bar_stylebox.set_corner_radius_all(4)
+	bar_stylebox.content_margin_left = 6
+	bar_stylebox.content_margin_right = 6
+	bar_stylebox.content_margin_top = 4
+	bar_stylebox.content_margin_bottom = 4
+	bar_panel.add_theme_stylebox_override("panel", bar_stylebox)
+	bar_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(bar_panel)
+
+	_action_bar = HBoxContainer.new()
+	_action_bar.add_theme_constant_override("separation", 6)
+	_action_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar_panel.add_child(_action_bar)
+
+	_action_slots.clear()
+	for slot_def in ACTION_BAR_SLOTS:
+		_action_slots.append(_build_action_slot(slot_def))
+
+
+## Один слот action bar'а. Возвращает Dictionary с ссылками на child'ы для
+## update'а: { panel, panel_stylebox, icon, ... }.
+func _build_action_slot(slot_def: Dictionary) -> Dictionary:
+	var slot_panel := PanelContainer.new()
+	var slot_stylebox := StyleBoxFlat.new()
+	slot_stylebox.bg_color = Color(0.12, 0.12, 0.15, 0.95)
+	slot_stylebox.border_color = Color(0.3, 0.3, 0.35, 1)
+	slot_stylebox.set_border_width_all(2)
+	slot_stylebox.set_corner_radius_all(3)
+	slot_panel.add_theme_stylebox_override("panel", slot_stylebox)
+	slot_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_action_bar.add_child(slot_panel)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 2)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	slot_panel.add_child(vbox)
+
+	# Icon — ColorRect 48x48 квадрат с цветом из slot_def. Потом заменим
+	# спрайтами (когда художник нарисует), сейчас цвет = достаточный
+	# отличительный признак.
+	var icon := ColorRect.new()
+	icon.color = slot_def.color
+	icon.custom_minimum_size = Vector2(48, 48)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(icon)
+
+	# Key + Name на одной строке снизу.
+	var bottom := HBoxContainer.new()
+	bottom.add_theme_constant_override("separation", 4)
+	bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(bottom)
+
+	var key_label := Label.new()
+	key_label.text = slot_def.key
+	key_label.add_theme_color_override("font_color", Color(1, 1, 0.8, 1))
+	key_label.add_theme_font_size_override("font_size", 12)
+	bottom.add_child(key_label)
+
+	var name_label := Label.new()
+	name_label.text = slot_def.name
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	name_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9, 1))
+	name_label.add_theme_font_size_override("font_size", 10)
+	bottom.add_child(name_label)
+
+	return {
+		"def": slot_def,
+		"panel": slot_panel,
+		"stylebox": slot_stylebox,
+		"icon": icon,
+		"key_label": key_label,
+		"name_label": name_label,
+	}
+
+
+## Tick-обновление action bar'а: highlight активного слота + cooldown-dim.
+## Дёргается из _process каждые ACTION_BAR_UPDATE_INTERVAL.
+func _update_action_bar() -> void:
+	var hand := _resolve_hand()
+	for slot in _action_slots:
+		var def: Dictionary = slot.def
+		var is_active: bool = _slot_is_active(hand, def)
+		var is_ready: bool = _slot_is_ready(hand, def)
+
+		# Active border: золотая рамка, иначе серая.
+		var stylebox: StyleBoxFlat = slot.stylebox
+		if is_active:
+			stylebox.border_color = Color(1.0, 0.85, 0.2, 1.0)
+			stylebox.set_border_width_all(3)
+		else:
+			stylebox.border_color = Color(0.3, 0.3, 0.35, 1)
+			stylebox.set_border_width_all(2)
+
+		# Cooldown dim: иконка тускнеет если способность недоступна.
+		var icon: ColorRect = slot.icon
+		var base_color: Color = def.color
+		if is_ready:
+			icon.color = base_color
+		else:
+			icon.color = Color(base_color.r * 0.35, base_color.g * 0.35, base_color.b * 0.35, 1.0)
+
+
+func _slot_is_active(hand: Hand, def: Dictionary) -> bool:
+	if hand == null:
+		return false
+	match def.category_str:
+		"PHYSICAL":
+			return hand.active_category == Hand.Category.PHYSICAL \
+				and hand.physical_actions != null \
+				and int(hand.physical_actions.equipped) == int(def.type)
+		"MAGIC":
+			return hand.active_category == Hand.Category.MAGIC \
+				and hand.spell_actions != null \
+				and int(hand.spell_actions.equipped) == int(def.type)
+		"SUPER":
+			return hand.active_category == Hand.Category.SUPER
+	return false
+
+
+func _slot_is_ready(hand: Hand, def: Dictionary) -> bool:
+	if hand == null:
+		return true
+	match def.category_str:
+		"PHYSICAL":
+			if hand.physical_actions == null:
+				return true
+			return hand.physical_actions.is_ability_ready(int(def.type))
+		"MAGIC":
+			if hand.spell_actions == null:
+				return true
+			return hand.spell_actions.is_spell_ready(int(def.type))
+		"SUPER":
+			# Super готов когда шкала full. Camp.is_super_ready — single source.
+			if _camp != null and is_instance_valid(_camp):
+				return _camp.is_super_ready()
+			return true
+	return true
+
+
 func _process(delta: float) -> void:
 	_update_timer -= delta
 	if _update_timer <= 0.0:
 		_update_counts()
 		_update_squad_cards_dynamic()
 		_update_timer = UPDATE_INTERVAL
+	_action_bar_update_timer -= delta
+	if _action_bar_update_timer <= 0.0:
+		_update_action_bar()
+		_action_bar_update_timer = ACTION_BAR_UPDATE_INTERVAL
 
 
 func _update_counts() -> void:

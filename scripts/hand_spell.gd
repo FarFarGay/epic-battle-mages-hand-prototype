@@ -43,6 +43,19 @@ var _hand: Hand
 @onready var _mine_scatter: HandSpellMineScatter = $MineScatter
 
 
+## Готово ли заклинание к кастy. ActionBar дёргает для тусклой подсветки
+## слотов на кулдауне.
+func is_spell_ready(type: int) -> bool:
+	match type:
+		SpellType.FIREBALL:
+			return _fireball.can_trigger()
+		SpellType.FIRESTORM:
+			return _firestorm.can_trigger()
+		SpellType.MINE_SCATTER:
+			return _mine_scatter.can_trigger()
+	return true
+
+
 func _ready() -> void:
 	_fireball.spell_cast.connect(spell_cast.emit)
 	_firestorm.spell_cast.connect(spell_cast.emit)
