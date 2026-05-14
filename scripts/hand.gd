@@ -73,6 +73,10 @@ var _initialized: bool = false
 var _last_surface_label: String = ""
 ## Активная категория ввода. PHYSICAL по умолчанию (Slam-equip).
 var active_category: Category = Category.PHYSICAL
+## Флаг активного UI-drag'а из action-bar'а. GameplayHud выставляет true на
+## start_drag и false на finish. Hand учитывает в `is_pointer_over_ui` —
+## пока тащим карту, ВСЕ мирные действия (grab, magnet, slam, cast) заблокированы.
+var ui_drag_active: bool = false
 # Если true — Hand не перетаскивает позицию под курсор. Используется
 # подмодулями, когда им нужно временно держать руку в собственном месте
 # (например, PhysicalActions при щелбане крутит руку вокруг цели).
@@ -192,7 +196,13 @@ func cursor_world_position() -> Vector3:
 ##
 ## Уже-активные действия (магнит на удерживаемом, hold-state Flick'а)
 ## продолжаются независимо: гейт срабатывает только на START-нажатии.
+##
+## ui_drag_active (HUD выставляет true пока тащит action-slot) принудительно
+## возвращает true — иначе при движении ghost-карты за курсором вне области
+## слотов pointer_over_ui становится false и Hand начинает магнитить ящики.
 func is_pointer_over_ui() -> bool:
+	if ui_drag_active:
+		return true
 	var hovered: Control = get_viewport().gui_get_hovered_control()
 	return hovered != null
 

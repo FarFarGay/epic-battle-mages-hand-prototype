@@ -432,12 +432,17 @@ func _equip_slot(slot_idx: int) -> void:
 ## set_input_as_handled() блокирует прохождение клика в мир (иначе ЛКМ
 ## на слоте параллельно бы пытался grab'нуть предмет под HUD'ом).
 
-const DRAG_SPRING_STIFFNESS: float = 60.0
-const DRAG_SPRING_DAMPING: float = 12.0
-## Множитель тильта (rad на 1 м/с горизонтальной velocity). 0.002 даёт
-## заметный «крен» при быстром движении, не слишком ломая читабельность.
-const DRAG_TILT_PER_VELOCITY: float = 0.002
-const DRAG_TILT_MAX: float = 0.35
+## Жёсткая пружина — карта почти не отрывается от курсора, только лёгкий
+## tilt на резком махе. Критическое демпфирование при k=350 ≈ 2·sqrt(350) ≈ 37.4;
+## ставим 40 (слегка переcдемпфированная — без bounce'а на резких сменах
+## направления). Если хочется больше «гулянья» — снизить stiffness до ~100-150.
+const DRAG_SPRING_STIFFNESS: float = 350.0
+const DRAG_SPRING_DAMPING: float = 40.0
+## Множитель тильта (rad на 1 px/с горизонтальной velocity). При жёсткой
+## пружине velocity мгновенно становится большой при махе — нужен меньший
+## множитель чтоб карта не выходила в сальто.
+const DRAG_TILT_PER_VELOCITY: float = 0.0006
+const DRAG_TILT_MAX: float = 0.25
 
 
 func _on_slot_gui_input(event: InputEvent, slot_idx: int) -> void:
@@ -510,6 +515,12 @@ func _start_drag(slot_idx: int) -> void:
 	(source_slot.icon as ColorRect).color = Color(0.2, 0.2, 0.25, 0.5)
 	(source_slot.name_label as Label).text = "..."
 
+	# Блокируем мирные действия руки на время drag'а. Hand.is_pointer_over_ui
+	# учитывает этот флаг — пока true, grab/magnet/slam/cast не запускаются.
+	var hand := _resolve_hand()
+	if hand != null:
+		hand.ui_drag_active = true
+
 
 ## Каждый кадр (в _process) — spring-damper физика к курсору, tilt от velocity.
 func _process_drag_physics(delta: float) -> void:
@@ -543,6 +554,11 @@ func _finish_drag() -> void:
 	var ghost: Control = _drag_state.get("ghost")
 	var source_idx: int = int(_drag_state.get("source_idx", -1))
 	_drag_state.clear()
+
+	# Разблокируем мирные действия руки.
+	var hand := _resolve_hand()
+	if hand != null:
+		hand.ui_drag_active = false
 
 	if source_idx < 0:
 		if is_instance_valid(ghost):
