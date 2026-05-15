@@ -986,6 +986,13 @@ func _find_nearest_pile() -> ResourcePile:
 	var pos := global_position
 	var nearest: ResourcePile = null
 	var best_weighted_dist_sq := INF
+	# Фильтр зоны сборки: кучи дальше gather_radius от deploy_anchor — невидимы.
+	# Лагерь работает «в своём кругу», не сканирует всю карту. Гном на самой
+	# границе радиуса всё равно может взять pile в центре зоны — фильтр на
+	# позиции pile'а относительно лагеря, а не относительно гнома.
+	var anchor: Vector3 = _camp.deploy_anchor
+	var gather_r: float = _camp.gather_radius
+	var gather_r_sq: float = gather_r * gather_r
 	for cell_key in Gnome._pile_grid.keys():
 		var entries: Array = Gnome._pile_grid[cell_key]
 		for entry in entries:
@@ -996,17 +1003,24 @@ func _find_nearest_pile() -> ResourcePile:
 			var rp := raw as ResourcePile
 			if rp == null or rp.units <= 0 or rp.freeze:
 				continue
+			# Зона сборки: XZ-расстояние pile'а до anchor'а. Y-разница (рельеф)
+			# не считается — это плоская зона на земле, не сфера в воздухе.
+			var ax: float = ppos.x - anchor.x
+			var az: float = ppos.z - anchor.z
+			if ax * ax + az * az > gather_r_sq:
+				continue
 			# Priority-фильтр через Camp: weight=0 (или близко) → тип «выключен»,
 			# гном проходит мимо. Так работает план «не собирать камень».
+			# Вес УЖЕ stock-aware (см. Camp.get_collection_priority_weight) —
+			# дефицитные типы получают приоритет автоматически.
 			var weight: float = _camp.get_collection_priority_weight(int(rp.resource_type))
 			if weight <= 0.001:
 				continue
 			# Эффективная дистанция: distance² / weight². Эквивалентно (d/w)²,
 			# а возведение в квадрат сохраняет монотонность для сравнения.
-			# При weight=0.5 pile «отодвигается» в 4 раза по cost'у; при
-			# weight=2 (если бы были такие веса в нормализованной системе) —
-			# приближается в 4 раза. В нашей нормализации weights ≤ 1, так что
-			# веса всегда «отодвигают» — относительный порядок типов сохраняется.
+			# С stock-aware весом: тип с большим stock получает меньший weight
+			# → его кучи «отодвигаются» по cost'у → гном переключается на
+			# дефицитный тип, даже если тот географически дальше.
 			var d_sq: float = pos.distance_squared_to(ppos)
 			var weighted_sq: float = d_sq / (weight * weight)
 			if weighted_sq >= best_weighted_dist_sq:

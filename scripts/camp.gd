@@ -285,6 +285,17 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 @export var initial_collection_priority_stone: float = 1.0
 @export var initial_collection_priority_iron: float = 1.0
 @export var initial_collection_priority_food: float = 1.0
+## Радиус поиска ресурсов от deploy_anchor. Гном игнорирует кучи дальше этой
+## дистанции — лагерь работает в «своём кругу», а не сканирует всю карту.
+## Хочешь дальше — двигай лагерь. 50м даёт зону диаметром 100м, для тестовой
+## карты ~150м radius'а это центральная половина.
+@export var gather_radius: float = 50.0
+## Масштаб stock-балансировки. Эффективный вес типа = base_weight / (1 + stock/SCALE).
+## При stock=SCALE вес половинится — гномы переключаются на дефицитные типы.
+## Меньше SCALE → агрессивнее переключение (план реагирует быстро). Больше →
+## план «жёстче» по типу. 30 даёт читаемое переключение при первых 50-100
+## единицах, что соответствует темпу постройки.
+@export var stock_balance_scale: float = 30.0
 @export_group("")
 
 @export_group("Anchor drop zone")
@@ -2281,15 +2292,35 @@ func set_collection_priority(weights: Dictionary) -> void:
 	EventBus.collection_priority_changed.emit(_collection_priority.duplicate())
 
 
-## Текущий нормализованный вес типа (0..1). Гном использует в _find_nearest_pile
-## как делитель дистанции — чем выше weight, тем «ближе» pile этого типа.
-## Незаданный тип трактуется как 0 → pile никогда не выбирается.
+## Эффективный вес типа с учётом stock-балансировки: дефицитные типы
+## получают приоритет. base = нормализованный вес плана (0..1), затем
+## делится на (1 + stock_текущий / stock_balance_scale).
+##
+## Пример с планом «Равномерно» (base=0.25 для всех): на старте stock=0
+## → все типы 0.25 (нейтрально, гном идёт к ближайшему). После сбора
+## 30 железа: iron_eff = 0.125, остальные 0.25 → железо «отодвигается»,
+## гномы временно переключаются на дерево/камень/еду пока не выровняется.
+##
+## Решает дизайнерскую проблему «План Равномерно, а собирают только
+## железо/камень» — раньше при равных base весах формула d²/w² сводилась
+## к чистой дистанции, и гномы всегда шли к ближайшим кучам (типы которых
+## случайно оказывались близко к лагерю).
+##
+## Незаданный тип → 0 → pile никогда не выбирается (это правильное
+## поведение для типов с явно отключенным сбором).
 func get_collection_priority_weight(type: int) -> float:
-	return float(_collection_priority.get(type, 0.0))
+	var base: float = float(_collection_priority.get(type, 0.0))
+	if base <= 0.0 or stock_balance_scale <= 0.0:
+		return base
+	var stock: float = float(_resources.get(type, 0))
+	return base / (1.0 + stock / stock_balance_scale)
 
 
 func get_collection_priority() -> Dictionary:
 	# Копия — чтобы caller не мог мутировать внутреннее состояние.
+	# Возвращает БАЗОВЫЙ план (без stock-балансировки) — UI показывает план
+	# как задал игрок. Эффективные веса (с учётом stock) — через
+	# get_collection_priority_weight.
 	return _collection_priority.duplicate()
 
 
