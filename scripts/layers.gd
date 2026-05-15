@@ -57,6 +57,15 @@ const FRIENDLY_UNIT := 1 << 8    # 256 — bit 8 = layer 9
 ## но не друг другом.
 const PALISADE_OBSTACLE := 1 << 9   # 512 — bit 9 = layer 10
 
+## Мины (трап-объекты от mine_scatter). Отдельный слой ОТ [ITEMS] нужен чтобы
+## Tower (mask=575 со включённым ITEMS) физически не врезался в мины как в
+## стены. Раньше мина была на ITEMS (для того чтобы AOE-силы с MASK_HAND_SLAM,
+## который включает ITEMS, находили мину shape-query'ем) — но это завязывало
+## мин-physics на Tower.mask. Теперь мины на собственном слое, и
+## MASK_HAND_SLAM явно включает MINE_HAZARD — те же силы триггерят мины,
+## но Tower/Skeleton проходят сквозь.
+const MINE_HAZARD := 1 << 10        # 1024 — bit 10 = layer 11
+
 # Композитные маски — собирай через OR из именованных битов.
 
 ## Hand cursor raycast: пол + предметы + смонтированные модули. Под цели
@@ -83,7 +92,13 @@ const MASK_HAND_TARGETS := ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE | MOUNTED_MO
 ## группу HAND_IMMUNE_GROUP.
 ## COLD_ENEMY оставлен исторически; FAR-скелеты slam ловит отдельным проходом
 ## по SKELETON_GROUP с distance²-фильтром в _perform_slam.
-const MASK_HAND_SLAM := ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE | COLD_ENEMY | FRIENDLY_UNIT                       # 438
+## MINE_HAZARD включён, чтобы Slam (и все «огневые» силы, использующие
+## MASK_HAND_SLAM как default: Fireball, Firestorm, Super, BurnPatch)
+## детонировали мины через Damageable.try_damage. Раньше мины ловились
+## через бит ITEMS (мина была на ITEMS), но Tower тоже сканирует ITEMS
+## и физически врезался в мины — пришлось переселить мины на отдельный
+## слой и явно включить его в этой маске.
+const MASK_HAND_SLAM := ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE | COLD_ENEMY | FRIENDLY_UNIT | MINE_HAZARD          # 1462
 
 ## «Всё обычное» (без палаток лагеря). Tower / Item / Ground / shatter.
 const MASK_ALL_GAMEPLAY := TERRAIN | ITEMS | ACTORS | PROJECTILES | ENEMIES   # 31

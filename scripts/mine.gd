@@ -17,10 +17,17 @@ extends StaticBody3D
 ## Friendly-fire ON по дизайну: trigger_mask включает и ENEMIES и FRIENDLY_UNIT.
 ## Стратегический вес — игрок думает куда кидает.
 ##
-## Mine.tscn: StaticBody3D на слое ITEMS (видим для всех AOE-сил которые
-## маскируют ITEMS — Slam, Fireball, Firestorm, Super, BurnPatch — это
-## MASK_HAND_SLAM) + BodyShape (CylinderShape для damage-сканов) +
+## Mine.tscn: StaticBody3D на собственном слое MINE_HAZARD (видим для всех
+## AOE-сил которые маскируют этот слой — Slam, Fireball, Firestorm, Super,
+## BurnPatch — все через MASK_HAND_SLAM, в которую с 2026-05-15 включён
+## MINE_HAZARD) + BodyShape (CylinderShape для damage-сканов) +
 ## MeshInstance3D + Area3D TriggerArea (proximity-trigger зона).
+##
+## Почему отдельный слой, а не ITEMS: Tower (mask=575) сканирует ITEMS чтобы
+## физически толкать ящики/кучи — но тогда же врезается и в мины как в стены.
+## MINE_HAZARD не в маске Tower (и не в Skeleton.mask) → башня и скелеты
+## физически проходят сквозь мины, триггер срабатывает только через Area3D
+## (или AOE shape-query от огневых сил).
 
 signal exploded(world_position: Vector3)
 
@@ -48,9 +55,10 @@ enum Phase { FALLING, ARMING, ARMED }
 ## Маска для AoE damage в момент взрыва. Шире чем trigger — мина бьёт всё
 ## что рядом, не только то что её активировало. Включает Tower и постройки —
 ## friendly fire by design (дизайнерское решение 2026-05-13). С 2026-05-15
-## добавлен ITEMS — взрыв одной мины повреждает соседние, цепная реакция
-## (мины Damageable, ARMED-мина в радиусе взрыва сама детонирует).
-@export_flags_3d_physics var aoe_damage_mask: int = Layers.ENEMIES | Layers.COLD_ENEMY | Layers.FRIENDLY_UNIT | Layers.ACTORS | Layers.CAMP_OBSTACLE | Layers.PALISADE_OBSTACLE | Layers.ITEMS
+## добавлен MINE_HAZARD — взрыв одной мины повреждает соседние, цепная
+## реакция (мины Damageable, ARMED-мина в радиусе взрыва сама детонирует).
+## ITEMS оставлен чтобы взрыв задевал ResourcePile/Item-боксы рядом.
+@export_flags_3d_physics var aoe_damage_mask: int = Layers.ENEMIES | Layers.COLD_ENEMY | Layers.FRIENDLY_UNIT | Layers.ACTORS | Layers.CAMP_OBSTACLE | Layers.PALISADE_OBSTACLE | Layers.ITEMS | Layers.MINE_HAZARD
 
 @export_group("Visual")
 ## Скорость мигания в ARMED-фазе (циклы в секунду × 2π → радиан/сек).
@@ -79,6 +87,13 @@ var _exploded: bool = false
 var _material: StandardMaterial3D = null
 var _base_emission_energy: float = 0.6
 var _blink_timer: float = 0.0
+## Радиус² triggerArea sphere (кэшированный) для FAR-LOD скелет fallback'а
+## в ARMED-фазе. FAR-скелеты имеют collision_layer=0 и CollisionShape3D.disabled
+## (см. SPEC §5.5.2 LOD), Area3D их не видит — догоняем group-scan'ом каждые
+## FAR_SCAN_INTERVAL секунд. Кэшируется в _ready из CollisionShape3D.shape.
+var _trigger_radius_sq: float = 0.36  # дефолт 0.6² на случай отсутствия shape
+const FAR_SCAN_INTERVAL: float = 0.2
+var _far_scan_timer: float = 0.0
 
 
 ## Зовётся спавнером сразу после instantiate+add_child. Задаёт стартовую
@@ -96,7 +111,14 @@ func _ready() -> void:
 	Damageable.register(self)
 	_trigger_area.collision_layer = 0
 	_trigger_area.collision_mask = trigger_mask
-	_trigger_area.monitoring = false  # включится после ARMING
+	# monitoring=true с самого начала. Гейт по _phase в _on_body_entered
+	# отсекает срабатывания в FALLING/ARMING. Раньше monitoring стартовал
+	# в false и включался при ARMED — но Area3D.body_entered не fire'ится
+	# для уже-перекрывающихся тел на момент включения мониторинга. Скелет,
+	# вошедший в зону за время ARMING (≤0.5с), оставался «невидимым» для
+	# триггера до тех пор, пока не выйдет и не вернётся. На переходе в
+	# ARMED делаем явный sweep по get_overlapping_bodies (см. _physics_process).
+	_trigger_area.monitoring = true
 	_trigger_area.body_entered.connect(_on_body_entered)
 	# Per-instance дубликат материала для независимого мигания. Запоминаем
 	# базовый emission_energy_multiplier — основа для пульсации в ARMED.
@@ -105,6 +127,12 @@ func _ready() -> void:
 		_base_emission_energy = src.emission_energy_multiplier
 		_material = src.duplicate() as StandardMaterial3D
 		_mesh.material_override = _material
+	# Кэшируем радиус² триггер-сферы для FAR-LOD скелет fallback'а.
+	var trigger_shape_node := _trigger_area.get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if trigger_shape_node != null:
+		var sphere := trigger_shape_node.shape as SphereShape3D
+		if sphere != null:
+			_trigger_radius_sq = sphere.radius * sphere.radius
 
 
 func _physics_process(delta: float) -> void:
@@ -125,9 +153,16 @@ func _physics_process(delta: float) -> void:
 			_arming_timer -= delta
 			if _arming_timer <= 0.0:
 				_phase = Phase.ARMED
-				_trigger_area.monitoring = true
 				if debug_log and LogConfig.master_enabled:
 					print("[Mine] вооружена @ (%.1f, %.1f)" % [global_position.x, global_position.z])
+				# Body_entered не fire'ится для тел, уже стоящих в зоне на
+				# момент перехода в ARMED. Явно сканируем текущие overlaps —
+				# если кто-то уже внутри (например, скелет, прошедший через
+				# точку приземления за время ARMING), детонируем сразу.
+				for b in _trigger_area.get_overlapping_bodies():
+					if is_instance_valid(b):
+						_explode()
+						return
 		Phase.ARMED:
 			# Мигание emission'а — сигнал «я вооружена». sin(t) ∈ [-1,1] → pulse ∈ [0,1].
 			# emission_energy = base × (1 + pulse × peak), от base до base × (1 + peak).
@@ -135,6 +170,13 @@ func _physics_process(delta: float) -> void:
 			if _material != null:
 				var pulse: float = sin(_blink_timer * armed_blink_rate) * 0.5 + 0.5
 				_material.emission_energy_multiplier = _base_emission_energy * (1.0 + pulse * armed_blink_peak)
+			# FAR-LOD скелеты вне broad-phase — Area3D их не ловит. Догоняем
+			# group-scan'ом каждые FAR_SCAN_INTERVAL секунд (см. поле выше).
+			# Параллельный паттерн со Slam.FAR-fallback'ом (hand_physical_slam.gd).
+			_far_scan_timer -= delta
+			if _far_scan_timer <= 0.0:
+				_far_scan_timer = FAR_SCAN_INTERVAL
+				_check_far_skeleton_trigger()
 
 
 func _on_body_entered(_body: Node) -> void:
@@ -152,6 +194,24 @@ func take_damage(amount: float) -> void:
 		return
 	if _phase == Phase.ARMED:
 		_explode()
+
+
+## Group-scan FAR-LOD скелетов в радиусе триггера. Параллельно с body_entered'ом
+## (NEAR/MID скелеты ловятся им через Area3D). На любом hit'е — детонация.
+## Per-mine raз в FAR_SCAN_INTERVAL (0.2с) → дешёво даже на 2000 скелетов
+## (всё та же 0.05мс распределённая на 5Hz).
+func _check_far_skeleton_trigger() -> void:
+	var origin: Vector3 = global_position
+	for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		var skel := n as Skeleton
+		if skel == null:
+			continue
+		if skel.get_lod_level() != Skeleton.LodLevel.FAR:
+			continue
+		var d_sq: float = (skel.global_position - origin).length_squared()
+		if d_sq <= _trigger_radius_sq:
+			_explode()
+			return
 
 
 ## AoE-взрыв: ShapeQuery радиусом aoe_radius, damage всем Damageable
@@ -175,9 +235,25 @@ func _explode() -> void:
 		if Damageable.is_damageable(b):
 			Damageable.try_damage(b, damage)
 			hit_count += 1
+	# FAR-LOD скелеты вне broad-phase, shape-query их не находит. Группа +
+	# distance²-фильтр — тот же паттерн, что в HandPhysicalSlam.FAR-fallback.
+	var aoe_radius_sq: float = aoe_radius * aoe_radius
+	var far_hits: int = 0
+	for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		var skel := n as Skeleton
+		if skel == null:
+			continue
+		if skel.get_lod_level() != Skeleton.LodLevel.FAR:
+			continue
+		var d_sq: float = (skel.global_position - global_position).length_squared()
+		if d_sq > aoe_radius_sq:
+			continue
+		Damageable.try_damage(skel, damage)
+		hit_count += 1
+		far_hits += 1
 	if debug_log and LogConfig.master_enabled:
-		print("[Mine:explode] @ (%.1f, %.1f, %.1f) hit=%d targets, damage=%.0f r=%.1f" % [
-			global_position.x, global_position.y, global_position.z, hit_count, damage, aoe_radius,
+		print("[Mine:explode] @ (%.1f, %.1f, %.1f) hit=%d targets (FAR: %d), damage=%.0f r=%.1f" % [
+			global_position.x, global_position.y, global_position.z, hit_count, far_hits, damage, aoe_radius,
 		])
 	# Взрыв-VFX: полный fire-explosion (отличается от приземления — мина именно
 	# сдетонировала, не «прилетела с пылью»). Спавним в parent (current_scene),
