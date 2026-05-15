@@ -981,18 +981,39 @@ func _horizontal_distance(target: Vector3) -> float:
 ##
 ## Использует static [Gnome._pile_grid]. Полный обход всех cells O(N pile-ов):
 ## на тестовых 30-100 pile × 60 гномов × 60fps это ~360k checks/сек.
+## Двухступенчатый выбор цели (2026-05-15 v3 после двух итераций stock-balance):
+##   1. Через Camp.pick_collection_type — стохастический выбор типа по eff-весам.
+##      Тип решается БЕЗ географии: с планом «Равномерно» каждый тип имеет
+##      ~равный шанс независимо от близости куч.
+##   2. Среди куч этого типа в gather_radius — ближайшая не-claimed.
+##   3. Если куч нужного типа в радиусе нет — fallback на старую weighted-distance
+##      search по всем типам. Без него гном залипал бы при «не повезло с типом».
+##
+## Решает дизайнерскую проблему «План Равномерно, а собирают только камень/железо»:
+## прежняя формула d²/w² смешивала тип и дистанцию, на тестовой карте wood-кучи
+## геометрически дальше → выигрывали по cost'у даже при сильно сниженном базовом
+## весе. Type-first decoupling делает выбор типа независимым от карты.
 func _find_nearest_pile() -> ResourcePile:
 	Gnome._maybe_refresh_pile_grid(get_tree())
+	var preferred_type: int = _camp.pick_collection_type()
+	if preferred_type >= 0:
+		var by_type := _find_nearest_pile_of_type(preferred_type)
+		if by_type != null:
+			return by_type
+	# Fallback: weighted-distance по всем типам (старый путь). Срабатывает если
+	# выбранного типа нет в радиусе или все его кучи claimed — гном не сидит
+	# идле, берёт что есть.
+	return _find_nearest_pile_weighted()
+
+
+## Ближайшая не-claimed куча конкретного типа в gather_radius. None если нет.
+## Используется как первый проход в _find_nearest_pile (type-first).
+func _find_nearest_pile_of_type(target_type: int) -> ResourcePile:
 	var pos := global_position
-	var nearest: ResourcePile = null
-	var best_weighted_dist_sq := INF
-	# Фильтр зоны сборки: кучи дальше gather_radius от deploy_anchor — невидимы.
-	# Лагерь работает «в своём кругу», не сканирует всю карту. Гном на самой
-	# границе радиуса всё равно может взять pile в центре зоны — фильтр на
-	# позиции pile'а относительно лагеря, а не относительно гнома.
 	var anchor: Vector3 = _camp.deploy_anchor
-	var gather_r: float = _camp.gather_radius
-	var gather_r_sq: float = gather_r * gather_r
+	var gather_r_sq: float = _camp.gather_radius * _camp.gather_radius
+	var nearest: ResourcePile = null
+	var best_d_sq: float = INF
 	for cell_key in Gnome._pile_grid.keys():
 		var entries: Array = Gnome._pile_grid[cell_key]
 		for entry in entries:
@@ -1003,24 +1024,50 @@ func _find_nearest_pile() -> ResourcePile:
 			var rp := raw as ResourcePile
 			if rp == null or rp.units <= 0 or rp.freeze:
 				continue
-			# Зона сборки: XZ-расстояние pile'а до anchor'а. Y-разница (рельеф)
-			# не считается — это плоская зона на земле, не сфера в воздухе.
+			if int(rp.resource_type) != target_type:
+				continue
+			# Зона сборки: XZ-расстояние pile'а до anchor'а.
 			var ax: float = ppos.x - anchor.x
 			var az: float = ppos.z - anchor.z
 			if ax * ax + az * az > gather_r_sq:
 				continue
-			# Priority-фильтр через Camp: weight=0 (или близко) → тип «выключен»,
-			# гном проходит мимо. Так работает план «не собирать камень».
-			# Вес УЖЕ stock-aware (см. Camp.get_collection_priority_weight) —
-			# дефицитные типы получают приоритет автоматически.
+			var d_sq: float = pos.distance_squared_to(ppos)
+			if d_sq >= best_d_sq:
+				continue
+			if _camp.is_pile_claimed(rp, self):
+				continue
+			best_d_sq = d_sq
+			nearest = rp
+	return nearest
+
+
+## Fallback: weighted-distance search по ВСЕМ типам (бывший _find_nearest_pile).
+## Срабатывает когда type-first не нашёл кандидата — гном берёт любую кучу,
+## не сидит идле. Чистая weighted-distance модель сохранена для этого редкого
+## случая (типа нет в радиусе, или все его кучи claimed).
+func _find_nearest_pile_weighted() -> ResourcePile:
+	var pos := global_position
+	var anchor: Vector3 = _camp.deploy_anchor
+	var gather_r_sq: float = _camp.gather_radius * _camp.gather_radius
+	var nearest: ResourcePile = null
+	var best_weighted_dist_sq := INF
+	for cell_key in Gnome._pile_grid.keys():
+		var entries: Array = Gnome._pile_grid[cell_key]
+		for entry in entries:
+			var ppos: Vector3 = entry[0]
+			var raw = entry[1]
+			if not is_instance_valid(raw):
+				continue
+			var rp := raw as ResourcePile
+			if rp == null or rp.units <= 0 or rp.freeze:
+				continue
+			var ax: float = ppos.x - anchor.x
+			var az: float = ppos.z - anchor.z
+			if ax * ax + az * az > gather_r_sq:
+				continue
 			var weight: float = _camp.get_collection_priority_weight(int(rp.resource_type))
 			if weight <= 0.001:
 				continue
-			# Эффективная дистанция: distance² / weight². Эквивалентно (d/w)²,
-			# а возведение в квадрат сохраняет монотонность для сравнения.
-			# С stock-aware весом: тип с большим stock получает меньший weight
-			# → его кучи «отодвигаются» по cost'у → гном переключается на
-			# дефицитный тип, даже если тот географически дальше.
 			var d_sq: float = pos.distance_squared_to(ppos)
 			var weighted_sq: float = d_sq / (weight * weight)
 			if weighted_sq >= best_weighted_dist_sq:

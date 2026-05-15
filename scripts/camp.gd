@@ -2329,6 +2329,48 @@ func get_collection_priority_weight(type: int) -> float:
 	return base / (factor * factor)
 
 
+## Стохастический выбор типа для сбора. Возвращает type из ResourcePile.ResourceType
+## (WOOD/STONE/IRON/FOOD) пропорционально эффективным весам, или -1 если все
+## веса нулевые. Используется гномом как **первый шаг** target-selection:
+##   1. Гном получает тип через pick_collection_type (отдельно от географии).
+##   2. Ищет ближайшую кучу выбранного типа в gather_radius.
+##   3. Если куч нет — fallback на weighted-distance по всем типам.
+##
+## Зачем разделять. Прежний путь d²/w² смешивал тип и дистанцию: даже с
+## stock-балансировкой география побеждала, если кучи нужного типа физически
+## дальше ближайших (wood:stone eff 0.195:0.111 ratio 1.76, но stone-куча в
+## 1.5× ближе → побеждала). Стохастический pick делает выбор типа независимым
+## от карты: «Равномерно» с base=0.25 каждый — гном с 25% шансом пойдёт за
+## деревом независимо от расположения кучи.
+##
+## Stock'и читаются через get_collection_priority_weight (квадратичный
+## penalty уже встроен). Веса нормализуются здесь повторно — sum может не = 1.0
+## из-за разного stock-штрафа.
+func pick_collection_type() -> int:
+	var total: float = 0.0
+	var pairs: Array = []
+	for t in [
+		ResourcePile.ResourceType.WOOD,
+		ResourcePile.ResourceType.STONE,
+		ResourcePile.ResourceType.IRON,
+		ResourcePile.ResourceType.FOOD,
+	]:
+		var w: float = get_collection_priority_weight(t)
+		if w > 0.0:
+			pairs.append([t, w])
+			total += w
+	if total <= 0.0:
+		return -1
+	var r: float = randf() * total
+	var acc: float = 0.0
+	for entry in pairs:
+		acc += entry[1]
+		if r <= acc:
+			return int(entry[0])
+	# Floating-point fallback на последний элемент (теоретически недостижим).
+	return int(pairs[pairs.size() - 1][0])
+
+
 func get_collection_priority() -> Dictionary:
 	# Копия — чтобы caller не мог мутировать внутреннее состояние.
 	# Возвращает БАЗОВЫЙ план (без stock-балансировки) — UI показывает план
