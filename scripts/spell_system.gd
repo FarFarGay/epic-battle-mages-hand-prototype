@@ -202,7 +202,7 @@ func try_unlock(id: StringName) -> bool:
 	if camp == null:
 		return false
 	var cost: Dictionary = SPELL_CATALOG[id].get("unlock_cost", {})
-	if not cost.is_empty() and not camp.try_spend(cost):
+	if not cost.is_empty() and not camp.economy.try_spend(cost):
 		return false
 	_unlocked[id] = true
 	_levels[id] = 0
@@ -221,7 +221,7 @@ func try_upgrade(id: StringName) -> bool:
 	if camp == null:
 		return false
 	var cost: Dictionary = get_next_upgrade_cost(id)
-	if not cost.is_empty() and not camp.try_spend(cost):
+	if not cost.is_empty() and not camp.economy.try_spend(cost):
 		return false
 	_levels[id] = int(_levels.get(id, 0)) + 1
 	if LogConfig.master_enabled:

@@ -776,7 +776,7 @@ func _tick_commuting_to_base() -> void:
 		# и при свёртке (RETURNING_TO_TENT) — в этих случаях ресурс теряется
 		# (буквально: упал по дороге). Кредит только на честной доставке.
 		if _carry_type >= 0:
-			_camp.add_resource(_carry_type, 1)
+			_camp.economy.add_resource(_carry_type, 1)
 			ResourceFx.pulse(global_position, ResourcePile.color_for_type(_carry_type))
 		_drop_carry()
 		# После каждой доставки полный rescan через SEARCHING — гном пере-

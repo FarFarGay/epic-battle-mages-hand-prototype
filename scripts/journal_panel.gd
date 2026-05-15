@@ -503,7 +503,7 @@ func _build_building_card(camp: Node, id: StringName) -> PanelContainer:
 			_wire_action_button(btn, _on_build_pressed.bind(id))
 		return card
 	var cost: Dictionary = data.get("cost", {})
-	var affordable: bool = camp.can_afford(cost)
+	var affordable: bool = camp.economy.can_afford(cost)
 	if reason != "":
 		btn.text = reason
 		btn.disabled = true
@@ -526,7 +526,7 @@ func _build_cost_row(camp: Node, cost: Dictionary, suffix: String = "") -> HBoxC
 
 	for type in cost:
 		var amount_required: int = int(cost[type])
-		var amount_have: int = camp.get_resource(type)
+		var amount_have: int = camp.economy.get_resource(type)
 		# С suffix'ом «/сегмент» (brush-mode) количество — это per-unit стоимость,
 		# а не total. Поэтому НЕ сравниваем «have/required» — игрок видит
 		# «2/сегмент» как формат «X wood за каждый» без enough-проверки.
@@ -866,7 +866,7 @@ func _build_spell_card(camp: Node, id: StringName) -> PanelContainer:
 	hbox.add_child(btn)
 
 	if not unlocked:
-		var affordable: bool = camp != null and camp.can_afford(cost)
+		var affordable: bool = camp != null and camp.economy.can_afford(cost)
 		btn.text = "открыть"
 		if not affordable:
 			btn.disabled = true
@@ -874,7 +874,7 @@ func _build_spell_card(camp: Node, id: StringName) -> PanelContainer:
 		else:
 			_wire_action_button(btn, _on_unlock_spell_pressed.bind(id))
 	elif SpellSystem.can_upgrade_further(id):
-		var affordable: bool = camp != null and camp.can_afford(cost)
+		var affordable: bool = camp != null and camp.economy.can_afford(cost)
 		btn.text = "улучшить → ур. %d" % (current_level + 1)
 		if not affordable:
 			btn.disabled = true
@@ -1009,7 +1009,7 @@ func _build_soldier_card(camp: Node, id: StringName) -> Control:
 		# Расшифруем причину для UX. Порядок проверок — от «жёстких» (state)
 		# к «мягким» (нехватка ресурсов): игроку показываем главную причину.
 		var available: int = camp.gatherer_count()
-		var has_resources: bool = camp.can_afford(cost)
+		var has_resources: bool = camp.economy.can_afford(cost)
 		var reserve: int = camp.get_recruit_reserve()
 		if not camp.is_deployed():
 			btn.text = "только в развёрнутом лагере"
@@ -1277,4 +1277,4 @@ func _grant_all_resources(camp: Node, amount: int) -> void:
 		ResourcePile.ResourceType.FOOD,
 		ResourcePile.ResourceType.PAGE,
 	]:
-		camp.add_resource(int(type), amount)
+		camp.economy.add_resource(int(type), amount)

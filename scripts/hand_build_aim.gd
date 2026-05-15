@@ -593,7 +593,7 @@ func _can_afford_total(total: int) -> bool:
 		return true
 	for type in _brush_cost_per_segment:
 		var per: int = int(_brush_cost_per_segment[type])
-		if _camp.get_resource(type) < per * total:
+		if _camp.economy.get_resource(type) < per * total:
 			return false
 	return true
 

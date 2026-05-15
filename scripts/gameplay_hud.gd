@@ -1079,7 +1079,7 @@ func _sync_all_resources() -> void:
 		return
 	for entry in RESOURCE_DISPLAY:
 		var type: int = int(entry["type"])
-		_refresh_resource_label(type, _camp.get_resource(type))
+		_refresh_resource_label(type, _camp.economy.get_resource(type))
 
 
 func _on_resource_changed(type: int, amount: int) -> void:

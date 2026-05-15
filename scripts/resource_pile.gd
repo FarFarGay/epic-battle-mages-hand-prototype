@@ -29,7 +29,7 @@ const GROUP := &"resource_pile"
 ## PAGE — страницы из книги колдовства. Не добываются гномами с pile-зон
 ## (или добываются — design-decision позже): тратятся на разблокировку и
 ## улучшение заклинаний башни через SpellSystem. Хранятся как обычный
-## ресурс в Camp._resources.
+## ресурс в Camp.economy.
 enum ResourceType { GENERIC, WOOD, STONE, IRON, FOOD, PAGE }
 
 ## Форма pile'а — определяет PrimitiveMesh + CollisionShape3D. По умолчанию

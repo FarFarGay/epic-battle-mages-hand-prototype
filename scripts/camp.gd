@@ -1092,7 +1092,7 @@ func can_recruit_squad(soldier_type: StringName) -> bool:
 	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
 	if data.is_empty():
 		return false
-	if not can_afford(data.get("cost", {})):
+	if not economy.can_afford(data.get("cost", {})):
 		return false
 	var squad_size: int = SoldierSystem.get_squad_size(soldier_type)
 	return gatherer_count() >= squad_size + get_recruit_reserve()
@@ -1121,7 +1121,7 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 		# общему пулу (DEFENDER_GROUP), не группируются как отряд.
 		return null
 	var cost: Dictionary = data.get("cost", {})
-	if not can_afford(cost):
+	if not economy.can_afford(cost):
 		return null
 	var squad_size: int = SoldierSystem.get_squad_size(soldier_type)
 	# Дублируем reserve-чек: UI должен был отфильтровать, но если recruit_squad
@@ -1135,9 +1135,9 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 	if scene == null:
 		push_error("Camp.recruit_squad: scene не задан в каталоге для %s" % soldier_type)
 		return null
-	# Списываем cost атомарно. После try_spend rollback'аемся через add_resource
-	# если что-то пойдёт не так дальше (instantiate'ы провалятся).
-	if not try_spend(cost):
+	# Списываем cost атомарно. После economy.try_spend rollback — через
+	# economy.add_resource если что-то пойдёт не так дальше (instantiate'ы провалятся).
+	if not economy.try_spend(cost):
 		return null
 
 	# Создаём Squad-объект ДО спавна солдат — каждый soldier при setup_soldier
@@ -1173,7 +1173,7 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 	if spawned == 0:
 		# Полный провал спавна — возвращаем cost.
 		for type in cost:
-			add_resource(type, int(cost[type]))
+			economy.add_resource(type, int(cost[type]))
 		return null
 
 	# Регистрируем squad. Подписка на disbanded — сами убираемся когда все
@@ -1197,10 +1197,10 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 ##
 ## Все гейты (deployed, can_afford, gatherer_count + reserve) валидируются
 ## здесь же — мимо UI вызов (читы/гонка) безопасен. На любой ошибке после
-## try_spend — rollback ресурсов через add_resource.
+## economy.try_spend — rollback ресурсов через economy.add_resource.
 func _recruit_defenders(soldier_type: StringName, data: Dictionary) -> void:
 	var cost: Dictionary = data.get("cost", {})
-	if not can_afford(cost):
+	if not economy.can_afford(cost):
 		return
 	var squad_size: int = SoldierSystem.get_squad_size(soldier_type)
 	if gatherer_count() < squad_size + get_recruit_reserve():
@@ -1221,7 +1221,7 @@ func _recruit_defenders(soldier_type: StringName, data: Dictionary) -> void:
 			tents.append(p)
 	if tents.is_empty():
 		return
-	if not try_spend(cost):
+	if not economy.try_spend(cost):
 		return
 
 	var spawned: int = 0
@@ -1250,7 +1250,7 @@ func _recruit_defenders(soldier_type: StringName, data: Dictionary) -> void:
 	if spawned == 0:
 		# Все instantiate'ы провалились — rollback cost'а.
 		for type in cost:
-			add_resource(type, int(cost[type]))
+			economy.add_resource(type, int(cost[type]))
 		return
 
 	if debug_log and LogConfig.master_enabled:
@@ -1349,7 +1349,7 @@ func disband_defender_squad() -> int:
 			for type in cost:
 				var refund_amt: int = int(float(cost[type]) * DEFENDER_DISBAND_REFUND_RATIO * float(converted) / float(squad_size))
 				if refund_amt > 0:
-					add_resource(type, refund_amt)
+					economy.add_resource(type, refund_amt)
 
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] расформированы защитники (×%d), осталось: %d" % [converted, defender_count()])
@@ -1638,57 +1638,11 @@ func get_squad_level() -> int:
 
 ## --- Resources (фаза 2 ресурсной экономики) ---
 
-## Накопленный пул ресурсов лагеря. Ключ — int (ResourcePile.ResourceType),
-## значение — целое количество единиц. Гномы доставляют по 1 единице через
-## add_resource(type, 1) на касании anchor'а; постройки списывают через
-## try_spend(cost). Лагерь не различает «пилу из деревянной зоны» и
-## «пилу принесённую рукой» — итоговый ресурс анонимен.
-##
-## Хранится в Dictionary[int, int], а не Array: типов ресурсов мало (4-5),
-## разные камп-инстансы могут иметь разный набор активных типов (например,
-## без iron-зон рядом — _resources не содержит ключ IRON), а Dictionary
-## естественно поддерживает «не было — нет ключа».
-var _resources: Dictionary = {}
-
-
-## Гном принёс единицу ресурса к anchor'у. amount > 0 — обычно 1, но
-## контракт не запрещает batch-кредит (магия каравана, бонусные постройки).
-func add_resource(type: int, amount: int) -> void:
-	if amount <= 0:
-		return
-	var current: int = int(_resources.get(type, 0))
-	_resources[type] = current + amount
-	EventBus.resources_changed.emit(type, _resources[type])
-
-
-func get_resource(type: int) -> int:
-	return int(_resources.get(type, 0))
-
-
-## Атомарная трата нескольких ресурсов одновременно. cost — Dictionary[int, int]
-## (тип → стоимость). Либо все ресурсы есть и списываются разом (с emit'ом
-## по каждому типу), либо ничего не меняется. Возвращает true на успех.
-##
-## Атомарность важна: если первая трата успела пройти, а на второй не хватило —
-## игрок остался без первого ресурса, не получив постройки. Вместо try-rollback
-## делаем сначала проверку всего, потом списание.
-func try_spend(cost: Dictionary) -> bool:
-	if not can_afford(cost):
-		return false
-	for type in cost:
-		var amount: int = int(cost[type])
-		if amount <= 0:
-			continue
-		_resources[type] = int(_resources.get(type, 0)) - amount
-		EventBus.resources_changed.emit(type, _resources[type])
-	return true
-
-
-func can_afford(cost: Dictionary) -> bool:
-	for type in cost:
-		if int(_resources.get(type, 0)) < int(cost[type]):
-			return false
-	return true
+## Ресурсная экономика выделена в [CampEconomy] (scripts/camp_economy.gd):
+## хранит пул, делает атомарную трату/проверку, эмитит EventBus.resources_changed.
+## Один инстанс на Camp. Доступ снаружи: `camp.economy.add_resource/get_resource/
+## try_spend/can_afford`. Внутри camp.gd — `economy.X` (см. рекруты/постройки).
+var economy: CampEconomy = CampEconomy.new()
 
 
 ## --- Camp buildings (фаза 3) ---
@@ -1777,9 +1731,9 @@ func try_build(id: StringName, params: Dictionary = {}) -> Dictionary:
 		return {"success": false, "reason": reason}
 	var data: Dictionary = CAMP_BUILDING_CATALOG.get(id, {})
 	var cost: Dictionary = data.get("cost", {})
-	if not can_afford(cost):
+	if not economy.can_afford(cost):
 		return {"success": false, "reason": "не хватает ресурсов"}
-	if not try_spend(cost):
+	if not economy.try_spend(cost):
 		# Race с другим вызовом try_build в один кадр — теоретически возможно,
 		# фактически в одном потоке нет; страхуем чтобы не разойтись с can_afford.
 		return {"success": false, "reason": "не хватает ресурсов"}
@@ -1790,7 +1744,7 @@ func try_build(id: StringName, params: Dictionary = {}) -> Dictionary:
 	if data.get("requires_gatherer", false):
 		if not _consume_gatherer():
 			for type in cost:
-				add_resource(type, int(cost[type]))
+				economy.add_resource(type, int(cost[type]))
 			return {"success": false, "reason": "нужен 1 свободный гном"}
 	if not _apply_building(id, params):
 		push_error("Camp.try_build: apply провалился для id=%s после успешного списания" % id)
@@ -1890,9 +1844,9 @@ func try_build_palisade_line(vertices: Array) -> Dictionary:
 	var total_cost: Dictionary = {}
 	for type in cost_per:
 		total_cost[type] = int(cost_per[type]) * segments.size()
-	if not can_afford(total_cost):
+	if not economy.can_afford(total_cost):
 		return {"success": false, "reason": "не хватает ресурсов", "segments_built": 0}
-	if not try_spend(total_cost):
+	if not economy.try_spend(total_cost):
 		# Race — теоретически между can_afford и try_spend; в однопоточном
 		# Godot не случится, но страховка.
 		return {"success": false, "reason": "не хватает ресурсов", "segments_built": 0}
@@ -2324,7 +2278,7 @@ func get_collection_priority_weight(type: int) -> float:
 	var base: float = float(_collection_priority.get(type, 0.0))
 	if base <= 0.0 or stock_balance_scale <= 0.0:
 		return base
-	var stock: float = float(_resources.get(type, 0))
+	var stock: float = float(economy.get_resource(type))
 	var factor: float = 1.0 + stock / stock_balance_scale
 	return base / (factor * factor)
 
@@ -2438,7 +2392,7 @@ func _consume_piles_in_drop_zone() -> void:
 		var fx_pos: Vector3 = pile.global_position
 		var amount: int = pile.consume_all()
 		if amount > 0:
-			add_resource(type, amount)
+			economy.add_resource(type, amount)
 			ResourceFx.pulse(fx_pos, ResourcePile.color_for_type(type))
 			if debug_log and LogConfig.master_enabled:
 				print("[Camp] поглощён pile (type=%d, units=%d)" % [type, amount])
