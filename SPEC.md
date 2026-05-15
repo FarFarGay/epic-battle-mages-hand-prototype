@@ -1164,7 +1164,13 @@ WaveStage поддерживает обе модели одновременно:
 - `nearest_part_to(pos) -> Node3D` — ближайшая живая палатка. Для назначения `forced_target` волне. Оторванные (torn_off) пропускаются — волне не назначаем летающую цель.
 - `has_alive_parts() -> bool` — есть ли хоть одна живая палатка. Лагерь-без-палаток не валидная цель волны.
 - `reset_population() -> void` — `queue_free` всех живых гномов и `_spawn_gnomes` снова. Палатки не восстанавливаются. Используется при P-рестарте кампании WaveDirector'ом. После reset в `DEPLOYED`-режиме новые гномы сразу `enter_deployed()` — выходят бродить.
-- `gatherer_count() / defender_count() / tent_count_alive() -> int` — счётчики для GameplayHud. Defender'ы фильтруются через `is DefenderGnome`.
+- `gatherer_count() / defender_count() / tent_count_alive() -> int` — счётчики для GameplayHud. Defender'ы фильтруются через группу `DefenderGnome.DEFENDER_GROUP`.
+- `defenders_in_formation_count() -> int` — сколько защитников назначено на `DefenseMarker`. HUD показывает в формате «Защитники — N (в строю: M)»: игрок понимает, сколько свободных под новый маркер.
+- `get_recruit_count(soldier_type) -> int` — универсальный счётчик «в строю» для журнала. Для `gnome_class == "defender"` → `defender_count()`, иначе → `soldier_count(type)`. Без этого defender-карточка в журнале показывала бы 0 (она читает soldier_count по умолчанию).
+- `place_defense_formation(world_pos, facing) -> bool` — спавнит `DefenseMarker`, назначает 3 ближайших свободных защитника. Гейтится `is_deployed + is_in_build_zone(pos)`. Возвращает true при успехе. Каждое нажатие = новый маркер (multi-line формация).
+- `disband_all_defense_markers()` — destroy всех маркеров. Защитники освобождаются и возвращаются к свободному патрулю (с wandering-дебафом).
+- `can_disband_defenders() -> bool` — гейт для UI-кнопки. Лагерь развёрнут И `defender_count > 0`.
+- `disband_defender_squad() -> int` — расформировывает до 3 защитников (приоритет: не в формации, затем по дистанции до лагеря). Конвертит в gatherer'ов на месте через `_spawn_one_gnome` + `enter_deployed`. Возврат 50% ресурсов рекрута пропорционально числу расформированных. Возвращает количество converted.
 
 **Сигналы:**
 - `deployed(anchor: Vector3)` — на переходе `CARAVAN_FOLLOWING → DEPLOYED`. Re-emit'ится в `EventBus.camp_deployed`.
@@ -1475,7 +1481,7 @@ Tent/Tower/Watch Bell/палисад в группе `navmesh_source` бакаю
 
 **Тип корня:** `CharacterBody3D` с `class_name DefenderGnome extends Gnome`.
 
-**Назначение:** гном-защитник-лучник. Спавнится `Camp` по `defenders_per_tent` штук на каждую палатку (дефолт 1 из 7 жителей; остальные 6 — обычные собиратели). В отличие от собирателей, **никогда не сидит в палатке** — на спавне сразу выходит в режим escort, в развёрнутом лагере патрулирует периметр. Видит угрозы через **конус зрения** (не sphere), реагирует на **alarm-канал** удара по лагерю, прокачивает **squad XP** убийствами.
+**Назначение:** гном-защитник-лучник. Спавнится `Camp` по `defenders_per_tent` штук на каждую палатку (дефолт 1 из 4 жителей; остальные 3 — обычные собиратели). Дополнительно **рекрутируется** игроком через «Армию» (§5.8.2) — отряд по 3 защитника за раз, +6 wood +4 iron. В отличие от собирателей, **никогда не сидит в палатке** — на спавне сразу выходит в режим escort, в развёрнутом лагере патрулирует периметр. Видит угрозы через **конус зрения** (не sphere), реагирует на **alarm-канал** удара по лагерю, прокачивает **squad XP** убийствами. С 2026-05-15 имеет два режима стат: **в формации** (полная точность/дальность, через `DefenseMarker`) и **в свободном патруле** (дебаф).
 
 **Что наследуется без изменений:**
 - Базовый `_physics_process` (LOD, gravity, knockback, move_and_slide vs cold-mode).
@@ -1497,6 +1503,7 @@ Tent/Tower/Watch Bell/палисад в группе `navmesh_source` бакаю
 - `_facing: Vector3` — текущее направление взгляда (горизонтальный unit-vector). Тело физически разворачивается через `rotation.y = atan2(-_facing.x, -_facing.z)`. Видимый игроку индикатор — `FacingIndicator` (тёмный «нос» на капсуле).
 - `_is_in_cone(target_pos)`: dot(_facing, dir_to_target) >= cos(half_angle). Прекомпьют `_vision_cone_cos` в `_ready`.
 - `_scan_cone()` — PhysicsShapeQuery со сферой `cone_vision_radius` (broadphase) → фильтр по углу через `_is_in_cone` → выбор «лучшей» цели по формуле `score = dist × (1 + aimers × target_share_penalty)`. Это распределение огня (см. ниже).
+- **Proximity-bypass** (`PROXIMITY_OVERRIDE_RADIUS = 4.0м`, добавлено 2026-05-15): любой враг ближе этой дистанции **игнорирует cone-фильтр** и считается видимым независимо от `_facing`. Применяется и в `_scan_cone` (новые цели), и в stale-валидации `_cached_target`. Нужно потому, что Skeleton`._perform_strike` явно НЕ emit'ит alarm на удар по защитнику (только палатка/мирный гном) — без proximity-bypass'а в формации защитник стоял истуканом, пока его били в упор сзади/сбоку. С 4м успевает развернуться и отстреляться до следующего удара скелета.
 
 **Alarm-канал** (этап 47):
 - `EventBus.skeleton_attacked_camp(attacker, victim, position)` — emit'ится из `Skeleton._perform_strike` после удара по CampPart или НЕ-DefenderGnome (мирному гному).
@@ -1511,13 +1518,15 @@ Tent/Tower/Watch Bell/палисад в группе `navmesh_source` бакаю
 4. Вызывается из обоих боевых тиков (DEPLOYED+CARAVAN).
 
 **Боевая модель:**
-- `attack_radius: float = 22.5` — дистанция гарантированного попадания (читается через `effective_attack_radius()`, +5м с апгрейдом long_draw).
+- `attack_radius: float = 22.5` — дистанция гарантированного попадания (читается через `effective_attack_radius()`, +5м с апгрейдом long_draw, ×WANDERING_RANGE_MULT в свободном патруле — см. ниже).
 - `attack_cooldown_min/max = 1.0 / 2.0`.
 - `arrow_damage_min/max = 20 / 32` (v5, 2026-05-10: −20% от 25/40). Avg 26 dmg, 1-shot скелета (hp=30) только при удачном крите 30..32 (~6%), обычно 2-shot. Магия должна оставаться основным DPS, лучник — пассивный backup.
 - `arrow_speed = 22`, `arrow_spawn_offset = (0, 0.6, 0)`.
 - На `_fire_at(target)` лучник готовит и спавнит стрелу. Kill-credit chain (этап 47-48) удалён в этапе 49 — XP теперь идёт через `XpOrbSpawner` autoload (слушает `EventBus.enemy_destroyed`). Стрелок не привязан к стреле.
 
 **Боевой тик в DEPLOYED** (`_defender_combat_tick`):
+- **Bell-response override**: если защитник отвечает на колокол (`_is_responding_to_bell()`) — идёт к bell_pos, по прибытию стреляет по vision-цели у колокола. Имеет приоритет над формацией.
+- **Formation override**: если назначен на `DefenseMarker` (`is_in_formation_slot()`) — `_tick_formation_slot(delta)` ведёт его в слот и держит лицом в `marker.facing_dir`. См. §5.8.1.1.
 - Цель в `effective_attack_radius()` → стой, стреляй. С апгрейдом kiting и `dist < kite_threshold_distance` — пятимся (-_facing × patrol_speed) продолжая стрелять.
 - Цель в конусе, но дальше attack_radius → sector-патруль: точка на окружности `patrol_radius=12м` от `deploy_anchor`, под углом = direction от лагеря к цели. Идёт туда; войдя в attack range, переключится автоматически.
 - Без цели → случайный патруль по периметру + cone-fallback `_facing` в направление движения, иначе outward от лагеря.
@@ -1528,9 +1537,18 @@ Tent/Tower/Watch Bell/палисад в группе `navmesh_source` бакаю
 - Sector-патруль здесь не применяется (anchor stale, колонна ведёт).
 
 **Точность и прокачка (per-instance):**
-- `base_inaccuracy_radius = 1.5`, `experience_half_shots = 100` — кривая `base / (1 + shots/half)`. 0 выстрелов: 1.5м, 100: 0.75м, 500: 0.25м, 1000: 0.14м.
+- `base_inaccuracy_radius = 0.4`, `experience_half_shots = 100` — кривая `base / (1 + shots/half)`. 0 выстрелов: 0.4м (новичок в формации, ~64% попадание в упор по skeleton radius ≈ 0.4м), 100: 0.2м (почти 100%), 500: 0.067м (снайпер).
+- **История балансировки** (2026-05-15): 1.5 → 0.4. Прежний разброс 1.5м у новичка давал ~7% попадания в упор формации, ~1% в свободном патруле (1.5×2.5=3.75м). Игрок жаловался: «вплотную мажут».
 - `_shots_fired` per-инстанс, не сохраняется. На смерть теряется.
 - Геттер `current_inaccuracy_radius()`, `get_shots_fired()`.
+
+**Wandering-дебаф vs формация vs тревога** (этап 50, 2026-05-15):
+- `is_in_formation_slot()` — назначен на валидный `DefenseMarker`.
+- `_is_responding_to_bell()` — отвечает на колокол.
+- `is_wandering()` — НЕ в формации И НЕ на bell-режиме И НЕТ активного `_alarm_target`. То есть «спокойный патруль вокруг лагеря».
+- `current_inaccuracy_radius()` × `WANDERING_INACCURACY_MULT = 1.6` если is_wandering. На base 0.4 → 0.64м wandering vs 0.4м formation. (Стартовая итерация была 2.5, потом 1.8, тюнинг до 1.6 — игрок просил «+10% к свободному», см. этап 50.)
+- `effective_attack_radius()` × `WANDERING_RANGE_MULT = 0.85` если is_wandering. На base 22.5 → 19.1м wandering vs 22.5м formation.
+- **Alarm снимает дебаф**: когда `EventBus.skeleton_attacked_camp` ставит `_alarm_target`, защитник переключается на baseline-точность даже в свободном патруле. Лагерь под атакой → стрелок «собирается», не «слепой».
 
 **Сепарация и распределение огня** (этап 47):
 - `separation_radius = 1.5`, `separation_strength = 0.5` (× patrol_speed) — `_compute_separation_force()` суммирует векторы отталкивания от защитников в радиусе с linear falloff. Прибавляется к velocity в attack-ветке. Защитник стоит/пятится, но дрейфует вбок если сосед прижался. `_facing` не меняется.
@@ -1563,21 +1581,54 @@ Tent/Tower/Watch Bell/палисад в группе `navmesh_source` бакаю
 
 ---
 
+### 5.8.1.1 DefenseMarker — `scenes/defense_marker.tscn`, `scripts/defense_marker.gd`
+
+**Тип корня:** `Node3D` с `class_name DefenseMarker`. Добавлен в этапе 50 (2026-05-15).
+
+**Назначение:** маркер обороной позиции. Игрок ставит точку на земле + направление обстрела (через `HandBuildAim` drag-direction режим). 3 ближайших свободных защитника назначаются на маркер, идут на слоты в линию перпендикулярно `facing_dir`, лицом в указанное направление. В формации защитник работает с baseline-статами; вне формации — wandering-дебаф (см. §5.8.1).
+
+**НЕ Damageable, НЕ в `skeleton_target` группе** — скелеты игнорируют маркер, это тактическое решение игрока, а не цель.
+
+**Константы и поля:**
+- `DEFENSE_MARKER_GROUP = "defense_marker"` — все маркеры в группе для быстрого lookup'а.
+- `SLOT_COUNT = 3` — защитников на одну линию обороны. Фиксированное (2026-05-14): два прикрывают, один тянет дальний фланг.
+- `@export slot_radius: float = 1.5` — радиус кольца слотов.
+- `@export facing_dir: Vector3 = Vector3.FORWARD` — направление обстрела (XZ).
+
+**API:**
+- `setup(world_pos, dir_xz)` — позиция + направление, нормализует facing_dir, перевыставляет визуальный arrow.
+- `get_slot_position(i: int) -> Vector3` — i=0/1/2: позиции −slot_radius / 0 / +slot_radius вдоль `right = facing × UP`. Центр — у самого маркера.
+- `destroy()` — emit `destroyed` + `queue_free`. `Camp` слушает, освобождает assigned-защитников.
+
+**Поведение защитника в слоте** (`DefenderGnome._tick_formation_slot`):
+1. Если маркер невалиден → `release_from_marker`, остановка.
+2. Если ещё далеко от слота (>`FORMATION_ARRIVAL=0.5м`) → марш на `FORMATION_MARCH_SPEED=3.0м/с` лицом по ходу.
+3. В слоте: стоит лицом в `marker.facing_dir`, `_resolve_target` ищет цель в конусе (с proximity-bypass'ом). Доворачивается на цель и стреляет.
+
+**Multi-marker.** Camp хранит `_defense_markers: Array[DefenseMarker]`. Каждое нажатие «На защиту» создаёт новый маркер — игрок может строить несколько линий обороны (например, по сторонам света). Каждый забирает следующие 3 ближайших СВОБОДНЫХ защитников. «Патруль» уничтожает все маркеры разом (`Camp.disband_all_defense_markers`).
+
+**Bell-alarm vs формация.** Bell имеет приоритет: защитник в формации, услышавший колокол, временно уходит к колоколу. После очистки зоны bell-mode истекает (BELL_LINGER_SECONDS=8с), защитник возвращается на слот.
+
+---
+
 ### 5.8.2 Армия — `Squad` (RefCounted), `SoldierGnome` (копейщик), `SoldierSystem` (autoload), `HandSquadAim` (aim-координатор)
 
-**Концепция.** Игрок мобилизует gatherer'ов в боевые отряды через `JournalPanel → «Армия»`. Призыв — лагерное действие (доступно только в `State.DEPLOYED`). Размобилизация — обратная конверсия в gatherer'а на текущей позиции, тоже только в лагере. Лучники (DefenderGnome) — НЕ призываются; они только штатные защитники у палаток. Призываются только melee-копейщики.
+**Концепция.** Игрок мобилизует gatherer'ов в боевые отряды через `JournalPanel → «Армия»`. Призыв — лагерное действие (доступно только в `State.DEPLOYED`). Размобилизация — обратная конверсия в gatherer'а на текущей позиции, тоже только в лагере. С 2026-05-15 в каталоге **два** типа: melee-копейщики (`pikeman`, формируют `Squad` с командной системой) и лучники-защитники (`defender`, присоединяются к общему пулу DefenderGnome без `Squad`). Диспетч по полю `gnome_class` каталога — см. §5.8.2.1.
 
 #### 5.8.2.1 SoldierSystem — каталог типов юнитов
 Autoload-сценарий, аналог SpellSystem. Single source of truth для параметров рекрутируемых юнитов.
 
 `SOLDIER_CATALOG: Dictionary` — id → Dictionary с полями:
 - `name`, `description`, `icon_color`
-- `squad_size: int` — единица призыва (5 для копейщиков). За один recruit-клик конвертится N gatherer'ов в N солдат.
+- `squad_size: int` — единица призыва (5 для копейщиков, 3 для защитников). За один recruit-клик конвертится N gatherer'ов в N юнитов.
 - `cost: Dictionary` (ResourcePile.ResourceType → amount) — ресурсы за весь отряд.
-- `scene: PackedScene` — что инстанцировать (extends SoldierGnome).
-- `stats: Dictionary` — параметры юнита (hp, enemy_detect_radius, attack_range, damage_min/max, cooldown_min/max, move_speed).
+- `scene: PackedScene` — что инстанцировать. Для `pikeman` — extends SoldierGnome; для `defender` — extends Gnome (DefenderGnome).
+- `stats: Dictionary` — параметры юнита (hp, enemy_detect_radius, attack_range, damage_min/max, cooldown_min/max, move_speed). Для defender — пустой: DefenderGnome имеет свои @export'ы, runtime-override не применяется.
+- **`gnome_class: StringName`** (этап 50) — маркер для диспетча в `Camp.recruit_squad`. Пустое/отсутствует → SoldierGnome flow (Squad, командная система). `&"defender"` → DefenderGnome flow (без Squad, round-robin по живым палаткам).
 
-Текущий каталог — только `pikeman`: hp=30, attack_range=2.2м, damage 22..32, cooldown 0.6..1.0с, move_speed=2.2.
+**Текущий каталог:**
+- `pikeman`: squad_size=5, cost {WOOD:8, IRON:5}. hp=30, attack_range=2.2м, damage 22..32, cooldown 0.6..1.0с, move_speed=2.2.
+- `defender` (этап 50, 2026-05-15): squad_size=3, cost {WOOD:6, IRON:4}, `gnome_class=&"defender"`. Stats читаются из `defender_gnome.tscn` (cone_vision_radius=35, attack_radius=22.5, и т.д. — см. §5.8.1).
 
 #### 5.8.2.2 Squad — RefCounted-сущность
 Не Node. Чистая логическая обёртка: `members: Array[SoldierGnome]`, `state`, `hold_position`, `_strict_move`. Каждый soldier держит ссылку (`_squad`), Camp хранит в `_squads` — пока живы, RefCounted alive.
@@ -1628,8 +1679,9 @@ UI-гейт на ПКМ: `Hand.is_pointer_over_ui()` — клик по HUD не 
 **Cancel:** Esc (`ui_cancel`) отменяет aim без команды. Повторный клик «Идти сюда» на той же карточке — тоже toggle-cancel.
 
 #### 5.8.2.5 Camp API для отрядов
-- `recruit_squad(soldier_type)` — гейтится `is_deployed() + can_afford(cost) + gatherer_count() ≥ squad_size + get_recruit_reserve()`. Reserve = `tent_count_alive() × RECRUIT_RESERVE_PER_TENT (=1)` — лагерь оставляет себе минимум 1 сборщика на каждую живую палатку, иначе экономика встанет (дизайнерское правило: армию строим излишком). UI расшифровывает нехватку как «оставьте сборщиков в лагере (нужно ещё N)». `get_recruit_reserve() -> int` — публичный getter, JournalPanel читает его для UX-текста.
-- Конвертирует gatherer'ов на месте, создаёт Squad.
+- `recruit_squad(soldier_type) -> Squad` — диспетч по `gnome_class` из каталога. Гейтится `is_deployed() + can_afford(cost) + gatherer_count() ≥ squad_size + get_recruit_reserve()`. Reserve = `tent_count_alive() × RECRUIT_RESERVE_PER_TENT (=1)` — лагерь оставляет себе минимум 1 сборщика на каждую живую палатку, иначе экономика встанет (дизайнерское правило: армию строим излишком). UI расшифровывает нехватку как «оставьте сборщиков в лагере (нужно ещё N)». `get_recruit_reserve() -> int` — публичный getter, JournalPanel читает его для UX-текста.
+- **SoldierGnome-flow** (default, `gnome_class` пуст): конвертирует gatherer'ов на месте, создаёт Squad, добавляет в `_squads`, emit `EventBus.squad_created`.
+- **DefenderGnome-flow** (`_recruit_defenders`, добавлено 2026-05-15, `gnome_class=&"defender"`): конвертирует N gatherer'ов в DefenderGnome'ов, распределяет round-robin по живым палаткам (`_parts`), **БЕЗ создания Squad**. Защитники присоединяются к общему пулу через `DEFENDER_GROUP`. После `setup()` явный `defender.enter_deployed()` — иначе свежий defender застревал в `FOLLOWING_CARAVAN` (см. §7.2 этап 50). Возвращает null (рекрут защитников не образует Squad), UI не использует возврат.
 - `dismiss_squad(squad)` — гейтится `is_deployed() + ВСЕ члены в `dismiss_radius=12м` от deploy_anchor`. Spawn нового gatherer'а на каждой позиции солдата + queue_free солдата.
 - `command_squad_hold(squad, pos)` / `command_squad_escort(squad)` / `command_squad_defend(squad)`.
 - `cheat_summon_squad(soldier_type)` — мимо всех гейтов, спавн кольцом 2м вокруг центра лагеря (X/Z от anchor/tower, Y от global_position камп'а — иначе спавн в воздухе при tower.y=3).
@@ -1649,7 +1701,17 @@ UI-гейт на ПКМ: `Hand.is_pointer_over_ui()` — клик по HUD не 
 - Визуал волны: только до границы зоны — out-of-zone отряды визуально «не слышат».
 
 #### 5.8.2.7 HUD squad-cards (правая колонка слева от RightPanel)
-ScrollContainer (PRESET_RIGHT_WIDE: anchor_top=0, anchor_bottom=1) → VBoxContainer с карточками. Lazy-create на первый `EventBus.squad_created`. Каждая карточка: title + 4 кнопки («Идти сюда», «За башней», «Защищать», «Распустить»). Все с `focus_mode = FOCUS_NONE` — иначе Space на сфокусированной кнопке параллельно «нажимал» бы её (помимо cast_super).
+ScrollContainer (PRESET_RIGHT_WIDE: anchor_top=0, anchor_bottom=1) → VBoxContainer с карточками. Lazy-create на первый `EventBus.squad_created`. Каждая squad-карточка: title + 4 кнопки («Идти сюда», «За башней», «Защищать», «Распустить»). Все с `focus_mode = FOCUS_NONE` — иначе Space на сфокусированной кнопке параллельно «нажимал» бы её (помимо cast_super).
+
+**Defender-карточка** (этап 50): постоянная карточка наверху списка squad'ов (move_child(card, 0)). Не привязана к Squad-объекту — отображает agregate-статус всех DefenderGnome'ов в лагере. Состав:
+- Header: красный swatch (Color(0.78, 0.2, 0.2)) + лейбл `«Защитники — N (в строю: M)»`. M — `Camp.defenders_in_formation_count()`, показывает сколько занято на маркерах. N−M = свободные под следующее «На защиту».
+- Sub-row: `«ур. N»` (squad level отряда).
+- Ряд 1 кнопок: **«На защиту»** (`HandBuildAim.start_defense_formation_aim()` — drag-direction режим, ЛКМ-drag даёт origin + facing; release вызывает `Camp.place_defense_formation`) / **«Патруль»** (`Camp.disband_all_defense_markers` — destroy всех маркеров, защитники к свободному патрулю).
+- Ряд 2: **«Расформировать (×3)»** (этап 50) — `Camp.disband_defender_squad`, отзывает до 3 защитников обратно в собирателей с 50%-возвратом ресурсов рекрута. Disabled когда `defender_count == 0`. Tooltip: «Возвращает до 3 защитников в собирателей. Возврат: 50% ресурсов рекрута.»
+
+**Multi-marker UX.** Каждое нажатие «На защиту» создаёт **новый** DefenseMarker и забирает следующие 3 свободных защитников. Игрок может построить несколько линий обороны (например, по сторонам света). Лейбл «(в строю: M)» помогает понять, сколько ещё свободных доступно.
+
+**MOUSE_FILTER на wrapper'ах** (фикс 2026-05-15): `_squad_scroll` / `_squad_panel` / card-PanelContainer / inner VBox/HBox'ы — все `MOUSE_FILTER_IGNORE`. Только сами Button'ы остаются `STOP` (дефолт). Без этого ScrollContainer'у дефолт STOP ловил hover в полосе 220×~всю_высоту справа, `Hand.is_pointer_over_ui()` через `gui_get_hovered_control()` возвращал не-null и блокировал каст заклинаний по всей правой полосе.
 
 ---
 
@@ -2935,6 +2997,35 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
     - **Balance-проходы v1..v5** (2026-05-10): магия суммарно ×1.82 от исходного damage'а. Финальные цифры в `SpellSystem.SPELL_CATALOG`. Лучник симметрично нерфнут на −20% (25..40 → 20..32). Slam ослаблен до utility (60→25 dmg, 5→3.5м radius, 0.5→0.7с cooldown) — magic должна оставаться основным DPS-инструментом.
     - **AOE falloff**: linear → sqrt-curve в `Fireball._apply_aoe` и `HandPhysicalSlam._slam_direction_and_falloff`. На 50% радиуса 71% damage'а (vs 50%), на 75% — 50% (vs 25%). Внешний пояс AOE перестал быть «бесполезным chip damage».
     - **Все balance-параметры в SpellSystem**. Раньше часть жила хардкодом @export'а в подмодулях (Firestorm burn, Super payload). Унифицировано: каждый подмодуль читает через `lvl = SpellSystem.get_current_level_data(id); lvl.get(key, fallback_export)`. @export'ы остались только для motion/feel (boost/homing/turn_rate) и visual'а — это не balance, это feel. Серии (Firestorm) и многоэтапные касты (Super carrier→burst→payloads) фиксируют значения в `_series_*` / `_resolved_*`: прокачка mid-cast не меняет числа активной серии.
+
+50. **Активная защита: формация, рекрут, балансировка, proximity-bypass** (2026-05-14…05-15).
+    Большая сессия по защитникам, превратившая их из «статичных лучников у палатки» в полноценный тактический инструмент. Несколько фронтов:
+
+    **(а) DefenseMarker + drag-direction aim.** `HandBuildAim.start_defense_formation_aim()` входит в новый direction-aim режим (отдельно от brush/single-point): ЛКМ-press ставит origin, drag визуализирует стрелку направления, release вызывает `Camp.place_defense_formation(origin, facing)`. Camp спавнит `DefenseMarker` (Node3D со scenes/defense_marker.tscn — флаг + arrow-меш), назначает 3 ближайших свободных DefenderGnome'а на слоты −slot_radius/0/+slot_radius перпендикулярно facing. `DefenderGnome._tick_formation_slot` ведёт защитника на слот (FORMATION_MARCH_SPEED=3м/с), потом держит лицом в `marker.facing_dir`. См. §5.8.1.1.
+
+    **(б) Multi-marker.** Каждый клик «На защиту» создаёт новый маркер, забирает следующие 3 свободных. Игрок строит несколько линий обороны (например, по сторонам). «Патруль» destroy'ит ВСЕ маркеры разом (`Camp.disband_all_defense_markers`). Дизайн отвергнут: «один большой маркер с динамическим slot_count = N свободных» — выбрана модель «много маркеров по 3» для гибкости.
+
+    **(в) Wandering-дебаф vs формация vs тревога.** `is_wandering()` возвращает true когда защитник НЕ в формации И НЕ на bell-режиме И НЕТ активного `_alarm_target`. В wandering применяются `WANDERING_INACCURACY_MULT` и `WANDERING_RANGE_MULT` поверх baseline. Стимул выстраивать формации, но при атаке защитник всё ещё рабочий — alarm от Skeleton'а на палатку/мирного гнома снимает дебаф. Без этого исключения «когда лагерь атакован — защитники слепые», что нелогично.
+
+    **(г) Балансировка точности.** Прежний разброс 1.5м базовый × 2.5 мульт_патруля = 3.75м у новичка → ~1% попадание в упор. Игрок: «вплотную мажут». Серия итераций:
+    - `base_inaccuracy_radius`: 1.5 → 0.4м (формация — ~64% попадание в упор по skeleton radius≈0.4м у новичка, ветеран 100 выстрелов — почти 100%).
+    - `WANDERING_INACCURACY_MULT`: 2.5 → 1.8 → 1.6 (дозум по запросу «+10% к свободному»). Wandering 0.72м → 0.64м у новичка (~39% в упор vs 64% formation).
+    - `WANDERING_RANGE_MULT`: 0.6 → 0.85 (срез дальности 15% вместо 40% — патруль реагирует на дальние угрозы как раньше формация).
+
+    **(д) Рекрут отряда защитников из «Армии».** Добавлен entry `&"defender"` в `SoldierSystem.SOLDIER_CATALOG`: squad_size=3, cost {WOOD:6, IRON:4}, `gnome_class=&"defender"`. `Camp.recruit_squad` диспетчит по gnome_class: для defender уходит в `_recruit_defenders` — конвертит 3 gatherer'ов в DefenderGnome'ов, распределяет round-robin по живым палаткам, **без Squad-объекта** (defender'ы работают индивидуально через DEFENDER_GROUP / tent-привязку / DefenseMarker). UI журнала читает счётчик через `Camp.get_recruit_count(id)` — диспетч по gnome_class на `defender_count()` vs `soldier_count(id)`.
+
+    **(е) Расформирование с возвратом 50%.** `Camp.disband_defender_squad()` отзывает до 3 защитников (приоритет: не в формации, затем по дистанции к лагерю), конвертит в gatherer'ов на месте через `_spawn_one_gnome` + `enter_deployed`, возвращает 50% ресурсов рекрута пропорционально converted (3 защитника из cost {6,4} → 3 wood + 2 iron). HUD-кнопка «Расформировать (×3)» в defender-карточке, disabled когда defender_count==0. Симметрично «Распустить» на squad-карточках копейщиков.
+
+    **(ж) Defender HUD card.** Постоянная карточка в squad-панели (move_child(card, 0) — всегда наверху). Header: красный swatch + «Защитники — N (в строю: M)». Sub-row: уровень отряда. Кнопки в двух рядах: «На защиту» / «Патруль» / «Расформировать». M считается через `Camp.defenders_in_formation_count()` — игрок видит, сколько ещё свободных под новый маркер.
+
+    **(з) Дефолтная популяция.** `defenders_per_tent: 1 из 4` (раньше 1 из 7). Геймдизайнер: «24 собирателя — избыточно». Сократили общую заселённость палатки с 7 до 4 жителей.
+
+    **Найденные баги в процессе:**
+    - **Свежий рекрутированный defender застревал в FOLLOWING_CARAVAN.** Причина: `Gnome.setup()` вызывает `_enter_in_tent`, у DefenderGnome это override на `enter_following_caravan` → state=FOLLOWING_CARAVAN. В этом стейте `_active_tick` идёт в caravan-ветку и **игнорирует** `_assigned_marker` (формация не работает в caravan). Оригинальные defender'ы спасала ветка `_start_deploy → enter_deployed` на всех _gnomes; рекрутированные мимо неё. Фикс: явный `defender.enter_deployed()` после `setup()` в `_recruit_defenders`.
+    - **Враг в упор был невидим для формации.** `Skeleton._perform_strike` явно НЕ emit'ит `skeleton_attacked_camp` на удар по защитнику (только палатка/мирный гном) — формация не получала сигнал. А cone-фильтр в `_scan_cone` отсеивал скелетов сзади/сбоку защитника. Скелет бил в упор, защитник стоял истуканом. Фикс: `PROXIMITY_OVERRIDE_RADIUS=4.0м` — враги ближе этой дистанции игнорируют cone-фильтр и в `_scan_cone` (новые цели), и в stale-валидации `_cached_target`. Защитник «чувствует дыхание на шее», доворачивается, отстреливается.
+    - **UI блокировал каст по всей правой полосе.** Squad-ScrollContainer + PanelContainer карточек по дефолту STOP — ловили hover в полосе 220×~всю_высоту справа, `Hand.is_pointer_over_ui()` через `gui_get_hovered_control()` возвращал non-null. Фикс: все wrapper'ы (scroll, panel, card, vbox, hbox) → `MOUSE_FILTER_IGNORE`, кнопки внутри остаются STOP (дефолт).
+
+    **Архитектурный итог.** Защитники теперь — три-режимная система: formation (полные статы, через DefenseMarker), wandering (с дебафом, стимул выстраивать), alarm/bell (полные статы, реакция на атаку). Рекрут unified с soldier-flow через diff'ed gnome_class. Multi-marker гибче чем «один большой» — игрок строит линии под местность.
 
 ### 7.3 Решённые ошибки
 
