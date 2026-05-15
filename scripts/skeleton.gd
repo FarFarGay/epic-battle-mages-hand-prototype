@@ -145,7 +145,12 @@ enum WanderPhase { RESTING, WANDERING }
 @export var lod_near_distance: float = 25.0
 ## Дистанция до камеры, дальше которой минимальная частота AI/vision.
 ## Между near и far — промежуточный уровень (~50% частоты).
-@export var lod_far_distance: float = 50.0
+## С 2026-05-15 расширено 50→80м: ловушки/мины, поставленные на расстоянии
+## > 50м от башни, не срабатывали — окружающие скелеты были FAR-LOD
+## (collision_layer=0, вне broad-phase, Area3D их не видит). Связано с
+## cap'ом zoom_max в camera_rig — игрок не может отзумиться дальше зоны,
+## где гарантированно работает физика. См. mine.gd FAR-fallback.
+@export var lod_far_distance: float = 80.0
 ## Период переоценки LOD-уровня (с). Дистанция меряется не каждый кадр —
 ## per-skeleton distance-чек на 100 врагов сам по себе нагрузка.
 @export var lod_check_interval: float = 0.5
