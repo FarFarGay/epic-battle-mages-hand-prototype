@@ -1,5 +1,5 @@
 class_name WatchBell
-extends Node3D
+extends StaticBody3D
 ## Сторожевой колокол — постройка-сторож. Гном-watcher внутри замечает
 ## приближение врагов в радиусе [alarm_radius] и эмитит [bell_alarmed].
 ## Camp слушает сигнал и отправляет двух ближайших защитников на помощь.
@@ -8,6 +8,13 @@ extends Node3D
 ## [Camp.SKELETON_TARGET_GROUP]) и атакуют по тому же приоритету что и
 ## палатки (гномы > здания). На hp=0 колокол разрушается, гном-watcher
 ## становится свободным gatherer'ом и бежит в лагерь (логика в Camp).
+##
+## **Physics body** (2026-05-15): StaticBody3D с CapsuleShape вокруг
+## post+bell. collision_layer = CAMP_OBSTACLE (32). До этого был Node3D
+## без коллизии — стрелы скелетов-лучников (MASK_HOSTILE_PROJECTILE
+## включает CAMP_OBSTACLE) пролетали сквозь колокол не нанося урон.
+## Melee-удары работали через Damageable.try_damage (group-based, не
+## зависит от физики). После фикса arrow.body_entered ловит колокол.
 ##
 ## **Гном внутри:** хранится как ссылка [_garrison_gnome]. На постройке
 ## Camp изымает gatherer'а из лагеря и привязывает; на разрушении —
