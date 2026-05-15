@@ -1,5 +1,5 @@
 class_name Mine
-extends Node3D
+extends StaticBody3D
 ## Мина-ловушка. Спавнится в воздухе от burst'а carrier'а (см. HandSpellMineScatter),
 ## падает на землю, после arming-задержки превращается в триггер.
 ##
@@ -9,14 +9,18 @@ extends Node3D
 ##             (соседняя мина, прохожий гном).
 ##   ARMING — приземлилась. arming_delay секунд защищает от само-цепной
 ##            реакции и от уже стоящих врагов в момент установки.
-##   ARMED — Area3D активна. На body_entered (любой в trigger_mask) — взрыв:
-##           ShapeQuery радиусом aoe_radius, damage всем Damageable.
+##   ARMED — Area3D активна. На body_entered (любой в trigger_mask) — взрыв.
+##           Также Damageable: любой урон в ARMED-фазе детонирует (Slam,
+##           Fireball AOE, Firestorm, Super, BurnPatch tick) — принцип
+##           симметрии взаимодействий 2026-05-15.
 ##
 ## Friendly-fire ON по дизайну: trigger_mask включает и ENEMIES и FRIENDLY_UNIT.
 ## Стратегический вес — игрок думает куда кидает.
 ##
-## Mine.tscn: Node3D + MeshInstance3D (визуал) + Area3D `TriggerArea` с
-## SphereShape3D (триггер-зона, обычно меньше aoe_radius — «педаль»).
+## Mine.tscn: StaticBody3D на слое ITEMS (видим для всех AOE-сил которые
+## маскируют ITEMS — Slam, Fireball, Firestorm, Super, BurnPatch — это
+## MASK_HAND_SLAM) + BodyShape (CylinderShape для damage-сканов) +
+## MeshInstance3D + Area3D TriggerArea (proximity-trigger зона).
 
 signal exploded(world_position: Vector3)
 
@@ -43,8 +47,10 @@ enum Phase { FALLING, ARMING, ARMED }
 @export_flags_3d_physics var trigger_mask: int = Layers.ENEMIES | Layers.COLD_ENEMY | Layers.FRIENDLY_UNIT
 ## Маска для AoE damage в момент взрыва. Шире чем trigger — мина бьёт всё
 ## что рядом, не только то что её активировало. Включает Tower и постройки —
-## friendly fire by design (дизайнерское решение 2026-05-13).
-@export_flags_3d_physics var aoe_damage_mask: int = Layers.ENEMIES | Layers.COLD_ENEMY | Layers.FRIENDLY_UNIT | Layers.ACTORS | Layers.CAMP_OBSTACLE | Layers.PALISADE_OBSTACLE
+## friendly fire by design (дизайнерское решение 2026-05-13). С 2026-05-15
+## добавлен ITEMS — взрыв одной мины повреждает соседние, цепная реакция
+## (мины Damageable, ARMED-мина в радиусе взрыва сама детонирует).
+@export_flags_3d_physics var aoe_damage_mask: int = Layers.ENEMIES | Layers.COLD_ENEMY | Layers.FRIENDLY_UNIT | Layers.ACTORS | Layers.CAMP_OBSTACLE | Layers.PALISADE_OBSTACLE | Layers.ITEMS
 
 @export_group("Visual")
 ## Скорость мигания в ARMED-фазе (циклы в секунду × 2π → радиан/сек).
@@ -64,6 +70,10 @@ enum Phase { FALLING, ARMING, ARMED }
 var _phase: int = Phase.FALLING
 var _velocity: Vector3 = Vector3.ZERO
 var _arming_timer: float = 0.0
+## Idempotency guard для _explode. Без него цепная реакция мин могла бы
+## дважды детонировать одну мину в одном кадре (chain через aoe_damage_mask
+## между перекрывающимися минами).
+var _exploded: bool = false
 ## Per-instance дубликат материала. Без duplicate'а мигание у одной мины
 ## мигало бы у всех (StandardMaterial3D шарится между инстансами сцены).
 var _material: StandardMaterial3D = null
@@ -79,6 +89,11 @@ func setup(spawn_pos: Vector3, initial_velocity: Vector3) -> void:
 
 
 func _ready() -> void:
+	# Damageable: ARMED-мина детонирует от любого источника урона
+	# (Slam, Fireball AOE, Firestorm shot, Super payload, BurnPatch tick).
+	# Принцип симметрии — урон по мине = триггер взрыва, без специальных
+	# случаев per-source. См. take_damage.
+	Damageable.register(self)
 	_trigger_area.collision_layer = 0
 	_trigger_area.collision_mask = trigger_mask
 	_trigger_area.monitoring = false  # включится после ARMING
@@ -128,9 +143,24 @@ func _on_body_entered(_body: Node) -> void:
 	_explode()
 
 
+## Damageable-контракт. Любой источник урона (Slam, Fireball, Firestorm, Super,
+## BurnPatch tick, цепной взрыв соседней мины) в ARMED-фазе детонирует мину.
+## В FALLING/ARMING — no-op (мина ещё «не активна», иначе burst-волна сама
+## могла бы сдетонировать соседок mid-fall'е, ломая весь паттерн раскидывания).
+func take_damage(amount: float) -> void:
+	if amount <= 0.0:
+		return
+	if _phase == Phase.ARMED:
+		_explode()
+
+
 ## AoE-взрыв: ShapeQuery радиусом aoe_radius, damage всем Damageable
-## в области. Эмитит exploded + queue_free.
+## в области. Эмитит exploded + queue_free. Идемпотентно через _exploded —
+## цепная реакция от соседних мин не вызывает повторного _explode.
 func _explode() -> void:
+	if _exploded:
+		return
+	_exploded = true
 	var space := get_world_3d().direct_space_state
 	var sphere := SphereShape3D.new()
 	sphere.radius = aoe_radius
