@@ -101,6 +101,10 @@ var _stage_elapsed: float = 0.0
 ## Кулдаун до следующей POI-волны. Берётся из stage.wave_interval, тикает
 ## пока активный POI не сменился/не остановился.
 var _wave_cd: float = 0.0
+## Кулдаун до следующего «разведчика» (одиночного скелета). Тикает
+## параллельно _wave_cd на активной стадии. Если stage.scout_interval=0 —
+## канал выключен (не тикаем, не спавним). Не консумит SpawnZone.waves_left.
+var _scout_cd: float = 0.0
 
 ## Таймер периодического мониторинга skeleton-в-safe-зоне (как раньше).
 var _safe_zone_check_cd: float = 0.0
@@ -355,6 +359,7 @@ func _on_camp_deployed(anchor: Vector3) -> void:
 	_stage_elapsed = 0.0
 	var first_stage := schedule.get_stage(0)
 	_wave_cd = first_stage.wave_interval if first_stage != null else 0.0
+	_scout_cd = first_stage.scout_interval if first_stage != null else 0.0
 	if debug_log and LogConfig.master_enabled:
 		var first_size: String
 		if first_stage == null:
@@ -391,6 +396,7 @@ func _clear_active_poi() -> void:
 	_stage_index = 0
 	_stage_elapsed = 0.0
 	_wave_cd = 0.0
+	_scout_cd = 0.0
 
 
 ## Тик активной осады. Stage advance + wave timer.
@@ -416,6 +422,14 @@ func _tick_active_poi(delta: float) -> void:
 			_spawn_legacy_poi_wave(stage.skeletons_per_wave)
 		_wave_cd = stage.wave_interval
 
+	# Scout-канал: одиночные «разведчики» между основными волнами. Параллельно
+	# _wave_cd, со своим интервалом. Если stage.scout_interval=0 — выключено.
+	if stage.scout_interval > 0.0:
+		_scout_cd -= delta
+		if _scout_cd <= 0.0:
+			_spawn_scout()
+			_scout_cd = stage.scout_interval
+
 	# Stage advance: только если есть следующая стадия. Последняя залипает.
 	if _stage_elapsed >= stage.duration and _stage_index + 1 < _active_schedule.stages.size():
 		_stage_index += 1
@@ -425,6 +439,9 @@ func _tick_active_poi(delta: float) -> void:
 		# темпу. Без этого пользователь получал бы «бесплатную паузу» на
 		# переходе стадий, что ломает ощущение нарастающей угрозы.
 		_wave_cd = minf(_wave_cd, next_stage.wave_interval) if next_stage != null else _wave_cd
+		# Scout_cd ресетим под новый темп — если новая стадия отключает scouts
+		# (=0) тиканье прекратится; иначе следующий разведчик через новый интервал.
+		_scout_cd = next_stage.scout_interval if next_stage != null else _scout_cd
 		if debug_log and LogConfig.master_enabled and next_stage != null:
 			# Для groups-driven стадий считаем сумму юнитов по всем группам;
 			# для legacy показываем skeletons_per_wave как раньше.
@@ -440,6 +457,34 @@ func _tick_active_poi(delta: float) -> void:
 			print("[WaveDirector] stage advance %d→%d (interval=%.0fс, %s)" % [
 				_stage_index - 1, _stage_index, next_stage.wave_interval, stage_size,
 			])
+
+
+## Спавн одиночного «разведчика» — параллельный канал микро-угроз.
+## Берёт случайную живую SpawnZone, ставит на нём 1 скелета, цель — ближайшая
+## палатка активного лагеря. НЕ консумит SpawnZone.waves_left (scouts не
+## расходуют budget зоны, иначе при scout_interval=15с зоны кончались бы
+## за пару минут). Если зон нет — silent skip.
+##
+## Дизайн: одиночка достаточно медленный/слабый чтобы рука обработала его
+## между сборкой ресурсов. На сложных стадиях добавляют темпа, но не
+## заменяют собой большие волны.
+func _spawn_scout() -> void:
+	if _spawner == null or _active_camp == null:
+		return
+	var zone: SpawnZone = _pick_random_live_zone()
+	if zone == null:
+		return
+	var origin := _pick_safe_point_in_zone(zone)
+	origin.y = _spawner.spawn_y
+	var target_part := _active_camp.nearest_part_to(origin)
+	if target_part == null:
+		return
+	var scouts := _spawner.spawn_group(skeleton_scene, 1, origin, 1.0)
+	_assign_forced_targets(scouts, target_part)
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] scout @ (%.0f, %.0f) → %s" % [
+			origin.x, origin.z, target_part.name,
+		])
 
 
 ## Legacy single-front POI-волна: группа из `count` скелетов из случайной
