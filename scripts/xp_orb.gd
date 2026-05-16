@@ -67,6 +67,13 @@ var _base_y: float = 0.0
 ## Куда лететь после активации магнита. None = ещё в IDLE.
 var _camp_target: Camp = null
 
+## Период авто-проверки попадания в зону добычи лагеря. Если орб в IDLE и
+## расстояние до развёрнутого Camp.deploy_anchor ≤ Camp.gather_radius —
+## автомагнит, без необходимости касания союзника. 0.2с (5Hz) дёшево даже
+## на 100+ орбах после стресс-волны (200×5 = 1000 distance²/с на N лагерей).
+const GATHER_SCAN_INTERVAL: float = 0.2
+var _gather_scan_timer: float = 0.0
+
 
 ## Орб ещё лежит и ждёт касания. `Gnome._scan_orb` использует это, чтобы
 ## не выбирать целью орб, который уже улетает к Camp'у (тогда побежал бы
@@ -114,6 +121,12 @@ func _physics_process(delta: float) -> void:
 		State.IDLE:
 			# Bobbing вокруг _base_y. Не трогаем X/Z — лежит на месте.
 			global_position.y = _base_y + sin(_life_elapsed * bobbing_speed + _bob_phase) * bobbing_amplitude
+			# Авто-магнит: если орб лежит в зоне добычи развёрнутого лагеря —
+			# летит к нему сам, без касания союзника. Throttled.
+			_gather_scan_timer -= delta
+			if _gather_scan_timer <= 0.0:
+				_gather_scan_timer = GATHER_SCAN_INTERVAL
+				_try_auto_magnetize_in_gather_zone()
 		State.MAGNETIZED:
 			_tick_magnetized(delta)
 
@@ -150,6 +163,32 @@ func _tick_magnetized(delta: float) -> void:
 		global_position = target_pos
 		return
 	global_position += to_target / dist * step
+
+
+## Сканит развёрнутые лагеря в группе CAMP_GROUP. Если орб в радиусе
+## gather_radius от deploy_anchor — активирует магнит к этому лагерю.
+## Дополнение к body_entered (магнит на касание союзника): орб в зоне
+## добычи притягивается даже если рядом никого. Дизайнерская идея 2026-05-16
+## — игроку не приходится водить гнома за орбом, своя территория = свой XP.
+func _try_auto_magnetize_in_gather_zone() -> void:
+	for c in get_tree().get_nodes_in_group(Camp.CAMP_GROUP):
+		if not is_instance_valid(c):
+			continue
+		var camp := c as Camp
+		if camp == null:
+			continue
+		# Только развёрнутый лагерь имеет осмысленный anchor. В каравне
+		# _deploy_anchor = ZERO (или старое значение от прошлого деплоя),
+		# зона добычи неактивна.
+		if not camp.is_deployed():
+			continue
+		var anchor: Vector3 = camp.deploy_anchor
+		var dx: float = global_position.x - anchor.x
+		var dz: float = global_position.z - anchor.z
+		var r: float = camp.gather_radius
+		if dx * dx + dz * dz <= r * r:
+			_activate_magnet(camp)
+			return
 
 
 ## Касание союзника — активируем магнит. Идемпотентно: повторное касание в
