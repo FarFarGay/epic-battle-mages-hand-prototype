@@ -69,7 +69,8 @@ const ACTION_BAR_FIXED_SUPER: Dictionary = {
 
 @export_node_path("Camp") var camp_path: NodePath
 
-@onready var _gnome_count_label: Label = $RightPanel/Margin/VBox/GnomeRow/CountLabel
+## Счётчик собирателей переехал в gatherer card (squad_panel, см.
+## _build_gatherer_card). RightPanel содержит только лучников/палатки/ресурсы.
 @onready var _defender_count_label: Label = $RightPanel/Margin/VBox/DefenderRow/CountLabel
 @onready var _tent_count_label: Label = $RightPanel/Margin/VBox/TentRow/CountLabel
 @onready var _vbox: VBoxContainer = $RightPanel/Margin/VBox
@@ -131,8 +132,23 @@ var _drag_state: Dictionary = {}
 ## живых + уровень отряда. Обновляется на _update_counts (0.25с) и
 ## EventBus.squad_leveled_up.
 var _defender_card_count_label: Label
-var _defender_card_level_label: Label
 var _defender_card_disband_btn: Button
+
+## Карточка гномов-собирателей (squad_panel, выше defender card). Показывает
+## счётчик живых gatherer'ов + кнопки переключения режима «Работа» (C) /
+## «Тревога» (V). Активный режим подсвечивается через font_color.
+var _gatherer_card_count_label: Label
+var _gatherer_work_btn: Button
+var _gatherer_alarm_btn: Button
+
+## Сколько защитников ставить в следующую линию обороны. Игрок настраивает
+## через +/− счётчик в defender card. Дефолт — текущее историческое 3.
+## Persistent между нажатиями «На защиту» — игрок может разбить отряд по
+## линиям выбранного размера.
+var _defense_slot_count: int = 3
+var _defense_slot_label: Label
+var _defense_slot_minus_btn: Button
+var _defense_slot_plus_btn: Button
 
 ## Порядок и метаданные отображения ресурсов в правой панели. Пять типов из
 ## ResourcePile.ResourceType, кроме GENERIC (legacy-ящик, не геймплейный).
@@ -149,10 +165,10 @@ func _ready() -> void:
 	if not camp_path.is_empty():
 		_camp = get_node_or_null(camp_path) as Camp
 	_build_tower_stats()
-	_build_squad_row()
 	_build_resources_rows()
 	_build_journal_button()
 	_build_action_bar()
+	_build_gatherer_card()
 	_build_defender_card()
 	_update_counts()
 	# Sync с текущим состоянием Camp (на случай позднего hookup или сцены
@@ -166,8 +182,11 @@ func _ready() -> void:
 	EventBus.pending_upgrade_choices_changed.connect(_refresh_journal_badge)
 	EventBus.resources_changed.connect(_on_resource_changed)
 	EventBus.collection_mode_changed.connect(_refresh_mode_label)
+	EventBus.collection_mode_changed.connect(_refresh_gatherer_mode_buttons)
 	if is_instance_valid(_camp):
-		_refresh_mode_label(_camp.get_collection_mode())
+		var current_mode: int = _camp.get_collection_mode()
+		_refresh_mode_label(current_mode)
+		_refresh_gatherer_mode_buttons(current_mode)
 
 	# Tower stats: подписка на сигналы + начальный sync. Tower может ready'ться
 	# раньше HUD'а — тогда initial emit из его _ready уйдёт «в пустоту»;
@@ -190,45 +209,81 @@ func _ready() -> void:
 
 ## Строит SquadRow программно и докидывает в существующий VBox правой панели.
 ## Рисуем сами, чтобы не править .tscn-файл — добавляется одной строкой кода.
-func _build_squad_row() -> void:
-	if _vbox == null:
-		return
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	_vbox.add_child(row)
 
-	var icon := ColorRect.new()
-	icon.custom_minimum_size = Vector2(20, 20)
-	icon.color = Color(1.0, 0.85, 0.2, 1.0)  # золото — squad XP
-	row.add_child(icon)
 
-	_squad_level_label = Label.new()
-	_squad_level_label.text = "ур. 0"
-	_squad_level_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_squad_level_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
-	_squad_level_label.add_theme_font_size_override("font_size", 14)
-	row.add_child(_squad_level_label)
+## Карточка отряда собирателей (gatherer'ов). Живёт в _squad_panel самой
+## первой — выше defender card и army squads. Показывает количество и
+## две кнопки переключения режима: «Работа» (бинд C) и «Тревога» (бинд V).
+## Активная кнопка визуально подсвечена через цвет шрифта.
+##
+## Без disband-кнопки: собиратели — base population лагеря, их рекрут идёт
+## через постройку «новая палатка» (отдельная конверсия), расформирование
+## не предусмотрено (некуда — они уже самый низкий «класс»).
+func _build_gatherer_card() -> void:
+	_ensure_squad_panel()
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Стиль карточки — коричневый border под цвет собирателей.
+	var card_box := StyleBoxFlat.new()
+	card_box.bg_color = Color(0.08, 0.08, 0.1, 0.78)
+	card_box.border_color = Color(0.7, 0.45, 0.25, 0.9)
+	card_box.set_border_width_all(2)
+	card_box.set_corner_radius_all(4)
+	card_box.content_margin_left = 6
+	card_box.content_margin_right = 6
+	card_box.content_margin_top = 4
+	card_box.content_margin_bottom = 4
+	card.add_theme_stylebox_override("panel", card_box)
 
-	# ProgressBar с overlay-Label поверх. min_size фиксирована, чтобы не
-	# конфликтовала с overall-шириной правой панели (190px минус Icon+Label).
-	_squad_xp_bar = ProgressBar.new()
-	_squad_xp_bar.custom_minimum_size = Vector2(80, 18)
-	_squad_xp_bar.show_percentage = false
-	_squad_xp_bar.min_value = 0.0
-	_squad_xp_bar.max_value = 1.0  # перенастроим под кривую при первом update
-	_squad_xp_bar.value = 0.0
-	row.add_child(_squad_xp_bar)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 4)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(vbox)
 
-	# Накладной Label с «X / Y» — текст по центру бара.
-	_squad_xp_label = Label.new()
-	_squad_xp_label.text = "0/0"
-	_squad_xp_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_squad_xp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_squad_xp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_squad_xp_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
-	_squad_xp_label.add_theme_font_size_override("font_size", 11)
-	_squad_xp_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_squad_xp_bar.add_child(_squad_xp_label)
+	# Header — цветной квадратик + название с счётчиком.
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 6)
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(header)
+	var swatch := ColorRect.new()
+	swatch.custom_minimum_size = Vector2(14, 14)
+	swatch.color = Color(0.7, 0.45, 0.25, 1.0)
+	header.add_child(swatch)
+	_gatherer_card_count_label = Label.new()
+	_gatherer_card_count_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_gatherer_card_count_label.add_theme_font_size_override("font_size", 13)
+	_gatherer_card_count_label.text = "Собиратели — —"
+	header.add_child(_gatherer_card_count_label)
+
+	# Ряд кнопок: «Работа [C]» / «Тревога [V]». Активный режим подсвечен.
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 4)
+	btn_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(btn_row)
+
+	_gatherer_work_btn = Button.new()
+	_gatherer_work_btn.text = "Работа [C]"
+	_gatherer_work_btn.focus_mode = Control.FOCUS_NONE
+	_gatherer_work_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_gatherer_work_btn.add_theme_font_size_override("font_size", 11)
+	_gatherer_work_btn.pressed.connect(_on_gatherer_work_pressed)
+	btn_row.add_child(_gatherer_work_btn)
+
+	_gatherer_alarm_btn = Button.new()
+	_gatherer_alarm_btn.text = "Тревога [V]"
+	_gatherer_alarm_btn.focus_mode = Control.FOCUS_NONE
+	_gatherer_alarm_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_gatherer_alarm_btn.add_theme_font_size_override("font_size", 11)
+	_gatherer_alarm_btn.pressed.connect(_on_gatherer_alarm_pressed)
+	btn_row.add_child(_gatherer_alarm_btn)
+
+	_squad_panel.add_child(card)
+	# Гарантируем первое место (выше defender card). Defender card строится
+	# СРАЗУ после нас (см. _ready), он сделает add_child вторым — порядок ок.
+	# move_child(0) на всякий случай: если когда-нибудь порядок _ready'ев
+	# изменится, gatherer останется на месте.
+	_squad_panel.move_child(card, 0)
 
 
 ## Постоянная карточка отряда защитников. Живёт в _squad_panel (там же где
@@ -279,18 +334,72 @@ func _build_defender_card() -> void:
 	_defender_card_count_label.text = "Защитники — —"
 	header.add_child(_defender_card_count_label)
 
-	# Sub-row с уровнем отряда (squad_level из Camp). Меньшим шрифтом,
-	# приглушённым цветом — как «подпись».
-	_defender_card_level_label = Label.new()
-	_defender_card_level_label.text = "ур. 0"
-	_defender_card_level_label.add_theme_color_override("font_color", Color(0.75, 0.75, 0.8, 1))
-	_defender_card_level_label.add_theme_font_size_override("font_size", 11)
-	vbox.add_child(_defender_card_level_label)
+	# Уровень + XP-бар. Squad XP curve общая для всего отряда защитников
+	# (не per-unit) — раньше эта полоска жила в правой панели рядом с
+	# ресурсами, перенесена сюда (2026-05-16) ближе к юниту, к которому
+	# относится. ProgressBar заполняется внутри текущего уровня
+	# (см. _refresh_squad_bar). Overlay-Label поверх показывает «X/Y».
+	var xp_row := HBoxContainer.new()
+	xp_row.add_theme_constant_override("separation", 6)
+	xp_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(xp_row)
+	_squad_level_label = Label.new()
+	_squad_level_label.text = "ур. 0"
+	_squad_level_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9, 1))
+	_squad_level_label.add_theme_font_size_override("font_size", 11)
+	_squad_level_label.custom_minimum_size = Vector2(36, 0)
+	xp_row.add_child(_squad_level_label)
+	_squad_xp_bar = ProgressBar.new()
+	_squad_xp_bar.custom_minimum_size = Vector2(0, 14)
+	_squad_xp_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_squad_xp_bar.show_percentage = false
+	_squad_xp_bar.min_value = 0.0
+	_squad_xp_bar.max_value = 1.0  # перенастроим под кривую при первом update
+	_squad_xp_bar.value = 0.0
+	xp_row.add_child(_squad_xp_bar)
+	# Накладной Label с «X/Y» поверх bar'а.
+	_squad_xp_label = Label.new()
+	_squad_xp_label.text = "0/0"
+	_squad_xp_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_squad_xp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_squad_xp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_squad_xp_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+	_squad_xp_label.add_theme_font_size_override("font_size", 10)
+	_squad_xp_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_squad_xp_bar.add_child(_squad_xp_label)
+
+	# Счётчик «Слотов: N» с +/− кнопками. Управляет _defense_slot_count —
+	# сколько защитников игрок хочет в следующей линии. Clamp 1..defender_count.
+	# Persistent между «На защиту» нажатиями.
+	var slot_row := HBoxContainer.new()
+	slot_row.add_theme_constant_override("separation", 4)
+	slot_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(slot_row)
+	_defense_slot_minus_btn = Button.new()
+	_defense_slot_minus_btn.text = "−"
+	_defense_slot_minus_btn.focus_mode = Control.FOCUS_NONE
+	_defense_slot_minus_btn.custom_minimum_size = Vector2(28, 22)
+	_defense_slot_minus_btn.add_theme_font_size_override("font_size", 13)
+	_defense_slot_minus_btn.pressed.connect(_on_defense_slot_minus_pressed)
+	slot_row.add_child(_defense_slot_minus_btn)
+	_defense_slot_label = Label.new()
+	_defense_slot_label.text = "Слотов: 3"
+	_defense_slot_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_defense_slot_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_defense_slot_label.add_theme_font_size_override("font_size", 12)
+	slot_row.add_child(_defense_slot_label)
+	_defense_slot_plus_btn = Button.new()
+	_defense_slot_plus_btn.text = "+"
+	_defense_slot_plus_btn.focus_mode = Control.FOCUS_NONE
+	_defense_slot_plus_btn.custom_minimum_size = Vector2(28, 22)
+	_defense_slot_plus_btn.add_theme_font_size_override("font_size", 13)
+	_defense_slot_plus_btn.pressed.connect(_on_defense_slot_plus_pressed)
+	slot_row.add_child(_defense_slot_plus_btn)
 
 	# Кнопки команд:
 	# «На защиту» → стартует BuildAim для DefenseMarker (drag-direction), игрок
-	#   ставит линию обороны → 3 ближайших СВОБОДНЫХ защитников идут в формацию.
-	#   Повторный клик создаёт второй маркер (вторую линию обороны) — следующие 3.
+	#   ставит линию обороны → _defense_slot_count ближайших СВОБОДНЫХ защитников
+	#   идут в формацию. Повторный клик создаёт второй маркер (следующие N).
 	# «Патруль» → отзывает всех с маркеров (destroy всех DefenseMarker'ов),
 	#   защитники возвращаются к свободному патрулю.
 	var btn_row := HBoxContainer.new()
@@ -331,20 +440,59 @@ func _build_defender_card() -> void:
 	_defender_card_disband_btn.pressed.connect(_on_defender_disband_pressed)
 	btn_row2.add_child(_defender_card_disband_btn)
 
-	# Вставляем первой — защитники всегда выше soldier-squad'ов в списке.
+	# Вставляем после gatherer card. Defender строится сразу после gatherer'а
+	# (см. _ready), index получится 1. Соответственно move_child(1) фиксирует
+	# позицию, даже если порядок _ready'ев когда-то изменится.
 	_squad_panel.add_child(card)
-	_squad_panel.move_child(card, 0)
+	_squad_panel.move_child(card, 1)
 
 
 ## «На защиту» — тактическая команда (не постройка). Стартует direction-aim
 ## для линии обороны: ЛКМ-drag задаёт origin + направление, на release
 ## защитники идут на формацию через Camp.place_defense_formation. Бесплатно.
+## Размер линии — _defense_slot_count (1..N, выставляется счётчиком ±).
 func _on_defender_defend_pressed() -> void:
 	var hand := _resolve_hand()
 	if hand == null or hand.build_aim == null:
 		push_warning("[HUD:Defender] hand/build_aim не резолвится")
 		return
-	hand.build_aim.start_defense_formation_aim()
+	hand.build_aim.start_defense_formation_aim(_defense_slot_count)
+
+
+## ± счётчика «Слотов»: меняют _defense_slot_count и обновляют label.
+## Бапы вверх/вниз с clamp 1..max(defender_count, 1). Если защитников 0 —
+## значение остаётся как было (всё равно «На защиту» disabled будет).
+func _on_defense_slot_minus_pressed() -> void:
+	_defense_slot_count = maxi(1, _defense_slot_count - 1)
+	_refresh_defense_slot_label()
+
+
+func _on_defense_slot_plus_pressed() -> void:
+	var max_slots: int = _defense_slot_max()
+	_defense_slot_count = mini(max_slots, _defense_slot_count + 1)
+	_refresh_defense_slot_label()
+
+
+## Максимально допустимое значение счётчика = defender_count лагеря
+## (но не меньше 1, чтобы при 0 защитников счётчик не показывал «Слотов: 0»).
+func _defense_slot_max() -> int:
+	if _camp == null or not is_instance_valid(_camp):
+		return 1
+	return maxi(1, _camp.defender_count())
+
+
+## Обновляет label + clamp _defense_slot_count к актуальному max. Зовётся
+## из _refresh_defender_card (на смену defender_count) и из ± нажатий.
+func _refresh_defense_slot_label() -> void:
+	if _defense_slot_label == null:
+		return
+	var max_slots: int = _defense_slot_max()
+	_defense_slot_count = clampi(_defense_slot_count, 1, max_slots)
+	_defense_slot_label.text = "Слотов: %d / %d" % [_defense_slot_count, max_slots]
+	if _defense_slot_minus_btn != null:
+		_defense_slot_minus_btn.disabled = _defense_slot_count <= 1
+	if _defense_slot_plus_btn != null:
+		_defense_slot_plus_btn.disabled = _defense_slot_count >= max_slots
 
 
 ## «Патруль» — отзывает всех защитников с маркеров (Camp.disband_all_defense_markers).
@@ -367,6 +515,48 @@ func _on_defender_disband_pressed() -> void:
 	_camp.disband_defender_squad()
 
 
+## Кнопки переключения режима собирателей. Camp.set_collection_mode эмитит
+## EventBus.collection_mode_changed → _on_collection_mode_changed обновит
+## визуал кнопок.
+func _on_gatherer_work_pressed() -> void:
+	if is_instance_valid(_camp):
+		_camp.set_collection_mode(Camp.CollectionMode.WORK)
+
+
+func _on_gatherer_alarm_pressed() -> void:
+	if is_instance_valid(_camp):
+		_camp.set_collection_mode(Camp.CollectionMode.ALARM)
+
+
+## Обновляет счётчик собирателей + подсветку активной кнопки. Дёргается
+## из _update_counts (0.25с) для счётчика и из _on_collection_mode_changed
+## для кнопок.
+func _refresh_gatherer_card() -> void:
+	if _gatherer_card_count_label == null:
+		return
+	if _camp == null or not is_instance_valid(_camp):
+		_gatherer_card_count_label.text = "Собиратели — —"
+		return
+	_gatherer_card_count_label.text = "Собиратели — %d" % _camp.gatherer_count()
+
+
+## Меняет цвет шрифта на кнопках, чтобы было видно активный режим:
+## активная — белая, неактивная — приглушённая. Цвет border'а тоже можно
+## было бы менять, но через theme override font_color проще и работает
+## кроссплатформенно.
+func _refresh_gatherer_mode_buttons(mode: int) -> void:
+	if _gatherer_work_btn == null or _gatherer_alarm_btn == null:
+		return
+	var active: Color = Color(1, 1, 0.7, 1)         # жёлтый — активный режим
+	var inactive: Color = Color(0.6, 0.6, 0.65, 1)  # серый — неактивный
+	if mode == Camp.CollectionMode.WORK:
+		_gatherer_work_btn.add_theme_color_override("font_color", active)
+		_gatherer_alarm_btn.add_theme_color_override("font_color", inactive)
+	else:
+		_gatherer_work_btn.add_theme_color_override("font_color", inactive)
+		_gatherer_alarm_btn.add_theme_color_override("font_color", active)
+
+
 ## Обновляет текст карточки защитников + disabled-флаг «Расформировать»-кнопки.
 ## Дёргается из _update_counts (0.25с).
 ##
@@ -377,16 +567,17 @@ func _refresh_defender_card() -> void:
 		return
 	if _camp == null or not is_instance_valid(_camp):
 		_defender_card_count_label.text = "Защитники — —"
-		_defender_card_level_label.text = "ур. 0"
 		if _defender_card_disband_btn != null:
 			_defender_card_disband_btn.disabled = true
 		return
 	var total: int = _camp.defender_count()
 	var in_formation: int = _camp.defenders_in_formation_count()
 	_defender_card_count_label.text = "Защитники — %d (в строю: %d)" % [total, in_formation]
-	_defender_card_level_label.text = "ур. %d" % _camp.get_squad_level()
+	# «ур. K» пишется через _refresh_squad_bar (см. squad_xp_changed signal),
+	# не здесь — общий источник истины для уровня + xp-бара.
 	if _defender_card_disband_btn != null:
 		_defender_card_disband_btn.disabled = not _camp.can_disband_defenders()
+	_refresh_defense_slot_label()
 
 
 ## Action bar по дну экрана. Diablo-style: горизонтальный ряд слотов,
@@ -907,13 +1098,13 @@ func _process(delta: float) -> void:
 
 func _update_counts() -> void:
 	if _camp == null or not is_instance_valid(_camp):
-		_gnome_count_label.text = "—"
 		_defender_count_label.text = "—"
 		_tent_count_label.text = "—"
+		_refresh_gatherer_card()
 		return
-	_gnome_count_label.text = "%d" % _camp.gatherer_count()
 	_defender_count_label.text = "%d" % _camp.defender_count()
 	_tent_count_label.text = "%d" % _camp.tent_count_alive()
+	_refresh_gatherer_card()
 	_refresh_defender_card()
 
 
