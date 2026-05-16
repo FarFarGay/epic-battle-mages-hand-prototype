@@ -297,6 +297,10 @@ func _ready() -> void:
 	Damageable.register(self)
 	Pushable.register(self)
 	add_to_group(GNOME_GROUP)
+	# Слам отталкивает гномов волной, но НЕ наносит им damage — иначе
+	# случайный хлопок убивал бы свой же отряд. См. Layers.SLAM_DAMAGE_IMMUNE_GROUP.
+	# Распространяется на DefenderGnome и SoldierGnome (extends Gnome, super._ready()).
+	add_to_group(Layers.SLAM_DAMAGE_IMMUNE_GROUP)
 	_knockback.friction = knockback_friction
 	# _effects_root: явный path → ноду; пустой/неразрешённый → fallback на
 	# current_scene. Камп родитель нам НЕ подходит — он мог бы освободиться

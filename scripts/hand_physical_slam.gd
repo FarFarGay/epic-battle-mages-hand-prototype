@@ -166,7 +166,10 @@ func _perform_slam() -> void:
 			continue
 		var velocity_change: Vector3 = hit.direction * slam_force * hit.falloff
 		Pushable.try_push(collider, velocity_change, slam_knockback_duration)
-		Damageable.try_damage(collider, slam_damage * hit.falloff)
+		# SLAM_DAMAGE_IMMUNE_GROUP: гномы получают push-волну, но не damage.
+		# Палатки/башня/скелеты/мины не в группе — урон им проходит как раньше.
+		if not Layers.is_slam_damage_immune(collider):
+			Damageable.try_damage(collider, slam_damage * hit.falloff)
 		affected_count += 1
 
 	# FAR-LOD скелеты отключены от broad-phase (CollisionShape3D.disabled=true,

@@ -155,6 +155,23 @@ static func is_hand_immune(target: Object) -> bool:
 	return target is Node and (target as Node).is_in_group(HAND_IMMUNE_GROUP)
 
 
+## Группа-маркер: цель НЕ получает damage от Slam (хлопка), но push/knockback
+## применяется как обычно. Дизайнерское решение (2026-05-16): хлопок — это
+## AOE friendly-fire-mistake, гномов не должно одним хлопком убивать.
+## Применяется в `HandPhysicalSlam._perform_slam`: после Pushable.try_push
+## делается проверка `is_slam_damage_immune` перед `Damageable.try_damage`.
+## Палатки/палисад/башня/скелеты НЕ в этой группе → им урон проходит.
+## Узкий scope только на Slam (не Flick): Flick — single-target chosen
+## action, дизайнерски «целюсь и щёлкаю», осознанный выбор.
+const SLAM_DAMAGE_IMMUNE_GROUP := &"slam_damage_immune"
+
+
+## True, если объект — Node, помеченный как иммунный к damage от Slam.
+## Push к нему всё равно применяется (волна отбрасывания).
+static func is_slam_damage_immune(target: Object) -> bool:
+	return target is Node and (target as Node).is_in_group(SLAM_DAMAGE_IMMUNE_GROUP)
+
+
 ## Группа-маркер: «soft-release» предметы. При отпускании рукой если её
 ## smoothed_velocity ниже порога (`HandPhysical.soft_release_velocity_threshold`),
 ## Hand пропускает применение impulse и кладёт предмет ровно там, где была
