@@ -63,6 +63,11 @@ var _relocating_bell: WatchBell = null
 ##   "defense_formation" — команда Camp.place_defense_formation (не постройка).
 ## _direction_origin = INF до press'а; после press'а — позиция.
 var _direction_aim_mode: String = ""
+## Желаемое количество слотов в линии обороны (только для
+## _direction_aim_mode == "defense_formation"). Заполняется в
+## start_defense_formation_aim, используется в _commit_direction_aim.
+## 0 → Camp возьмёт дефолт (DefenseMarker.DEFAULT_SLOT_COUNT = 3).
+var _defense_slot_count: int = 0
 var _direction_origin: Vector3 = Vector3.INF
 ## Визуал линии направления — стрелка от origin к курсору во время drag'а.
 var _direction_arrow: MeshInstance3D = null
@@ -254,10 +259,16 @@ func start_aim(building_id: StringName) -> void:
 		])
 
 
-## Запуск direction-aim'а для приказа «занять линию обороны». Это НЕ постройка
-## (нет cost, нет catalog'а), а тактическая команда — аналог «Идти сюда» для
-## squad'ов копейщиков. На commit вызывает Camp.place_defense_formation.
-func start_defense_formation_aim() -> void:
+## Запуск aim'а для приказа «занять линию обороны». Гибрид: короткий клик
+## (release ≈ press) → facing вычисляется автоматически наружу от центра
+## лагеря. Drag (release заметно дальше press'а) → facing = направление
+## drag'а. Перекрывает 90% случаев без UI-усложнения; explicit-facing
+## для edge case'ов (фланг, засада) делается естественно — просто тянешь
+## руку дальше.
+##
+## slot_count — число защитников на линию (1..N). 0 → дефолт
+## (DefenseMarker.DEFAULT_SLOT_COUNT = 3).
+func start_defense_formation_aim(slot_count: int = 0) -> void:
 	if not is_instance_valid(_hand):
 		push_warning("[Hand:BuildAim] start_defense_formation_aim — _hand не задан")
 		return
@@ -265,14 +276,15 @@ func start_defense_formation_aim() -> void:
 		cancel_aim()
 	_active_building = &"_defense_formation"  # маркер активного состояния, не из каталога
 	_aim_radius = 1.5
-	_direction_aim_mode = "defense_formation"
+	_direction_aim_mode = "defense_formation"  # drag-direction flow с auto-fallback на short-click
 	_direction_origin = Vector3.INF
+	_defense_slot_count = slot_count
 	_pre_aim_category = _hand.active_category
 	_hand.set_active_category(Hand.Category.BUILD_AIM)
 	_spawn_indicator()
 	if LogConfig.master_enabled:
-		print("[Hand:BuildAim] defense-formation aim старт, prev_category=%s" % [
-			Hand.Category.keys()[_pre_aim_category],
+		print("[Hand:BuildAim] defense-formation aim старт (click/drag hybrid) slots=%d, prev_category=%s" % [
+			slot_count, Hand.Category.keys()[_pre_aim_category],
 		])
 
 
@@ -391,12 +403,19 @@ func _update_direction_arrow(ground: Vector3) -> void:
 	_direction_arrow.scale = Vector3(1.0, 1.0, d)
 
 
+## Минимальная длина drag'а в метрах, при которой расцениваем жест как
+## explicit facing. Меньше — это «короткий клик», facing вычисляется
+## автоматически наружу от центра лагеря. 0.5м ≈ маленький drag, который
+## игрок мог сделать неосознанно при «обычном клике» — игнорируем.
+const DEFENSE_AUTO_FACING_DRAG_THRESHOLD: float = 0.5
+
 func _commit_direction_aim(ground: Vector3) -> void:
 	var origin: Vector3 = _direction_origin
 	var to_cursor: Vector3 = ground - origin
 	to_cursor.y = 0.0
+	var drag_length_sq: float = to_cursor.length_squared()
 	var facing: Vector3 = Vector3.FORWARD
-	if to_cursor.length_squared() > 0.0001:
+	if drag_length_sq > 0.0001:
 		facing = to_cursor.normalized()
 	# Очистим стрелку до dispatch'а — на любом исходе она больше не нужна.
 	if is_instance_valid(_direction_arrow):
@@ -413,15 +432,25 @@ func _commit_direction_aim(ground: Vector3) -> void:
 	# Dispatch по типу direction-aim'а.
 	match _direction_aim_mode:
 		"defense_formation":
-			var ok: bool = _camp.place_defense_formation(origin, facing)
+			# Гибрид click/drag: если drag слишком короткий — короткий клик,
+			# facing вычисляется автоматически наружу от центра лагеря.
+			# Иначе используем drag-direction как явный facing.
+			var is_short_click: bool = drag_length_sq < DEFENSE_AUTO_FACING_DRAG_THRESHOLD * DEFENSE_AUTO_FACING_DRAG_THRESHOLD
+			if is_short_click:
+				var camp_center: Vector3 = _camp.build_zone_center()
+				var to_pos: Vector3 = origin - camp_center
+				to_pos.y = 0.0
+				facing = to_pos.normalized() if to_pos.length_squared() > 0.0001 else Vector3.FORWARD
+			var ok: bool = _camp.place_defense_formation(origin, facing, _defense_slot_count)
 			if LogConfig.master_enabled:
-				print("[Hand:BuildAim] defense-commit @ (%.1f, %.1f) face=(%.2f, %.2f) → %s" % [
-					origin.x, origin.z, facing.x, facing.z,
+				print("[Hand:BuildAim] defense-commit @ (%.1f, %.1f) face=(%.2f, %.2f) slots=%d %s → %s" % [
+					origin.x, origin.z, facing.x, facing.z, _defense_slot_count,
+					"[auto]" if is_short_click else "[drag]",
 					"OK" if ok else "FAIL",
 				])
+			_defense_slot_count = 0  # сброс, дефолт на следующий вход
 		_:
-			# Legacy: построек с direction-aim сейчас нет, но если появятся —
-			# идут через try_build с params.
+			# Generic drag-direction для будущих фич (орудия с явным направлением).
 			var result: Dictionary = _camp.try_build(_active_building, {
 				"position": origin,
 				"facing_dir": facing,

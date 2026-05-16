@@ -287,9 +287,17 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 @export var initial_collection_priority_food: float = 1.0
 ## Радиус поиска ресурсов от deploy_anchor. Гном игнорирует кучи дальше этой
 ## дистанции — лагерь работает в «своём кругу», а не сканирует всю карту.
-## Хочешь дальше — двигай лагерь. 50м даёт зону диаметром 100м, для тестовой
-## карты ~150м radius'а это центральная половина.
-@export var gather_radius: float = 50.0
+## Хочешь дальше — двигай лагерь.
+##
+## С 2026-05-16 уменьшен 50→30м (в две итерации): на тестовой карте при 50м
+## все 4 ResourceZone попадали в радиус, и при истощении ближних (12-17м)
+## гномы шли к дальним (~32м) — игрок воспринимал это как «через всю карту».
+## Первая попытка с 20м оказалась слишком тесной — wood/food zones имеют
+## центры ~30м и ближайшие кучи в них на ~20м от anchor'а, обрезались
+## строгим > сравнением. 30м совпадает с build_radius (что застроишь — то
+## и гномы добывают), захватывает близкие куски всех 4 зон, при этом
+## ограничивает шатание по карте.
+@export var gather_radius: float = 30.0
 ## Масштаб stock-балансировки. Эффективный вес типа = base_weight / (1 + stock/SCALE)².
 ## При stock=SCALE вес делится на 4 (квадратичный штраф). Меньше SCALE →
 ## агрессивнее переключение, дефицит выкуривает гномов туда быстрее. Больше →
@@ -1929,7 +1937,10 @@ func _do_palisade_rebake() -> void:
 ##
 ## Спавнит DefenseMarker, назначает 3 ближайших свободных защитника. На
 ## marker.destroyed — освобождает их обратно.
-func place_defense_formation(world_pos: Vector3, facing: Vector3) -> bool:
+## Спавнит DefenseMarker и привязывает к нему `slot_count` ближайших
+## свободных защитников. slot_count = 0 → дефолт (DefenseMarker.DEFAULT_SLOT_COUNT).
+## HUD пробрасывает выбранное значение через HandBuildAim.
+func place_defense_formation(world_pos: Vector3, facing: Vector3, slot_count: int = 0) -> bool:
 	if _state != State.DEPLOYED:
 		if LogConfig.master_enabled:
 			print("[Camp] defense formation отменена — лагерь не развёрнут")
@@ -1946,18 +1957,20 @@ func place_defense_formation(world_pos: Vector3, facing: Vector3) -> bool:
 		push_error("Camp.place_defense_formation: scene не инстанцируется как DefenseMarker")
 		return false
 	get_tree().current_scene.add_child(marker)
-	marker.setup(world_pos, facing)
+	# 0 как «не задано» → дефолт. Положительные → ровно как игрок попросил.
+	var effective_count: int = slot_count if slot_count > 0 else DefenseMarker.DEFAULT_SLOT_COUNT
+	marker.setup(world_pos, facing, effective_count)
 	marker.destroyed.connect(_on_defense_marker_destroyed.bind(marker))
 	_defense_markers.append(marker)
 	_assign_defenders_to_marker(marker)
 	if LogConfig.master_enabled:
-		print("[Camp] Defense formation @ (%.1f, %.1f) face=(%.2f, %.2f), markers=%d" % [
-			world_pos.x, world_pos.z, facing.x, facing.z, _defense_markers.size(),
+		print("[Camp] Defense formation @ (%.1f, %.1f) face=(%.2f, %.2f) slots=%d, markers=%d" % [
+			world_pos.x, world_pos.z, facing.x, facing.z, effective_count, _defense_markers.size(),
 		])
 	return true
 
 
-## Подбирает [DefenseMarker.SLOT_COUNT] ближайших защитников к позиции маркера,
+## Подбирает marker.slot_count ближайших защитников к позиции маркера,
 ## ещё не назначенных в формацию, и привязывает их. Свободные = те у кого
 ## is_in_formation_slot() == false. Если защитников меньше нужного — занимаем
 ## сколько есть, остальные слоты остаются пустыми.
@@ -1973,19 +1986,19 @@ func _assign_defenders_to_marker(marker: DefenseMarker) -> void:
 		if def.is_in_formation_slot():
 			continue
 		candidates.append(def)
-	# Сортируем по дистанции до маркера (XZ). Берём первые SLOT_COUNT.
+	# Сортируем по дистанции до маркера (XZ). Берём первые slot_count.
 	var mp: Vector3 = marker.global_position
 	candidates.sort_custom(func(a: DefenderGnome, b: DefenderGnome) -> bool:
 		var da: float = (Vector3(a.global_position.x, mp.y, a.global_position.z) - mp).length_squared()
 		var db: float = (Vector3(b.global_position.x, mp.y, b.global_position.z) - mp).length_squared()
 		return da < db
 	)
-	var n: int = mini(candidates.size(), DefenseMarker.SLOT_COUNT)
+	var n: int = mini(candidates.size(), marker.slot_count)
 	for i in range(n):
 		candidates[i].assign_to_marker(marker, i)
 	if LogConfig.master_enabled:
 		print("[Camp] DefenseMarker assignment: %d из %d свободных защитников назначено (нужно %d)" % [
-			n, candidates.size(), DefenseMarker.SLOT_COUNT,
+			n, candidates.size(), marker.slot_count,
 		])
 
 
