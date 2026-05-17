@@ -25,6 +25,11 @@ var _elapsed: float = 0.0
 var _next_tick_at: float = 0.0
 var _ticks_done: int = 0
 
+## Свойство для FogOfWar.FOG_REVEAL_GROUP — рассеивание тумана в радиусе ×1.5
+## пока зона горит. По окончании duration BurnPatch queue_free'ится → автоматически
+## выходит из группы, область начинает зарастать туманом через CPU-decay.
+var fog_reveal_radius: float = 1.5
+
 @onready var _disk: MeshInstance3D = get_node_or_null("Disk") as MeshInstance3D
 
 
@@ -40,6 +45,7 @@ func setup(
 	_tick_interval = tick_interval
 	_duration = duration
 	_mask = mask
+	fog_reveal_radius = radius * 5.0
 	# Первый тик через interval, а не сразу: основной взрыв уже нанёс
 	# damage в этом же кадре, повторный мгновенный тик — явный double-hit.
 	_next_tick_at = tick_interval
@@ -50,6 +56,8 @@ func _ready() -> void:
 	# CylinderMesh с radius=0.5 (см. VISUAL_BASE_RADIUS), масштабируем.
 	if _disk != null:
 		_disk.scale = Vector3(_radius / 0.5, 1.0, _radius / 0.5)
+	# Регистрируемся в FogOfWar — рассеиваем туман пока горим.
+	add_to_group(FogOfWar.FOG_REVEAL_GROUP)
 
 
 func _physics_process(delta: float) -> void:

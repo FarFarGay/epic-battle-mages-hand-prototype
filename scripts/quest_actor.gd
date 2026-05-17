@@ -55,6 +55,11 @@ const POI_GROUP := &"poi_zone"
 ## кольцом строятся симметрично вокруг костра, не уезжают на пол-метра.
 @export var safe_radius: float = 12.0
 
+## Радиус рассеивания тумана от костра. Используется FogOfWar (FOG_REVEAL_GROUP).
+## Костёр виден издалека, vision вокруг него постоянно, даже без юнитов.
+## С 2026-05-18 расширен 14→25м — POI-костёр заметный «маяк» на карте.
+@export var fog_reveal_radius: float = 25.0
+
 ## Расписание осады. Если null — POI «мирный»: лагерь развернётся, но волны
 ## на него не идут. Если задан — WaveDirector проигрывает stages по порядку
 ## с момента camp_deployed. См. [WaveSchedule] для формата.
@@ -86,6 +91,8 @@ var _is_camp_deployed_here: bool = false
 func _ready() -> void:
 	# POI-зона: регистрация в группе для discovery'я Camp'ом и WaveDirector'ом.
 	add_to_group(POI_GROUP)
+	# Туман: костёр — постоянный источник рассеивания, fog_reveal_radius выше.
+	add_to_group(FogOfWar.FOG_REVEAL_GROUP)
 	_clone_log_material()
 	# Зафиксируем максимум амоунта (active-состояние). Все переключения —
 	# через amount_ratio, см. _smoke_amount_max в комменте выше.

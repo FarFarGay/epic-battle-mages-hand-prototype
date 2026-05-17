@@ -261,5 +261,9 @@ func _explode() -> void:
 	var fx_root: Node = get_parent()
 	if fx_root != null:
 		AoeVisual.spawn_explosion(fx_root, global_position, aoe_radius)
+	# Fog reveal: вспышка мины «выжигает» туман в широком радиусе ×5 от aoe
+	# на 3с (30 ticks). Импакт читается как полноценный «взрыв света»,
+	# освобождающий большую зону вокруг точки детонации.
+	FogOfWar.pulse_reveal(global_position, aoe_radius * 5.0, 30)
 	exploded.emit(global_position)
 	queue_free()

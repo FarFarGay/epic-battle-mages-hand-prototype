@@ -41,6 +41,11 @@ const TARGET_GROUP := &"skeleton_target"
 ## будущие) их игнорируют — стрелять в палисад/ворота бесполезно. Помечает
 ## себя сама сущность через `add_to_group(MELEE_ONLY_TARGET_GROUP)`.
 const MELEE_ONLY_TARGET_GROUP := &"melee_only_target"
+## Общая группа всех врагов (Skeleton + SkeletonArcher + будущие). Регистрация
+## в Enemy._ready — наследники получают автоматически. FogOfWar использует
+## для итерации всех врагов независимо от конкретного класса (раньше нужно
+## было итерировать SKELETON_GROUP + отдельно archer'ов).
+const ENEMY_GROUP := &"enemy"
 ## Размер cell'а в spatial-grid'е. 12м — компромисс между плотностью cell'ов и
 ## cost'ом запросов. Совпадает с типовым vision_radius — 3×3 cell'ов гарантированно
 ## покрывают диск vision'а.
@@ -152,6 +157,7 @@ func _ready() -> void:
 	# (значения литералами в .tscn — Godot хранит маски как ints).
 	Damageable.register(self)
 	Pushable.register(self)
+	add_to_group(ENEMY_GROUP)
 	# Группы выставлены прямо выше — assert один раз в _ready, а не каждый
 	# физкадр на каждом враге (был spam в editor-сборке при 50 скелетах).
 	assert(is_in_group(Damageable.GROUP), "Enemy: Damageable не зарегистрирован")

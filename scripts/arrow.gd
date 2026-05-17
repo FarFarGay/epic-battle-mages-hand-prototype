@@ -94,8 +94,16 @@ func _orient_along_velocity() -> void:
 	look_at(global_position + fwd, up)
 
 
+## Свойство для FogOfWar.FOG_REVEAL_GROUP — стрела тащит маленький круг
+## света вдоль траектории. Дружественные стрелы (defender/turret) дают
+## трассу видимости; вражеские (archer-скелет) — выдают своё местоположение
+## оборонщику через wisps на тропе. На queue_free группа очищается.
+var fog_reveal_radius: float = 3.0
+
+
 func _ready() -> void:
 	_hit_area.body_entered.connect(_on_body_entered)
+	add_to_group(FogOfWar.FOG_REVEAL_GROUP)
 
 
 func _physics_process(delta: float) -> void:

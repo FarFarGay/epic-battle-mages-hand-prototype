@@ -19,6 +19,7 @@
 [ext_resource type="Resource" uid="uid://bj8ej7jf1bubo" path="res://resources/wave_schedule_default.tres" id="18_schedule_default"]
 [ext_resource type="PackedScene" uid="uid://grassfield01" path="res://scenes/grass_field.tscn" id="19_grass_field"]
 [ext_resource type="Script" uid="uid://ca4r3f6w4pm3w" path="res://scripts/nav_region.gd" id="20_nav"]
+[ext_resource type="PackedScene" path="res://scenes/fog_of_war.tscn" id="21_fog"]
 
 [sub_resource type="NavigationMesh" id="NavMesh_main"]
 geometry_collision_mask = 33
@@ -139,3 +140,5 @@ resource_type = 3
 [node name="ResourceZone4" parent="." unique_id=1553489164 instance=ExtResource("18_dp3eg")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -27.68639, 0, -15.37766)
 resource_type = 4
+
+[node name="FogOfWar" parent="." unique_id=1234567890 instance=ExtResource("21_fog")]

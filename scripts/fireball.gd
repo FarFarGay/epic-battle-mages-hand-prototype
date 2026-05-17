@@ -77,6 +77,18 @@ var _burn_tick_interval: float = 0.5
 var _burn_duration: float = 3.0
 
 
+## Свойство для FogOfWar.FOG_REVEAL_GROUP — в полёте снаряд светит вокруг,
+## рассеивая туман. С 2026-05-17 радиус 6→14м — магия мощнее «прорезает»
+## мглу вдоль траектории, в полёте видно широкий коридор.
+var fog_reveal_radius: float = 14.0
+
+
+func _ready() -> void:
+	# Туман: ракета в полёте — мобильный источник света, рассеивает мглу
+	# вдоль траектории. После _explode queue_free снимает узел из группы.
+	add_to_group(FogOfWar.FOG_REVEAL_GROUP)
+
+
 ## Конфиг ракеты. Вызывает HandSpellFireball.on_press после instantiate'а.
 ## Boost-фаза создаёт стартовую дугу (выскакивает из башни вверх + slight
 ## forward, gravity пригибает). Homing-фаза тянет напрямую к target с
@@ -303,6 +315,12 @@ func _explode() -> void:
 			AoeVisual.spawn_dust(fx_root, origin)
 		else:
 			AoeVisual.spawn_explosion(fx_root, origin, _radius)
+		# Fog reveal: вспышка взрыва выжигает мглу в широком радиусе на 3с
+		# (30 ticks × 0.1с). После пульса CPU-decay медленно возвращает туман
+		# — общая видимость зоны ~30-40с после взрыва. Радиус ×5 от aoe —
+		# момент попадания читается как полноценный «взрыв света»,
+		# освобождающий большую зону.
+		FogOfWar.pulse_reveal(origin, _radius * 5.0, 30)
 		# Остаточное горение: статичная зона на месте взрыва, тикает damage
 		# через `_burn_duration` секунд. Спавним только если scene задана —
 		# чтобы можно было выключить burn полностью одним полем (null).
