@@ -72,6 +72,18 @@ enum State {
 @export var move_speed: float = 1.6
 @export var gravity: float = 20.0
 
+@export_group("Friendly separation")
+## Радиус соседского расталкивания. Гномы (включая subclass'ов — defender'ов
+## и soldier'ов) физически проходят сквозь друг друга (collision_mask=TERRAIN),
+## без soft-separation тяжело видеть кто где, особенно вокруг anchor-зоны или
+## слотов формации. 1.0м — два гнома (capsule radius 0.3) на ощутимом зазоре.
+@export var separation_radius: float = 1.0
+## Множитель скорости расталкивания относительно move_speed. 0 = выключено.
+## 0.3 — мягкий drift, основная траектория не ломается, но «один-на-одном»
+## не остаются. Defender'ы в формации (in_formation_slot) сепарацию пропускают
+## через override _should_apply_separation — иначе сошли бы со слотов.
+@export_range(0.0, 2.0) var separation_strength: float = 0.3
+
 @export_group("Behaviour")
 ## Дальность зрения гнома для XP-орбов (см. _scan_orb). Pile-ам vision_radius
 ## не нужен — гном ищет ближайший глобально, без cap'а. Орбы же исчезают за
@@ -610,6 +622,13 @@ func _physics_process(delta: float) -> void:
 		velocity = _knockback.apply_friction(velocity, delta)
 	else:
 		_active_tick(delta)
+		# Friendly-separation: после AI-velocity, прибавляем soft-drift от
+		# соседей. Гейт через виртуальный _should_apply_separation — DefenderGnome
+		# override'ит, чтобы защитники в формации не уезжали со слотов.
+		if separation_strength > 0.0 and _should_apply_separation():
+			var sep: Vector3 = _compute_friendly_separation()
+			velocity.x += sep.x
+			velocity.z += sep.z
 
 	if _lod_far:
 		# Cold-mode: position += velocity без физики/коллизий. Гном на
@@ -619,6 +638,38 @@ func _physics_process(delta: float) -> void:
 		global_position.z += velocity.z * delta
 	else:
 		move_and_slide()
+
+
+## Виртуальный hook: применять ли friendly-separation в текущем тике.
+## База — всегда true. DefenderGnome override'ит на `not is_in_formation_slot()`
+## (защитники в слоте формации не дрейфуют — стоят там где поставили).
+func _should_apply_separation() -> bool:
+	return true
+
+
+## Soft-drift от соседних гномов в радиусе separation_radius. Linear falloff
+## (близкий — сильнее). Используется всеми subclass'ами (Gnome / DefenderGnome /
+## SoldierGnome) через _physics_process в Gnome-базе. Per-frame стоимость:
+## N гномов × N соседей = O(N²); на типичных 30 гномах = 900 ops/тик, дёшево.
+func _compute_friendly_separation() -> Vector3:
+	var pos: Vector3 = global_position
+	var force: Vector3 = Vector3.ZERO
+	var r_sq: float = separation_radius * separation_radius
+	for n in get_tree().get_nodes_in_group(GNOME_GROUP):
+		if n == self or not is_instance_valid(n):
+			continue
+		var other := n as Node3D
+		if other == null:
+			continue
+		var to: Vector3 = pos - other.global_position
+		to.y = 0.0
+		var d_sq: float = to.length_squared()
+		if d_sq < 0.0001 or d_sq > r_sq:
+			continue
+		var dist: float = sqrt(d_sq)
+		var falloff: float = (separation_radius - dist) / separation_radius
+		force += (to / dist) * falloff
+	return force * (move_speed * separation_strength)
 
 
 ## Виртуальный hook — подклассы переопределяют свою активную AI-логику.

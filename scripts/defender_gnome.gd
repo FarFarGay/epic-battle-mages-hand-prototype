@@ -107,14 +107,10 @@ extends Gnome
 @export_group("")
 
 @export_group("Defender separation")
-## Личное пространство: если другой защитник в этом радиусе — наш дрейфует
-## вбок, чтобы не стояли «один на одном». Меньше capsule-радиуса × 4 = тесная
-## группа кучкой; больше 3м = гипер-разреженный строй. 1.5м — две капсулы
-## раздвинуты с зазором 1м.
-@export var separation_radius: float = 1.5
-## Сила сепарации как доля patrol_speed. 0.5 = гентл-дрейф (0.5 м/с при
-## касании), не ломающий прицел. 1.0+ — суетливо и не читается. 0 = выкл.
-@export_range(0.0, 2.0) var separation_strength: float = 0.5
+## Separation для защитников унифицирована с Gnome-базой (2026-05-17).
+## Поля separation_radius / separation_strength наследуются из Gnome.
+## Override _should_apply_separation() ниже — защитники в слоте формации
+## пропускают сепарацию, чтобы не уезжать со слотов.
 ## Штраф к «эффективной дистанции» цели за каждого уже-стреляющего по ней
 ## защитника (для распределения огня в _scan_cone). 0.5 = «целью в N метров
 ## с одним стрелком воспринимается как N×1.5 метра без стрелка». 0 = не
@@ -602,13 +598,10 @@ func _defender_combat_tick(delta: float) -> void:
 			else:
 				velocity.x = 0.0
 				velocity.z = 0.0
-			# Сепарация: дрейф вбок если соседний защитник прижался ближе
-			# separation_radius. Прибавляется к base velocity (стой / kite),
-			# чтобы лучники не стояли «один на одном». _facing на цели не
-			# меняется — выстрелы идут в правильную сторону.
-			var sep: Vector3 = _compute_separation_force()
-			velocity.x += sep.x
-			velocity.z += sep.z
+			# Friendly-separation применяется в Gnome._physics_process после
+			# _active_tick (см. Gnome.gd). Здесь не дублируем — defender
+			# в боевой ветке получает тот же soft-drift автоматически,
+			# гейт по is_in_formation_slot в _should_apply_separation override'е.
 			_attack_timer -= delta
 			if _attack_timer <= 0.0:
 				_fire_at(target)
@@ -943,33 +936,11 @@ func _count_aimers_on(target: Node3D) -> int:
 	return count
 
 
-## Сепарация: суммарный вектор отталкивания от ближайших защитников
-## внутри separation_radius. Linear falloff (близкий = сильнее). Применяется
-## к velocity в attack-ветке боевого тика — лучник стоит/пятится, но
-## дрейфует вбок если сосед прижался. Не ломает _facing (выстрелы по цели
-## идут как обычно).
-func _compute_separation_force() -> Vector3:
-	if separation_strength <= 0.0:
-		return Vector3.ZERO
-	var force: Vector3 = Vector3.ZERO
-	var radius_sq: float = separation_radius * separation_radius
-	var my_pos: Vector3 = global_position
-	for d in get_tree().get_nodes_in_group(DEFENDER_GROUP):
-		if d == self or not is_instance_valid(d):
-			continue
-		var other := d as Node3D
-		if other == null:
-			continue
-		var to_self: Vector3 = my_pos - other.global_position
-		to_self.y = 0.0
-		var d_sq: float = to_self.length_squared()
-		if d_sq > radius_sq or d_sq < 0.0001:
-			continue
-		var dist: float = sqrt(d_sq)
-		# Linear falloff: на касании (dist→0) сила = 1.0; на radius — 0.
-		var falloff: float = (separation_radius - dist) / separation_radius
-		force += (to_self / dist) * falloff
-	return force * (patrol_speed * separation_strength)
+## Override Gnome._should_apply_separation: защитники в слоте формации
+## остаются на месте (не сдвигаются soft-drift'ом). Свободные защитники
+## (патруль / alarm / нет цели) — drift включён, унифицирован с базой.
+func _should_apply_separation() -> bool:
+	return not is_in_formation_slot()
 
 
 ## Точка в конусе зрения? Сравниваем угол между _facing и направлением

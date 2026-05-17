@@ -698,7 +698,11 @@ func _ai_step(delta: float) -> void:
 	# кадре — экономия ~1ms vs прежнее «NEAR+MID». Если плотные кучи на MID
 	# станут визуально мешать, можно вернуть `_lod_level != LodLevel.FAR`.
 	# История: NEAR+MID → NEAR-only (этап 43, профайлер: 1.95ms / 105 calls).
-	if _lod_level == LodLevel.NEAR and _state == AttackState.APPROACH:
+	# 2026-05-17: убрал `_state == APPROACH` гейт — скелеты в WINDUP/STRIKE/
+	# COOLDOWN тоже расталкиваются. Иначе при атаке цели стоят в пирамидальной
+	# куче «5 замахов по одному гному вплотную», после avoidance — расходятся
+	# в полукольцо. Слабая просадка перфа (×~2 на calls) терпима на NEAR'е.
+	if _lod_level == LodLevel.NEAR:
 		_apply_neighbor_avoidance()
 	# MID-divisor компенсация: super._physics_process вызывает нас раз в N
 	# физкадров (на пропускаемых _physics_process делает early return). Один
