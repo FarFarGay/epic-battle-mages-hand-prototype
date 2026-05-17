@@ -40,8 +40,12 @@ const SOLDIER_CATALOG: Dictionary = {
 		# round-robin по живым палаткам (`Camp._recruit_defenders`).
 		"squad_size": 3,
 		# Cost — за весь отряд. Дерево + железо (древки + наконечники стрел).
-		# Дешевле копейщиков по абсолюту, но дороже per-юнит — лучник ценнее.
-		"cost": {ResourcePile.ResourceType.WOOD: 6, ResourcePile.ResourceType.IRON: 4},
+		# История: 6w+4i (старт) → 3w+2i (2026-05-17) — ждать рекрут было «прилично»,
+		# особенно после перехода стартовых защитников в «производятся за ресурсы».
+		# Снижение в 2× ускорило цикл «накопить → нанять» с ~30-60с до ~15-30с.
+		# Now defender дешевле per-юнит (1w+0.67i) чем pikeman (1.6w+1i) — по дизайну
+		# базовый юнит, дальняя статистика дешевле толстой melee-броня.
+		"cost": {ResourcePile.ResourceType.WOOD: 3, ResourcePile.ResourceType.IRON: 2},
 		"scene": DEFENDER_SCENE,
 		# Маркер для Camp.recruit_squad — диспатч в _recruit_defenders вместо
 		# обычного SoldierGnome-flow. Defender'ы используют свои @export'ы

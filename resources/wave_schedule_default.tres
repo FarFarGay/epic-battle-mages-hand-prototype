@@ -20,7 +20,7 @@ metadata/_custom_type_script = "uid://fqose6y31knl"
 [sub_resource type="Resource" id="Stage_0_recon"]
 script = ExtResource("2_stage")
 groups = Array[ExtResource("3_group")]([SubResource("Group_recon_a")])
-scout_interval = 1.0
+scout_interval = 50.0
 metadata/_custom_type_script = "uid://dyuckha78cek"
 
 [sub_resource type="Resource" id="Group_pressure_a"]

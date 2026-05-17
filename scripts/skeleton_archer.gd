@@ -222,6 +222,14 @@ func _perform_strike(target: Node3D) -> void:
 	arrow.damage = damage
 	arrow.speed = arrow_speed
 	arrow.setup(spawn, aim)
+	# Alarm-сигнал: outgoing shot по не-защитнику = атака лагеря, защитники
+	# реагируют через `_alarm_target` (override cone-фильтра). Параллелит melee
+	# `Skeleton._perform_strike` (см. skeleton.gd:1449). Без этого archer мог
+	# держаться 8-14м от защитника, оставаться вне 90°-конуса и стрелять
+	# безнаказанно — защитники не «слышали тетиву». Фильтр «наш лагерь»
+	# применяется на стороне получателя в `DefenderGnome._on_skeleton_attacked_camp`.
+	if not target.is_in_group(DefenderGnome.DEFENDER_GROUP):
+		EventBus.skeleton_attacked_camp.emit(self, target, target.global_position)
 	if debug_log and LogConfig.master_enabled:
 		var d: float = global_position.distance_to(target.global_position)
 		print("[Archer:%s] выстрел в %s (dist=%.1fм, dmg=%.1f)" % [name, target.name, d, damage])
