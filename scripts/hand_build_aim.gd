@@ -239,6 +239,11 @@ func toggle_aim_for(building_id: StringName) -> void:
 ## Запуск aim'а. Радиус кольца берётся из CAMP_BUILDING_CATALOG (поле
 ## `aim_radius` — preview визуала; не задано → 0, кольцо не рисуется).
 ## Для сторожевого колокола это [WatchBell.alarm_radius] (15м).
+##
+## Если в каталоге у постройки стоит флаг `requires_direction: true` — это
+## drag-direction flow с auto-fallback на короткий клик (наружу от лагеря),
+## аналогично defense-formation. Используется для построек с явным facing'ом
+## (стрелковый пост, будущие орудия). Иначе — обычный single-point aim.
 func start_aim(building_id: StringName) -> void:
 	if not is_instance_valid(_hand):
 		push_warning("[Hand:BuildAim] start_aim — _hand не задан")
@@ -248,14 +253,21 @@ func start_aim(building_id: StringName) -> void:
 	_active_building = building_id
 	var data: Dictionary = Camp.CAMP_BUILDING_CATALOG.get(building_id, {})
 	_aim_radius = float(data.get("aim_radius", 0.0))
-	_direction_aim_mode = ""  # обычный single-point aim
+	# `requires_direction` → direction-aim flow (drag для facing, короткий клик
+	# фолбэк на «наружу от лагеря»). Сама диспатч-ветка в _commit_direction_aim
+	# идёт по «_» — generic, она дёрнет Camp.try_build с position + facing_dir.
+	if data.get("requires_direction", false):
+		_direction_aim_mode = "_generic"
+	else:
+		_direction_aim_mode = ""
 	_direction_origin = Vector3.INF
 	_pre_aim_category = _hand.active_category
 	_hand.set_active_category(Hand.Category.BUILD_AIM)
 	_spawn_indicator()
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:BuildAim] aim старт для %s, radius=%.1f, prev_category=%s" % [
-			building_id, _aim_radius, Hand.Category.keys()[_pre_aim_category],
+		print("[Hand:BuildAim] aim старт для %s, radius=%.1f, direction=%s, prev_category=%s" % [
+			building_id, _aim_radius, str(_direction_aim_mode != ""),
+			Hand.Category.keys()[_pre_aim_category],
 		])
 
 
@@ -429,18 +441,19 @@ func _commit_direction_aim(ground: Vector3) -> void:
 		push_warning("[Hand:BuildAim] _camp не резолвится — commit прерван")
 		_finish_aim()
 		return
+	# Гибрид click/drag: короткий drag → facing вычисляется автоматически
+	# наружу от центра лагеря; явный drag → используем direction как facing.
+	# Это работает и для defense_formation, и для generic-построек (стрелковый
+	# пост и пр.), потому что игрок ожидает одинаковой UX-логики.
+	var is_short_click: bool = drag_length_sq < DEFENSE_AUTO_FACING_DRAG_THRESHOLD * DEFENSE_AUTO_FACING_DRAG_THRESHOLD
+	if is_short_click:
+		var camp_center: Vector3 = _camp.build_zone_center()
+		var to_pos: Vector3 = origin - camp_center
+		to_pos.y = 0.0
+		facing = to_pos.normalized() if to_pos.length_squared() > 0.0001 else Vector3.FORWARD
 	# Dispatch по типу direction-aim'а.
 	match _direction_aim_mode:
 		"defense_formation":
-			# Гибрид click/drag: если drag слишком короткий — короткий клик,
-			# facing вычисляется автоматически наружу от центра лагеря.
-			# Иначе используем drag-direction как явный facing.
-			var is_short_click: bool = drag_length_sq < DEFENSE_AUTO_FACING_DRAG_THRESHOLD * DEFENSE_AUTO_FACING_DRAG_THRESHOLD
-			if is_short_click:
-				var camp_center: Vector3 = _camp.build_zone_center()
-				var to_pos: Vector3 = origin - camp_center
-				to_pos.y = 0.0
-				facing = to_pos.normalized() if to_pos.length_squared() > 0.0001 else Vector3.FORWARD
 			var ok: bool = _camp.place_defense_formation(origin, facing, _defense_slot_count)
 			if LogConfig.master_enabled:
 				print("[Hand:BuildAim] defense-commit @ (%.1f, %.1f) face=(%.2f, %.2f) slots=%d %s → %s" % [
@@ -450,14 +463,16 @@ func _commit_direction_aim(ground: Vector3) -> void:
 				])
 			_defense_slot_count = 0  # сброс, дефолт на следующий вход
 		_:
-			# Generic drag-direction для будущих фич (орудия с явным направлением).
+			# Generic drag-direction для построек с requires_direction
+			# (стрелковый пост, будущие орудия).
 			var result: Dictionary = _camp.try_build(_active_building, {
 				"position": origin,
 				"facing_dir": facing,
 			})
 			if LogConfig.master_enabled:
-				print("[Hand:BuildAim] direction-commit %s @ (%.1f, %.1f) → %s / %s" % [
-					_active_building, origin.x, origin.z,
+				print("[Hand:BuildAim] direction-commit %s @ (%.1f, %.1f) face=(%.2f, %.2f) %s → %s / %s" % [
+					_active_building, origin.x, origin.z, facing.x, facing.z,
+					"[auto]" if is_short_click else "[drag]",
 					"success" if result.get("success", false) else "FAIL",
 					str(result.get("reason", "")),
 				])

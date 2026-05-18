@@ -2459,6 +2459,78 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 
 ---
 
+### 5.14 Туман войны — `scripts/fog_of_war.gd`, `shaders/fog_of_war.gdshader` (2026-05-17)
+
+**Tier 3 fog of war**: persistent visibility-текстура с медленным CPU-decay'ем + 9 stacked плоскостей на разной высоте для объёма + источники рассеивания (юниты, огонь, магия) + скрытие врагов вне зоны видимости.
+
+#### Архитектура
+
+**CPU visibility texture.** `Image 128×128 L8` (16K байт, 1.17м/пиксель на карте 300×300). Каждые `UPDATE_INTERVAL = 0.1с` (10Hz):
+1. **Decay**: все 16K байт × `DECAY_PER_TICK = 0.995` напрямую через `PackedByteArray` (без get_pixel). 50% яркость за 14с, 5% за 60с, 1% за ~90с.
+2. **Paint**: вокруг каждого источника — soft circle с linear falloff (`(1 - d/r)²`), max-blend (повышает но не понижает).
+3. `ImageTexture.update(image)` → GPU.
+4. `_update_enemy_visibility()` — все Enemy.ENEMY_GROUP сравниваются с visibility (hysteresis ON=0.4, OFF=0.2).
+
+**Shader sampling.** Shader-плоскости делят один `ShaderMaterial_fog` с `sampler2D vision_texture`. Per-fragment:
+- World→UV: `(world_xz + map_half) / (map_half × 2)`.
+- Read `visibility = texture(vision_texture, uv).r`.
+- Boundary wobble: noise шевелит границу только на кромке через колокол `4 × v × (1−v)` — внутренность (v=1) гарантированно прозрачна, снаружи (v=0) не шумит.
+- Height fade: `1 - smoothstep(0, fog_top_height, world_pos.y)` — плотный пол, тающий верх.
+- ALPHA = `fog_color.a × (1 − effective_vis) × density × height_alpha`.
+
+**9 stacked plane'ов** в `fog_of_war.tscn`: y = 0.05, 1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5, 12.0. `fog_top_height = 14м`. Камера под углом 55° видит длинный градиент от плотного пола до тающего верха — объёмная мгла, параллакс при движении камеры. Каждый слой носит чуть другой noise (через `world_pos.y * 0.04` offset).
+
+#### Источники рассеивания
+
+| Источник | Радиус | Тип |
+|---|---|---|
+| Tower (Tower.GROUP) | 45м | per-tick paint (постоянно) |
+| Camp.deploy_anchor | 220м | per-tick paint с **анимацией разгорания** smoothstep grow 0→full за 1.2с на `EventBus.camp_deployed` |
+| Gnome (gatherer) | 12м | per-tick paint |
+| DefenderGnome | 18м | per-tick paint |
+| SoldierGnome | 15м | per-tick paint |
+| QuestActor (POI костёр) | 25м (`fog_reveal_radius` @export) | FOG_REVEAL_GROUP |
+| BurnPatch (огонь на земле) | `radius × 5` (от Fireball.burn_radius) | FOG_REVEAL_GROUP |
+| Fireball в полёте | 14м (`fog_reveal_radius`) | FOG_REVEAL_GROUP |
+| Arrow в полёте | 3м | FOG_REVEAL_GROUP |
+| Fireball._explode | `radius × 5`, 30 ticks (3с активного paint'а) | `pulse_reveal()` API |
+| Mine._explode | `aoe_radius × 5`, 30 ticks | `pulse_reveal()` API |
+
+**FOG_REVEAL_GROUP** (`"fog_reveal"`): ноды в группе должны быть Node3D и (опционально) иметь свойство `fog_reveal_radius: float`. FogOfWar обходит группу каждый тик и рисует. Удобно для статических источников и долгоживущих эффектов.
+
+**`pulse_reveal(pos, radius, ticks)`** (static API): добавляет в очередь короткоживущую вспышку — paint каждый тик ticks раз, потом удаляется. Используется для одноразовых взрывов магии и мин. Параметр `ticks` × `UPDATE_INTERVAL` = длительность активной засветки; после неё CPU-decay медленно возвращает туман.
+
+**Camp grow-on-deploy.** `EventBus.camp_deployed` → FogOfWar запоминает время. В `_paint_vision_points` камп paint'ится с анимированным радиусом `VISION_RADIUS_CAMP × smoothstep(elapsed / CAMP_GROW_SECONDS)`. Параллельно спавнятся `camp_fire_particles.tscn` (80 GPU-искр × 2с lifetime, радиальный разлёт 6-11 м/с от центра, color ramp ярко-жёлтый → оранжевый → угасание). По истечении `CAMP_GROW_SECONDS = 1.2с` `particles.emitting = false` — искры дотлевают, vision остаётся постоянным.
+
+#### Сокрытие врагов
+
+`_update_enemy_visibility()` каждые 0.1с:
+- Для каждого Enemy в `Enemy.ENEMY_GROUP` сэмплирует `_vision_data` в его XZ-позиции.
+- Hysteresis: видимый скрывается на vis ≤ 0.2, скрытый показывается на vis ≥ 0.4. Между порогами — keep previous state.
+- `node.visible = false/true` — рендеринг отключается. Физика (AI, движение, коллизии, эмит сигналов) **продолжает работать** — скелет невидимо подходит к лагерю, scout-волна материализуется на границе vision'а.
+
+#### Публичный API
+
+- `FogOfWar.is_visible_at(pos: Vector3) -> bool` (static) — true если visibility ≥ 0.4. Для других систем (например, UI-маркеры над живыми врагами).
+- `FogOfWar.pulse_reveal(pos, radius, ticks)` (static) — короткоживущая вспышка.
+
+#### Перф
+
+- CPU: ~16K decay byte-ops × 10Hz = 160K/с + paint в радиусе ~10 пикселей × ~20 источников × 10Hz = ~20K/с. < 1мс/с total.
+- GPU: 9 layers × full-screen × shader (1 texture sample vision + 2 texture samples noise + ~10 math). На 1080p — около 2-4мс/frame на современной карте.
+- Enemy hiding: O(N) распределённо по 10Hz; на 500 врагов ~5K ops/с. Тривиально.
+
+#### Тюнинг (в инспекторе material_override на любом из 9 Plane'ов)
+
+- `fog_color`: цвет + base alpha (сейчас `(0.02, 0.02, 0.04, 1.0)` — почти чёрный, 100%).
+- `density_amount` 0.35 — вариация плотности от noise.
+- `boundary_wobble` 0.15 — рваная кромка vision'а.
+- `fog_top_height` 14м — где туман полностью тает по высоте.
+- `noise_scale_a/b` 0.012 / 0.045 — две частоты noise для parallax.
+- `scroll_speed_a/b` 0.0 / 0.0 — туман сейчас стоячий. Поставь >0 для лёгкого дрейфа.
+
+---
+
 ## 6. Управление и инпуты
 
 Регистрируются в `project.godot → [input]`:

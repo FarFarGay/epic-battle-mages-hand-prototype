@@ -131,6 +131,80 @@ static func spawn_dust(root: Node, pos: Vector3) -> void:
 	_schedule_queue_free(root.get_tree(), particles, DUST_LIFETIME + 0.2)
 
 
+## Искры-«разлёт горения» под рассеивание тумана (pulse). Используется
+## fireball._explode и mine._explode после `FogOfWar.pulse_reveal`. Идея —
+## визуальный сигнал «горение распространяется», как искры от загорающегося
+## костра лагеря (см. camp_fire_particles.tscn).
+##
+## Параметры:
+## `target_radius` — куда искры долетят (обычно = радиусу AOE-урона).
+## `speed` — скорость частиц м/с. Совпадает с FogOfWar.PULSE_SPREAD_SPEED:
+## фронт тумана и фронт искр движутся с одинаковой скоростью. Lifetime
+## вычисляется как target_radius / speed — искры умирают ровно когда
+## достигают края damage-зоны. С разбросом ±25% — край имеет ragged look.
+static func spawn_pulse_sparks(root: Node, pos: Vector3, target_radius: float, speed: float) -> void:
+	if root == null or target_radius <= 0.1 or speed <= 0.01:
+		return
+	var lifetime: float = target_radius / speed
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.28, 0.28)
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	mat.billboard_keep_scale = true
+	mat.albedo_color = Color(1.0, 0.7, 0.3, 1.0)
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.6, 0.2, 1.0)
+	mat.emission_energy_multiplier = 3.0
+	quad.material = mat
+	# Цветовой градиент: жёлто-белый → оранжевый → тёмный → прозрачный.
+	var grad_color := Gradient.new()
+	grad_color.offsets = PackedFloat32Array([0.0, 0.3, 0.8, 1.0])
+	grad_color.colors = PackedColorArray([
+		Color(1.0, 0.95, 0.55, 1.0),
+		Color(1.0, 0.6, 0.15, 1.0),
+		Color(0.6, 0.2, 0.05, 0.6),
+		Color(0.2, 0.05, 0.0, 0.0),
+	])
+	var grad_tex := GradientTexture1D.new()
+	grad_tex.gradient = grad_color
+	# Scale-curve: чуть растут на старте (warmth), затем гаснут в 0.
+	var scale_curve := Curve.new()
+	scale_curve.add_point(Vector2(0.0, 0.5))
+	scale_curve.add_point(Vector2(0.2, 1.0))
+	scale_curve.add_point(Vector2(0.7, 0.7))
+	scale_curve.add_point(Vector2(1.0, 0.0))
+	var scale_tex := CurveTexture.new()
+	scale_tex.curve = scale_curve
+	var ppm := ParticleProcessMaterial.new()
+	ppm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	ppm.emission_sphere_radius = 0.4
+	ppm.spread = 180.0
+	# flatness = 0.85 → почти горизонтальный разлёт (Y-компонента мала). Туман
+	# на земле, искры должны разлетаться в XZ-плоскости, не подниматься столбом.
+	ppm.flatness = 0.85
+	# Скорость задаётся caller'ом (общая со скоростью распространения тумана).
+	# ±25% — небольшой разброс, край искр не идеальное кольцо.
+	ppm.initial_velocity_min = speed * 0.75
+	ppm.initial_velocity_max = speed * 1.25
+	# Лёгкая «плавучесть» вверх — тепловой подъём. Совпадает с camp_fire_particles.
+	ppm.gravity = Vector3(0.0, 1.0, 0.0)
+	# Damping мягко тормозит к концу lifetime'а — искра не вылетает за
+	# target_radius по инерции.
+	ppm.damping_min = 1.0
+	ppm.damping_max = 2.0
+	ppm.color_ramp = grad_tex
+	ppm.scale_curve = scale_tex
+	ppm.scale_min = 1.0
+	ppm.scale_max = 1.6
+	# Кол-во искр пропорционально радиусу: больше зона — больше «пылинок»,
+	# плотность остаётся похожей. 8 искр на метр радиуса, мин 16, макс 64.
+	# (Damage-радиус обычно мелкий, 1.5..3.5м → ~12..28 искр.)
+	var amount: int = clampi(int(target_radius * 8.0), 16, 64)
+	_spawn_oneshot_particles(root, pos, ppm, quad, amount, lifetime, target_radius)
+
+
 ## Полноценный взрыв: ядро-вспышка (sphere) + огненные частицы (быстрые,
 ## ярко-оранжевые, разлетаются радиально) + дымные (медленнее, темнее,
 ## поднимаются вверх). Всё процедурно, без внешних ассетов. Замена для

@@ -247,6 +247,12 @@ func _perform_cast() -> void:
 	)
 	if burn_patch_scene != null:
 		fireball.setup_burn(burn_patch_scene, p_burn_radius, p_burn_dmg, p_burn_tick_interval, p_burn_duration)
+	# Большой одиночный файрбол: фиксированный 12м-pulse. Длительность
+	# вычисляется в fireball._explode от FogOfWar.PULSE_SPREAD_SPEED (10м/с)
+	# → ~1.2с плавного раскрытия. Огненный шквал НЕ зовёт setup_fog_pulse —
+	# его шоты используют дефолт (_radius × 7 ≈ 10м), серия не сливается в
+	# гигантскую засветку.
+	fireball.setup_fog_pulse(12.0)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Spell:Fireball] каст @ target=(%.1f, %.1f, %.1f)" % [target_pos.x, target_pos.y, target_pos.z])
 	spell_cast.emit(&"fireball", target_pos)

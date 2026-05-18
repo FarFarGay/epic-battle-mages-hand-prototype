@@ -25,10 +25,12 @@ var _elapsed: float = 0.0
 var _next_tick_at: float = 0.0
 var _ticks_done: int = 0
 
-## Свойство для FogOfWar.FOG_REVEAL_GROUP — рассеивание тумана в радиусе ×1.5
-## пока зона горит. По окончании duration BurnPatch queue_free'ится → автоматически
-## выходит из группы, область начинает зарастать туманом через CPU-decay.
-var fog_reveal_radius: float = 1.5
+## Свойство для FogOfWar.FOG_REVEAL_GROUP — было ×5 от радиуса горения,
+## давало стационарную засветку 7.5м поверх уже выгоревшего pulse-импакта.
+## Игрок читал это как «второй взрыв», добавляющий область после импактной
+## вспышки. С 2026-05-18 отключено (=0 → круг не рисуется, см. fog_of_war.gd
+## проверку `rr > 0.1`). BurnPatch теперь только наносит урон в зоне.
+var fog_reveal_radius: float = 0.0
 
 @onready var _disk: MeshInstance3D = get_node_or_null("Disk") as MeshInstance3D
 
@@ -45,7 +47,9 @@ func setup(
 	_tick_interval = tick_interval
 	_duration = duration
 	_mask = mask
-	fog_reveal_radius = radius * 5.0
+	# fog_reveal_radius намеренно НЕ выставляется (остаётся 0) — burn-зона
+	# даёт только урон, рассеивание тумана уже сделано pulse-импактом
+	# fireball/mine.
 	# Первый тик через interval, а не сразу: основной взрыв уже нанёс
 	# damage в этом же кадре, повторный мгновенный тик — явный double-hit.
 	_next_tick_at = tick_interval

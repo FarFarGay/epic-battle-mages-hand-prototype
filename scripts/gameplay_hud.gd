@@ -133,6 +133,10 @@ var _drag_state: Dictionary = {}
 ## EventBus.squad_leveled_up.
 var _defender_card_count_label: Label
 var _defender_card_disband_btn: Button
+## Сама карточка защитников (PanelContainer). Скрывается через .visible
+## когда у игрока 0 защитников — пока он не построит первого, карточка не
+## мозолит глаза. Появляется автоматически в _refresh_defender_card.
+var _defender_card: PanelContainer
 
 ## Карточка гномов-собирателей (squad_panel, выше defender card). Показывает
 ## счётчик живых gatherer'ов + кнопки переключения режима «Работа» (C) /
@@ -140,6 +144,8 @@ var _defender_card_disband_btn: Button
 var _gatherer_card_count_label: Label
 var _gatherer_work_btn: Button
 var _gatherer_alarm_btn: Button
+## Сама карточка собирателей (PanelContainer). Скрывается когда 0 gatherer'ов.
+var _gatherer_card: PanelContainer
 
 ## Сколько защитников ставить в следующую линию обороны. Игрок настраивает
 ## через +/− счётчик в defender card. Дефолт — текущее историческое 3.
@@ -222,6 +228,8 @@ func _ready() -> void:
 func _build_gatherer_card() -> void:
 	_ensure_squad_panel()
 	var card := PanelContainer.new()
+	_gatherer_card = card
+	card.visible = false  # старт скрыт, _refresh_gatherer_card покажет когда >0
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	# Стиль карточки — коричневый border под цвет собирателей.
@@ -296,6 +304,8 @@ func _build_defender_card() -> void:
 	# Гарантируем что _squad_panel создан до добавления нашей карточки.
 	_ensure_squad_panel()
 	var card := PanelContainer.new()
+	_defender_card = card
+	card.visible = false  # старт скрыт, _refresh_defender_card покажет когда >0
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# IGNORE на корпусе карточки — иначе тело PanelContainer ловит hover
 	# и Hand считает курсор «над UI» по всей карточке. Кнопки внутри
@@ -536,8 +546,13 @@ func _refresh_gatherer_card() -> void:
 		return
 	if _camp == null or not is_instance_valid(_camp):
 		_gatherer_card_count_label.text = "Собиратели — —"
+		if _gatherer_card != null:
+			_gatherer_card.visible = false
 		return
-	_gatherer_card_count_label.text = "Собиратели — %d" % _camp.gatherer_count()
+	var n: int = _camp.gatherer_count()
+	if _gatherer_card != null:
+		_gatherer_card.visible = n > 0
+	_gatherer_card_count_label.text = "Собиратели — %d" % n
 
 
 ## Меняет цвет шрифта на кнопках, чтобы было видно активный режим:
@@ -569,9 +584,13 @@ func _refresh_defender_card() -> void:
 		_defender_card_count_label.text = "Защитники — —"
 		if _defender_card_disband_btn != null:
 			_defender_card_disband_btn.disabled = true
+		if _defender_card != null:
+			_defender_card.visible = false
 		return
 	var total: int = _camp.defender_count()
 	var in_formation: int = _camp.defenders_in_formation_count()
+	if _defender_card != null:
+		_defender_card.visible = total > 0
 	_defender_card_count_label.text = "Защитники — %d (в строю: %d)" % [total, in_formation]
 	# «ур. K» пишется через _refresh_squad_bar (см. squad_xp_changed signal),
 	# не здесь — общий источник истины для уровня + xp-бара.

@@ -261,9 +261,17 @@ func _explode() -> void:
 	var fx_root: Node = get_parent()
 	if fx_root != null:
 		AoeVisual.spawn_explosion(fx_root, global_position, aoe_radius)
-	# Fog reveal: вспышка мины «выжигает» туман в широком радиусе ×5 от aoe
-	# на 3с (30 ticks). Импакт читается как полноценный «взрыв света»,
-	# освобождающий большую зону вокруг точки детонации.
-	FogOfWar.pulse_reveal(global_position, aoe_radius * 5.0, 30)
+	# Fog reveal: радиус ×7 от aoe (≈13м при aoe=1.8). Длительность раскрытия
+	# вычисляется от FogOfWar.PULSE_SPREAD_SPEED — фронт тумана движется со
+	# скоростью м/с, той же что у spark-частиц. Симметрично fireball._explode.
+	var mine_pulse_radius: float = aoe_radius * 7.0
+	var speed: float = FogOfWar.PULSE_SPREAD_SPEED
+	var grow_ticks: int = maxi(1, int(ceil(mine_pulse_radius / speed / 0.1)))
+	var total_ticks: int = grow_ticks + 1
+	FogOfWar.pulse_reveal(global_position, mine_pulse_radius, total_ticks, grow_ticks)
+	# Искры-разлёт «горения» только до aoe_radius (damage-зона). Скорость
+	# совпадает с фронтом тумана — оба фронта движутся синхронно.
+	if fx_root != null:
+		AoeVisual.spawn_pulse_sparks(fx_root, global_position, aoe_radius, speed)
 	exploded.emit(global_position)
 	queue_free()

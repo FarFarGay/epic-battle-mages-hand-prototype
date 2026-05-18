@@ -76,11 +76,23 @@ var _burn_damage_per_tick: float = 8.0
 var _burn_tick_interval: float = 0.5
 var _burn_duration: float = 3.0
 
+# Максимальный радиус fog-pulse на импакте. Дефолт = _radius × 7
+# (мелкие шоты огненного шквала → ~10м). Большой одиночный файрбол
+# (HandSpellFireball) переопределяет через setup_fog_pulse() (12м).
+# -1.0 = sentinel «не задан, использовать дефолт».
+# Кол-во тиков и grow вычисляется автоматически из FogOfWar.PULSE_SPREAD_SPEED
+# (общая скорость с spark-частицами).
+var _fog_pulse_max_radius: float = -1.0
+
 
 ## Свойство для FogOfWar.FOG_REVEAL_GROUP — в полёте снаряд светит вокруг,
-## рассеивая туман. С 2026-05-17 радиус 6→14м — магия мощнее «прорезает»
-## мглу вдоль траектории, в полёте видно широкий коридор.
-var fog_reveal_radius: float = 14.0
+## рассеивая туман. История: 14→26→40→55→32→8м. Концепция эволюционировала:
+## вначале хотелось «широкий коридор видимости» (55м), но дизайнер
+## переосмыслил — ракета не освещает половину карты, а РАЗРЕЗАЕТ темноту
+## тонкой линией; драматичная вспышка происходит на ИМПАКТЕ (×12 множитель в
+## pulse_reveal ниже), а не в полёте. Тонкий 8м-трейл читается как «росчерк
+## огня», импакт — как «взрыв света».
+var fog_reveal_radius: float = 8.0
 
 
 func _ready() -> void:
@@ -131,6 +143,12 @@ func setup(
 	# Drift-угол homing'а: random ± от заданной амплитуды. Знак случайный —
 	# фаербол уводит то влево, то вправо при каждом касте.
 	_homing_drift_angle = deg_to_rad(randf_range(-homing_drift_angle_deg, homing_drift_angle_deg))
+	if LogConfig.master_enabled:
+		print("[Fireball:setup] launch=(%.1f,%.1f,%.1f) target=(%.1f,%.1f,%.1f) radius=%.1f damage=%.1f" % [
+			launch_pos.x, launch_pos.y, launch_pos.z,
+			target_pos.x, target_pos.y, target_pos.z,
+			radius, damage,
+		])
 
 	var dx: float = target_pos.x - launch_pos.x
 	var dz: float = target_pos.z - launch_pos.z
@@ -143,6 +161,15 @@ func setup(
 	var sway: float = randf_range(-1.0, 1.0) * boost_drift_velocity
 	_velocity = Vector3.UP * boost_velocity_up + dir_xz * boost_velocity_forward + perp_xz * sway
 	_phase = Phase.BOOST
+
+
+## Опциональный override максимального радиуса fog-pulse. Без вызова —
+## дефолт = _radius × 7 (подходит для мелких шотов огненного шквала).
+## Длительность раскрытия вычисляется автоматически из
+## FogOfWar.PULSE_SPREAD_SPEED — фронт тумана движется с фиксированной
+## скоростью м/с, ticks = radius/speed.
+func setup_fog_pulse(max_radius: float) -> void:
+	_fog_pulse_max_radius = max_radius
 
 
 ## Опциональный конфиг остаточного горения после взрыва. Если scene не
@@ -184,6 +211,11 @@ func _physics_process(delta: float) -> void:
 				var desired_init: Vector3 = to_target_init.normalized()
 				var drift_basis := Basis(Vector3.UP, _homing_drift_angle)
 				_velocity = (drift_basis * desired_init) * _current_speed
+			if LogConfig.master_enabled:
+				print("[Fireball:boost->homing] age=%.2fс pos=(%.1f,%.1f,%.1f) dist_to_target=%.1fм" % [
+					_age, global_position.x, global_position.y, global_position.z,
+					to_target_init.length(),
+				])
 	else:
 		# Homing: speed растёт линейно (acceleration), direction плавно
 		# slerp'ится к target. Decay = 1-exp(-rate*dt) даёт frame-rate
@@ -211,9 +243,13 @@ func _physics_process(delta: float) -> void:
 	# пробили target.y вниз (страховка на случай overshoot'а в HOMING).
 	var to_target_3d: Vector3 = _target_pos - global_position
 	if to_target_3d.length_squared() <= HIT_PROXIMITY_SQ:
+		if LogConfig.master_enabled:
+			print("[Fireball:trigger] proximity age=%.2fс dist=%.2fм" % [_age, to_target_3d.length()])
 		_explode()
 		return
 	if _phase == Phase.HOMING and global_position.y <= _target_pos.y:
+		if LogConfig.master_enabled:
+			print("[Fireball:trigger] y-pierce age=%.2fс y=%.2f target_y=%.2f" % [_age, global_position.y, _target_pos.y])
 		_explode()
 
 
@@ -315,12 +351,29 @@ func _explode() -> void:
 			AoeVisual.spawn_dust(fx_root, origin)
 		else:
 			AoeVisual.spawn_explosion(fx_root, origin, _radius)
-		# Fog reveal: вспышка взрыва выжигает мглу в широком радиусе на 3с
-		# (30 ticks × 0.1с). После пульса CPU-decay медленно возвращает туман
-		# — общая видимость зоны ~30-40с после взрыва. Радиус ×5 от aoe —
-		# момент попадания читается как полноценный «взрыв света»,
-		# освобождающий большую зону.
-		FogOfWar.pulse_reveal(origin, _radius * 5.0, 30)
+		# Fog reveal: импакт-вздох тумана. Радиус: дефолт _radius × 7 (мелкие
+		# шоты шквала), override через setup_fog_pulse (большой файрбол → 12м).
+		# Pulse стартует с размера trail'а (8м у фаербола в полёте) — иначе
+		# первые 0.8с pulse «прячется» внутри ещё-прокрашенной trail-зоны и
+		# игрок видит «паузу» перед расширением.
+		# Длительность раскрытия = (max − start) / PULSE_SPREAD_SPEED — фронт
+		# движется со скоростью PULSE_SPREAD_SPEED м/с (общая со spark'ами).
+		var pulse_radius: float = _fog_pulse_max_radius if _fog_pulse_max_radius > 0.0 else _radius * 7.0
+		var pulse_start: float = fog_reveal_radius  # размер trail'а на момент импакта
+		var speed: float = FogOfWar.PULSE_SPREAD_SPEED
+		var grow_distance: float = maxf(pulse_radius - pulse_start, 0.5)
+		var grow_ticks: int = maxi(1, int(ceil(grow_distance / speed / 0.1)))
+		var total_ticks: int = grow_ticks + 1  # +1 финальный тик на полном радиусе
+		if LogConfig.master_enabled:
+			print("[Fireball:fog-pulse] origin=(%.1f,%.1f,%.1f) start=%.1fм→max=%.1fм speed=%.1fм/с ticks=%d grow=%d" % [
+				origin.x, origin.y, origin.z, pulse_start, pulse_radius, speed, total_ticks, grow_ticks,
+			])
+		FogOfWar.pulse_reveal(origin, pulse_radius, total_ticks, grow_ticks, pulse_start)
+		# Искры-разлёт «горения» только до радиуса damage'а. Скорость совпадает
+		# с скоростью фронта тумана — визуально оба фронта движутся синхронно,
+		# но искры останавливаются на _radius (damage-зона), туман продолжает
+		# расширяться до pulse_radius за тот же интервал времени.
+		AoeVisual.spawn_pulse_sparks(fx_root, origin, _radius, speed)
 		# Остаточное горение: статичная зона на месте взрыва, тикает damage
 		# через `_burn_duration` секунд. Спавним только если scene задана —
 		# чтобы можно было выключить burn полностью одним полем (null).
@@ -336,6 +389,10 @@ func _explode() -> void:
 					_burn_duration,
 					_explode_mask,
 				)
+				if LogConfig.master_enabled:
+					print("[Fireball:burn] spawn @ (%.1f,%.1f,%.1f) radius=%.1fм duration=%.1fс" % [
+						origin.x, origin.y, origin.z, _burn_radius, _burn_duration,
+					])
 
 	queue_free()
 

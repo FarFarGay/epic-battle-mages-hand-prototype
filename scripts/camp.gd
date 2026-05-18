@@ -80,6 +80,7 @@ const UPGRADE_LONG_DRAW := &"long_draw"
 const BUILDING_NEW_TENT := &"new_tent"
 const BUILDING_WATCH_BELL := &"watch_bell"
 const BUILDING_PALISADE := &"palisade"
+const BUILDING_ARCHER_POST := &"archer_post"
 
 ## Каталог апгрейдов отряда — id → отображаемые поля. JournalPanel читает
 ## name/description/level чтобы построить карточки. Эффекты применяются на
@@ -155,6 +156,28 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 		# palisade_segment.tscn (2м). Polyline AB длиной N разбивается на
 		# floor(N / segment_length) сегментов.
 		"segment_length": 2.0,
+	},
+	BUILDING_ARCHER_POST: {
+		"name": "Стрелковый пост",
+		"description": "Стационарный лучник на башенке. Видит дальше обычного защитника, но только в направлении взгляда — конус света медленно сканирует сектор. Игрок выбирает направление при установке: короткий клик — наружу от лагеря, drag — точное направление.",
+		"cost": {
+			ResourcePile.ResourceType.WOOD: 8,
+			ResourcePile.ResourceType.IRON: 3,
+		},
+		"deployed_only": true,
+		"repeatable": true,
+		# Изымает 1 свободного гнома (как watch_bell). Пост — это не палатка, а
+		# самостоятельное здание с встроенным лучником; гном «исчезает» из
+		# каравана пока пост стоит. На свёртке/разрушении гном возвращается
+		# обратно spawn'ом gatherer'а на месте поста (см. _on_archer_post_destroyed).
+		"requires_gatherer": true,
+		"requires_aim": true,
+		# direction-aim mode (drag для направления, короткий клик → наружу от
+		# лагеря). См. HandBuildAim — этот флаг переводит start_aim в
+		# direction-aim flow с generic dispatch.
+		"requires_direction": true,
+		# Preview-кольцо размером с площадку поста, ~1.5м.
+		"aim_radius": 1.5,
 	},
 }
 
@@ -251,6 +274,9 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 ## скрипт что и сегмент (общий hp/damage/группы). Если null — стыки
 ## остаются открытыми.
 @export var palisade_post_scene: PackedScene
+## Сцена стрелкового поста (ArcherPost). Спавнится через BUILDING_ARCHER_POST.
+## Если null — постройка молча провалится.
+@export var archer_post_scene: PackedScene
 ## Радиус «зоны строительства» от центра развёрнутого лагеря. Постройки,
 ## требующие интерактивного выбора места (флаг `requires_aim` в каталоге),
 ## не ставятся за пределами этого круга. Преимущественно для сторожевого
@@ -374,6 +400,11 @@ var _gnomes: Array[Gnome] = []
 ## Camp подписан на каждый на `bell_alarmed` (диспатч защитников) и `destroyed`
 ## (респавн gatherer'а на месте). Удаляются на destroy.
 var _bells: Array[WatchBell] = []
+## Активные стрелковые посты (ArcherPost), построенные через
+## BUILDING_ARCHER_POST. Camp подписан на каждый на `destroyed` (респавн
+## gatherer'а на месте, как с колоколом) и на pack — вычищает массив через
+## _dismantle_archer_posts(). Гном считается «внутри поста», пока пост стоит.
+var _archer_posts: Array[ArcherPost] = []
 ## Активные маркеры обороны, построенные через BUILDING_DEFENSE_MARKER.
 ## На спавн маркера: 3 ближайших защитника назначаются на слоты (через
 ## defender.assign_to_marker). На marker.destroyed: все назначенные
@@ -1773,6 +1804,8 @@ func _apply_building(id: StringName, params: Dictionary) -> bool:
 			return _build_new_tent()
 		BUILDING_WATCH_BELL:
 			return _build_watch_bell(params)
+		BUILDING_ARCHER_POST:
+			return _build_archer_post(params)
 	push_error("Camp._apply_building: нет handler для id=%s" % id)
 	return false
 
@@ -2158,6 +2191,91 @@ func _on_bell_destroyed(bell: WatchBell) -> void:
 		gnome.enter_deployed()
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp:Bell] разрушен, гном-сторож выжил и бежит в лагерь")
+
+
+## Эффект BUILDING_ARCHER_POST: спавнит стационарный стрелковый пост в
+## `params.position`, ориентированный по `params.facing_dir`. Гном уже изъят
+## из лагеря (через _consume_gatherer в try_build, как у колокола); пост сам
+## является стрелком, поэтому отдельную единицу не спавним. На разрушение —
+## респавн gatherer'а на месте поста (см. _on_archer_post_destroyed).
+func _build_archer_post(params: Dictionary) -> bool:
+	if archer_post_scene == null:
+		push_warning("Camp: archer_post_scene не задан — пост не строится")
+		return false
+	var pos: Vector3 = params.get("position", Vector3.INF)
+	var facing: Vector3 = params.get("facing_dir", Vector3.FORWARD)
+	if pos == Vector3.INF:
+		push_warning("Camp._build_archer_post: position не задана")
+		return false
+	if not is_in_build_zone(pos):
+		push_warning("Camp._build_archer_post: position вне build_radius — отказ")
+		return false
+	var post := archer_post_scene.instantiate() as ArcherPost
+	if post == null:
+		push_error("Camp._build_archer_post: scene не инстанцируется как ArcherPost")
+		return false
+	# Якорь в current_scene (как WatchBell) — пост переживёт queue_free Camp'а
+	# и не двигается с лагерем. Setup ставит позицию + direction.
+	get_tree().current_scene.add_child(post)
+	post.setup(pos, facing, self)
+	post.destroyed.connect(_on_archer_post_destroyed.bind(post))
+	_archer_posts.append(post)
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp:ArcherPost] построен @ (%.1f, %.1f) face=(%.2f, %.2f)" % [
+			pos.x, pos.z, facing.x, facing.z,
+		])
+	return true
+
+
+## Пост разрушен (скелетами или магией) ИЛИ демонтирован при свёртке. В обоих
+## случаях: освобождаем «застрявшего» гнома — спавним gatherer'а на месте
+## поста, чтобы он добрался до палатки (или продолжил караван, если PACKING).
+##
+## Симметрично _on_bell_destroyed: ресурсы НЕ возвращаются (постройка
+## потрачена), но гном-«гарнизон» жив.
+func _on_archer_post_destroyed(post: ArcherPost) -> void:
+	_archer_posts.erase(post)
+	if gnome_scene == null:
+		return
+	var spawn_pos: Vector3 = post.global_position if is_instance_valid(post) else _deploy_anchor
+	# Выбираем «дом» для возвращающегося гнома — first alive tent. Если палаток
+	# нет (теоретически возможно при синхронном уничтожении лагеря) — гном не
+	# спавнится, как в bell-flow'е.
+	var tent: Node3D = null
+	for p in _parts:
+		if is_instance_valid(p):
+			tent = p
+			break
+	if tent == null:
+		if debug_log and LogConfig.master_enabled:
+			print("[Camp:ArcherPost] разрушен, но палаток нет — гном не возрождён")
+		return
+	var gnome := _spawn_one_gnome(gnome_scene, tent, "gatherer") as Gnome
+	if gnome == null:
+		return
+	gnome.global_position = spawn_pos
+	# В DEPLOYED — gatherer-flow, в PACKING — request_return сам подключится через
+	# _start_pack-цикл (но мы спавним ПОСЛЕ _start_pack, поэтому дёргаем
+	# request_return на месте).
+	if _state == State.DEPLOYED:
+		gnome.enter_deployed()
+	elif _state == State.PACKING_RETURNING:
+		gnome.request_return()
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp:ArcherPost] разрушен/демонтирован, гном-стрелок возвращается в лагерь")
+
+
+## Демонтаж всех активных постов. Вызывается из _start_pack: посты — мобильная
+## экипировка лагеря, при свёртке исчезают (см. дизайн-выбор «сворачивается
+## вместе с лагерем»). Каждый destroy триггерит _on_archer_post_destroyed,
+## который возвращает гнома обратно через spawn'а gatherer'а на месте.
+func _dismantle_archer_posts() -> void:
+	# Копируем массив — destroy() триггерит _on_archer_post_destroyed, который
+	# erase'ит из _archer_posts (модификация во время итерации иначе багает).
+	var snapshot: Array[ArcherPost] = _archer_posts.duplicate()
+	for post in snapshot:
+		if is_instance_valid(post):
+			post.take_damage(post.hp_max * 2.0)
 
 
 ## Эффект BUILDING_NEW_TENT: спавнит новую палатку и заселяет её жителями
@@ -2981,6 +3099,11 @@ func _start_pack() -> void:
 	# свёртывания, не должны засчитываться (лагерь уже не «принимает»).
 	if _anchor_drop_zone != null:
 		_anchor_drop_zone.monitoring = false
+	# Стрелковые посты — мобильная экипировка лагеря, при свёртке демонтируются.
+	# Каждый пост возвращает «застрявшего» гнома (spawn gatherer'а на месте),
+	# который сразу получит request_return ниже по циклу (или прямо из
+	# _on_archer_post_destroyed: PACKING_RETURNING-ветка).
+	_dismantle_archer_posts()
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] свёртка инициирована — ждём гномов")
 	for g in _gnomes:
