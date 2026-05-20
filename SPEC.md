@@ -937,6 +937,37 @@ static func spawn(
 - Material: тёмно-красный (`Color(0.7, 0.15, 0.2)`) с тёмно-красной emission. Визуально отличимо от оранжевой дружественной стрелы.
 - **Палисад блокирует стрелу** через PALISADE_OBSTACLE в маске — стена работает как укрытие. Высокие баллистические дуги могут перелетать через `palisade_segment.height = 1.5м` — это by design.
 
+#### 5.5.3.2 SkeletonGiant — `scenes/skeleton_giant.tscn`, `scripts/skeleton_giant.gd` (2026-05-19)
+
+**Тип корня:** `CharacterBody3D` с `class_name SkeletonGiant`. **Наследник `Skeleton`** (не Enemy напрямую — гиганту нужна вся melee-логика: lunge, AoE-strike, pose-tween, boids, target-load).
+
+**Концепция:** «боссовый» танк, прицеленный на Tower. Создан чтобы дать башне реальную угрозу — обычные скелеты воспринимались как «несерьёзные» из-за того что палатки/гномы перетягивали их агро. Гигант идёт строго к башне, игнорируя других целей.
+
+**Параметры (через @export в scene):**
+- `hp = 240.0` (×8 от Skeleton.hp=30) — танк, защитники долбят его 30+ секунд.
+- `move_speed = 1.6` (vs 2.7) — медленный, успевает развернуть оборону.
+- `attack_damage = 28.0` (vs 8.0) — серьёзный урон на удар. По Tower (1000 HP) ~2.8% за хит.
+- `attack_range = 2.6` (vs 1.5) — крупный gabar, AoE-радиус strike = `attack_range × 1.3 = 3.4м`.
+- `attack_cooldown = 1.6` (vs 1.0), `attack_windup = 0.55` (vs 0.4) — телеграфы, защитники успевают среагировать.
+- `vision_radius = 30` (vs 12) — видит Tower с любой разумной дистанции.
+- `lod_near_distance = 40` (vs 25) — должен быть виден в полной AI-частоте дальше обычного.
+- `shatter_fragment_count = 18` (vs 7) — большой shatter на смерть.
+
+**Визуал:** CapsuleShape3D radius=0.75 / height=3.4 (vs 0.4/2.0 у обычного — ≈2× крупнее). Собственный shared static material `_shared_giant_material`: тёмно-серый body `Color(0.42, 0.38, 0.32)` с багряной emission `Color(0.9, 0.25, 0.18)` × 0.4 — отличить от обычного beige-скелетного силуэта.
+
+**Tower-приоритет (override'ы):**
+- `_scan_target()` → возвращает `get_first_node_in_group(Tower.GROUP)` если жива; fallback на `super._scan_target()` (палатки/гномы) если башня мертва. **Игнорирует** `vision_radius` для Tower — гигант «знает где башня» с любой точки карты (это «boss-behavior»).
+- `get_active_target()` → разрешает Tower как валидную цель (базовая `Skeleton.get_active_target` отбрасывает не-в-TARGET_GROUP, а Tower там нет).
+- `_perform_strike(target)` → итерирует `Tower.GROUP` отдельно от super (Tower не в TARGET_GROUP, базовая её игнорирует) + вызывает `super._perform_strike()` для палаток/гномов в радиусе AoE.
+
+**Технический долг (не блокер):** `_scan_target` override возвращает Tower, но базовая `Skeleton._physics_process` каждый тик инвалидирует `_cached_target` (Tower не в TARGET_GROUP) → rescan каждый кадр. Для 1-2 гигантов это ~120 сканов/сек, копейки. Если масштабировать до 10+ гигантов — рефакторить в `Skeleton._target_still_valid(node) -> bool` виртуал.
+
+**Видимость сквозь туман:** гигант в `FogOfWar.FOG_REVEAL_GROUP` с `fog_reveal_radius = 9.0м`. Сам себе выжигает зону тумана → автоматически НЕ скрывается через `FogOfWar._update_enemy_visibility` (visibility у его позиции всегда > threshold от собственного stamp'а). Дизайнерское решение: игрок должен видеть гиганта издалека как «фокусную точку угрозы», а не получать неожиданный близкий контакт.
+
+**Группы:** `&"skeleton"` (наследует от Skeleton, входит в boids-avoidance) + `&"skeleton_giant"` (для будущего HUD-маркера/PerfHud) + `&"enemy"` + `&"damageable"` + `&"skeleton_target"`.
+
+**Спавн через WaveDirector:** см. §5.5.5 — параметры `giant_scene` и `giant_every_n_waves = 3`. Каждая 3-я POI-волна автоматически дополняет себя одним гигантом. Cheat-кнопка «Призвать гиганта» в Журнале (вкладка читы) для теста.
+
 #### 5.5.4 EnemySpawner — `scripts/enemy_spawner.gd` (Node3D в `main.tscn`)
 
 **Назначение:** низкоуровневый «как» — порождает врагов в заданных паттернах. Не имеет таймеров и фаз кампании (это уезжает в `WaveDirector` 5.5.5). Распределяет крупные спавны по нескольким физкадрам — без фрейм-спайка на старте волны.
@@ -1003,6 +1034,8 @@ WaveStage поддерживает обе модели одновременно:
 - Legacy: `skeletons_per_wave: int` — fallback когда `groups` пуст. WaveStage без `groups` (старые .tres) продолжают работать через legacy-ветку.
 
 **Scout-канал** (2026-05-16, `scout_interval: float = 0.0` в WaveStage): параллельный волнам канал микро-угроз. Если `> 0`, раз в N секунд WaveDirector спавнит одиночного скелета через `_spawn_scout()` (случайная live SpawnZone → 1 скелет → `forced_target` на ближайшую палатку). **НЕ консумит `SpawnZone.waves_left`** (иначе зоны кончались бы за пару минут при scout_interval=15с).
+
+**Giant-канал** (2026-05-19, `giant_scene: PackedScene` + `giant_every_n_waves: int = 3` экспорты WaveDirector'а): каждая N-я POI-волна дополняется спавном одного SkeletonGiant'а (см. §5.5.3.2) через `_spawn_giant()`. Внутренний счётчик `_wave_count` инкрементится в `_tick_active_poi` на каждом spawn'е основной волны; условие `_wave_count % giant_every_n_waves == 0` запускает дополнительный спавн. Гигант идёт в случайной live SpawnZone'е, forced_target = `_active_camp.get_tower()`. **НЕ консумит** `SpawnZone.waves_left` (бонус-юнит, не отнимает budget). Если `giant_every_n_waves = 0` или `giant_scene = null` — канал выключен. `cheat_spawn_giant()` для теста (кнопка «Призвать гиганта» в Журнале).
 
 Дизайнерский паттерн «фаза подготовки»: stage 0 с большим `wave_interval` (60-90с) и маленьким `scout_interval` (10-15с) — игрок строит/собирает, периодически рука занимается одиночками. Поздние стадии могут `scout_interval=0` (основной поток через групповые волны). `_scout_cd` инициализируется на `camp_deployed` из first_stage, переустанавливается на stage advance, сбрасывается на `_clear_active_poi`. Тикает только пока POI активна и `stage.scout_interval > 0`.
 
@@ -1679,8 +1712,8 @@ READY → APPROACH → WINDUP → LUNGE → DRIFT → RECOVERY → READY
 - **APPROACH** (`approach_max_speed=3.5`, `approach_accel_time=0.18`) — бежит к цели, скорость линейно с 0 до max, направление пересчитывается каждый кадр (re-aim). При `dist ≤ lunge_trigger_range=4.0м` → WINDUP. Лимит `max_approach_distance=9м` — отмена.
 - **WINDUP** (`LUNGE_WINDUP_DURATION=0.09с`) — статичная coiled-пауза перед взрывом. `velocity = 0`, направление обновляется на последний кадр (за 90мс цель могла сдвинуться). Тело tween'ится в `POSE_WINDUP=(1.3, 0.95, 0.6)` — вид сверху широкий овал поперёк, гном «припал как пружина». Без этой фазы рывок сливался бы с разгоном и читался как «продолжил ускоряться», а не «выстрелил копьём». Anticipation — обязательна даже когда цель уже в упор.
 - **LUNGE** (`lunge_speed=22 м/с`, фикс-дир) — молниеносный рывок (~6× approach_max_speed — резкий разрыв, глаз отделяет lunge от разгона как другое событие). Удар первым кадром в `attack_range=2.2м`. Продолжает лететь `lunge_pass_distance=1.6м` после удара по инерции («протыкает насквозь»). Тело снапает в `POSE_LUNGE=(0.6, 1.0, 1.7)` — extended-стрелка вдоль направления удара.
-- **DRIFT** (`drift_time=0.25с`) — резкое торможение поверх 22 м/с. Speed спадает по `pow(t, 0.6)` — медленный начальный спад («занос держит инерцию»). На входе в DRIFT поза tween'ится обратно в `POSE_NEUTRAL=(1,1,1)` за `POSE_RESTORE_TIME=0.22с`.
-- **RECOVERY** (`recovery_time=0.7с`) — стоит, отдыхает, уязвим. Окно расплаты для скелета 0.95с (drift 0.25 + recovery 0.7) — windup 0.32-0.48с укладывается дважды, один strike гарантированно, второй возможен при удачном тайминге. После — READY.
+- **DRIFT** (`drift_time=0.0с` с 2026-05-19) — раньше был 0.25с со skid'ом (speed спадал по `pow(t, 0.6)` от 22 до 0). Дизайнер заметил что копейщик «уезжает» по инерции и скелет не успевает второй strike. Сейчас `drift_time=0` → DRIFT-state проходит за 1 кадр с velocity=0 и сразу даёт RECOVERY. На входе в DRIFT поза tween'ится обратно в `POSE_NEUTRAL=(1,1,1)` за `POSE_RESTORE_TIME=0.22с`.
+- **RECOVERY** (`recovery_time=0.5с` с 2026-05-19) — стоит, отдыхает, уязвим. Раньше было 0.7с (drift+recovery = 0.95с); после убийства drift'а сократили до 0.5с — окно ровно под один скелет-windup (0.32-0.48с укладывается один strike в окно, второй уже за пределом). После — READY.
 
 Полный цикл: WINDUP 0.09 + LUNGE ~0.15 + DRIFT 0.25 + RECOVERY 0.7 ≈ 1.2с + cooldown 0.6-1.0с ≈ 1.8-2.2с между ударами.
 
@@ -3161,6 +3194,21 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
        Эффект: «Равномерно» даёт реально равные стоки независимо от расположения куч. «Больше дерева» даёт пропорцию ~2.2:1:1:1 в стоках (квадратичный penalty компрессирует raw-вес 3.67:1 до 2.2:1, что нормально для design intent «predпочитать, но не эксклюзивно»).
 
     **Архитектурный итог.** Раньше выбор цели — одна формула `d²/w²`, смешивающая тип и географию. Теперь — три раздельных шага: (1) что собирать (тип, стохастически от eff-весов с stock-balance), (2) где (ближайший pile этого типа в gather_radius), (3) fallback на старую weighted-формулу для edge case'ов. План реально работает как декларация дизайнера. См. также `[[feedback-symmetric-interactions]]` — те же принципы про «правила универсальны, асимметрию декларируй явно через группы».
+
+52. **Скелет-гигант, тюнинг копейщиков и Скрытие пустых HUD-карточек** (2026-05-19).
+    Геймдизайнер: «башне почти ничего не угрожает, скелеты воспринимаются как несерьёзные». Решение — добавить «боссового» танка, нацеленного именно на Tower.
+
+    **(а) SkeletonGiant.** Новый юнит, `extends Skeleton` (см. §5.5.3.2). HP 240 (×8), speed 1.6 (медленный), damage 28 (×3.5), range 2.6м, windup 0.55с. Mesh 2× крупнее (capsule r=0.75 / h=3.4), тёмно-серый body с багряной emission. **Tower имеет абсолютный приоритет**: `_scan_target` возвращает `Tower.GROUP[0]` если жива, игнорируя vision_radius (гигант «знает где башня»). `get_active_target` и `_perform_strike` extend'ят базу чтобы пропускать Tower через guardrails TARGET_GROUP. В `FOG_REVEAL_GROUP` с радиусом 9м — сам выжигает туман и видим сквозь fog (visibility у его позиции всегда выше threshold'а). Cheat-кнопка «Призвать гиганта» в Журнале.
+
+    **(б) Спавн каждые N волн.** WaveDirector.giant_every_n_waves = 3 + `_wave_count` инкремент в `_tick_active_poi`. Условие `_wave_count % N == 0` запускает `_spawn_giant()` — отдельный спавн в случайной live SpawnZone, forced_target = Tower активного POI, без consume waves_left (бонус-юнит). Не настраивается через `.tres` (как scout/groups), а через @export для прямолинейности — гигант это глобальный фоновый «таймер угрозы», не часть стадии.
+
+    **(в) Технический долг.** `SkeletonGiant._scan_target` возвращает Tower, но базовая `Skeleton._physics_process` каждый тик инвалидирует `_cached_target` (Tower не в TARGET_GROUP) → rescan каждый кадр. Для 1-2 гигантов на карте это ~120 сканов/сек, копейки. На 10+ — рефакторить в `Skeleton._target_still_valid(node) -> bool` виртуал.
+
+    **(г) Тюнинг копейщиков.** `drift_time` 0.25 → **0.0с** (skid после lunge убран, копейщик стоит сразу после страйка вместо «уезжания» по инерции). `recovery_time` 0.7 → **0.5с** (окно уязвимости короче, ровно под один скелет-windup ответный). Дизайнер: «копейщик слишком долго заваливается, скелет успевал ткнуть второй раз — стало читаться как тупой юнит». См. §5.8.2.
+
+    **(д) HUD: пустые карточки скрыты.** `_gatherer_card` и `_defender_card` стартуют `visible = false`, появляются автоматом когда счётчик > 0 в `_refresh_*_card`. До первой постройки/рекрута HUD чище.
+
+    **(е) Per-instance материалы для ArcherPost.** Баг: материалы в `archer_post.tscn` — SubResource, расшарены между ВСЕМИ инстансами поста. `_flash_damage()` модифицировал общий ресурс → все посты мигали красным при одном попадании, хотя HP per-instance. Фикс: `_localize_materials()` в `_ready` дублирует `material_override` на трёх мешах (PostLeg/Platform/ArcherMesh). Стоимость: 3 material instance per пост.
 
 ### 7.3 Решённые ошибки
 

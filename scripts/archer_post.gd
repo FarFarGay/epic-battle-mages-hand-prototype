@@ -153,9 +153,27 @@ func _ready() -> void:
 	# в одну и ту же точку → визуально как один пост.
 	_scan_phase = randf() * TAU
 	_build_cone_visual()
+	# Per-instance материалы: материалы в archer_post.tscn — SubResource'ы,
+	# расшаренные между ВСЕМИ инстансами поста. Без локализации _flash_damage()
+	# модифицирует общий ресурс → все посты на сцене мигают красным при одном
+	# попадании. Дублируем на старте, чтобы каждый имел свои.
+	_localize_materials()
 	# Сигнал EventBus.skeleton_attacked_camp — переключение на alarm-цель когда
 	# атакуют нас или объект нашего лагеря. См. _on_skeleton_attacked_camp.
 	EventBus.skeleton_attacked_camp.connect(_on_skeleton_attacked_camp)
+
+
+## Дублирует material_override на каждом меше, который flash'ится при уроне.
+## Без этого все посты с одной shared-материалкой мигают синхронно при ударе
+## по одному из них (баг shared-SubResource).
+func _localize_materials() -> void:
+	var node_paths: Array[String] = ["PostLeg", "Platform", "Head/ArcherMesh"]
+	for path in node_paths:
+		var mesh := get_node_or_null(path) as MeshInstance3D
+		if mesh == null:
+			continue
+		if mesh.material_override != null:
+			mesh.material_override = mesh.material_override.duplicate()
 
 
 func _exit_tree() -> void:
