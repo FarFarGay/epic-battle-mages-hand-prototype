@@ -37,6 +37,14 @@ enum Phase { IDLE, RUNNING }
 ## NodePath-override не валился на загрузке.
 @export_node_path("Node3D") var poi_root_path: NodePath
 @export var skeleton_scene: PackedScene
+## Сцена скелета-гиганта (танк, фокус на Tower). Спавнится каждые
+## [member giant_every_n_waves] волн как «боссовая» точка волны. Если null —
+## гиганты не спавнятся.
+@export var giant_scene: PackedScene
+## Каждые N волн POI-осады дополнительно спавнится 1 гигант (расчёт идёт
+## глобально по счётчику волн, не per-stage). 0 = выключено. 3 = первый
+## гигант на волне 3, далее на 6, 9 и т.д.
+@export var giant_every_n_waves: int = 3
 @export_group("")
 
 @export_group("Background tide (фоновая угроза)")
@@ -101,6 +109,10 @@ var _stage_elapsed: float = 0.0
 ## Кулдаун до следующей POI-волны. Берётся из stage.wave_interval, тикает
 ## пока активный POI не сменился/не остановился.
 var _wave_cd: float = 0.0
+## Глобальный счётчик POI-волн (incrementится каждый spawn). Используется для
+## гигантов: спавнится дополнительно если `_wave_count % giant_every_n_waves == 0`.
+## Сбрасывается на clear_active_poi (новая осада начинается с 1).
+var _wave_count: int = 0
 ## Кулдаун до следующего «разведчика» (одиночного скелета). Тикает
 ## параллельно _wave_cd на активной стадии. Если stage.scout_interval=0 —
 ## канал выключен (не тикаем, не спавним). Не консумит SpawnZone.waves_left.
@@ -256,6 +268,33 @@ func cheat_stress_2000() -> void:
 			print("[WaveDirector] cheat-stress: запущен async-спавн 2000 скелетов")
 
 
+## Спавн одного скелета-гиганта на лету. Делегирует в _spawn_giant'е, который
+## выбирает зону и forced_target = Tower. Если нет активного POI — гигант
+## всё равно спавнится в случайной live SpawnZone, но без forced_target
+## (он сам найдёт Tower через _scan_target override).
+func cheat_spawn_giant() -> void:
+	if giant_scene == null:
+		push_warning("[WaveDirector] cheat_spawn_giant: giant_scene не задан в инспекторе")
+		return
+	if _active_camp != null:
+		# Активная осада — используем стандартный pipeline (forced_target=Tower).
+		_spawn_giant()
+		return
+	# Нет активного лагеря — спавним вручную в любой live SpawnZone'е,
+	# гигант сам найдёт Tower через _scan_target.
+	if _spawner == null:
+		return
+	var zone: SpawnZone = _pick_random_live_zone()
+	if zone == null:
+		push_warning("[WaveDirector] cheat_spawn_giant: нет живых SpawnZone")
+		return
+	var origin := _pick_safe_point_in_zone(zone)
+	origin.y = _spawner.spawn_y
+	_spawner.spawn_group(giant_scene, 1, origin, 1.0)
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] cheat: гигант спавн @ (%.0f, %.0f)" % [origin.x, origin.z])
+
+
 # --- Старт кампании ---
 
 func _start_campaign() -> void:
@@ -357,6 +396,7 @@ func _on_camp_deployed(anchor: Vector3) -> void:
 	_active_schedule = schedule
 	_stage_index = 0
 	_stage_elapsed = 0.0
+	_wave_count = 0
 	var first_stage := schedule.get_stage(0)
 	_wave_cd = first_stage.wave_interval if first_stage != null else 0.0
 	_scout_cd = first_stage.scout_interval if first_stage != null else 0.0
@@ -397,6 +437,7 @@ func _clear_active_poi() -> void:
 	_stage_elapsed = 0.0
 	_wave_cd = 0.0
 	_scout_cd = 0.0
+	_wave_count = 0
 
 
 ## Тик активной осады. Stage advance + wave timer.
@@ -420,6 +461,12 @@ func _tick_active_poi(delta: float) -> void:
 			_spawn_groups_wave(stage.groups)
 		else:
 			_spawn_legacy_poi_wave(stage.skeletons_per_wave)
+		_wave_count += 1
+		# Гигант: каждые `giant_every_n_waves` волн дополнительно к основной
+		# волне. Отдельный спавн со своей spawn-zone, чтобы танк не сливался
+		# с пачкой обычных скелетов визуально.
+		if giant_every_n_waves > 0 and giant_scene != null and _wave_count % giant_every_n_waves == 0:
+			_spawn_giant()
 		_wave_cd = stage.wave_interval
 
 	# Scout-канал: одиночные «разведчики» между основными волнами. Параллельно
@@ -457,6 +504,39 @@ func _tick_active_poi(delta: float) -> void:
 			print("[WaveDirector] stage advance %d→%d (interval=%.0fс, %s)" % [
 				_stage_index - 1, _stage_index, next_stage.wave_interval, stage_size,
 			])
+
+
+## Спавн одного скелета-гиганта. Берёт случайную живую SpawnZone (на безопасной
+## дистанции от лагеря), ставит на ней 1 гиганта. Forced_target — Tower
+## активного POI: гигант идёт прямо к башне, игнорируя палатки/гномов
+## (его override `_scan_target` тоже возвращает Tower). Не консумит
+## SpawnZone.waves_left — гигант это бонус-юнит, не отнимает budget зоны.
+##
+## Дизайн: фокусная боссовая угроза каждые N волн (giant_every_n_waves).
+## Хайвей-маркер «волна стала серьёзной» — игрок видит большого скелета,
+## слышит звук, идёт защищать башню вручную (магией / руками).
+func _spawn_giant() -> void:
+	if _spawner == null or _active_camp == null or giant_scene == null:
+		return
+	var zone: SpawnZone = _pick_random_live_zone()
+	if zone == null:
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] giant пропущен — нет живых SpawnZone")
+		return
+	var origin := _pick_safe_point_in_zone(zone)
+	origin.y = _spawner.spawn_y
+	var giants := _spawner.spawn_group(giant_scene, 1, origin, 1.0)
+	# Принудительный таргет — Tower. Гигант override'ит _scan_target и сам
+	# найдёт башню, но forced_target дублирует это для случая когда vision
+	# не успел просканировать (первые тики после спавна).
+	var tower: Node3D = _active_camp.get_tower() if _active_camp != null else null
+	if tower != null:
+		_assign_forced_targets(giants, tower)
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] ГИГАНТ #%d спавн @ (%.0f, %.0f) → %s" % [
+			_wave_count, origin.x, origin.z,
+			tower.name if tower != null else "no-tower",
+		])
 
 
 ## Спавн одиночного «разведчика» — параллельный канал микро-угроз.

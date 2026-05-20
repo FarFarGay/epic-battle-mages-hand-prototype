@@ -1195,6 +1195,13 @@ func _build_debug_tab(camp: Node) -> void:
 		func(): wd.cheat_stress_2000(),
 	))
 	list.add_child(_build_cheat_card(
+		"Призвать гиганта",
+		"Спавнит 1 скелета-гиганта в случайной SpawnZone. Идёт прямо к Tower (forced_target). HP 240, dmg 28, медленный.",
+		"гигант",
+		wd,
+		func(): wd.cheat_spawn_giant(),
+	))
+	list.add_child(_build_cheat_card(
 		"+100 каждого ресурса",
 		"Накидывает 100 единиц дерева/камня/железа/еды на склад лагеря.",
 		"+100",

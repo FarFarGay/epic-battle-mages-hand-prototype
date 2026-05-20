@@ -7,6 +7,7 @@
 [ext_resource type="Texture2D" uid="uid://cway2bqfxljaa" path="res://resources/ground_noise.tres" id="5_noise"]
 [ext_resource type="Script" uid="uid://g47nmagw0cfh" path="res://scripts/enemy_spawner.gd" id="6"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="7"]
+[ext_resource type="PackedScene" path="res://scenes/skeleton_giant.tscn" id="7_giant"]
 [ext_resource type="PackedScene" path="res://scenes/camp.tscn" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/octagon_turret.tscn" id="10"]
 [ext_resource type="PackedScene" path="res://scenes/perf_hud.tscn" id="11"]
@@ -89,6 +90,7 @@ spawner_path = NodePath("../EnemySpawner")
 camp_paths = Array[NodePath]([NodePath("../Camp")])
 poi_root_path = NodePath("../PointsOfInterest")
 skeleton_scene = ExtResource("7")
+giant_scene = ExtResource("7_giant")
 
 [node name="Modules" type="Node3D" parent="." unique_id=1539843594]
 
