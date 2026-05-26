@@ -21,16 +21,16 @@ noise = SubResource("FNL_fog")
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_fog"]
 shader = ExtResource("2")
-shader_parameter/fog_color = Color(0.02, 0.02, 0.04, 1.0)
+shader_parameter/fog_color = Color(0.04, 0.05, 0.08, 0.85)
 shader_parameter/map_half = 150.0
 shader_parameter/persistent_memory = 0.0
 shader_parameter/noise_scale_a = 0.012
 shader_parameter/noise_scale_b = 0.045
-shader_parameter/scroll_speed_a = 0.0
-shader_parameter/scroll_speed_b = 0.0
-shader_parameter/density_amount = 0.35
-shader_parameter/boundary_wobble = 0.15
-shader_parameter/fog_top_height = 14.0
+shader_parameter/scroll_speed_a = 0.015
+shader_parameter/scroll_speed_b = 0.05
+shader_parameter/density_amount = 0.5
+shader_parameter/boundary_wobble = 0.18
+shader_parameter/fog_top_height = 2.5
 shader_parameter/noise_texture = SubResource("NT_fog_noise")
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_fog"]
@@ -47,49 +47,37 @@ material_override = SubResource("ShaderMaterial_fog")
 cast_shadow = 0
 
 [node name="Plane2" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.4, 0)
 mesh = SubResource("PlaneMesh_fog")
 material_override = SubResource("ShaderMaterial_fog")
 cast_shadow = 0
 
 [node name="Plane3" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.0, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
 mesh = SubResource("PlaneMesh_fog")
 material_override = SubResource("ShaderMaterial_fog")
 cast_shadow = 0
 
 [node name="Plane4" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4.5, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
 mesh = SubResource("PlaneMesh_fog")
 material_override = SubResource("ShaderMaterial_fog")
 cast_shadow = 0
 
 [node name="Plane5" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 6.0, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.45, 0)
 mesh = SubResource("PlaneMesh_fog")
 material_override = SubResource("ShaderMaterial_fog")
 cast_shadow = 0
 
 [node name="Plane6" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.5, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.8, 0)
 mesh = SubResource("PlaneMesh_fog")
 material_override = SubResource("ShaderMaterial_fog")
 cast_shadow = 0
 
 [node name="Plane7" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9.0, 0)
-mesh = SubResource("PlaneMesh_fog")
-material_override = SubResource("ShaderMaterial_fog")
-cast_shadow = 0
-
-[node name="Plane8" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 10.5, 0)
-mesh = SubResource("PlaneMesh_fog")
-material_override = SubResource("ShaderMaterial_fog")
-cast_shadow = 0
-
-[node name="Plane9" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 12.0, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.15, 0)
 mesh = SubResource("PlaneMesh_fog")
 material_override = SubResource("ShaderMaterial_fog")
 cast_shadow = 0

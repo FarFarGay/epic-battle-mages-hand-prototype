@@ -236,6 +236,8 @@ func _sample_visibility(pos: Vector3) -> float:
 
 
 func _process(delta: float) -> void:
+	if _cheat_disabled:
+		return
 	_update_timer -= delta
 	if _update_timer <= 0.0:
 		_update_timer = UPDATE_INTERVAL
@@ -243,6 +245,35 @@ func _process(delta: float) -> void:
 		_paint_vision_points()
 		_upload_texture()
 		_update_enemy_visibility()
+
+
+## Чит: отключить туман целиком. Скрывает meshes-плейн + показывает всех
+## врагов разом, останавливает _process (decay/paint/upload/visibility
+## пропускаются). Toggle через [is_cheat_disabled]. Включить обратно —
+## set_cheat_disabled(false): _process возвращается к нормальному циклу,
+## визуал врагов обновится через 0.1с (UPDATE_INTERVAL).
+var _cheat_disabled: bool = false
+
+
+func set_cheat_disabled(value: bool) -> void:
+	if _cheat_disabled == value:
+		return
+	_cheat_disabled = value
+	# Туман — несколько плейнов (Plane, Plane2..Plane9) на разных высотах для
+	# атмосферного эффекта. Переключаем все, иначе остаются «слои».
+	for child in get_children():
+		if child is MeshInstance3D:
+			(child as MeshInstance3D).visible = not value
+	# При отключении принудительно показываем всех живых врагов — иначе
+	# те что были hidden останутся невидимыми до восстановления тумана.
+	if value:
+		for e in get_tree().get_nodes_in_group(Enemy.ENEMY_GROUP):
+			if is_instance_valid(e):
+				(e as Node3D).visible = true
+
+
+func is_cheat_disabled() -> bool:
+	return _cheat_disabled
 
 
 ## Затухание всей visibility-карты. Работаем с PackedByteArray напрямую —
@@ -512,20 +543,9 @@ func _upload_texture() -> void:
 	_vision_texture.update(_vision_image)
 
 
-## Скрывает Enemy-ноды вне visibility-порога. Hysteresis: уже-видимый
-## скрывается только при visibility ≤ OFF; уже-скрытый показывается при
-## ≥ ON. Между порогами — keeps previous state, без мерцания.
+## Раньше скрывал врагов вне видимости. С 2026-05-22 (дизайнерское решение)
+## враги всегда видны — fog теперь только визуальная дымка низко над землёй
+## (fog_top_height=2.5м, ниже Tower), скелеты-капсулы силуэтами читаются
+## сквозь неё. Если захочется вернуть hiding — раскомментировать тело.
 func _update_enemy_visibility() -> void:
-	for e in get_tree().get_nodes_in_group(Enemy.ENEMY_GROUP):
-		if not is_instance_valid(e):
-			continue
-		var en := e as Node3D
-		if en == null:
-			continue
-		var vis: float = _sample_visibility(en.global_position)
-		if en.visible:
-			if vis <= ENEMY_VISIBLE_THRESHOLD_OFF:
-				en.visible = false
-		else:
-			if vis >= ENEMY_VISIBLE_THRESHOLD_ON:
-				en.visible = true
+	pass

@@ -94,81 +94,13 @@ func _resolve_target() -> Node3D:
 
 
 ## Сцена снаряда-камня ([GiantStone]). Переопределяем стрелу archer'а
-## другим типом снаряда — AOE-камень с волной импакта вместо single-target
-## стрелы. Если null — `_perform_strike` no-op'ит с push_warning.
-@export var stone_scene: PackedScene = null
-## Радиус AOE-зоны импакта камня. Должен совпадать с aoe_radius в самой
-## GiantStone-сцене — иначе telegraph ring (этот radius) и реальный взрыв
-## разойдутся, что обманет игрока. Дублируется здесь, чтобы дизайнер мог
-## крутить из инспектора thrower'а; sync со stone'ом — ответственность
-## дизайнера.
-@export var telegraph_radius: float = 4.0
-## Цвет telegraph-кольца на земле. Красно-оранжевый — «опасность», читается
-## как «сюда упадёт камень».
-@export var telegraph_color: Color = Color(1.0, 0.3, 0.15, 0.9)
-
-## Зафиксированная точка прицеливания на entering WINDUP. На STRIKE камень
-## кидается ровно туда — иначе inaccuracy рандомизировался бы между
-## телеграфом и выпуском, и кольцо обманывало бы. Vector3.INF = «не
-## зафиксировано» (init / после strike). Не Node3D — целевая точка
-## фиксирована во ВРЕМЕНИ (момент начала windup'а), не в пространстве:
-## Tower может уехать WASD'ом за 1.2с windup'а, камень всё равно полетит
-## в зафиксированную точку. Это и есть «телеграф» — игрок видит куда
-## упадёт ДО выпуска, и может убрать Tower.
-var _telegraphed_aim: Vector3 = Vector3.INF
-
-
-## Override Enemy._on_state_enter: при entering WINDUP — фиксируем aim
-## (target.global_position + inaccuracy offset) и спавним ground ring
-## на земле под этой точкой. Игрок видит зону «сейчас сюда прилетит»
-## за attack_windup секунд до выпуска камня. Ring auto-fade'ится за
-## attack_windup (см. AoeVisual.spawn_ground_ring), к моменту STRIKE
-## он уже погаснет — органичный «countdown».
+## другим типом снаряда — AOE-камень с волной импакта вместо AoeArrow.
+## Если null — `_perform_strike` no-op'ит с push_warning.
 ##
-## inaccuracy применяется ОДИН РАЗ в WINDUP (а не повторно в STRIKE
-## как у обычного archer'а), потому что иначе real-impact ушёл бы от
-## telegraph'а: дизайнерский антипаттерн «телеграф обманул».
-func _on_state_enter(new_state: int) -> void:
-	super._on_state_enter(new_state)
-	if new_state == AttackState.WINDUP:
-		_enter_windup()
-	elif new_state == AttackState.STRIKE:
-		if debug_log and LogConfig.master_enabled:
-			print("[GiantThrower:%s] STRIKE → бросаю камень" % name)
-	elif new_state == AttackState.COOLDOWN:
-		if debug_log and LogConfig.master_enabled:
-			print("[GiantThrower:%s] COOLDOWN" % name)
-
-
-func _enter_windup() -> void:
-	var target: Node3D = _resolve_target()
-	if target == null:
-		_telegraphed_aim = Vector3.INF
-		if debug_log and LogConfig.master_enabled:
-			print("[GiantThrower:%s] WINDUP без target → отмена" % name)
-		return
-	var aim: Vector3 = target.global_position
-	if arrow_inaccuracy_radius > 0.0:
-		var angle: float = randf() * TAU
-		var r: float = sqrt(randf()) * arrow_inaccuracy_radius
-		aim.x += cos(angle) * r
-		aim.z += sin(angle) * r
-	# Камень падает на ЗЕМЛЮ, не в центр Tower'а (y=3). AOE через sphere-query
-	# накроет Tower'а сверху — её BoxShape 2×6×2 с центром на y=3, нижний край
-	# на y=0, попадает в sphere radius=4 из landing point (0,0,Tower.xz).
-	# Если aim.y оставить на Tower.y=3, импакт случится на высоте 3м над землёй,
-	# взрыв ÷ туман-планы (1.5 / 3 / 4.5м) визуально перекроет — выглядит как
-	# «врезался в туман». Семантика: «камень упал на ЗЕМЛЮ рядом с башней».
-	aim.y = 0.0
-	_telegraphed_aim = aim
-	var root: Node = get_tree().current_scene
-	if is_instance_valid(root):
-		AoeVisual.spawn_ground_ring(root, aim, telegraph_radius, attack_windup, telegraph_color)
-	if debug_log and LogConfig.master_enabled:
-		var d: float = global_position.distance_to(aim)
-		print("[GiantThrower:%s] WINDUP target=%s aim=(%.1f,%.1f) dist=%.1fм windup=%.1fс" % [
-			name, target.name, aim.x, aim.z, d, attack_windup,
-		])
+## telegraph_radius/color/_telegraphed_aim/_on_state_enter теперь в [SkeletonArcher]
+## базе — Thrower тюнит параметры через .tscn (telegraph_radius=4.0,
+## telegraph_color = красно-оранжевый).
+@export var stone_scene: PackedScene = null
 
 
 ## Override SkeletonArcher._perform_strike: вместо single-target стрелы

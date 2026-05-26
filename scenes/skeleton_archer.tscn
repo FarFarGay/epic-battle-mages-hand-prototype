@@ -1,7 +1,7 @@
 [gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/skeleton_archer.gd" id="1"]
-[ext_resource type="PackedScene" path="res://scenes/enemy_arrow.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/aoe_arrow.tscn" id="2"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_archer"]
 radius = 0.35

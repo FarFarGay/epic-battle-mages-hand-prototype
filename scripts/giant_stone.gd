@@ -45,6 +45,17 @@ extends Node3D
 ## защитник немного отлетит от Tower.
 @export var knockback_speed: float = 4.0
 @export var knockback_duration: float = 0.3
+## Цвет expanding_ring'а на impact. Дефолт пыльно-оранжевый под камень.
+## AoeArrow override'ит на фиолетовый (магическая стрела скелетов-лучников).
+@export var explosion_ring_color: Color = Color(0.85, 0.55, 0.25, 0.9)
+## Показывать big-explosion-визуал (ядро+огонь+дым+expanding_ring) на impact.
+## Default true для камня. False = вообще никакого визуала. Для тонкого
+## impact-эффекта стрелы — оставить true но включить impact_ring_only.
+@export var show_explosion_visual: bool = true
+## Если true — показываем ТОЛЬКО expanding_ring (тонкая impact-волна), без
+## ядра/огня/дыма. AoeArrow: лёгкий puff на земле при попадании стрелы.
+## Игнорируется если show_explosion_visual=false.
+@export var impact_ring_only: bool = false
 @export var debug_log: bool = false
 
 ## Damage задаётся caller'ом перед setup() — у разных гигантов может быть
@@ -147,9 +158,11 @@ func _explode(pos: Vector3) -> void:
 	# Визуал: ядро+огонь+дым (та же связка что у fireball/slam) + волна
 	# (expanding_ring). Цвет волны — пыльно-оранжевый, отличается от
 	# tower-recall (голубой) и slam-волны.
-	AoeVisual.spawn_explosion(root, pos, aoe_radius)
-	AoeVisual.spawn_expanding_ring(root, pos, aoe_radius * 1.15, 0.45,
-		Color(0.85, 0.55, 0.25, 0.9), 0.22)
+	if show_explosion_visual:
+		if not impact_ring_only:
+			AoeVisual.spawn_explosion(root, pos, aoe_radius)
+		AoeVisual.spawn_expanding_ring(root, pos, aoe_radius * 1.15, 0.45,
+			explosion_ring_color, 0.22)
 	_apply_aoe(pos)
 	if debug_log and LogConfig.master_enabled:
 		print("[GiantStone:explode] pos=(%.1f,%.2f,%.1f) r=%.1f dmg=%.1f" % [

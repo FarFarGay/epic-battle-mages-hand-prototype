@@ -49,6 +49,9 @@ enum Phase { IDLE, RUNNING }
 ## Сейчас спавнится только через чит-карточку для playtest'а; авто-волны
 ## не настроены — это отдельный balance-этап. Если null — чит no-op.
 @export var giant_thrower_scene: PackedScene
+## Сцена ArcherGroup — координатор группы из 4 лучников. Спавнится через
+## cheat_spawn_archer_group; в авто-волнах пока не используется.
+@export var archer_group_scene: PackedScene
 @export_group("")
 
 @export_group("Background tide (фоновая угроза)")
@@ -292,6 +295,47 @@ func cheat_spawn_giant_thrower() -> void:
 		push_warning("[WaveDirector] cheat_spawn_giant_thrower: giant_thrower_scene не задан в инспекторе")
 		return
 	_cheat_spawn_enemy(giant_thrower_scene, "каменщик", true)
+
+
+## Спавн группы лучников (ArcherGroup, default 4 шт.) в случайной SpawnZone.
+## Координатор размещает их в квадратной формации, выровненные фазы → залп
+## почти в один кадр. forced_target = ближайшая палатка лагеря (если есть).
+func cheat_spawn_archer_group() -> void:
+	if archer_group_scene == null:
+		push_warning("[WaveDirector] cheat_spawn_archer_group: archer_group_scene не задан в инспекторе")
+		return
+	if _spawner == null:
+		return
+	var zone: SpawnZone = _pick_random_live_zone()
+	if zone == null:
+		push_warning("[WaveDirector] cheat_spawn_archer_group: нет живых SpawnZone")
+		return
+	var origin: Vector3 = _pick_safe_point_in_zone(zone)
+	origin.y = _spawner.spawn_y
+	var group := archer_group_scene.instantiate() as ArcherGroup
+	if group == null:
+		push_warning("[WaveDirector] cheat_spawn_archer_group: scene не инстанцируется как ArcherGroup")
+		return
+	# ВАЖНО: position ДО add_child. add_child триггерит _ready → _spawn_archers
+	# использует global_position. Если ставить global_position после add_child,
+	# лучники спавнятся в (0,0,0). position (local) до tree-вставки превращается
+	# в global при add_child, т.к. parent (current_scene root) имеет identity-transform.
+	group.position = origin
+	get_tree().current_scene.add_child(group)
+	# forced_target: ближайшая палатка активного лагеря (если есть). Иначе
+	# Tower как fallback, иначе оставляем null — лучники найдут цель vision'ом.
+	var tgt: Node3D = null
+	if _active_camp != null:
+		tgt = _active_camp.nearest_part_to(origin)
+		if tgt == null:
+			tgt = _active_camp.get_tower()
+	if tgt != null:
+		group.set_forced_target(tgt)
+	if debug_log and LogConfig.master_enabled:
+		var tgt_label: String = tgt.name if tgt != null else "no-target"
+		print("[WaveDirector] cheat: группа лучников @ (%.0f, %.0f) → %s" % [
+			origin.x, origin.z, tgt_label,
+		])
 
 
 ## Helper для cheat-спавнов одного врага. Случайная live SpawnZone, safe-point,

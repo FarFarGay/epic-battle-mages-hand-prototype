@@ -36,6 +36,7 @@ shatter_lifetime = 3.0
 shatter_color = Color(0.45, 0.55, 0.3, 1)
 debug_log = true
 stone_scene = ExtResource("2")
+has_telegraph = true
 telegraph_radius = 4.0
 telegraph_color = Color(1, 0.3, 0.15, 0.9)
 

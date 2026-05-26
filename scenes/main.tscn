@@ -23,6 +23,14 @@
 [ext_resource type="Script" uid="uid://ca4r3f6w4pm3w" path="res://scripts/nav_region.gd" id="20_nav"]
 [ext_resource type="PackedScene" path="res://scenes/fog_of_war.tscn" id="21_fog"]
 [ext_resource type="PackedScene" path="res://scenes/harvester.tscn" id="22_harvester"]
+[ext_resource type="PackedScene" path="res://scenes/archer_group.tscn" id="23_archer_group"]
+
+[sub_resource type="Environment" id="Environment_atmo"]
+background_mode = 1
+background_color = Color(0.02, 0.02, 0.04, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.15, 0.16, 0.22, 1)
+ambient_light_energy = 0.5
 
 [sub_resource type="NavigationMesh" id="NavMesh_main"]
 geometry_collision_mask = 33
@@ -50,8 +58,12 @@ size = Vector3(300, 1, 300)
 
 [node name="Main" type="Node3D" unique_id=462266493]
 
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_atmo")
+
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1155419915]
 transform = Transform3D(1, 0, 0, 0, 0.707, 0.707, 0, -0.707, 0.707, 0, 20, 0)
+light_energy = 0.6
 shadow_enabled = true
 
 [node name="NavigationRegion3D" type="NavigationRegion3D" parent="." unique_id=918273456 groups=["nav_region"]]
@@ -94,6 +106,7 @@ poi_root_path = NodePath("../PointsOfInterest")
 skeleton_scene = ExtResource("7")
 giant_scene = ExtResource("7_giant")
 giant_thrower_scene = ExtResource("7_thrower")
+archer_group_scene = ExtResource("23_archer_group")
 
 [node name="Modules" type="Node3D" parent="." unique_id=1539843594]
 

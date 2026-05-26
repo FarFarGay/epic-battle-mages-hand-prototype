@@ -529,8 +529,8 @@ var _stuck_timer: float = 0.0
 ## не получим валидную цель из vision-scan. Сбрасывается в [_set_cached_target]
 ## когда цель найдена → следующий _ai_step падает в APPROACH, не в _wander_tick.
 var _local_wander_mode: bool = false
-const LOCAL_WANDER_DISTANCE_MIN: float = 2.0
-const LOCAL_WANDER_DISTANCE_MAX: float = 4.5
+const LOCAL_WANDER_DISTANCE_MIN: float = 4.0
+const LOCAL_WANDER_DISTANCE_MAX: float = 9.0
 ## Направление к заблокированной цели (XZ-нормализованное), запомненное при
 ## _enter_local_wander. Используется для bias'а wander-точек: выбираем
 ## перпендикулярно — скелет движется ВДОЛЬ стены, ищет обход, а не топчется
@@ -1243,8 +1243,8 @@ func _tick_stuck_detection(work_delta: float) -> void:
 			print("[Skeleton] упёрся → переключаюсь на %s" % obstacle.name)
 	elif obstacle == null:
 		# Нет валидных целей рядом — упёрся именно в стену. Переход в local
-		# wander: бродим маленькими шагами вокруг точки столкновения, пока
-		# vision не подберёт цель (или скелет случайно не нашёл обход).
+		# wander: бродим вдоль точки столкновения, пока vision не подберёт
+		# цель (или скелет случайно не нашёл обход).
 		_enter_local_wander()
 	_stuck_timer = 0.0
 
@@ -1329,14 +1329,14 @@ func _pick_local_wander_target() -> Vector3:
 
 
 ## Проверка «отрезок не пересекает палисад». Аналог _has_line_of_sight_to,
-## но между произвольными точками (а не от self к ноде). Y фиксируется на +1м,
-## маска — только PALISADE_OBSTACLE.
+## но между произвольными точками (а не от self к ноде). Та же низкая
+## фиксированная высота LOS_RAY_HEIGHT, чтобы луч не перепрыгивал стену.
 func _is_segment_clear_of_palisade(from_pos: Vector3, to_pos: Vector3) -> bool:
 	var space := get_world_3d().direct_space_state
 	if space == null:
 		return true
-	var from := Vector3(from_pos.x, from_pos.y + 1.0, from_pos.z)
-	var to := Vector3(to_pos.x, to_pos.y + 1.0, to_pos.z)
+	var from := Vector3(from_pos.x, from_pos.y + LOS_RAY_HEIGHT, from_pos.z)
+	var to := Vector3(to_pos.x, to_pos.y + LOS_RAY_HEIGHT, to_pos.z)
 	var q := PhysicsRayQueryParameters3D.create(from, to, Layers.PALISADE_OBSTACLE)
 	q.exclude = [self.get_rid()]
 	return space.intersect_ray(q).is_empty()
@@ -1388,19 +1388,23 @@ func _find_nearest_obstacle(radius: float) -> Node3D:
 ## throttled (vision_scan_interval × LOD-mult ≈ 0.3-1.2с), так что общая
 ## нагрузка ~1-2k ray/сек на 200 скелетах — терпимо.
 ##
-## Высота луча +1.0м от ground обеих сторон: гном ~1м, скелет ~1.5м, палисад
-## ~1.5м. Луч идёт между «головами» через зону стены — палисад его перекроет,
-## низкие препятствия не сработают (их и нет в маске).
+## ВАЖНО про высоту: оба конца луча на ФИКСИРОВАННОЙ skel.y + LOS_RAY_HEIGHT.
+## Раньше брал target.global_position.y + 1.0 — но Tower имеет origin на y≈3
+## (центр большого меша), и луч уходил по диагонали высоко, перепрыгивая
+## палисад (~1.5м высоты). Сейчас оба конца на y≈0.7 — строго горизонтальный
+## низкий луч, гарантированно режется стеной.
 ##
 ## Маска ТОЛЬКО PALISADE_OBSTACLE: Tower / палатки / гномы / земля не блокируют
 ## зрение (Tower на ACTORS, палатки на CAMP_OBSTACLE, гномы на FRIENDLY_UNIT).
 ## Иначе скелет «слеп» через каждую палатку, чего мы не хотим.
+const LOS_RAY_HEIGHT: float = 0.7
 func _has_line_of_sight_to(target: Node3D) -> bool:
 	var space := get_world_3d().direct_space_state
 	if space == null:
 		return true  # no physics space yet — fail-open, без LOS не блокируем
-	var from := Vector3(global_position.x, global_position.y + 1.0, global_position.z)
-	var to := Vector3(target.global_position.x, target.global_position.y + 1.0, target.global_position.z)
+	var y: float = global_position.y + LOS_RAY_HEIGHT
+	var from := Vector3(global_position.x, y, global_position.z)
+	var to := Vector3(target.global_position.x, y, target.global_position.z)
 	var q := PhysicsRayQueryParameters3D.create(from, to, Layers.PALISADE_OBSTACLE)
 	q.exclude = [self.get_rid()]
 	var hit: Dictionary = space.intersect_ray(q)
@@ -1582,8 +1586,15 @@ func _scan_target() -> Node3D:
 		return nearest_any_gnome
 	# Vision пуст — на forced_target (палатка-якорь для wave-скелетов вне
 	# vision_radius). Гномы в 12м зоне всегда отбирают приоритет.
+	# LOS-фильтр ТОЛЬКО в _local_wander_mode: иначе wave-скелет на спавне
+	# в 50м от палисада сразу отверг бы forced (raycast 50м проходит сквозь
+	# стену) и ушёл бы в wander, не дойдя до лагеря. Когда скелет уже
+	# упёрся (local mode) — фильтр предотвращает цикл APPROACH→stuck→wander.
+	# Открытие LOS (нашёл обход) автоматически выводит из local-wander через
+	# _set_cached_target.
 	if is_instance_valid(_forced_target) and _forced_target.is_in_group(TARGET_GROUP):
-		return _forced_target
+		if not _local_wander_mode or _has_line_of_sight_to(_forced_target):
+			return _forced_target
 	return null
 
 

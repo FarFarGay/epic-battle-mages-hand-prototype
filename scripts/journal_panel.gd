@@ -1229,6 +1229,13 @@ func _build_debug_tab(camp: Node) -> void:
 		func(): wd.cheat_spawn_giant_thrower(),
 	))
 	list.add_child(_build_cheat_card(
+		"Призвать группу лучников",
+		"Спавнит 4 скелетов-лучников в квадратной формации. Синхронные фазы → залп почти в один кадр, рассев inaccuracy даёт зону покрытия.",
+		"группа",
+		wd,
+		func(): wd.cheat_spawn_archer_group(),
+	))
+	list.add_child(_build_cheat_card(
 		"+100 каждого ресурса",
 		"Накидывает 100 единиц дерева/камня/железа/еды на склад лагеря.",
 		"+100",
@@ -1241,6 +1248,27 @@ func _build_debug_tab(camp: Node) -> void:
 		"копейщики",
 		camp,
 		func(): camp.cheat_summon_squad(&"pikeman"),
+	))
+	# FogOfWar toggle — autoload-style singleton, ищем по группе.
+	var fog: FogOfWar = null
+	for n in get_tree().get_nodes_in_group(FogOfWar.FOG_REVEAL_GROUP):
+		# fog_reveal — группа источников рассеивания (костры/мины/посты),
+		# в неё сам FogOfWar НЕ входит. Поэтому ищем по типу через
+		# get_first_node_in_group отдельной группы — но у FogOfWar группы нет.
+		# Fallback: единственный экземпляр на сцене, итерация по детям main.
+		break
+	# Самый простой способ — пройти по корню сцены и найти FogOfWar.
+	for child in get_tree().current_scene.get_children():
+		if child is FogOfWar:
+			fog = child as FogOfWar
+			break
+	var fog_label: String = "выключить" if (fog != null and not fog.is_cheat_disabled()) else "включить"
+	list.add_child(_build_cheat_card(
+		"Туман войны",
+		"Toggle: скрывает плейн тумана и показывает всех врагов сразу. Полезно для отладки спавна и видимости вражеских юнитов.",
+		fog_label,
+		fog,
+		func(): fog.set_cheat_disabled(not fog.is_cheat_disabled()),
 	))
 	# QuestProgress — autoload, всегда есть. Передаём self как target, чтобы
 	# карточка не disable'илась (логика _build_cheat_card: target == null →

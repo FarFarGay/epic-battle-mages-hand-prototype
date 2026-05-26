@@ -1,0 +1,104 @@
+[gd_scene load_steps=12 format=3]
+
+[ext_resource type="Script" path="res://scripts/aoe_arrow.gd" id="1_script"]
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_shaft"]
+top_radius = 0.04
+bottom_radius = 0.04
+height = 0.55
+radial_segments = 8
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_tip"]
+top_radius = 0.0
+bottom_radius = 0.1
+height = 0.18
+radial_segments = 8
+
+[sub_resource type="StandardMaterial3D" id="Material_arrow"]
+albedo_color = Color(0.45, 0.2, 0.65, 1)
+roughness = 0.45
+emission_enabled = true
+emission = Color(0.7, 0.3, 0.95, 1)
+emission_energy_multiplier = 1.0
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_arrow"]
+radius = 0.2
+
+[sub_resource type="StandardMaterial3D" id="MAT_trail_aoe"]
+transparency = 1
+shading_mode = 0
+billboard_mode = 1
+billboard_keep_scale = true
+albedo_color = Color(0.7, 0.3, 0.95, 1)
+emission_enabled = true
+emission = Color(0.6, 0.2, 0.85, 1)
+emission_energy_multiplier = 2.5
+
+[sub_resource type="QuadMesh" id="QM_trail_aoe"]
+material = SubResource("MAT_trail_aoe")
+size = Vector2(0.12, 0.12)
+
+[sub_resource type="Gradient" id="G_trail_color_aoe"]
+offsets = PackedFloat32Array(0, 0.5, 1)
+colors = PackedColorArray(0.85, 0.4, 1, 1, 0.55, 0.2, 0.8, 0.6, 0.3, 0.05, 0.5, 0)
+
+[sub_resource type="GradientTexture1D" id="GT_trail_color_aoe"]
+gradient = SubResource("G_trail_color_aoe")
+
+[sub_resource type="Curve" id="C_trail_scale_aoe"]
+_data = [Vector2(0, 1), 0.0, 0.0, 0, 0, Vector2(1, 0), 0.0, 0.0, 0, 0]
+point_count = 2
+
+[sub_resource type="CurveTexture" id="CT_trail_scale_aoe"]
+curve = SubResource("C_trail_scale_aoe")
+
+[sub_resource type="ParticleProcessMaterial" id="PPM_trail_aoe"]
+emission_shape = 1
+emission_sphere_radius = 0.04
+gravity = Vector3(0, 0.3, 0)
+initial_velocity_min = 0.0
+initial_velocity_max = 0.3
+scale_curve = SubResource("CT_trail_scale_aoe")
+color_ramp = SubResource("GT_trail_color_aoe")
+
+[node name="AoeArrow" type="Node3D"]
+script = ExtResource("1_script")
+speed = 16.0
+gravity = 10.0
+lifetime = 5.0
+aoe_radius = 1.5
+aoe_mask = 868
+knockback_speed = 0.0
+knockback_duration = 0.0
+explosion_ring_color = Color(0.7, 0.3, 0.95, 0.9)
+show_explosion_visual = true
+impact_ring_only = true
+fog_reveal_radius = 4.0
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 6.12323e-17, 1, 0, -1, 6.12323e-17, 0, 0, 0)
+mesh = SubResource("CylinderMesh_shaft")
+material_override = SubResource("Material_arrow")
+cast_shadow = 0
+
+[node name="Tip" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 6.12323e-17, 1, 0, -1, 6.12323e-17, 0, 0, -0.32)
+mesh = SubResource("CylinderMesh_tip")
+material_override = SubResource("Material_arrow")
+cast_shadow = 0
+
+[node name="HitArea" type="Area3D" parent="."]
+collision_layer = 0
+collision_mask = 869
+monitoring = true
+monitorable = false
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="HitArea"]
+shape = SubResource("SphereShape3D_arrow")
+
+[node name="Trail" type="GPUParticles3D" parent="."]
+amount = 25
+lifetime = 0.25
+process_material = SubResource("PPM_trail_aoe")
+draw_pass_1 = SubResource("QM_trail_aoe")
+visibility_aabb = AABB(-15, -15, -15, 30, 30, 30)

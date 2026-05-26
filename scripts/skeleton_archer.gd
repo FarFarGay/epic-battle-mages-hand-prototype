@@ -40,6 +40,9 @@ extends Enemy
 @export_range(0.0, 1.0) var retreat_speed_factor: float = 0.8
 
 @export_group("Projectile")
+## Сцена снаряда — [AoeArrow] (extends GiantStone). Стреляет по дуге в точку
+## на земле, на impact'е делает AOE-урон в радиусе. SkeletonGiantThrower
+## override'ит на свой stone_scene (более крупный AOE).
 @export var arrow_scene: PackedScene = null
 @export var arrow_damage_min: float = 12.0
 @export var arrow_damage_max: float = 18.0
@@ -48,9 +51,20 @@ extends Enemy
 ## не родилась внутри CollisionShape3D и не вылетела сразу в сам archer.
 @export var arrow_spawn_offset: Vector3 = Vector3(0.0, 0.6, 0.0)
 ## Фиксированный разброс прицеливания в метрах. uniform-в-круге через sqrt(rand).
-## В отличие от DefenderGnome — без обучения (опыта). Лучник одинаково плох всю
-## жизнь, балансится количеством и темпом стрельбы.
-@export var arrow_inaccuracy_radius: float = 1.5
+## По дизайну (2026-05-22) — стрельба «по площади, не прицельно»: радиус заметный,
+## стрела летит в зону рядом с целью. Игрок и движущиеся гномы могут уклониться.
+@export var arrow_inaccuracy_radius: float = 2.5
+
+@export_group("Telegraph")
+## Включить ground-ring телеграф в WINDUP + фиксировать _telegraphed_aim.
+## Default false — обычный лучник стреляет single-target Arrow в гнома, без
+## показа зоны падения. SkeletonGiantThrower override'ит на true (.tscn) — он
+## кидает AOE-камень, телеграф нужен чтобы игрок мог уклониться.
+@export var has_telegraph: bool = false
+## Радиус ground-ring телеграфа. Имеет смысл только если has_telegraph=true.
+@export var telegraph_radius: float = 4.0
+## Цвет ground-ring. По дефолту красно-оранжевый (под Thrower'а).
+@export var telegraph_color: Color = Color(1.0, 0.3, 0.15, 0.9)
 
 @export_group("Shatter (распад на осколки на смерти)")
 ## Сколько RB-фрагментов спавнить в момент гибели. Меньше чем у Skeleton (7) —
@@ -70,6 +84,19 @@ var _projectiles_root: Node = null
 var _cached_target: Node3D = null
 var _scan_timer: float = 0.0
 var _forced_target: Node3D = null
+## Personal offset от центра цели для kite-движения. Каждый archer группы
+## имеет свой offset (квадратная формация), благодаря этому они подходят на
+## разные точки вокруг цели, а не кучкуются в одну. ZERO = подходим прямо
+## к цели (одиночный archer).
+var formation_offset: Vector3 = Vector3.ZERO
+## Зафиксированная точка приземления на entering WINDUP. На STRIKE стрела
+## летит ровно туда — иначе inaccuracy рандомизировался бы между телеграфом
+## и выпуском, и кольцо обманывало бы. Vector3.INF = «не зафиксировано»
+## (init / после strike). Цель фиксирована во ВРЕМЕНИ (момент начала
+## windup'а), не в пространстве: гном может отойти за 0.7с windup'а — стрела
+## всё равно прилетит в зафиксированную точку. Игрок видит куда упадёт ДО
+## выпуска и может убрать юнита из зоны.
+var _telegraphed_aim: Vector3 = Vector3.INF
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 
@@ -121,8 +148,12 @@ func _ai_step(delta: float) -> void:
 ## Kite: цель далеко — идём, цель слишком близко — отступаем, в зоне — WINDUP.
 ## Отступ медленнее атаки (retreat_speed_factor) — иначе лучник на отбегает
 ## безнаказанно от melee. Lookat не нужен — capsule визуально симметричный.
+##
+## formation_offset: каждый archer группы держит свою точку (target + offset),
+## чтобы 4 не кучковались в одну позицию. Одиночный archer offset=0 → как было.
 func _kite_to_range(target: Node3D) -> void:
-	var to_target: Vector3 = target.global_position - global_position
+	var target_pos: Vector3 = target.global_position + formation_offset
+	var to_target: Vector3 = target_pos - global_position
 	to_target.y = 0.0
 	var dist: float = to_target.length()
 	if dist > attack_radius_max:
@@ -198,45 +229,88 @@ func _resolve_target() -> Node3D:
 	return null
 
 
-## Override: вместо melee-AoE из Skeleton — выстрел стрелы. Спавн в
-## _projectiles_root, баллистика через Arrow.setup. Inaccuracy — фиксированная
-## (без обучения как у DefenderGnome).
-func _perform_strike(target: Node3D) -> void:
-	if not is_instance_valid(target):
+## Override Enemy._on_state_enter: при WINDUP — если has_telegraph, фиксируем
+## aim в зоне падения и спавним ground-ring. Без флага — пропуск (обычный
+## single-target archer не телеграфит).
+func _on_state_enter(new_state: int) -> void:
+	super._on_state_enter(new_state)
+	if new_state == AttackState.WINDUP and has_telegraph:
+		_enter_windup()
+
+
+func _enter_windup() -> void:
+	var target: Node3D = _resolve_target()
+	if target == null:
+		_telegraphed_aim = Vector3.INF
 		return
-	if arrow_scene == null:
-		push_warning("SkeletonArcher: arrow_scene не задан")
-		return
-	var arrow := arrow_scene.instantiate() as Arrow
-	if arrow == null:
-		push_warning("SkeletonArcher: arrow_scene не инстанцируется как Arrow")
-		return
-	if not is_instance_valid(_projectiles_root):
-		_projectiles_root = get_tree().current_scene
-	_projectiles_root.add_child(arrow)
-	var damage: float = randf_range(arrow_damage_min, arrow_damage_max)
-	var spawn: Vector3 = global_position + arrow_spawn_offset
-	# Прицел с рандомным смещением в круге inaccuracy. sqrt(rand) — uniform-в-круге.
 	var aim: Vector3 = target.global_position
 	if arrow_inaccuracy_radius > 0.0:
 		var angle: float = randf() * TAU
 		var r: float = sqrt(randf()) * arrow_inaccuracy_radius
 		aim.x += cos(angle) * r
 		aim.z += sin(angle) * r
-	arrow.damage = damage
+	# AOE-снаряд падает на ЗЕМЛЮ, точка прицеливания Y=0. Иначе телеграф ring
+	# окажется в воздухе на уровне цели (Tower y=3).
+	aim.y = 0.0
+	_telegraphed_aim = aim
+	var root: Node = get_tree().current_scene
+	if is_instance_valid(root):
+		AoeVisual.spawn_ground_ring(root, aim, telegraph_radius, attack_windup, telegraph_color)
+
+
+## Баллистическая стрела по дуге с маленьким AOE (radius ~1.5м) для попадания
+## по упавшей зоне. Прицеливаемся в **точку на земле** рядом с целью (xz
+## цели + inaccuracy, y=0) — стрела падает, AOE цепляет всё в радиусе.
+##
+## Если has_telegraph=true и _enter_windup зафиксировал _telegraphed_aim —
+## используем его (стрела летит ровно в показанную ring'ом точку). Иначе
+## считаем aim здесь (одиночный лучник без ring'а).
+##
+## SkeletonGiantThrower override'ит этот метод на свой GiantStone-AOE.
+func _perform_strike(target: Node3D) -> void:
+	if not is_instance_valid(target):
+		_telegraphed_aim = Vector3.INF
+		return
+	if arrow_scene == null:
+		push_warning("SkeletonArcher: arrow_scene не задан")
+		_telegraphed_aim = Vector3.INF
+		return
+	var arrow := arrow_scene.instantiate() as AoeArrow
+	if arrow == null:
+		push_warning("SkeletonArcher: arrow_scene не инстанцируется как AoeArrow")
+		_telegraphed_aim = Vector3.INF
+		return
+	if not is_instance_valid(_projectiles_root):
+		_projectiles_root = get_tree().current_scene
+	_projectiles_root.add_child(arrow)
+	arrow.damage = randf_range(arrow_damage_min, arrow_damage_max)
 	arrow.speed = arrow_speed
+	arrow.debug_log = debug_log
+	var spawn: Vector3 = global_position + arrow_spawn_offset
+	# Используем _telegraphed_aim если был зафиксирован в WINDUP (group archer
+	# с has_telegraph). Иначе считаем aim здесь (одиночный без ring'а).
+	var aim: Vector3
+	if _telegraphed_aim != Vector3.INF:
+		aim = _telegraphed_aim
+	else:
+		aim = target.global_position
+		if arrow_inaccuracy_radius > 0.0:
+			var angle: float = randf() * TAU
+			var r: float = sqrt(randf()) * arrow_inaccuracy_radius
+			aim.x += cos(angle) * r
+			aim.z += sin(angle) * r
+		aim.y = 0.0
+	_telegraphed_aim = Vector3.INF
 	arrow.setup(spawn, aim)
 	# Alarm-сигнал: outgoing shot по не-защитнику = атака лагеря, защитники
-	# реагируют через `_alarm_target` (override cone-фильтра). Параллелит melee
-	# `Skeleton._perform_strike` (см. skeleton.gd:1449). Без этого archer мог
-	# держаться 8-14м от защитника, оставаться вне 90°-конуса и стрелять
-	# безнаказанно — защитники не «слышали тетиву». Фильтр «наш лагерь»
-	# применяется на стороне получателя в `DefenderGnome._on_skeleton_attacked_camp`.
+	# реагируют через `_alarm_target` (override cone-фильтра).
 	if not target.is_in_group(DefenderGnome.DEFENDER_GROUP):
 		EventBus.skeleton_attacked_camp.emit(self, target, target.global_position)
 	if debug_log and LogConfig.master_enabled:
-		var d: float = global_position.distance_to(target.global_position)
-		print("[Archer:%s] выстрел в %s (dist=%.1fм, dmg=%.1f)" % [name, target.name, d, damage])
+		var d: float = global_position.distance_to(aim)
+		print("[Archer:%s] баллистический выстрел в (%.1f,%.1f) → dist=%.1fм, dmg=%.1f" % [
+			name, aim.x, aim.z, d, arrow.damage,
+		])
 
 
 ## Duck-typed контракт для WaveDirector._assign_forced_targets (см. enemy.gd
