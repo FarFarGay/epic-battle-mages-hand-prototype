@@ -221,20 +221,12 @@ func _explode() -> void:
 	if _exploded:
 		return
 	_exploded = true
-	var space := get_world_3d().direct_space_state
-	var sphere := SphereShape3D.new()
-	sphere.radius = aoe_radius
-	var query := PhysicsShapeQueryParameters3D.new()
-	query.shape = sphere
-	query.transform = Transform3D(Basis.IDENTITY, global_position)
-	query.collision_mask = aoe_damage_mask
-	var results: Array = space.intersect_shape(query, 32)
-	var hit_count: int = 0
-	for hit in results:
-		var b: Node = hit.collider
-		if Damageable.is_damageable(b):
-			Damageable.try_damage(b, damage)
-			hit_count += 1
+	# Основной AOE через shared util (sphere-query + radius²-filter +
+	# Damageable.try_damage). Раньше логика жила локально без radius²-filter'а —
+	# теперь AOE строго в радиусе, AABB-broadphase подмешивание отсекается.
+	var hits: Array[Node] = AoeDamage.apply_uniform(get_tree(), global_position,
+		aoe_radius, aoe_damage_mask, damage, 0.0, 0.0, 32)
+	var hit_count: int = hits.size()
 	# FAR-LOD скелеты вне broad-phase, shape-query их не находит. Группа +
 	# distance²-фильтр — тот же паттерн, что в HandPhysicalSlam.FAR-fallback.
 	var aoe_radius_sq: float = aoe_radius * aoe_radius

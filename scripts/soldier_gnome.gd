@@ -617,32 +617,38 @@ func _move_toward(to_goal_xz: Vector3, dist: float) -> void:
 ## Claim считается per-tick через скан SOLDIER_GROUP. Дёшево: ~500 ops/сек
 ## на юнита (10 копейщиков × 5 кандидатов × ~10 сканов/сек между charge'ами).
 ##
-## SKELETON_GROUP — и NEAR, и FAR-LOD скелеты (в отличие от broad-phase,
-## которая FAR пропускает).
+## Скан по `Enemy.ENEMY_GROUP` — все наследники Enemy: melee-Skeleton + Archer +
+## Giant + Thrower + любой будущий тип. SKELETON_GROUP-only был бы асимметрией:
+## SkeletonArcher и SkeletonGiantThrower extends Archer не входят в SKELETON_GROUP
+## (она только melee-Skeleton'ы) → копейщики игнорировали бы их и игрок не смог
+## бы их «отправить туда». См. [[feedback-symmetric-interactions]].
+##
+## ENEMY_GROUP — и NEAR, и FAR-LOD враги (в отличие от broad-phase, которая
+## FAR-Skeleton'ов пропускает). Archer'ы и гиганты — без LOD'а, всегда видимы.
 func _find_target_in_leash() -> Node3D:
 	var leash_center: Vector3 = _resolve_squad_center()
 	var leash_sq: float = combat_leash_radius * combat_leash_radius
 	var detect_sq: float = enemy_detect_radius * enemy_detect_radius
-	var nearest: Skeleton = null
+	var nearest: Enemy = null
 	var nearest_d_sq: float = detect_sq
-	for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
-		var skel := n as Skeleton
-		if skel == null:
+	for n in get_tree().get_nodes_in_group(Enemy.ENEMY_GROUP):
+		var enemy := n as Enemy
+		if enemy == null:
 			continue
-		if not is_instance_valid(skel):
+		if not is_instance_valid(enemy):
 			continue
-		var dx_l: float = skel.global_position.x - leash_center.x
-		var dz_l: float = skel.global_position.z - leash_center.z
+		var dx_l: float = enemy.global_position.x - leash_center.x
+		var dz_l: float = enemy.global_position.z - leash_center.z
 		if dx_l * dx_l + dz_l * dz_l > leash_sq:
 			continue
-		var d_sq: float = (skel.global_position - global_position).length_squared()
+		var d_sq: float = (enemy.global_position - global_position).length_squared()
 		if d_sq >= detect_sq:
 			continue
-		if _is_target_claimed_by_other(skel):
+		if _is_target_claimed_by_other(enemy):
 			continue
 		if d_sq < nearest_d_sq:
 			nearest_d_sq = d_sq
-			nearest = skel
+			nearest = enemy
 	return nearest
 
 

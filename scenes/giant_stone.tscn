@@ -1,0 +1,40 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/giant_stone.gd" id="1"]
+
+[sub_resource type="SphereMesh" id="SphereMesh_stone"]
+radius = 0.4
+height = 0.8
+radial_segments = 12
+rings = 6
+
+[sub_resource type="StandardMaterial3D" id="Material_stone"]
+albedo_color = Color(0.35, 0.32, 0.28, 1)
+roughness = 0.95
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_stone"]
+radius = 0.4
+
+[node name="GiantStone" type="Node3D"]
+script = ExtResource("1")
+speed = 22.0
+gravity = 8.0
+lifetime = 5.0
+aoe_radius = 4.0
+aoe_mask = 868
+knockback_speed = 4.0
+knockback_duration = 0.3
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+mesh = SubResource("SphereMesh_stone")
+material_override = SubResource("Material_stone")
+cast_shadow = 0
+
+[node name="HitArea" type="Area3D" parent="."]
+collision_layer = 0
+collision_mask = 869
+monitoring = true
+monitorable = false
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="HitArea"]
+shape = SubResource("SphereShape3D_stone")

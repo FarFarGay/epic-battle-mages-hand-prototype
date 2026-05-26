@@ -30,7 +30,7 @@ const GROUP := &"resource_pile"
 ## (или добываются — design-decision позже): тратятся на разблокировку и
 ## улучшение заклинаний башни через SpellSystem. Хранятся как обычный
 ## ресурс в Camp.economy.
-enum ResourceType { GENERIC, WOOD, STONE, IRON, FOOD, PAGE }
+enum ResourceType { GENERIC, WOOD, STONE, IRON, FOOD, PAGE, GOLD }
 
 ## Форма pile'а — определяет PrimitiveMesh + CollisionShape3D. По умолчанию
 ## выбирается по resource_type (BOX для большинства, CYLINDER для дерева).
@@ -87,6 +87,8 @@ static func color_for_type(t: int) -> Color:
 			return Color(0.85, 0.35, 0.25)
 		ResourceType.PAGE:
 			return Color(0.55, 0.35, 0.85)
+		ResourceType.GOLD:
+			return Color(0.95, 0.78, 0.18)
 		_:
 			return Color(0.4, 0.75, 0.3)
 
@@ -110,6 +112,9 @@ static func _defaults_for_type(t: int) -> Array:
 		ResourceType.PAGE:
 			# Стопка страниц/книга: фиолетовый приплюснутый бокс.
 			return [color_for_type(t), Vector3(0.55, 0.25, 0.7), PileShape.BOX]
+		ResourceType.GOLD:
+			# Слиток золота: золотой компактный бокс.
+			return [color_for_type(t), Vector3(0.45, 0.3, 0.7), PileShape.BOX]
 		_:
 			# GENERIC — старый зелёный ящик.
 			return [color_for_type(t), Vector3(0.6, 0.6, 0.6), PileShape.BOX]

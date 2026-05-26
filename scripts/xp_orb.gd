@@ -64,8 +64,13 @@ var _bob_phase: float = 0.0
 ## Также используется как Y магнитного полёта: target_y = _base_y, чтобы орб
 ## летел строго горизонтально и не нырял в anchor-точку (которая на полу).
 var _base_y: float = 0.0
-## Куда лететь после активации магнита. None = ещё в IDLE.
+## Camp-получатель кредита XP на arrival. None = ещё в IDLE.
 var _camp_target: Camp = null
+## Что физически преследовать в MAGNETIZED-фазе. Harvester внутри build_radius
+## лагеря, Tower вне (она движется, орб догоняет). Решается в _activate_magnet
+## по позиции орба и не пересчитывается каждый тик — иначе при пересечении
+## границы build_radius орб резко менял бы цель в полёте.
+var _magnet_target_node: Node3D = null
 
 ## Период авто-проверки попадания в зону добычи лагеря. Если орб в IDLE и
 ## расстояние до развёрнутого Camp.deploy_anchor ≤ Camp.gather_radius —
@@ -136,22 +141,24 @@ func _tick_magnetized(delta: float) -> void:
 		# Camp умер до прибытия — орб не имеет получателя, просто исчезает.
 		queue_free()
 		return
-	# Целимся в X/Z `current_center()` (среднее живых палаток, fallback на Tower),
-	# но Y держим равной `_base_y` — высоте, на которой орб появился и
-	# bobbing'ал в IDLE. Это даёт горизонтальный полёт без ныряний:
-	#  - `current_center().y` ≈ половина высоты палатки (origin палатки в
-	#    центре меша) — не та высота, что у орба;
-	#  - `deploy_anchor.y` = 0 пока лагерь не развёрнут — вообще не вариант.
-	# Один источник правды для высоты — точка рождения орба.
-	var center: Vector3 = _camp_target.current_center()
-	var target_pos := Vector3(center.x, _base_y, center.z)
+	if _magnet_target_node == null or not is_instance_valid(_magnet_target_node):
+		# Цель полёта (Harvester или Tower) исчезла — орб теряет ориентир.
+		# Кредит без полёта не выдаём, чтобы XP визуально совпадал с прибытием.
+		queue_free()
+		return
+	# Целимся в X/Z позиции магнит-цели (Harvester в DEPLOYED-зоне или Tower
+	# снаружи), но Y держим равной `_base_y` — высоте рождения орба. Это даёт
+	# горизонтальный полёт без ныряний. Tower движется → target_pos считается
+	# каждый тик (орб её преследует).
+	var attract: Vector3 = _magnet_target_node.global_position
+	var target_pos := Vector3(attract.x, _base_y, attract.z)
 	var to_target: Vector3 = target_pos - global_position
 	var dist: float = to_target.length()
 	if dist <= arrival_distance:
 		if debug_log and LogConfig.master_enabled:
-			print("[XpOrb:%s] arrival: pos=(%.2f, %.2f, %.2f), camp_center=(%.2f, %.2f, %.2f), +%d xp" % [
+			print("[XpOrb:%s] arrival: pos=(%.2f, %.2f, %.2f), target=%s @(%.2f, %.2f, %.2f), +%d xp" % [
 				name, global_position.x, global_position.y, global_position.z,
-				center.x, center.y, center.z, amount,
+				_magnet_target_node.name, attract.x, attract.y, attract.z, amount,
 			])
 		_camp_target.add_squad_xp(amount, global_position)
 		collected.emit(amount, global_position)
@@ -224,6 +231,13 @@ func _resolve_camp_from(body: Node) -> Camp:
 
 func _activate_magnet(camp: Camp) -> void:
 	_camp_target = camp
+	_magnet_target_node = camp.get_xp_magnet_target(global_position)
+	if _magnet_target_node == null:
+		# Ни Harvester, ни Tower не доступны как цель — орб некуда лететь.
+		# Лучше queue_free, чем висеть в MAGNETIZED с null-target и сразу
+		# само-удаляться в _tick_magnetized.
+		queue_free()
+		return
 	_state = State.MAGNETIZED
 	# Снимаем Area3D.monitoring — больше не интересны новые касания.
 	# Лишнее body_entered в полёте к anchor'у только зря тратит physics-call'ы.
@@ -232,8 +246,8 @@ func _activate_magnet(camp: Camp) -> void:
 	# во время этой фазы запрещено — спамит ошибкой каждый кадр магнита.
 	_magnet_area.set_deferred("monitoring", false)
 	if debug_log and LogConfig.master_enabled:
-		var center: Vector3 = camp.current_center()
-		print("[XpOrb:%s] magnet activated: pos=(%.2f, %.2f, %.2f), target_xz=(%.2f, %.2f), target_y=%.2f (=base_y), camp_center.y=%.2f" % [
+		var t_pos: Vector3 = _magnet_target_node.global_position
+		print("[XpOrb:%s] magnet activated: pos=(%.2f, %.2f, %.2f), target=%s xz=(%.2f, %.2f), target_y=%.2f (=base_y)" % [
 			name, global_position.x, global_position.y, global_position.z,
-			center.x, center.z, _base_y, center.y,
+			_magnet_target_node.name, t_pos.x, t_pos.z, _base_y,
 		])

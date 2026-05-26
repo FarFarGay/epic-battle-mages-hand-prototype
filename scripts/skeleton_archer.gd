@@ -183,10 +183,14 @@ func _rescan_target() -> void:
 ## Резолв цели для текущего тика. Приоритет: scan-кэш → forced_target →
 ## base get_active_target (Tower от EnemySpawner). is_instance_valid проверки
 ## везде — цели queue_free'аются, кэш может протухнуть между сканами.
+##
+## Фильтр forced_target через виртуал `_target_still_valid` (живёт в Enemy
+## с default-TARGET_GROUP) — наследники (SkeletonGiantThrower → Tower) могут
+## разрешить дополнительные группы, не override'я весь _resolve_target.
 func _resolve_target() -> Node3D:
 	if is_instance_valid(_cached_target):
 		return _cached_target
-	if is_instance_valid(_forced_target) and _forced_target.is_in_group(Enemy.TARGET_GROUP):
+	if is_instance_valid(_forced_target) and _target_still_valid(_forced_target):
 		return _forced_target
 	var base_target: Node3D = get_active_target()
 	if is_instance_valid(base_target):

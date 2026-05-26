@@ -47,7 +47,7 @@ var _consumed: bool = false
 ## слишком далеко) — фоллбэк на прямой выстрел.
 func setup(source_position: Vector3, target_position: Vector3) -> void:
 	global_position = source_position
-	_velocity = _compute_launch_velocity(source_position, target_position)
+	_velocity = BallisticUtil.compute_launch_velocity(source_position, target_position, speed, gravity)
 	_orient_along_velocity()
 	if debug_log and LogConfig.master_enabled:
 		var d_h: float = Vector2(target_position.x - source_position.x, target_position.z - source_position.z).length()
@@ -57,30 +57,6 @@ func setup(source_position: Vector3, target_position: Vector3) -> void:
 			d_h, target_position.y - source_position.y, speed,
 			_velocity.x, _velocity.y, _velocity.z,
 		])
-
-
-## Решение баллистической задачи: source, target, фиксированный |v| = speed,
-## гравитация по -Y. Возвращает initial velocity. Если discriminant < 0 (цель
-## вне досягаемости) — фоллбэк: прямой выстрел в направлении цели.
-func _compute_launch_velocity(source: Vector3, target: Vector3) -> Vector3:
-	var to_target := target - source
-	var horizontal := Vector3(to_target.x, 0.0, to_target.z)
-	var d := horizontal.length()
-	var dy := to_target.y
-	if d < 0.0001:
-		var dir_y: float = signf(dy) if absf(dy) > 0.0 else 1.0
-		return Vector3(0.0, dir_y * speed, 0.0)
-	var v2 := speed * speed
-	var v4 := v2 * v2
-	var disc := v4 - gravity * (gravity * d * d + 2.0 * dy * v2)
-	if disc < 0.0:
-		return to_target.normalized() * speed
-	# Низкая дуга: tan(α) = (v² − √disc) / (g·d).
-	var sqrt_disc := sqrt(disc)
-	var tan_low := (v2 - sqrt_disc) / (gravity * d)
-	var angle := atan(tan_low)
-	var dir_h := horizontal / d
-	return dir_h * speed * cos(angle) + Vector3.UP * speed * sin(angle)
 
 
 ## Поворачивает меш носом вдоль текущей _velocity.

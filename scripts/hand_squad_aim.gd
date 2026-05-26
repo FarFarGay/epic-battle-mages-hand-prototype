@@ -130,12 +130,18 @@ func _process(_delta: float) -> void:
 		_commit_aim()
 
 
-## True если в круге aim_ring_radius вокруг центра есть живой скелет.
-## Идём через SKELETON_GROUP — и NEAR, и FAR-LOD цели засчитываются.
-## Дёшево: ~50 скелетов max × 1 frame, без sqrt.
+## True если в круге aim_ring_radius вокруг центра есть живой враг любого типа.
+## Идём через `Enemy.ENEMY_GROUP` — все наследники Enemy (melee-Skeleton +
+## Archer + Giant + Thrower + любой будущий тип), NEAR и FAR-LOD одинаково.
+## SKELETON_GROUP-only был бы асимметрией: каменщик / обычный archer не
+## вошли бы в неё (они extends Archer, не Skeleton) → кольцо не подсвечивалось
+## бы hostile-цветом, хотя SoldierGnome их теперь атакует через ENEMY_GROUP.
+## См. [[feedback-symmetric-interactions]].
+##
+## Дёшево: ~50 врагов max × 1 frame, без sqrt.
 func _has_enemies_in_aim_zone(center: Vector3) -> bool:
 	var r_sq: float = aim_ring_radius * aim_ring_radius
-	for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+	for n in get_tree().get_nodes_in_group(Enemy.ENEMY_GROUP):
 		if not is_instance_valid(n):
 			continue
 		var node3d := n as Node3D

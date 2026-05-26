@@ -8,6 +8,7 @@
 [ext_resource type="Script" uid="uid://g47nmagw0cfh" path="res://scripts/enemy_spawner.gd" id="6"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="7"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton_giant.tscn" id="7_giant"]
+[ext_resource type="PackedScene" path="res://scenes/skeleton_giant_thrower.tscn" id="7_thrower"]
 [ext_resource type="PackedScene" path="res://scenes/camp.tscn" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/octagon_turret.tscn" id="10"]
 [ext_resource type="PackedScene" path="res://scenes/perf_hud.tscn" id="11"]
@@ -21,6 +22,7 @@
 [ext_resource type="PackedScene" uid="uid://grassfield01" path="res://scenes/grass_field.tscn" id="19_grass_field"]
 [ext_resource type="Script" uid="uid://ca4r3f6w4pm3w" path="res://scripts/nav_region.gd" id="20_nav"]
 [ext_resource type="PackedScene" path="res://scenes/fog_of_war.tscn" id="21_fog"]
+[ext_resource type="PackedScene" path="res://scenes/harvester.tscn" id="22_harvester"]
 
 [sub_resource type="NavigationMesh" id="NavMesh_main"]
 geometry_collision_mask = 33
@@ -91,6 +93,7 @@ camp_paths = Array[NodePath]([NodePath("../Camp")])
 poi_root_path = NodePath("../PointsOfInterest")
 skeleton_scene = ExtResource("7")
 giant_scene = ExtResource("7_giant")
+giant_thrower_scene = ExtResource("7_thrower")
 
 [node name="Modules" type="Node3D" parent="." unique_id=1539843594]
 
@@ -118,6 +121,7 @@ wave_schedule = ExtResource("18_schedule_default")
 [node name="Camp" parent="." unique_id=745402752 instance=ExtResource("8")]
 target_path = NodePath("../Tower")
 tent_count = 3
+harvester_scene = ExtResource("22_harvester")
 
 [node name="PerfHud" parent="." unique_id=2138312601 instance=ExtResource("11")]
 
@@ -144,3 +148,4 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -27.68639, 0, -15.37766)
 resource_type = 4
 
 [node name="FogOfWar" parent="." unique_id=1234567890 instance=ExtResource("21_fog")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.013473511, 0, -0.053047895)

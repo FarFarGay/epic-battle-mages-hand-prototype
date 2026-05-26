@@ -45,6 +45,10 @@ enum Phase { IDLE, RUNNING }
 ## глобально по счётчику волн, не per-stage). 0 = выключено. 3 = первый
 ## гигант на волне 3, далее на 6, 9 и т.д.
 @export var giant_every_n_waves: int = 3
+## Сцена гиганта-каменщика (ranged-танк, кидает камни в Tower с 25-35м).
+## Сейчас спавнится только через чит-карточку для playtest'а; авто-волны
+## не настроены — это отдельный balance-этап. Если null — чит no-op.
+@export var giant_thrower_scene: PackedScene
 @export_group("")
 
 @export_group("Background tide (фоновая угроза)")
@@ -268,31 +272,49 @@ func cheat_stress_2000() -> void:
 			print("[WaveDirector] cheat-stress: запущен async-спавн 2000 скелетов")
 
 
-## Спавн одного скелета-гиганта на лету. Делегирует в _spawn_giant'е, который
-## выбирает зону и forced_target = Tower. Если нет активного POI — гигант
-## всё равно спавнится в случайной live SpawnZone, но без forced_target
-## (он сам найдёт Tower через _scan_target override).
+## Спавн одного скелета-гиганта на лету. Делегирует в _spawn_giant'е если есть
+## активная осада (forced_target=Tower). Иначе — fallback через
+## _cheat_spawn_enemy: гигант сам найдёт Tower через _scan_target override.
 func cheat_spawn_giant() -> void:
 	if giant_scene == null:
 		push_warning("[WaveDirector] cheat_spawn_giant: giant_scene не задан в инспекторе")
 		return
 	if _active_camp != null:
-		# Активная осада — используем стандартный pipeline (forced_target=Tower).
 		_spawn_giant()
 		return
-	# Нет активного лагеря — спавним вручную в любой live SpawnZone'е,
-	# гигант сам найдёт Tower через _scan_target.
+	_cheat_spawn_enemy(giant_scene, "гигант", false)
+
+
+## Спавн одного гиганта-каменщика на лету. Случайная live SpawnZone,
+## forced_target = Tower (если есть активный лагерь). Не зашит в авто-волны.
+func cheat_spawn_giant_thrower() -> void:
+	if giant_thrower_scene == null:
+		push_warning("[WaveDirector] cheat_spawn_giant_thrower: giant_thrower_scene не задан в инспекторе")
+		return
+	_cheat_spawn_enemy(giant_thrower_scene, "каменщик", true)
+
+
+## Helper для cheat-спавнов одного врага. Случайная live SpawnZone, safe-point,
+## spawn_group(1). Опционально назначает forced_target=Tower через
+## _assign_forced_targets (если есть _active_camp с Tower).
+func _cheat_spawn_enemy(scene: PackedScene, label: String, assign_tower_target: bool) -> void:
 	if _spawner == null:
 		return
 	var zone: SpawnZone = _pick_random_live_zone()
 	if zone == null:
-		push_warning("[WaveDirector] cheat_spawn_giant: нет живых SpawnZone")
+		push_warning("[WaveDirector] cheat_spawn (%s): нет живых SpawnZone" % label)
 		return
 	var origin := _pick_safe_point_in_zone(zone)
 	origin.y = _spawner.spawn_y
-	_spawner.spawn_group(giant_scene, 1, origin, 1.0)
+	var spawned := _spawner.spawn_group(scene, 1, origin, 1.0)
+	var tower: Node3D = _active_camp.get_tower() if _active_camp != null else null
+	if assign_tower_target and tower != null:
+		_assign_forced_targets(spawned, tower)
 	if debug_log and LogConfig.master_enabled:
-		print("[WaveDirector] cheat: гигант спавн @ (%.0f, %.0f)" % [origin.x, origin.z])
+		var tower_label: String = tower.name if tower != null else "no-tower"
+		print("[WaveDirector] cheat: %s спавн @ (%.0f, %.0f) → %s" % [
+			label, origin.x, origin.z, tower_label,
+		])
 
 
 # --- Старт кампании ---

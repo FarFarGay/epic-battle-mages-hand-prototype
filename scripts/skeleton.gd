@@ -492,6 +492,14 @@ func _set_cached_target(new_target: Node3D) -> void:
 	_cached_target = new_target
 	_approach_angle = randf() * TAU
 	_recompute_path_decision()
+	# Цель найдена → выходим из local-wander (если были в нём). Следующий
+	# _ai_step увидит cached_target и пойдёт в APPROACH, _wander_tick не
+	# вызовется. Сбрасываем явно — иначе если позже цель снова потеряется,
+	# скелет останется в local-режиме «вокруг старой стены».
+	if new_target != null and _local_wander_mode:
+		_local_wander_mode = false
+		_blocked_target_dir = Vector3.ZERO
+		_local_wander_side = 0
 
 
 ## Множитель «обходить если путь ≤ X × прямой дистанции». 2.0 = готов
@@ -515,6 +523,27 @@ const STUCK_DURATION: float = 0.6
 const STUCK_OBSTACLE_RADIUS: float = 2.0
 var _stuck_last_pos: Vector3 = Vector3.INF
 var _stuck_timer: float = 0.0
+
+## Local-wander режим: упёрся в стену (stuck-handler не нашёл реальной цели
+## вокруг), теперь бродим небольшими шагами вокруг точки столкновения, пока
+## не получим валидную цель из vision-scan. Сбрасывается в [_set_cached_target]
+## когда цель найдена → следующий _ai_step падает в APPROACH, не в _wander_tick.
+var _local_wander_mode: bool = false
+const LOCAL_WANDER_DISTANCE_MIN: float = 2.0
+const LOCAL_WANDER_DISTANCE_MAX: float = 4.5
+## Направление к заблокированной цели (XZ-нормализованное), запомненное при
+## _enter_local_wander. Используется для bias'а wander-точек: выбираем
+## перпендикулярно — скелет движется ВДОЛЬ стены, ищет обход, а не топчется
+## в той же точке. ZERO = ещё не выбрано / сбросилось.
+var _blocked_target_dir: Vector3 = Vector3.ZERO
+## Сторона обхода стены, выбирается случайно при первом _enter_local_wander
+## (±1). Разные скелеты пойдут в разные стороны → толпа расходится вдоль
+## забора. Сбрасывается вместе с _local_wander_mode.
+var _local_wander_side: int = 0
+## Максимум попыток подобрать wander-точку с валидным LOS (raycast не
+## упирается в палисад). Если все попытки за стеной — fallback на любую
+## точку (скелет может застрять, но следующий stuck-цикл попробует снова).
+const LOCAL_WANDER_LOS_RETRIES: int = 6
 
 
 ## Решение «обходить или ломать»: считаем длину NavMesh-пути и сравниваем
@@ -543,6 +572,17 @@ func _recompute_path_decision() -> void:
 	for i in range(path.size() - 1):
 		path_length += (path[i + 1] - path[i]).length()
 	_should_path_around = path_length <= direct * DETOUR_THRESHOLD
+
+
+## Override базы Enemy: обычный melee-скелет не считает стены/палисад валидной
+## целью. MELEE_ONLY_TARGET_GROUP — подмаркер «только тяжёлая пехота бьёт это»,
+## раньше базовый Skeleton туда и относился. По переработке (2026-05-22) пехота
+## стены НЕ атакует — упирается и переходит в [_enter_local_wander] вокруг них.
+## SkeletonGiant (override отдельно) продолжает их бить.
+func _target_still_valid(target: Node3D) -> bool:
+	if not super._target_still_valid(target):
+		return false
+	return not target.is_in_group(MELEE_ONLY_TARGET_GROUP)
 
 
 ## на меше; если скелет умрёт сразу после, mesh queue_free'нется вместе с
@@ -1040,7 +1080,7 @@ func _wander_tick(delta: float) -> void:
 			velocity.z = 0.0
 			_rest_timer = maxf(_rest_timer - delta, 0.0)
 			if _rest_timer <= 0.0:
-				_wander_target = _pick_wander_target()
+				_wander_target = _pick_local_wander_target() if _local_wander_mode else _pick_wander_target()
 				_wander_phase = WanderPhase.WANDERING
 		WanderPhase.WANDERING:
 			var to_target := _wander_target - global_position
@@ -1120,7 +1160,7 @@ func _physics_process(delta: float) -> void:
 	var stale := false
 	if _cached_target != null:
 		if is_instance_valid(_cached_target):
-			if not _cached_target.is_in_group(TARGET_GROUP):
+			if not _target_still_valid(_cached_target):
 				# Цель «исчезла» из под удара (постройка поднята в руку, гном
 				# вошёл в палатку и т.п.), но физически жива — запоминаем её
 				# **последнюю позицию** и продолжаем бежать туда. Без этого
@@ -1194,13 +1234,112 @@ func _tick_stuck_detection(work_delta: float) -> void:
 		return
 	# Превышение — ищем ближайшее препятствие. Используем существующий
 	# spatial-grid целей (Enemy._target_grid) — 3×3 cell'а вокруг скелета,
-	# среди них любая нода skeleton_target в радиусе.
+	# среди них любая нода skeleton_target в радиусе (стены исключены
+	# фильтром в [_find_nearest_obstacle] — иначе зациклились бы).
 	var obstacle: Node3D = _find_nearest_obstacle(STUCK_OBSTACLE_RADIUS)
 	if obstacle != null and obstacle != _cached_target:
 		_set_cached_target(obstacle)
 		if LogConfig.master_enabled:
 			print("[Skeleton] упёрся → переключаюсь на %s" % obstacle.name)
+	elif obstacle == null:
+		# Нет валидных целей рядом — упёрся именно в стену. Переход в local
+		# wander: бродим маленькими шагами вокруг точки столкновения, пока
+		# vision не подберёт цель (или скелет случайно не нашёл обход).
+		_enter_local_wander()
 	_stuck_timer = 0.0
+
+
+## Переход в локальный wander около точки столкновения со стеной. Сбрасывает
+## текущую цель и last-known-pos — _ai_step упадёт в [_wander_tick]. Флаг
+## [_local_wander_mode] переключает _pick_*_wander_target на близкие точки
+## (2-4.5м), чтобы скелет не уходил далеко от стены. Выход — в
+## [_set_cached_target] когда _scan_target подберёт реальную цель.
+##
+## Запоминает направление к заблокированной цели (XZ) и выбирает сторону
+## обхода (±1, рандом) — wander-точки будут смещаться вдоль стены, а не
+## топтаться в случайной точке.
+func _enter_local_wander() -> void:
+	# Направление к стене запоминаем ДО сброса cached_target / last_known_pos.
+	# Приоритет: cached_target (актуальная цель), потом last_known_pos.
+	var blocked_pos: Vector3 = Vector3.INF
+	if _cached_target != null and is_instance_valid(_cached_target):
+		blocked_pos = _cached_target.global_position
+	elif _last_known_target_pos != Vector3.INF:
+		blocked_pos = _last_known_target_pos
+	if blocked_pos != Vector3.INF:
+		var to_blocked := Vector3(blocked_pos.x - global_position.x, 0.0, blocked_pos.z - global_position.z)
+		if to_blocked.length_squared() > VecUtil.EPSILON_SQ:
+			_blocked_target_dir = to_blocked.normalized()
+	if _local_wander_mode:
+		# Уже в режиме, повторное срабатывание stuck — просто перевыбираем
+		# точку (предыдущая wander-цель видимо упёрлась в ту же стену).
+		_wander_target = _pick_local_wander_target()
+		_wander_phase = WanderPhase.WANDERING
+		return
+	_local_wander_mode = true
+	# Сторона обхода — раз и навсегда per stuck-сессию. Разные скелеты ↔
+	# разные стороны → толпа расходится по обе стороны забора.
+	_local_wander_side = 1 if randf() < 0.5 else -1
+	_cached_target = null
+	_last_known_target_pos = Vector3.INF
+	_wander_target = _pick_local_wander_target()
+	_wander_phase = WanderPhase.WANDERING
+	if LogConfig.master_enabled:
+		print("[Skeleton] упёрся в стену → local wander (side=%d)" % _local_wander_side)
+
+
+## Точка локального wander'а с bias'ом «вдоль стены». Если blocked_target_dir
+## задан, выбираем точку в полуплоскости _local_wander_side от направления
+## на стену (±30° от перпендикуляра) — скелет движется параллельно забору.
+## Делаем LOCAL_WANDER_LOS_RETRIES попыток с LOS-чеком: точка за тем же
+## палисадом отбрасывается. Если все попытки в стену — fallback на любую
+## (скелет пытается снова через следующий stuck-цикл).
+func _pick_local_wander_target() -> Vector3:
+	var has_dir: bool = _blocked_target_dir.length_squared() > VecUtil.EPSILON_SQ
+	# Перпендикуляр к direction-on-wall в горизонтальной плоскости. Для
+	# Vector3(x, 0, z) перпендикуляры: (z, 0, -x) и (-z, 0, x).
+	# Берём ту, что соответствует _local_wander_side.
+	var perp: Vector3 = Vector3.ZERO
+	if has_dir:
+		perp = Vector3(_blocked_target_dir.z, 0.0, -_blocked_target_dir.x) * float(_local_wander_side)
+	var fallback_candidate: Vector3 = global_position
+	for attempt in range(LOCAL_WANDER_LOS_RETRIES):
+		var dir: Vector3
+		if has_dir:
+			# ±30° tilt от перпендикуляра. randf_range(-1, 1) × 0.5 рад ≈ ±28°.
+			var tilt: float = randf_range(-0.5, 0.5)
+			dir = perp.rotated(Vector3.UP, tilt).normalized()
+		else:
+			# Нет направления (например, _enter_local_wander без cached_target) —
+			# полный random угол как в старой логике.
+			var angle: float = randf() * TAU
+			dir = Vector3(cos(angle), 0.0, sin(angle))
+		var dist: float = randf_range(LOCAL_WANDER_DISTANCE_MIN, LOCAL_WANDER_DISTANCE_MAX)
+		var t: Vector3 = global_position + dir * dist
+		t.x = clampf(t.x, -wander_map_half_extent, wander_map_half_extent)
+		t.z = clampf(t.z, -wander_map_half_extent, wander_map_half_extent)
+		t.y = global_position.y
+		if attempt == 0:
+			fallback_candidate = t
+		# LOS-чек: луч от себя+1м к target+1м на маске PALISADE. Если попал —
+		# точка за стеной, перевыбираем.
+		if _is_segment_clear_of_palisade(global_position, t):
+			return t
+	return fallback_candidate
+
+
+## Проверка «отрезок не пересекает палисад». Аналог _has_line_of_sight_to,
+## но между произвольными точками (а не от self к ноде). Y фиксируется на +1м,
+## маска — только PALISADE_OBSTACLE.
+func _is_segment_clear_of_palisade(from_pos: Vector3, to_pos: Vector3) -> bool:
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return true
+	var from := Vector3(from_pos.x, from_pos.y + 1.0, from_pos.z)
+	var to := Vector3(to_pos.x, to_pos.y + 1.0, to_pos.z)
+	var q := PhysicsRayQueryParameters3D.create(from, to, Layers.PALISADE_OBSTACLE)
+	q.exclude = [self.get_rid()]
+	return space.intersect_ray(q).is_empty()
 
 
 ## Ищет ближайший skeleton_target в горизонтальном радиусе вокруг скелета.
@@ -1229,6 +1368,11 @@ func _find_nearest_obstacle(radius: float) -> Node3D:
 					continue
 				if not node.is_in_group(TARGET_GROUP):
 					continue
+				# Стены не считаем как obstacle-цель: иначе stuck-handler
+				# вернёт палисад, _set_cached_target его примет и скелет
+				# зациклится «нашёл стену → отвергнул в valid → нашёл снова».
+				if node.is_in_group(MELEE_ONLY_TARGET_GROUP):
+					continue
 				var d_sq: float = Vector2(
 					node.global_position.x - pos.x,
 					node.global_position.z - pos.z,
@@ -1237,6 +1381,30 @@ func _find_nearest_obstacle(radius: float) -> Node3D:
 					nearest_sq = d_sq
 					nearest = node
 	return nearest
+
+
+## Raycast «глаза скелета → центр цели» на маске PALISADE_OBSTACLE. Если
+## попадание — между нами стена, цель не видна. Вызывается из [_scan_target]
+## throttled (vision_scan_interval × LOD-mult ≈ 0.3-1.2с), так что общая
+## нагрузка ~1-2k ray/сек на 200 скелетах — терпимо.
+##
+## Высота луча +1.0м от ground обеих сторон: гном ~1м, скелет ~1.5м, палисад
+## ~1.5м. Луч идёт между «головами» через зону стены — палисад его перекроет,
+## низкие препятствия не сработают (их и нет в маске).
+##
+## Маска ТОЛЬКО PALISADE_OBSTACLE: Tower / палатки / гномы / земля не блокируют
+## зрение (Tower на ACTORS, палатки на CAMP_OBSTACLE, гномы на FRIENDLY_UNIT).
+## Иначе скелет «слеп» через каждую палатку, чего мы не хотим.
+func _has_line_of_sight_to(target: Node3D) -> bool:
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return true  # no physics space yet — fail-open, без LOS не блокируем
+	var from := Vector3(global_position.x, global_position.y + 1.0, global_position.z)
+	var to := Vector3(target.global_position.x, target.global_position.y + 1.0, target.global_position.z)
+	var q := PhysicsRayQueryParameters3D.create(from, to, Layers.PALISADE_OBSTACLE)
+	q.exclude = [self.get_rid()]
+	var hit: Dictionary = space.intersect_ray(q)
+	return hit.is_empty()
 
 
 ## «Холодный» физический шаг для FAR-скелетов: AI считает velocity (через те
@@ -1294,7 +1462,7 @@ func get_active_target() -> Node3D:
 		return null
 	if not is_instance_valid(_cached_target):
 		return null
-	if not _cached_target.is_in_group(TARGET_GROUP):
+	if not _target_still_valid(_cached_target):
 		return null
 	return _cached_target
 
@@ -1369,6 +1537,16 @@ func _scan_target() -> Node3D:
 				if node == null:
 					continue
 				if not node.is_in_group(TARGET_GROUP):
+					continue
+				# Стены/палисад не цель для базового melee — он переходит в
+				# local-wander вокруг них (см. [_enter_local_wander]).
+				if node.is_in_group(MELEE_ONLY_TARGET_GROUP):
+					continue
+				# Line-of-sight: палисад блокирует зрение. Гном за стеной — не
+				# цель; иначе скелет видит сквозь забор, идёт, упирается, входит
+				# в local wander, vision снова даёт ту же цель — дёрганый цикл.
+				# Делается ПОСЛЕ дешёвых group-чеков — raycast только для прошедших.
+				if not _has_line_of_sight_to(node):
 					continue
 				# Приоритет «гном vs прочее» (палатки) — через group, не через
 				# `is Gnome`. Контракт: GNOME_GROUP содержит все гномы (мирных

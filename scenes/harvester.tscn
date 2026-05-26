@@ -1,0 +1,110 @@
+[gd_scene load_steps=12 format=3]
+
+[ext_resource type="Script" path="res://scripts/harvester.gd" id="1_script"]
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_base"]
+top_radius = 0.9
+bottom_radius = 1.1
+height = 0.25
+radial_segments = 16
+
+[sub_resource type="StandardMaterial3D" id="Material_base"]
+albedo_color = Color(0.28, 0.24, 0.2, 1)
+roughness = 0.95
+
+[sub_resource type="BoxMesh" id="BoxMesh_strut"]
+size = Vector3(0.12, 1.4, 0.12)
+
+[sub_resource type="StandardMaterial3D" id="Material_metal"]
+albedo_color = Color(0.45, 0.42, 0.38, 1)
+roughness = 0.45
+metallic = 0.8
+metallic_specular = 0.6
+
+[sub_resource type="BoxMesh" id="BoxMesh_housing"]
+size = Vector3(0.85, 0.45, 0.85)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_shaft"]
+top_radius = 0.12
+bottom_radius = 0.12
+height = 0.9
+radial_segments = 12
+
+[sub_resource type="StandardMaterial3D" id="Material_drill"]
+albedo_color = Color(0.55, 0.5, 0.42, 1)
+roughness = 0.3
+metallic = 0.9
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_bit"]
+top_radius = 0.18
+bottom_radius = 0.02
+height = 0.4
+radial_segments = 12
+
+[sub_resource type="SphereMesh" id="SphereMesh_orb"]
+radius = 0.22
+height = 0.44
+radial_segments = 16
+rings = 10
+
+[sub_resource type="StandardMaterial3D" id="Material_gold_orb"]
+albedo_color = Color(0.98, 0.82, 0.25, 1)
+roughness = 0.25
+metallic = 0.9
+metallic_specular = 0.85
+emission_enabled = true
+emission = Color(1, 0.78, 0.25, 1)
+emission_energy_multiplier = 1.4
+
+[node name="Harvester" type="Node3D"]
+transform = Transform3D(1.8, 0, 0, 0, 1.8, 0, 0, 0, 1.8, 0, 0, 0)
+script = ExtResource("1_script")
+drill_node_path = NodePath("DrillAssembly")
+
+[node name="Base" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.125, 0)
+mesh = SubResource("CylinderMesh_base")
+material_override = SubResource("Material_base")
+
+[node name="StrutA" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.55, 0.95, 0.55)
+mesh = SubResource("BoxMesh_strut")
+material_override = SubResource("Material_metal")
+
+[node name="StrutB" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, 0.95, 0.55)
+mesh = SubResource("BoxMesh_strut")
+material_override = SubResource("Material_metal")
+
+[node name="StrutC" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.55, 0.95, -0.55)
+mesh = SubResource("BoxMesh_strut")
+material_override = SubResource("Material_metal")
+
+[node name="StrutD" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, 0.95, -0.55)
+mesh = SubResource("BoxMesh_strut")
+material_override = SubResource("Material_metal")
+
+[node name="Housing" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.85, 0)
+mesh = SubResource("BoxMesh_housing")
+material_override = SubResource("Material_metal")
+
+[node name="GoldOrb" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.3, 0)
+mesh = SubResource("SphereMesh_orb")
+material_override = SubResource("Material_gold_orb")
+
+[node name="DrillAssembly" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
+
+[node name="Shaft" type="MeshInstance3D" parent="DrillAssembly"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0, 0)
+mesh = SubResource("CylinderMesh_shaft")
+material_override = SubResource("Material_drill")
+
+[node name="Bit" type="MeshInstance3D" parent="DrillAssembly"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.7, 0)
+mesh = SubResource("CylinderMesh_bit")
+material_override = SubResource("Material_drill")

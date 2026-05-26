@@ -127,6 +127,13 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 @export_range(0.1, 1.0) var point_blank_distance_factor: float = 0.7
 ## Замедление knockback-скорости в секунду (lerp coefficient × delta).
 @export var knockback_friction: float = 5.0
+## Доля knockback-импульса, который реально применяется к этому врагу.
+## 1.0 = полный (default для обычных врагов). <1.0 — танк-семантика: гиганты
+## ставят 0.2 (×0.2 от стрел/slam'а), чтобы их не сбивали со штриха обычные
+## силы. Применяется в [apply_knockback] перед super-делегатом —
+## наследники могут override'ить через @export в .tscn без переписывания
+## метода. Damage НЕ урезается этим полем.
+@export_range(0.0, 1.0) var knockback_resistance: float = 1.0
 
 @export_group("Knockback contacts")
 ## Коэффициент отскока от активной цели при ударе в knockback'е (0 — без отскока, 1 — полный возврат).
@@ -192,6 +199,21 @@ func set_target(target: Node3D) -> void:
 	_targets = new_targets
 
 
+## Виртуал: «можно ли продолжать держать этот таргет в кэше». Default —
+## членство в TARGET_GROUP (skeleton_target = палатки/гномы/колокол). Наследники
+## с другим источником цели (например SkeletonGiant → Tower) override'ят,
+## разрешая дополнительные группы. Зовётся из stale-check'ов и фильтров
+## get_active_target в Skeleton/SkeletonArcher. Единая точка для расширения —
+## новый ranged-наследник через Archer тоже сможет переопределить.
+##
+## **History 2026-05-21:** изначально жил в Skeleton — потерял симметрию с
+## Archer'ом (SkeletonGiantThrower extends Archer не имел доступа к виртуалу,
+## приходилось override'ить _resolve_target отдельно). Поднят в Enemy после
+## code review — теперь общая база.
+func _target_still_valid(target: Node3D) -> bool:
+	return target.is_in_group(TARGET_GROUP)
+
+
 ## Возвращает ближайшую валидную цель, либо null. Невалидные (queue_free)
 ## пропускаются, поэтому ручная чистка списка не нужна.
 func get_active_target() -> Node3D:
@@ -222,7 +244,9 @@ func take_damage(amount: float) -> void:
 func apply_knockback(impulse: Vector3, duration: float) -> void:
 	# Внешний knockback: заменяем горизонтальную скорость, вертикаль накладываем
 	# поверх, и дёргаем _on_knockback хук (подкласс может сбить замах и т.п.).
-	_apply_velocity_change(impulse, duration)
+	# knockback_resistance умножает обе компоненты — у обычного врага = 1.0
+	# (без эффекта), у танка <1 (гасит силу/длительность).
+	_apply_velocity_change(impulse * knockback_resistance, duration * knockback_resistance)
 	_on_knockback()
 
 

@@ -159,6 +159,7 @@ var _defense_slot_plus_btn: Button
 ## Порядок и метаданные отображения ресурсов в правой панели. Пять типов из
 ## ResourcePile.ResourceType, кроме GENERIC (legacy-ящик, не геймплейный).
 const RESOURCE_DISPLAY: Array = [
+	{"type": ResourcePile.ResourceType.GOLD, "label": "золото", "color": Color(0.95, 0.78, 0.18)},
 	{"type": ResourcePile.ResourceType.WOOD, "label": "дерево", "color": Color(0.45, 0.28, 0.15)},
 	{"type": ResourcePile.ResourceType.STONE, "label": "камень", "color": Color(0.55, 0.55, 0.55)},
 	{"type": ResourcePile.ResourceType.IRON, "label": "железо", "color": Color(0.45, 0.48, 0.55)},
@@ -189,6 +190,11 @@ func _ready() -> void:
 	EventBus.resources_changed.connect(_on_resource_changed)
 	EventBus.collection_mode_changed.connect(_refresh_mode_label)
 	EventBus.collection_mode_changed.connect(_refresh_gatherer_mode_buttons)
+	# EventBus — autoload (жив всю сессию). Подписки в _ready без disconnect'а
+	# накапливаются между перезагрузками сцены / game-over reset'ами; на 10
+	# рестартах каждый emit будет 10× вызывать _refresh_*. Тот же паттерн что
+	# в Gnome._disconnect_eventbus (см. Agent Task.md, коммит 65ec7e4).
+	tree_exiting.connect(_disconnect_eventbus)
 	if is_instance_valid(_camp):
 		var current_mode: int = _camp.get_collection_mode()
 		_refresh_mode_label(current_mode)
@@ -211,6 +217,28 @@ func _ready() -> void:
 		_refresh_tower_mana(tower.mana, tower.max_mana)
 	if is_instance_valid(_camp):
 		_refresh_super_charge(_camp.get_super_charge(), _camp.get_super_charge_max())
+
+
+## Чистка EventBus-подписок на tree_exiting. Все Callable'ы парные с _ready —
+## порядок добавления здесь должен совпадать (для отслеживания глазом, не для
+## функциональности — disconnect идемпотентен). Object-to-Object Godot чистит
+## автоматически, но EventBus — autoload (жив сессию), фантомные Callable'ы
+## копились бы между перезагрузками.
+func _disconnect_eventbus() -> void:
+	EventBus.squad_xp_changed.disconnect(_refresh_squad_bar)
+	EventBus.squad_leveled_up.disconnect(_on_level_up)
+	EventBus.pending_upgrade_choices_changed.disconnect(_refresh_journal_badge)
+	EventBus.resources_changed.disconnect(_on_resource_changed)
+	EventBus.collection_mode_changed.disconnect(_refresh_mode_label)
+	EventBus.collection_mode_changed.disconnect(_refresh_gatherer_mode_buttons)
+	EventBus.tower_health_changed.disconnect(_refresh_tower_health)
+	EventBus.tower_mana_changed.disconnect(_refresh_tower_mana)
+	EventBus.super_charge_changed.disconnect(_refresh_super_charge)
+	EventBus.squad_created.disconnect(_on_squad_created)
+	EventBus.squad_changed.disconnect(_on_squad_changed)
+	EventBus.squad_disbanded.disconnect(_on_squad_disbanded)
+	EventBus.squad_recall_ignored.disconnect(_on_squad_recall_ignored)
+	EventBus.recall_zone_pulsed.disconnect(_on_recall_zone_pulsed)
 
 
 ## Строит SquadRow программно и докидывает в существующий VBox правой панели.

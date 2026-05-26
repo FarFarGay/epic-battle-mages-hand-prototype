@@ -66,9 +66,12 @@ var _highlighted: bool = false
 var _garrison_gnome: Node3D = null
 var _alarm_cd: float = 0.0
 var _destroyed: bool = false
-## Счётчик скелетов сейчас в alarm-зоне. Поднимается на body_entered,
-## опускается на body_exited (только для нод в SKELETON_GROUP). Используется
-## защитниками в bell-mode: пока > 0, бой не закончен → не отзывают.
+## Счётчик врагов сейчас в alarm-зоне. Поднимается на body_entered,
+## опускается на body_exited (только для нод в `Enemy.ENEMY_GROUP`).
+## Используется защитниками в bell-mode: пока > 0, бой не закончен → не
+## отзывают. Группа ENEMY_GROUP, не SKELETON_GROUP — иначе archer'ы и
+## гиганты-каменщики (extends Archer) проходили бы alarm-зону молча. См.
+## [[feedback-symmetric-interactions]].
 var _enemies_in_zone: int = 0
 ## True пока bell «в руке» (Hand BuildAim relocate). Защитники в bell-mode
 ## проверяют через [is_carried] и отпускаются, чтобы не стоять до linger'а
@@ -189,8 +192,10 @@ func _die() -> void:
 func _on_alarm_body_entered(body: Node) -> void:
 	if _destroyed:
 		return
-	# Только скелеты считаются. Гномы/палатки в alarm-area не интересуют.
-	if not body.is_in_group(Skeleton.SKELETON_GROUP):
+	# Только враги считаются. Гномы/палатки в alarm-area не интересуют. Группа
+	# ENEMY_GROUP, не SKELETON_GROUP — alarm срабатывает на любых наследников
+	# Enemy (melee-Skeleton, Archer, Giant, Thrower, любой будущий тип).
+	if not body.is_in_group(Enemy.ENEMY_GROUP):
 		return
 	_enemies_in_zone += 1
 	# Alarm cd защищает от множественных emit-ов от пачки скелетов, ввалившихся
@@ -203,6 +208,6 @@ func _on_alarm_body_entered(body: Node) -> void:
 
 
 func _on_alarm_body_exited(body: Node) -> void:
-	if not body.is_in_group(Skeleton.SKELETON_GROUP):
+	if not body.is_in_group(Enemy.ENEMY_GROUP):
 		return
 	_enemies_in_zone = maxi(_enemies_in_zone - 1, 0)

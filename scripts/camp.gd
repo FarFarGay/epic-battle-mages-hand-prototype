@@ -203,6 +203,10 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 @export var follow_speed: float = 4.0
 ## Расстояние между палатками в цепочке и между башней и parts[0].
 @export var part_gap: float = 2.5
+## Дистанция «башня ↔ Harvester» и «Harvester ↔ первая палатка» в каравне.
+## Больше part_gap, потому что Harvester крупнее палатки и должен иметь
+## визуальное «дыхание» вокруг себя — иначе в строю всё налезает кучей.
+@export var harvester_gap: float = 4.5
 ## Базовое расстояние между гномами-followers в цепочке. Меньше part_gap —
 ## гномы идут плотнее палаток, как «толпа за караваном». Реальный gap
 ## раздёргивается per-гном через gnome_chain_gap_variance.
@@ -347,6 +351,15 @@ const CAMP_BUILDING_CATALOG: Dictionary = {
 @export var anchor_drop_radius: float = 2.5
 @export_group("")
 
+@export_group("Harvester")
+## Сцена Harvester'а — звено каравана между башней и палатками. Спавнится
+## в _ready, на _start_deploy ставится на _deploy_anchor (= центр POI) и
+## начинает добычу золота. На свёртке возвращается в строй каравана.
+## Если null — лагерь работает без харвестера: gold не добывается, цепочка
+## tower→tents[0] остаётся как раньше.
+@export var harvester_scene: PackedScene
+@export_group("")
+
 @export_group("Squad XP / upgrades")
 ## Кривая порогов уровней. squad_level_xp_curve[N] = XP, нужный для уровня N+1.
 ## Дойдя до индекса >= size — больше уровней не дают (всё, апгрейды кончились).
@@ -383,6 +396,11 @@ var _state: State = State.CARAVAN_FOLLOWING
 ## через `(part as CampPart).is_torn_off()`. Также удобнее, если когда-то
 ## появятся не-RB палатки.
 var _parts: Array[Node3D] = []
+## Звено каравана между башней и палатками — отдельная сущность, добывает
+## золото в DEPLOYED. Спавнится в _ready если harvester_scene задан. Двигается
+## Camp'ом в _update_caravan_follow (как палатки), деплоится на _deploy_anchor
+## в _start_deploy. Может быть null — лагерь продолжит работать без него.
+var _harvester: Harvester
 ## Таймер удержания R в CARAVAN_FOLLOWING (для развёртки).
 var _deploy_hold: float = 0.0
 ## Таймер удержания R в DEPLOYED (для свёртки).
@@ -503,6 +521,7 @@ func _ready() -> void:
 		push_warning("Camp: target_path не разрешился, башня не задана")
 
 	_spawn_tents()
+	_spawn_harvester()
 	_spawn_gnomes()
 	_build_anchor_drop_zone()
 	_init_collection_priority()
@@ -595,6 +614,29 @@ func _spawn_one_tent() -> Node3D:
 	return tent
 
 
+## Спавнит Harvester как звено каравана сразу за башней. Если сцена не задана —
+## лагерь работает без харвестера (no-op в follow и deploy/pack).
+func _spawn_harvester() -> void:
+	if harvester_scene == null:
+		return
+	var h := harvester_scene.instantiate() as Harvester
+	if h == null:
+		push_warning("Camp: harvester_scene не инстанцируется как Harvester")
+		return
+	h.name = "Harvester"
+	add_child(h)
+	var leader_xz: Vector3 = _tower.global_position if _tower != null else global_position
+	# Ставим за башней на harvester_gap (больше part_gap — Harvester крупнее).
+	# Y оставляем из сцены — Harvester сам ставится на пол через свой базовый меш.
+	h.global_position = Vector3(
+		leader_xz.x - harvester_gap,
+		h.global_position.y,
+		leader_xz.z,
+	)
+	h.bind_economy(economy)
+	_harvester = h
+
+
 func _spawn_gnomes() -> void:
 	if gnome_scene == null and defender_scene == null:
 		if debug_log and LogConfig.master_enabled:
@@ -650,6 +692,22 @@ func get_gnomes() -> Array[Gnome]:
 ## Публичный геттер ссылки на башню. Бездомные гномы (FOLLOWING_CARAVAN) идут
 ## за ней. Может быть null если target_path не разрешился или Tower уничтожена.
 func get_tower() -> Node3D:
+	return _tower
+
+
+## Цель магнита XP-орба, выбирается по позиции орба:
+##  - орб внутри build_radius от _deploy_anchor И лагерь DEPLOYED И Harvester
+##    жив → летит к Harvester'у (визуально орбы сходятся к буровой);
+##  - иначе → летит к Tower (она движется, орб её преследует и доезжает с ней
+##    обратно в лагерь, где уже зачислится через arrival).
+## Может вернуть null если ни Harvester'а, ни Tower'а нет — XpOrb на null-target
+## queue_free'ится без кредита.
+func get_xp_magnet_target(orb_position: Vector3) -> Node3D:
+	if _state == State.DEPLOYED and _harvester != null and is_instance_valid(_harvester):
+		var dx: float = orb_position.x - _deploy_anchor.x
+		var dz: float = orb_position.z - _deploy_anchor.z
+		if dx * dx + dz * dz <= build_radius * build_radius:
+			return _harvester
 	return _tower
 
 
@@ -3065,7 +3123,9 @@ func _start_deploy() -> void:
 	# Tower уходит из аггро-цели — скелеты переключаются на палатки/гномов.
 	# Если игрок свернёт лагерь, _finalize_pack вернёт tower в группу.
 	_set_tower_aggro(false)
-	# Гномы выходят бродить.
+	# Гномы выходят бродить — каждый из своей палатки (setup() в _spawn_one_gnome
+	# привязал их к конкретному tent'у). Harvester для гномов — не дом, просто
+	# объект в центре кольца.
 	for g in _gnomes:
 		if is_instance_valid(g):
 			g.enter_deployed()
@@ -3082,6 +3142,14 @@ func _start_deploy() -> void:
 	if _anchor_drop_zone != null:
 		_anchor_drop_zone.global_position = Vector3(_deploy_anchor.x, _deploy_anchor.y + 0.5, _deploy_anchor.z)
 		_anchor_drop_zone.monitoring = true
+	# Harvester встаёт ровно на anchor (= центр POI, между палатками кольца) и
+	# начинает качать золото. Y берём с пола, как у _center_slot — иначе он
+	# повиснет на высоте башни (anchor.y ≈ 3, центр Tower-меша).
+	if _harvester != null:
+		var harv_ground_y: float = 0.0
+		if not _parts.is_empty():
+			harv_ground_y = _ground_y_at(_parts[0], _deploy_anchor)
+		_harvester.deploy_on(Vector3(_deploy_anchor.x, harv_ground_y, _deploy_anchor.z))
 
 
 func _start_pack() -> void:
@@ -3106,6 +3174,10 @@ func _start_pack() -> void:
 	_dismantle_archer_posts()
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] свёртка инициирована — ждём гномов")
+	# Harvester снимается с POI — gold-tick останавливается. Двигаться обратно
+	# в строй будет уже из _update_caravan_follow после _finalize_pack.
+	if _harvester != null:
+		_harvester.pack_to_caravan()
 	for g in _gnomes:
 		if is_instance_valid(g):
 			g.request_return()
@@ -3158,6 +3230,13 @@ func _update_caravan_follow(delta: float) -> void:
 	if _caravan_halted:
 		return
 
+	# Harvester (если есть и не на POI) едет первым звеном за башней. Палатки
+	# дальше следуют за ним вместо башни. После _finalize_pack харвестер сам
+	# is_deployed()=false — этим же путём встраивается обратно в строй.
+	var harvester_in_caravan: bool = _harvester != null and not _harvester.is_deployed()
+	if harvester_in_caravan:
+		_move_harvester_to_caravan(delta)
+
 	# Виртуальная цепочка: только палатки, которыми Camp реально может управлять.
 	# Skip'аются: torn_off (живут по физике), in_hand (Hand двигает), вне строя
 	# (флаг _outside_caravan, ставится в notify_part_settled при release вне
@@ -3176,6 +3255,8 @@ func _update_caravan_follow(delta: float) -> void:
 	if active_parts.is_empty():
 		return
 
+	# Лидер для проверки «башня ушла слишком далеко» — Tower, а не Harvester:
+	# follow_max_distance — это видимость самой башни, не звена-харвестера.
 	var lead_dist: float = active_parts[0].global_position.distance_to(_tower.global_position)
 	var leader_too_far := lead_dist > follow_max_distance
 
@@ -3186,9 +3267,11 @@ func _update_caravan_follow(delta: float) -> void:
 			print("[Camp] башня вернулась в зону видимости (dist=%.1f)" % lead_dist)
 		_was_out_of_range = leader_too_far
 
+	# Звено-лидер для первой палатки: Harvester (если в каравне) или сама башня.
+	var first_leader: Node3D = _harvester if harvester_in_caravan else _tower
 	for i in range(active_parts.size()):
 		var part := active_parts[i]
-		var leader_pos: Vector3 = _tower.global_position if i == 0 else active_parts[i - 1].global_position
+		var leader_pos: Vector3 = first_leader.global_position if i == 0 else active_parts[i - 1].global_position
 
 		# Ведущая палатка стоит, если башня ушла за порог. Остальные всё равно
 		# подтягиваются к своему (стоящему) лидеру — цепочка собирается.
@@ -3200,7 +3283,11 @@ func _update_caravan_follow(delta: float) -> void:
 		if to_leader.length_squared() < VecUtil.EPSILON_SQ:
 			continue
 		var dir := to_leader.normalized()
-		var target_pos := leader_pos - dir * part_gap
+		# gap зависит от того, кто ведёт это звено: если первая палатка идёт
+		# за Harvester'ом — берём harvester_gap (он крупнее, нужно дыхание).
+		# Остальные звенья — обычный part_gap между палатками.
+		var link_gap: float = harvester_gap if (i == 0 and harvester_in_caravan) else part_gap
+		var target_pos := leader_pos - dir * link_gap
 		# Y: ground + half-height — палатка стоит ровно на полу, не утопает.
 		# Без offset palatka.center на ground_y → её нижняя сторона уходит
 		# под пол на половину высоты (визуально незаметно из-за толщины
@@ -3211,7 +3298,26 @@ func _update_caravan_follow(delta: float) -> void:
 		_move_part_kinematic(part, step_pos)
 
 
+## Двигает Harvester'а одной exp-decay-итерацией к точке «за башней на part_gap».
+## Используется только в IN_CARAVAN — на _start_deploy Harvester телепортируется
+## на anchor и сам себя не двигает. Y тянется к ground_y, чтобы не висел в
+## воздухе если башня едет по уклону.
+func _move_harvester_to_caravan(delta: float) -> void:
+	var to_leader := _tower.global_position - _harvester.global_position
+	to_leader.y = 0.0
+	if to_leader.length_squared() < VecUtil.EPSILON_SQ:
+		return
+	var dir := to_leader.normalized()
+	var target_pos: Vector3 = _tower.global_position - dir * harvester_gap
+	target_pos.y = _ground_y_at(_harvester, target_pos)
+	_harvester.global_position = _exp_decay_capped(
+		_harvester.global_position, target_pos, follow_speed, caravan_max_speed, delta
+	)
+
+
 func _update_deployed(delta: float) -> void:
+	# Добыча золота вынесена в Harvester (он сам тикает в DEPLOYED). Здесь
+	# только движение палаток к ring-целям + (через _process) гномы.
 	for i in range(_parts.size()):
 		if i >= _deployed_targets.size():
 			break

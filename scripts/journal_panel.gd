@@ -113,6 +113,26 @@ func _ready() -> void:
 	# в будущем). Перерисовываем вкладку SPELLS если она активна.
 	EventBus.spell_unlocked.connect(_on_spell_changed)
 	EventBus.spell_upgraded.connect(_on_spell_changed)
+	# EventBus — autoload, подписки переживают tree-removal. На live-reload /
+	# game-reset фантомные Callable'ы будут вызываться повторно на каждом
+	# emit. Тот же паттерн что в gameplay_hud._disconnect_eventbus.
+	tree_exiting.connect(_disconnect_eventbus)
+
+
+## Чистка EventBus-подписок на tree_exiting. Парные с _ready по списку, порядок
+## не важен (disconnect идемпотентен).
+func _disconnect_eventbus() -> void:
+	EventBus.pending_upgrade_choices_changed.disconnect(_on_pending_changed)
+	EventBus.squad_xp_changed.disconnect(_on_squad_xp_changed)
+	EventBus.squad_upgrade_granted.disconnect(_on_upgrade_granted)
+	EventBus.resources_changed.disconnect(_on_resources_changed)
+	EventBus.camp_deployed.disconnect(_on_camp_state_changed_anchor)
+	EventBus.camp_packed.disconnect(_on_camp_state_changed)
+	EventBus.camp_buildings_changed.disconnect(_on_camp_state_changed)
+	EventBus.collection_priority_changed.disconnect(_on_collection_priority_changed)
+	EventBus.quest_advanced.disconnect(_on_quest_advanced)
+	EventBus.spell_unlocked.disconnect(_on_spell_changed)
+	EventBus.spell_upgraded.disconnect(_on_spell_changed)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1202,6 +1222,13 @@ func _build_debug_tab(camp: Node) -> void:
 		func(): wd.cheat_spawn_giant(),
 	))
 	list.add_child(_build_cheat_card(
+		"Призвать каменщика",
+		"Спавнит 1 гиганта-каменщика. Кидает камни в Tower с 25-35м. HP 220, dmg 40-55, attack_cd 3с, windup 1.2с.",
+		"каменщик",
+		wd,
+		func(): wd.cheat_spawn_giant_thrower(),
+	))
+	list.add_child(_build_cheat_card(
 		"+100 каждого ресурса",
 		"Накидывает 100 единиц дерева/камня/железа/еды на склад лагеря.",
 		"+100",
@@ -1283,5 +1310,6 @@ func _grant_all_resources(camp: Node, amount: int) -> void:
 		ResourcePile.ResourceType.IRON,
 		ResourcePile.ResourceType.FOOD,
 		ResourcePile.ResourceType.PAGE,
+		ResourcePile.ResourceType.GOLD,
 	]:
 		camp.economy.add_resource(int(type), amount)
