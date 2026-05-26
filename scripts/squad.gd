@@ -22,6 +22,12 @@ signal state_changed
 ## Эмитится один раз при потере последнего члена. Camp слушает чтобы убрать
 ## squad из _squads и эмитнуть squad_disbanded.
 signal disbanded
+## Заряженная AOE-атака отряда: накопилось ещё единиц / достигнут max / списано.
+## Маркер над отрядом подписан и обновляет визуал (прогресс bar / пульсация).
+signal charge_changed(value: float, max_value: float)
+## Шкала впервые в этом цикле достигла max — маркер триггерит «готов»-анимацию
+## один раз (а не в каждом on_change).
+signal charge_ready
 
 enum State { HOLDING_POSITION, ESCORTING_TOWER, DEFENDING_CAMP }
 
@@ -55,6 +61,16 @@ var hold_position: Vector3 = Vector3.ZERO
 ## участвуют). На `command_escort` сбрасывается. Дизайнерское правило:
 ## «точное указание места — четкое указание, всё прерывает».
 var _strict_move: bool = false
+
+## Заряд squad-ability — копится от убийств членами отряда (SoldierGnome._strike_at
+## зовёт add_charge на kill'е). При >= charge_max — маркер над отрядом пульсирует
+## и ловит hand-slam → trigger_charge_ability. Семантика по типам:
+##   - pikeman: круговая push-волна + лёгкий damage (отогнать натиск).
+## Списывается полностью на trigger.
+var _charge: float = 0.0
+## Максимум шкалы. Назначается Camp.recruit_squad по типу (SoldierSystem.SOLDIER_CATALOG[type].charge_max).
+## Дефолт 5 — если каталог не задал.
+var charge_max: float = 5.0
 
 
 func _to_string() -> String:
@@ -156,3 +172,46 @@ func target_for_member(soldier: SoldierGnome, center: Vector3) -> Vector3:
 	var radius: float = maxf(HOLD_RING_RADIUS, HOLD_RING_MIN_ARC * float(n) / TAU)
 	var angle: float = TAU * float(idx) / float(n)
 	return center + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
+
+
+## Геометрический центр живых членов отряда. Используется маркером заряда
+## (визуал над центром) и AOE-каста (точка взрыва). Если живых нет — Vector3.INF
+## как сигнал caller'у что squad пуст (маркер сам себя освободит).
+func compute_center() -> Vector3:
+	var sum: Vector3 = Vector3.ZERO
+	var n: int = 0
+	for m in members:
+		if is_instance_valid(m):
+			sum += m.global_position
+			n += 1
+	if n == 0:
+		return Vector3.INF
+	return sum / float(n)
+
+
+## Прирастить заряд (1.0 = один kill членом отряда). Эмитит charge_changed,
+## один раз charge_ready на переходе через max.
+func add_charge(amount: float) -> void:
+	if amount <= 0.0 or charge_max <= 0.0:
+		return
+	var was_ready: bool = _charge >= charge_max
+	_charge = clampf(_charge + amount, 0.0, charge_max)
+	charge_changed.emit(_charge, charge_max)
+	if not was_ready and _charge >= charge_max:
+		charge_ready.emit()
+
+
+func get_charge() -> float:
+	return _charge
+
+
+func is_charge_ready() -> bool:
+	return _charge >= charge_max
+
+
+## Списать всю шкалу — вызывается маркером после успешного триггера AOE.
+func consume_charge() -> void:
+	if _charge <= 0.0:
+		return
+	_charge = 0.0
+	charge_changed.emit(_charge, charge_max)

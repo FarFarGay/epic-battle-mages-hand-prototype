@@ -69,11 +69,14 @@ func _on_self_damaged(_amount: float) -> void:
 static func _ensure_thrower_material() -> void:
 	if _shared_thrower_material == null:
 		var m := StandardMaterial3D.new()
-		m.albedo_color = Color(0.32, 0.42, 0.28, 1.0)
+		# Серо-каменный с тёплым emission — каменщик кидает камни, цвет
+		# семантически связан с его атакой. Контрастирует с травой (раньше
+		# был болотно-зелёный и сливался).
+		m.albedo_color = Color(0.55, 0.5, 0.42, 1.0)
 		m.roughness = 0.85
 		m.emission_enabled = true
-		m.emission = Color(0.4, 0.65, 0.25, 1.0)
-		m.emission_energy_multiplier = 0.4
+		m.emission = Color(0.7, 0.55, 0.35, 1.0)
+		m.emission_energy_multiplier = 0.55
 		_shared_thrower_material = m
 
 

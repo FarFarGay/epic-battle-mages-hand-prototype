@@ -687,5 +687,12 @@ func _strike_at(target: Node3D) -> void:
 	var alive: bool = is_instance_valid(target) and "hp" in target and target.hp > 0.0
 	if alive:
 		Pushable.try_push(target, _charge_dir * strike_knockback_speed, strike_knockback_duration)
+	else:
+		# Kill — копит squad charge-ability ([Squad._charge]). 1 убийство = 1.
+		# Только от прямых ударов squad-членов (не damage'а защитников/башни) —
+		# так заряд требует «squad в бою», как и задумано дизайном
+		# [[project-ebm-charge-abilities]].
+		if _squad != null:
+			_squad.add_charge(1.0)
 	if debug_log and LogConfig.master_enabled:
 		print("[SoldierGnome:%s] удар по %s (dmg=%.1f, alive=%s)" % [name, target.name, damage, str(alive)])

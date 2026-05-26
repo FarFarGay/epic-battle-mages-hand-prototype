@@ -65,6 +65,10 @@ const SOLDIER_CATALOG: Dictionary = {
 		# Cost — за весь отряд, не per-soldier. Дерево + железо (на копья).
 		"cost": {ResourcePile.ResourceType.WOOD: 8, ResourcePile.ResourceType.IRON: 5},
 		"scene": PIKEMAN_SCENE,
+		# Squad charge-ability ([[project-ebm-charge-abilities]]). 5 убийств членами
+		# отряда — заряжен; маркер над отрядом ловит hand-slam, бьёт круговой
+		# push-волной + damage'ом вокруг центра формации. Тест-значения.
+		"charge_max": 5.0,
 		# Stats — на одного солдата отряда. Melee: толще (hp), быстрее
 		# (move_speed для догона), больно бьёт в упор (damage), чаще чем
 		# лучник (cooldown — 1 удар/сек примерно).

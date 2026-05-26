@@ -1275,10 +1275,12 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 
 	# Регистрируем squad. Подписка на disbanded — сами убираемся когда все
 	# юниты погибли.
+	squad.charge_max = float(data.get("charge_max", squad.charge_max))
 	_squads.append(squad)
 	squad.disbanded.connect(_on_squad_disbanded.bind(squad), CONNECT_ONE_SHOT)
 	squad.members_changed.connect(_on_squad_changed.bind(squad))
 	squad.state_changed.connect(_on_squad_changed.bind(squad))
+	_spawn_squad_charge_marker(squad)
 
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] призван %s, gatherer'ов: %d, солдат: %d" % [str(squad), gatherer_count(), soldier_count()])
@@ -1523,10 +1525,12 @@ func cheat_summon_squad(soldier_type: StringName) -> Squad:
 	if spawned == 0:
 		return null
 
+	squad.charge_max = float(data.get("charge_max", squad.charge_max))
 	_squads.append(squad)
 	squad.disbanded.connect(_on_squad_disbanded.bind(squad), CONNECT_ONE_SHOT)
 	squad.members_changed.connect(_on_squad_changed.bind(squad))
 	squad.state_changed.connect(_on_squad_changed.bind(squad))
+	_spawn_squad_charge_marker(squad)
 
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] CHEAT: призван %s (×%d) у центра (%.1f, %.1f, %.1f)" % [
@@ -1546,6 +1550,23 @@ func _on_squad_disbanded(squad: Squad) -> void:
 
 func _on_squad_changed(squad: Squad) -> void:
 	EventBus.squad_changed.emit(squad)
+
+
+## Спавнит [SquadChargeMarker] над центром только что созданного отряда.
+## Маркер сам подписывается на squad.charge_changed / disbanded — Camp его
+## дальше не отслеживает. Лежит как ребёнок current_scene'а: лагерь не
+## должен таскать маркер при свёртке/деплое (отряд — самостоятельная
+## RTS-сущность, маркер летает за ним по миру).
+func _spawn_squad_charge_marker(squad: Squad) -> void:
+	if squad == null:
+		return
+	var scene_root: Node = get_tree().current_scene
+	if not is_instance_valid(scene_root):
+		return
+	var marker := SquadChargeMarker.new()
+	marker.name = "SquadChargeMarker_%d" % squad.id
+	scene_root.add_child(marker)
+	marker.setup(squad)
 
 
 ## Все активные squad'ы. UI читает для построения панели карточек.
