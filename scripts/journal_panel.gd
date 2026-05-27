@@ -341,17 +341,10 @@ func _required_level(id: StringName) -> int:
 
 
 func _build_unit_card(camp: Node, id: StringName, pending: int, squad_level: int) -> PanelContainer:
-	var card := PanelContainer.new()
-	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 12)
-	card.add_child(hbox)
-
-	var info := VBoxContainer.new()
-	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	info.add_theme_constant_override("separation", 4)
-	hbox.add_child(info)
+	var parts := _make_action_card()
+	var card: PanelContainer = parts[0]
+	var info: VBoxContainer = parts[1]
+	var btn: Button = parts[2]
 
 	var data: Dictionary = Camp.UPGRADE_CATALOG.get(id, {})
 	var required_level: int = int(data.get("level", 1))
@@ -372,17 +365,7 @@ func _build_unit_card(camp: Node, id: StringName, pending: int, squad_level: int
 	level_tag.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0, 1.0))
 	title_row.add_child(level_tag)
 
-	var desc_label := Label.new()
-	desc_label.text = data.get("description", "")
-	desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	desc_label.add_theme_font_size_override("font_size", 12)
-	desc_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 1.0))
-	desc_label.custom_minimum_size = Vector2(420, 0)
-	info.add_child(desc_label)
-
-	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(160, 48)
-	hbox.add_child(btn)
+	_add_card_description(info, data.get("description", ""))
 
 	# Цепочка состояний: уже взят > заблокирован по уровню > нет очков > можно брать.
 	# Порядок важен — взятый апгрейд показываем «активен» независимо от того,
@@ -426,6 +409,41 @@ func _wire_action_button(btn: Button, callback: Callable) -> void:
 	)
 
 
+## Базовый скелет «action-карточки»: `PanelContainer + HBox { VBox info, Button }`.
+## Возвращает `[card, info, btn]` — caller наполняет info-VBox специфичной
+## внутрянкой (title, description, cost-row, stats) и настраивает
+## btn.text/disabled/handler. Унифицирует 5 карточек в этом файле
+## (unit / building / plan_preset / spell / cheat) — раньше каждая
+## дублировала эту обёртку.
+func _make_action_card(btn_size: Vector2 = Vector2(160, 48)) -> Array:
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 12)
+	card.add_child(hbox)
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.add_theme_constant_override("separation", 4)
+	hbox.add_child(info)
+	var btn := Button.new()
+	btn.custom_minimum_size = btn_size
+	hbox.add_child(btn)
+	return [card, info, btn]
+
+
+## Стандартный desc-label: autowrap, 12pt, серый, минимальная ширина.
+## Используется во всех _build_*_card — один стиль на весь журнал.
+func _add_card_description(info: Control, text: String, min_width: float = 420.0) -> Label:
+	var desc_label := Label.new()
+	desc_label.text = text
+	desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc_label.add_theme_font_size_override("font_size", 12)
+	desc_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 1.0))
+	desc_label.custom_minimum_size = Vector2(min_width, 0)
+	info.add_child(desc_label)
+	return desc_label
+
+
 func _on_unit_upgrade_pressed(id: StringName) -> void:
 	var camp := _resolve_camp()
 	if camp == null:
@@ -464,17 +482,12 @@ func _build_camp_tab(camp: Node) -> void:
 
 
 func _build_building_card(camp: Node, id: StringName) -> PanelContainer:
-	var card := PanelContainer.new()
-	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 12)
-	card.add_child(hbox)
-
-	var info := VBoxContainer.new()
-	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	info.add_theme_constant_override("separation", 4)
-	hbox.add_child(info)
+	var parts := _make_action_card(Vector2(180, 56))
+	var card: PanelContainer = parts[0]
+	var info: VBoxContainer = parts[1]
+	var btn: Button = parts[2]
+	btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	btn.add_theme_font_size_override("font_size", 13)
 
 	var data: Dictionary = Camp.CAMP_BUILDING_CATALOG.get(id, {})
 
@@ -483,13 +496,7 @@ func _build_building_card(camp: Node, id: StringName) -> PanelContainer:
 	name_label.add_theme_font_size_override("font_size", 16)
 	info.add_child(name_label)
 
-	var desc_label := Label.new()
-	desc_label.text = data.get("description", "")
-	desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	desc_label.add_theme_font_size_override("font_size", 12)
-	desc_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 1.0))
-	desc_label.custom_minimum_size = Vector2(380, 0)
-	info.add_child(desc_label)
+	_add_card_description(info, data.get("description", ""), 380.0)
 
 	# Строка цены: иконки ресурсов + числа. Подсвечиваем красным то, чего
 	# не хватает — игрок сразу видит что собирать дальше.
@@ -500,15 +507,6 @@ func _build_building_card(camp: Node, id: StringName) -> PanelContainer:
 		info.add_child(_build_cost_row(camp, data.get("cost_per_segment", {}), "/сегмент"))
 	else:
 		info.add_child(_build_cost_row(camp, data.get("cost", {})))
-
-	# Правая колонка: кнопка построить. Состояние и текст определяются
-	# can_build_reason + can_afford. Полный disabled — если нельзя по
-	# состоянию (свёрнут/развёрнут) ИЛИ ресурсам.
-	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(180, 56)
-	btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	btn.add_theme_font_size_override("font_size", 13)
-	hbox.add_child(btn)
 
 	var reason: String = camp.can_build_reason(id)
 	# Brush-постройки: can_afford проверяется уже после рисования линии — здесь
@@ -683,17 +681,10 @@ func _build_plan_tab(camp: Node) -> void:
 
 
 func _build_plan_preset_card(preset: Dictionary, current: Dictionary) -> PanelContainer:
-	var card := PanelContainer.new()
-	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 12)
-	card.add_child(hbox)
-
-	var info := VBoxContainer.new()
-	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	info.add_theme_constant_override("separation", 4)
-	hbox.add_child(info)
+	var parts := _make_action_card(Vector2(140, 48))
+	var card: PanelContainer = parts[0]
+	var info: VBoxContainer = parts[1]
+	var btn: Button = parts[2]
 
 	var name_label := Label.new()
 	name_label.text = preset["label"]
@@ -703,10 +694,6 @@ func _build_plan_preset_card(preset: Dictionary, current: Dictionary) -> PanelCo
 	# Строка долей: цветной квадратик + проценты для каждого типа.
 	var weights: Dictionary = preset["weights"]
 	info.add_child(_build_plan_weights_row(weights))
-
-	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(140, 48)
-	hbox.add_child(btn)
 
 	var is_active: bool = _weights_match(current, weights)
 	if is_active:
@@ -999,13 +986,10 @@ func _build_soldier_card(camp: Node, id: StringName) -> Control:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 
-	# Описание
-	var desc := Label.new()
-	desc.text = data.get("description", "")
+	# Описание (slightly bluish vs стандартный grey — отличие солдатки от
+	# базовой карточки; min_width=0 — родительский VBox даёт ширину).
+	var desc: Label = _add_card_description(info, data.get("description", ""), 0.0)
 	desc.add_theme_color_override("font_color", Color(0.85, 0.85, 0.95, 0.85))
-	desc.add_theme_font_size_override("font_size", 12)
-	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info.add_child(desc)
 
 	# Stats-row (generic key:value, как у Spell)
 	var stats: Dictionary = data.get("stats", {})
@@ -1275,35 +1259,18 @@ func _build_debug_tab(camp: Node) -> void:
 ## Универсальная карточка чита: заголовок + описание + кнопка. Если target
 ## не найден (WaveDirector не загружен / Camp нет) — кнопка disabled.
 func _build_cheat_card(title: String, desc: String, btn_text: String, target: Node, action: Callable) -> PanelContainer:
-	var card := PanelContainer.new()
-	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 12)
-	card.add_child(hbox)
-
-	var info := VBoxContainer.new()
-	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	info.add_theme_constant_override("separation", 4)
-	hbox.add_child(info)
+	var parts := _make_action_card()
+	var card: PanelContainer = parts[0]
+	var info: VBoxContainer = parts[1]
+	var btn: Button = parts[2]
+	btn.add_theme_font_size_override("font_size", 13)
 
 	var name_label := Label.new()
 	name_label.text = title
 	name_label.add_theme_font_size_override("font_size", 16)
 	info.add_child(name_label)
 
-	var desc_label := Label.new()
-	desc_label.text = desc
-	desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	desc_label.add_theme_font_size_override("font_size", 12)
-	desc_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 1.0))
-	desc_label.custom_minimum_size = Vector2(420, 0)
-	info.add_child(desc_label)
-
-	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(160, 48)
-	btn.add_theme_font_size_override("font_size", 13)
-	hbox.add_child(btn)
+	_add_card_description(info, desc)
 
 	if target == null:
 		btn.text = "недоступно"
