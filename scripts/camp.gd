@@ -73,14 +73,13 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 const UPGRADE_KITING := &"kiting"
 const UPGRADE_LONG_DRAW := &"long_draw"
 
-## ID-константы построек лагеря. Отдельный namespace от squad-апгрейдов:
-## юнит-апгрейды берутся за очко уровня (одноразово на id), постройки —
-## за ресурсы (BUILDING_NEW_TENT можно строить многократно). См.
-## CAMP_BUILDING_CATALOG ниже.
-const BUILDING_NEW_TENT := &"new_tent"
-const BUILDING_WATCH_BELL := &"watch_bell"
-const BUILDING_PALISADE := &"palisade"
-const BUILDING_ARCHER_POST := &"archer_post"
+## ID-константы построек лагеря. Re-export'ятся из [CampBuildings] для
+## удобства callsite'ов (Camp.BUILDING_NEW_TENT короче CampBuildings.NEW_TENT
+## и был исходным API). Каталог тоже re-exported ниже.
+const BUILDING_NEW_TENT := CampBuildings.NEW_TENT
+const BUILDING_WATCH_BELL := CampBuildings.WATCH_BELL
+const BUILDING_PALISADE := CampBuildings.PALISADE
+const BUILDING_ARCHER_POST := CampBuildings.ARCHER_POST
 
 ## Каталог апгрейдов отряда — id → отображаемые поля. JournalPanel читает
 ## name/description/level чтобы построить карточки. Эффекты применяются на
@@ -104,82 +103,11 @@ const UPGRADE_CATALOG: Dictionary = {
 }
 
 
-## Каталог построек лагеря — id → {name, description, cost, packed_only,
-## repeatable}. JournalPanel читает чтобы построить карточки, Camp.try_build
-## применяет эффект через _apply_building.
-##
-## - cost: Dictionary[ResourcePile.ResourceType (int) → int]. Списывается
-##   атомарно через try_spend.
-## - packed_only: true → постройка только в State.CARAVAN_FOLLOWING (свёрнут).
-##   Дизайнерское правило: палатки строятся только в свёрнутом лагере, в
-##   развёрнутом — нет (см. project_ebm_camp_progression).
-## - repeatable: true → можно купить много раз (новые палатки). false →
-##   одноразово (для будущих watchtower / orb_magnet).
-const CAMP_BUILDING_CATALOG: Dictionary = {
-	BUILDING_NEW_TENT: {
-		"name": "Новая палатка",
-		"description": "Добавляет ещё одну палатку в кольцо лагеря — +жителей, +лучник, +собиратели.",
-		"cost": {
-			ResourcePile.ResourceType.WOOD: 20,
-			ResourcePile.ResourceType.STONE: 10,
-			ResourcePile.ResourceType.FOOD: 5,
-		},
-		"deployed_only": true,
-		"repeatable": true,
-	},
-	BUILDING_WATCH_BELL: {
-		"name": "Сторожевой колокол",
-		"description": "Гном-сторож замечает врагов в радиусе и зовёт двух защитников из лагеря. Колокол можно поставить где угодно — например, у источника ресурсов.",
-		"cost": {
-			ResourcePile.ResourceType.WOOD: 12,
-			ResourcePile.ResourceType.IRON: 5,
-		},
-		"deployed_only": true,
-		"repeatable": true,
-		"requires_gatherer": true,
-		"requires_aim": true,
-		# Preview-радиус aim-кольца. Совпадает с WatchBell.alarm_radius (7.5м).
-		# Если синхронизировать со сценой нужно динамически — в будущем
-		# прочитаем из инстанса при aim_start; пока константа достаточна.
-		"aim_radius": 7.5,
-	},
-	BUILDING_PALISADE: {
-		"name": "Деревянный частокол",
-		"description": "Дешёвые сегменты стены 2м длиной. Скелеты ломают их, но тратят на это время — защитники успевают стрелять. Рисуй ломаную линию: ЛКМ ставит точки, ПКМ — построить, Esc — отмена.",
-		# brush_mode → стоимость per-segment, total зависит от длины линии.
-		# UI рисует «N wood / сегмент» вместо обычного total.
-		"cost_per_segment": {ResourcePile.ResourceType.WOOD: 2},
-		"deployed_only": true,
-		"repeatable": true,
-		"brush_mode": true,
-		# Длина одного сегмента в метрах. Совпадает с BoxMesh.size.x в
-		# palisade_segment.tscn (2м). Polyline AB длиной N разбивается на
-		# floor(N / segment_length) сегментов.
-		"segment_length": 2.0,
-	},
-	BUILDING_ARCHER_POST: {
-		"name": "Стрелковый пост",
-		"description": "Стационарный лучник на башенке. Видит дальше обычного защитника, но только в направлении взгляда — конус света медленно сканирует сектор. Игрок выбирает направление при установке: короткий клик — наружу от лагеря, drag — точное направление.",
-		"cost": {
-			ResourcePile.ResourceType.WOOD: 8,
-			ResourcePile.ResourceType.IRON: 3,
-		},
-		"deployed_only": true,
-		"repeatable": true,
-		# Изымает 1 свободного гнома (как watch_bell). Пост — это не палатка, а
-		# самостоятельное здание с встроенным лучником; гном «исчезает» из
-		# каравана пока пост стоит. На свёртке/разрушении гном возвращается
-		# обратно spawn'ом gatherer'а на месте поста (см. _on_archer_post_destroyed).
-		"requires_gatherer": true,
-		"requires_aim": true,
-		# direction-aim mode (drag для направления, короткий клик → наружу от
-		# лагеря). См. HandBuildAim — этот флаг переводит start_aim в
-		# direction-aim flow с generic dispatch.
-		"requires_direction": true,
-		# Preview-кольцо размером с площадку поста, ~1.5м.
-		"aim_radius": 1.5,
-	},
-}
+## Каталог построек лагеря. Данные живут в [CampBuildings.CATALOG] — этот
+## алиас сохраняется для обратной совместимости callsite'ов
+## (JournalPanel / HandBuildAim / Camp.try_build всё ещё читают
+## `Camp.CAMP_BUILDING_CATALOG`).
+const CAMP_BUILDING_CATALOG: Dictionary = CampBuildings.CATALOG
 
 
 @export_group("POI deploy gate")
@@ -483,10 +411,12 @@ var _collection_mode: CollectionMode = CollectionMode.WORK
 ## Сбрасывается при _start_deploy (если каким-то образом игрок развернёт),
 ## чтобы не остаться в halted после возврата в caravan.
 var _caravan_halted: bool = false
-## Нормализованные веса приоритета сбора по типам, sum=1.0. Дефолт ставится
-## в _init_collection_priority из @export'ов. Меняется через set_collection_priority
-## (Journal-вкладка «План»). Гном читает get_collection_priority_weight.
-var _collection_priority: Dictionary = {}
+## Подмодуль: нормализованные веса приоритета сбора по типам (sum=1.0).
+## Дефолт ставится в _init_collection_priority из @export'ов. Меняется через
+## set_collection_priority (Journal-вкладка «План»). Гном читает
+## get_collection_priority_weight (он применяет stock-балансировку поверх
+## базовых весов из плана).
+var _plan: CampCollectionPlan = CampCollectionPlan.new()
 
 ## Публичный геттер anchor'а — гномы читают, чтобы знать, куда нести ресурс.
 var deploy_anchor: Vector3:
@@ -524,6 +454,12 @@ func _ready() -> void:
 	_spawn_harvester()
 	_spawn_gnomes()
 	_build_anchor_drop_zone()
+	# Re-emit изменений плана сбора в EventBus (гномы слушают через EventBus,
+	# не через прямую ссылку на Camp — autoload-стиль). Подписка ДО _init,
+	# чтобы первый emit при инициализации тоже долетел.
+	_plan.weights_changed.connect(func(weights: Dictionary) -> void:
+		EventBus.collection_priority_changed.emit(weights)
+	)
 	_init_collection_priority()
 
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
@@ -2425,30 +2361,11 @@ func _init_collection_priority() -> void:
 
 
 ## Назначает новые приоритеты сбора. weights — Dictionary[int, float] по
-## типам ресурсов; будут нормализованы к сумме 1.0. Все ключи — ResourcePile.ResourceType.
-##
-## Если сумма весов ≤ 0 (всё нули) — fallback на равномерное распределение,
-## иначе гномы вообще не смогут собирать. Это страховка от случайного preset'а
-## «всё по 0».
+## типам ресурсов; будут нормализованы к сумме 1.0. Все ключи —
+## ResourcePile.ResourceType. Делегируется в [CampCollectionPlan];
+## EventBus.collection_priority_changed эмитится через подписку в _ready.
 func set_collection_priority(weights: Dictionary) -> void:
-	var total: float = 0.0
-	for w in weights.values():
-		total += maxf(float(w), 0.0)
-	_collection_priority.clear()
-	if total <= 0.0:
-		# Fallback: равномерно по 4 типам.
-		var fallback_keys: Array = [
-			ResourcePile.ResourceType.WOOD,
-			ResourcePile.ResourceType.STONE,
-			ResourcePile.ResourceType.IRON,
-			ResourcePile.ResourceType.FOOD,
-		]
-		for k in fallback_keys:
-			_collection_priority[k] = 0.25
-	else:
-		for k in weights:
-			_collection_priority[k] = maxf(float(weights[k]), 0.0) / total
-	EventBus.collection_priority_changed.emit(_collection_priority.duplicate())
+	_plan.set_weights(weights)
 
 
 ## Эффективный вес типа с учётом stock-балансировки: дефицитные типы
@@ -2473,7 +2390,7 @@ func set_collection_priority(weights: Dictionary) -> void:
 ## Незаданный тип → 0 → pile никогда не выбирается (правильно для
 ## явно отключенного сбора).
 func get_collection_priority_weight(type: int) -> float:
-	var base: float = float(_collection_priority.get(type, 0.0))
+	var base: float = _plan.get_weight(type)
 	if base <= 0.0 or stock_balance_scale <= 0.0:
 		return base
 	var stock: float = float(economy.get_resource(type))
@@ -2524,11 +2441,10 @@ func pick_collection_type() -> int:
 
 
 func get_collection_priority() -> Dictionary:
-	# Копия — чтобы caller не мог мутировать внутреннее состояние.
-	# Возвращает БАЗОВЫЙ план (без stock-балансировки) — UI показывает план
-	# как задал игрок. Эффективные веса (с учётом stock) — через
+	# Базовый план (без stock-балансировки) — UI показывает план как задал
+	# игрок. Эффективные веса (с учётом stock) — через
 	# get_collection_priority_weight.
-	return _collection_priority.duplicate()
+	return _plan.get_weights()
 
 
 func get_collection_mode() -> int:
