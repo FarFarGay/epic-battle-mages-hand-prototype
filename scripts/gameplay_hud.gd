@@ -40,6 +40,10 @@ const ABILITY_META: Dictionary = {
 		"name": "Мины", "color": Color(0.8, 0.3, 0.2),
 		"category_str": "MAGIC", "type": 2,
 	},
+	&"frost": {
+		"name": "Мороз", "color": Color(0.45, 0.8, 1.0),
+		"category_str": "MAGIC", "type": 3,
+	},
 }
 
 ## Названия equip-actions в InputMap, в порядке слотов 1..5. Используется
@@ -51,12 +55,13 @@ const SLOT_EQUIP_ACTIONS: Array[StringName] = [
 	&"equip_fireball",      # клавиша 3
 	&"equip_firestorm",     # клавиша 4
 	&"equip_mine_scatter",  # клавиша 5
+	&"equip_frost",         # клавиша 6
 ]
 
 ## Стартовая раскладка слотов. Игрок может пересобрать через drag-and-drop.
 ## Сохранение в файл — TODO (пока сбрасывается на дефолт при рестарте).
 const ACTION_BAR_DEFAULT_ASSIGNMENT: Array[StringName] = [
-	&"slam", &"flick", &"fireball", &"firestorm", &"mine_scatter",
+	&"slam", &"flick", &"fireball", &"firestorm", &"mine_scatter", &"frost",
 ]
 
 ## Super — фиксированный 6-й слот, не draggable. Имеет свою клавишу (Space)

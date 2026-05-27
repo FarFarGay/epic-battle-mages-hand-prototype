@@ -19,12 +19,13 @@ extends Node
 
 signal spell_cast(spell_name: StringName, position: Vector3)
 
-enum SpellType { FIREBALL, FIRESTORM, MINE_SCATTER }
+enum SpellType { FIREBALL, FIRESTORM, MINE_SCATTER, FROST }
 
 const ACTION_ACTION := &"hand_action"
 const ACTION_EQUIP_FIREBALL := &"equip_fireball"
 const ACTION_EQUIP_FIRESTORM := &"equip_firestorm"
 const ACTION_EQUIP_MINE_SCATTER := &"equip_mine_scatter"
+const ACTION_EQUIP_FROST := &"equip_frost"
 
 @export var equipped: SpellType = SpellType.FIREBALL:
 	set(value):
@@ -47,6 +48,7 @@ var _tower_cache: Node3D = null
 @onready var _fireball: HandSpellFireball = $Fireball
 @onready var _firestorm: HandSpellFirestorm = $Firestorm
 @onready var _mine_scatter: HandSpellMineScatter = $MineScatter
+@onready var _frost: HandSpellFrost = $Frost
 
 
 ## Готово ли заклинание к кастy. ActionBar дёргает для тусклой подсветки
@@ -59,6 +61,8 @@ func is_spell_ready(type: int) -> bool:
 			return _firestorm.can_trigger()
 		SpellType.MINE_SCATTER:
 			return _mine_scatter.can_trigger()
+		SpellType.FROST:
+			return _frost.can_trigger()
 	return true
 
 
@@ -66,6 +70,7 @@ func _ready() -> void:
 	_fireball.spell_cast.connect(spell_cast.emit)
 	_firestorm.spell_cast.connect(spell_cast.emit)
 	_mine_scatter.spell_cast.connect(spell_cast.emit)
+	_frost.spell_cast.connect(spell_cast.emit)
 	EventBus.tower_destroyed.connect(_on_tower_destroyed)
 
 
@@ -115,6 +120,7 @@ func setup(hand: Hand) -> void:
 	_fireball.setup(_hand, self)
 	_firestorm.setup(_hand, self)
 	_mine_scatter.setup(_hand, self)
+	_frost.setup(_hand, self)
 
 
 func _process(delta: float) -> void:
@@ -123,6 +129,7 @@ func _process(delta: float) -> void:
 	_fireball.tick(delta)
 	_firestorm.tick(delta)
 	_mine_scatter.tick(delta)
+	_frost.tick(delta)
 	_handle_input()
 
 
@@ -171,3 +178,8 @@ func _dispatch_cast() -> void:
 				_mine_scatter.on_press()
 			elif debug_log and LogConfig.master_enabled:
 				print("[Hand:Spell] минное-рассевание на кулдауне")
+		SpellType.FROST:
+			if _frost.can_trigger():
+				_frost.on_press()
+			elif debug_log and LogConfig.master_enabled:
+				print("[Hand:Spell] мороз на кулдауне")

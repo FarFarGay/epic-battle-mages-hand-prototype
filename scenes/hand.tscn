@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=3]
+[gd_scene load_steps=24 format=3]
 
 [ext_resource type="Script" path="res://scripts/hand.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hand_physical.gd" id="2"]
@@ -17,6 +17,9 @@
 [ext_resource type="Script" path="res://scripts/hand_spell_mine_scatter.gd" id="15_mine_spell"]
 [ext_resource type="PackedScene" path="res://scenes/mine.tscn" id="16_mine_scene"]
 [ext_resource type="PackedScene" path="res://scenes/mine_projectile.tscn" id="17_mine_proj"]
+[ext_resource type="Script" path="res://scripts/hand_spell_frost.gd" id="18_frost_spell"]
+[ext_resource type="PackedScene" path="res://scenes/frost_bolt.tscn" id="19_frost_bolt"]
+[ext_resource type="PackedScene" path="res://scenes/frost_patch.tscn" id="20_frost_patch"]
 
 [sub_resource type="SphereMesh" id="SphereMesh_hand"]
 radius = 0.5
@@ -78,6 +81,11 @@ burn_patch_scene = ExtResource("8")
 script = ExtResource("15_mine_spell")
 projectile_scene = ExtResource("17_mine_proj")
 mine_scene = ExtResource("16_mine_scene")
+
+[node name="Frost" type="Node" parent="SpellActions"]
+script = ExtResource("18_frost_spell")
+frost_bolt_scene = ExtResource("19_frost_bolt")
+frost_patch_scene = ExtResource("20_frost_patch")
 
 [node name="SuperActions" type="Node" parent="."]
 script = ExtResource("10")

@@ -342,6 +342,11 @@ func _explode() -> void:
 	# Scatter использует — ставит Mine'у в origin). Эмитим ДО visual'ов
 	# и queue_free, чтобы слушатель видел консистентное состояние.
 	hit.emit(origin, _radius)
+	# Override-точка для подклассов (FrostBolt применяет freeze к hit-target'ам,
+	# спавнит FrostPatch). Вызывается ДО спавна burn_patch / визуалов —
+	# подкласс может полностью пропустить burn (не задав scene) и подставить
+	# свой patch-аналог.
+	_on_post_explode(origin)
 	# Визуалы взрыва. Спавним в parent (effects_root, обычно current_scene) —
 	# не в self, иначе на queue_free() ниже визуалы тоже умрут до окончания
 	# tween'а. parent живёт всё время сцены.
@@ -395,6 +400,12 @@ func _explode() -> void:
 					])
 
 	queue_free()
+
+
+## Override-точка для подклассов. Базовая реализация ничего не делает.
+## FrostBolt использует для freeze hit-target'ов + спавна FrostPatch.
+func _on_post_explode(_origin: Vector3) -> void:
+	pass
 
 
 func _apply_aoe(target: Node, origin: Vector3) -> void:

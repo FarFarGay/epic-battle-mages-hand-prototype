@@ -99,6 +99,27 @@ const SPELL_CATALOG: Dictionary = {
 		],
 		"upgrade_costs": [],
 	},
+	&"frost": {
+		"name": "Мороз",
+		"description": "Ледяная ракета: вылетает из башни, наводится на курсор. Прямое попадание полностью замораживает врагов в зоне взрыва. На земле остаётся пятно льда, которое замедляет всех вошедших.",
+		"icon_color": Color(0.45, 0.8, 1.0, 1.0),
+		"unlocked_by_default": true,
+		"unlock_cost": {},
+		# Frost — control-spell, не damage. damage=0; rebalance делается через
+		# hit_freeze_duration / patch_radius / patch_duration / patch_slow_factor.
+		"levels": [
+			{"damage": 0.0, "radius": 3.5, "cooldown": 0.6, "mana_cost": 18.0,
+				"hit_freeze_duration": 2.0, "patch_radius": 5.0, "patch_duration": 4.0, "patch_slow_factor": 0.4},
+			{"damage": 0.0, "radius": 3.8, "cooldown": 0.55, "mana_cost": 17.0,
+				"hit_freeze_duration": 2.4, "patch_radius": 5.5, "patch_duration": 4.5, "patch_slow_factor": 0.35},
+			{"damage": 0.0, "radius": 4.2, "cooldown": 0.5, "mana_cost": 16.0,
+				"hit_freeze_duration": 3.0, "patch_radius": 6.0, "patch_duration": 5.0, "patch_slow_factor": 0.3},
+		],
+		"upgrade_costs": [
+			{ResourcePile.ResourceType.PAGE: 4},
+			{ResourcePile.ResourceType.PAGE: 8},
+		],
+	},
 	&"mine_scatter": {
 		"name": "Минное рассеивание",
 		"description": "Башня запускает в небо снаряд, тот рассыпает над целью N мин. Мины приземляются, ждут жертв — рвут любого в радиусе (включая своих). Стратегическое оружие зоны контроля.",

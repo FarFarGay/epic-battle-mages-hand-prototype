@@ -1,0 +1,28 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/frost_patch.gd" id="1"]
+
+[sub_resource type="CylinderMesh" id="Cylinder_frostpatch"]
+top_radius = 0.5
+bottom_radius = 0.5
+height = 0.05
+radial_segments = 24
+rings = 1
+
+[sub_resource type="StandardMaterial3D" id="Material_frostpatch"]
+transparency = 1
+shading_mode = 0
+cull_mode = 2
+albedo_color = Color(0.55, 0.85, 1.0, 0.55)
+emission_enabled = true
+emission = Color(0.45, 0.8, 1.0, 1)
+emission_energy_multiplier = 2.0
+
+[node name="FrostPatch" type="Node3D"]
+script = ExtResource("1")
+
+[node name="Disk" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.05, 0)
+cast_shadow = 0
+mesh = SubResource("Cylinder_frostpatch")
+material_override = SubResource("Material_frostpatch")

@@ -156,6 +156,23 @@ var _dying: bool = false
 
 var _effects_root: Node = null
 
+## Freeze/slow эффект (заклинание Мороз). Если `_freeze_until_msec > now` —
+## XZ-velocity враг масштабируется на `_freeze_slow_factor` перед
+## `move_and_slide` (см. `_physics_process`). Y-velocity (gravity) и
+## knockback не масштабируются — внешние силы и физика всегда работают.
+##
+## `_freeze_slow_factor`:
+## - 0.0 → полная заморозка (стоит, AI fsm идёт но движение = 0)
+## - 0.4 → 60% slow (40% скорости, frost-patch на земле)
+## - 1.0 → нет эффекта
+##
+## Применяется через `apply_freeze(duration_sec, slow_factor)`. Повторный
+## вызов с **более сильным** эффектом (меньше slow_factor) перекрывает;
+## с более слабым — игнорируется (frost-patch не "снимает" hard-freeze).
+## Длительность всегда продлевается до max(существующий, новый).
+var _freeze_until_msec: int = 0
+var _freeze_slow_factor: float = 1.0
+
 
 func _ready() -> void:
 	# Подклассы, override'ящие _ready, ОБЯЗАНЫ звать super._ready(), иначе
@@ -255,6 +272,40 @@ func apply_push(velocity_change: Vector3, duration: float) -> void:
 	apply_knockback(velocity_change, duration)
 
 
+## Применяет frost-эффект: замедление или полная заморозка движения на
+## `duration_sec`. `slow_factor`: 0.0 = hard freeze (стой), 0.4 = 60% slow,
+## 1.0 = нет эффекта. Накладывается: более **сильный** (меньше factor)
+## перекрывает существующий, более **слабый** игнорируется. Длительность
+## всегда продлевается до max'а. Это даёт логику: frost-patch (0.4 / 4с)
+## не «снимает» прямой хит (0.0 / 2с), и hard-freeze не «прерывается»
+## случайным заходом в frost-patch с slow'ом.
+func apply_freeze(duration_sec: float, slow_factor: float) -> void:
+	if duration_sec <= 0.0:
+		return
+	var now: int = Time.get_ticks_msec()
+	var new_until: int = now + int(duration_sec * 1000.0)
+	# Активный freeze с более сильным эффектом — игнорируем входящий slow.
+	if _freeze_until_msec > now and slow_factor > _freeze_slow_factor:
+		# Только продлеваем срок, фактор оставляем сильным.
+		_freeze_until_msec = maxi(_freeze_until_msec, new_until)
+		return
+	_freeze_slow_factor = clampf(slow_factor, 0.0, 1.0)
+	_freeze_until_msec = maxi(_freeze_until_msec, new_until)
+
+
+## True если на этого врага сейчас действует frost-эффект.
+func is_frozen() -> bool:
+	return _freeze_until_msec > Time.get_ticks_msec()
+
+
+## Множитель XZ-скорости из-за freeze (1.0 если эффекта нет). Используется
+## в `_physics_process` для масштабирования velocity перед `move_and_slide`.
+func _freeze_velocity_factor() -> float:
+	if _freeze_until_msec <= Time.get_ticks_msec():
+		return 1.0
+	return _freeze_slow_factor
+
+
 ## Низкоуровневая запись velocity + knockback-таймера БЕЗ хука _on_knockback.
 ## Используется подклассами для self-knockback (lunge), чтобы свой же удар
 ## не сбивал собственное FSM-состояние через хук.
@@ -282,6 +333,17 @@ func _physics_process(delta: float) -> void:
 		velocity = _knockback.apply_friction(velocity, delta)
 	else:
 		_ai_step(delta)
+
+	# Frost/slow эффект: масштабируем XZ-velocity. Y (gravity) и knockback
+	# (внешняя сила) не масштабируются — заморозка не отменяет физику и не
+	# защищает от отталкивания. AI/FSM-таймеры идут в real-time — игрок
+	# видит «враг шевелится, замахивается, но шагает медленно». Применяется
+	# ПОСЛЕ knockback-блока, чтобы knockback-сила не глушилась slow'ом.
+	if not _knockback.is_active():
+		var sf: float = _freeze_velocity_factor()
+		if sf < 0.999:
+			velocity.x *= sf
+			velocity.z *= sf
 
 	# Запоминаем скорость ДО slide'а: после move_and_slide компонент в стенку
 	# обнуляется, и без этого мы не сможем посчитать «как сильно врезались».
