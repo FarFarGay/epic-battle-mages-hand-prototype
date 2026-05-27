@@ -594,14 +594,9 @@ func _target_still_valid(target: Node3D) -> bool:
 ## ONE) перетёр бы coiled-позу и оставил бы скелета в нейтрале до конца
 ## замаха — телеграф терялся бы при попадании.
 func _on_self_damaged(_amount: float) -> void:
-	if _mesh == null or not is_instance_valid(_mesh):
-		return
 	if _state == AttackState.WINDUP:
 		return
-	var tween := _mesh.create_tween()
-	tween.set_trans(Tween.TRANS_QUAD)
-	tween.tween_property(_mesh, "scale", Vector3.ONE * 1.25, 0.06).set_ease(Tween.EASE_OUT)
-	tween.tween_property(_mesh, "scale", Vector3.ONE, 0.14).set_ease(Tween.EASE_IN)
+	HitPunch.punch(_mesh)
 
 
 ## Squash & stretch как у копейщика — pose-телеграф для WINDUP/STRIKE.
@@ -1623,21 +1618,35 @@ func _perform_strike(_target: Node3D) -> void:
 	var strike_radius_sq: float = strike_radius * strike_radius
 	var hits: int = 0
 	var alarm_victim: Node3D = null  # первая палатка/мирный гном среди жертв
-	for n in get_tree().get_nodes_in_group(TARGET_GROUP):
-		if not is_instance_valid(n):
-			continue
-		var node := n as Node3D
-		if node == null:
-			continue
-		var d_sq: float = (node.global_position - global_position).length_squared()
-		if d_sq > strike_radius_sq:
-			continue
-		if Damageable.try_damage(node, attack_damage):
-			hits += 1
-			# Alarm-сигнал триггерим только на палатке/мирном гноме — defender'ы
-			# себя не «зовут». Берём первого, чтобы не спамить EventBus.
-			if alarm_victim == null and not node.is_in_group(DefenderGnome.DEFENDER_GROUP):
-				alarm_victim = node
+	# AOE-strike через spatial grid (Enemy._target_grid) вместо полного
+	# get_nodes_in_group(TARGET_GROUP): при 200 скелетах × 1Гц атак полный
+	# обход ~28k ops/с впустую (целей в радиусе ≤attack_range×1.3 — единицы,
+	# в 3×3 cells of SKEL_GRID_CELL_SIZE=4м их всегда хватает).
+	Enemy._maybe_refresh_target_grid(get_tree())
+	var skel_cell: Vector2i = Enemy._grid_cell(global_position)
+	for dx in [-1, 0, 1]:
+		for dz in [-1, 0, 1]:
+			var cell := Vector2i(skel_cell.x + dx, skel_cell.y + dz)
+			if not Enemy._target_grid.has(cell):
+				continue
+			var entries: Array = Enemy._target_grid[cell]
+			for entry in entries:
+				var raw = entry[1]
+				if not is_instance_valid(raw):
+					continue
+				var node := raw as Node3D
+				if node == null:
+					continue
+				var d_sq: float = (node.global_position - global_position).length_squared()
+				if d_sq > strike_radius_sq:
+					continue
+				if Damageable.try_damage(node, attack_damage):
+					hits += 1
+					# Alarm-сигнал триггерим только на палатке/мирном гноме —
+					# defender'ы себя не «зовут». Берём первого, чтобы не
+					# спамить EventBus.
+					if alarm_victim == null and not node.is_in_group(DefenderGnome.DEFENDER_GROUP):
+						alarm_victim = node
 	if hits > 0 and alarm_victim != null:
 		EventBus.skeleton_attacked_camp.emit(self, alarm_victim, alarm_victim.global_position)
 	# Self-lunge: направление к locked-target'у если он ещё валиден, иначе

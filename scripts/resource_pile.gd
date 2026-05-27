@@ -52,8 +52,8 @@ var _material: StandardMaterial3D
 ## Идемпотентность смерти: take_damage и take_one могут привести pile к
 ## уничтожению независимо в одном кадре (например, slam добивает hp, а гном
 ## параллельно вызывает take_one на units=1). Без флага оба вызвали бы
-## destroyed.emit() → EventBus.item_destroyed.emit(self) дважды → UI/счётчики
-## ловят двойной сигнал. queue_free() идемпотентен сам по себе, но сигнал — нет.
+## destroyed.emit() дважды → подписчики (gnome carry-reset, fx) ловят двойной
+## сигнал. queue_free() идемпотентен сам по себе, но сигнал — нет.
 var _dying: bool = false
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
@@ -67,9 +67,6 @@ func _ready() -> void:
 	Grabbable.register(self)
 	_apply_visual()
 	_apply_shape()
-	# Re-emit на глобальный EventBus — для UI / звука / статистики.
-	damaged.connect(func(amount: float) -> void: EventBus.item_damaged.emit(self, amount))
-	destroyed.connect(func() -> void: EventBus.item_destroyed.emit(self))
 
 
 ## Дефолтный цвет по типу ресурса. Публичный — используют HUD/Journal/Gnome

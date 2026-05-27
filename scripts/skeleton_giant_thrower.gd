@@ -53,15 +53,10 @@ func _ready() -> void:
 
 
 func _on_self_damaged(_amount: float) -> void:
-	if _mesh == null or not is_instance_valid(_mesh):
-		return
 	HitFlash.flash(_mesh)
-	if _hit_punch_tween != null and _hit_punch_tween.is_valid():
-		_hit_punch_tween.kill()
-	_hit_punch_tween = create_tween()
-	_hit_punch_tween.set_trans(Tween.TRANS_QUAD)
-	_hit_punch_tween.tween_property(_mesh, "scale", Vector3.ONE * 1.18, 0.06).set_ease(Tween.EASE_OUT)
-	_hit_punch_tween.tween_property(_mesh, "scale", Vector3.ONE, 0.14).set_ease(Tween.EASE_IN)
+	# peak=1.18 (мягче дефолтного 1.25 у [HitPunch]) — гигант массивный,
+	# выраженный squash на нём смотрелся бы мультяшно.
+	_hit_punch_tween = HitPunch.punch(_mesh, _hit_punch_tween, 1.18)
 	if debug_log and LogConfig.master_enabled:
 		print("[GiantThrower:%s] DAMAGED -%.1f → hp=%.1f" % [name, _amount, hp])
 

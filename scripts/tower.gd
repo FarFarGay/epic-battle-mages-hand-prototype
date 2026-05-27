@@ -81,7 +81,6 @@ func _ready() -> void:
 	mana = max_mana
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
-	damaged.connect(func(amount: float) -> void: EventBus.tower_damaged.emit(amount))
 	destroyed.connect(func() -> void: EventBus.tower_destroyed.emit())
 	health_changed.connect(func(current: float, maximum: float) -> void: EventBus.tower_health_changed.emit(current, maximum))
 	mana_changed.connect(func(current: float, maximum: float) -> void: EventBus.tower_mana_changed.emit(current, maximum))

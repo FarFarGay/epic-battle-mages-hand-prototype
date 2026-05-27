@@ -37,8 +37,6 @@ var _hand: Hand
 var _camp: Camp
 var _effects_root: Node = null
 var _active_squad: Squad = null
-## Категория Hand'а до старта aim'а — на завершении возвращаем (PHYSICAL/MAGIC).
-var _pre_aim_category: int = Hand.Category.PHYSICAL
 var _aim_indicator: MeshInstance3D = null
 
 
@@ -89,11 +87,10 @@ func start_aim(squad: Squad) -> void:
 	if _active_squad != null:
 		cancel_aim()
 	_active_squad = squad
-	_pre_aim_category = _hand.active_category
-	_hand.set_active_category(Hand.Category.SQUAD_AIM)
+	_hand.push_category(Hand.Category.SQUAD_AIM)
 	_spawn_indicator()
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:SquadAim] aim старт для %s, prev_category=%s" % [str(squad), Hand.Category.keys()[_pre_aim_category]])
+		print("[Hand:SquadAim] aim старт для %s" % str(squad))
 
 
 ## Отмена без команды (повторный клик «Идти сюда» / squad распущен).
@@ -188,7 +185,7 @@ func _commit_aim() -> void:
 func _finish_aim() -> void:
 	_clear_indicator()
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.SQUAD_AIM:
-		_hand.set_active_category(_pre_aim_category)
+		_hand.pop_category()
 	_active_squad = null
 
 

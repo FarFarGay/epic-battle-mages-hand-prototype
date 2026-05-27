@@ -178,14 +178,10 @@ func _start_volley() -> void:
 	_series_burn_tick_interval = float(lvl.get("burn_tick_interval", burn_tick_interval))
 	_series_burn_duration = float(lvl.get("burn_duration", burn_duration))
 
-	var tower := _find_tower()
-	# Контракт: мана-провайдером может быть всё, у чего есть `try_consume_mana`
-	# (сейчас это Tower; не лочим тип на класс).
-	if tower != null and tower.has_method(&"try_consume_mana"):
-		if not tower.try_consume_mana(p_mana_cost):
-			if debug_log and LogConfig.master_enabled:
-				print("[Hand:Spell:Firestorm] не хватает маны (нужно %.0f)" % p_mana_cost)
-			return
+	if not _coord.try_consume_tower_mana(p_mana_cost):
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:Spell:Firestorm] не хватает маны (нужно %.0f)" % p_mana_cost)
+		return
 
 	# Зафиксировали target в момент press'а — игрок может водить курсор во
 	# время серии, но шквал ложится туда, где было нажатие.
@@ -204,12 +200,7 @@ func _start_volley() -> void:
 
 
 func _launch_one() -> void:
-	var tower := _find_tower()
-	var launch_pos: Vector3
-	if tower != null:
-		launch_pos = tower.global_position + Vector3.UP * launch_offset_y
-	else:
-		launch_pos = _hand.global_position
+	var launch_pos: Vector3 = _coord.tower_launch_position(launch_offset_y, _hand)
 	# Jitter target в круге scatter_radius — каждый шот в свою точку «ковра».
 	var angle: float = randf() * TAU
 	var dist: float = sqrt(randf()) * _series_scatter_radius  # uniform по площади
@@ -250,6 +241,3 @@ func _launch_one() -> void:
 		fireball.setup_burn(burn_patch_scene, _series_burn_radius, _series_burn_damage_per_tick, _series_burn_tick_interval, _series_burn_duration)
 
 
-func _find_tower() -> Node3D:
-	var t := _hand.get_tree().get_first_node_in_group(Tower.GROUP)
-	return t as Node3D

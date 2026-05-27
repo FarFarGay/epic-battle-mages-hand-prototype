@@ -161,9 +161,13 @@ func _kite_to_range(target: Node3D) -> void:
 		velocity.x = dir.x * move_speed
 		velocity.z = dir.z * move_speed
 	elif dist < attack_radius_min:
-		# Отступаем от цели. Если to_target.length≈0 (наложение позиций) —
-		# не двигаемся, иначе normalized() даст NaN.
-		if dist < 0.001:
+		# Отступаем от цели. Порог 0.3м — половина диаметра капсулы лучника
+		# (radius=0.3): на реальной плотности (capsule+capsule = ~0.6м между
+		# центрами) dist редко падает ниже 0.6. Прежний 0.001 не срабатывал
+		# никогда, и `-to_target/dist` для dist≈0.05м давал «ракетный» отступ
+		# на 20× move_speed. На текущем пороге если цель в обнимку — просто
+		# стоим и WINDUP.
+		if dist < 0.3:
 			velocity.x = 0.0
 			velocity.z = 0.0
 			_enter_state(AttackState.WINDUP)

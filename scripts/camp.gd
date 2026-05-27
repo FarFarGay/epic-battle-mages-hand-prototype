@@ -1237,55 +1237,25 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 	if not economy.try_spend(cost):
 		return null
 
-	# Создаём Squad-объект ДО спавна солдат — каждый soldier при setup_soldier
-	# получит ссылку через squad.add_member.
-	var squad := Squad.new()
-	squad.id = _next_squad_id
-	_next_squad_id += 1
-	squad.soldier_type = soldier_type
-	squad.icon_color = data.get("icon_color", Color.WHITE)
 	# Дефолтная команда: HOLDING_POSITION на центре gatherers'ов — там, где
-	# их позвали. Игрок получает «5 лучников стоят и стреляют», без сюрпризов.
+	# их позвали. Игрок получает «5 копейщиков стоят», без сюрпризов.
 	var center: Vector3 = Vector3.ZERO
 	for g in gatherers:
 		center += g.global_position
 	center /= float(gatherers.size())
-	squad.command_hold(center)
-
-	var stats: Dictionary = data.get("stats", {})
-	var spawned: int = 0
-	for gatherer in gatherers:
-		var soldier := scene.instantiate() as SoldierGnome
-		if soldier == null:
-			push_error("Camp.recruit_squad: scene не инстанцируется как SoldierGnome")
-			continue
-		add_child(soldier)
-		soldier.setup_soldier(soldier_type, stats, self, gatherer.global_position)
-		_gnomes.erase(gatherer)
-		gatherer.queue_free()
-		_gnomes.append(soldier)
-		squad.add_member(soldier)
-		spawned += 1
-
-	if spawned == 0:
-		# Полный провал спавна — возвращаем cost.
+	var spawn_positions: Array[Vector3] = []
+	for g in gatherers:
+		spawn_positions.append(g.global_position)
+	var squad := _build_and_register_squad(soldier_type, data, spawn_positions, center, gatherers)
+	if squad == null:
+		# Полный провал спавна — возвращаем cost (gatherer'ы НЕ конвертированы,
+		# на them rollback не нужен).
 		for type in cost:
 			economy.add_resource(type, int(cost[type]))
 		return null
 
-	# Регистрируем squad. Подписка на disbanded — сами убираемся когда все
-	# юниты погибли.
-	squad.charge_max = float(data.get("charge_max", squad.charge_max))
-	_squads.append(squad)
-	squad.disbanded.connect(_on_squad_disbanded.bind(squad), CONNECT_ONE_SHOT)
-	squad.members_changed.connect(_on_squad_changed.bind(squad))
-	squad.state_changed.connect(_on_squad_changed.bind(squad))
-	_spawn_squad_charge_marker(squad)
-
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] призван %s, gatherer'ов: %d, солдат: %d" % [str(squad), gatherer_count(), soldier_count()])
-	EventBus.camp_buildings_changed.emit()
-	EventBus.squad_created.emit(squad)
 	return squad
 
 
@@ -1498,46 +1468,19 @@ func cheat_summon_squad(soldier_type: StringName) -> Squad:
 		_tower.global_position if is_instance_valid(_tower) else global_position
 	)
 	var center := Vector3(raw_center.x, global_position.y, raw_center.z)
-
-	var squad := Squad.new()
-	squad.id = _next_squad_id
-	_next_squad_id += 1
-	squad.soldier_type = soldier_type
-	squad.icon_color = data.get("icon_color", Color.WHITE)
-	squad.command_hold(center)
-
-	var stats: Dictionary = data.get("stats", {})
-	var spawned: int = 0
+	# Спавн кольцом ~2м вокруг центра — чтобы не наслаивались в одной точке.
+	var spawn_positions: Array[Vector3] = []
 	for i in range(squad_size):
-		var soldier := scene.instantiate() as SoldierGnome
-		if soldier == null:
-			push_error("Camp.cheat_summon_squad: scene не инстанцируется как SoldierGnome")
-			continue
-		# Спавн кольцом ~2м вокруг центра — чтобы не наслаивались в одной точке.
 		var angle: float = TAU * float(i) / float(squad_size)
-		var spawn_pos: Vector3 = center + Vector3(cos(angle) * 2.0, 0.0, sin(angle) * 2.0)
-		add_child(soldier)
-		soldier.setup_soldier(soldier_type, stats, self, spawn_pos)
-		_gnomes.append(soldier)
-		squad.add_member(soldier)
-		spawned += 1
-
-	if spawned == 0:
+		spawn_positions.append(center + Vector3(cos(angle) * 2.0, 0.0, sin(angle) * 2.0))
+	var squad := _build_and_register_squad(soldier_type, data, spawn_positions, center, [])
+	if squad == null:
 		return null
 
-	squad.charge_max = float(data.get("charge_max", squad.charge_max))
-	_squads.append(squad)
-	squad.disbanded.connect(_on_squad_disbanded.bind(squad), CONNECT_ONE_SHOT)
-	squad.members_changed.connect(_on_squad_changed.bind(squad))
-	squad.state_changed.connect(_on_squad_changed.bind(squad))
-	_spawn_squad_charge_marker(squad)
-
 	if debug_log and LogConfig.master_enabled:
-		print("[Camp] CHEAT: призван %s (×%d) у центра (%.1f, %.1f, %.1f)" % [
-			str(squad), spawned, center.x, center.y, center.z,
+		print("[Camp] CHEAT: призван %s у центра (%.1f, %.1f, %.1f)" % [
+			str(squad), center.x, center.y, center.z,
 		])
-	EventBus.camp_buildings_changed.emit()
-	EventBus.squad_created.emit(squad)
 	return squad
 
 
@@ -1550,6 +1493,70 @@ func _on_squad_disbanded(squad: Squad) -> void:
 
 func _on_squad_changed(squad: Squad) -> void:
 	EventBus.squad_changed.emit(squad)
+
+
+## Общий путь для recruit_squad и cheat_summon_squad. Создаёт Squad-объект,
+## инстанцирует scene.instantiate × spawn_positions.size(), регистрирует squad
+## в _squads + сигналы, спавнит charge-marker, эмитит EventBus.camp_buildings_changed
+## и squad_created. Возвращает Squad (или null если ни одного юнита не удалось
+## спавнить — caller сам решает rollback ресурсов).
+##
+## - `spawn_positions` — одна позиция на юнита (1:1 длины с фактическим
+##   `squad_size`). Кольцо/линия/одиночные точки — на стороне caller'а.
+## - `command_center` — для дефолтного `squad.command_hold(center)`.
+## - `replacement_gatherers` — если непустой и длина = spawn_positions, КАЖДЫЙ
+##   спавненный соldier «заменяет» gatherer'а: gatherer уходит из `_gnomes`
+##   и queue_free()'ится. Для recruit-flow (gatherer→soldier). Для cheat-flow
+##   передавайте `[]` — солдаты просто добавляются к `_gnomes` без замен.
+##
+## Подписки на disbanded/members_changed/state_changed — CONNECT_ONE_SHOT
+## только для disbanded; остальные эмитятся многократно (Squad перекомандуют).
+func _build_and_register_squad(
+	soldier_type: StringName,
+	data: Dictionary,
+	spawn_positions: Array[Vector3],
+	command_center: Vector3,
+	replacement_gatherers: Array[Gnome],
+) -> Squad:
+	var scene: PackedScene = data.get("scene", null)
+	if scene == null:
+		push_error("Camp._build_and_register_squad: scene не задан для %s" % soldier_type)
+		return null
+	var has_replacements: bool = replacement_gatherers.size() == spawn_positions.size()
+	var squad := Squad.new()
+	squad.id = _next_squad_id
+	_next_squad_id += 1
+	squad.soldier_type = soldier_type
+	squad.icon_color = data.get("icon_color", Color.WHITE)
+	squad.command_hold(command_center)
+	var stats: Dictionary = data.get("stats", {})
+	var spawned: int = 0
+	for i in range(spawn_positions.size()):
+		var soldier := scene.instantiate() as SoldierGnome
+		if soldier == null:
+			push_error("Camp._build_and_register_squad: scene не инстанцируется как SoldierGnome для %s" % soldier_type)
+			continue
+		add_child(soldier)
+		soldier.setup_soldier(soldier_type, stats, self, spawn_positions[i])
+		if has_replacements:
+			var gatherer: Gnome = replacement_gatherers[i]
+			if is_instance_valid(gatherer):
+				_gnomes.erase(gatherer)
+				gatherer.queue_free()
+		_gnomes.append(soldier)
+		squad.add_member(soldier)
+		spawned += 1
+	if spawned == 0:
+		return null
+	squad.charge_max = float(data.get("charge_max", squad.charge_max))
+	_squads.append(squad)
+	squad.disbanded.connect(_on_squad_disbanded.bind(squad), CONNECT_ONE_SHOT)
+	squad.members_changed.connect(_on_squad_changed.bind(squad))
+	squad.state_changed.connect(_on_squad_changed.bind(squad))
+	_spawn_squad_charge_marker(squad)
+	EventBus.camp_buildings_changed.emit()
+	EventBus.squad_created.emit(squad)
+	return squad
 
 
 ## Спавнит [SquadChargeMarker] над центром только что созданного отряда.
@@ -2143,21 +2150,57 @@ func _on_defense_marker_destroyed(marker: DefenseMarker) -> void:
 			def.release_from_marker()
 
 
+## Общий гейт для garrison-зданий (bell / archer_post): scene есть, position
+## задана и попадает в build_radius. Возвращает true если можно строить.
+## Лог-tag нужен только для warning'ов («Camp._build_X: …»).
+func _validate_garrison_build(scene: PackedScene, pos: Vector3, log_tag: String) -> bool:
+	if scene == null:
+		push_warning("Camp.%s: scene не задан" % log_tag)
+		return false
+	if pos == Vector3.INF:
+		push_warning("Camp.%s: position не задана" % log_tag)
+		return false
+	if not is_in_build_zone(pos):
+		push_warning("Camp.%s: position вне build_radius — отказ" % log_tag)
+		return false
+	return true
+
+
+## Спавнит gatherer'а в указанной точке (на destroy garrison-здания: гном
+## «выскочил из развалин» и бежит в палатку). Find first alive tent → новый
+## Gnome → set pos → entry-state по текущему Camp.state. null если палаток
+## нет или gnome_scene не задан. Используется bell/archer_post-on_destroy,
+## симметрично: оба теряют гарнизон, оба возвращают gatherer'а в лагерь.
+func _respawn_garrison_gatherer(spawn_pos: Vector3, log_tag: String) -> Gnome:
+	if gnome_scene == null:
+		return null
+	var tent: Node3D = null
+	for p in _parts:
+		if is_instance_valid(p):
+			tent = p
+			break
+	if tent == null:
+		if debug_log and LogConfig.master_enabled:
+			print("[Camp:%s] разрушен, но палаток нет — гном не возрождён" % log_tag)
+		return null
+	var gnome := _spawn_one_gnome(gnome_scene, tent, "gatherer") as Gnome
+	if gnome == null:
+		return null
+	gnome.global_position = spawn_pos
+	# В DEPLOYED — gatherer-flow, в PACKING — догоняет караван.
+	if _state == State.DEPLOYED:
+		gnome.enter_deployed()
+	elif _state == State.PACKING_RETURNING:
+		gnome.request_return()
+	return gnome
+
+
 ## Эффект BUILDING_WATCH_BELL: спавнит WatchBell в `params.position`, привязывает
 ## уже-изъятого gatherer'а как гарнизон (флаг — на destroy респавним), подписывает
 ## Camp на alarm/destroyed сигналы. Если позиция не задана — fail.
 func _build_watch_bell(params: Dictionary) -> bool:
-	if watch_bell_scene == null:
-		push_warning("Camp: watch_bell_scene не задан, постройка колокола невозможна")
-		return false
 	var pos: Vector3 = params.get("position", Vector3.INF)
-	if pos == Vector3.INF:
-		push_warning("Camp._build_watch_bell: position не задана")
-		return false
-	# Страховочная валидация зоны (HandBuildAim уже фильтрует ПКМ вне zone,
-	# но через скрипт можно вызвать с любой position). Вне build_radius — fail.
-	if not is_in_build_zone(pos):
-		push_warning("Camp._build_watch_bell: position вне build_radius — отказ")
+	if not _validate_garrison_build(watch_bell_scene, pos, "_build_watch_bell"):
 		return false
 	var bell := watch_bell_scene.instantiate() as WatchBell
 	if bell == null:
@@ -2240,35 +2283,11 @@ func _on_bell_destroyed(bell: WatchBell) -> void:
 				d.release_from_bell()
 	if bell.get_garrison() == null:
 		return
-	if gnome_scene == null:
-		return
-	var spawn_pos: Vector3 = bell.global_position
-	# Выбираем палатку-«дом» для нового gatherer'а — first alive part. Если
-	# лагерь свернут или нет палаток, gnome всё равно создаём, но без home_tent
-	# он зависнет (gatherer-flow ожидает _home_tent). Лучше fail-fast в этом
-	# случае, чтобы не плодить «зомби-гнома».
-	var tent: Node3D = null
-	for p in _parts:
-		# tent_count_alive в Camp использует только is_instance_valid —
-		# уничтоженные палатки queue_free'нутся и выпадают из _parts через
-		# _on_part_destroyed (см. Camp подписку на CampPart.destroyed).
-		if is_instance_valid(p):
-			tent = p
-			break
-	if tent == null:
-		if debug_log and LogConfig.master_enabled:
-			print("[Camp:Bell] разрушен, но палаток нет — гном не возрождён")
-		return
-	var gnome := _spawn_one_gnome(gnome_scene, tent, "gatherer") as Gnome
-	if gnome == null:
-		return
-	gnome.global_position = spawn_pos
-	# В DEPLOYED новый gatherer должен искать ресурс / бежать в палатку;
-	# enter_deployed() ставит его в SEARCHING. На пути в лагерь его могут
-	# убить — это часть дизайна (вырвался из развалин, бежит домой).
-	if _state == State.DEPLOYED:
-		gnome.enter_deployed()
-	if debug_log and LogConfig.master_enabled:
+	# Гарнизон жив — спавним gatherer'а на месте колокола (общий путь с
+	# archer_post-destroy). Если палаток нет — гном не возрождается (см.
+	# [_respawn_garrison_gatherer] лог).
+	var gnome := _respawn_garrison_gatherer(bell.global_position, "Bell")
+	if gnome != null and debug_log and LogConfig.master_enabled:
 		print("[Camp:Bell] разрушен, гном-сторож выжил и бежит в лагерь")
 
 
@@ -2278,16 +2297,9 @@ func _on_bell_destroyed(bell: WatchBell) -> void:
 ## является стрелком, поэтому отдельную единицу не спавним. На разрушение —
 ## респавн gatherer'а на месте поста (см. _on_archer_post_destroyed).
 func _build_archer_post(params: Dictionary) -> bool:
-	if archer_post_scene == null:
-		push_warning("Camp: archer_post_scene не задан — пост не строится")
-		return false
 	var pos: Vector3 = params.get("position", Vector3.INF)
 	var facing: Vector3 = params.get("facing_dir", Vector3.FORWARD)
-	if pos == Vector3.INF:
-		push_warning("Camp._build_archer_post: position не задана")
-		return false
-	if not is_in_build_zone(pos):
-		push_warning("Camp._build_archer_post: position вне build_radius — отказ")
+	if not _validate_garrison_build(archer_post_scene, pos, "_build_archer_post"):
 		return false
 	var post := archer_post_scene.instantiate() as ArcherPost
 	if post == null:
@@ -2314,33 +2326,9 @@ func _build_archer_post(params: Dictionary) -> bool:
 ## потрачена), но гном-«гарнизон» жив.
 func _on_archer_post_destroyed(post: ArcherPost) -> void:
 	_archer_posts.erase(post)
-	if gnome_scene == null:
-		return
 	var spawn_pos: Vector3 = post.global_position if is_instance_valid(post) else _deploy_anchor
-	# Выбираем «дом» для возвращающегося гнома — first alive tent. Если палаток
-	# нет (теоретически возможно при синхронном уничтожении лагеря) — гном не
-	# спавнится, как в bell-flow'е.
-	var tent: Node3D = null
-	for p in _parts:
-		if is_instance_valid(p):
-			tent = p
-			break
-	if tent == null:
-		if debug_log and LogConfig.master_enabled:
-			print("[Camp:ArcherPost] разрушен, но палаток нет — гном не возрождён")
-		return
-	var gnome := _spawn_one_gnome(gnome_scene, tent, "gatherer") as Gnome
-	if gnome == null:
-		return
-	gnome.global_position = spawn_pos
-	# В DEPLOYED — gatherer-flow, в PACKING — request_return сам подключится через
-	# _start_pack-цикл (но мы спавним ПОСЛЕ _start_pack, поэтому дёргаем
-	# request_return на месте).
-	if _state == State.DEPLOYED:
-		gnome.enter_deployed()
-	elif _state == State.PACKING_RETURNING:
-		gnome.request_return()
-	if debug_log and LogConfig.master_enabled:
+	var gnome := _respawn_garrison_gatherer(spawn_pos, "ArcherPost")
+	if gnome != null and debug_log and LogConfig.master_enabled:
 		print("[Camp:ArcherPost] разрушен/демонтирован, гном-стрелок возвращается в лагерь")
 
 
@@ -3074,8 +3062,14 @@ func _is_tower_stationary() -> bool:
 func _find_poi_for_deploy() -> Node3D:
 	var now_msec: int = Time.get_ticks_msec()
 	var cache_age_msec: int = now_msec - _poi_cache_time_msec
+	# Cache hit: либо null (нет POI в радиусе), либо живой Node. На freed-POI
+	# (теоретически — пока POI не разрушаются, но защита есть) — invalidate
+	# и пересчёт ниже. Раньше условие читалось обратно («null И валиден»),
+	# что было верно по смыслу, но запутывало читающего.
 	if cache_age_msec < int(POI_CACHE_TTL_SEC * 1000.0):
-		if _poi_cache == null or is_instance_valid(_poi_cache):
+		if _poi_cache == null:
+			return null
+		if is_instance_valid(_poi_cache):
 			return _poi_cache
 	_poi_cache_time_msec = now_msec
 

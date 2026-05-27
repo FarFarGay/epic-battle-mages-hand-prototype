@@ -134,9 +134,6 @@ var _effects_root: Node = null
 ## CanvasLayer для overlay'а — создаётся лениво на первый каст.
 var _overlay_canvas: CanvasLayer = null
 var _overlay: SuperPatternOverlay = null
-## Категория, в которой была рука перед началом каста — на завершении
-## возвращаем (PHYSICAL→PHYSICAL, MAGIC→MAGIC).
-var _pre_super_category: int = Hand.Category.PHYSICAL
 ## Запомненная позиция земли под курсором на момент успеха QTE — это «центр
 ## ковра». Игрок может ещё подвигать курсором; финальная цель определится
 ## именно нажатием ПКМ в AIMING_TARGET.
@@ -226,10 +223,9 @@ func _try_start_cast() -> void:
 	_resolved_payload_radius = float(lvl.get("payload_radius", payload_radius))
 	_resolved_payload_radius_aoe = float(lvl.get("payload_radius_aoe", payload_radius_aoe))
 	_resolved_pattern_length = int(lvl.get("pattern_length", pattern_length))
-	# Запоминаем категорию для возврата (на провале QTE / завершении каста).
-	_pre_super_category = _hand.active_category
-	_hand.set_active_category(Hand.Category.SUPER)
-	EventBus.super_cast_started.emit()
+	# Hand.push_category сохранит предыдущую категорию в стек; pop_category на
+	# завершении каста (_finish_super) её вернёт.
+	_hand.push_category(Hand.Category.SUPER)
 	_enter_aiming_pattern()
 
 
@@ -331,16 +327,15 @@ func _cancel_aim() -> void:
 	_finish_super(false)
 
 
-func _finish_super(success: bool) -> void:
+func _finish_super(_success: bool) -> void:
 	# На любой выход (success/fail/cancel) — indicator не должен повиснуть.
 	# _commit_rain и _cancel_aim уже зовут _clear_aim_indicator явно, тут
 	# подстраховка для путей, которые могли бы пропустить.
 	_clear_aim_indicator()
 	if _hand.active_category == Hand.Category.SUPER:
-		_hand.set_active_category(_pre_super_category)
+		_hand.pop_category()
 	if _state != State.CASTING:
 		_state = State.READY
-	EventBus.super_cast_finished.emit(success)
 
 
 func _spawn_carrier(target_pos: Vector3) -> void:
@@ -349,12 +344,9 @@ func _spawn_carrier(target_pos: Vector3) -> void:
 		return
 	if _effects_root == null:
 		return
-	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
-	var launch_pos: Vector3
-	if tower != null:
-		launch_pos = tower.global_position + Vector3.UP * carrier_launch_offset_y
-	else:
-		launch_pos = _hand.global_position
+	# Tower-launch helper живёт в HandSpell (там tower-cache); используем тот
+	# же контракт — single source of truth для «откуда летят снаряды».
+	var launch_pos: Vector3 = _hand.spell_actions.tower_launch_position(carrier_launch_offset_y, _hand)
 	var burst_pos: Vector3 = target_pos + Vector3.UP * carrier_burst_height
 	var carrier := carrier_scene.instantiate() as SuperCarrier
 	if carrier == null:

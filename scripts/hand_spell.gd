@@ -38,6 +38,12 @@ const ACTION_EQUIP_MINE_SCATTER := &"equip_mine_scatter"
 
 var _hand: Hand
 
+## Кеш Tower'а — три spell-модуля и Super дёргают find_tower на каждом каст'е,
+## раньше каждый делал свой `get_first_node_in_group`. Инвалидируется на
+## EventBus.tower_destroyed (см. _on_tower_destroyed). Если Tower ещё не
+## зареди'нился (race на старте) — lazy-резолв на следующем вызове.
+var _tower_cache: Node3D = null
+
 @onready var _fireball: HandSpellFireball = $Fireball
 @onready var _firestorm: HandSpellFirestorm = $Firestorm
 @onready var _mine_scatter: HandSpellMineScatter = $MineScatter
@@ -60,6 +66,46 @@ func _ready() -> void:
 	_fireball.spell_cast.connect(spell_cast.emit)
 	_firestorm.spell_cast.connect(spell_cast.emit)
 	_mine_scatter.spell_cast.connect(spell_cast.emit)
+	EventBus.tower_destroyed.connect(_on_tower_destroyed)
+
+
+func _on_tower_destroyed() -> void:
+	_tower_cache = null
+
+
+# --- Shared spell-cast helpers (используют 3 spell-модуля + HandSuper) ---
+
+## Tower или null. Кешируется до tower_destroyed. Lazy-резолв если cache пуст.
+## Несколько Tower'ов на сцене не поддерживаются — возвращается первый
+## (мультибашня не в SPEC).
+func find_tower() -> Node3D:
+	if _tower_cache != null and is_instance_valid(_tower_cache):
+		return _tower_cache
+	_tower_cache = get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
+	return _tower_cache
+
+
+## Точка launch'а снаряда: верх башни (+offset по Y) если Tower есть, иначе
+## позиция руки. Fallback нужен для дев-сцен без Tower'а и для случая
+## «башня уничтожена в момент каста».
+func tower_launch_position(offset_y: float, hand: Hand) -> Vector3:
+	var tower := find_tower()
+	if tower != null:
+		return tower.global_position + Vector3.UP * offset_y
+	return hand.global_position
+
+
+## Попытка списать ману с башни. true — мана списана (или Tower'а нет —
+## fallback «free cast» для дев-сцен). false — есть Tower и маны не хватило,
+## caller отменяет каст без cooldown'а. Контракт по `try_consume_mana` —
+## не лочим тип на Tower (мана-провайдером может быть другой источник).
+func try_consume_tower_mana(cost: float) -> bool:
+	var tower := find_tower()
+	if tower == null:
+		return true
+	if not tower.has_method(&"try_consume_mana"):
+		return true
+	return tower.try_consume_mana(cost)
 
 
 ## Координатор Hand вызывает этот метод после собственного _ready, передавая

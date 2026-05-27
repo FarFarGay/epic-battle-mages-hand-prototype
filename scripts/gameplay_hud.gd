@@ -797,9 +797,12 @@ func _update_action_bar() -> void:
 ## action; теперь HUD — single dispatcher, что позволяет drag-and-drop
 ## переназначение.
 func _unhandled_input(event: InputEvent) -> void:
+	# event-driven match: is_action_pressed смотрит на сам event, а не на
+	# глобальный Input.is_action_just_pressed (тот мог пропустить одну из
+	# двух одновременных клавиш если фрейм поймал обе сразу).
 	if event is InputEventKey and event.pressed and not event.echo:
 		for i in range(SLOT_EQUIP_ACTIONS.size()):
-			if Input.is_action_just_pressed(SLOT_EQUIP_ACTIONS[i]):
+			if event.is_action_pressed(SLOT_EQUIP_ACTIONS[i]):
 				_equip_slot(i)
 				return
 	# ЛКМ-отпускание во время drag'а — финализируем. Ловим именно

@@ -321,9 +321,6 @@ func _ready() -> void:
 		_effects_root = get_node_or_null(effects_root_path)
 	if _effects_root == null:
 		_effects_root = get_tree().current_scene
-	# Re-emit на глобальный EventBus — для UI / звука / статистики.
-	damaged.connect(func(amount: float) -> void: EventBus.gnome_damaged.emit(self, amount))
-	destroyed.connect(func() -> void: EventBus.gnome_destroyed.emit(self))
 	# Фазовый сдвиг LOD-чека: 126+ гномов не должны пересчитывать дистанцию
 	# до камеры одним кадром. Размазываем по 0..lod_check_interval.
 	_lod_check_timer = randf() * lod_check_interval

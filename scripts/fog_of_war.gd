@@ -90,6 +90,13 @@ const VISION_RADIUS_REVEAL_DEFAULT: float = 8.0
 
 static var _instance: FogOfWar = null
 
+
+## Глобальная точка доступа — единственный FogOfWar на сцене. null если ещё
+## не _ready'нулся или уже free'нут (рестарт сцены). Используется UI/cheat
+## кодом, который иначе ходил бы по детям сцены в поисках экземпляра.
+static func instance() -> FogOfWar:
+	return _instance if _instance != null and is_instance_valid(_instance) else null
+
 var _vision_image: Image
 var _vision_texture: ImageTexture
 var _vision_data: PackedByteArray  ## Working buffer; быстрее set_pixel/get_pixel.

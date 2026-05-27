@@ -17,16 +17,11 @@ extends Node
 ## but never used in the class» — false-positive для этого паттерна.
 @warning_ignore_start("unused_signal")
 
-# --- Item ---
-signal item_damaged(item: Node3D, amount: float)
-signal item_destroyed(item: Node3D)
-
 # --- Enemy ---
 signal enemy_damaged(enemy: Node3D, amount: float)
 signal enemy_destroyed(enemy: Node3D)
 
 # --- Tower ---
-signal tower_damaged(amount: float)
 signal tower_destroyed
 ## Текущий HP башни изменился. HUD рисует hp-bar.
 signal tower_health_changed(current: float, maximum: float)
@@ -44,18 +39,10 @@ signal spell_upgraded(id: StringName, level: int)
 # --- Hand: захват / бросок / способности ---
 signal hand_grabbed(item: Node3D)
 signal hand_released(item: Node3D, velocity: Vector3)
-signal hand_slammed(position: Vector3, radius: float)
-signal hand_flicked(target: Node3D, velocity: Vector3)
 
 # --- Camp ---
 signal camp_deployed(anchor: Vector3)
 signal camp_packed
-signal camp_part_damaged(part: Node3D, amount: float)
-signal camp_part_destroyed(part: Node3D)
-
-# --- Gnome ---
-signal gnome_damaged(gnome: Node3D, amount: float)
-signal gnome_destroyed(gnome: Node3D)
 
 # --- Camp alarm: скелет бьёт по «мирному» лагерю (палатка / гном-собиратель) ---
 ## Эмитится из Skeleton._perform_strike, когда скелет наносит урон CampPart
@@ -111,10 +98,6 @@ signal collection_priority_changed(weights: Dictionary)
 ## слушатели бара — итоговый XP/level.
 signal squad_xp_gained_at(amount: int, world_position: Vector3)
 
-# --- Modules / mount slots ---
-signal module_mounted(module: Node, slot: Node)
-signal module_unmounted(module: Node, slot: Node)
-
 # --- Quests ---
 ## Прогресс сюжета продвинулся: new_index = новый QuestProgress.current_index.
 ## Слушают QuestActor (для перекраса) и потенциально HUD.
@@ -150,11 +133,5 @@ signal navmesh_baked
 ## Шкала «великой силы» отряда изменилась. Накопление по нанесённому damage'у
 ## врагам. value/max = сырые единицы (сейчас 0..100 ≈ 100 hp нанесённого damage).
 signal super_charge_changed(value: float, max_value: float)
-## Игрок начал каст супер-удара (нажат Space, шкала full). UI замораживает
-## мир time_scale=0.15, показывает QTE-паттерн.
-signal super_cast_started
-## QTE завершён. success=true → игрок прицеливается и кастует, шкала спишется
-## полностью; success=false → шкала спишется на половину, мир возвращается.
-signal super_cast_finished(success: bool)
 
 @warning_ignore_restore("unused_signal")

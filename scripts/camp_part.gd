@@ -147,8 +147,6 @@ func _ready() -> void:
 		_effects_root = get_node_or_null(effects_root_path)
 	if _effects_root == null:
 		_effects_root = get_tree().current_scene
-	damaged.connect(func(amount: float) -> void: EventBus.camp_part_damaged.emit(self, amount))
-	destroyed.connect(func() -> void: EventBus.camp_part_destroyed.emit(self))
 	## Hand-события: грэб ставит in_hand-флаг, release решает «бросок vs поставил».
 	EventBus.hand_grabbed.connect(_on_hand_grabbed)
 	EventBus.hand_released.connect(_on_hand_released)

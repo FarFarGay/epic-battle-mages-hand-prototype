@@ -194,24 +194,14 @@ func _perform_cast() -> void:
 		push_error("[Hand:Spell:Fireball] fireball_scene не инстанцируется как Fireball")
 		return
 
-	var tower := _find_tower()
-	# Mana-gate: если есть Tower и в нём не хватает маны — отказ. Cooldown
-	# не запускается (попытка не «съедается»). Если Tower'а нет (dev-сцена) —
-	# каст всё равно проходит без mana-чека. Контракт по `try_consume_mana`
-	# вместо `is Tower` — потенциально мана-провайдером может быть и не Tower.
-	if tower != null and tower.has_method(&"try_consume_mana"):
-		if not tower.try_consume_mana(p_mana_cost):
-			if debug_log and LogConfig.master_enabled:
-				print("[Hand:Spell:Fireball] не хватает маны (нужно %.0f)" % p_mana_cost)
-			fireball.queue_free()
-			return
-	# Launch: вершина башни (если есть), иначе позиция руки. На сцене Tower
-	# всегда есть, fallback — для дев-сцен и для случая «башня уничтожена».
-	var launch_pos: Vector3
-	if tower != null:
-		launch_pos = tower.global_position + Vector3.UP * launch_offset_y
-	else:
-		launch_pos = _hand.global_position
+	# Mana-gate: cooldown НЕ запускается на отказе (попытка не «съедается»).
+	# Подробности контракта — см. [HandSpell.try_consume_tower_mana].
+	if not _coord.try_consume_tower_mana(p_mana_cost):
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:Spell:Fireball] не хватает маны (нужно %.0f)" % p_mana_cost)
+		fireball.queue_free()
+		return
+	var launch_pos: Vector3 = _coord.tower_launch_position(launch_offset_y, _hand)
 	var target_pos: Vector3 = _hand.cursor_world_position()
 	# Y цели — приземление: пол (`hand_height` снят, чтобы шар врезался в землю,
 	# а не в воздух над курсором). Если из cursor_world_position нельзя достать
@@ -258,9 +248,3 @@ func _perform_cast() -> void:
 	spell_cast.emit(&"fireball", target_pos)
 
 
-## Ищем Tower на сцене через group. Если в проекте появится несколько
-## Tower'ов (мультибашня — пока нет в SPEC), вернём первый — это OK,
-## фаербол стартует из ближайшей по логике игрока башни.
-func _find_tower() -> Node3D:
-	var t := _hand.get_tree().get_first_node_in_group(Tower.GROUP)
-	return t as Node3D

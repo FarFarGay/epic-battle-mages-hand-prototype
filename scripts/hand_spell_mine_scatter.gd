@@ -137,12 +137,10 @@ func _cast() -> void:
 	var p_cooldown: float = float(lvl.get("cooldown", cooldown))
 	var p_mana_cost: float = float(lvl.get("mana_cost", mana_cost))
 
-	var tower := _find_tower()
-	if tower != null and tower.has_method(&"try_consume_mana"):
-		if not tower.try_consume_mana(p_mana_cost):
-			if debug_log and LogConfig.master_enabled:
-				print("[Hand:Spell:MineScatter] не хватает маны (нужно %.0f)" % p_mana_cost)
-			return
+	if not _coord.try_consume_tower_mana(p_mana_cost):
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:Spell:MineScatter] не хватает маны (нужно %.0f)" % p_mana_cost)
+		return
 
 	var target_pos: Vector3 = _hand.cursor_world_position()
 	target_pos.y -= _hand.hand_height
@@ -172,12 +170,7 @@ func _cast() -> void:
 func _launch_one_projectile(landing: Vector3) -> void:
 	if not is_instance_valid(_effects_root):
 		return
-	var launch_pos: Vector3
-	var tower := _find_tower()
-	if tower != null:
-		launch_pos = tower.global_position + Vector3.UP * launch_offset_y
-	else:
-		launch_pos = _hand.global_position
+	var launch_pos: Vector3 = _coord.tower_launch_position(launch_offset_y, _hand)
 	var fireball := projectile_scene.instantiate() as Fireball
 	if fireball == null:
 		push_error("[Hand:Spell:MineScatter] projectile_scene не инстанцируется как Fireball")
@@ -226,6 +219,3 @@ func _on_projectile_hit(origin: Vector3, _radius: float) -> void:
 	mine.setup(origin, Vector3.ZERO)
 
 
-func _find_tower() -> Node3D:
-	var t := _hand.get_tree().get_first_node_in_group(Tower.GROUP)
-	return t as Node3D

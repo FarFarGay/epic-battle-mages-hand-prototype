@@ -47,8 +47,6 @@ var _active_building: StringName = &""
 ## Кэш радиуса будущей постройки — для визуального кольца. Заполняется
 ## в start_aim по building-id'у. 0 = нет визуала, кольцо не рисуется.
 var _aim_radius: float = 0.0
-## Категория Hand'а до старта aim'а — на завершении возвращаем.
-var _pre_aim_category: int = Hand.Category.PHYSICAL
 var _aim_indicator: MeshInstance3D = null
 ## Большой круг зоны строительства вокруг центра лагеря — видим только в
 ## активном aim'е. Не двигается (camp.build_zone_center статичен в DEPLOYED).
@@ -162,8 +160,7 @@ func start_relocate(bell: WatchBell) -> void:
 	_relocating_bell = bell
 	_active_building = RELOCATE_SENTINEL
 	_aim_radius = bell.alarm_radius
-	_pre_aim_category = _hand.active_category
-	_hand.set_active_category(Hand.Category.BUILD_AIM)
+	_hand.push_category(Hand.Category.BUILD_AIM)
 	bell.set_carried(true)
 	_spawn_indicator()
 	if debug_log and LogConfig.master_enabled:
@@ -203,8 +200,7 @@ func start_brush(building_id: StringName) -> void:
 	_brush_committed_segments_count = 0
 	_brush_segment_length = float(data.get("segment_length", 2.0))
 	_brush_cost_per_segment = data.get("cost_per_segment", {})
-	_pre_aim_category = _hand.active_category
-	_hand.set_active_category(Hand.Category.BUILD_AIM)
+	_hand.push_category(Hand.Category.BUILD_AIM)
 	_spawn_build_zone_only_indicator()
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:BuildAim] brush-старт %s, segment_length=%.1f" % [
@@ -261,13 +257,11 @@ func start_aim(building_id: StringName) -> void:
 	else:
 		_direction_aim_mode = ""
 	_direction_origin = Vector3.INF
-	_pre_aim_category = _hand.active_category
-	_hand.set_active_category(Hand.Category.BUILD_AIM)
+	_hand.push_category(Hand.Category.BUILD_AIM)
 	_spawn_indicator()
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:BuildAim] aim старт для %s, radius=%.1f, direction=%s, prev_category=%s" % [
+		print("[Hand:BuildAim] aim старт для %s, radius=%.1f, direction=%s" % [
 			building_id, _aim_radius, str(_direction_aim_mode != ""),
-			Hand.Category.keys()[_pre_aim_category],
 		])
 
 
@@ -291,13 +285,10 @@ func start_defense_formation_aim(slot_count: int = 0) -> void:
 	_direction_aim_mode = "defense_formation"  # drag-direction flow с auto-fallback на short-click
 	_direction_origin = Vector3.INF
 	_defense_slot_count = slot_count
-	_pre_aim_category = _hand.active_category
-	_hand.set_active_category(Hand.Category.BUILD_AIM)
+	_hand.push_category(Hand.Category.BUILD_AIM)
 	_spawn_indicator()
 	if LogConfig.master_enabled:
-		print("[Hand:BuildAim] defense-formation aim старт (click/drag hybrid) slots=%d, prev_category=%s" % [
-			slot_count, Hand.Category.keys()[_pre_aim_category],
-		])
+		print("[Hand:BuildAim] defense-formation aim старт (click/drag hybrid) slots=%d" % slot_count)
 
 
 func cancel_aim() -> void:
@@ -540,21 +531,26 @@ func _add_brush_vertex(cursor: Vector3) -> void:
 
 
 ## Пересчитывает preview активной части (от last_vertex'а до курсора).
-## Каждый кадр уничтожает старые active-preview'ы и спавнит новые. Дёшево
-## при <10 сегментах в активной части.
+## Каждый кадр обновляет позицию/цвет существующих preview-меш'ей вместо
+## queue_free + create. Раньше при BRUSH_MAX_VERTICES=20 и 60FPS делал до
+## ~2280 alloc/free MeshInstance3D в секунду — теперь только перепозиция.
+## Cleanup пула — в [_finish_brush].
+##
+## _brush_active_meshes используется как пул переменного размера: вершины
+## приходят/уходят, разница по сравнению с прошлым кадром обычно ≤1 сегмент.
 func _update_brush_active_preview(cursor: Vector3) -> void:
-	# Очистка старых.
+	# Все существующие preview сначала «hide»; ниже разиспользуем нужное
+	# количество, лишние останутся hidden до следующего тика или free на
+	# _finish_brush.
 	for m in _brush_active_meshes:
 		if is_instance_valid(m):
-			m.queue_free()
-	_brush_active_meshes.clear()
+			m.visible = false
+	var used: int = 0
 	if _brush_vertices.is_empty():
 		# Ещё не поставили первый vertex — показываем «фантомный сегмент»
 		# в точке курсора (горизонтально, дефолтная ориентация). Подсказка:
 		# «ЛКМ поставит первую точку».
-		var seg := _make_preview_segment(cursor, 0.0, brush_preview_color_valid)
-		if seg != null:
-			_brush_active_meshes.append(seg)
+		_acquire_preview_segment(used, cursor, 0.0, brush_preview_color_valid)
 		return
 	var last: Vector3 = _brush_vertices[-1]
 	var pt: Vector3 = Vector3(cursor.x, last.y, cursor.z)
@@ -595,14 +591,38 @@ func _update_brush_active_preview(cursor: Vector3) -> void:
 		active_color = brush_preview_color_valid
 	for j in range(count):
 		var center: Vector3 = last + step * (float(j) + 0.5)
-		var seg := _make_preview_segment(center, rot_y, active_color)
-		if seg != null:
-			_brush_active_meshes.append(seg)
+		_acquire_preview_segment(used, center, rot_y, active_color)
+		used += 1
 	# Committed сегменты держат свой цвет, но краснеют синхронно — это часть
 	# того же blueprint'а. Перекраска копеечная (≤ ~38 мешей).
 	var committed_color: Color = brush_committed_color if can_afford else brush_preview_color_invalid
 	for m in _brush_committed_meshes:
 		_apply_color_to_mesh(m, committed_color)
+
+
+## Pool-API: переиспользует mesh из [_brush_active_meshes] по индексу `slot`,
+## создавая при необходимости. После вызова mesh виден, на нужной позиции,
+## с нужной ориентацией и цветом. Caller инкрементит счётчик использованных.
+func _acquire_preview_segment(slot: int, pos: Vector3, rot_y: float, color: Color) -> void:
+	var mesh: MeshInstance3D = null
+	if slot < _brush_active_meshes.size():
+		mesh = _brush_active_meshes[slot]
+		if not is_instance_valid(mesh):
+			mesh = _make_preview_segment(pos, rot_y, color)
+			_brush_active_meshes[slot] = mesh
+			return
+	else:
+		mesh = _make_preview_segment(pos, rot_y, color)
+		if mesh != null:
+			_brush_active_meshes.append(mesh)
+		return
+	# Reuse: перепозиция + цвет, видимость on.
+	mesh.global_position = pos + Vector3.UP * 0.75
+	mesh.rotation.y = rot_y
+	_apply_color_to_mesh(mesh, color)
+	mesh.visible = true
+
+
 
 
 ## Спавнит committed-preview между двумя vertex'ами (от vertex_i к vertex_{i+1}).
@@ -733,7 +753,7 @@ func _finish_brush() -> void:
 	_brush_active_meshes.clear()
 	_clear_indicator()
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
-		_hand.set_active_category(_pre_aim_category)
+		_hand.pop_category()
 
 
 ## Меняет albedo + emission материала кольца — синхронно с aim_indicator
@@ -801,7 +821,7 @@ func _finish_aim() -> void:
 	_direction_origin = Vector3.INF
 	_direction_aim_mode = ""
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
-		_hand.set_active_category(_pre_aim_category)
+		_hand.pop_category()
 	_active_building = &""
 	_aim_radius = 0.0
 

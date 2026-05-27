@@ -73,6 +73,12 @@ var _initialized: bool = false
 var _last_surface_label: String = ""
 ## Активная категория ввода. PHYSICAL по умолчанию (Slam-equip).
 var active_category: Category = Category.PHYSICAL
+## Стек предыдущих категорий для [push_category]/[pop_category]. Координаторы
+## (Super/SquadAim/BuildAim) запоминают, в какой категории была рука перед их
+## активацией, и возвращают её на завершении. Раньше каждый координатор хранил
+## свою `_pre_*_category` — три параллельных хранилища, на вложенных aim'ах
+## (теоретически: build → super) одно могло перетереть другое.
+var _category_stack: Array[Category] = []
 ## Флаг активного UI-drag'а из action-bar'а. GameplayHud выставляет true на
 ## start_drag и false на finish. Hand учитывает в `is_pointer_over_ui` —
 ## пока тащим карту, ВСЕ мирные действия (grab, magnet, slam, cast) заблокированы.
@@ -182,6 +188,29 @@ func set_active_category(category: Category) -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand] категория: %s" % Category.keys()[category])
 	category_changed.emit(category)
+
+
+## Push current category onto stack and switch to `category`. Если рука уже
+## в `category` — стек не растёт (no-op). Используется временными координаторами
+## (Super, SquadAim, BuildAim) — на завершении они зовут [pop_category],
+## который вернёт ту категорию, что была до них.
+##
+## Защита от вложенных push'ей одного и того же cat'а делает pop сбалансированным
+## даже если координатор «случайно» дёрнул push дважды.
+func push_category(category: Category) -> void:
+	if active_category == category:
+		return
+	_category_stack.push_back(active_category)
+	set_active_category(category)
+
+
+## Возвращает категорию, сохранённую [push_category]. Если стек пуст —
+## fallback на PHYSICAL (на старте/после рестарта мы туда же и возвращаемся).
+func pop_category() -> void:
+	var prev: Category = Category.PHYSICAL
+	if not _category_stack.is_empty():
+		prev = _category_stack.pop_back()
+	set_active_category(prev)
 
 
 func cursor_world_position() -> Vector3:

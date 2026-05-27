@@ -43,10 +43,6 @@ var _mounted: CampModule = null
 func _ready() -> void:
 	EventBus.hand_grabbed.connect(_on_hand_grabbed)
 	EventBus.hand_released.connect(_on_hand_released)
-	# Re-emit на глобальный EventBus — слушатели UI/звука/логики апгрейдов
-	# подписываются один раз, не зная о конкретных слотах.
-	module_attached.connect(func(m: Node) -> void: EventBus.module_mounted.emit(m, self))
-	module_detached.connect(func(m: Node) -> void: EventBus.module_unmounted.emit(m, self))
 
 
 func is_occupied() -> bool:
