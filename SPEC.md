@@ -297,8 +297,9 @@ hand_gameplay_prot/
 - `debug_log: bool = true` — лог только смены поверхности.
 
 **Категория ввода:**
-- `enum Category { PHYSICAL, MAGIC }`, `var active_category` (default PHYSICAL).
+- `enum Category { PHYSICAL, MAGIC, SUPER, SQUAD_AIM, BUILD_AIM }`, `var active_category` (default PHYSICAL). Последние три — временные aim-режимы временных координаторов (HandSuper, HandSquadAim, HandBuildAim).
 - `set_active_category(category)` — публичный setter, эмитит `category_changed`. Equip-биндинги (1/2 в HandPhysical, 3/4 в HandSpell) вызывают это для переключения. ЛКМ-граб работает в любой категории; ПКМ — только в активной.
+- **`push_category(cat)` / `pop_category()` (2026-05-27)** — стек предыдущих категорий для временных координаторов. Раньше HandSuper / HandSquadAim / HandBuildAim каждый хранил свою `_pre_*_category` (три параллельных хранилища, на вложенных aim'ах одно могло перетереть другое). Теперь `push` сохраняет current в `_category_stack` и переключает на `cat`; `pop` возвращает saved (fallback PHYSICAL если стек пуст). Защита от повторного push'а одной и той же категории — стек не растёт, pop остаётся сбалансированным.
 - `is_holding() -> bool` — общий guard для ПКМ-действий (если рука занята — ни Slam, ни Flick, ни Fireball не триггерятся).
 - См. §5.12 «Магия» для полного контекста.
 
@@ -483,25 +484,31 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 
 #### 5.2.2 SpellActions — `scripts/hand_spell.gd`
 
-**Тип:** `Node` с `class_name HandSpell extends Node`.
+**Тип:** `Node` с `class_name HandSpell extends Node`. Координатор магических подмодулей: Fireball, Firestorm, MineScatter (см. §5.12).
 
-**Категория:** заклинания. **ЗАГЛУШКА** на текущей итерации.
+**Дочерние узлы:**
+- `Fireball` (`HandSpellFireball`) — баллистический AOE-снаряд.
+- `Firestorm` (`HandSpellFirestorm`) — серия мелких fireball'ов в зону.
+- `MineScatter` (`HandSpellMineScatter`) — залп fireball'ов-доставщиков, на impact'е спавнят Mine.
 
 **Жизненный цикл:**
-- В `_ready` отключает `set_process(false)` / `set_physics_process(false)` — без активной логики не тикаем.
-- `setup(hand: Hand)` вызывается из `Hand._ready` после собственной инициализации. Хранит `_hand` для будущего доступа к позиции/скорости. Получение ссылки идёт явно от координатора, не через `get_parent()`.
+- `setup(hand: Hand)` вызывается из `Hand._ready`. Хранит `_hand` для будущего доступа к позиции/скорости. Получение ссылки идёт явно от координатора, не через `get_parent()`.
+- Subscribes to `EventBus.tower_destroyed` для инвалидации tower-кеша.
 
-**План (TBD):**
-- Привязка ввода: ПКМ или клавиши 1..N.
-- Реестр заклинаний (`name → cost / cooldown / scene-effect`).
-- `cast(spell_name: String)` с проверкой кулдауна/маны.
+**Shared spell-launch helpers (2026-05-27).** Раньше каждый spell-модуль (Fireball/Firestorm/MineScatter) и HandSuper имел свой `_find_tower()` + дубль `tower != null then tower.global_position + UP * offset else hand.global_position`. Сейчас в `HandSpell`:
+- `find_tower() -> Node3D` — Tower из `get_first_node_in_group(Tower.GROUP)` с кешем (`_tower_cache`), invalidate'ится на `tower_destroyed`. Lazy-резолв если cache пуст.
+- `tower_launch_position(offset_y: float, hand: Hand) -> Vector3` — точка launch'а: вершина башни (+offset по Y) если Tower есть, иначе `hand.global_position` (fallback для дев-сцен / случая «башня уничтожена в момент каста»).
+- `try_consume_tower_mana(cost: float) -> bool` — true если мана списана (или Tower'а нет — free-cast fallback). false → caller отменяет каст без cooldown'а. Контракт duck-typed по `has_method(&"try_consume_mana")` — мана-провайдером может быть и не Tower.
 
-**Сигналы:**
-- `spell_cast(spell_name: String, position: Vector3)` — черновик, под будущих слушателей (UI/звук/анимация башни).
+HandSuper пользуется теми же helper'ами через `_hand.spell_actions.tower_launch_position(...)` — единая точка для «откуда летят снаряды».
 
-**Экспорты сейчас:** `debug_log: bool = true`.
+**Категориальный гейт ввода:** в `_handle_input` блокируется когда `active_category ∈ {SUPER, SQUAD_AIM, BUILD_AIM}` — соответствующий координатор сам вернёт категорию на завершении. Equip-биндинги (3/4/5) — в GameplayHud через slot-mapping (см. §5.13 action-bar).
 
-**Зависимости:** только родитель Hand (через `setup`). Через него — позиция и скорость для исхода заклинания.
+**Сигналы:** `spell_cast(spell_name: StringName, position: Vector3)` re-emit'ится из подмодулей.
+
+**Экспорты:** `debug_log: bool = true`, `equipped: SpellType` (FIREBALL/FIRESTORM/MINE_SCATTER), `_tower_cache: Node3D` (internal).
+
+**Зависимости:** Hand (через `setup`), EventBus.tower_destroyed, Tower (через group lookup). См. §5.12 «Магия» для деталей каждого заклинания.
 
 ### 5.3 CameraRig — `scenes/camera_rig.tscn`, `scripts/camera_rig.gd`
 
@@ -591,7 +598,7 @@ const ACTION_EQUIP_FLICK := &"equip_flick"
 
 ### 5.5 Enemies — категория врагов
 
-Иерархия: `Enemy` (база) → `Skeleton` (melee) и `SkeletonArcher` (ranged, 2026-05-13). Оба — sibling-наследники Enemy, не друг-друга (archer не наследует melee-логику Skeleton: LOD, soft-cap, approach-кольцо, boids-avoidance к archer'у не применимы). Вспомогательный модуль смерти — `ShatterEffect` (общий). Спавн делает отдельный узел `EnemySpawner` в `main.tscn`.
+Иерархия: `Enemy` (база) → `Skeleton` (melee) и `SkeletonArcher` (ranged, 2026-05-13). Гиганты: `SkeletonGiant extends Skeleton` (melee-танк) и `SkeletonGiantThrower extends SkeletonArcher` (ranged-каменщик). Координатор группы лучников — `ArcherGroup` (Node3D, не Enemy). Вспомогательный модуль смерти — `ShatterEffect` (общий). Hit-feedback (scale-punch на damage) — общий `HitPunch.punch(mesh, prev_tween, peak)` ([scripts/hit_punch.gd]), используется и Skeleton'ом и Thrower'ом. Спавн делает отдельный узел `EnemySpawner` в `main.tscn`.
 
 #### 5.5.1 Enemy — `scripts/enemy.gd`
 
@@ -729,6 +736,12 @@ Skeleton не использует `Enemy._targets` — вместо этого 
 
 Skip-условия: не в APPROACH, нет цели, в knockback'е — счётчик сбрасывается.
 
+**Local-wander у стены + LOS-raycast (2026-05-22).** Скелет не видит цели сквозь палисад: `_scan_target` фильтрует кандидатов через `_has_line_of_sight_to(node)` — `PhysicsRayQueryParameters3D` от `global_position.y + LOS_RAY_HEIGHT (0.7м)` к той же высоте у цели, маска `Layers.PALISADE_OBSTACLE (512)`. Без фиксированной Y оба эндпоинта брали бы свою высоту — диагональный рэй перепрыгивал бы через стену 1.5м (Tower на y=3 → диагональ высоко). Палисад в `MELEE_ONLY_TARGET_GROUP` (см. §5.5.3): melee-скелет ломает стену чтобы пройти, archer её игнорирует — это работает поверх LOS-фильтра.
+
+При упирании в стену (`forced_target` или нашёл цель, но LOS blocked) скелет уходит в **local-wander mode**: помнит направление `_blocked_target_dir`, выбирает сторону `_local_wander_side` (±1) и бродит по перпендикуляру к стене с лёгким наклоном (±30°) в радиусе `LOCAL_WANDER_DISTANCE 4..9м`. На каждой итерации wander-target пропускается через LOS-check — кандидаты «сквозь стену» отбрасываются. Цель: не толпиться в одной точке, а fan-out'нуть вдоль стены и найти проход.
+
+LOS-фильтр на `_forced_target` применяется **только в local-wander mode** — иначе wave-скелеты, заспавненные в 50м от лагеря, мгновенно уходили бы в local-wander (LOS до forced палатки часто blocked стеной/самим скелетом ранним рейкастом). Логика: `if not _local_wander_mode or _has_line_of_sight_to(_forced_target): return _forced_target`.
+
 **Gotcha (важный паттерн при работе с grid-snapshot'ами):** typed-assignment из Array (`var node: Node3D = entry[1]`) вылетает с `Trying to assign invalid previously freed instance`, если объект уже освобождён — runtime бьёт ошибку **до** проверки `is_instance_valid`. Правильный паттерн:
 ```gdscript
 var raw = entry[1]              # untyped Variant
@@ -836,7 +849,7 @@ static var _shared_normal_material: StandardMaterial3D
 - `_on_state_enter(new_state)`: на `AttackState.WINDUP` → `_tween_pose_to(POSE_WINDUP_SKEL, POSE_WINDUP_TIME)` (coiled-поза) + **защёлкиваем `_windup_target = get_active_target()`** (этап 47). Лок цели замаха — strike будет бить именно её, а не текущий рескан-результат. На `AttackState.STRIKE` → `_tween_pose_strike()` (snap в extended-позу с chain'ом restore к нейтрали).
 - `_on_state_exit(_old_state)`: ничего — поза управляется через enter-хуки.
 - `_on_knockback()` (override): super сбрасывает WINDUP→APPROACH; если был WINDUP — `_tween_pose_to(POSE_NEUTRAL, POSE_RESTORE_TIME)`, иначе coiled-поза зависла бы.
-- `_perform_strike(_target)` — **AoE-удар в радиусе** `attack_range × STRIKE_RADIUS_FACTOR=1.3` (~1.95м) вокруг скелета. Damage'ит всех в `TARGET_GROUP` в этом радиусе через `Damageable.try_damage(node, attack_damage)`. `_windup_target` используется только для направления self-lunge'а — куда скелет целил, туда и сделает физический выпад. Если locked invalid → forward по текущему look_at (local -Z) через `_apply_velocity_change`. Параметр `_target` из `Enemy._ai_step` игнорируется. `EventBus.skeleton_attacked_camp.emit` дёргается один раз на strike с первой не-defender жертвой (не спамим на каждую damage'нутую). **Почему AoE, а не single-target:** старая single-target логика с slack-валидацией (×1.5 от attack_range) мазала по движущимся целям — pikeman после lunge'а драфтит из slack'а к моменту STRIKE'а, и удар не проходил даже когда pikeman был в физическом melee. AoE решает это: размах конечностью покрывает дугу, кто рядом — получил. Цена: кластер защитников/гномов ближе чем 1.95м к скелету получают damage все вместе.
+- `_perform_strike(_target)` — **AoE-удар в радиусе** `attack_range × STRIKE_RADIUS_FACTOR=1.3` (~1.95м) вокруг скелета. Damage'ит всех в `TARGET_GROUP` в этом радиусе через `Damageable.try_damage(node, attack_damage)`. `_windup_target` используется только для направления self-lunge'а — куда скелет целил, туда и сделает физический выпад. Если locked invalid → forward по текущему look_at (local -Z) через `_apply_velocity_change`. Параметр `_target` из `Enemy._ai_step` игнорируется. `EventBus.skeleton_attacked_camp.emit` дёргается один раз на strike с первой не-defender жертвой (не спамим на каждую damage'нутую). **Почему AoE, а не single-target:** старая single-target логика с slack-валидацией (×1.5 от attack_range) мазала по движущимся целям — pikeman после lunge'а драфтит из slack'а к моменту STRIKE'а, и удар не проходил даже когда pikeman был в физическом melee. AoE решает это: размах конечностью покрывает дугу, кто рядом — получил. Цена: кластер защитников/гномов ближе чем 1.95м к скелету получают damage все вместе. **Скан целей идёт через `Enemy._target_grid`** (3×3 cell'ов вокруг скелета, размер cell'а = 4м, strike_radius=1.95м гарантированно покрыт), а не `get_nodes_in_group(TARGET_GROUP)` — на 200 скелетах × ~1Гц атак полный обход ~28k ops/с тратился впустую (целей в реальной зоне — единицы); grid lookup ужимает до ~270 ops/с.
 - `_do_lunge(target)`: считаем горизонтальное направление к цели; **`_apply_velocity_change(dir × lunge_speed, lunge_duration)`**, а не `apply_knockback`. Свой собственный strike через `apply_knockback` дёрнул бы `_on_knockback` хук, который сбил бы только что выставленное состояние.
 
 **Squash & stretch телеграф (как у копейщика):**
@@ -844,7 +857,7 @@ static var _shared_normal_material: StandardMaterial3D
 - Тайминги: `POSE_WINDUP_TIME=0.12с` (медленный ramp в coiled — у скелета вся фаза 0.32-0.48с, есть запас), `POSE_STRIKE_TIME=0.04с` (snap «выстрел»), `POSE_RESTORE_TIME=0.25с` (chain'ом после strike-snap, к середине COOLDOWN'а скелет в нейтрале).
 - `_pose_tween: Tween` хранится для kill'а при следующем переходе (быстрая серия windup'ов не должна перекрываться tween'ами).
 - `_tween_pose_to(target, duration)` — обычный переход. `_tween_pose_strike()` — снап + chain restore одной цепочкой.
-- Hit-feedback (`_on_self_damaged`) — пропускается в WINDUP'е: scale-punch (target=Vector3.ONE×1.25→ONE) перетёр бы coiled-позу и оставил бы скелета в нейтрале до конца замаха, телеграф терялся бы при попадании.
+- Hit-feedback (`_on_self_damaged`) — `HitPunch.punch(_mesh)` (shared helper, см. §3) с дефолтными `peak=1.25` / `in=0.06` / `out=0.14`. Пропускается в WINDUP'е: scale-punch перетёр бы coiled-позу и оставил бы скелета в нейтрале до конца замаха, телеграф терялся бы при попадании.
 
 **Зачем target-lock в WINDUP** (этап 47): `_vision_scan_timer` тикает в `_physics_process` независимо от FSM-состояния, поэтому за 0.4с замаха `_cached_target` мог быть подменён ближайшим гномом из 12-метрового vision. До фикса — strike бил по новой цели на любой дистанции (`Damageable.try_damage` без contact-чека → мгновенный урон по цели за 11м). После фикса — strike бьёт того, на кого замахнулся, или мажет, если он ушёл.
 
@@ -907,6 +920,17 @@ static func spawn(
 - `arrow_spawn_offset: Vector3(0, 0.6, 0)` — над головой, чтобы не родиться внутри своего CollisionShape3D.
 - `arrow_inaccuracy_radius: 1.5` — фиксированный разброс (uniform в круге через sqrt(rand)). Без обучения как у DefenderGnome.
 
+**Экспорты (Telegraph) — добавлено 2026-05-22:**
+- `has_telegraph: bool = false` — рисовать ли ground-ring под точкой прицела в WINDUP. По умолчанию off (одиночный лучник на фоне толпы перегружал бы экран красными кольцами). Включается у `SkeletonGiantThrower` (singleton-каменщик, ring читается как «сейчас прилетит»). У групповых лучников через [ArcherGroup] остаётся `false` — общий group-ring рисует координатор.
+- `telegraph_radius: float = 4.0` — радиус ring'а.
+- `telegraph_color: Color = (1.0, 0.3, 0.15, 0.9)` — красно-оранжевый.
+
+В `_on_state_enter(WINDUP)` (если `has_telegraph`): фиксируется `_telegraphed_aim` (точка прицела + опциональный inaccuracy-jitter), спавнится `AoeVisual.spawn_ground_ring(_telegraphed_aim, telegraph_radius, attack_windup + flight_time_estimate, telegraph_color)`. Длительность ring'а покрывает windup + ожидаемое время полёта снаряда — кольцо живёт до момента импакта, а не исчезает к моменту приземления (дизайнерское правило: «не убирай зону до столкновения», см. [ArcherGroup] §5.5.3.4).
+
+**Формация в группе — `formation_offset: Vector3`.** Личный смещение от center'а цели при kite-движении: `_kite_to_range` идёт в `target.global_position + formation_offset`, а не в саму цель. ArcherGroup раздаёт offset'ы при спавне (2×2-кольцо вокруг общего center'а) — без этого все 4 лучника склеивались в одну точку под общую цель. Дефолт `Vector3.ZERO` (одиночный лучник работает как раньше).
+
+**`_telegraphed_aim: Vector3 = Vector3.INF`** — публичное поле, ArcherGroup перезаписывает его в `_begin_group_volley` (рандомная точка внутри common-ring), `_perform_strike` использует если задано, иначе fallback на `target.global_position`. Без этой подмены 4 стрелы летят в одну точку — игрок не видит «area shot», только single-pile.
+
 **Дефолтные значения в `.tscn`** (переопределяют экспорты `Enemy`):
 - `hp = 20.0`, `move_speed = 2.4`, `attack_windup = 0.7`, `attack_cooldown = 1.8`.
 - `attack_damage = 0.0` — base-поле не используется (override `_perform_strike` спавнит стрелу с собственным damage).
@@ -967,6 +991,63 @@ static func spawn(
 **Группы:** `&"skeleton"` (наследует от Skeleton, входит в boids-avoidance) + `&"skeleton_giant"` (для будущего HUD-маркера/PerfHud) + `&"enemy"` + `&"damageable"` + `&"skeleton_target"`.
 
 **Спавн через WaveDirector:** см. §5.5.5 — параметры `giant_scene` и `giant_every_n_waves = 3`. Каждая 3-я POI-волна автоматически дополняет себя одним гигантом. Cheat-кнопка «Призвать гиганта» в Журнале (вкладка читы) для теста.
+
+#### 5.5.3.3 SkeletonGiantThrower — `scenes/skeleton_giant_thrower.tscn`, `scripts/skeleton_giant_thrower.gd` (2026-05-21)
+
+**Тип корня:** `CharacterBody3D` с `class_name SkeletonGiantThrower`. **Наследник `SkeletonArcher`** (не `SkeletonGiant`) — каменщик ranged, kite-логика лучника даёт «стоит на 25-35м и кидает камни», a не «бьёт в melee как обычный гигант».
+
+**Концепция:** второй вариант босса-танка. Если `SkeletonGiant` подходит вплотную и хлещет Tower, Thrower стоит вдали и обстреливает её камнями с дугой. Игрок не может игнорировать ни ту, ни другую угрозу — обе требуют разной тактики (melee → blockers/палисад; ranged → defender'ы на дистанции / собственные стрелы).
+
+**Параметры (через `.tscn`):**
+- `hp = 220.0` (vs `SkeletonGiant.hp=240`) — почти такой же танк.
+- `move_speed = 1.4`, `knockback_resistance = 0.2` (танк не сбивается стрелами защитников / slam'ом).
+- `attack_range = 35`, `attack_radius_min = 25`, `attack_radius_max = 35` — kite-зона. Стоит на 25-35м от Tower, не подходит ближе.
+- `attack_cooldown = 3.0`, `attack_windup = 1.2`. Долгие фазы — игрок видит замах и успевает увести гнома из landing-зоны.
+- `arrow_damage_min/max = 40/55`, `arrow_speed = 22` (как у обычного archer'а — баллистика та же).
+- `arrow_inaccuracy_radius = 2.5`, `arrow_spawn_offset = (0, 1.8, 0)` (над головой каменщика).
+- `has_telegraph = true`, `telegraph_radius = 4.0`, `telegraph_color = (1, 0.3, 0.15, 0.9)` — singleton-каменщик показывает кольцо impact-зоны.
+- `shatter_fragment_count = 14`, `shatter_color = (0.55, 0.5, 0.42)` — камешки в тон тушке.
+
+**Визуал:** CapsuleShape3D radius=0.75 / height=3.4 (как у `SkeletonGiant`). Собственный shared static material `_shared_thrower_material`: серо-каменный body `Color(0.55, 0.5, 0.42)` с тёплой emission `(0.7, 0.55, 0.35) × 0.55` — отличить от багряного `SkeletonGiant` и фиолетового обычного `SkeletonArcher`. Раньше был болотно-зелёный, но геймдизайнер указал что сливается с травой (2026-05-26).
+
+**Tower-приоритет.** Override `_resolve_target()`: возвращает `get_first_node_in_group(Tower.GROUP)` если жива и Damageable. Fallback на `super._resolve_target()` после смерти Tower. Контракт идентичен `SkeletonGiant._scan_target` override'у — каменщик «знает где башня» без vision_radius'а.
+
+**Снаряд — `GiantStone` ([scripts/giant_stone.gd], [scenes/giant_stone.tscn]).** Не `Arrow` (single-target on body_entered), а AOE-снаряд: баллистика → impact в точке landing'а → `AoeDamage.apply_uniform` по `aoe_mask=ENEMIES|COLD_ENEMY|...` в `aoe_radius=4м` (Tower 2×2 покрыта + защитники рядом). Damage передаётся caller'ом (Thrower рандомизирует в `arrow_damage_min..max`), gravity=12 (выше Arrow=6 — камень тяжелее, дуга круче), `knockback_speed=4 м/с × 0.3с` (радиальный push, гномы отлетают). На impact'е: `AoeVisual.spawn_explosion` (ядро + огонь + дым) + `AoeVisual.spawn_expanding_ring` (волна) + ground-damage.
+
+`_perform_strike` override: вместо single-target arrow.setup → instantiate `stone_scene as GiantStone`, передаёт `damage = randf_range(arrow_damage_min, arrow_damage_max)`, `speed = arrow_speed`, `setup(spawn, aim)`. `aim` из `_telegraphed_aim` (зафиксирован в WINDUP), fallback на текущую `target.global_position` если телеграф пропустили knockback'ом.
+
+**Видимость сквозь туман:** в `FogOfWar.FOG_REVEAL_GROUP` с `fog_reveal_radius = 9.0м`, как `SkeletonGiant` — игрок видит каменщика издалека.
+
+**Hit-feedback:** `_on_self_damaged` зовёт `HitPunch.punch(_mesh, _hit_punch_tween, 1.18)` (см. §3 общий helper). `peak=1.18` мягче дефолтных 1.25 — гигант массивный, заметный squash смотрится мультяшно. + `HitFlash.flash(_mesh)` (короткий красный flash).
+
+**Группы:** `&"skeleton_giant"` (общая для обоих гигантов — HUD/cheat карточка считает их одним типом) + `&"enemy"` + `&"damageable"` + `&"fog_reveal"`. **НЕ** в `&"skeleton"` (наследует от Archer, не Skeleton — нет boids/target_load).
+
+#### 5.5.3.4 ArcherGroup — `scenes/archer_group.tscn`, `scripts/archer_group.gd` (2026-05-22)
+
+**Тип корня:** `Node3D` с `class_name ArcherGroup`. Координатор синхронного залпа группы лучников.
+
+**Концепция.** Одиночный `SkeletonArcher` — точечный hostile-источник: одна стрела в одного гнома. Группа из 4 archers в формации даёт **зональный залп** — общая ground-зона + 4 стрелы внутри неё. Игрок видит «угрозу области», не «4 индивидуальных снайпера». Спавнится через cheat «Призвать группу лучников» или будущим wave-эвентом.
+
+**Архитектурный паттерн.** Координатор поверх standalone-юнитов: members — нормальные `SkeletonArcher`'ы с собственным FSM (APPROACH/WINDUP/STRIKE/COOLDOWN). ArcherGroup НЕ перехватывает их FSM, только подсматривает `_state` и подменяет `_telegraphed_aim`. Сами лучники не знают о группе — могут жить и без координатора.
+
+**Свой FSM группы:** `enum GroupPhase { READY, WINDUP, STRIKE_DONE }`.
+
+Каждый кадр `_coordinate_volley()`:
+- `READY` + первый member в WINDUP → spawn общий ring, раздать личные aim → `WINDUP`.
+- `WINDUP` + не осталось members в WINDUP → `STRIKE_DONE` (стрельнули).
+- `STRIKE_DONE` + все в APPROACH/READY → `READY` (следующий цикл).
+
+**Common ring + personal aim.** На переходе в WINDUP:
+1. `AoeVisual.spawn_ground_ring(center, group_ring_radius=4.0м, duration = attack_windup + flight_time_estimate, group_ring_color=(0.7, 0.3, 0.95, 0.85))` — фиолетовая area-зона на земле под общим target'ом. `duration` покрывает windup + полёт снаряда (`attack_radius_max / projectile_speed + safety`) — кольцо живёт **до момента импакта**, не исчезает заранее (дизайнерское правило игрока: «не убирай зону до столкновения, в других атаках мы так не делаем»).
+2. Каждому member'у выставляется `archer._telegraphed_aim = ring_center + uniform_random_in_circle(group_ring_radius)`. Sqrt(rand) даёт uniform по площади (не by-angle). На STRIKE снаряд каждого летит в свою точку, но визуально игрок видит один общий impact-area.
+
+**Members `has_telegraph = false`** — личный ring у каждого archer'а выключен; рисует только общий. Per-member ring'и склеились бы в визуальный спам.
+
+**Спавн (`_ready` через `archer_scene` × `archer_count=4`).** Кольцом 2×2 в `formation_spacing=1.6м` вокруг origin'а группы. Каждому при спавне выставляется `archer.formation_offset = local_position - center` — kite-движение учитывает personal slot, archers держат формацию вместо склейки в одну точку.
+
+**WaveDirector / cheat-интеграция.** Cheat-кнопка «Призвать группу лучников» (JournalPanel → читы) → `wave_director.cheat_spawn_archer_group()`. Группа спавнится **с явной позицией ДО `add_child`** (`group.position = origin` перед `add_child` — иначе `archer._ready` дёргает `global_position` пока group ещё в (0,0,0), и все archers рождаются в центре карты).
+
+**Зависимости:** `SkeletonArcher` (members), `AoeVisual.spawn_ground_ring` (common ring). Не привязан к Wave/Camp/Tower — просто спавнит archer'ов и координирует их через приватные поля.
 
 #### 5.5.4 EnemySpawner — `scripts/enemy_spawner.gd` (Node3D в `main.tscn`)
 
@@ -1237,7 +1318,17 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 - `_gnomes: Array[Gnome]` — гномы лагеря (создаются в `_spawn_gnomes`).
 - `deploy_anchor: Vector3` — публичное property (геттер возвращает `_deploy_anchor`). Гномы читают, чтобы знать, куда нести ресурс.
 
-**`_ready`:** резолвит `_tower` через `target_path`; вызывает `_spawn_tents()` затем `_spawn_gnomes()`; подключает re-emit на EventBus и подписку на `tower_destroyed`.
+**Harvester в каравне (2026-05-20).** Между Tower и tents[0] едет отдельная сущность [Harvester] ([scripts/harvester.gd], [scenes/harvester.tscn]) — drill rig, добывающий GOLD. Это отдельный класс с двумя состояниями (IN_CARAVAN / DEPLOYED), не наследник CampPart — у него своя физика жизненного цикла и собственный визуал, не Damageable.
+
+- `harvester_scene: PackedScene` (`@export`) — задаётся в `main.tscn`. Если null — лагерь работает без harvester'а, no-op в follow и deploy/pack.
+- `harvester_gap: float = 4.5` (отдельный от `part_gap=2.5`) — Harvester массивнее палаток, требует своего зазора.
+- `_harvester: Harvester` — ссылка в Camp'е. Спавнится в `_spawn_harvester()` после `_spawn_tents()`, ребёнком Camp'а, в точке `Tower − UP × harvester_gap`.
+- `_update_caravan_follow` тянет Harvester между Tower и первой палаткой через `_move_harvester_to_caravan(delta)` — тот же `_exp_decay` что у палаток, но с `harvester_gap`.
+- На `_start_deploy`: `_harvester.deploy_on(_deploy_anchor)` — телепорт ровно на POI (центр кольца палаток). В DEPLOYED Harvester тикает `gold_per_second=0.5` (1 gold каждые 2с) → `economy.add_resource(GOLD, 1)` через `bind_economy(economy)`.
+- На `_start_pack`: `_harvester.pack_to_caravan()` → IN_CARAVAN, перестаёт добывать.
+- XP-magnet: новый getter `Camp.get_xp_magnet_target(orb_pos) -> Node3D` возвращает Harvester если deployed и orb в build_radius, иначе Tower. [XpOrb] на activate спрашивает Camp'а — в зоне магнитится к Harvester'у, вне — к башне.
+
+**`_ready`:** резолвит `_tower` через `target_path`; вызывает `_spawn_tents()`, `_spawn_harvester()`, `_spawn_gnomes()`; подключает re-emit на EventBus и подписку на `tower_destroyed`.
 
 **`_spawn_tents`:** инстанцирует `tent_scene` × `tent_count` раз. Стартовая XZ — цепочка **позади башни** (`leader = _tower.global_position` если есть, иначе `global_position` Camp): `tent[i].x = leader.x − (i+1) × part_gap`, `z = leader.z`. Y берётся из самой `tent.tscn` (там 0.75 — низ меша на полу). Раньше `tent[0]` ставился в Camp local (0,0,0) и подтягивался к башне через exp_decay — на разнесённых Camp/Tower палатки на первом кадре сидели в центре и потом «уезжали»; сейчас сразу строится конечная цепочка. Каждая палатка — самостоятельный `CampPart`-инстанс; Camp подписывается на её `destroyed`, чтобы синхронно вычистить и `_parts`, и `_deployed_targets` по индексу. Без сцены (`tent_scene = null`) или при `tent_count <= 0` — `push_warning` и пустой караван.
 
@@ -1740,8 +1831,9 @@ UI-гейт на ПКМ: `Hand.is_pointer_over_ui()` — клик по HUD не 
 
 #### 5.8.2.5 Camp API для отрядов
 - `recruit_squad(soldier_type) -> Squad` — диспетч по `gnome_class` из каталога. Гейтится `is_deployed() + can_afford(cost) + gatherer_count() ≥ squad_size + get_recruit_reserve()`. Reserve = `tent_count_alive() × RECRUIT_RESERVE_PER_TENT (=1)` — лагерь оставляет себе минимум 1 сборщика на каждую живую палатку, иначе экономика встанет (дизайнерское правило: армию строим излишком). UI расшифровывает нехватку как «оставьте сборщиков в лагере (нужно ещё N)». `get_recruit_reserve() -> int` — публичный getter, JournalPanel читает его для UX-текста.
-- **SoldierGnome-flow** (default, `gnome_class` пуст): конвертирует gatherer'ов на месте, создаёт Squad, добавляет в `_squads`, emit `EventBus.squad_created`.
+- **SoldierGnome-flow** (default, `gnome_class` пуст): валидирует cost, ищет gatherer'ов, считает центр + позиции, зовёт общий `_build_and_register_squad`. Тот конвертирует gatherer'ов на месте, создаёт Squad, спавнит [SquadChargeMarker] (см. §5.8.2.8), добавляет в `_squads`, эмитит `EventBus.squad_created`.
 - **DefenderGnome-flow** (`_recruit_defenders`, добавлено 2026-05-15, `gnome_class=&"defender"`): конвертирует N gatherer'ов в DefenderGnome'ов, распределяет round-robin по живым палаткам (`_parts`), **БЕЗ создания Squad**. Защитники присоединяются к общему пулу через `DEFENDER_GROUP`. После `setup()` явный `defender.enter_deployed()` — иначе свежий defender застревал в `FOLLOWING_CARAVAN` (см. §7.2 этап 50). Возвращает null (рекрут защитников не образует Squad), UI не использует возврат.
+- **Общий helper `_build_and_register_squad(soldier_type, data, spawn_positions, command_center, replacement_gatherers)`** (2026-05-27) — единая точка для `recruit_squad` и `cheat_summon_squad`. Создаёт Squad, инстанцирует scene × spawn_positions, регистрирует squad (charge_max, signal connects, marker), эмитит camp_buildings_changed + squad_created. `replacement_gatherers` непустой → каждый soldier «заменяет» gatherer'а (recruit-flow), пустой → просто спавн (cheat-flow). До extract'а две функции дублировали друг друга 1-в-1.
 - `dismiss_squad(squad)` — гейтится `is_deployed() + ВСЕ члены в `dismiss_radius=12м` от deploy_anchor`. Spawn нового gatherer'а на каждой позиции солдата + queue_free солдата.
 - `command_squad_hold(squad, pos)` / `command_squad_escort(squad)` / `command_squad_defend(squad)`.
 - `cheat_summon_squad(soldier_type)` — мимо всех гейтов, спавн кольцом 2м вокруг центра лагеря (X/Z от anchor/tower, Y от global_position камп'а — иначе спавн в воздухе при tower.y=3).
@@ -1778,6 +1870,42 @@ ScrollContainer (PRESET_RIGHT_WIDE: anchor_top=0, anchor_bottom=1) → VBoxConta
 **Multi-marker UX.** Каждое нажатие «На защиту» создаёт **новый** DefenseMarker и забирает следующих `_defense_slot_count` свободных защитников. Игрок может построить несколько линий обороны разного размера. Лейбл «(в строю: M)» + счётчик слотов помогают спланировать.
 
 **MOUSE_FILTER на wrapper'ах** (фикс 2026-05-15): `_squad_scroll` / `_squad_panel` / card-PanelContainer / inner VBox/HBox'ы — все `MOUSE_FILTER_IGNORE`. Только сами Button'ы остаются `STOP` (дефолт). Без этого ScrollContainer'у дефолт STOP ловил hover в полосе 220×~всю_высоту справа, `Hand.is_pointer_over_ui()` через `gui_get_hovered_control()` возвращал не-null и блокировал каст заклинаний по всей правой полосе.
+
+#### 5.8.2.8 Заряженная AOE-ability отряда — `Squad._charge`, `SquadChargeMarker` (2026-05-26)
+
+**Концепция (дизайн-направление).** Двухслойная система заряженных AOE-атак для игрока:
+- **Tower super-charge** (см. §5.2.x HandSuper) — очень мощный AOE, очень долго копится (от damage'а всех источников через `EventBus.enemy_damaged`). Роль: «решающий момент» — босс-killer, отвод тяжёлой волны. Игрок ждёт удобный момент.
+- **Squad charge-ability** — средний AOE вокруг отряда, средне копится (от убийств **членами squad'а**, не от damage'а в целом). Роль: tactical emergency response — «отогнать натиск», когда отряд окружили. Чаще, дешевле, локальнее.
+
+Раздельные слои не девальвируют друг друга: super — редкий decisive (1-2 раза за матч), ability — частый эмердженс (раз в 30-60с per squad). Конкуренция за внимание игрока распределена.
+
+**Состояние на `Squad`:**
+- `_charge: float = 0` / `charge_max: float = 5.0` (по умолчанию). Назначается из `SoldierSystem.SOLDIER_CATALOG[type].charge_max` через `Camp._build_and_register_squad`.
+- `add_charge(amount)` — `SoldierGnome._strike_at` зовёт `_squad.add_charge(1.0)` на kill (target.hp ≤ 0 после damage). Считается только прямой kill членом отряда. Damage защитников/башни не зачисляется — это игроку «squad в бою», не «squad в тылу».
+- `is_charge_ready() -> bool` (`>= charge_max`), `consume_charge()` (обнуляет).
+- Сигналы `charge_changed(value, max)` (на каждое изменение) и `charge_ready` (один раз при переходе через max — маркер играет «готов»-анимацию).
+- Хелпер `compute_center() -> Vector3` — geometric center живых members. Vector3.INF если пусто.
+
+**Каталог `SoldierSystem`:** `pikeman.charge_max = 5.0` (тест-значение для копейщиков, 5 убийств = заряжен). Защитники в squad не входят — у них своего charge'а нет.
+
+**Визуальный маркер — `SquadChargeMarker` (`scripts/squad_charge_marker.gd`).** Программно-сгенерированный Node3D, спавнится Camp'ом из `_spawn_squad_charge_marker(squad)` сразу после squad-регистрации (вызов в `_build_and_register_squad`). Лежит в `get_tree().current_scene`, не как ребёнок Camp'а — лагерь не должен таскать маркер на свёртке/деплое.
+
+Визуал — `TorusMesh` (outer=0.5, inner=0.38), вращается вокруг Y (`spin_speed=1.2 rad/s`), висит на `FLOAT_HEIGHT=2.2м` над `squad.compute_center()`, exp-decay follow (`FOLLOW_SMOOTH=12`) — на резких lunge'ах отдельных копейщиков маркер не дёргается. Цвет/emission/alpha интерполируются по `_charge / charge_max`:
+- Не заряжен (`charge=0`) → серо-коричневый, alpha=0.25, emission энергия 0.4.
+- Заряжается → лerp к оранжево-огненному, alpha=0.85, emission энергия 2.5.
+- Готов → ярко-жёлтый `(1, 0.85, 0.35)` с emission энергией 4.0, scale пульсирует `1.0..1.18 sin(t × 9)`.
+
+**Активация — ЛКМ при hover'е (2026-05-26).** Маркер **сам** считает hover (`_update_hover`): XZ-distance от `_hand.cursor_world_position()` до своих xz, `HOVER_RADIUS=1.5м` (совпадает с `Hand.PICKUP_HIGHLIGHT_RADIUS`). Не через `Hand.PICKUP_HIGHLIGHT_GROUP` колбэки — `Hand._update_pickup_highlight` гасит callbacks в не-PHYSICAL категориях (MAGIC и т.д.), и ability был бы недоступен при выбранном заклинании. Сами считаем — работает в PHYSICAL/MAGIC. На hover amplitude пульсации растёт `0.18→0.28` (визуальный «отклик»). При `is_charge_ready() AND _is_hovered AND Input.is_action_just_pressed("hand_grab")` → `_trigger_ability(center)`.
+
+**Гейт ввода (`_is_input_allowed`):** блокируем только SUPER (QTE-каст) / SQUAD_AIM (команда «иди туда») / BUILD_AIM (постройка) — там ЛКМ занят. Плюс `Hand.is_pointer_over_ui()` — клик по HUD не должен триггерить ability сквозь UI.
+
+**Per-type dispatch ability'я.** В `_trigger_ability(center)` `match _squad.soldier_type`:
+- **pikeman**: круговая push-волна (`pikeman_ability_radius=6м`, `pikeman_damage=30`, `pikeman_push_speed=14 м/с × 0.35с`). Маска `Layers.ENEMIES | COLD_ENEMY` (только враги, гномов/палатки/палисад не задеваем — friendly-fire-free в отличие от player slam'а). Визуал: `AoeVisual.spawn_expanding_ring` + `spawn_ground_ring` + `spawn_dust` в центре, цвет огненно-оранжевый под цвет маркера (игрок видит «знак с маркера превратился в волну»).
+- Defender'ы / лучники — будущие типы. Per-type dispatch расширяется в `_trigger_ability` match'е.
+
+**Жизненный цикл маркера:** spawn на `EventBus.squad_created` (через `Camp._build_and_register_squad`), self-`queue_free` на `squad.disbanded` (CONNECT_ONE_SHOT) или когда `squad.count_alive() == 0` в `_process`.
+
+**Не реализовано (на будущее):** sound feedback на ready/trigger; HUD-индикатор charge-прогресса в squad-карточке; per-type визуал ability'я (сейчас generic expanding_ring + dust для всех).
 
 ---
 
@@ -2492,9 +2620,9 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 
 ---
 
-### 5.14 Туман войны — `scripts/fog_of_war.gd`, `shaders/fog_of_war.gdshader` (2026-05-17)
+### 5.14 Туман войны (атмосферная дымка) — `scripts/fog_of_war.gd`, `shaders/fog_of_war.gdshader` (2026-05-17, переработан 2026-05-24)
 
-**Tier 3 fog of war**: persistent visibility-текстура с медленным CPU-decay'ем + 9 stacked плоскостей на разной высоте для объёма + источники рассеивания (юниты, огонь, магия) + скрытие врагов вне зоны видимости.
+**Tier 3 fog of war + атмосферная дымка**: persistent visibility-текстура с медленным CPU-decay'ем + 7 stacked плоскостей на низкой высоте (ниже башни) для атмосферы + источники рассеивания (юниты, огонь, магия) + скрытие врагов вне зоны видимости. С 2026-05-24 эволюционировал из «полноэкранного объёмного тумана» в **«низкую дымку у земли»** — Tower и крупные постройки торчат над ней, игрок видит силуэты сверху, а зона ground-боя укрыта мглой.
 
 #### Архитектура
 
@@ -2511,7 +2639,11 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 - Height fade: `1 - smoothstep(0, fog_top_height, world_pos.y)` — плотный пол, тающий верх.
 - ALPHA = `fog_color.a × (1 − effective_vis) × density × height_alpha`.
 
-**9 stacked plane'ов** в `fog_of_war.tscn`: y = 0.05, 1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5, 12.0. `fog_top_height = 14м`. Камера под углом 55° видит длинный градиент от плотного пола до тающего верха — объёмная мгла, параллакс при движении камеры. Каждый слой носит чуть другой noise (через `world_pos.y * 0.04` offset).
+**7 stacked plane'ов на низкой высоте** в `fog_of_war.tscn` (2026-05-24): y = 0.05, 0.4, 0.75, 1.1, 1.45, 1.8, 2.15. `fog_top_height = 2.5м`. Все слои **ниже башни** (Tower живёт в y=3-6) — игрок видит её и крупные постройки над дымкой, ground-бой укрыт. Плотнее предыдущей итерации (`density_amount = 0.5`, было 0.35), цвет — холодный тёмно-синий `(0.04, 0.05, 0.08, 0.85)` вместо почти-чёрного. Каждый слой носит чуть другой noise (через `world_pos.y * 0.04` offset).
+
+**Атмосфера сцены (`main.tscn`):** `WorldEnvironment` с приглушённым ambient (`ambient_light_energy=0.5`), `DirectionalLight3D.light_energy=0.6` — общий свет тусклый. Tower имеет собственный `OmniLight3D GlowLight` на y=3.5 (`light_energy=2.0`, `omni_range=18.0`, тёплый `(1, 0.82, 0.55)`) — над дымкой башня светится как маяк, низ освещён её сферой. Аналогичные источники у POI-костров и BurnPatch'ей дают «островки света» в дымке.
+
+**Cheat-toggle.** `FogOfWar.set_cheat_disabled(bool)` — итерирует ВСЕ дочерние `MeshInstance3D` (7 планов) и `visible = not value`; на выключении force-shows всех Enemy. JournalPanel → читы → «Туман войны». Раньше переключал только первый Plane — фикс на 7-плановой стопке. `is_cheat_disabled() -> bool` — для UI-label'а кнопки.
 
 #### Источники рассеивания
 
@@ -2550,15 +2682,17 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 #### Перф
 
 - CPU: ~16K decay byte-ops × 10Hz = 160K/с + paint в радиусе ~10 пикселей × ~20 источников × 10Hz = ~20K/с. < 1мс/с total.
-- GPU: 9 layers × full-screen × shader (1 texture sample vision + 2 texture samples noise + ~10 math). На 1080p — около 2-4мс/frame на современной карте.
+- GPU: 7 layers × full-screen × shader (1 texture sample vision + 2 texture samples noise + ~10 math). На 1080p — около 1-3мс/frame на современной карте (меньше чем при 9 слоях).
 - Enemy hiding: O(N) распределённо по 10Hz; на 500 врагов ~5K ops/с. Тривиально.
+
+**Singleton-getter `FogOfWar.instance() -> FogOfWar` (2026-05-27):** статический accessor к единственному экземпляру в сцене (`static var _instance` обновляется в `_ready` / `_exit_tree`). UI/cheat-код использует вместо `get_first_node_in_group(FOG_REVEAL_GROUP)` + итерации по детям scene (сам FogOfWar в FOG_REVEAL_GROUP не входит). Возвращает null если ещё не _ready'нулся или freed.
 
 #### Тюнинг (в инспекторе material_override на любом из 9 Plane'ов)
 
-- `fog_color`: цвет + base alpha (сейчас `(0.02, 0.02, 0.04, 1.0)` — почти чёрный, 100%).
-- `density_amount` 0.35 — вариация плотности от noise.
+- `fog_color`: цвет + base alpha (сейчас `(0.04, 0.05, 0.08, 0.85)` — холодный тёмно-синий, 85%). Раньше был почти-чёрный (0.02, 0.02, 0.04, 1.0) — стало мягче и атмосфернее.
+- `density_amount` 0.5 (этап 2026-05-24, было 0.35) — плотнее, дымка читается как «низкое облако», а не как «тонкая занавеска».
 - `boundary_wobble` 0.15 — рваная кромка vision'а.
-- `fog_top_height` 14м — где туман полностью тает по высоте.
+- `fog_top_height` 2.5м (этап 2026-05-24, было 14м) — дымка тает на высоте чуть выше человеческого роста, Tower (y=3-6) полностью над ней.
 - `noise_scale_a/b` 0.012 / 0.045 — две частоты noise для parallax.
 - `scroll_speed_a/b` 0.0 / 0.0 — туман сейчас стоячий. Поставь >0 для лёгкого дрейфа.
 
