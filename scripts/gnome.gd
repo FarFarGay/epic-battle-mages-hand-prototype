@@ -732,8 +732,7 @@ func _tick_following_caravan() -> void:
 		return
 	var dist: float = sqrt(dist_sq)
 	var dir: Vector3 = to_target / dist  # normalized без второго sqrt
-	var t: float = clampf(dist / maxf(caravan_full_sprint_distance, 0.001), 0.0, 1.0)
-	var speed: float = lerpf(move_speed, caravan_sprint_speed, t)
+	var speed: float = _sprint_speed_for(dist)
 	velocity.x = dir.x * speed
 	velocity.z = dir.z * speed
 
@@ -968,10 +967,13 @@ func _on_collection_priority_changed(_weights: Dictionary) -> void:
 		_on_pile_lost()
 
 
-func _move_toward_xz(target: Vector3) -> void:
-	# Pathfinding-обёртка: вместо прямого движения к target идём к следующей
-	# точке пути из NavAgent. На близких целях (≤ NAV_DIRECT_RADIUS) и без
-	# nav-агента — fallback на прямое движение.
+## Pathfinding-обёртка движения к точке с произвольной скоростью. Вместо
+## прямого хода к target идём к следующей точке пути из NavAgent. На близких
+## целях (≤ NAV_DIRECT_RADIUS) и без nav-агента — fallback на прямое движение.
+## Универсальная замена ранее существовавших копий `_move_toward_xz` /
+## `_step_toward` в подклассах (DefenderGnome удалил свою копию,
+## SoldierGnome._move_toward использует через _sprint_speed_for).
+func _step_toward(target: Vector3, speed: float) -> void:
 	var step_target: Vector3 = _resolve_path_step(target)
 	var to_target := step_target - global_position
 	to_target.y = 0.0
@@ -980,8 +982,23 @@ func _move_toward_xz(target: Vector3) -> void:
 		velocity.z = 0.0
 		return
 	var dir := to_target.normalized()
-	velocity.x = dir.x * move_speed
-	velocity.z = dir.z * move_speed
+	velocity.x = dir.x * speed
+	velocity.z = dir.z * speed
+
+
+## Тонкая обёртка `_step_toward(target, move_speed)` — большинство юнитов в
+## обычных режимах патрулят на base move_speed без adaptive sprint'а.
+func _move_toward_xz(target: Vector3) -> void:
+	_step_toward(target, move_speed)
+
+
+## Sprint-лерп скорости по дистанции до цели: от `move_speed` (на близком)
+## до `caravan_sprint_speed` (на `caravan_full_sprint_distance` и дальше).
+## Унифицирует формулу, ранее дублировавшуюся inline в `_tick_following_caravan`
+## (Gnome + DefenderGnome) и `_move_toward` (SoldierGnome).
+func _sprint_speed_for(dist: float) -> float:
+	var t: float = clampf(dist / maxf(caravan_full_sprint_distance, 0.001), 0.0, 1.0)
+	return lerpf(move_speed, caravan_sprint_speed, t)
 
 
 ## Возвращает следующую точку, к которой нужно двигаться: либо waypoint

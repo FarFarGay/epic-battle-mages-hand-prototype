@@ -381,8 +381,7 @@ func _tick_following_caravan() -> void:
 		return
 	var dist: float = sqrt(dist_sq)
 	var dir: Vector3 = to_target / dist
-	var t: float = clampf(dist / maxf(caravan_full_sprint_distance, 0.001), 0.0, 1.0)
-	var speed: float = lerpf(move_speed, caravan_sprint_speed, t)
+	var speed: float = _sprint_speed_for(dist)
 	velocity.x = dir.x * speed
 	velocity.z = dir.z * speed
 
@@ -844,23 +843,6 @@ func _pick_patrol_point(anchor: Vector3, angle: float) -> Vector3:
 		anchor.y,
 		anchor.z + sin(angle) * patrol_radius,
 	)
-
-
-## Локальный аналог Gnome._move_toward_xz, но с произвольной скоростью:
-## защитник патрулирует медленнее (patrol_speed), а Gnome.move_speed
-## остаётся для возврата в палатку (через унаследованный _tick_returning).
-## Pathfinding-обёртка через [Gnome._resolve_path_step] — обходит стены.
-func _step_toward(target: Vector3, speed: float) -> void:
-	var step_target: Vector3 = _resolve_path_step(target)
-	var to_target: Vector3 = step_target - global_position
-	to_target.y = 0.0
-	if to_target.length_squared() < VecUtil.EPSILON_SQ:
-		velocity.x = 0.0
-		velocity.z = 0.0
-		return
-	var dir := to_target.normalized()
-	velocity.x = dir.x * speed
-	velocity.z = dir.z * speed
 
 
 ## Cone-скан: PhysicsShapeQuery со сферой cone_vision_radius (broadphase),

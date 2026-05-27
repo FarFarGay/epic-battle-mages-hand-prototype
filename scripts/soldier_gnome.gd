@@ -603,8 +603,7 @@ func _move_toward(to_goal_xz: Vector3, dist: float) -> void:
 		return
 	step_dir = step_dir.normalized()
 	look_at(global_position + step_dir, Vector3.UP)
-	var t: float = clampf(dist / maxf(caravan_full_sprint_distance, 0.001), 0.0, 1.0)
-	var speed: float = lerpf(move_speed, caravan_sprint_speed, t)
+	var speed: float = _sprint_speed_for(dist)
 	velocity = step_dir * speed
 
 
