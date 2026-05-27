@@ -1,0 +1,24 @@
+[gd_scene format=3 uid="uid://c5tyv5dqeeeom"]
+
+[ext_resource type="Script" path="res://scripts/blocker.gd" id="1_blocker"]
+[ext_resource type="Material" path="res://resources/blocker_greybox_material.tres" id="2_mat"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_hill"]
+size = Vector3(6, 1.5, 6)
+
+[sub_resource type="BoxShape3D" id="BoxShape_hill"]
+size = Vector3(6, 1.5, 6)
+
+[node name="BlockerHill" type="StaticBody3D"]
+collision_layer = 544
+collision_mask = 0
+script = ExtResource("1_blocker")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
+mesh = SubResource("BoxMesh_hill")
+material_override = ExtResource("2_mat")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
+shape = SubResource("BoxShape_hill")

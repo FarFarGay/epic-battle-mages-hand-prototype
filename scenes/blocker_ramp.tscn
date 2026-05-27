@@ -1,0 +1,25 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/blocker.gd" id="1_blocker"]
+[ext_resource type="Material" path="res://resources/blocker_greybox_material.tres" id="2_mat"]
+
+[sub_resource type="PrismMesh" id="PrismMesh_ramp"]
+left_to_right = 0.0
+size = Vector3(4, 1.5, 4)
+
+[sub_resource type="ConvexPolygonShape3D" id="ConvexShape_ramp"]
+points = PackedVector3Array(-2, -0.75, -2, 2, -0.75, -2, -2, -0.75, 2, 2, -0.75, 2, -2, 0.75, -2, -2, 0.75, 2)
+
+[node name="BlockerRamp" type="StaticBody3D"]
+collision_layer = 544
+collision_mask = 0
+script = ExtResource("1_blocker")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
+mesh = SubResource("PrismMesh_ramp")
+material_override = ExtResource("2_mat")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
+shape = SubResource("ConvexShape_ramp")
