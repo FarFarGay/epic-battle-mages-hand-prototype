@@ -28,6 +28,8 @@ const COLOR_SLOT_BORDER_HIGHLIGHT := Color(1.0, 0.85, 0.2, 1.0)
 const COLOR_MODE_FONT_ACTIVE := Color(1, 1, 0.7, 1)
 ## Цвет font'а неактивной mode-кнопки.
 const COLOR_MODE_FONT_INACTIVE := Color(0.6, 0.6, 0.65, 1)
+## Размер цветного swatch'а в header'ах карточек отрядов.
+const SQUAD_CARD_SWATCH_SIZE := Vector2(14, 14)
 
 ## Метаданные всех способностей, которые могут стоять в слотах action bar'а.
 ## Ключ = ability_id (StringName). Каждая запись описывает куда смотреть
@@ -266,6 +268,56 @@ func _disconnect_eventbus() -> void:
 ## Рисуем сами, чтобы не править .tscn-файл — добавляется одной строкой кода.
 
 
+## Helper для общего скелета squad-card'а: создаёт PanelContainer с
+## stylebox'ом (border-цвет — единственное отличие между gatherer/defender
+## карточками), внутри — VBoxContainer для контента. Все обёртки на
+## MOUSE_FILTER_IGNORE. Возвращает `[card, vbox]` для дальнейшего наполнения.
+##
+## Дублировался построчно в _build_gatherer_card / _build_defender_card —
+## разница только в border'е, всё остальное один-в-один.
+func _make_squad_card(border_color: Color) -> Array:
+	var card := PanelContainer.new()
+	card.visible = false  # старт скрыт, _refresh показывает когда счётчик > 0
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# IGNORE на корпусе — иначе тело PanelContainer ловит hover и Hand считает
+	# курсор «над UI» по всей карточке. Кнопки внутри остаются STOP.
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var card_box := StyleBoxFlat.new()
+	card_box.bg_color = COLOR_CARD_BG
+	card_box.border_color = border_color
+	card_box.set_border_width_all(2)
+	card_box.set_corner_radius_all(4)
+	card_box.content_margin_left = 6
+	card_box.content_margin_right = 6
+	card_box.content_margin_top = 4
+	card_box.content_margin_bottom = 4
+	card.add_theme_stylebox_override("panel", card_box)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 4)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(vbox)
+	return [card, vbox]
+
+
+## Header для squad-карточки: цветной swatch + Label с текстом. Возвращает
+## Label чтобы caller хранил ссылку для обновления счётчика.
+func _add_squad_card_header(parent: VBoxContainer, swatch_color: Color, initial_text: String) -> Label:
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 6)
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(header)
+	var swatch := ColorRect.new()
+	swatch.custom_minimum_size = SQUAD_CARD_SWATCH_SIZE
+	swatch.color = swatch_color
+	header.add_child(swatch)
+	var label := Label.new()
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.add_theme_font_size_override("font_size", 13)
+	label.text = initial_text
+	header.add_child(label)
+	return label
+
+
 ## Карточка отряда собирателей (gatherer'ов). Живёт в _squad_panel самой
 ## первой — выше defender card и army squads. Показывает количество и
 ## две кнопки переключения режима: «Работа» (бинд C) и «Тревога» (бинд V).
@@ -276,42 +328,14 @@ func _disconnect_eventbus() -> void:
 ## не предусмотрено (некуда — они уже самый низкий «класс»).
 func _build_gatherer_card() -> void:
 	_ensure_squad_panel()
-	var card := PanelContainer.new()
+	# Коричневый border под цвет собирателей.
+	var parts := _make_squad_card(Color(0.7, 0.45, 0.25, 0.9))
+	var card: PanelContainer = parts[0]
+	var vbox: VBoxContainer = parts[1]
 	_gatherer_card = card
-	card.visible = false  # старт скрыт, _refresh_gatherer_card покажет когда >0
-	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# Стиль карточки — коричневый border под цвет собирателей.
-	var card_box := StyleBoxFlat.new()
-	card_box.bg_color = COLOR_CARD_BG
-	card_box.border_color = Color(0.7, 0.45, 0.25, 0.9)
-	card_box.set_border_width_all(2)
-	card_box.set_corner_radius_all(4)
-	card_box.content_margin_left = 6
-	card_box.content_margin_right = 6
-	card_box.content_margin_top = 4
-	card_box.content_margin_bottom = 4
-	card.add_theme_stylebox_override("panel", card_box)
-
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 4)
-	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_child(vbox)
-
-	# Header — цветной квадратик + название с счётчиком.
-	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 6)
-	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(header)
-	var swatch := ColorRect.new()
-	swatch.custom_minimum_size = Vector2(14, 14)
-	swatch.color = Color(0.7, 0.45, 0.25, 1.0)
-	header.add_child(swatch)
-	_gatherer_card_count_label = Label.new()
-	_gatherer_card_count_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_gatherer_card_count_label.add_theme_font_size_override("font_size", 13)
-	_gatherer_card_count_label.text = "Собиратели — —"
-	header.add_child(_gatherer_card_count_label)
+	_gatherer_card_count_label = _add_squad_card_header(
+		vbox, Color(0.7, 0.45, 0.25, 1.0), "Собиратели — —"
+	)
 
 	# Ряд кнопок: «Работа [C]» / «Тревога [V]». Активный режим подсвечен.
 	var btn_row := HBoxContainer.new()
@@ -352,46 +376,15 @@ func _build_gatherer_card() -> void:
 func _build_defender_card() -> void:
 	# Гарантируем что _squad_panel создан до добавления нашей карточки.
 	_ensure_squad_panel()
-	var card := PanelContainer.new()
+	# Красный border чтоб визуально отличать от squad-cards копейщиков.
+	var parts := _make_squad_card(Color(0.7, 0.2, 0.2, 0.9))
+	var card: PanelContainer = parts[0]
+	var vbox: VBoxContainer = parts[1]
 	_defender_card = card
-	card.visible = false  # старт скрыт, _refresh_defender_card покажет когда >0
-	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# IGNORE на корпусе карточки — иначе тело PanelContainer ловит hover
-	# и Hand считает курсор «над UI» по всей карточке. Кнопки внутри
-	# остаются STOP (дефолт) и продолжают принимать клики.
-	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# Лёгкий красный border чтоб визуально отличать от squad-cards копейщиков.
-	var card_box := StyleBoxFlat.new()
-	card_box.bg_color = COLOR_CARD_BG
-	card_box.border_color = Color(0.7, 0.2, 0.2, 0.9)
-	card_box.set_border_width_all(2)
-	card_box.set_corner_radius_all(4)
-	card_box.content_margin_left = 6
-	card_box.content_margin_right = 6
-	card_box.content_margin_top = 4
-	card_box.content_margin_bottom = 4
-	card.add_theme_stylebox_override("panel", card_box)
-
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 4)
-	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_child(vbox)
-
-	# Header — цветной квадратик (как у squad'ов копейщиков) + название
-	# с динамическим счётчиком, апдейтится в _refresh_defender_card.
-	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 6)
-	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(header)
-	var swatch := ColorRect.new()
-	swatch.custom_minimum_size = Vector2(14, 14)
-	swatch.color = Color(0.78, 0.2, 0.2, 1.0)  # цвет DefenderGnome
-	header.add_child(swatch)
-	_defender_card_count_label = Label.new()
-	_defender_card_count_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_defender_card_count_label.add_theme_font_size_override("font_size", 13)
-	_defender_card_count_label.text = "Защитники — —"
-	header.add_child(_defender_card_count_label)
+	# Swatch — цвет DefenderGnome (как у squad'ов копейщиков).
+	_defender_card_count_label = _add_squad_card_header(
+		vbox, Color(0.78, 0.2, 0.2, 1.0), "Защитники — —"
+	)
 
 	# Уровень + XP-бар. Squad XP curve общая для всего отряда защитников
 	# (не per-unit) — раньше эта полоска жила в правой панели рядом с

@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="BallisticConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ballistic_config.gd" id="1_ballistic"]
+
+[resource]
+script = ExtResource("1_ballistic")
+boost_duration = 0.18
+boost_velocity_up = 7.0
+boost_velocity_forward = 3.0
+boost_gravity = 14.0
+boost_drift_velocity = 2.8
+homing_initial_speed = 8.0
+homing_acceleration = 100.0
+homing_max_speed = 55.0
+homing_drift_angle_deg = 45.0
+homing_turn_rate = 3.5

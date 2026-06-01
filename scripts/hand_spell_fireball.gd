@@ -17,44 +17,10 @@ extends Node
 
 signal spell_cast(spell_name: StringName, position: Vector3)
 
-@export_group("Boost (стартовая дуга)")
-## Длительность boost-фазы, секунд. Снаряд короткое время движется по
-## баллистике (vy_initial вверх + slight forward, тянет boost_gravity).
-## После boost_duration переходит в HOMING — летит прямо в target.
-@export var boost_duration: float = 0.18
-## Стартовая вертикальная скорость boost'а, м/с. Чем больше — тем выше
-## взлетает в первых кадрах.
-@export var boost_velocity_up: float = 7.0
-## Стартовая горизонтальная скорость boost'а в направлении цели, м/с.
-## Маленькое значение — почти вертикальный «выстрел вверх».
-@export var boost_velocity_forward: float = 3.0
-## Гравитация в boost-фазе, м/с². В HOMING-фазе не применяется — там
-## velocity полностью определяется direction-to-target × current_speed.
-@export var boost_gravity: float = 14.0
-## Амплитуда случайного бокового sway'я в boost'e, м/с. Каждый каст
-## фаербол уходит вбок на ±[0; этого значения] с random знаком.
-## Создаёт «дрожь» при выстреле — каждый кастит немного по-своему.
-@export var boost_drift_velocity: float = 2.8
-
-@export_group("Homing (полёт в цель)")
-## Стартовая скорость homing-фазы, м/с. Почти всегда меньше скорости
-## набранной в boost — фаербол «замедляется», прежде чем разогнаться к цели.
-@export var homing_initial_speed: float = 8.0
-## Линейное ускорение в homing-фазе, м/с². Чем больше — тем стремительнее
-## разгон. С 100м/с² скорость 8→60 за 0.52с — нормальный «ракетный» feel.
-@export var homing_acceleration: float = 100.0
-## Cap скорости. Когда current_speed его достигает — перестаёт расти.
-## 50м/с — быстрая, но читаемая; не «телепорт».
-@export var homing_max_speed: float = 55.0
-## Drift-угол на старте homing'а, градусы. Velocity отклоняется от
-## desired-direction на random ±[0; это значение] вокруг UP. Slerp ниже
-## плавно докручивает к цели — фаербол летит «крюком», очень импактно.
-## 0 = без drift'а (прямой полёт), 30+ = выраженный изогнутый трасса.
-@export_range(0.0, 80.0) var homing_drift_angle_deg: float = 45.0
-## Скорость возврата к target-direction в homing-фазе (exp-decay rate).
-## Меньше → длиннее drift; больше → быстрый коррекшен. 3.5 — drift
-## заметнее, фаербол дольше «летит мимо» прежде чем повернуть.
-@export_range(1.0, 30.0) var homing_turn_rate: float = 3.5
+## Параметры траектории — общие для Fireball/Firestorm/Frost. По умолчанию
+## ссылается на [code]resources/ballistic_default.tres[/code]. Для per-spell
+## override создай дубль .tres и подсунь сюда.
+@export var ballistics: BallisticConfig = preload("res://resources/ballistic_default.tres")
 
 @export_group("Balance")
 ## Базовый урон в эпицентре. Falloff линейный по расстоянию (как у Slam).
@@ -218,16 +184,16 @@ func _perform_cast() -> void:
 	fireball.setup(
 		launch_pos,
 		target_pos,
-		boost_duration,
-		boost_velocity_up,
-		boost_velocity_forward,
-		boost_gravity,
-		boost_drift_velocity,
-		homing_initial_speed,
-		homing_acceleration,
-		homing_max_speed,
-		homing_drift_angle_deg,
-		homing_turn_rate,
+		ballistics.boost_duration,
+		ballistics.boost_velocity_up,
+		ballistics.boost_velocity_forward,
+		ballistics.boost_gravity,
+		ballistics.boost_drift_velocity,
+		ballistics.homing_initial_speed,
+		ballistics.homing_acceleration,
+		ballistics.homing_max_speed,
+		ballistics.homing_drift_angle_deg,
+		ballistics.homing_turn_rate,
 		p_damage,
 		p_radius,
 		explode_mask,

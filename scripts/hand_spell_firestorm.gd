@@ -42,19 +42,9 @@ signal spell_cast(spell_name: StringName, position: Vector3)
 ## шотом. На моментах когда серия уже идёт, дополнительной маны не нужно.
 @export var mana_cost: float = 50.0
 
-@export_group("Boost (стартовая дуга)")
-@export var boost_duration: float = 0.18
-@export var boost_velocity_up: float = 7.0
-@export var boost_velocity_forward: float = 3.0
-@export var boost_gravity: float = 14.0
-@export var boost_drift_velocity: float = 2.8
-
-@export_group("Homing (полёт в цель)")
-@export var homing_initial_speed: float = 8.0
-@export var homing_acceleration: float = 100.0
-@export var homing_max_speed: float = 55.0
-@export_range(0.0, 80.0) var homing_drift_angle_deg: float = 45.0
-@export_range(1.0, 30.0) var homing_turn_rate: float = 3.5
+## Параметры траектории — общие для Fireball/Firestorm/Frost. По умолчанию
+## ссылается на [code]resources/ballistic_default.tres[/code].
+@export var ballistics: BallisticConfig = preload("res://resources/ballistic_default.tres")
 
 @export_group("AOE / Knockback")
 @export_flags_3d_physics var explode_mask: int = Layers.MASK_HAND_SLAM
@@ -220,16 +210,16 @@ func _launch_one() -> void:
 	fireball.setup(
 		launch_pos,
 		target_pos,
-		boost_duration,
-		boost_velocity_up,
-		boost_velocity_forward,
-		boost_gravity,
-		boost_drift_velocity,
-		homing_initial_speed,
-		homing_acceleration,
-		homing_max_speed,
-		homing_drift_angle_deg,
-		homing_turn_rate,
+		ballistics.boost_duration,
+		ballistics.boost_velocity_up,
+		ballistics.boost_velocity_forward,
+		ballistics.boost_gravity,
+		ballistics.boost_drift_velocity,
+		ballistics.homing_initial_speed,
+		ballistics.homing_acceleration,
+		ballistics.homing_max_speed,
+		ballistics.homing_drift_angle_deg,
+		ballistics.homing_turn_rate,
 		_series_shot_damage,
 		_series_shot_radius,
 		explode_mask,
