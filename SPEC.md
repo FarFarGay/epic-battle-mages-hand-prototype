@@ -1554,7 +1554,7 @@ Camp хранит пул ресурсов и API списания. Гном на
 Параллельный каталог `CAMP_BUILDING_CATALOG` отдельно от `UPGRADE_CATALOG`: апгрейды отряда — за уровни (XP-driven), постройки — за ресурсы. Дизайнер: «У лагеря нет источника XP. Это постройка за ресурсы».
 
 - `BUILDING_NEW_TENT` — новая палатка в кольце лагеря. Cost: 20 wood + 10 stone + 5 food. `deployed_only: true` (строится только в `State.DEPLOYED` — дизайнерское правило 2026-05-08, изменено с прежнего «только в свёрнутом»). `repeatable: true`.
-- `BUILDING_WATCH_BELL` — сторожевой колокол с alarm-зоной и гарнизоном из 1 gatherer'а. Cost: 12 wood + 5 iron + 1 gatherer. Флаги `requires_aim: true`, `aim_radius: 7.5` (interactive ПКМ-выбор позиции через HandBuildAim). Скелеты атакуют как палатку (`skeleton_target`), при разрушении гарнизонный gatherer спавнится на месте и бежит в лагерь.
+- ~~`BUILDING_WATCH_BELL`~~ — **удалён в этапе 55**. Сторожевой колокол не имел смысла после унификации (некому отзываться без DefenderGnome).
 - `BUILDING_PALISADE` — деревянный частокол через polyline-кисть. Не single-aim, а **brush-mode** (флаг `brush_mode: true`). Стоимость `cost_per_segment: {WOOD: 2}` — total зависит от длины линии. `segment_length: 2.0`. Игрок: ЛКМ ставит vertex'ы ломаной, preview обновляется каждый кадр (committed-сегменты + active от last_vertex к курсору). Цвет preview — единственный сигнал: green = валидно, red = вне build_zone ИЛИ ресурсов не хватает на total, yellow = достигнут BRUSH_MAX_VERTICES. ПКМ — построить, Esc — отмена. См. `HandBuildAim` brush-mode и `Camp.try_build_palisade_line`.
 - `try_build(id) -> {success, reason}` — атомарно: `can_build_reason` (state) → `can_afford` → `try_spend` → `_apply_building`. Эмитит `camp_buildings_changed`. Для **brush-mode** построек идёт через отдельный путь `try_build_palisade_line(vertices)` — see below.
 - `_build_new_tent`: вызывает извлечённый `_spawn_one_tent()` (общий с инициализацией), ставит палатку на `_deploy_anchor`, дёргает `_rebuild_deployed_targets()` (кольцо пересчитывается на N+1 слотов), спавнит гномов, дёргает `enter_deployed()` на новых.
@@ -1699,11 +1699,28 @@ Tent/Tower/Watch Bell/палисад в группе `navmesh_source` бакаю
 
 ---
 
-### 5.8.1 DefenderGnome — `scenes/defender_gnome.tscn`, `scripts/defender_gnome.gd`
+### 5.8.1 DefenderGnome — **УДАЛЁН** (этап 55, 2026-06-01)
+
+> Класс `DefenderGnome` + сцена `defender_gnome.tscn` + все связанные системы
+> (DefenseMarker, WatchBell, DEFENDER_GROUP, defenders_per_tent, Camp._bells,
+> Camp._defense_markers, _recruit_defenders, place_defense_formation,
+> disband_defender_squad, _build_watch_bell и т.д.) удалены в этапе 55.
+>
+> Лучники теперь — отдельный тип отряда в общей Squad-системе:
+> `&"archer_squad"` через `ArcherSoldier extends SoldierGnome` (§5.8.2).
+> Управление унифицировано с копейщиками: sticky-aim ЛКМ «Иди сюда»,
+> кнопки «За башней» / «Защищать» / «Распустить» на одной HUD-карточке.
+>
+> Старый раздел оставлен ниже для исторического контекста (геймдизайн,
+> формулы точности и пр.). Не реализованного кода больше нет.
+
+---
+
+**Историческая справка (DefenderGnome до этапа 55):**
 
 **Тип корня:** `CharacterBody3D` с `class_name DefenderGnome extends Gnome`.
 
-**Назначение:** гном-защитник-лучник. Спавнится `Camp` по `defenders_per_tent` штук на каждую палатку (дефолт 1 из 4 жителей; остальные 3 — обычные собиратели). Дополнительно **рекрутируется** игроком через «Армию» (§5.8.2) — отряд по 3 защитника за раз, +6 wood +4 iron. В отличие от собирателей, **никогда не сидит в палатке** — на спавне сразу выходит в режим escort, в развёрнутом лагере патрулирует периметр. Видит угрозы через **конус зрения** (не sphere), реагирует на **alarm-канал** удара по лагерю, прокачивает **squad XP** убийствами. С 2026-05-15 имеет два режима стат: **в формации** (полная точность/дальность, через `DefenseMarker`) и **в свободном патруле** (дебаф).
+**Назначение:** гном-защитник-лучник. Спавнился `Camp` по `defenders_per_tent` штук на каждую палатку (дефолт 1 из 4 жителей; остальные 3 — обычные собиратели). Дополнительно **рекрутировался** игроком через «Армию» (§5.8.2) — отряд по 3 защитника за раз, +6 wood +4 iron. В отличие от собирателей, **никогда не сидел в палатке** — на спавне сразу выходил в режим escort, в развёрнутом лагере патрулировал периметр. Видел угрозы через **конус зрения** (не sphere), реагировал на **alarm-канал** удара по лагерю, прокачивал **squad XP** убийствами. С 2026-05-15 имел два режима стат: **в формации** (полная точность/дальность, через `DefenseMarker`) и **в свободном патруле** (дебаф).
 
 **Что наследуется без изменений:**
 - Базовый `_physics_process` (LOD, gravity, knockback, move_and_slide vs cold-mode).
@@ -1803,7 +1820,14 @@ Tent/Tower/Watch Bell/палисад в группе `navmesh_source` бакаю
 
 ---
 
-### 5.8.1.1 DefenseMarker — `scenes/defense_marker.tscn`, `scripts/defense_marker.gd`
+### 5.8.1.1 DefenseMarker — **УДАЛЁН** (этап 55, 2026-06-01)
+
+> Был тактическим маркером для построения линии защитников. Удалён вместе с
+> DefenderGnome — у Squad-системы свой механизм формации через `command_hold(pos)`.
+
+---
+
+**Историческая справка:**
 
 **Тип корня:** `Node3D` с `class_name DefenseMarker`. Добавлен в этапе 50 (2026-05-15); параметризованный slot_count + click/drag UX + jitter — 2026-05-16.
 
@@ -3532,6 +3556,31 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
     - **`RangedScanner` helper — пропущен.** ArcherPost фильтрует XZ-distance (пост на платформе, цели на земле), Octagon/DefenderGnome — 3D. Unify через общий sphere-broadphase ломал бы archer-радиус (3D-distance включает Y-gap до 3м). Tech-debt — сэкономил бы ~18 строк, не блокирует геймплей.
 
     **Методически.** 6 параллельных Explore-агентов по доменам — тот же паттерн что в этапе 47 (5 агентов). Каждый возвращал ≤400 слов в фиксированном формате (Hardcode/Dead code/Half-finished/Duplication/Прочее) с verification evidence для dead-claim'ов. Из 6 отчётов — UI-агент ошибся на 2 EventBus-сигналах (helper'ы `enemy_damaged`/`tower_destroyed`), grep'нул не все консьюмеры. **Trust but verify** — критично перед удалением. См. `[[feedback-verify-dead-code-claims]]`.
+
+55. **Унификация боевых юнитов: все через Squad** (2026-06-01). Геймдизайнер: «все юниты которые управляются игроком должны быть идентичными, защитники как отдельная сущность — это лишнее, это упростит процесс в целом».
+
+    **Перед:** две параллельные модели боевых юнитов. Pikeman через Squad-систему (sticky-aim ЛКМ, командные кнопки на HUD-карточке, ESCORTING_TOWER/HOLDING/DEFENDING_CAMP states). DefenderGnome — отдельная сущность, привязанная к палаткам (round-robin), своя HUD-карточка с drag-формацией через DefenseMarker, отзыв на WatchBell-alarm, прокачка точности per-instance. ~2400 строк двух параллельных AI и UI.
+
+    **После:** только Squad. Новый `ArcherSoldier extends SoldierGnome` со своим stand-and-shoot AI (вместо charge state-machine pikeman'а). Каталог `&"archer_squad"` в SoldierSystem рядом с `&"pikeman"` — squad_size=3, cost 3w+2i, charge_max=15 (~5 выстрелов на лучника = ult ready). ULT — волейный AOE-залп через `SquadChargeMarker._cast_archer_volley`: каждый живой лучник стреляет N стрел по случайным точкам внутри `archer_ability_radius=8м` вокруг центра отряда.
+
+    **(а) ArcherSoldier (Phase 1).** `extends SoldierGnome`, переопределяет только `_active_tick`. Логика:
+    - Strict-march: дойти до слота, combat-assist (выстрел в цель в `attack_range`) во время марша, как у pikeman'а lunge'и.
+    - Цель в `attack_range` + cd готов → выстрел, velocity=0.
+    - Цель в leash но вне range → подходим ближе.
+    - Нет цели → squad-positioning.
+    Параметры через [member SoldierGnome.attack_range/damage/cooldown] (унаследованы), специфика лучника — `arrow_speed`, `arrow_spawn_offset`, `base_inaccuracy_radius`, `experience_half_shots`. Per-soldier `_shots_fired` теряется на смерти (как у DefenderGnome'а до этапа 55). Сцена `archer_soldier.tscn` — клон pikeman'а с цветом `Color(0.55, 0.35, 0.75)` (тёмно-фиолетовый).
+
+    **(б) Каталог (Phase 2).** `&"archer_squad"` в SoldierSystem.SOLDIER_CATALOG. Без `gnome_class` поля → стандартный SoldierGnome-flow в `Camp.recruit_squad → _build_and_register_squad`. Squad-команды (hold/escort/defend/dismiss) идентичны pikeman'у, без специальных кодопутей.
+
+    **(в) Volley ULT (Phase 3).** В SquadChargeMarker'е новая ветка `&"archer_squad" → _cast_archer_volley(center)`. Каждый ArcherSoldier зовёт публичный `volley_fire_at(aim_pos, dmg)` (без inaccuracy-разброса — scatter задаёт caller через random aim_pos). 5 стрел × 3 лучника = 15 стрел в залпе. Charge добавляется per-выстрел (`Squad.add_charge(1.0)` в `_fire_at` ArcherSoldier'а) вместо per-kill как у pikeman'а — kill-credit chain мы не реставрируем (этап 49 убрал), per-shot честнее для ranged-юнита.
+
+    **(г) Удаление (Phase 4).** ~2400 строк удалено. Файлы: `defender_gnome.gd/.tscn/.uid`, `defense_marker.gd/.tscn/.uid`, `watch_bell.gd/.tscn/.uid`. Из camp.gd: `_recruit_defenders`, `defender_count`, `defenders_in_formation_count`, `can_disband_defenders`, `disband_defender_squad`, `place_defense_formation`, `_assign_defenders_to_marker`, `disband_all_defense_markers`, `_on_defense_marker_destroyed`, `_build_watch_bell`, `_on_bell_alarmed`, `_on_bell_destroyed`, `DEFENDER_DISBAND_BATCH/REFUND_RATIO`, `BUILDING_WATCH_BELL`, `BELL_RESPONSE_COUNT`, `_bells`/`_defense_markers` массивы, defender-роль в `_spawn_gnomes`/`_build_new_tent`. Из hand_build_aim.gd: `start_defense_formation_aim`, `start_relocate`, `try_pickup_at_cursor`, `_relocating_bell`, `RELOCATE_SENTINEL`, `_defense_slot_count`, `"defense_formation"` dispatch. Из gameplay_hud.gd: `_build_defender_card` + 6 callback'ов, `_refresh_defender_card`, `_refresh_defense_slot_label`, DefenderRow в .tscn. Из camp_part.gd: `defenders_per_tent`. Из camp_buildings.gd: `WATCH_BELL` каталог. Из enemy-скриптов: `DefenderGnome.DEFENDER_GROUP` → `SoldierGnome.SOLDIER_GROUP` фильтры. Из fog_of_war.gd: `VISION_RADIUS_DEFENDER` убран.
+
+    **Архитектурно.** «Один путь, не много» (`[[feedback-one-path-not-many]]`) — раньше две параллельные системы, теперь одна Squad-абстракция, два типа юнитов с разной AI-стратегией. Будущие типы (kamikaze, healer, mage) — добавляются записью в SOLDIER_CATALOG + extends SoldierGnome.
+
+    **Что не доделано** (отложено):
+    - `Camp._squad_xp` / `_squad_level` / UPGRADE_CATALOG — system жива (XpOrb feeds, EventBus сигналы идут), но привязки в UI убраны и `has_upgrade(id)` не применяется ни к чему. Cleanup отдельным проходом.
+    - SPEC.md разделы §5.8.1 / §5.8.1.1 / §5.7 BUILDING_WATCH_BELL помечены REMOVED но не вычищены полностью — историческая справка осталась. Полная зачистка SPEC — отдельный проход документации.
 
 ### 7.3 Решённые ошибки
 
