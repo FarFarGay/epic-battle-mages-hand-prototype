@@ -1,13 +1,17 @@
 class_name HandSquadAim
 extends Node
 ## Координатор aim-режима для команды отряду «Идти сюда». Ввод ПКМ при
-## активном aim'е считается подтверждением точки — squad получает команду
-## командования hold(pos), aim завершается.
+## активном aim'е считается подтверждением точки — squad получает
+## `command_hold(pos)`. Aim **остаётся активным** (sticky) — игрок может
+## давать команды point-and-click без возврата в HUD. На точке commit'а
+## остаётся затухающий ground-ring как визуальное подтверждение.
 ##
 ## По образцу HandSuper.AIMING_TARGET, но без предшествующего QTE — это
 ## мгновенный command-targeting. UI (gameplay_hud) запускает через
 ## `start_aim(squad)`; повторный клик той же squad-кнопки → `cancel_aim()`
-## (toggle).
+## (toggle). Esc — основной способ выхода. Старт aim'а для другого squad'а
+## переключает контекст. Уничтожение squad'а во время aim'а автоматически
+## завершает режим (guard в _process).
 ##
 ## Hand-категория переключается в SQUAD_AIM на время aim'а — все остальные
 ## ввод-системы (hand_physical / hand_spell / hand_super) гасятся ранним return.
@@ -28,6 +32,10 @@ const ACTION_AIM_CANCEL := &"ui_cancel"  # Esc — отмена aim'а (Godot-д
 ## и как зона сканирования врагов: если в радиусе кольца есть скелет —
 ## кольцо подсвечивается hostile-цветом.
 @export var aim_ring_radius: float = 3.5
+## Длительность затухающего ground-ring'а, оставляемого на точке commit'а.
+## Подтверждает игроку «команда ушла, отряд идёт сюда» — нужно потому что
+## sticky-aim продолжается, и обычный (cursor-ring) сразу уходит за курсором.
+@export var commit_marker_duration: float = 0.6
 @export var debug_log: bool = true
 
 @export_group("")
@@ -105,6 +113,12 @@ func cancel_aim() -> void:
 func _process(_delta: float) -> void:
 	if _active_squad == null:
 		return
+	# Squad мог быть распущен/уничтожен пока aim активен (sticky-mode
+	# держит aim между commit'ами — squad freed-в-промежутке вероятнее
+	# чем при one-shot). Guard на freed-ref.
+	if not is_instance_valid(_active_squad):
+		_finish_aim()
+		return
 	# Двигаем ring под курсором каждый кадр. Ground-Y берём из cursor world
 	# минус hand_height (как у Super.AIMING_TARGET).
 	if is_instance_valid(_aim_indicator):
@@ -173,13 +187,16 @@ func _commit_aim() -> void:
 	# Lazy-resolve: если в _ready Camp ещё не был в группе, пробуем сейчас.
 	if not is_instance_valid(_camp):
 		_camp = get_tree().get_first_node_in_group(Camp.CAMP_GROUP) as Camp
-	if is_instance_valid(_camp):
-		_camp.command_squad_hold(_active_squad, ground)
-		if debug_log and LogConfig.master_enabled:
-			print("[Hand:SquadAim] commit %s @ (%.1f, %.1f, %.1f)" % [str(_active_squad), ground.x, ground.y, ground.z])
-	else:
+	if not is_instance_valid(_camp):
 		push_warning("[Hand:SquadAim] _camp не резолвится — команда не дошла")
-	_finish_aim()
+		return
+	_camp.command_squad_hold(_active_squad, ground)
+	if debug_log and LogConfig.master_enabled:
+		print("[Hand:SquadAim] commit %s @ (%.1f, %.1f, %.1f)" % [str(_active_squad), ground.x, ground.y, ground.z])
+	_spawn_commit_marker(ground)
+	# Sticky: aim НЕ завершается. Игрок может тут же ПКМ в другую точку,
+	# не возвращаясь в HUD. Выход — Esc / повторный клик кнопки / новый
+	# aim для другого squad'а / гибель squad'а.
 
 
 func _finish_aim() -> void:
@@ -207,3 +224,23 @@ func _clear_indicator() -> void:
 	if is_instance_valid(_aim_indicator):
 		_aim_indicator.queue_free()
 	_aim_indicator = null
+
+
+## Spawn'ит независимое затухающее кольцо на точке commit'а. Цвет берём
+## из текущего material'а cursor-ring'а — если игрок commit'ил в hostile-зону,
+## метка тоже hostile-красная.
+func _spawn_commit_marker(pos: Vector3) -> void:
+	if _effects_root == null:
+		return
+	var color: Color = aim_ring_color
+	if is_instance_valid(_aim_indicator):
+		var cur_mat := _aim_indicator.material_override as StandardMaterial3D
+		if cur_mat != null:
+			color = cur_mat.albedo_color
+	AoeVisual.spawn_ground_ring(
+		_effects_root,
+		pos,
+		aim_ring_radius,
+		commit_marker_duration,
+		color,
+	)
