@@ -36,6 +36,12 @@ const GROUP := &"xp_orb"
 ## Дистанция до anchor'а, на которой орб «прибыл» и зачисляется. Меньше
 ## arrival_distance = риск проскочить за один тик при magnet_speed=12.
 @export var arrival_distance: float = 0.5
+## Радиус «области сбора» вокруг каждого солдата отряда. Симметрично
+## tower-зоне ([Camp.gather_radius]): орб в этом радиусе от живого
+## солдата авто-магнитится. Запитан в том же polling-цикле, что и
+## tower-зона ([_try_auto_magnetize_in_gather_zone]). Дефолт 3м —
+## ширина типичной формации копейщиков ~5-7м с буфером.
+@export var soldier_pickup_radius: float = 3.0
 
 @export_group("Idle visual")
 ## Амплитуда вертикального покачивания в IDLE — даёт орбу «жизнь», глаз
@@ -172,11 +178,16 @@ func _tick_magnetized(delta: float) -> void:
 	global_position += to_target / dist * step
 
 
-## Сканит развёрнутые лагеря в группе CAMP_GROUP. Если орб в радиусе
-## gather_radius от deploy_anchor — активирует магнит к этому лагерю.
-## Дополнение к body_entered (магнит на касание союзника): орб в зоне
-## добычи притягивается даже если рядом никого. Дизайнерская идея 2026-05-16
-## — игроку не приходится водить гнома за орбом, своя территория = свой XP.
+## Polling-сканер автомагнита: проверяет, попадает ли орб в чью-то «область
+## сбора». Два источника, проверяются в порядке убывающей дальности:
+##  1. **Tower-зона**: орб в радиусе [Camp.gather_radius] от deploy_anchor
+##     развёрнутого лагеря. Дизайн 2026-05-16 — своя территория = свой XP.
+##  2. **Soldier-зона**: орб в радиусе [soldier_pickup_radius] от любого живого
+##     солдата. Симметрично tower-зоне — отряд «всасывает» XP по ходу боя,
+##     не нужно вести юнита прямо по орбу.
+##
+## Дополнение к body_entered (магнит на физическое касание). Раз нашли —
+## return, орб уже в MAGNETIZED.
 func _try_auto_magnetize_in_gather_zone() -> void:
 	for c in get_tree().get_nodes_in_group(Camp.CAMP_GROUP):
 		if not is_instance_valid(c):
@@ -196,6 +207,22 @@ func _try_auto_magnetize_in_gather_zone() -> void:
 		if dx * dx + dz * dz <= r * r:
 			_activate_magnet(camp)
 			return
+	var sr_sq: float = soldier_pickup_radius * soldier_pickup_radius
+	for s in get_tree().get_nodes_in_group(SoldierGnome.SOLDIER_GROUP):
+		if not is_instance_valid(s):
+			continue
+		var soldier := s as SoldierGnome
+		if soldier == null:
+			continue
+		var dx: float = global_position.x - soldier.global_position.x
+		var dz: float = global_position.z - soldier.global_position.z
+		if dx * dx + dz * dz > sr_sq:
+			continue
+		var camp := soldier.get_camp()
+		if camp == null:
+			continue
+		_activate_magnet(camp)
+		return
 
 
 ## Касание союзника — активируем магнит. Идемпотентно: повторное касание в
