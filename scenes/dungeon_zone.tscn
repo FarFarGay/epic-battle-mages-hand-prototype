@@ -1,0 +1,35 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/dungeon_zone.gd" id="1_dungeon"]
+
+[sub_resource type="BoxShape3D" id="BoxShape_dungeon"]
+resource_local_to_scene = true
+size = Vector3(10, 4, 10)
+
+[sub_resource type="BoxMesh" id="BoxMesh_dungeon"]
+size = Vector3(1, 1, 1)
+
+[sub_resource type="StandardMaterial3D" id="Material_dungeon"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0.25, 0.85, 0.35, 0.28)
+emission_enabled = true
+emission = Color(0.25, 0.85, 0.35, 1)
+emission_energy_multiplier = 0.4
+
+[node name="DungeonZone" type="Node3D"]
+script = ExtResource("1_dungeon")
+
+[node name="Area3D" type="Area3D" parent="."]
+collision_layer = 0
+collision_mask = 256
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Area3D"]
+shape = SubResource("BoxShape_dungeon")
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+mesh = SubResource("BoxMesh_dungeon")
+material_override = SubResource("Material_dungeon")
+cast_shadow = 0
+
+[node name="CentroidProxy" type="Node3D" parent="."]

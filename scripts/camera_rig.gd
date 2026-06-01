@@ -1,8 +1,16 @@
+class_name CameraRig
 extends Node3D
 ## Плавно следует за указанным узлом. Цель задаётся через @export.
 ## Колесо мыши приближает/отдаляет камеру: оффсет Camera3D (заданный в .tscn)
 ## масштабируется множителем `_zoom`. Направление обзора и угол сохраняются —
 ## меняется только дистанция от rig'а до камеры.
+##
+## Focus override: внешние системы (DungeonZone) могут временно подменять
+## цель — `set_focus_override(node)` переключает камеру на переданный Node3D,
+## `clear_focus_override()` возвращает на дефолтную (`target_path`). Если
+## override-узел вдруг стал freed — фоллбэк на дефолт автоматически.
+
+const CAMERA_RIG_GROUP := &"camera_rig"
 
 @export_node_path("Node3D") var target_path: NodePath
 @export var follow_speed: float = 8.0
@@ -25,7 +33,11 @@ extends Node3D
 
 @onready var _camera: Camera3D = $Camera3D
 
-var _target: Node3D
+var _default_target: Node3D
+## Временная подмена цели через [method set_focus_override]. Если задан и
+## жив — камера следит за ним. Иначе — за [member _default_target]. Без
+## стэка: один override за раз (для прототипа достаточно — один данж).
+var _focus_override: Node3D = null
 ## Базовый оффсет Camera3D из .tscn — сохраняем при _ready, чтобы зум всегда
 ## масштабировал именно его, а не накапливал ошибки от предыдущих кадров.
 var _base_offset: Vector3 = Vector3.ZERO
@@ -34,12 +46,36 @@ var _zoom_target: float = 1.0
 
 
 func _ready() -> void:
+	add_to_group(CAMERA_RIG_GROUP)
 	if not target_path.is_empty():
-		_target = get_node_or_null(target_path)
-	if _target:
-		global_position = _target.global_position
+		_default_target = get_node_or_null(target_path)
+	if _default_target:
+		global_position = _default_target.global_position
 	if _camera:
 		_base_offset = _camera.position
+
+
+## Эффективная цель этого кадра. Override — если задан и жив; иначе дефолт.
+## is_instance_valid защищает от случая, когда override-узел queue_free'нулся,
+## а внешний код не успел/забыл вызвать [method clear_focus_override].
+func _current_target() -> Node3D:
+	if is_instance_valid(_focus_override):
+		return _focus_override
+	return _default_target
+
+
+## Подмена цели камеры (зовётся DungeonZone когда первый солдат вошёл
+## в данж). Без эффекта если node == null — для очистки используйте
+## [method clear_focus_override].
+func set_focus_override(node: Node3D) -> void:
+	if node == null:
+		return
+	_focus_override = node
+
+
+## Возврат на дефолтную цель из инспектора.
+func clear_focus_override() -> void:
+	_focus_override = null
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -52,8 +88,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
-	if _target:
-		global_position = global_position.lerp(_target.global_position, follow_speed * delta)
+	var t := _current_target()
+	if t:
+		global_position = global_position.lerp(t.global_position, follow_speed * delta)
 	_update_zoom(delta)
 
 
