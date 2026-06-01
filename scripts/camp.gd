@@ -442,6 +442,16 @@ var _poi_cache_time_msec: int = -1000000
 ## get_first_node_in_group('camp'), без знания о конкретном Camp-инстансе.
 const CAMP_GROUP := &"camp"
 
+## Радиус кольца спавна юнитов вокруг центра в [method cheat_summon_squad].
+## Достаточно чтобы не наслаивались в одной точке, мало чтобы остаться
+## внутри камп-зоны.
+const CHEAT_SQUAD_SPAWN_RADIUS: float = 2.0
+
+## Множитель урона при принудительном демонтаже структуры (archer post,
+## etc.). 2× hp_max — гарантия kill'а в один take_damage'е даже если
+## где-то есть mitigation (там нет, но защитнее).
+const FORCED_DEMOLISH_DAMAGE_MULT: float = 2.0
+
 
 func _ready() -> void:
 	add_to_group(CAMP_GROUP)
@@ -1404,11 +1414,15 @@ func cheat_summon_squad(soldier_type: StringName) -> Squad:
 		_tower.global_position if is_instance_valid(_tower) else global_position
 	)
 	var center := Vector3(raw_center.x, global_position.y, raw_center.z)
-	# Спавн кольцом ~2м вокруг центра — чтобы не наслаивались в одной точке.
+	# Спавн кольцом вокруг центра — чтобы не наслаивались в одной точке.
 	var spawn_positions: Array[Vector3] = []
 	for i in range(squad_size):
 		var angle: float = TAU * float(i) / float(squad_size)
-		spawn_positions.append(center + Vector3(cos(angle) * 2.0, 0.0, sin(angle) * 2.0))
+		spawn_positions.append(center + Vector3(
+			cos(angle) * CHEAT_SQUAD_SPAWN_RADIUS,
+			0.0,
+			sin(angle) * CHEAT_SQUAD_SPAWN_RADIUS,
+		))
 	var squad := _build_and_register_squad(soldier_type, data, spawn_positions, center, [])
 	if squad == null:
 		return null
@@ -2159,7 +2173,7 @@ func _build_watch_bell(params: Dictionary) -> bool:
 ## Скелет вошёл в alarm-зону колокола. Помощь = 2 ближайших к колоколу
 ## защитника из лагеря. Защитники сами управляют таймером (продлевают
 ## пока в зоне есть враги; release после linger-периода после очищения,
-## см. DefenderGnome.BELL_LINGER_SECONDS). Явный release происходит на
+## см. DefenderGnome.bell_linger_seconds). Явный release происходит на
 ## bell.destroyed (см. _on_bell_destroyed).
 const BELL_RESPONSE_COUNT: int = 2
 
@@ -2278,7 +2292,7 @@ func _dismantle_archer_posts() -> void:
 	var snapshot: Array[ArcherPost] = _archer_posts.duplicate()
 	for post in snapshot:
 		if is_instance_valid(post):
-			post.take_damage(post.hp_max * 2.0)
+			post.take_damage(post.hp_max * FORCED_DEMOLISH_DAMAGE_MULT)
 
 
 ## Эффект BUILDING_NEW_TENT: спавнит новую палатку и заселяет её жителями

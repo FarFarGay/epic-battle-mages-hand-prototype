@@ -209,15 +209,20 @@ var _bell_until_msec: int = 0
 ## продлевается (защитник остаётся на посту). Сбрасывается на release_from_bell
 ## или истечении таймера.
 var _bell_ref: WatchBell = null
+@export_group("Bell response")
 ## Длительность задержки после очищения зоны (последний скелет ушёл/умер).
 ## Пока есть скелеты — этот же интервал используется как «постоянное продление»
 ## таймера на каждом тике. Дизайн: после боя защитник стоит ещё linger секунд
 ## на случай новой волны.
-const BELL_LINGER_SECONDS: float = 8.0
+@export var bell_linger_seconds: float = 8.0
 ## Скорость движения к колоколу. Между walk (move_speed=1.6) и
 ## sprint (caravan_sprint_speed=9.0). Дизайнерский баланс: alarm-помощь
 ## должна быть видимой, но не «телепортом». 4 м/с = заметный бег.
-const BELL_RESPONSE_SPEED: float = 4.0
+@export var bell_response_speed: float = 4.0
+## Дистанция до колокола, на которой защитник «прибыл» и переходит в защитное
+## кольцо вокруг bell'а. Меньше — защитник может проскочить точку и кружить.
+@export var bell_arrival_distance: float = 2.0
+@export_group("")
 ## Знак латерального смещения для escort-точки: -1 (левый борт) или +1
 ## (правый борт). Рандомизируется в _ready, фиксируется на жизнь инстанса —
 ## чтобы защитник не «прыгал» через палатку на каждом тике.
@@ -445,13 +450,13 @@ func _active_tick(delta: float) -> void:
 ## Вызов от Camp на bell_alarmed: защитник переключается в bell-response
 ## режим — идёт к колоколу, бьёт всё видимое рядом. Таймер автоматически
 ## продлевается пока в alarm-зоне колокола есть скелеты; когда зона
-## очищена — таймер истекает через [BELL_LINGER_SECONDS] секунд.
+## очищена — таймер истекает через [member bell_linger_seconds] секунд.
 func respond_to_bell(bell: WatchBell) -> void:
 	if bell == null:
 		return
 	_bell_ref = bell
 	_bell_pos = bell.global_position
-	_bell_until_msec = Time.get_ticks_msec() + int(BELL_LINGER_SECONDS * 1000.0)
+	_bell_until_msec = Time.get_ticks_msec() + int(bell_linger_seconds * 1000.0)
 
 
 ## Явная отмена bell-response (Camp при разрушении колокола).
@@ -465,7 +470,7 @@ func release_from_bell() -> void:
 ## True если защитник сейчас в bell-response режиме. Пока в alarm-зоне колокола
 ## есть скелеты — продлеваем таймер на каждом тике (по сути «работает пока
 ## идёт бой»). После очищения зоны таймер истекает естественным образом
-## через BELL_LINGER_SECONDS — защитник стоит ещё linger секунд на случай
+## через bell_linger_seconds — защитник стоит ещё linger секунд на случай
 ## новой волны.
 func _is_responding_to_bell() -> bool:
 	if _bell_pos == Vector3.INF:
@@ -484,7 +489,7 @@ func _is_responding_to_bell() -> bool:
 	# Враги в зоне → продлеваем таймер. Этот «постоянный re-trigger» делает
 	# linger-логику простой: защитник остаётся пока бой идёт.
 	if _bell_ref.has_enemies_in_zone():
-		_bell_until_msec = Time.get_ticks_msec() + int(BELL_LINGER_SECONDS * 1000.0)
+		_bell_until_msec = Time.get_ticks_msec() + int(bell_linger_seconds * 1000.0)
 	if Time.get_ticks_msec() >= _bell_until_msec:
 		release_from_bell()
 		return false
@@ -539,14 +544,13 @@ func _defender_combat_tick(delta: float) -> void:
 		var to_bell: Vector3 = _bell_pos - global_position
 		to_bell.y = 0.0
 		var bell_dist: float = to_bell.length()
-		const BELL_ARRIVAL: float = 2.0
-		if bell_dist > BELL_ARRIVAL:
-			# Бежим к колоколу — средняя скорость (BELL_RESPONSE_SPEED).
+		if bell_dist > bell_arrival_distance:
+			# Бежим к колоколу — средняя скорость (bell_response_speed).
 			# Не sprint — дизайнер хочет чтобы alarm-помощь была видимой бегущей
 			# реакцией, а не телепортом.
 			var dir := to_bell / bell_dist
-			velocity.x = dir.x * BELL_RESPONSE_SPEED
-			velocity.z = dir.z * BELL_RESPONSE_SPEED
+			velocity.x = dir.x * bell_response_speed
+			velocity.z = dir.z * bell_response_speed
 			_facing = dir
 			_apply_facing()
 			return

@@ -13,6 +13,14 @@ extends Node
 const ACTION_AIM_COMMIT := &"hand_action"
 const ACTION_AIM_CANCEL := &"ui_cancel"
 
+## Высота отрыва ground-индикатора от земли. Достаточно чтобы избежать
+## z-fighting'а с terrain'ом, недостаточно чтобы читалось как «висит».
+const AIM_RING_HEIGHT: float = 0.05
+
+## Высота центра preview-меша постройки над землёй. Превью-меш BoxMesh
+## ~1.5м высотой → центр на 0.75м чтобы низ совпал с землёй.
+const PREVIEW_MESH_CENTER_HEIGHT: float = 0.75
+
 @export_group("Visual")
 ## Цвет ground-ring'а — visualization будущей alarm-зоны колокола.
 ## Жёлто-оранжевый = «здесь будет стоять сторож».
@@ -319,7 +327,7 @@ func _process(_delta: float) -> void:
 		_process_direction_aim(ground)
 		return
 	if is_instance_valid(_aim_indicator):
-		_aim_indicator.global_position = ground + Vector3.UP * 0.05
+		_aim_indicator.global_position = ground + Vector3.UP * AIM_RING_HEIGHT
 		var in_zone: bool = is_instance_valid(_camp) and _camp.is_in_build_zone(ground)
 		_set_ring_color(_aim_indicator, aim_ring_color if in_zone else aim_ring_color_invalid)
 	if Input.is_action_just_pressed(ACTION_AIM_CANCEL):
@@ -342,7 +350,7 @@ func _process_direction_aim(ground: Vector3) -> void:
 	# Pre-press: кольцо едет за курсором, ждём ЛКМ.
 	if _direction_origin == Vector3.INF:
 		if is_instance_valid(_aim_indicator):
-			_aim_indicator.global_position = ground + Vector3.UP * 0.05
+			_aim_indicator.global_position = ground + Vector3.UP * AIM_RING_HEIGHT
 			var in_zone_pre: bool = is_instance_valid(_camp) and _camp.is_in_build_zone(ground)
 			_set_ring_color(_aim_indicator, aim_ring_color if in_zone_pre else aim_ring_color_invalid)
 		# ЛКМ press вне UI и в build_zone → фиксируем origin.
@@ -353,7 +361,7 @@ func _process_direction_aim(ground: Vector3) -> void:
 		return
 	# После press'а — обновляем стрелку origin → cursor.
 	if is_instance_valid(_aim_indicator):
-		_aim_indicator.global_position = _direction_origin + Vector3.UP * 0.05
+		_aim_indicator.global_position = _direction_origin + Vector3.UP * AIM_RING_HEIGHT
 	_update_direction_arrow(ground)
 	# Release ЛКМ → commit.
 	if Input.is_action_just_released(ACTION_BRUSH_VERTEX):
@@ -397,7 +405,7 @@ func _update_direction_arrow(ground: Vector3) -> void:
 	_direction_arrow.visible = true
 	var dir: Vector3 = to_cursor / d
 	# Центр стрелки — посередине между origin и cursor, чуть над землёй.
-	var mid: Vector3 = _direction_origin + to_cursor * 0.5 + Vector3.UP * 0.05
+	var mid: Vector3 = _direction_origin + to_cursor * 0.5 + Vector3.UP * AIM_RING_HEIGHT
 	_direction_arrow.global_position = mid
 	# Ориентация: локальный +Z должен смотреть от origin к cursor. look_at
 	# смотрит -Z на target, поэтому ставим target позади mid.
@@ -617,7 +625,7 @@ func _acquire_preview_segment(slot: int, pos: Vector3, rot_y: float, color: Colo
 			_brush_active_meshes.append(mesh)
 		return
 	# Reuse: перепозиция + цвет, видимость on.
-	mesh.global_position = pos + Vector3.UP * 0.75
+	mesh.global_position = pos + Vector3.UP * PREVIEW_MESH_CENTER_HEIGHT
 	mesh.rotation.y = rot_y
 	_apply_color_to_mesh(mesh, color)
 	mesh.visible = true
@@ -696,7 +704,7 @@ func _make_preview_segment(pos: Vector3, rot_y: float, color: Color) -> MeshInst
 	mesh.material_override = mat
 	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_effects_root.add_child(mesh)
-	mesh.global_position = pos + Vector3.UP * 0.75  # центр меша на 0.75м — над землёй
+	mesh.global_position = pos + Vector3.UP * PREVIEW_MESH_CENTER_HEIGHT
 	mesh.rotation.y = rot_y
 	return mesh
 

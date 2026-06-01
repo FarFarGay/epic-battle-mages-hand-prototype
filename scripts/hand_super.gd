@@ -107,6 +107,32 @@ enum State { READY, AIMING_PATTERN, AIMING_TARGET, CASTING }
 @export var payload_warning_color: Color = Color(1.0, 0.35, 0.15, 0.85)
 @export_group("")
 
+@export_group("Payload trajectory")
+## Короткая boost-фаза payload'а перед HOMING. Carrier уже разделился — все
+## velocity-параметры boost'а нулевые (payload летит почти вертикально вниз
+## под собственной homing-логикой). boost_duration ненулевой только чтобы
+## Fireball не упал в первом тике в init-state'е.
+@export var payload_boost_duration: float = 0.05
+## Стартовая скорость homing-фазы payload'а. Меньше carrier_homing_initial
+## (12) — payload «выпадает», не «выстреливает».
+@export var payload_homing_initial_speed: float = 14.0
+## Базовое ускорение payload'а. На каст ×[1-jitter, 1+jitter] из
+## [member payload_speed_jitter] — разные времена полёта между payload'ами.
+@export var payload_homing_acceleration_base: float = 55.0
+## Базовый max_speed payload'а (с jitter'ом).
+@export var payload_homing_max_speed_base: float = 42.0
+## Drift-угол homing'а payload'а, рандом per-payload в диапазоне [min, max]
+## градусов. Маленький разброс (4-14°) → почти-прямые трассы вниз, без
+## большого изгиба как у обычного fireball'а (45°).
+@export_range(0.0, 80.0) var payload_drift_angle_deg_min: float = 4.0
+@export_range(0.0, 80.0) var payload_drift_angle_deg_max: float = 14.0
+## Turn_rate homing'а payload'а, рандом per-payload [min, max]. Выше чем у
+## fireball'а (3.5), потому что drift маленький — коррекция к target'у
+## должна быть быстрой.
+@export_range(1.0, 30.0) var payload_turn_rate_min: float = 8.0
+@export_range(1.0, 30.0) var payload_turn_rate_max: float = 14.0
+@export_group("")
+
 @export_group("Aim indicator")
 ## Радиус ground-кольца в фазе AIMING_TARGET. Совпадает с payload_radius —
 ## показывает зону разлёта payload'ов вокруг точки прицела.
@@ -462,16 +488,16 @@ func _spawn_one_payload(burst_position: Vector3, ground_target: Vector3) -> void
 	fireball.setup(
 		payload_launch,
 		payload_target,
-		0.05,                                           # boost_duration
-		0.0,                                            # boost_velocity_up
+		payload_boost_duration,
+		0.0,                                            # boost_velocity_up — payload не «стреляет», падает
 		0.0,                                            # boost_velocity_forward
 		0.0,                                            # boost_gravity
 		0.0,                                            # boost_drift_velocity
-		14.0,                                           # homing_initial_speed
-		55.0 * accel_factor,                            # homing_acceleration (jittered)
-		42.0 * max_speed_factor,                        # homing_max_speed (jittered)
-		randf_range(4.0, 14.0),                         # homing_drift_angle_deg
-		randf_range(8.0, 14.0),                         # homing_turn_rate
+		payload_homing_initial_speed,
+		payload_homing_acceleration_base * accel_factor,
+		payload_homing_max_speed_base * max_speed_factor,
+		randf_range(payload_drift_angle_deg_min, payload_drift_angle_deg_max),
+		randf_range(payload_turn_rate_min, payload_turn_rate_max),
 		_resolved_payload_damage,
 		_resolved_payload_radius_aoe,
 		payload_explode_mask,

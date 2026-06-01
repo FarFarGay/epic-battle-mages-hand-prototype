@@ -13,6 +13,22 @@ const UPDATE_INTERVAL: float = 0.25
 ## меняются в течение секунды-двух, надо обновлять плавно).
 const ACTION_BAR_UPDATE_INTERVAL: float = 0.1
 
+## --- HUD-общие цвета (единый визуальный язык карточек/слотов/баров) ---
+
+## Фон карточек отрядов (gatherer/defender) — приглушённый тёмный полупрозрачный.
+const COLOR_CARD_BG := Color(0.08, 0.08, 0.1, 0.78)
+## Фон action-slot'ов / equip-slot'ов — чуть светлее и непрозрачнее карточек,
+## слот должен «выпирать».
+const COLOR_SLOT_BG := Color(0.12, 0.12, 0.15, 0.95)
+## Дефолтный border слота (неактивная способность, не подсвечен).
+const COLOR_SLOT_BORDER_NORMAL := Color(0.3, 0.3, 0.35, 1)
+## Подсветка слота — активная способность / drag-over highlight.
+const COLOR_SLOT_BORDER_HIGHLIGHT := Color(1.0, 0.85, 0.2, 1.0)
+## Цвет font'а активной mode-кнопки (Работа/Тревога).
+const COLOR_MODE_FONT_ACTIVE := Color(1, 1, 0.7, 1)
+## Цвет font'а неактивной mode-кнопки.
+const COLOR_MODE_FONT_INACTIVE := Color(0.6, 0.6, 0.65, 1)
+
 ## Метаданные всех способностей, которые могут стоять в слотах action bar'а.
 ## Ключ = ability_id (StringName). Каждая запись описывает куда смотреть
 ## (category + type) для подсветки и cooldown'а, и как заклинание выглядит
@@ -267,7 +283,7 @@ func _build_gatherer_card() -> void:
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	# Стиль карточки — коричневый border под цвет собирателей.
 	var card_box := StyleBoxFlat.new()
-	card_box.bg_color = Color(0.08, 0.08, 0.1, 0.78)
+	card_box.bg_color = COLOR_CARD_BG
 	card_box.border_color = Color(0.7, 0.45, 0.25, 0.9)
 	card_box.set_border_width_all(2)
 	card_box.set_corner_radius_all(4)
@@ -346,7 +362,7 @@ func _build_defender_card() -> void:
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	# Лёгкий красный border чтоб визуально отличать от squad-cards копейщиков.
 	var card_box := StyleBoxFlat.new()
-	card_box.bg_color = Color(0.08, 0.08, 0.1, 0.78)
+	card_box.bg_color = COLOR_CARD_BG
 	card_box.border_color = Color(0.7, 0.2, 0.2, 0.9)
 	card_box.set_border_width_all(2)
 	card_box.set_corner_radius_all(4)
@@ -595,14 +611,12 @@ func _refresh_gatherer_card() -> void:
 func _refresh_gatherer_mode_buttons(mode: int) -> void:
 	if _gatherer_work_btn == null or _gatherer_alarm_btn == null:
 		return
-	var active: Color = Color(1, 1, 0.7, 1)         # жёлтый — активный режим
-	var inactive: Color = Color(0.6, 0.6, 0.65, 1)  # серый — неактивный
 	if mode == Camp.CollectionMode.WORK:
-		_gatherer_work_btn.add_theme_color_override("font_color", active)
-		_gatherer_alarm_btn.add_theme_color_override("font_color", inactive)
+		_gatherer_work_btn.add_theme_color_override("font_color", COLOR_MODE_FONT_ACTIVE)
+		_gatherer_alarm_btn.add_theme_color_override("font_color", COLOR_MODE_FONT_INACTIVE)
 	else:
-		_gatherer_work_btn.add_theme_color_override("font_color", inactive)
-		_gatherer_alarm_btn.add_theme_color_override("font_color", active)
+		_gatherer_work_btn.add_theme_color_override("font_color", COLOR_MODE_FONT_INACTIVE)
+		_gatherer_alarm_btn.add_theme_color_override("font_color", COLOR_MODE_FONT_ACTIVE)
 
 
 ## Обновляет текст карточки защитников + disabled-флаг «Расформировать»-кнопки.
@@ -691,8 +705,8 @@ func _build_action_bar() -> void:
 func _build_action_slot(slot_idx: int, draggable: bool) -> Dictionary:
 	var slot_panel := PanelContainer.new()
 	var slot_stylebox := StyleBoxFlat.new()
-	slot_stylebox.bg_color = Color(0.12, 0.12, 0.15, 0.95)
-	slot_stylebox.border_color = Color(0.3, 0.3, 0.35, 1)
+	slot_stylebox.bg_color = COLOR_SLOT_BG
+	slot_stylebox.border_color = COLOR_SLOT_BORDER_NORMAL
 	slot_stylebox.set_border_width_all(2)
 	slot_stylebox.set_corner_radius_all(3)
 	slot_panel.add_theme_stylebox_override("panel", slot_stylebox)
@@ -783,10 +797,10 @@ func _update_action_bar() -> void:
 
 		var stylebox: StyleBoxFlat = slot.stylebox
 		if is_active:
-			stylebox.border_color = Color(1.0, 0.85, 0.2, 1.0)
+			stylebox.border_color = COLOR_SLOT_BORDER_HIGHLIGHT
 			stylebox.set_border_width_all(3)
 		else:
-			stylebox.border_color = Color(0.3, 0.3, 0.35, 1)
+			stylebox.border_color = COLOR_SLOT_BORDER_NORMAL
 			stylebox.set_border_width_all(2)
 
 		var icon: ColorRect = slot.icon
@@ -900,8 +914,8 @@ func _start_drag(slot_idx: int) -> void:
 	# (~56×64), точно угадывать не надо — пользователь смотрит на цвет/имя.
 	var ghost := PanelContainer.new()
 	var ghost_box := StyleBoxFlat.new()
-	ghost_box.bg_color = Color(0.15, 0.15, 0.2, 0.95)
-	ghost_box.border_color = Color(1.0, 0.85, 0.2, 1.0)
+	ghost_box.bg_color = Color(0.15, 0.15, 0.2, 0.95)  # чуть светлее slot'а — drag-ghost «парит»
+	ghost_box.border_color = COLOR_SLOT_BORDER_HIGHLIGHT
 	ghost_box.set_border_width_all(2)
 	ghost_box.set_corner_radius_all(4)
 	ghost.add_theme_stylebox_override("panel", ghost_box)
