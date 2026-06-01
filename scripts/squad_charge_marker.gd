@@ -26,6 +26,11 @@ extends Node3D
 
 const ACTION_TRIGGER := &"hand_grab"  # ЛКМ — клик по маркеру
 
+## Группа всех живых маркеров. [HandSquadAim] итерирует её, чтобы пропустить
+## commit движения в кадре, когда маркер тоже сработает на ЛКМ (иначе ult'а
+## + move в ту же точку одним кликом).
+const GROUP := &"squad_charge_marker"
+
 const FLOAT_HEIGHT: float = 2.2
 const FOLLOW_SMOOTH: float = 12.0
 ## Радиус hover'а курсора по XZ. Совпадает с [Hand.PICKUP_HIGHLIGHT_RADIUS]
@@ -72,9 +77,19 @@ func setup(squad: Squad) -> void:
 
 
 func _ready() -> void:
+	add_to_group(GROUP)
 	_build_visual()
 	_hand = get_tree().get_first_node_in_group(Hand.HAND_GROUP) as Hand
 	_update_visual_state()
+
+
+## Сработает ли маркер на ЛКМ в этот кадр? True = ult'а готова, курсор
+## наводится, режим руки позволяет. [HandSquadAim] зовёт чтобы не дать
+## SQUAD_AIM-commit'у выстрелить в тот же кадр.
+func would_consume_lmb() -> bool:
+	if _squad == null or not _squad.is_charge_ready():
+		return false
+	return _is_hovered and _is_input_allowed()
 
 
 func _build_visual() -> void:
@@ -181,14 +196,17 @@ func _update_hover() -> void:
 
 ## Гейт ЛКМ: PHYSICAL/MAGIC — ОК (LMB grab свободен или хватает только если
 ## под курсором есть Grabbable — маркер таковым не является, конфликта нет).
-## SUPER (QTE) / SQUAD_AIM (команда «иди туда») / BUILD_AIM (постройка) —
-## ЛКМ в этих режимах занят. UI поверх курсора — тоже глушим (через
-## [Hand.is_pointer_over_ui]).
+## SUPER (QTE) / BUILD_AIM (brush-vertex) — ЛКМ в этих режимах занят, маркер
+## молчит. SQUAD_AIM использует только ПКМ (`hand_action`) + Esc — ЛКМ
+## свободна, маркер должен срабатывать (со sticky-aim категория висит до
+## явного выхода; без этого ability недоступен в самом нужный момент —
+## когда ведёшь отряд в гущу). UI поверх курсора — глушим через
+## [Hand.is_pointer_over_ui].
 func _is_input_allowed() -> bool:
 	if _hand == null or not is_instance_valid(_hand):
 		return false
 	match _hand.active_category:
-		Hand.Category.SUPER, Hand.Category.SQUAD_AIM, Hand.Category.BUILD_AIM:
+		Hand.Category.SUPER, Hand.Category.BUILD_AIM:
 			return false
 	return not _hand.is_pointer_over_ui()
 

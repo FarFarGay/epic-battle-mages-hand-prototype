@@ -1,10 +1,15 @@
 class_name HandSquadAim
 extends Node
-## Координатор aim-режима для команды отряду «Идти сюда». Ввод ПКМ при
+## Координатор aim-режима для команды отряду «Идти сюда». Ввод ЛКМ при
 ## активном aim'е считается подтверждением точки — squad получает
 ## `command_hold(pos)`. Aim **остаётся активным** (sticky) — игрок может
 ## давать команды point-and-click без возврата в HUD. На точке commit'а
 ## остаётся затухающий ground-ring как визуальное подтверждение.
+##
+## ЛКМ — приоритет SquadChargeMarker: если игрок над ready+hovered маркером
+## (ult'а отряда), ЛКМ кушает marker (ult'а), не commit. Так одна кнопка
+## управляет двумя интеракциями без конфликта — на пустом месте едут,
+## на маркере применяют ult'у.
 ##
 ## По образцу HandSuper.AIMING_TARGET, но без предшествующего QTE — это
 ## мгновенный command-targeting. UI (gameplay_hud) запускает через
@@ -16,7 +21,7 @@ extends Node
 ## Hand-категория переключается в SQUAD_AIM на время aim'а — все остальные
 ## ввод-системы (hand_physical / hand_spell / hand_super) гасятся ранним return.
 
-const ACTION_AIM_COMMIT := &"hand_action"  # ПКМ — commit точки
+const ACTION_AIM_COMMIT := &"hand_grab"  # ЛКМ — commit точки
 const ACTION_AIM_CANCEL := &"ui_cancel"  # Esc — отмена aim'а (Godot-дефолт)
 
 @export_group("Visual")
@@ -133,11 +138,13 @@ func _process(_delta: float) -> void:
 	if Input.is_action_just_pressed(ACTION_AIM_CANCEL):
 		cancel_aim()
 		return
-	# ПКМ — commit точки. Используем Input.is_action_just_pressed: aim mode
-	# единственный listener в этой категории, конфликтов нет. UI-гейт: если
-	# курсор над виджетом HUD'а, ПКМ — это клик по кнопке, не команда отряду
-	# (иначе клик «За башней» во время aim'а ставил бы юнитов в случайную точку).
-	if Input.is_action_just_pressed(ACTION_AIM_COMMIT) and not _hand.is_pointer_over_ui():
+	# ЛКМ — commit точки. UI-гейт: если курсор над виджетом HUD'а, ЛКМ — это
+	# клик по кнопке, не команда отряду (иначе клик «За башней» во время aim'а
+	# ставил бы юнитов в случайную точку). Marker-приоритет: если игрок над
+	# готовым SquadChargeMarker'ом — ЛКМ кушает marker (ult'а), не commit.
+	if Input.is_action_just_pressed(ACTION_AIM_COMMIT) \
+			and not _hand.is_pointer_over_ui() \
+			and not _charge_marker_will_consume_lmb():
 		_commit_aim()
 
 
@@ -224,6 +231,22 @@ func _clear_indicator() -> void:
 	if is_instance_valid(_aim_indicator):
 		_aim_indicator.queue_free()
 	_aim_indicator = null
+
+
+## True если в этот кадр любой SquadChargeMarker готов «съесть» ЛКМ —
+## готов к ult'е и игрок наводится на него. Тогда commit движения пропускаем,
+## marker сам обработает свой trigger (он тоже на ЛКМ). Чтобы избежать
+## двойного срабатывания «ult'а + move в ту же точку».
+func _charge_marker_will_consume_lmb() -> bool:
+	for m in get_tree().get_nodes_in_group(SquadChargeMarker.GROUP):
+		if not is_instance_valid(m):
+			continue
+		var marker := m as SquadChargeMarker
+		if marker == null:
+			continue
+		if marker.would_consume_lmb():
+			return true
+	return false
 
 
 ## Spawn'ит независимое затухающее кольцо на точке commit'а. Цвет берём
