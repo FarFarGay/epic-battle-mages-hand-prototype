@@ -1307,13 +1307,19 @@ func command_squad_escort(squad: Squad) -> void:
 	squad.command_escort()
 
 
-## Команда: squad защищает лагерь (кольцо вокруг anchor'а). Доп. слой обороны
-## поверх штатных DefenderGnome'ов. Доступна и в каравне, но визуально юниты
-## пойдут к башне (fallback в SoldierGnome._resolve_squad_center).
+## Команда: squad защищает лагерь — кольцо вокруг anchor'а с patrol'ом по
+## периметру. Доступна ТОЛЬКО когда отряд физически в зоне строительства —
+## защищать лагерь не имеет смысла «с другого конца карты». UI гейтит
+## кнопку через [is_squad_in_build_zone], тут — серверный дубль на случай
+## race'а / прямого вызова.
 func command_squad_defend(squad: Squad) -> void:
 	if squad == null:
 		return
 	if not _squads.has(squad):
+		return
+	if not is_squad_in_build_zone(squad):
+		if LogConfig.master_enabled:
+			print("[Camp] defend отклонён: squad#%d вне зоны строительства" % squad.id)
 		return
 	squad.command_defend()
 
@@ -2431,6 +2437,19 @@ func is_squad_in_recall_zone(squad: Squad) -> bool:
 	var dx: float = center.x - _tower.global_position.x
 	var dz: float = center.z - _tower.global_position.z
 	return dx * dx + dz * dz <= recall_zone_radius * recall_zone_radius
+
+
+## True если центр отряда в зоне строительства лагеря (build_radius от
+## _deploy_anchor). Защита «Защищать лагерь» — лагерное действие: команда
+## имеет смысл только когда отряд физически рядом с лагерем. Не пускаем
+## защиту с другого конца карты (включая dungeon). В свёрнутом лагере
+## (_state != DEPLOYED) — false: зоны строительства нет.
+func is_squad_in_build_zone(squad: Squad) -> bool:
+	if _state != State.DEPLOYED:
+		return false
+	if squad == null or squad.count_alive() == 0:
+		return false
+	return is_in_build_zone(_squad_alive_center(squad))
 
 
 ## True если башня в зоне вызова от anchor'а развёрнутого лагеря — нужно

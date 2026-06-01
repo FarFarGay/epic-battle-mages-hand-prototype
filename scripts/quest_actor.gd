@@ -66,6 +66,40 @@ const POI_GROUP := &"poi_zone"
 @export var wave_schedule: WaveSchedule
 @export_group("")
 
+@export_group("Resources")
+## Сцена ResourceZone для авто-спавна 4 типов ресурсов вокруг POI. При null
+## ресурсы не появляются — POI остаётся «голым» (можно для специфических
+## квестов-арен без эконом-этапа).
+@export var resource_zone_scene: PackedScene = preload("res://scenes/resource_zone.tscn")
+
+## Сколько единиц каждого ресурсного типа должно быть вокруг POI. Делится на
+## resource_units_per_pile и даёт count кучек на тип. Дизайнерский knob:
+## «сколько раз гнома хватит ходить за дровами/камнем», не «сколько кучек на
+## земле». 100 единиц = много, лагерь живёт долго; 30 — туже, быстрее
+## деплет.
+@export_range(0, 1000) var resource_total_per_type: int = 100
+
+## Единиц на одну кучку (= сколько раз гном с неё возьмёт). При
+## total_per_type=100 и per_pile=20 получаем 5 кучек на тип = 20 кучек
+## всего вокруг POI — просторно, скелеты не упираются. Меньше — больше
+## кучек, гном бегает чаще; больше — кучек меньше, гном дольше «жуёт»
+## одну.
+@export_range(1, 100) var resource_units_per_pile: int = 20
+
+## Размер прямоугольника каждой ResourceZone (X×Z, м). Дефолт 50×50 — кучки
+## раскидываются на ~25м в каждую сторону от костра; внутренний круг
+## safe_radius (12м) отфильтруется в ResourceZone._pick_position, кучки
+## лягут снаружи палаток. Большая зона = есть «коридоры» между кучками,
+## скелет (агент ~0.5м) пройдёт сквозь карьер не упираясь в пень.
+@export var resource_zone_size: Vector2 = Vector2(50.0, 50.0)
+
+## Минимальная дистанция между соседними кучками ВНУТРИ одной ResourceZone.
+## Передаётся каждой 4 зонам. ResourceZone использует rejection sampling
+## (до 10 попыток), при невозможности — кладёт в случайное место. 2.5м
+## оставляет ширину для пары скелетов плечом-к-плечу или одного гиганта.
+@export var resource_min_spacing: float = 2.5
+@export_group("")
+
 @onready var _logs_root: Node3D = $Logs
 @onready var _flame_core: MeshInstance3D = $FlameCore
 @onready var _flame_particles: GPUParticles3D = $FlameParticles
@@ -102,6 +136,43 @@ func _ready() -> void:
 	EventBus.camp_deployed.connect(_on_camp_deployed)
 	EventBus.camp_packed.connect(_on_camp_packed)
 	_refresh_visual()
+	_spawn_resource_zones()
+
+
+## Спавнит 4 ResourceZone (Wood/Stone/Iron/Food) как детей POI'я. Каждая
+## разбрасывает ~total_per_type / units_per_pile кучек в прямоугольнике
+## resource_zone_size вокруг POI. Внутренний safe_radius (палатки) отсечётся
+## фильтром ResourceZone._pick_position — игроку видны кольца кучек снаружи
+## костра, никакие пни не торчат в очаге.
+##
+## Архитектура: ResourceZone сама в deferred-frame инстанцирует pile'ы и
+## кладёт их в current_scene (через spawn_root_path null → fallback). Это
+## значит pile'ы НЕ дети POI'я (переживают reload вместе со сценой, но не
+## с POI). Само Zone-нода прозрачна (Mesh.visible = false на _ready) — у нас
+## остаётся только логический spawner, можно держать как ребёнка POI без
+## визуальных артефактов.
+func _spawn_resource_zones() -> void:
+	if resource_zone_scene == null or resource_total_per_type <= 0:
+		return
+	var per_pile: int = maxi(resource_units_per_pile, 1)
+	var count: int = maxi(roundi(float(resource_total_per_type) / float(per_pile)), 1)
+	# 1=Wood, 2=Stone, 3=Iron, 4=Food (см. ResourceZone.resource_type enum).
+	for type_id in [1, 2, 3, 4]:
+		var zone := resource_zone_scene.instantiate() as ResourceZone
+		if zone == null:
+			push_warning("[QuestActor] resource_zone_scene не инстанцируется как ResourceZone")
+			continue
+		zone.size = resource_zone_size
+		zone.resource_type = type_id
+		zone.count = count
+		zone.units_per_pile = per_pile
+		zone.min_spacing = resource_min_spacing
+		add_child(zone)
+		# Все 4 зоны центрированы на POI (Z3D position = (0,0,0) локально).
+		# Геометрический overlap не страшен: pile'ы спавнятся через rejection
+		# sampling с min_spacing, тип на тип не конфликтует (4 типа × 20 куч =
+		# 80 точек на 28×28 минус safe_radius=12 кружок = плотность ~0.15
+		# куч/м², просторно).
 
 
 ## Лагерь развернулся где-то на сцене. Если anchor в нашем safe_radius —

@@ -36,9 +36,9 @@ enum Phase { IDLE, RUNNING }
 ## гиганты не спавнятся.
 @export var giant_scene: PackedScene
 ## Каждые N волн POI-осады дополнительно спавнится 1 гигант (расчёт идёт
-## глобально по счётчику волн, не per-stage). 0 = выключено. 3 = первый
-## гигант на волне 3, далее на 6, 9 и т.д.
-@export var giant_every_n_waves: int = 3
+## глобально по счётчику волн, не per-stage). 0 = выключено (текущий дефолт —
+## большие в осаде не участвуют, balance-этап).
+@export var giant_every_n_waves: int = 0
 ## Сцена гиганта-каменщика (ranged-танк, кидает камни в Tower с 25-35м).
 ## Сейчас спавнится только через чит-карточку для playtest'а; авто-волны
 ## не настроены — это отдельный balance-этап. Если null — чит no-op.
@@ -62,6 +62,30 @@ enum Phase { IDLE, RUNNING }
 ## плавный «прилив», не залп. Если просадка большая (например после
 ## зачистки POI игроком), подкачка идёт ровно по 1/сек до возврата к target.
 @export var background_replenish_interval: float = 1.0
+@export_group("")
+
+@export_group("Caravan waves (атаки на караван в дороге)")
+## Период между caravan-волнами в секундах. Каждая волна спавнит группу
+## скелетов в случайной точке вокруг каравана. Тикает пока есть живой
+## Camp, который не развёрнут (CARAVAN_FOLLOWING-стадия). На camp_deployed
+## таймер засыпает — POI-осада ведёт атаки сама. На camp_packed —
+## возобновляется.
+@export var caravan_wave_interval: float = 25.0
+## Стартовый размер caravan-волны. Растёт линейно по wall-clock минутам
+## с момента старта кампании.
+@export var caravan_wave_size_initial: int = 3
+## Прирост размера caravan-волны в минуту wall-clock. Через 5 минут при
+## initial=3, growth=0.6 → 3 + 0.6×5 = 6 скелетов на волну.
+@export var caravan_wave_size_growth_per_minute: float = 0.6
+## Потолок размера caravan-волны.
+@export var caravan_wave_size_cap: int = 12
+## Дистанция от центра каравана до точки спавна caravan-волны. 28м =
+## чуть за пределами tower-вижена (20м), скелеты появляются «из ниоткуда»,
+## но физически близко чтобы успеть догнать караван.
+@export var caravan_spawn_distance: float = 28.0
+## Разброс кластера caravan-волны. Та же семантика что wave_group_radius
+## для POI-волн.
+@export var caravan_group_radius: float = 3.5
 @export_group("")
 
 @export_group("POI siege spawn")
@@ -123,6 +147,14 @@ var _scout_cd: float = 0.0
 var _safe_zone_check_cd: float = 0.0
 var _last_safe_zone_count: int = -1
 
+## Таймер до следующей caravan-волны. Тикает пока есть живой Camp в
+## CARAVAN_FOLLOWING (любой Camp с has_alive_parts() и not is_deployed()).
+## Сбрасывается на caravan_wave_interval после каждого спавна.
+var _caravan_wave_cd: float = 0.0
+## Wall-clock метка старта кампании (ms, Time.get_ticks_msec). Используется
+## для линейного роста размера caravan-волн. На рестарте обновляется.
+var _campaign_started_at_ms: int = 0
+
 
 ## Группа для discovery извне без явных NodePath. WaveDirector один на сцену;
 ## ResourceZone, Camp и другие потребители safe/POI-логики находят его
@@ -158,6 +190,12 @@ func _ready() -> void:
 	# Poi_*/Actor (на практике редко, но защита бесплатная).
 	_collect_pois_deferred()
 
+	# Автостарт кампании при «Начать игру» (StartMenu взвёл MatchConfig.
+	# match_started=true перед reload). Без флага молчим — первый запуск
+	# игры остаётся «спокойным» до клика на меню.
+	if MatchConfig.match_started:
+		_start_campaign()
+
 
 ## Лениво собирает POI через группу [QuestActor.POI_GROUP]. Группа содержит
 ## именно QuestActor-ноды (на которых safe_radius и wave_schedule), а не
@@ -183,6 +221,13 @@ func _process(delta: float) -> void:
 		_tick_background(delta)
 		if _active_camp != null and _active_schedule != null:
 			_tick_active_poi(delta)
+		# Caravan-волны идут параллельно фону пока есть Camp в пути к POI.
+		# Если активная POI-осада запущена (_active_camp != null) — этот же
+		# лагерь сидит в DEPLOYED, _find_caravan_camp() его пропустит. То есть
+		# одновременно идут либо «caravan для лагеря-каравана + POI-осада для
+		# другого лагеря», либо одно из двух — на нашей одной-Camp-сцене это
+		# просто переключение.
+		_tick_caravan_waves(delta)
 
 	_tick_safe_zone_monitor(delta)
 
@@ -211,7 +256,7 @@ func cheat_force_wave() -> void:
 	if stage == null:
 		return
 	if stage.has_groups():
-		_spawn_groups_wave(stage.groups)
+		_spawn_groups_wave(_select_groups_for_wave(stage))
 	else:
 		_spawn_legacy_poi_wave(stage.skeletons_per_wave)
 	_wave_cd = stage.wave_interval
@@ -387,6 +432,8 @@ func _start_campaign() -> void:
 	_spawn_safe_uniform(background_initial_count)
 	_background_target = float(background_initial_count)
 	_background_replenish_cd = background_replenish_interval
+	_caravan_wave_cd = caravan_wave_interval
+	_campaign_started_at_ms = Time.get_ticks_msec()
 	_phase = Phase.RUNNING
 
 
@@ -413,6 +460,89 @@ func _tick_background(delta: float) -> void:
 	var live: int = _live_skeleton_count()
 	if float(live) < _background_target:
 		_spawn_safe_uniform(1)
+
+
+# --- Caravan-волны ---
+
+## Тик caravan-волн: атаки на караван в пути к POI. Активен пока есть Camp
+## в CARAVAN_FOLLOWING-стадии (any не-deployed Camp с has_alive_parts). Если
+## такого Camp'а нет (все лагеря развёрнуты или мертвы) — тикаем cd, но
+## не спавним: игроку не нужны caravan-атаки на пустом месте.
+##
+## Спавн идёт в случайной точке на кольце caravan_spawn_distance вокруг
+## current_center() лагеря — это даёт «появление с рандомной стороны». Цель
+## пачки — Tower (forced_target), скелеты идут на караван по прямой.
+func _tick_caravan_waves(delta: float) -> void:
+	_caravan_wave_cd -= delta
+	if _caravan_wave_cd > 0.0:
+		return
+	var camp: Camp = _find_caravan_camp()
+	if camp == null:
+		# Cd «висит» в нуле — как только караван снова в пути, первая
+		# волна срабатывает сразу. Чтобы избежать залпа после долгой
+		# DEPLOYED-сессии (cd сильно ушёл в минус), удерживаем нулём.
+		_caravan_wave_cd = 0.0
+		return
+	_caravan_wave_cd = caravan_wave_interval
+	if _spawner == null or skeleton_scene == null:
+		return
+	var wave_size: int = _current_caravan_wave_size()
+	var spawn_pos: Vector3 = _pick_caravan_spawn_pos(camp)
+	var skeletons: Array[Enemy] = _spawner.spawn_group(
+		skeleton_scene, wave_size, spawn_pos, caravan_group_radius,
+	)
+	var tower: Node3D = camp.get_tower()
+	if tower != null:
+		_assign_forced_targets(skeletons, tower)
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] caravan-волна %d скелетов @ (%.0f, %.0f) → %s" % [
+			skeletons.size(), spawn_pos.x, spawn_pos.z,
+			tower.name if tower != null else "no-tower",
+		])
+
+
+## Первый живой Camp, который сейчас в caravan-стадии (не deployed). Если
+## таких нет — null. На нашей одно-Camp-сцене это всегда возвращает либо
+## этот Camp в пути, либо null если он развёрнут.
+func _find_caravan_camp() -> Camp:
+	for c in _camps:
+		if not is_instance_valid(c):
+			continue
+		if not c.has_alive_parts():
+			continue
+		if c.is_deployed():
+			continue
+		return c
+	return null
+
+
+## Размер caravan-волны на момент сейчас: initial + linear-growth-per-minute,
+## с потолком cap. Минута считается от _campaign_started_at_ms — wall-clock
+## с момента «Начать игру» / cheat_start_campaign.
+func _current_caravan_wave_size() -> int:
+	var elapsed_ms: int = Time.get_ticks_msec() - _campaign_started_at_ms
+	var minutes: float = float(elapsed_ms) / 60000.0
+	var size_f: float = float(caravan_wave_size_initial) \
+			+ caravan_wave_size_growth_per_minute * minutes
+	return clampi(roundi(size_f), caravan_wave_size_initial, caravan_wave_size_cap)
+
+
+## Точка спавна caravan-волны: случайный угол вокруг центра каравана на
+## дистанции caravan_spawn_distance. Без safe-фильтра — наоборот, мы ИЩЕМ
+## близкую к каравану точку (фильтр гонит от лагеря, а тут наоборот).
+## Clamp в границы карты на случай, если караван у самого края.
+func _pick_caravan_spawn_pos(camp: Camp) -> Vector3:
+	var center: Vector3 = camp.current_center()
+	var angle: float = randf() * TAU
+	var pos := Vector3(
+		center.x + cos(angle) * caravan_spawn_distance,
+		_spawner.spawn_y,
+		center.z + sin(angle) * caravan_spawn_distance,
+	)
+	var half: float = _spawner.map_half_extent
+	pos.x = clampf(pos.x, -half, half)
+	pos.z = clampf(pos.z, -half, half)
+	return pos
 
 
 # --- POI-волны ---
@@ -517,8 +647,9 @@ func _tick_active_poi(delta: float) -> void:
 	if _wave_cd <= 0.0:
 		# Новая модель — массив CombatGroup'ов (поддерживает многофронт +
 		# композицию). Legacy fallback — одиночный кластер скелетов.
+		# random_groups=true — один случайный preset за волну.
 		if stage.has_groups():
-			_spawn_groups_wave(stage.groups)
+			_spawn_groups_wave(_select_groups_for_wave(stage))
 		else:
 			_spawn_legacy_poi_wave(stage.skeletons_per_wave)
 		_wave_count += 1
@@ -654,6 +785,22 @@ func _spawn_legacy_poi_wave(count: int) -> void:
 			skeletons.size(), zone.name, origin.x, origin.z,
 			_active_camp.name, target_part.name, dist,
 		])
+
+
+## Выбирает массив групп для текущей волны с учётом [WaveStage.random_groups].
+## random_groups=true → одна случайная группа из stage.groups (preset-режим,
+## каждая волна непредсказуемый сет с случайной стороны). False → все
+## группы стадии (legacy многофронт — все «фронты» одновременно).
+func _select_groups_for_wave(stage: WaveStage) -> Array[CombatGroup]:
+	if not stage.random_groups or stage.groups.size() <= 1:
+		return stage.groups
+	var picked: CombatGroup = stage.groups[randi() % stage.groups.size()]
+	if picked == null:
+		return stage.groups
+	# Типизированный массив — иначе _spawn_groups_wave получит untyped Array
+	# и пройдёт через for, но Godot ругнётся на несовместимый параметр.
+	var out: Array[CombatGroup] = [picked]
+	return out
 
 
 ## Новая многосоставная волна: каждая [CombatGroup] спавнится отдельным

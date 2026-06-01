@@ -62,6 +62,10 @@ const ABILITY_META: Dictionary = {
 		"name": "Мороз", "color": Color(0.45, 0.8, 1.0),
 		"category_str": "MAGIC", "type": 3,
 	},
+	&"spark": {
+		"name": "Искра", "color": Color(1.0, 0.95, 0.3),
+		"category_str": "MAGIC", "type": 4,
+	},
 }
 
 ## Названия equip-actions в InputMap, в порядке слотов 1..5. Используется
@@ -74,12 +78,13 @@ const SLOT_EQUIP_ACTIONS: Array[StringName] = [
 	&"equip_firestorm",     # клавиша 4
 	&"equip_mine_scatter",  # клавиша 5
 	&"equip_frost",         # клавиша 6
+	&"equip_spark",         # клавиша 7
 ]
 
 ## Стартовая раскладка слотов. Игрок может пересобрать через drag-and-drop.
 ## Сохранение в файл — TODO (пока сбрасывается на дефолт при рестарте).
 const ACTION_BAR_DEFAULT_ASSIGNMENT: Array[StringName] = [
-	&"slam", &"flick", &"fireball", &"firestorm", &"mine_scatter", &"frost",
+	&"slam", &"flick", &"fireball", &"firestorm", &"mine_scatter", &"frost", &"spark",
 ]
 
 ## Super — фиксированный 6-й слот, не draggable. Имеет свою клавишу (Space)
@@ -1428,6 +1433,7 @@ func _refresh_squad_card(card: Control, squad: Squad) -> void:
 			_apply_escort_state(btn, squad)
 		elif btn.has_meta(&"squad_btn_defend"):
 			btn.button_pressed = squad.state == Squad.State.DEFENDING_CAMP
+			_apply_defend_state(btn, squad)
 		elif btn.has_meta(&"squad_btn_aim"):
 			# Подсвечиваем когда HandSquadAim в режиме aim'а на этом squad'е
 			# ИЛИ когда squad в HOLD-strict-режиме (юниты ещё идут к точке).
@@ -1469,6 +1475,22 @@ func _apply_escort_state(btn: Button, squad: Squad) -> void:
 		btn.tooltip_text = "Отряд вне зоны вызова — подойдите ближе с башней"
 
 
+## Гейт «Защищать»: команда имеет смысл только когда отряд физически в зоне
+## строительства лагеря. Запустить защиту «с другого конца карты» (включая
+## dungeon) нельзя. button_pressed уже выставлен в _refresh_squad_card по
+## state'у — тут только disabled + tooltip.
+func _apply_defend_state(btn: Button, squad: Squad) -> void:
+	if not is_instance_valid(_camp):
+		btn.disabled = true
+		return
+	var in_zone: bool = _camp.is_squad_in_build_zone(squad)
+	btn.disabled = not in_zone
+	if in_zone:
+		btn.tooltip_text = "Отряд патрулирует периметр лагеря"
+	else:
+		btn.tooltip_text = "Отряд должен быть в зоне строительства лагеря"
+
+
 ## Раз в UPDATE_INTERVAL: подсветка/disabled кнопок, зависящих от мирового
 ## state'а (proximity для dismiss, recall-зона для escort). Squad-сигналы
 ## это не покрывают: башня и юниты двигаются без эмита. Дёшево — ≤6-12
@@ -1485,6 +1507,8 @@ func _update_squad_cards_dynamic() -> void:
 				_apply_dismiss_state(btn, squad)
 			elif btn.has_meta(&"squad_btn_escort"):
 				_apply_escort_state(btn, squad)
+			elif btn.has_meta(&"squad_btn_defend"):
+				_apply_defend_state(btn, squad)
 
 
 func _on_squad_aim_pressed(squad_id: int) -> void:
@@ -1550,6 +1574,13 @@ func _squad_alive_center_or_tower(squad: Squad) -> Vector3:
 func _on_squad_defend_pressed(squad_id: int) -> void:
 	var squad: Squad = _resolve_squad_by_id(squad_id)
 	if squad == null or not is_instance_valid(_camp):
+		return
+	# Гейт по build-zone: дублируем UI-disabled на случай race'а
+	# (кнопка disabled выставляется реактивно, но между тиками
+	# squad мог уйти за периметр).
+	if not _camp.is_squad_in_build_zone(squad):
+		if LogConfig.master_enabled:
+			print("[HUD:Squad] defend отклонён: отряд вне зоны строительства")
 		return
 	_camp.command_squad_defend(squad)
 

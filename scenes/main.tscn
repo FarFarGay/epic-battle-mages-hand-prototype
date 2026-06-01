@@ -17,7 +17,6 @@
 [ext_resource type="PackedScene" path="res://scenes/gameplay_hud.tscn" id="14"]
 [ext_resource type="PackedScene" uid="uid://drdbcmqb67xwj" path="res://scenes/quest_actor.tscn" id="16"]
 [ext_resource type="PackedScene" path="res://scenes/spawn_zone.tscn" id="17"]
-[ext_resource type="PackedScene" path="res://scenes/resource_zone.tscn" id="18_dp3eg"]
 [ext_resource type="Resource" uid="uid://bj8ej7jf1bubo" path="res://resources/wave_schedule_default.tres" id="18_schedule_default"]
 [ext_resource type="PackedScene" uid="uid://grassfield01" path="res://scenes/grass_field.tscn" id="19_grass_field"]
 [ext_resource type="Script" uid="uid://ca4r3f6w4pm3w" path="res://scripts/nav_region.gd" id="20_nav"]
@@ -26,6 +25,8 @@
 [ext_resource type="PackedScene" path="res://scenes/archer_group.tscn" id="23_archer_group"]
 [ext_resource type="PackedScene" uid="uid://c5tyv5sieeeom" path="res://scenes/blocker_wall.tscn" id="25_og1vs"]
 [ext_resource type="PackedScene" path="res://scenes/dungeon_zone.tscn" id="26_2wyq8"]
+[ext_resource type="Script" path="res://scripts/main_setup.gd" id="27_main_setup"]
+[ext_resource type="PackedScene" path="res://scenes/start_menu.tscn" id="28_start_menu"]
 
 [sub_resource type="Environment" id="Environment_atmo"]
 background_mode = 1
@@ -59,6 +60,7 @@ shader_parameter/grass_color_light = Color(0.45, 0.62, 0.28, 1)
 size = Vector3(300, 1, 300)
 
 [node name="Main" type="Node3D" unique_id=462266493]
+script = ExtResource("27_main_setup")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1638326598]
 environment = SubResource("Environment_atmo")
@@ -146,21 +148,6 @@ camp_path = NodePath("../Camp")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.28, 0)
 coverage_target_path = NodePath("../Ground/GroundMesh")
 
-[node name="ResourceZone" parent="." unique_id=737445101 instance=ExtResource("18_dp3eg")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -29.66965, 0, 13.417672)
-
-[node name="ResourceZone2" parent="." unique_id=830205332 instance=ExtResource("18_dp3eg")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.97786, -1.9073486e-06, 11.4630785)
-resource_type = 2
-
-[node name="ResourceZone3" parent="." unique_id=1514561639 instance=ExtResource("18_dp3eg")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.02143, 0, -16.741749)
-resource_type = 3
-
-[node name="ResourceZone4" parent="." unique_id=1553489164 instance=ExtResource("18_dp3eg")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -27.68639, 0, -15.37766)
-resource_type = 4
-
 [node name="FogOfWar" parent="." unique_id=1234567890 instance=ExtResource("21_fog")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.013473511, 0, -0.053047895)
 
@@ -189,3 +176,5 @@ transform = Transform3D(23.380001, 0, 0, 0, 1, 0, 0, 0, 1, 101.80631, 0, 116)
 
 [node name="DungeonZone" parent="." unique_id=1606547872 instance=ExtResource("26_2wyq8")]
 transform = Transform3D(9.79, 0, 0, 0, 1, 0, 0, 0, 8.96, 98.105, 1, 96.728)
+
+[node name="StartMenu" parent="." unique_id=1771881234 instance=ExtResource("28_start_menu")]

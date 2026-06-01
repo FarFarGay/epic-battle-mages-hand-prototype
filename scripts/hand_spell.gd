@@ -19,13 +19,14 @@ extends Node
 
 signal spell_cast(spell_name: StringName, position: Vector3)
 
-enum SpellType { FIREBALL, FIRESTORM, MINE_SCATTER, FROST }
+enum SpellType { FIREBALL, FIRESTORM, MINE_SCATTER, FROST, SPARK }
 
 const ACTION_ACTION := &"hand_action"
 const ACTION_EQUIP_FIREBALL := &"equip_fireball"
 const ACTION_EQUIP_FIRESTORM := &"equip_firestorm"
 const ACTION_EQUIP_MINE_SCATTER := &"equip_mine_scatter"
 const ACTION_EQUIP_FROST := &"equip_frost"
+const ACTION_EQUIP_SPARK := &"equip_spark"
 
 @export var equipped: SpellType = SpellType.FIREBALL:
 	set(value):
@@ -49,6 +50,7 @@ var _tower_cache: Node3D = null
 @onready var _firestorm: HandSpellFirestorm = $Firestorm
 @onready var _mine_scatter: HandSpellMineScatter = $MineScatter
 @onready var _frost: HandSpellFrost = $Frost
+@onready var _spark: HandSpellSpark = $Spark
 
 
 ## Готово ли заклинание к кастy. ActionBar дёргает для тусклой подсветки
@@ -63,6 +65,8 @@ func is_spell_ready(type: int) -> bool:
 			return _mine_scatter.can_trigger()
 		SpellType.FROST:
 			return _frost.can_trigger()
+		SpellType.SPARK:
+			return _spark.can_trigger()
 	return true
 
 
@@ -71,6 +75,7 @@ func _ready() -> void:
 	_firestorm.spell_cast.connect(spell_cast.emit)
 	_mine_scatter.spell_cast.connect(spell_cast.emit)
 	_frost.spell_cast.connect(spell_cast.emit)
+	_spark.spell_cast.connect(spell_cast.emit)
 	EventBus.tower_destroyed.connect(_on_tower_destroyed)
 
 
@@ -121,6 +126,7 @@ func setup(hand: Hand) -> void:
 	_firestorm.setup(_hand, self)
 	_mine_scatter.setup(_hand, self)
 	_frost.setup(_hand, self)
+	_spark.setup(_hand, self)
 
 
 func _process(delta: float) -> void:
@@ -130,6 +136,7 @@ func _process(delta: float) -> void:
 	_firestorm.tick(delta)
 	_mine_scatter.tick(delta)
 	_frost.tick(delta)
+	_spark.tick(delta)
 	_handle_input()
 
 
@@ -181,3 +188,8 @@ func _dispatch_cast() -> void:
 				_frost.on_press()
 			elif debug_log and LogConfig.master_enabled:
 				print("[Hand:Spell] мороз на кулдауне")
+		SpellType.SPARK:
+			if _spark.can_trigger():
+				_spark.on_press()
+			elif debug_log and LogConfig.master_enabled:
+				print("[Hand:Spell] искра на кулдауне")

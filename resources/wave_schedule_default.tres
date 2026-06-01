@@ -7,80 +7,73 @@
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="5_skel"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton_archer.tscn" id="6_archer"]
 
-[sub_resource type="Resource" id="Entry_skel_5"]
+; --- UnitEntry'и (атомарные «N штук скелетов/лучников») ---
+
+[sub_resource type="Resource" id="Entry_skel_10"]
 script = ExtResource("4_entry")
 scene = ExtResource("5_skel")
+count = 10
 metadata/_custom_type_script = "uid://j0tr35r42ex5"
 
-[sub_resource type="Resource" id="Group_recon_a"]
+[sub_resource type="Resource" id="Entry_skel_8"]
+script = ExtResource("4_entry")
+scene = ExtResource("5_skel")
+count = 8
+metadata/_custom_type_script = "uid://j0tr35r42ex5"
+
+[sub_resource type="Resource" id="Entry_skel_6"]
+script = ExtResource("4_entry")
+scene = ExtResource("5_skel")
+count = 6
+metadata/_custom_type_script = "uid://j0tr35r42ex5"
+
+[sub_resource type="Resource" id="Entry_archer_4"]
+script = ExtResource("4_entry")
+scene = ExtResource("6_archer")
+count = 4
+metadata/_custom_type_script = "uid://j0tr35r42ex5"
+
+; --- CombatGroup'ы (preset'ы): чистые скелеты И смешанные skel+archer ---
+
+[sub_resource type="Resource" id="Group_skel_10"]
 script = ExtResource("3_group")
-composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_5")])
+composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_10")])
 metadata/_custom_type_script = "uid://fqose6y31knl"
+
+[sub_resource type="Resource" id="Group_skel_8"]
+script = ExtResource("3_group")
+composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_8")])
+metadata/_custom_type_script = "uid://fqose6y31knl"
+
+[sub_resource type="Resource" id="Group_mixed_10"]
+script = ExtResource("3_group")
+composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_6"), SubResource("Entry_archer_4")])
+cluster_spread = 1.3
+metadata/_custom_type_script = "uid://fqose6y31knl"
+
+; --- Стадии (random_groups=true: каждая волна — один случайный preset) ---
 
 [sub_resource type="Resource" id="Stage_0_recon"]
 script = ExtResource("2_stage")
-groups = Array[ExtResource("3_group")]([SubResource("Group_recon_a")])
+groups = Array[ExtResource("3_group")]([SubResource("Group_skel_10")])
+random_groups = true
 scout_interval = 50.0
 metadata/_custom_type_script = "uid://dyuckha78cek"
-
-[sub_resource type="Resource" id="Group_pressure_a"]
-script = ExtResource("3_group")
-composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_5")])
-metadata/_custom_type_script = "uid://fqose6y31knl"
-
-[sub_resource type="Resource" id="Entry_skel_3"]
-script = ExtResource("4_entry")
-scene = ExtResource("5_skel")
-count = 3
-metadata/_custom_type_script = "uid://j0tr35r42ex5"
-
-[sub_resource type="Resource" id="Entry_archer_2"]
-script = ExtResource("4_entry")
-scene = ExtResource("6_archer")
-count = 2
-metadata/_custom_type_script = "uid://j0tr35r42ex5"
-
-[sub_resource type="Resource" id="Group_pressure_b"]
-script = ExtResource("3_group")
-composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_3"), SubResource("Entry_archer_2")])
-cluster_spread = 1.3
-metadata/_custom_type_script = "uid://fqose6y31knl"
 
 [sub_resource type="Resource" id="Stage_1_pressure"]
 script = ExtResource("2_stage")
 duration = 90.0
 wave_interval = 45.0
-groups = Array[ExtResource("3_group")]([SubResource("Group_pressure_a"), SubResource("Group_pressure_b")])
+groups = Array[ExtResource("3_group")]([SubResource("Group_skel_10"), SubResource("Group_mixed_10")])
+random_groups = true
 metadata/_custom_type_script = "uid://dyuckha78cek"
-
-[sub_resource type="Resource" id="Group_siege_a"]
-script = ExtResource("3_group")
-composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_5")])
-metadata/_custom_type_script = "uid://fqose6y31knl"
-
-[sub_resource type="Resource" id="Entry_skel_4"]
-script = ExtResource("4_entry")
-scene = ExtResource("5_skel")
-count = 4
-metadata/_custom_type_script = "uid://j0tr35r42ex5"
-
-[sub_resource type="Resource" id="Group_siege_b"]
-script = ExtResource("3_group")
-composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_4")])
-cluster_spread = 1.2
-metadata/_custom_type_script = "uid://fqose6y31knl"
-
-[sub_resource type="Resource" id="Group_siege_c"]
-script = ExtResource("3_group")
-composition = Array[ExtResource("4_entry")]([SubResource("Entry_skel_3"), SubResource("Entry_archer_2")])
-cluster_spread = 1.5
-metadata/_custom_type_script = "uid://fqose6y31knl"
 
 [sub_resource type="Resource" id="Stage_2_siege"]
 script = ExtResource("2_stage")
 duration = 999999.0
 wave_interval = 30.0
-groups = Array[ExtResource("3_group")]([SubResource("Group_siege_a"), SubResource("Group_siege_b"), SubResource("Group_siege_c")])
+groups = Array[ExtResource("3_group")]([SubResource("Group_skel_10"), SubResource("Group_skel_8"), SubResource("Group_mixed_10")])
+random_groups = true
 metadata/_custom_type_script = "uid://dyuckha78cek"
 
 [resource]
