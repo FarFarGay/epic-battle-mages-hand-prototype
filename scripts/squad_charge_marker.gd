@@ -54,6 +54,20 @@ const HOVER_RADIUS: float = 1.5
 @export var pikeman_ring_color: Color = Color(1.0, 0.65, 0.2, 0.95)
 @export_group("")
 
+@export_group("Archer volley ability")
+## Радиус разлёта стрел вокруг центра отряда. Больше pikeman'а — лучник
+## бьёт по площади дальше, AOE-эффект «дождь стрел».
+@export var archer_ability_radius: float = 8.0
+## Стрел на одного лучника. 5 × 3 лучника = 15 стрел в залпе.
+@export var archer_arrows_per_member: int = 5
+## Damage одной стрелы залпа. Чуть выше обычной (20-32 → 35) — компенсация
+## за расход squad-charge'а.
+@export var archer_volley_damage: float = 35.0
+## Цвет визуального кольца на земле под залпом (тёмно-фиолетовый под цвет
+## лучника).
+@export var archer_ring_color: Color = Color(0.55, 0.35, 0.75, 0.95)
+@export_group("")
+
 @export var debug_log: bool = true
 
 var _squad: Squad = null
@@ -219,6 +233,8 @@ func _trigger_ability(center: Vector3) -> void:
 	match _squad.soldier_type:
 		&"pikeman":
 			_cast_pikeman_push(center)
+		&"archer_squad":
+			_cast_archer_volley(center)
 		_:
 			push_warning("[SquadChargeMarker] нет ability для типа %s" % _squad.soldier_type)
 			return
@@ -246,3 +262,33 @@ func _cast_pikeman_push(center: Vector3) -> void:
 	AoeDamage.apply_uniform(get_tree(), center, pikeman_ability_radius,
 		pikeman_aoe_mask, pikeman_damage,
 		pikeman_push_speed, pikeman_push_duration)
+
+
+## Волейный залп для лучников. Каждый живой ArcherSoldier в отряде спавнит
+## `archer_arrows_per_member` стрел с прицелом на случайные точки внутри
+## `archer_ability_radius` вокруг `center`. Damage применяется при попадании
+## (Arrow это уже делает по своему пути). Визуал: ground-ring +
+## expanding-ring под цвет лучника.
+func _cast_archer_volley(center: Vector3) -> void:
+	var root: Node = get_tree().current_scene
+	if not is_instance_valid(root):
+		return
+	AoeVisual.spawn_ground_ring(root, center, archer_ability_radius, 0.5, archer_ring_color)
+	AoeVisual.spawn_expanding_ring(root, center, archer_ability_radius, 0.5,
+		archer_ring_color, 0.2)
+	for member in _squad.members:
+		if not is_instance_valid(member):
+			continue
+		var archer := member as ArcherSoldier
+		if archer == null:
+			continue
+		for j in range(archer_arrows_per_member):
+			var angle: float = randf() * TAU
+			# sqrt — uniform по площади круга (иначе плотность к центру).
+			var r: float = sqrt(randf()) * archer_ability_radius
+			var aim_pos := Vector3(
+				center.x + cos(angle) * r,
+				center.y,
+				center.z + sin(angle) * r,
+			)
+			archer.volley_fire_at(aim_pos, archer_volley_damage)

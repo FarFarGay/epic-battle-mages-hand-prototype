@@ -29,30 +29,36 @@ extends Node
 ## добавим `levels[]` как у SpellSystem.
 
 const PIKEMAN_SCENE: PackedScene = preload("res://scenes/soldier_pikeman.tscn")
-const DEFENDER_SCENE: PackedScene = preload("res://scenes/defender_gnome.tscn")
+const ARCHER_SCENE: PackedScene = preload("res://scenes/archer_soldier.tscn")
 
 const SOLDIER_CATALOG: Dictionary = {
-	&"defender": {
-		"name": "Отряд защитников",
-		"description": "Отряд из 3 лучников. Привязаны к палаткам, патрулируют периметр, реагируют на тревогу. В формации точность выше.",
-		"icon_color": Color(0.78, 0.2, 0.2, 1.0),
-		# 3 свободных gatherer'а конвертятся в 3 защитников и распределяются
-		# round-robin по живым палаткам (`Camp._recruit_defenders`).
+	&"archer_squad": {
+		"name": "Отряд лучников",
+		"description": "Отряд из 3 лучников. Дальний бой, точность растёт с опытом.",
+		"icon_color": Color(0.55, 0.35, 0.75, 1.0),
+		# 3 свободных gatherer'а конвертятся в 3 ArcherSoldier — через стандартный
+		# SoldierGnome-flow (нет диспатча по gnome_class). Управляется как pikeman:
+		# squad-команды Hold/Escort/Defend/Dismiss, sticky-aim ЛКМ.
 		"squad_size": 3,
-		# Cost — за весь отряд. Дерево + железо (древки + наконечники стрел).
-		# История: 6w+4i (старт) → 3w+2i (2026-05-17) — ждать рекрут было «прилично»,
-		# особенно после перехода стартовых защитников в «производятся за ресурсы».
-		# Снижение в 2× ускорило цикл «накопить → нанять» с ~30-60с до ~15-30с.
-		# Now defender дешевле per-юнит (1w+0.67i) чем pikeman (1.6w+1i) — по дизайну
-		# базовый юнит, дальняя статистика дешевле толстой melee-броня.
+		# Cost дешевле pikeman'а — лёгкий ranged-юнит без брони.
 		"cost": {ResourcePile.ResourceType.WOOD: 3, ResourcePile.ResourceType.IRON: 2},
-		"scene": DEFENDER_SCENE,
-		# Маркер для Camp.recruit_squad — диспатч в _recruit_defenders вместо
-		# обычного SoldierGnome-flow. Defender'ы используют свои @export'ы
-		# (cone_vision_radius, attack_radius, inaccuracy и т.д.), runtime-stats
-		# из каталога не применяются — поэтому stats пустой.
-		"gnome_class": &"defender",
-		"stats": {},
+		"scene": ARCHER_SCENE,
+		# ULT — волейный AOE-залп. Заряжается per-выстрел (см.
+		# ArcherSoldier._fire_at → _squad.add_charge(1.0)). При charge_max=15
+		# (≈ 5 выстрелов на лучника в отряде из 3) — готов.
+		"charge_max": 15.0,
+		# Stats на одного лучника. Большая дистанция, средний урон, медленный
+		# cooldown (по сравнению с pikeman'ом). HP меньше — squishy ranged.
+		"stats": {
+			"hp": 18.0,
+			"enemy_detect_radius": 25.0,
+			"attack_range": 22.5,
+			"attack_damage_min": 20.0,
+			"attack_damage_max": 32.0,
+			"attack_cooldown_min": 1.0,
+			"attack_cooldown_max": 2.0,
+			"move_speed": 1.6,
+		},
 	},
 	&"pikeman": {
 		"name": "Отряд копейщиков",
