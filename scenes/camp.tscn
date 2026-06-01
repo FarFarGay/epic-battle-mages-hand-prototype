@@ -1,23 +1,17 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/camp.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/gnome.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/tent.tscn" id="3"]
 [ext_resource type="Script" path="res://scripts/mount_slot.gd" id="4"]
-[ext_resource type="PackedScene" path="res://scenes/defender_gnome.tscn" id="5"]
-[ext_resource type="PackedScene" path="res://scenes/watch_bell.tscn" id="6_bell"]
 [ext_resource type="PackedScene" path="res://scenes/palisade_segment.tscn" id="7_palisade"]
 [ext_resource type="PackedScene" path="res://scenes/palisade_post.tscn" id="8_palisade_post"]
-[ext_resource type="PackedScene" path="res://scenes/defense_marker.tscn" id="9_defense_marker"]
 [ext_resource type="PackedScene" path="res://scenes/archer_post.tscn" id="10_archer_post"]
 
 [node name="Camp" type="Node3D"]
 script = ExtResource("1")
 tent_scene = ExtResource("3")
 gnome_scene = ExtResource("2")
-defender_scene = ExtResource("5")
-watch_bell_scene = ExtResource("6_bell")
-defense_marker_scene = ExtResource("9_defense_marker")
 palisade_segment_scene = ExtResource("7_palisade")
 palisade_post_scene = ExtResource("8_palisade_post")
 archer_post_scene = ExtResource("10_archer_post")

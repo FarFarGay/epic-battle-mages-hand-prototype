@@ -10,7 +10,6 @@ extends RefCounted
 ##
 ## ID-константы:
 ## - `NEW_TENT` — добавить палатку в кольцо лагеря (повторяемо)
-## - `WATCH_BELL` — сторожевой колокол, изымает 1 gatherer'а
 ## - `PALISADE` — частокол (brush-mode, polyline)
 ## - `ARCHER_POST` — стрелковый пост, изымает 1 gatherer'а
 ##
@@ -18,14 +17,13 @@ extends RefCounted
 ## (`Camp.CAMP_BUILDING_CATALOG`) для обратной совместимости callsite'ов.
 
 const NEW_TENT := &"new_tent"
-const WATCH_BELL := &"watch_bell"
 const PALISADE := &"palisade"
 const ARCHER_POST := &"archer_post"
 
 const CATALOG: Dictionary = {
 	NEW_TENT: {
 		"name": "Новая палатка",
-		"description": "Добавляет ещё одну палатку в кольцо лагеря — +жителей, +лучник, +собиратели.",
+		"description": "Добавляет ещё одну палатку в кольцо лагеря — +жителей-собирателей.",
 		"cost": {
 			ResourcePile.ResourceType.WOOD: 20,
 			ResourcePile.ResourceType.STONE: 10,
@@ -33,22 +31,6 @@ const CATALOG: Dictionary = {
 		},
 		"deployed_only": true,
 		"repeatable": true,
-	},
-	WATCH_BELL: {
-		"name": "Сторожевой колокол",
-		"description": "Гном-сторож замечает врагов в радиусе и зовёт двух защитников из лагеря. Колокол можно поставить где угодно — например, у источника ресурсов.",
-		"cost": {
-			ResourcePile.ResourceType.WOOD: 12,
-			ResourcePile.ResourceType.IRON: 5,
-		},
-		"deployed_only": true,
-		"repeatable": true,
-		"requires_gatherer": true,
-		"requires_aim": true,
-		# Preview-радиус aim-кольца. Совпадает с WatchBell.alarm_radius (7.5м).
-		# Если синхронизировать со сценой нужно динамически — в будущем
-		# прочитаем из инстанса при aim_start; пока константа достаточна.
-		"aim_radius": 7.5,
 	},
 	PALISADE: {
 		"name": "Деревянный частокол",

@@ -237,14 +237,6 @@ func _handle_input() -> void:
 			if Input.is_action_just_released(ACTION_ACTION):
 				_dispatch_action_release()
 
-	# Перехват ЛКМ для pickup-relocate колокола: если курсор близко к
-	# WatchBell, переходим в BuildAim relocate-mode и обычный grab не
-	# запускаем. Только на edge-press, только когда рука свободна.
-	if Input.is_action_just_pressed(ACTION_GRAB) and not _hand.is_holding() \
-			and _hand.active_category == Hand.Category.PHYSICAL \
-			and _hand.build_aim != null \
-			and _hand.build_aim.try_pickup_at_cursor():
-		return
 	# LMB-грабинг через polling, не через just_pressed/released:
 	# во время flick'а edge-события пропускались бы и _is_grabbing залипало
 	# (магнит после flick'а тянул бы предметы постоянно).

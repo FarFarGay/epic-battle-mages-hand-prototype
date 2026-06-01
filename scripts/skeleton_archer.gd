@@ -306,9 +306,8 @@ func _perform_strike(target: Node3D) -> void:
 		aim.y = 0.0
 	_telegraphed_aim = Vector3.INF
 	arrow.setup(spawn, aim)
-	# Alarm-сигнал: outgoing shot по не-защитнику = атака лагеря, защитники
-	# реагируют через `_alarm_target` (override cone-фильтра).
-	if not target.is_in_group(DefenderGnome.DEFENDER_GROUP):
+	# Alarm-сигнал: outgoing shot по не-боевому юниту = атака лагеря.
+	if not target.is_in_group(SoldierGnome.SOLDIER_GROUP):
 		EventBus.skeleton_attacked_camp.emit(self, target, target.global_position)
 	if debug_log and LogConfig.master_enabled:
 		var d: float = global_position.distance_to(aim)

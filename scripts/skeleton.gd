@@ -1643,9 +1643,9 @@ func _perform_strike(_target: Node3D) -> void:
 				if Damageable.try_damage(node, attack_damage):
 					hits += 1
 					# Alarm-сигнал триггерим только на палатке/мирном гноме —
-					# defender'ы себя не «зовут». Берём первого, чтобы не
+					# боевые юниты себя не «зовут». Берём первого, чтобы не
 					# спамить EventBus.
-					if alarm_victim == null and not node.is_in_group(DefenderGnome.DEFENDER_GROUP):
+					if alarm_victim == null and not node.is_in_group(SoldierGnome.SOLDIER_GROUP):
 						alarm_victim = node
 	if hits > 0 and alarm_victim != null:
 		EventBus.skeleton_attacked_camp.emit(self, alarm_victim, alarm_victim.global_position)

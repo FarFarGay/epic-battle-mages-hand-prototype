@@ -140,7 +140,7 @@ func _perform_strike(target: Node3D) -> void:
 	_telegraphed_aim = Vector3.INF
 	stone.debug_log = debug_log
 	stone.setup(spawn, aim)
-	if not target.is_in_group(DefenderGnome.DEFENDER_GROUP):
+	if not target.is_in_group(SoldierGnome.SOLDIER_GROUP):
 		EventBus.skeleton_attacked_camp.emit(self, target, target.global_position)
 	if debug_log and LogConfig.master_enabled:
 		var d: float = global_position.distance_to(aim)

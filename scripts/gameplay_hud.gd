@@ -93,8 +93,7 @@ const ACTION_BAR_FIXED_SUPER: Dictionary = {
 @export_node_path("Camp") var camp_path: NodePath
 
 ## Счётчик собирателей переехал в gatherer card (squad_panel, см.
-## _build_gatherer_card). RightPanel содержит только лучников/палатки/ресурсы.
-@onready var _defender_count_label: Label = $RightPanel/Margin/VBox/DefenderRow/CountLabel
+## _build_gatherer_card). RightPanel содержит палатки/ресурсы.
 @onready var _tent_count_label: Label = $RightPanel/Margin/VBox/TentRow/CountLabel
 @onready var _vbox: VBoxContainer = $RightPanel/Margin/VBox
 
@@ -151,17 +150,7 @@ var _slot_assignments: Array[StringName] = []
 ## State перетаскивания. null когда не активно; иначе Dictionary с ghost-
 ## картой, source slot idx, физическими параметрами (pos, velocity).
 var _drag_state: Dictionary = {}
-## Постоянная карточка отряда защитников (нижний-левый угол). Иконка + счётчик
-## живых + уровень отряда. Обновляется на _update_counts (0.25с) и
-## EventBus.squad_leveled_up.
-var _defender_card_count_label: Label
-var _defender_card_disband_btn: Button
-## Сама карточка защитников (PanelContainer). Скрывается через .visible
-## когда у игрока 0 защитников — пока он не построит первого, карточка не
-## мозолит глаза. Появляется автоматически в _refresh_defender_card.
-var _defender_card: PanelContainer
-
-## Карточка гномов-собирателей (squad_panel, выше defender card). Показывает
+## Карточка гномов-собирателей (squad_panel, первая в списке). Показывает
 ## счётчик живых gatherer'ов + кнопки переключения режима «Работа» (C) /
 ## «Тревога» (V). Активный режим подсвечивается через font_color.
 var _gatherer_card_count_label: Label
@@ -169,15 +158,6 @@ var _gatherer_work_btn: Button
 var _gatherer_alarm_btn: Button
 ## Сама карточка собирателей (PanelContainer). Скрывается когда 0 gatherer'ов.
 var _gatherer_card: PanelContainer
-
-## Сколько защитников ставить в следующую линию обороны. Игрок настраивает
-## через +/− счётчик в defender card. Дефолт — текущее историческое 3.
-## Persistent между нажатиями «На защиту» — игрок может разбить отряд по
-## линиям выбранного размера.
-var _defense_slot_count: int = 3
-var _defense_slot_label: Label
-var _defense_slot_minus_btn: Button
-var _defense_slot_plus_btn: Button
 
 ## Порядок и метаданные отображения ресурсов в правой панели. Пять типов из
 ## ResourcePile.ResourceType, кроме GENERIC (legacy-ящик, не геймплейный).
@@ -199,7 +179,6 @@ func _ready() -> void:
 	_build_journal_button()
 	_build_action_bar()
 	_build_gatherer_card()
-	_build_defender_card()
 	_update_counts()
 	# Sync с текущим состоянием Camp (на случай позднего hookup или сцены
 	# с уже накопленным XP). Затем подписываемся на инкременты.
@@ -367,206 +346,6 @@ func _build_gatherer_card() -> void:
 	_squad_panel.move_child(card, 0)
 
 
-## Постоянная карточка отряда защитников. Живёт в _squad_panel (там же где
-## карточки копейщиков), всегда первая в списке. По стилю — копия soldier
-## squad card'ы (PanelContainer + header swatch + title), без action-buttons:
-## защитники не отзываются командами, они живут в палатках.
-##
-## Обновление текста — _refresh_defender_card на тике 0.25с (_update_counts).
-func _build_defender_card() -> void:
-	# Гарантируем что _squad_panel создан до добавления нашей карточки.
-	_ensure_squad_panel()
-	# Красный border чтоб визуально отличать от squad-cards копейщиков.
-	var parts := _make_squad_card(Color(0.7, 0.2, 0.2, 0.9))
-	var card: PanelContainer = parts[0]
-	var vbox: VBoxContainer = parts[1]
-	_defender_card = card
-	# Swatch — цвет DefenderGnome (как у squad'ов копейщиков).
-	_defender_card_count_label = _add_squad_card_header(
-		vbox, Color(0.78, 0.2, 0.2, 1.0), "Защитники — —"
-	)
-
-	# Уровень + XP-бар. Squad XP curve общая для всего отряда защитников
-	# (не per-unit) — раньше эта полоска жила в правой панели рядом с
-	# ресурсами, перенесена сюда (2026-05-16) ближе к юниту, к которому
-	# относится. ProgressBar заполняется внутри текущего уровня
-	# (см. _refresh_squad_bar). Overlay-Label поверх показывает «X/Y».
-	var xp_row := HBoxContainer.new()
-	xp_row.add_theme_constant_override("separation", 6)
-	xp_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(xp_row)
-	_squad_level_label = Label.new()
-	_squad_level_label.text = "ур. 0"
-	_squad_level_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9, 1))
-	_squad_level_label.add_theme_font_size_override("font_size", 11)
-	_squad_level_label.custom_minimum_size = Vector2(36, 0)
-	xp_row.add_child(_squad_level_label)
-	_squad_xp_bar = ProgressBar.new()
-	_squad_xp_bar.custom_minimum_size = Vector2(0, 14)
-	_squad_xp_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_squad_xp_bar.show_percentage = false
-	_squad_xp_bar.min_value = 0.0
-	_squad_xp_bar.max_value = 1.0  # перенастроим под кривую при первом update
-	_squad_xp_bar.value = 0.0
-	xp_row.add_child(_squad_xp_bar)
-	# Накладной Label с «X/Y» поверх bar'а.
-	_squad_xp_label = Label.new()
-	_squad_xp_label.text = "0/0"
-	_squad_xp_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_squad_xp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_squad_xp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_squad_xp_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
-	_squad_xp_label.add_theme_font_size_override("font_size", 10)
-	_squad_xp_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_squad_xp_bar.add_child(_squad_xp_label)
-
-	# Счётчик «Слотов: N» с +/− кнопками. Управляет _defense_slot_count —
-	# сколько защитников игрок хочет в следующей линии. Clamp 1..defender_count.
-	# Persistent между «На защиту» нажатиями.
-	var slot_row := HBoxContainer.new()
-	slot_row.add_theme_constant_override("separation", 4)
-	slot_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(slot_row)
-	_defense_slot_minus_btn = Button.new()
-	_defense_slot_minus_btn.text = "−"
-	_defense_slot_minus_btn.focus_mode = Control.FOCUS_NONE
-	_defense_slot_minus_btn.custom_minimum_size = Vector2(28, 22)
-	_defense_slot_minus_btn.add_theme_font_size_override("font_size", 13)
-	_defense_slot_minus_btn.pressed.connect(_on_defense_slot_minus_pressed)
-	slot_row.add_child(_defense_slot_minus_btn)
-	_defense_slot_label = Label.new()
-	_defense_slot_label.text = "Слотов: 3"
-	_defense_slot_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_defense_slot_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_defense_slot_label.add_theme_font_size_override("font_size", 12)
-	slot_row.add_child(_defense_slot_label)
-	_defense_slot_plus_btn = Button.new()
-	_defense_slot_plus_btn.text = "+"
-	_defense_slot_plus_btn.focus_mode = Control.FOCUS_NONE
-	_defense_slot_plus_btn.custom_minimum_size = Vector2(28, 22)
-	_defense_slot_plus_btn.add_theme_font_size_override("font_size", 13)
-	_defense_slot_plus_btn.pressed.connect(_on_defense_slot_plus_pressed)
-	slot_row.add_child(_defense_slot_plus_btn)
-
-	# Кнопки команд:
-	# «На защиту» → стартует BuildAim для DefenseMarker (drag-direction), игрок
-	#   ставит линию обороны → _defense_slot_count ближайших СВОБОДНЫХ защитников
-	#   идут в формацию. Повторный клик создаёт второй маркер (следующие N).
-	# «Патруль» → отзывает всех с маркеров (destroy всех DefenseMarker'ов),
-	#   защитники возвращаются к свободному патрулю.
-	var btn_row := HBoxContainer.new()
-	btn_row.add_theme_constant_override("separation", 4)
-	btn_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(btn_row)
-
-	var btn_defend := Button.new()
-	btn_defend.text = "На защиту"
-	btn_defend.focus_mode = Control.FOCUS_NONE
-	btn_defend.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	btn_defend.add_theme_font_size_override("font_size", 11)
-	btn_defend.pressed.connect(_on_defender_defend_pressed)
-	btn_row.add_child(btn_defend)
-
-	var btn_patrol := Button.new()
-	btn_patrol.text = "Патруль"
-	btn_patrol.focus_mode = Control.FOCUS_NONE
-	btn_patrol.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	btn_patrol.add_theme_font_size_override("font_size", 11)
-	btn_patrol.pressed.connect(_on_defender_patrol_pressed)
-	btn_row.add_child(btn_patrol)
-
-	# Второй ряд кнопок: «Расформировать» — отзывает 3 защитников обратно в
-	# собирателей с компенсацией 50% ресурсов рекрута. Симметрично «Распустить»
-	# на squad-карточках копейщиков.
-	var btn_row2 := HBoxContainer.new()
-	btn_row2.add_theme_constant_override("separation", 4)
-	btn_row2.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(btn_row2)
-
-	_defender_card_disband_btn = Button.new()
-	_defender_card_disband_btn.text = "Расформировать (×3)"
-	_defender_card_disband_btn.focus_mode = Control.FOCUS_NONE
-	_defender_card_disband_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_defender_card_disband_btn.add_theme_font_size_override("font_size", 11)
-	_defender_card_disband_btn.tooltip_text = "Возвращает до 3 защитников в собирателей. Возврат: 50% ресурсов рекрута."
-	_defender_card_disband_btn.pressed.connect(_on_defender_disband_pressed)
-	btn_row2.add_child(_defender_card_disband_btn)
-
-	# Вставляем после gatherer card. Defender строится сразу после gatherer'а
-	# (см. _ready), index получится 1. Соответственно move_child(1) фиксирует
-	# позицию, даже если порядок _ready'ев когда-то изменится.
-	_squad_panel.add_child(card)
-	_squad_panel.move_child(card, 1)
-
-
-## «На защиту» — тактическая команда (не постройка). Стартует direction-aim
-## для линии обороны: ЛКМ-drag задаёт origin + направление, на release
-## защитники идут на формацию через Camp.place_defense_formation. Бесплатно.
-## Размер линии — _defense_slot_count (1..N, выставляется счётчиком ±).
-func _on_defender_defend_pressed() -> void:
-	var hand := _resolve_hand()
-	if hand == null or hand.build_aim == null:
-		push_warning("[HUD:Defender] hand/build_aim не резолвится")
-		return
-	hand.build_aim.start_defense_formation_aim(_defense_slot_count)
-
-
-## ± счётчика «Слотов»: меняют _defense_slot_count и обновляют label.
-## Бапы вверх/вниз с clamp 1..max(defender_count, 1). Если защитников 0 —
-## значение остаётся как было (всё равно «На защиту» disabled будет).
-func _on_defense_slot_minus_pressed() -> void:
-	_defense_slot_count = maxi(1, _defense_slot_count - 1)
-	_refresh_defense_slot_label()
-
-
-func _on_defense_slot_plus_pressed() -> void:
-	var max_slots: int = _defense_slot_max()
-	_defense_slot_count = mini(max_slots, _defense_slot_count + 1)
-	_refresh_defense_slot_label()
-
-
-## Максимально допустимое значение счётчика = defender_count лагеря
-## (но не меньше 1, чтобы при 0 защитников счётчик не показывал «Слотов: 0»).
-func _defense_slot_max() -> int:
-	if _camp == null or not is_instance_valid(_camp):
-		return 1
-	return maxi(1, _camp.defender_count())
-
-
-## Обновляет label + clamp _defense_slot_count к актуальному max. Зовётся
-## из _refresh_defender_card (на смену defender_count) и из ± нажатий.
-func _refresh_defense_slot_label() -> void:
-	if _defense_slot_label == null:
-		return
-	var max_slots: int = _defense_slot_max()
-	_defense_slot_count = clampi(_defense_slot_count, 1, max_slots)
-	_defense_slot_label.text = "Слотов: %d / %d" % [_defense_slot_count, max_slots]
-	if _defense_slot_minus_btn != null:
-		_defense_slot_minus_btn.disabled = _defense_slot_count <= 1
-	if _defense_slot_plus_btn != null:
-		_defense_slot_plus_btn.disabled = _defense_slot_count >= max_slots
-
-
-## «Патруль» — отзывает всех защитников с маркеров (Camp.disband_all_defense_markers).
-## Маркеры уничтожаются, ассигнованные защитники освобождаются и возвращаются
-## к свободному патрулю (с дебафом — стимул выстраивать заново когда нужно).
-func _on_defender_patrol_pressed() -> void:
-	if _camp == null or not is_instance_valid(_camp):
-		return
-	_camp.disband_all_defense_markers()
-
-
-## «Расформировать» — отзывает 3 ближайших к лагерю защитников (приоритет:
-## не в формации) обратно в собирателей. Возвращает 50% ресурсов рекрута
-## пропорционально числу расформированных (за 3 защитников из cost {6,4} —
-## 3 wood + 2 iron). Гейтится `can_disband_defenders()`: лагерь развёрнут
-## И defender_count > 0.
-func _on_defender_disband_pressed() -> void:
-	if _camp == null or not is_instance_valid(_camp):
-		return
-	_camp.disband_defender_squad()
-
-
 ## Кнопки переключения режима собирателей. Camp.set_collection_mode эмитит
 ## EventBus.collection_mode_changed → _on_collection_mode_changed обновит
 ## визуал кнопок.
@@ -615,30 +394,6 @@ func _refresh_gatherer_mode_buttons(mode: int) -> void:
 ## Обновляет текст карточки защитников + disabled-флаг «Расформировать»-кнопки.
 ## Дёргается из _update_counts (0.25с).
 ##
-## Лейбл показывает «N (в строю: M)» чтобы игрок понимал, сколько защитников
-## свободно под следующий маркер обороны (каждое «На защиту» забирает 3).
-func _refresh_defender_card() -> void:
-	if _defender_card_count_label == null:
-		return
-	if _camp == null or not is_instance_valid(_camp):
-		_defender_card_count_label.text = "Защитники — —"
-		if _defender_card_disband_btn != null:
-			_defender_card_disband_btn.disabled = true
-		if _defender_card != null:
-			_defender_card.visible = false
-		return
-	var total: int = _camp.defender_count()
-	var in_formation: int = _camp.defenders_in_formation_count()
-	if _defender_card != null:
-		_defender_card.visible = total > 0
-	_defender_card_count_label.text = "Защитники — %d (в строю: %d)" % [total, in_formation]
-	# «ур. K» пишется через _refresh_squad_bar (см. squad_xp_changed signal),
-	# не здесь — общий источник истины для уровня + xp-бара.
-	if _defender_card_disband_btn != null:
-		_defender_card_disband_btn.disabled = not _camp.can_disband_defenders()
-	_refresh_defense_slot_label()
-
-
 ## Action bar по дну экрана. Diablo-style: горизонтальный ряд слотов,
 ## слоты 1..5 — draggable (можно переназначить через ЛКМ-drag), слот 6 (Super) —
 ## фиксированный.
@@ -1160,14 +915,11 @@ func _process(delta: float) -> void:
 
 func _update_counts() -> void:
 	if _camp == null or not is_instance_valid(_camp):
-		_defender_count_label.text = "—"
 		_tent_count_label.text = "—"
 		_refresh_gatherer_card()
 		return
-	_defender_count_label.text = "%d" % _camp.defender_count()
 	_tent_count_label.text = "%d" % _camp.tent_count_alive()
 	_refresh_gatherer_card()
-	_refresh_defender_card()
 
 
 ## Обновление squad-бара. Вызывается на каждом инкременте XP (через

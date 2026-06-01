@@ -58,7 +58,6 @@ const VISION_RADIUS_TOWER: float = 20.0
 ## вдруг будет 0 или невалиден.
 const VISION_RADIUS_CAMP: float = 30.0
 const VISION_RADIUS_GNOME: float = 12.0
-const VISION_RADIUS_DEFENDER: float = 18.0
 const VISION_RADIUS_SOLDIER: float = 15.0
 
 ## Скорость расширения pulse-импактов в м/с. Используется и для grow-фазы
@@ -347,9 +346,7 @@ func _paint_vision_points() -> void:
 		if gp == null:
 			continue
 		var r: float = VISION_RADIUS_GNOME
-		if g is DefenderGnome:
-			r = VISION_RADIUS_DEFENDER
-		elif g is SoldierGnome:
+		if g is SoldierGnome:
 			r = VISION_RADIUS_SOLDIER
 		_paint_soft_circle(gp.global_position, r)
 	# Доп. источники: огни/костры/магия в FOG_REVEAL_GROUP. Каждый узел

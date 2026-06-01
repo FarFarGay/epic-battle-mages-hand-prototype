@@ -77,7 +77,6 @@ const UPGRADE_LONG_DRAW := &"long_draw"
 ## удобства callsite'ов (Camp.BUILDING_NEW_TENT короче CampBuildings.NEW_TENT
 ## и был исходным API). Каталог тоже re-exported ниже.
 const BUILDING_NEW_TENT := CampBuildings.NEW_TENT
-const BUILDING_WATCH_BELL := CampBuildings.WATCH_BELL
 const BUILDING_PALISADE := CampBuildings.PALISADE
 const BUILDING_ARCHER_POST := CampBuildings.ARCHER_POST
 
@@ -183,20 +182,9 @@ const CAMP_BUILDING_CATALOG: Dictionary = CampBuildings.CATALOG
 @export var stationary_threshold: float = 0.01
 
 @export_group("Gnomes")
-## Сцена обычного гнома-собирателя. Спавнится на каждую палатку
-## (gnomes_per_tent − defenders_per_tent) раз — это «жители-собиратели»,
-## ищут ResourcePile и носят к anchor лагеря.
+## Сцена обычного гнома-собирателя. Спавнится gnomes_per_tent раз на каждую
+## палатку — «жители-собиратели», ищут ResourcePile и носят к anchor лагеря.
 @export var gnome_scene: PackedScene
-## Сцена защитника-лучника (DefenderGnome). Спавнится на каждую палатку
-## defenders_per_tent раз — стоят у лагеря и стреляют в скелетов.
-## Если null — защитники не спавнятся, на их слоты подставятся обычные гномы.
-@export var defender_scene: PackedScene
-## Сцена сторожевого колокола (WatchBell). Спавнится через BUILDING_WATCH_BELL.
-## Если null — постройка watch_bell молча провалится.
-@export var watch_bell_scene: PackedScene
-## Сцена маркера обороны (DefenseMarker). Спавнится через BUILDING_DEFENSE_MARKER.
-## Если null — постройка молча fail'ит на _build_defense_marker (push_warning).
-@export var defense_marker_scene: PackedScene
 ## Сцена сегмента деревянного частокола. Спавнится множественно через
 ## BUILDING_PALISADE / try_build_palisade_line. Если null — постройка молча
 ## провалится.
@@ -342,20 +330,11 @@ var _pack_elapsed: float = 0.0
 var _last_target_pos: Vector3 = Vector3.INF
 ## Гномы лагеря — gnomes_per_tent × количество палаток. Создаются в _ready.
 var _gnomes: Array[Gnome] = []
-## Активные сторожевые колокола, построенные через [BUILDING_WATCH_BELL].
-## Camp подписан на каждый на `bell_alarmed` (диспатч защитников) и `destroyed`
-## (респавн gatherer'а на месте). Удаляются на destroy.
-var _bells: Array[WatchBell] = []
 ## Активные стрелковые посты (ArcherPost), построенные через
 ## BUILDING_ARCHER_POST. Camp подписан на каждый на `destroyed` (респавн
-## gatherer'а на месте, как с колоколом) и на pack — вычищает массив через
+## gatherer'а на месте) и на pack — вычищает массив через
 ## _dismantle_archer_posts(). Гном считается «внутри поста», пока пост стоит.
 var _archer_posts: Array[ArcherPost] = []
-## Активные маркеры обороны, построенные через BUILDING_DEFENSE_MARKER.
-## На спавн маркера: 3 ближайших защитника назначаются на слоты (через
-## defender.assign_to_marker). На marker.destroyed: все назначенные
-## освобождаются (release_from_marker), возвращаются к свободному патрулю.
-var _defense_markers: Array[DefenseMarker] = []
 ## Бездомные гномы (выкинутые из палатки), идут за караваном в общей цепочке
 ## за палатками. Порядок = порядок регистрации (раньше eject'нутые — ближе к
 ## палаткам). Слот в цепочке = индекс в массиве. Регистрируются из
@@ -584,29 +563,22 @@ func _spawn_harvester() -> void:
 
 
 func _spawn_gnomes() -> void:
-	if gnome_scene == null and defender_scene == null:
+	if gnome_scene == null:
 		if debug_log and LogConfig.master_enabled:
-			print("[Camp] ни gnome_scene, ни defender_scene не заданы — никого не спавним")
+			print("[Camp] gnome_scene не задана — никого не спавним")
 		return
 	for tent in _parts:
 		if not (tent is CampPart):
 			continue
 		var part := tent as CampPart
-		var total: int = part.gnomes_per_tent
-		# defenders_per_tent клампим до total — защитников не больше жителей.
-		var defender_n: int = clampi(part.defenders_per_tent, 0, total)
-		var gatherer_n: int = total - defender_n
-		# Сначала защитники (если их сцена задана), потом собиратели.
-		# Каждый получает позицию палатки + setup(camp, tent) — гном привязан
-		# именно к этой палатке (RETURNING_TO_TENT идёт сюда же).
-		for i in range(defender_n):
-			_spawn_one_gnome(defender_scene, tent, "defender")
-		for i in range(gatherer_n):
+		# Каждая палатка спавнит gnomes_per_tent собирателей. Лучники как
+		# боевые юниты теперь призываются как Squad через recruit_squad
+		# (см. SoldierSystem.&"archer_squad").
+		for i in range(part.gnomes_per_tent):
 			_spawn_one_gnome(gnome_scene, tent, "gatherer")
 
 
-## Инстанцирует одну сцену гнома, привязывает к палатке. Используется
-## и для защитников (defender_scene), и для собирателей (gnome_scene).
+## Инстанцирует одну сцену гнома, привязывает к палатке.
 ## Если сцена null или не инстанцируется как Gnome — push_warning и null.
 ## Возвращает спавненного гнома (или null) — caller'у может потребоваться
 ## дёрнуть enter_deployed на нём (run-time постройка в DEPLOYED).
@@ -864,47 +836,16 @@ func _rebuild_deployed_targets() -> void:
 		idx += 1
 
 
-## Считает живых гномов-собирателей (исключая защитников). Используется HUD'ом.
+## Считает живых гномов-собирателей. Soldier'ы (pikeman, archer_squad)
+## мобилизованы через recruit_squad и не собирают, поэтому исключаются.
 func gatherer_count() -> int:
-	# Gatherer = гном НЕ в DEFENDER_GROUP и НЕ в SOLDIER_GROUP. Defender'ы
-	# привязаны к палатке и не собирают; soldier'ы мобилизованы через recruit
-	# и тоже не собирают.
 	var n := 0
 	for g in _gnomes:
 		if not is_instance_valid(g):
-			continue
-		if g.is_in_group(DefenderGnome.DEFENDER_GROUP):
 			continue
 		if g.is_in_group(SoldierGnome.SOLDIER_GROUP):
 			continue
 		n += 1
-	return n
-
-
-## Считает живых гномов-защитников (DefenderGnome).
-func defender_count() -> int:
-	var n := 0
-	for g in _gnomes:
-		if not is_instance_valid(g):
-			continue
-		if g.is_in_group(DefenderGnome.DEFENDER_GROUP):
-			n += 1
-	return n
-
-
-## Считает защитников, назначенных на DefenseMarker (формация). Используется
-## HUD'ом для отображения «в строю: M» — игрок понимает, сколько ещё свободно
-## под новый маркер (каждое «На защиту» забирает 3 ближайших свободных).
-func defenders_in_formation_count() -> int:
-	var n := 0
-	for g in _gnomes:
-		if not is_instance_valid(g):
-			continue
-		var def := g as DefenderGnome
-		if def == null:
-			continue
-		if def.is_in_formation_slot():
-			n += 1
 	return n
 
 
@@ -1084,8 +1025,6 @@ func _find_idle_gatherers(count: int) -> Array[Gnome]:
 			break
 		if not is_instance_valid(g):
 			continue
-		if g.is_in_group(DefenderGnome.DEFENDER_GROUP):
-			continue
 		if g.is_in_group(SoldierGnome.SOLDIER_GROUP):
 			continue
 		if g._state == Gnome.State.IN_TENT:
@@ -1096,8 +1035,6 @@ func _find_idle_gatherers(count: int) -> Array[Gnome]:
 			if found.size() >= count:
 				break
 			if not is_instance_valid(g):
-				continue
-			if g.is_in_group(DefenderGnome.DEFENDER_GROUP):
 				continue
 			if g.is_in_group(SoldierGnome.SOLDIER_GROUP):
 				continue
@@ -1144,9 +1081,6 @@ func can_recruit_squad(soldier_type: StringName) -> bool:
 ## Призвать отряд заданного типа. Создаёт Squad-объект и заполняет его
 ## squad_size солдатами. Каждый солдат — конвертированный gatherer.
 ## Возвращает Squad или null при провале.
-##
-## Диспатч по gnome_class из каталога: &"defender" → DefenderGnome flow
-## (без Squad, round-robin по палаткам), иначе → SoldierGnome flow (Squad).
 func recruit_squad(soldier_type: StringName) -> Squad:
 	if SoldierSystem == null:
 		return null
@@ -1157,11 +1091,6 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
 	if data.is_empty():
 		push_warning("Camp.recruit_squad: неизвестный тип %s" % soldier_type)
-		return null
-	if data.get("gnome_class", &"") == &"defender":
-		_recruit_defenders(soldier_type, data)
-		# Defender-flow не возвращает Squad — defender'ы присоединяются к
-		# общему пулу (DEFENDER_GROUP), не группируются как отряд.
 		return null
 	var cost: Dictionary = data.get("cost", {})
 	if not economy.can_afford(cost):
@@ -1205,185 +1134,13 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 	return squad
 
 
-## Defender-вариант рекрута: конвертит N gatherer'ов в N DefenderGnome'ов и
-## распределяет их round-robin по живым палаткам. В отличие от SoldierGnome-
-## flow не создаёт Squad-объект — защитники работают индивидуально через
-## tent-привязку, DEFENDER_GROUP и AI (cone-vision/bell-alarm/DefenseMarker).
-##
-## Все гейты (deployed, can_afford, gatherer_count + reserve) валидируются
-## здесь же — мимо UI вызов (читы/гонка) безопасен. На любой ошибке после
-## economy.try_spend — rollback ресурсов через economy.add_resource.
-func _recruit_defenders(soldier_type: StringName, data: Dictionary) -> void:
-	var cost: Dictionary = data.get("cost", {})
-	if not economy.can_afford(cost):
-		return
-	var squad_size: int = SoldierSystem.get_squad_size(soldier_type)
-	if gatherer_count() < squad_size + get_recruit_reserve():
-		return
-	var gatherers: Array[Gnome] = _find_idle_gatherers(squad_size)
-	if gatherers.size() < squad_size:
-		return
-	var scene: PackedScene = data.get("scene", null)
-	if scene == null:
-		push_error("Camp._recruit_defenders: scene не задан в каталоге для %s" % soldier_type)
-		return
-	# Список живых палаток — round-robin'им новых защитников между ними,
-	# чтобы периметр рос равномерно. Если все палатки умерли (но gatherer'ы
-	# почему-то ещё есть) — призыв отменяется: бездомных защитников не плодим.
-	var tents: Array = []
-	for p in _parts:
-		if is_instance_valid(p):
-			tents.append(p)
-	if tents.is_empty():
-		return
-	if not economy.try_spend(cost):
-		return
-
-	var spawned: int = 0
-	for i in range(gatherers.size()):
-		var gatherer: Gnome = gatherers[i]
-		var tent: Node3D = tents[i % tents.size()]
-		var defender := scene.instantiate() as DefenderGnome
-		if defender == null:
-			push_error("Camp._recruit_defenders: scene не инстанцируется как DefenderGnome")
-			continue
-		add_child(defender)
-		defender.global_position = gatherer.global_position
-		defender.setup(self, tent)
-		# КРИТИЧНО: setup() через override _enter_in_tent гонит DefenderGnome'а
-		# в FOLLOWING_CARAVAN — там _active_tick идёт в caravan-ветку и
-		# игнорирует _assigned_marker. Без enter_deployed() рекрутированный
-		# защитник назначался в формацию, но не шёл на слот.
-		# Рекрут гейтится is_deployed(), поэтому enter_deployed безопасен.
-		defender.enter_deployed()
-		defender.destroyed.connect(_on_gnome_destroyed.bind(defender))
-		_gnomes.erase(gatherer)
-		gatherer.queue_free()
-		_gnomes.append(defender)
-		spawned += 1
-
-	if spawned == 0:
-		# Все instantiate'ы провалились — rollback cost'а.
-		for type in cost:
-			economy.add_resource(type, int(cost[type]))
-		return
-
-	if debug_log and LogConfig.master_enabled:
-		print("[Camp] призваны защитники (×%d), всего: %d" % [spawned, defender_count()])
-	EventBus.camp_buildings_changed.emit()
-
-
-## Размер «партии» расформирования защитников. Симметрично squad_size при
-## рекруте (3 = 1 squad). UI-кнопка «Расформировать» отзывает столько за клик.
-const DEFENDER_DISBAND_BATCH: int = 3
-## Доля возврата ресурсов рекрута при расформировании. 0.5 = половина wood/iron
-## возвращается на склад. Дизайнерское решение (2026-05-15): рекрут не должен
-## быть «безответным» — игрок боится тратить gnome'ов на дорогих защитников,
-## если их нельзя откатить. 50% — компромисс: возврат есть, но потеря
-## ощутимая (нельзя бесконечно туда-сюда оптимизировать).
-const DEFENDER_DISBAND_REFUND_RATIO: float = 0.5
-
-
-## True если игрок может прямо сейчас расформировать защитника (кнопка
-## активна). Достаточно одного защитника — расформируем сколько есть.
-## Лагерь должен быть DEPLOYED — конвертация в gatherer'а без палатки
-## бессмысленна.
-func can_disband_defenders() -> bool:
-	return is_deployed() and defender_count() > 0
-
-
-## Расформировать партию защитников: до DEFENDER_DISBAND_BATCH ближайших к
-## центру лагеря конвертируются обратно в gatherer'ов. Если защитник был на
-## маркере или отвечал на колокол — освобождаем перед конвертацией.
-##
-## Приоритет: сначала свободные (не в формации), потом из формации. Игрок
-## таким образом сохраняет активную защиту, расформировывая «лишних».
-##
-## Refund: 50% от cost рекрута, пропорционально числу расформированных.
-## Для 3 защитников из cost {WOOD:6, IRON:4} возвращается 3 wood + 2 iron.
-## Возвращает количество расформированных (0 если кнопку нажали мимо гейта).
-func disband_defender_squad() -> int:
-	if not can_disband_defenders():
-		return 0
-	# Собираем кандидатов; сортируем сначала по «не в формации», потом по
-	# дистанции до anchor'а. Так первые 3 — это «свободные ближайшие», что
-	# минимально ломает текущую оборону.
-	var candidates: Array[DefenderGnome] = []
-	for g in _gnomes:
-		if not is_instance_valid(g):
-			continue
-		var def := g as DefenderGnome
-		if def != null:
-			candidates.append(def)
-	if candidates.is_empty():
-		return 0
-	var center: Vector3 = _deploy_anchor
-	candidates.sort_custom(func(a: DefenderGnome, b: DefenderGnome) -> bool:
-		var a_in: bool = a.is_in_formation_slot()
-		var b_in: bool = b.is_in_formation_slot()
-		if a_in != b_in:
-			return not a_in  # не-в-формации идут первыми
-		var da: float = (Vector3(a.global_position.x, center.y, a.global_position.z) - center).length_squared()
-		var db: float = (Vector3(b.global_position.x, center.y, b.global_position.z) - center).length_squared()
-		return da < db
-	)
-	var n: int = mini(candidates.size(), DEFENDER_DISBAND_BATCH)
-	var converted: int = 0
-	for i in range(n):
-		var def: DefenderGnome = candidates[i]
-		if not is_instance_valid(def):
-			continue
-		# Отвязка от маркера/колокола обязательна — иначе после queue_free
-		# у маркера останется висячая ссылка через slot_idx, у колокола —
-		# зачёт «отвечает». release_*_from_* идемпотентны (no-op если не
-		# был назначен), безопасны для unconditional-вызова.
-		def.release_from_marker()
-		def.release_from_bell()
-		var pos: Vector3 = def.global_position
-		var tent: CampPart = _pick_tent_for_new_gatherer()
-		if tent == null:
-			continue
-		var gatherer := _spawn_one_gnome(gnome_scene, tent, "gatherer")
-		if gatherer != null:
-			gatherer.global_position = pos
-			# В DEPLOYED — сразу выходим в SEARCHING (симметрично dismiss_squad).
-			# Без этого новый gatherer сидел бы IN_TENT и не работал бы.
-			if _state == State.DEPLOYED:
-				gatherer.enter_deployed()
-		_gnomes.erase(def)
-		def.queue_free()
-		converted += 1
-
-	# Refund пропорционально converted. Округление floor — игрок не получает
-	# за остатки (1 защитник: 6×0.5×1/3 = 1 wood, 4×0.5×1/3 = 0.67 → 0 iron).
-	if converted > 0 and SoldierSystem != null:
-		var data: Dictionary = SoldierSystem.get_soldier_data(&"defender")
-		var cost: Dictionary = data.get("cost", {})
-		var squad_size: int = SoldierSystem.get_squad_size(&"defender")
-		if squad_size > 0:
-			for type in cost:
-				var refund_amt: int = int(float(cost[type]) * DEFENDER_DISBAND_REFUND_RATIO * float(converted) / float(squad_size))
-				if refund_amt > 0:
-					economy.add_resource(type, refund_amt)
-
-	if debug_log and LogConfig.master_enabled:
-		print("[Camp] расформированы защитники (×%d), осталось: %d" % [converted, defender_count()])
-	EventBus.camp_buildings_changed.emit()
-	return converted
-
-
-## Сколько юнитов указанного типа сейчас в лагере. Универсальный геттер для
-## UI журнала: для defender-каталога считает defender_count(), для остальных —
-## soldier_count(id). Без него UI пришлось бы branch'ить по gnome_class в
-## журнале — а это деталь реализации каталога, журнал не должен в неё лезть.
+## Сколько юнитов указанного типа сейчас в лагере. Геттер для UI журнала.
 func get_recruit_count(soldier_type: StringName) -> int:
 	if SoldierSystem == null:
 		return 0
 	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
 	if data.is_empty():
 		return 0
-	if data.get("gnome_class", &"") == &"defender":
-		return defender_count()
 	return soldier_count(soldier_type)
 
 
@@ -1762,14 +1519,14 @@ func build_zone_center() -> Vector3:
 	return _deploy_anchor
 
 
-## Ищет первого живого gatherer'а (Gnome без DEFENDER_GROUP). null если нет.
+## Ищет первого живого gatherer'а (Gnome без SOLDIER_GROUP). null если нет.
 ## Используется в can_build_reason / try_build для построек с требованием
 ## «1 гном» как часть стоимости.
 func _find_free_gatherer() -> Gnome:
 	for g in _gnomes:
 		if not is_instance_valid(g):
 			continue
-		if g.is_in_group(DefenderGnome.DEFENDER_GROUP):
+		if g.is_in_group(SoldierGnome.SOLDIER_GROUP):
 			continue
 		return g
 	return null
@@ -1838,8 +1595,6 @@ func _apply_building(id: StringName, params: Dictionary) -> bool:
 	match id:
 		BUILDING_NEW_TENT:
 			return _build_new_tent()
-		BUILDING_WATCH_BELL:
-			return _build_watch_bell(params)
 		BUILDING_ARCHER_POST:
 			return _build_archer_post(params)
 	push_error("Camp._apply_building: нет handler для id=%s" % id)
@@ -1999,108 +1754,7 @@ func _do_palisade_rebake() -> void:
 	_rebake_navmesh()
 
 
-## Прямой приказ «занять линию обороны». Не постройка — тактический маркер,
-## аналог «Иди сюда» для squad'ов, но в рамках лагеря (для defender'ов).
-## Без cost, без can_build_reason, без try_spend. Минимальные ограничения:
-## лагерь должен быть DEPLOYED и position в build_zone.
-##
-## Спавнит DefenseMarker, назначает 3 ближайших свободных защитника. На
-## marker.destroyed — освобождает их обратно.
-## Спавнит DefenseMarker и привязывает к нему `slot_count` ближайших
-## свободных защитников. slot_count = 0 → дефолт (DefenseMarker.DEFAULT_SLOT_COUNT).
-## HUD пробрасывает выбранное значение через HandBuildAim.
-func place_defense_formation(world_pos: Vector3, facing: Vector3, slot_count: int = 0) -> bool:
-	if _state != State.DEPLOYED:
-		if LogConfig.master_enabled:
-			print("[Camp] defense formation отменена — лагерь не развёрнут")
-		return false
-	if not is_in_build_zone(world_pos):
-		if LogConfig.master_enabled:
-			print("[Camp] defense formation отменена — вне build_radius")
-		return false
-	if defense_marker_scene == null:
-		push_warning("Camp: defense_marker_scene не задан")
-		return false
-	var marker := defense_marker_scene.instantiate() as DefenseMarker
-	if marker == null:
-		push_error("Camp.place_defense_formation: scene не инстанцируется как DefenseMarker")
-		return false
-	get_tree().current_scene.add_child(marker)
-	# 0 как «не задано» → дефолт. Положительные → ровно как игрок попросил.
-	var effective_count: int = slot_count if slot_count > 0 else DefenseMarker.DEFAULT_SLOT_COUNT
-	marker.setup(world_pos, facing, effective_count)
-	marker.destroyed.connect(_on_defense_marker_destroyed.bind(marker))
-	_defense_markers.append(marker)
-	_assign_defenders_to_marker(marker)
-	if LogConfig.master_enabled:
-		print("[Camp] Defense formation @ (%.1f, %.1f) face=(%.2f, %.2f) slots=%d, markers=%d" % [
-			world_pos.x, world_pos.z, facing.x, facing.z, effective_count, _defense_markers.size(),
-		])
-	return true
-
-
-## Подбирает marker.slot_count ближайших защитников к позиции маркера,
-## ещё не назначенных в формацию, и привязывает их. Свободные = те у кого
-## is_in_formation_slot() == false. Если защитников меньше нужного — занимаем
-## сколько есть, остальные слоты остаются пустыми.
-func _assign_defenders_to_marker(marker: DefenseMarker) -> void:
-	# Собираем кандидатов: живые defender'ы без assignment'а.
-	var candidates: Array[DefenderGnome] = []
-	for g in _gnomes:
-		if not is_instance_valid(g):
-			continue
-		var def := g as DefenderGnome
-		if def == null:
-			continue
-		if def.is_in_formation_slot():
-			continue
-		candidates.append(def)
-	# Сортируем по дистанции до маркера (XZ). Берём первые slot_count.
-	var mp: Vector3 = marker.global_position
-	candidates.sort_custom(func(a: DefenderGnome, b: DefenderGnome) -> bool:
-		var da: float = (Vector3(a.global_position.x, mp.y, a.global_position.z) - mp).length_squared()
-		var db: float = (Vector3(b.global_position.x, mp.y, b.global_position.z) - mp).length_squared()
-		return da < db
-	)
-	var n: int = mini(candidates.size(), marker.slot_count)
-	for i in range(n):
-		candidates[i].assign_to_marker(marker, i)
-	if LogConfig.master_enabled:
-		print("[Camp] DefenseMarker assignment: %d из %d свободных защитников назначено (нужно %d)" % [
-			n, candidates.size(), marker.slot_count,
-		])
-
-
-## Массово отзывает всех защитников с маркеров — destroy всех DefenseMarker'ов.
-## Каждый marker.destroy() триггерит _on_defense_marker_destroyed, который
-## освобождает assigned-защитников. По сигналу destroyed маркер queue_free'нется.
-##
-## Вызывается из HUD «Патруль»-кнопки. Сам список _defense_markers очищается
-## через chain _on_defense_marker_destroyed.erase(marker).
-func disband_all_defense_markers() -> void:
-	# Копируем список — destroy() триггерит _on_defense_marker_destroyed,
-	# который erase'ит из _defense_markers (модификация во время итерации).
-	var snapshot: Array[DefenseMarker] = _defense_markers.duplicate()
-	for marker in snapshot:
-		if is_instance_valid(marker):
-			marker.destroy()
-
-
-## Marker queue_free'нулся (или destroy()'нулся явно). Освобождаем
-## всех защитников, которые на нём были — обратно к свободному патрулю.
-func _on_defense_marker_destroyed(marker: DefenseMarker) -> void:
-	_defense_markers.erase(marker)
-	for g in _gnomes:
-		if not is_instance_valid(g):
-			continue
-		var def := g as DefenderGnome
-		if def == null:
-			continue
-		if def._assigned_marker == marker:
-			def.release_from_marker()
-
-
-## Общий гейт для garrison-зданий (bell / archer_post): scene есть, position
+## Общий гейт для garrison-зданий (archer_post): scene есть, position
 ## задана и попадает в build_radius. Возвращает true если можно строить.
 ## Лог-tag нужен только для warning'ов («Camp._build_X: …»).
 func _validate_garrison_build(scene: PackedScene, pos: Vector3, log_tag: String) -> bool:
@@ -2143,102 +1797,6 @@ func _respawn_garrison_gatherer(spawn_pos: Vector3, log_tag: String) -> Gnome:
 	elif _state == State.PACKING_RETURNING:
 		gnome.request_return()
 	return gnome
-
-
-## Эффект BUILDING_WATCH_BELL: спавнит WatchBell в `params.position`, привязывает
-## уже-изъятого gatherer'а как гарнизон (флаг — на destroy респавним), подписывает
-## Camp на alarm/destroyed сигналы. Если позиция не задана — fail.
-func _build_watch_bell(params: Dictionary) -> bool:
-	var pos: Vector3 = params.get("position", Vector3.INF)
-	if not _validate_garrison_build(watch_bell_scene, pos, "_build_watch_bell"):
-		return false
-	var bell := watch_bell_scene.instantiate() as WatchBell
-	if bell == null:
-		push_error("Camp._build_watch_bell: scene не инстанцируется как WatchBell")
-		return false
-	# Якорь в current_scene чтобы пережить возможный queue_free Camp'а
-	# (на P-restart Camp.reset_population колокол НЕ удаляет — это автономное
-	# здание, не часть лагеря; см. _bells).
-	get_tree().current_scene.add_child(bell)
-	bell.global_position = pos
-	# Маркер «гном внутри» — мы уже его queue_free'нули, физически отдельного
-	# инстанса нет. На destroy респавним нового gatherer'а на месте колокола.
-	bell.set_garrison(bell)  # self-ref как truthy маркер
-	bell.bell_alarmed.connect(_on_bell_alarmed)
-	bell.destroyed.connect(_on_bell_destroyed.bind(bell))
-	_bells.append(bell)
-	return true
-
-
-## Скелет вошёл в alarm-зону колокола. Помощь = 2 ближайших к колоколу
-## защитника из лагеря. Защитники сами управляют таймером (продлевают
-## пока в зоне есть враги; release после linger-периода после очищения,
-## см. DefenderGnome.bell_linger_seconds). Явный release происходит на
-## bell.destroyed (см. _on_bell_destroyed).
-const BELL_RESPONSE_COUNT: int = 2
-
-func _on_bell_alarmed(world_pos: Vector3) -> void:
-	# Резолв колокола обратно по позиции — Camp хранит _bells, ищем тот,
-	# чья global_position совпадает (epsilon для float). Альтернатива —
-	# передавать bell в сигнале, но Vector3 проще для будущих внешних слушателей.
-	var bell: WatchBell = null
-	for b in _bells:
-		if not is_instance_valid(b):
-			continue
-		if b.global_position.distance_squared_to(world_pos) < 0.01:
-			bell = b
-			break
-	if bell == null:
-		return
-	var defenders: Array = []
-	for g in _gnomes:
-		if not is_instance_valid(g):
-			continue
-		if not g.is_in_group(DefenderGnome.DEFENDER_GROUP):
-			continue
-		defenders.append(g)
-	if defenders.is_empty():
-		if debug_log and LogConfig.master_enabled:
-			print("[Camp:Bell] alarm @ (%.1f, %.1f) — нет живых защитников" % [world_pos.x, world_pos.z])
-		return
-	# Сортируем по дистанции до колокола (xz). Берём первые N.
-	defenders.sort_custom(func(a: Node3D, b2: Node3D) -> bool:
-		var da: float = (a.global_position - world_pos).length_squared()
-		var db: float = (b2.global_position - world_pos).length_squared()
-		return da < db
-	)
-	var n: int = mini(BELL_RESPONSE_COUNT, defenders.size())
-	for i in range(n):
-		var d := defenders[i] as DefenderGnome
-		if d != null:
-			d.respond_to_bell(bell)
-	if debug_log and LogConfig.master_enabled:
-		print("[Camp:Bell] alarm @ (%.1f, %.1f) — %d защитник(а) на помощь" % [
-			world_pos.x, world_pos.z, n,
-		])
-
-
-## Колокол разрушен. Спавним gatherer'а на его позиции (как «гном выскочил из
-## развалин»), он бежит в лагерь по обычному gatherer-flow'у (RETURNING_TO_TENT
-## → IN_TENT). По дороге его могут убить — это часть дизайна.
-func _on_bell_destroyed(bell: WatchBell) -> void:
-	_bells.erase(bell)
-	# Отзываем только тех защитников, кто отвечал НА ЭТОТ КОНКРЕТНЫЙ bell.
-	# Если на сцене несколько колоколов, разрушение одного не должно сбрасывать
-	# защитников, отвечающих на другой.
-	for g in _gnomes:
-		if is_instance_valid(g) and g is DefenderGnome:
-			var d := g as DefenderGnome
-			if d.is_responding_to_bell(bell):
-				d.release_from_bell()
-	if bell.get_garrison() == null:
-		return
-	# Гарнизон жив — спавним gatherer'а на месте колокола (общий путь с
-	# archer_post-destroy). Если палаток нет — гном не возрождается (см.
-	# [_respawn_garrison_gatherer] лог).
-	var gnome := _respawn_garrison_gatherer(bell.global_position, "Bell")
-	if gnome != null and debug_log and LogConfig.master_enabled:
-		print("[Camp:Bell] разрушен, гном-сторож выжил и бежит в лагерь")
 
 
 ## Эффект BUILDING_ARCHER_POST: спавнит стационарный стрелковый пост в
@@ -2295,9 +1853,9 @@ func _dismantle_archer_posts() -> void:
 			post.take_damage(post.hp_max * FORCED_DEMOLISH_DAMAGE_MULT)
 
 
-## Эффект BUILDING_NEW_TENT: спавнит новую палатку и заселяет её жителями
-## (по defaults из tent.tscn — gnomes_per_tent / defenders_per_tent).
-## Доступно только в DEPLOYED (гарантировано can_build_reason'ом).
+## Эффект BUILDING_NEW_TENT: спавнит новую палатку и заселяет её
+## gnomes_per_tent собирателями. Доступно только в DEPLOYED (гарантировано
+## can_build_reason'ом).
 ##
 ## В DEPLOYED палатки расставлены кольцом. Новая встаёт на anchor (центр),
 ## кольцо пересчитывается на N+1 слотов через _rebuild_deployed_targets,
@@ -2320,14 +1878,8 @@ func _build_new_tent() -> bool:
 		_rebuild_deployed_targets()
 	if tent is CampPart:
 		var part := tent as CampPart
-		var defender_n: int = clampi(part.defenders_per_tent, 0, part.gnomes_per_tent)
-		var gatherer_n: int = part.gnomes_per_tent - defender_n
 		var new_gnomes: Array[Gnome] = []
-		for i in range(defender_n):
-			var g := _spawn_one_gnome(defender_scene, tent, "defender")
-			if g != null:
-				new_gnomes.append(g)
-		for i in range(gatherer_n):
+		for i in range(part.gnomes_per_tent):
 			var g := _spawn_one_gnome(gnome_scene, tent, "gatherer")
 			if g != null:
 				new_gnomes.append(g)
@@ -2469,8 +2021,8 @@ func get_collection_mode() -> int:
 ## (enter_deployed → SEARCHING). ALARM — все gatherer'ы → request_return
 ## (бегут в палатки → IN_TENT, скрыты, неуязвимы).
 ##
-## DefenderGnome пропускается в обоих случаях: они снаружи всегда и в WORK,
-## и в ALARM (продолжают защищать периметр). Режим имеет эффект только в
+## SoldierGnome (pikeman/archer-squad) пропускается — они в squad-flow,
+## своё AI без оглядки на gatherer-mode. Режим имеет эффект только в
 ## DEPLOYED — в каравне/при свёртке гномы и так в палатках или идут туда.
 func set_collection_mode(mode: int) -> void:
 	if _collection_mode == mode:
@@ -2485,7 +2037,7 @@ func set_collection_mode(mode: int) -> void:
 	for g in _gnomes:
 		if not is_instance_valid(g):
 			continue
-		if g is DefenderGnome:
+		if g is SoldierGnome:
 			continue
 		match mode:
 			CollectionMode.WORK:

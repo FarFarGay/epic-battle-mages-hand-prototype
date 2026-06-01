@@ -59,29 +59,17 @@ var _aim_indicator: MeshInstance3D = null
 ## Большой круг зоны строительства вокруг центра лагеря — видим только в
 ## активном aim'е. Не двигается (camp.build_zone_center статичен в DEPLOYED).
 var _build_zone_indicator: MeshInstance3D = null
-## Если не null — мы в режиме relocate существующего колокола. _commit_aim
-## вместо try_build сдвигает позицию этого инстанса. На finish — колокол
-## возвращается на исходное место (отмена) или остаётся где переставили.
-var _relocating_bell: WatchBell = null
 ## Direction-aim режим (drag-направление: ЛКМ-зажим → origin → drag → release).
 ## _direction_aim_mode определяет что вызвать на commit:
 ##   "" — выкл, обычный single-point aim.
-##   "defense_formation" — команда Camp.place_defense_formation (не постройка).
+##   "archer_post" / другие — drag-flow для построек, требующих facing'а.
 ## _direction_origin = INF до press'а; после press'а — позиция.
 var _direction_aim_mode: String = ""
-## Желаемое количество слотов в линии обороны (только для
-## _direction_aim_mode == "defense_formation"). Заполняется в
-## start_defense_formation_aim, используется в _commit_direction_aim.
-## 0 → Camp возьмёт дефолт (DefenseMarker.DEFAULT_SLOT_COUNT = 3).
-var _defense_slot_count: int = 0
 var _direction_origin: Vector3 = Vector3.INF
 ## Визуал линии направления — стрелка от origin к курсору во время drag'а.
 var _direction_arrow: MeshInstance3D = null
-## Сентинель building_id для режима relocate. Не из CAMP_BUILDING_CATALOG.
-const RELOCATE_SENTINEL: StringName = &"<relocate>"
-## Радиус «захвата» колокола от точки курсора. ЛКМ в пределах этого
-## радиуса от любого колокола → start_relocate. Совпадает с
-## [Hand.PICKUP_HIGHLIGHT_RADIUS] — игрок видит подсветку, видит и точку
+## Радиус «захвата» от точки курсора для будущих pickup-объектов.
+## Совпадает с [Hand.PICKUP_HIGHLIGHT_RADIUS] — игрок видит подсветку, видит и точку
 ## действия. 1.5м комфортно — попадать пиксель-в-пиксель не нужно.
 const PICKUP_RADIUS: float = 1.5
 
@@ -129,54 +117,6 @@ func setup(hand: Hand) -> void:
 ## Hand.physical вызывает в обработке ЛКМ-press (ACTION_GRAB). Если в радиусе
 ## [PICKUP_RADIUS] от курсора есть колокол — переходим в relocate-mode, иначе
 ## возвращаем false (hand_physical продолжает обычное grab/slam).
-func try_pickup_at_cursor() -> bool:
-	if not is_instance_valid(_hand) or _hand.is_holding():
-		return false
-	if is_aiming_any():
-		return false  # уже что-то строим/двигаем, лишний pickup игнорируем
-	var cursor: Vector3 = _hand.cursor_world_position()
-	cursor.y -= _hand.hand_height
-	var r_sq: float = PICKUP_RADIUS * PICKUP_RADIUS
-	for n in get_tree().get_nodes_in_group(WatchBell.WATCH_BELL_GROUP):
-		if not is_instance_valid(n):
-			continue
-		var bell := n as WatchBell
-		if bell == null:
-			continue
-		var dx: float = bell.global_position.x - cursor.x
-		var dz: float = bell.global_position.z - cursor.z
-		if dx * dx + dz * dz <= r_sq:
-			start_relocate(bell)
-			return true
-	return false
-
-
-## Запуск relocate-mode для конкретного колокола. Колокол прячется и
-## отключается (set_carried(true)), под курсором появляется preview-кольцо
-## его alarm-зоны. ПКМ в build_zone — переставить, Esc — отмена (колокол
-## возвращается на исходное место).
-func start_relocate(bell: WatchBell) -> void:
-	if bell == null:
-		return
-	if _active_building != &"":
-		cancel_aim()
-	if not is_instance_valid(_hand):
-		push_warning("[Hand:BuildAim] start_relocate — _hand не задан")
-		return
-	if not is_instance_valid(_camp):
-		_camp = get_tree().get_first_node_in_group(Camp.CAMP_GROUP) as Camp
-	_relocating_bell = bell
-	_active_building = RELOCATE_SENTINEL
-	_aim_radius = bell.alarm_radius
-	_hand.push_category(Hand.Category.BUILD_AIM)
-	bell.set_carried(true)
-	_spawn_indicator()
-	if debug_log and LogConfig.master_enabled:
-		print("[Hand:BuildAim] relocate-старт %s @ (%.1f, %.1f)" % [
-			bell.name, bell.global_position.x, bell.global_position.z,
-		])
-
-
 ## True если сейчас идёт aim для указанной постройки.
 func is_aiming(building_id: StringName) -> bool:
 	return _active_building == building_id
@@ -271,32 +211,6 @@ func start_aim(building_id: StringName) -> void:
 		print("[Hand:BuildAim] aim старт для %s, radius=%.1f, direction=%s" % [
 			building_id, _aim_radius, str(_direction_aim_mode != ""),
 		])
-
-
-## Запуск aim'а для приказа «занять линию обороны». Гибрид: короткий клик
-## (release ≈ press) → facing вычисляется автоматически наружу от центра
-## лагеря. Drag (release заметно дальше press'а) → facing = направление
-## drag'а. Перекрывает 90% случаев без UI-усложнения; explicit-facing
-## для edge case'ов (фланг, засада) делается естественно — просто тянешь
-## руку дальше.
-##
-## slot_count — число защитников на линию (1..N). 0 → дефолт
-## (DefenseMarker.DEFAULT_SLOT_COUNT = 3).
-func start_defense_formation_aim(slot_count: int = 0) -> void:
-	if not is_instance_valid(_hand):
-		push_warning("[Hand:BuildAim] start_defense_formation_aim — _hand не задан")
-		return
-	if _active_building != &"":
-		cancel_aim()
-	_active_building = &"_defense_formation"  # маркер активного состояния, не из каталога
-	_aim_radius = 1.5
-	_direction_aim_mode = "defense_formation"  # drag-direction flow с auto-fallback на short-click
-	_direction_origin = Vector3.INF
-	_defense_slot_count = slot_count
-	_hand.push_category(Hand.Category.BUILD_AIM)
-	_spawn_indicator()
-	if LogConfig.master_enabled:
-		print("[Hand:BuildAim] defense-formation aim старт (click/drag hybrid) slots=%d" % slot_count)
 
 
 func cancel_aim() -> void:
@@ -442,39 +356,25 @@ func _commit_direction_aim(ground: Vector3) -> void:
 		return
 	# Гибрид click/drag: короткий drag → facing вычисляется автоматически
 	# наружу от центра лагеря; явный drag → используем direction как facing.
-	# Это работает и для defense_formation, и для generic-построек (стрелковый
-	# пост и пр.), потому что игрок ожидает одинаковой UX-логики.
 	var is_short_click: bool = drag_length_sq < DEFENSE_AUTO_FACING_DRAG_THRESHOLD * DEFENSE_AUTO_FACING_DRAG_THRESHOLD
 	if is_short_click:
 		var camp_center: Vector3 = _camp.build_zone_center()
 		var to_pos: Vector3 = origin - camp_center
 		to_pos.y = 0.0
 		facing = to_pos.normalized() if to_pos.length_squared() > 0.0001 else Vector3.FORWARD
-	# Dispatch по типу direction-aim'а.
-	match _direction_aim_mode:
-		"defense_formation":
-			var ok: bool = _camp.place_defense_formation(origin, facing, _defense_slot_count)
-			if LogConfig.master_enabled:
-				print("[Hand:BuildAim] defense-commit @ (%.1f, %.1f) face=(%.2f, %.2f) slots=%d %s → %s" % [
-					origin.x, origin.z, facing.x, facing.z, _defense_slot_count,
-					"[auto]" if is_short_click else "[drag]",
-					"OK" if ok else "FAIL",
-				])
-			_defense_slot_count = 0  # сброс, дефолт на следующий вход
-		_:
-			# Generic drag-direction для построек с requires_direction
-			# (стрелковый пост, будущие орудия).
-			var result: Dictionary = _camp.try_build(_active_building, {
-				"position": origin,
-				"facing_dir": facing,
-			})
-			if LogConfig.master_enabled:
-				print("[Hand:BuildAim] direction-commit %s @ (%.1f, %.1f) face=(%.2f, %.2f) %s → %s / %s" % [
-					_active_building, origin.x, origin.z, facing.x, facing.z,
-					"[auto]" if is_short_click else "[drag]",
-					"success" if result.get("success", false) else "FAIL",
-					str(result.get("reason", "")),
-				])
+	# Generic drag-direction для построек с requires_direction
+	# (стрелковый пост, будущие орудия).
+	var result: Dictionary = _camp.try_build(_active_building, {
+		"position": origin,
+		"facing_dir": facing,
+	})
+	if LogConfig.master_enabled:
+		print("[Hand:BuildAim] direction-commit %s @ (%.1f, %.1f) face=(%.2f, %.2f) %s → %s / %s" % [
+			_active_building, origin.x, origin.z, facing.x, facing.z,
+			"[auto]" if is_short_click else "[drag]",
+			"success" if result.get("success", false) else "FAIL",
+			str(result.get("reason", "")),
+		])
 	_finish_aim()
 
 
@@ -794,18 +694,6 @@ func _commit_aim() -> void:
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:BuildAim] ПКМ вне build_zone — игнор")
 		return
-	# Ветка relocate: сдвигаем существующий колокол вместо новой постройки.
-	if _relocating_bell != null:
-		if is_instance_valid(_relocating_bell):
-			_relocating_bell.global_position = Vector3(ground.x, _relocating_bell.global_position.y, ground.z)
-			_relocating_bell.set_carried(false)
-			if debug_log and LogConfig.master_enabled:
-				print("[Hand:BuildAim] relocate-commit %s → (%.1f, %.1f)" % [
-					_relocating_bell.name, ground.x, ground.z,
-				])
-		_relocating_bell = null  # set_carried уже снят, в _finish_aim не трогаем повторно
-		_finish_aim()
-		return
 	# Обычная постройка с нуля.
 	var result: Dictionary = _camp.try_build(_active_building, {"position": ground})
 	if debug_log and LogConfig.master_enabled:
@@ -818,10 +706,6 @@ func _commit_aim() -> void:
 
 
 func _finish_aim() -> void:
-	if _relocating_bell != null:
-		if is_instance_valid(_relocating_bell):
-			_relocating_bell.set_carried(false)
-		_relocating_bell = null
 	_clear_indicator()
 	if is_instance_valid(_direction_arrow):
 		_direction_arrow.queue_free()
