@@ -523,11 +523,13 @@ HandSuper пользуется теми же helper'ами через `_hand.spe
   - Pitch ~55° вниз, yaw 45° (классическая «изометрия» с осью Y вверх).
   - Базис задан явно в `transform = Transform3D(...)` в `.tscn` — не через `look_at`, чтобы матрица не зависела от стартовой позиции рига.
 
-**Скрипт `camera_rig.gd`:** Node3D-фолловер + zoom колесом мыши.
-- `@export_node_path("Node3D") target_path: NodePath`.
+**Скрипт `camera_rig.gd`:** `class_name CameraRig` extends Node3D. Фолловер + zoom колесом мыши + focus override.
+- `@export_node_path("Node3D") target_path: NodePath` → `_default_target` в `_ready`.
 - `@export follow_speed: float = 8.0`.
-- В `_ready` снимает цель, мгновенно прыгает на её позицию (нет «въезда» с (0, 0, 0)). Также сохраняет `_base_offset := _camera.position` — оффсет Camera3D из `.tscn`. Зум масштабирует именно его, не накапливая ошибки от предыдущих кадров.
-- В `_process`: `global_position = global_position.lerp(target.global_position, follow_speed * delta)` + `_update_zoom(delta)`.
+- В `_ready` регистрируется в группе `CAMERA_RIG_GROUP = &"camera_rig"`, снимает цель, мгновенно прыгает на её позицию (нет «въезда» с (0, 0, 0)). Также сохраняет `_base_offset := _camera.position` — оффсет Camera3D из `.tscn`. Зум масштабирует именно его, не накапливая ошибки от предыдущих кадров.
+- В `_process`: `global_position = global_position.lerp(_current_target().global_position, follow_speed * delta)` + `_update_zoom(delta)`.
+
+**Focus override** (2026-06-01): публичный API `set_focus_override(node: Node3D)` / `clear_focus_override()` — временная подмена цели без потери `_default_target`. `_current_target()` возвращает `_focus_override if is_instance_valid` else `_default_target`. Без стэка — одно override-окно за раз (для прототипа с одним данжем достаточно). Если override-узел queue_free'нулся без явного `clear_focus_override` — автоматический фоллбэк на дефолт через is_instance_valid-guard. Внешний consumer (`DungeonZone`, см. §5.6.3) находит риг по `get_first_node_in_group(CameraRig.CAMERA_RIG_GROUP)`.
 
 **Zoom колесом мыши:**
 - `_unhandled_input`: ловит `InputEventMouseButton` с `button_index = MOUSE_BUTTON_WHEEL_UP / WHEEL_DOWN`. WHEEL_UP → `_zoom_target *= zoom_step` (приближение), WHEEL_DOWN → `/= zoom_step` (отдаление). После клампа в `[zoom_min, zoom_max]`.
@@ -1277,6 +1279,38 @@ Pivot всех блокеров — у основания (y=0 = земля). Sn
 
 **Пример раскладки:** [scenes/level_forest_draft.tscn] — заготовка карты по референсу дизайнера (Start/Harvest/Finish, хребты по периметру, ResourceZone Wood в центре). Не интегрирован с игровой инфраструктурой (Tower/Hand/Camp), открывается в редакторе для визуального осмотра геометрии.
 
+### 5.6.3 DungeonZone — `scenes/dungeon_zone.tscn`, `scripts/dungeon_zone.gd` (`@tool`, 2026-06-01)
+
+Зона данжа. Пока внутри зоны хотя бы один **Soldier** (`SoldierGnome.SOLDIER_GROUP`) — камера переключается на CentroidProxy (центр масс живых солдат в зоне). Все вышли или умерли — камера возвращается на дефолтную цель `CameraRig`'а (башню).
+
+**Дизайнерская мотивация:** маленькое подземелье на карте, в которое башня геометрически не пролезает. Игрок ведёт туда squad sticky-aim'ом (см. §5.8.2.4), и пока юниты внутри — камера фокусируется на них, не на башне снаружи. Без явной кнопки «контроль отряда» — переключение по факту физического входа.
+
+**Структура `.tscn`:**
+```
+DungeonZone (Node3D, скрипт @tool)
+├── Area3D (collision_layer=0, collision_mask=FRIENDLY_UNIT=256)
+│   └── CollisionShape3D (BoxShape3D, resource_local_to_scene=true)
+├── Mesh (MeshInstance3D, BoxMesh + полупрозрачный зелёный material) — индикатор для дизайнера
+└── CentroidProxy (Node3D) — невидимая точка, скрипт двигает каждый кадр
+```
+
+**Один экспорт `size: Vector3 = (10, 4, 10)`** с setter'ом → `_refresh_visual()`. Синхронизирует BoxShape3D.size и Mesh.scale за один write — дизайнер крутит ОДИН field на DungeonZone, шейп и куб обновляются вместе. `resource_local_to_scene=true` на BoxShape3D, чтобы две зоны не шарили один resource.
+
+**Visual contract:**
+- В редакторе: зелёный полупрозрачный куб (`Color(0.25, 0.85, 0.35, 0.28)` + emission), виден дизайнеру.
+- В рантайме: `Mesh.visible = Engine.is_editor_hint()` → невидим игроку. Зона работает только через Area3D-сигналы.
+
+**Лог поведения (`_process` + body_entered/exited):**
+- `body_entered`: проверка `is_in_group(SoldierGnome.SOLDIER_GROUP)` (defender/gatherer игнорируются — их в данж не отправишь point-and-click'ом). Если `_members` стал непуст → `_camera_rig.set_focus_override(proxy)`.
+- `body_exited`: убрать из `_members`. Если стал пуст → `clear_focus_override()`.
+- `_process`: чистит freed-ссылки (солдат умер в зоне → body_exited Godot эмитит на следующем физкадре, флип камеры хочется СРАЗУ). После cleanup: если `_members` пуст и был непуст — `clear_focus_override()`. Иначе считает centroid X/Z живых членов и пишет в `proxy.global_position` с Y=Y зоны (данж на том же уровне что и зона, не подвал).
+
+**Editor-mode guards:** `_process` и signal connects в `_ready` раннеют через `if Engine.is_editor_hint(): return` — в редакторе только визуал (`_refresh_visual()`), никакой рантайм-логики.
+
+**Башня в данж не пускается ГЕОМЕТРИЧЕСКИ** — узкий проход в данж, башня не пролезает. Collision-фильтр не используется. Если в будущем понадобится явный гейт — отдельный коллайдер на layer'е башни, не здесь.
+
+**Не реализовано (если зайдёт):** стэк override'ов для нескольких данжей одновременно (сейчас последний сработавший «выигрывает»); fade-transition камеры (сейчас плавно через follow_speed=8.0 lerp); фильтр squad'а (сейчас любой Soldier — если будет несколько отрядов, считается общий centroid всех в зоне).
+
 ### 5.7 Camp — `scenes/camp.tscn`, `scripts/camp.gd`
 
 **Тип корня:** `Node3D` с `class_name Camp`.
@@ -1865,13 +1899,17 @@ READY → APPROACH → WINDUP → LUNGE → DRIFT → RECOVERY → READY
 **DEFEND wander-patrol:** `_tick_defend_patrol` — каждый юнит независимо берёт случайные точки на окружности `defend_patrol_radius=12м` (как у DefenderGnome.patrol_radius), идёт `defend_patrol_speed=1.2 м/с`. Не использует squad-кольцо — отряд равномерно расходится по периметру. На бой переключается из основного `_active_tick`.
 
 #### 5.8.2.4 HandSquadAim — координатор aim'а «Идти сюда»
-Дочерний узел Hand. Активируется HUD-кнопкой `«Идти сюда»` на squad-card → `Hand.set_active_category(SQUAD_AIM)` → spawn ground-кольца радиусом `aim_ring_radius=3.5м` под курсором. ПКМ — commit точки → `Camp.command_squad_hold(squad, pos)`.
+Дочерний узел Hand. Активируется HUD-кнопкой `«Идти сюда»` на squad-card → `Hand.set_active_category(SQUAD_AIM)` → spawn ground-кольца радиусом `aim_ring_radius=3.5м` под курсором. **ЛКМ** — commit точки → `Camp.command_squad_hold(squad, pos)`. ПКМ в SQUAD_AIM свободна (используется только Esc/повторный клик кнопки для выхода).
 
-**Hostile-подсветка:** каждый кадр scan'ит SKELETON_GROUP в радиусе кольца. Если найдены живые — кольцо красное (`Color(1.0, 0.25, 0.25, 0.95)`), иначе голубое. Сигнализирует: «кликнешь — отряд вбежит в эту толпу».
+**Sticky-mode (2026-06-01):** после commit'а aim **остаётся активным** — игрок может давать команды point-and-click без возврата в HUD. На точке commit'а спавнится независимый затухающий ground-ring (`commit_marker_duration=0.6с`, цвет берётся из текущего material'а cursor-ring'а — hostile-красный сохраняется). Cursor-ring продолжает следовать за курсором. До правки на sticky aim завершался после первого ПКМ; теперь — только явный выход. Plus guard на freed-squad в `_process` (autoexit если squad распущен/убит).
 
-UI-гейт на ПКМ: `Hand.is_pointer_over_ui()` — клик по HUD не фиксируется как commit aim'а.
+**ЛКМ-commit + marker priority (2026-06-01):** до 06-01 commit был на ПКМ (`hand_action`). Переведён на ЛКМ (`hand_grab`) — конфликт с [SquadChargeMarker] (тоже ЛКМ). Решение через приоритет в самом `HandSquadAim._process`: helper `_charge_marker_will_consume_lmb()` итерирует группу `SquadChargeMarker.GROUP` и зовёт публичный `would_consume_lmb() -> bool` на каждом. Если хоть один готов к ult'е и наводится — commit пропускается, marker сам срабатывает (ЛКМ принадлежит ему). На пустом месте → commit движения.
 
-**Cancel:** Esc (`ui_cancel`) отменяет aim без команды. Повторный клик «Идти сюда» на той же карточке — тоже toggle-cancel.
+**Hostile-подсветка:** каждый кадр scan'ит `Enemy.ENEMY_GROUP` (все типы врагов, не SKELETON_GROUP-only — см. `[[feedback-symmetric-interactions]]`) в радиусе кольца. Если найдены живые — кольцо красное (`Color(1.0, 0.25, 0.25, 0.95)`), иначе голубое. Сигнализирует: «кликнешь — отряд вбежит в эту толпу».
+
+UI-гейт на ЛКМ: `Hand.is_pointer_over_ui()` — клик по HUD не фиксируется как commit aim'а.
+
+**Cancel:** Esc (`ui_cancel`) — основной способ выхода. Повторный клик «Идти сюда» на той же карточке — toggle-cancel. Старт aim'а для другого squad'а — переключает контекст. Squad распущен/убит — guard на freed-ссылку в `_process` автоматически финиширует aim.
 
 #### 5.8.2.5 Camp API для отрядов
 - `recruit_squad(soldier_type) -> Squad` — диспетч по `gnome_class` из каталога. Гейтится `is_deployed() + can_afford(cost) + gatherer_count() ≥ squad_size + get_recruit_reserve()`. Reserve = `tent_count_alive() × RECRUIT_RESERVE_PER_TENT (=1)` — лагерь оставляет себе минимум 1 сборщика на каждую живую палатку, иначе экономика встанет (дизайнерское правило: армию строим излишком). UI расшифровывает нехватку как «оставьте сборщиков в лагере (нужно ещё N)». `get_recruit_reserve() -> int` — публичный getter, JournalPanel читает его для UX-текста.
@@ -1941,7 +1979,9 @@ ScrollContainer (PRESET_RIGHT_WIDE: anchor_top=0, anchor_bottom=1) → VBoxConta
 
 **Активация — ЛКМ при hover'е (2026-05-26).** Маркер **сам** считает hover (`_update_hover`): XZ-distance от `_hand.cursor_world_position()` до своих xz, `HOVER_RADIUS=1.5м` (совпадает с `Hand.PICKUP_HIGHLIGHT_RADIUS`). Не через `Hand.PICKUP_HIGHLIGHT_GROUP` колбэки — `Hand._update_pickup_highlight` гасит callbacks в не-PHYSICAL категориях (MAGIC и т.д.), и ability был бы недоступен при выбранном заклинании. Сами считаем — работает в PHYSICAL/MAGIC. На hover amplitude пульсации растёт `0.18→0.28` (визуальный «отклик»). При `is_charge_ready() AND _is_hovered AND Input.is_action_just_pressed("hand_grab")` → `_trigger_ability(center)`.
 
-**Гейт ввода (`_is_input_allowed`):** блокируем только SUPER (QTE-каст) / SQUAD_AIM (команда «иди туда») / BUILD_AIM (постройка) — там ЛКМ занят. Плюс `Hand.is_pointer_over_ui()` — клик по HUD не должен триггерить ability сквозь UI.
+**Гейт ввода (`_is_input_allowed`):** блокируем только SUPER (QTE-каст) / BUILD_AIM (brush-vertex) — там ЛКМ занят. SQUAD_AIM **разрешён** (2026-06-01): после перевода squad-aim commit'а на ЛКМ оба listener'а слушают одну кнопку — конфликт решается через `would_consume_lmb()` на стороне HandSquadAim (см. §5.8.2.4), маркеру нужно лишь сигналить готовность через публичный метод. До правки маркер блокировался в SQUAD_AIM безусловно — было невидно (one-shot aim), стало болью при sticky (ult недоступен пока aim активен — буквально в самый нужный момент). Плюс `Hand.is_pointer_over_ui()` — клик по HUD не должен триггерить ability сквозь UI.
+
+**Публичный API для координации:** `const GROUP := &"squad_charge_marker"` (маркер регается в `_ready`) + `would_consume_lmb() -> bool` (true если `is_charge_ready() AND _is_hovered AND _is_input_allowed()`). HandSquadAim итерирует группу и пропускает commit движения если хоть один маркер собирается съесть ту же ЛКМ.
 
 **Per-type dispatch ability'я.** В `_trigger_ability(center)` `match _squad.soldier_type`:
 - **pikeman**: круговая push-волна (`pikeman_ability_radius=6м`, `pikeman_damage=30`, `pikeman_push_speed=14 м/с × 0.35с`). Маска `Layers.ENEMIES | COLD_ENEMY` (только враги, гномов/палатки/палисад не задеваем — friendly-fire-free в отличие от player slam'а). Визуал: `AoeVisual.spawn_expanding_ring` + `spawn_ground_ring` + `spawn_dust` в центре, цвет огненно-оранжевый под цвет маркера (игрок видит «знак с маркера превратился в волну»).
@@ -2801,8 +2841,8 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 | `move_back` | S | Tower |
 | `move_left` | A | Tower |
 | `move_right` | D | Tower |
-| `hand_grab` | LMB | Hand:PhysicalActions (захват/бросок — работает в любой категории) |
-| `hand_action` | RMB | Hand:PhysicalActions (slam/flick) или Hand:Spell (fireball/firestorm), в зависимости от Hand.active_category |
+| `hand_grab` | LMB | Hand:PhysicalActions (захват/бросок — работает в любой категории); SquadChargeMarker (триггер ult'ы отряда при hover'е); HandSquadAim (commit точки «Иди сюда» в SQUAD_AIM, 2026-06-01) — приоритет marker'а через `would_consume_lmb()` |
+| `hand_action` | RMB | Hand:PhysicalActions (slam/flick) или Hand:Spell (fireball/firestorm), в зависимости от Hand.active_category. В SQUAD_AIM не используется (2026-06-01, перевод commit'а на ЛКМ) |
 | `equip_slam` | 1 | Hand:PhysicalActions (экипировать хлопок) → category PHYSICAL |
 | `equip_flick` | 2 | Hand:PhysicalActions (экипировать щелбан) → category PHYSICAL |
 | `equip_fireball` | 3 | Hand:Spell (экипировать фаербол) → category MAGIC |
@@ -2815,7 +2855,7 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 | `gnome_collect` | C | Camp.set_collection_mode(WORK) — gatherer'ы возвращаются на сбор |
 | `gnome_alarm` | V | Camp.set_collection_mode(ALARM) — gatherer'ы бегут в палатки (request_return); defender'ы продолжают защищать |
 
-**UI-гейт мыше-инпутов:** `Hand.is_pointer_over_ui()` → `get_viewport().gui_get_hovered_control() != null`. Все мыше-зависимые действия (LMB grab в hand_physical, ПКМ ability/spell, ПКМ commit aim'а отряда) гейтятся этим — клик по HUD-кнопке не тригерит параллельный grab/cast/aim под виджетом. Уже-активные действия (release удерживаемого) не трогаются. Клавиатурные хоткеи (equip 1/2/3/4, Space, Q, R) гейтом не покрыты — они работают и над UI.
+**UI-гейт мыше-инпутов:** `Hand.is_pointer_over_ui()` → `get_viewport().gui_get_hovered_control() != null`. Все мыше-зависимые действия (LMB grab/marker-trigger/squad-commit в `hand_physical`/`squad_charge_marker`/`hand_squad_aim`, ПКМ ability/spell) гейтятся этим — клик по HUD-кнопке не тригерит параллельный grab/cast/aim под виджетом. Уже-активные действия (release удерживаемого) не трогаются. Клавиатурные хоткеи (equip 1/2/3/4, Space, Q, R) гейтом не покрыты — они работают и над UI.
 
 **Focus_mode HUD-кнопок:** все squad-cards и journal-кнопка имеют `focus_mode = FOCUS_NONE`. Без этого Godot Button по дефолту имеет FOCUS_ALL, и Space на сфокусированной (последней кликнутой) кнопке параллельно триггерит её pressed-сигнал — после клика «Идти сюда» Space одновременно вызывал и super-удар, и активировал squad-aim ring.
 
@@ -3328,7 +3368,7 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 
     **(ж) Один путь, не много.** Архитектурно соблюдается правило `feedback_one_path_not_many`: единственный канал XP — orbs. Promежуточная попытка добавить per-kill flavor-trail (золотая искорка от трупа к ближайшему защитнику) была снята как мешающая: визуально trail неотличим от XpOrb (тот же золотой emissive шарик), игрок считывает частицу как «вот мой XP полетел в стрелка», а орб на земле — как что-то отдельное. Когнитивный диссонанс с реальной механикой. Один визуальный язык — один смысл: **золотой шар = XP, и это орб на земле, который надо собрать**.
 
-    **(з) Авто-магнит в зоне добычи** (2026-05-16, было запланировано как «UPGRADE_ORB_MAGNET»). Реализовано БЕЗ research-гейта: в IDLE-фазе раз в `GATHER_SCAN_INTERVAL = 0.2с` орб проверяет расстояние до развёрнутого `Camp.deploy_anchor`. Если в `Camp.gather_radius` (30м) — `_activate_magnet(camp)`, орб летит сам к лагерю. Гейтится `camp.is_deployed()` (в каравне `_deploy_anchor` неосмысленный, зона добычи неактивна; за пределы зоны на касание союзника). Цена: N orbs × 5Hz × M camps distance²/с — ~1000 ops/с на 200 орбов, незаметно. Дизайн: «своя территория = свой XP».
+    **(з) Авто-магнит в зоне добычи** (2026-05-16, было запланировано как «UPGRADE_ORB_MAGNET»). Реализовано БЕЗ research-гейта: в IDLE-фазе раз в `GATHER_SCAN_INTERVAL = 0.2с` орб проверяет расстояние до развёрнутого `Camp.deploy_anchor`. Если в `Camp.gather_radius` (30м) — `_activate_magnet(camp)`, орб летит сам к лагерю. Гейтится `camp.is_deployed()` (в каравне `_deploy_anchor` неосмысленный, зона добычи неактивна; за пределы зоны на касание союзника). Цена: N orbs × 5Hz × M camps distance²/с — ~1000 ops/с на 200 орбов, незаметно. Дизайн: «своя территория = свой XP». **Дополнено 2026-06-01**: после tower-зоны второй проход того же polling'а — по `SOLDIER_GROUP` с `soldier_pickup_radius=3м`. Симметрично tower-зоне: отряд «всасывает» XP по ходу боя, не нужно вести юнита прямо по орбу. См. этап 53(д) и `[[feedback-symmetric-interactions]]`.
 
     **(и) Серия фиксов высоты орба** (in-session отладка по логам):
     - Spawn ставился ПОСЛЕ `add_child`, а `_ready` орба зовётся синхронно из `add_child` — поэтому `_base_y` захватывал дефолтную (0,0,0). Bobbing качал орб вокруг y=0, низ sphere уходил под пол. Фикс: `orb.position = ...` ДО `add_child` (root `Main` — Node3D с identity transform, `.position == .global_position` после добавления).
@@ -3436,6 +3476,29 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
     **(д) HUD: пустые карточки скрыты.** `_gatherer_card` и `_defender_card` стартуют `visible = false`, появляются автоматом когда счётчик > 0 в `_refresh_*_card`. До первой постройки/рекрута HUD чище.
 
     **(е) Per-instance материалы для ArcherPost.** Баг: материалы в `archer_post.tscn` — SubResource, расшарены между ВСЕМИ инстансами поста. `_flash_damage()` модифицировал общий ресурс → все посты мигали красным при одном попадании, хотя HP per-instance. Фикс: `_localize_materials()` в `_ready` дублирует `material_override` на трёх мешах (PostLeg/Platform/ArcherMesh). Стоимость: 3 material instance per пост.
+
+53. **Sticky squad-aim, ЛКМ-управление, DungeonZone и soldier-XP-pickup** (2026-06-01).
+
+    Серия взаимосвязанных правок вокруг управления отрядом и подвижности камеры. Каждая по отдельности маленькая, но смысловой единицей — «отряд становится первоклассным объектом контроля наравне с башней».
+
+    **(а) Sticky-mode для «Иди сюда»** (`hand_squad_aim.gd`). Раньше после первого ПКМ aim завершался — игрок возвращался в HUD к кнопке для следующей точки. Sticky: commit точки не выходит из aim'а, на месте commit'а остаётся затухающий ground-ring (`commit_marker_duration=0.6с`, цвет берётся из cursor-ring'а — hostile-красный сохраняется). Выход — Esc / повторный клик кнопки / aim другого squad'а / гибель squad'а (guard на freed-ссылку в `_process`).
+
+    **(б) Перевод commit'а на ЛКМ + marker-priority** (продолжение). Дизайнер: «давай управление отрядом сделаем на ЛКМ направление движения». Конфликт с [SquadChargeMarker] (тоже ЛКМ): `HandSquadAim` итерирует группу `SquadChargeMarker.GROUP` и зовёт `would_consume_lmb()` на каждом маркере перед commit'ом — если кто-то готов ult'у и наведён, commit движения пропускается, маркер обрабатывает ЛКМ. RMB в SQUAD_AIM освобождается (раньше commit'ил).
+
+    **(в) Charge-marker блокировка в SQUAD_AIM снята** (`squad_charge_marker.gd`). До правки `_is_input_allowed` гасил ЛКМ во всех aim-категориях (SUPER/SQUAD_AIM/BUILD_AIM) — пессимистично, до sticky это было незаметно (категория жила 1 кадр), стало болью при sticky (ult недоступен пока aim активен — буквально в самый нужный момент). SUPER/BUILD_AIM остались (там ЛКМ реально занята). Маркер регается в `&"squad_charge_marker"` группу для координации с HandSquadAim.
+
+    **(г) DungeonZone — переключение фокуса камеры на отряд** (см. §5.6.3). Дизайнер построил подземелье, куда башня не пролезает геометрически; нужно центрировать камеру на солдатах когда они там. Решение через Area3D на FRIENDLY_UNIT-layer'е + CameraRig focus override:
+    - `CameraRig` получил публичный `set_focus_override(node) / clear_focus_override()` поверх существующего `target_path`. Регистрация в группе `&"camera_rig"` для внешних consumer'ов. `_current_target()` возвращает override если жив, иначе дефолт — automatic fallback на freed.
+    - `DungeonZone` (`@tool`): Area3D отлавливает SOLDIER_GROUP по body_entered/exited, держит `_members`, в `_process` чистит freed-ссылки и пишет centroid в невидимый CentroidProxy. Первый член внутри → override CameraRig'а на proxy, последний вышел/умер → clear. Один экспорт `size: Vector3` драйверит и BoxShape3D, и зелёный visual-куб (видим только в редакторе через `Engine.is_editor_hint()`).
+    - Фильтр Soldier-only — совпадает с дизайн-условием «в данж только группой солдат» (defender/gatherer на point-and-click не реагируют).
+    - Башня в данж не пускается ГЕОМЕТРИЧЕСКИ. Collision-фильтр не используется.
+
+    **(д) Soldier-XP-pickup радиус** (`xp_orb.gd`). Раньше солдат подбирал XpOrb только коллизией MagnetArea (sphere 0.6м) — приходилось проводить юнита прямо по орбу. Симметрично tower-зоне (`Camp.gather_radius=30м` с auto-magnet): добавил `soldier_pickup_radius=3.0м` (typical pikeman-formation width с буфером). В существующем 5Hz polling-цикле `_try_auto_magnetize_in_gather_zone` после tower-сканера — второй проход по `SOLDIER_GROUP`, если орб в радиусе живого солдата → magnet к его camp'у. Лётный target резолвится как раньше через `camp.get_xp_magnet_target` (Harvester/Tower). См. `[[feedback-symmetric-interactions]]` — «если tower собирает зоной, и soldier должен зоной».
+
+    **Архитектурно.**
+    - **Один путь, не много** (`[[feedback-one-path-not-many]]`). Soldier-pickup — расширение существующего polling-сканера орба, не отдельная Area3D на каждом солдате. Cam-focus — расширение существующего follower'а через override-флаг, не новый camera-controller.
+    - **Контракт через группу, не тип.** SquadChargeMarker.GROUP + `would_consume_lmb()` — HandSquadAim не знает про конкретный класс marker'а, только про contract. Если завтра появится другой LMB-listener в SQUAD_AIM-режиме — он зайдёт через ту же координационную дверь.
+    - **Marker-блок переоценён.** Защитное блокирование «всех aim-категорий» из этапа 47 было пессимизмом. С sticky-aim'ом это превратилось из невидимой осторожности в реальный bug. Принцип: гейты пишем по фактически-конфликтным input'ам, а не «на всякий случай».
 
 ### 7.3 Решённые ошибки
 
