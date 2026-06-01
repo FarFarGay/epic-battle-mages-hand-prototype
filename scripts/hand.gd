@@ -178,6 +178,19 @@ func is_holding() -> bool:
 	return physical_actions != null and physical_actions.is_holding()
 
 
+## True если рука сейчас в одной из «aim-takeover» категорий, где
+## input принадлежит специальному координатору (Super QTE, SquadAim,
+## BuildAim). Используется hand_physical/hand_spell для гейта своего
+## _handle_input — equip и cast не должны срываться в эти моменты.
+## HandSuper'у этот helper не подходит (когда сам Super активен,
+## hand_super._handle_input должен работать) — там inline-проверка
+## {SQUAD_AIM, BUILD_AIM} без SUPER.
+func is_in_aim_mode() -> bool:
+	return active_category == Category.SUPER \
+			or active_category == Category.SQUAD_AIM \
+			or active_category == Category.BUILD_AIM
+
+
 ## Переключает активную категорию ввода. Идемпотентно. Эмитит category_changed,
 ## на который PhysicalActions подписан (роняет удержанный предмет при уходе
 ## из PHYSICAL — иначе игрок переключился на магию, а в руке торчит ящик).

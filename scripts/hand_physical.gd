@@ -214,9 +214,7 @@ func _handle_input() -> void:
 	# В SUPER / SQUAD_AIM / BUILD_AIM режимах физический ввод полностью
 	# заглушаем — даже equip-переключения. Иначе нажатие «1» во время QTE /
 	# aim'а сбросит каст или цель. Координатор сам вернёт категорию на завершении.
-	if _hand.active_category == Hand.Category.SUPER \
-			or _hand.active_category == Hand.Category.SQUAD_AIM \
-			or _hand.active_category == Hand.Category.BUILD_AIM:
+	if _hand.is_in_aim_mode():
 		return
 	# Equip-биндинги (клавиши 1/2/3/4/5) теперь слушаются в GameplayHud
 	# через slot-mapping — позволяет drag-and-drop переназначение в action-bar'е.

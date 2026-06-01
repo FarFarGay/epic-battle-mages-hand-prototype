@@ -285,7 +285,7 @@ func setup(world_pos: Vector3, facing: Vector3, camp: Camp) -> void:
 	_camp = camp
 	var dir := facing
 	dir.y = 0.0
-	if dir.length_squared() < 0.0001:
+	if dir.length_squared() < VecUtil.EPSILON_SQ:
 		dir = Vector3.FORWARD
 	dir = dir.normalized()
 	# Локальный -Z головы при rotation.y = θ смотрит в (-sin θ, 0, -cos θ).
@@ -393,7 +393,7 @@ func _tick_scan_animation(delta: float) -> void:
 func _yaw_to_node(node: Node3D) -> float:
 	var to_t: Vector3 = node.global_position - global_position
 	to_t.y = 0.0
-	if to_t.length_squared() < 0.0001:
+	if to_t.length_squared() < VecUtil.EPSILON_SQ:
 		return _base_yaw
 	var dir: Vector3 = to_t.normalized()
 	return atan2(-dir.x, -dir.z)
@@ -441,7 +441,7 @@ func _is_target_in_attack_zone(node: Node3D) -> bool:
 	var to_t: Vector3 = node.global_position - global_position
 	to_t.y = 0.0
 	var d_sq: float = to_t.length_squared()
-	if d_sq < 0.0001 or d_sq > attack_radius * attack_radius:
+	if d_sq < VecUtil.EPSILON_SQ or d_sq > attack_radius * attack_radius:
 		return false
 	var d: float = sqrt(d_sq)
 	var head_forward: Vector3 = Vector3(-sin(_head_yaw), 0.0, -cos(_head_yaw))
@@ -457,7 +457,7 @@ func _is_target_in_attack_range(node: Node3D) -> bool:
 	var to_t: Vector3 = node.global_position - global_position
 	to_t.y = 0.0
 	var d_sq: float = to_t.length_squared()
-	return d_sq > 0.0001 and d_sq <= attack_radius * attack_radius
+	return d_sq > VecUtil.EPSILON_SQ and d_sq <= attack_radius * attack_radius
 
 
 ## Cone-scan: ищет ближайшую damageable-цель в attack-конусе вокруг ТЕКУЩЕГО
@@ -490,7 +490,7 @@ func _scan_cone_for_target() -> Node3D:
 		var to_t := node.global_position - global_position
 		to_t.y = 0.0
 		var d_sq := to_t.length_squared()
-		if d_sq < 0.0001:
+		if d_sq < VecUtil.EPSILON_SQ:
 			continue
 		var d := sqrt(d_sq)
 		if d > attack_radius:

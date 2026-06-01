@@ -50,11 +50,6 @@ extends Node3D
 ## Decrement'ится `consume_wave()` при каждом выстреле дирижёра. По исчерпанию
 ## (0) — зона тиха, пока кто-то не вызовет `add_waves`/`set_waves`.
 @export var wave_count: int = 5
-## Сколько скелетов в группе за одну волну с этой зоны.
-## DEPRECATED (K2 POI-driven): размер пачки теперь читается из активной
-## WaveStage POI, а не из самой зоны. Поле оставлено чтобы main.tscn с
-## override'нутым значением не валился на загрузке. Игнорируется.
-@export var skeletons_per_wave: int = 10
 @export_group("")
 
 var _waves_left: int = 0

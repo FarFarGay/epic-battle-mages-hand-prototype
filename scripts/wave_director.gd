@@ -30,12 +30,6 @@ enum Phase { IDLE, RUNNING }
 ## по anchor'у при camp_deployed. WaveDirector сам не знает, какой Camp
 ## развернулся — ищет ближайший к anchor в этом массиве.
 @export var camp_paths: Array[NodePath] = []
-## DEPRECATED (этап 42, фикс «POI без скрипта»): больше не используется.
-## POI собираются через группу [QuestActor.POI_GROUP], потому что
-## wave_schedule/safe_radius/API сидят на QuestActor-нодах (детях Poi_*),
-## а не на самих Poi_*-маркерах. Поле оставлено только чтоб main.tscn с
-## NodePath-override не валился на загрузке.
-@export_node_path("Node3D") var poi_root_path: NodePath
 @export var skeleton_scene: PackedScene
 ## Сцена скелета-гиганта (танк, фокус на Tower). Спавнится каждые
 ## [member giant_every_n_waves] волн как «боссовая» точка волны. Если null —

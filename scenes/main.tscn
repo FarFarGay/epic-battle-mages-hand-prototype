@@ -24,6 +24,8 @@
 [ext_resource type="PackedScene" path="res://scenes/fog_of_war.tscn" id="21_fog"]
 [ext_resource type="PackedScene" path="res://scenes/harvester.tscn" id="22_harvester"]
 [ext_resource type="PackedScene" path="res://scenes/archer_group.tscn" id="23_archer_group"]
+[ext_resource type="PackedScene" uid="uid://c5tyv5sieeeom" path="res://scenes/blocker_wall.tscn" id="25_og1vs"]
+[ext_resource type="PackedScene" path="res://scenes/dungeon_zone.tscn" id="26_2wyq8"]
 
 [sub_resource type="Environment" id="Environment_atmo"]
 background_mode = 1
@@ -58,7 +60,7 @@ size = Vector3(300, 1, 300)
 
 [node name="Main" type="Node3D" unique_id=462266493]
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1638326598]
 environment = SubResource("Environment_atmo")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1155419915]
@@ -102,7 +104,6 @@ map_half_extent = 150.0
 script = ExtResource("13")
 spawner_path = NodePath("../EnemySpawner")
 camp_paths = Array[NodePath]([NodePath("../Camp")])
-poi_root_path = NodePath("../PointsOfInterest")
 skeleton_scene = ExtResource("7")
 giant_scene = ExtResource("7_giant")
 giant_thrower_scene = ExtResource("7_thrower")
@@ -162,3 +163,29 @@ resource_type = 4
 
 [node name="FogOfWar" parent="." unique_id=1234567890 instance=ExtResource("21_fog")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.013473511, 0, -0.053047895)
+
+[node name="Dungeon" type="Node3D" parent="." unique_id=1732417692]
+
+[node name="BlockerWall" parent="Dungeon" unique_id=1988274554 instance=ExtResource("25_og1vs")]
+transform = Transform3D(20.34, 0, 0, 0, 1, 0, 0, 0, 1, 107.966, 0, 52)
+
+[node name="BlockerWall2" parent="Dungeon" unique_id=920418267 instance=ExtResource("25_og1vs")]
+transform = Transform3D(4.6000004, 0, 0, 0, 1, 0, 0, 0, 1, 56.200005, 0, 52)
+
+[node name="BlockerWall3" parent="Dungeon" unique_id=872542256 instance=ExtResource("25_og1vs")]
+transform = Transform3D(-1.0310293e-06, 0, -0.9999997, 0, 1, 0, 23.5872, 0, -4.3711374e-08, 46.9, 0, 99)
+
+[node name="BlockerWall4" parent="Dungeon" unique_id=1362096263 instance=ExtResource("25_og1vs")]
+transform = Transform3D(25.643204, 0, 0, 0, 1, 0, 0, 0, 1, 98, 0, 145.98036)
+
+[node name="BlockerWall5" parent="Dungeon" unique_id=1171929391 instance=ExtResource("25_og1vs")]
+transform = Transform3D(-7.0215117e-07, 0, 1, 0, 1, 0, -23.560284, 0, -2.9802322e-08, 148.69983, 0, 98.83364)
+
+[node name="BlockerWall6" parent="Dungeon" unique_id=1169551367 instance=ExtResource("25_og1vs")]
+transform = Transform3D(22.95, 0, 0, 0, 1, 0, 0, 0, 1, 92.605, 0, 74)
+
+[node name="BlockerWall7" parent="Dungeon" unique_id=1921138407 instance=ExtResource("25_og1vs")]
+transform = Transform3D(23.380001, 0, 0, 0, 1, 0, 0, 0, 1, 101.80631, 0, 116)
+
+[node name="DungeonZone" parent="." unique_id=1606547872 instance=ExtResource("26_2wyq8")]
+transform = Transform3D(9.79, 0, 0, 0, 1, 0, 0, 0, 8.96, 98.105, 1, 96.728)

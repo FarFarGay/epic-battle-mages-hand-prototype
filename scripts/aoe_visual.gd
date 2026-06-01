@@ -1,69 +1,22 @@
 class_name AoeVisual
 extends RefCounted
-## Общие визуалы AOE-удара/взрыва: распирающаяся distortion-сфера и пыль.
+## Общие визуалы AOE-удара/взрыва. Hub для всех радиус-эффектов руки и
+## магии: explosion (полноценный взрыв 3-в-1), ground_ring (плоское кольцо
+## на земле), expanding_ring (распахивающееся), dust (пылевой залп),
+## pulse_sparks (искры наружу).
 ##
-## Используется и `HandPhysicalSlam` (хлопок по земле), и `Fireball` (взрыв) —
-## единый визуальный язык для «удара о землю с разлётом всего вокруг».
-## Изначально жил в Slam с пулом MeshInstance3D'ей; перенесён сюда без пула,
-## так как и slam (cooldown 0.5с) и fireball (cooldown 3с) спавнят визуал
-## редко — overhead на каждый instance ≈0.2мс, неощутимо для прототипа.
-##
-## Доп. визуал индикатора чёткого радиуса (`spawn_radius_indicator`) даёт
-## явные «габариты» AOE — solid translucent sphere фиксированного размера,
-## fade-out. Distortion-волна и так показывает радиус, но дизайнеру удобнее
-## видеть жирную границу для тюнинга.
+## Используется HandPhysicalSlam (хлопок по земле), Fireball (взрыв),
+## Mine (триггер), HandSquadAim (aim-ring), squad-charge ability и др. —
+## единый визуальный язык для «удара/AOE с разлётом всего вокруг».
+## Без пула: spawn-частота низкая (cooldown 0.5-3с), overhead per-instance
+## ≈0.2мс, неощутимо для прототипа.
 
-const DISTORTION_MATERIAL_PATH := "res://resources/slam_distortion_material.tres"
 const DUST_MATERIAL_PATH := "res://resources/slam_dust_material.tres"
 const DUST_PROCESS_PATH := "res://resources/slam_dust_process.tres"
-
-## SphereMesh с radius=0.5 — distortion-шейдер расчитан на unit-радиус
-## (sphere_dist = length(object_position) - 0.5). Если radius иной —
-## dissolve_alpha постоянно 0 и эффект невидим. Размер компенсируется
-## через mesh.scale = target_radius / 0.5.
-const VISUAL_BASE_RADIUS := 0.5
-const VISUAL_BASE_HEIGHT := 1.0
 
 const DUST_AMOUNT := 72
 const DUST_LIFETIME := 0.9
 const DUST_QUAD_SIZE := 0.22
-
-
-## Распирающаяся distortion-волна. Расширяется до `radius` за `duration` с
-## затуханием intensity. На завершении tween'а — queue_free. Без пула.
-static func spawn_wave(root: Node, pos: Vector3, radius: float, duration: float = 0.45) -> void:
-	if root == null:
-		return
-	var base_mat := load(DISTORTION_MATERIAL_PATH) as ShaderMaterial
-	if base_mat == null:
-		push_error("[AoeVisual] не загрузился %s" % DISTORTION_MATERIAL_PATH)
-		return
-	var mat := base_mat.duplicate() as ShaderMaterial
-	var sphere := SphereMesh.new()
-	sphere.radius = VISUAL_BASE_RADIUS
-	sphere.height = VISUAL_BASE_HEIGHT
-	var mesh := MeshInstance3D.new()
-	mesh.mesh = sphere
-	mesh.material_override = mat
-	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	root.add_child(mesh)
-	mesh.global_position = pos
-	mat.set_shader_parameter("intensity", 1.0)
-	mat.set_shader_parameter("ripple_time", 0.0)
-	mat.set_shader_parameter("ripple_center", pos)
-	var target_scale: float = radius / sphere.radius
-	var tween := mesh.create_tween()
-	tween.set_parallel(true)
-	tween.tween_property(mesh, "scale", Vector3.ONE * target_scale, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.tween_method(_set_param.bind(mat, "intensity"), 1.0, 0.0, duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
-	tween.tween_method(_set_param.bind(mat, "ripple_time"), 0.0, 1.0, duration).set_trans(Tween.TRANS_LINEAR)
-	_queue_free_on_tween_finished(tween, mesh)
-
-
-static func _set_param(value: float, mat: ShaderMaterial, param_name: String) -> void:
-	if mat == null or not is_instance_valid(mat):
-		return
-	mat.set_shader_parameter(param_name, value)
 
 
 ## Lambda-helper: queue_free node на timeout таймера, БЕЗ Godot 4.6 warning'а
@@ -86,17 +39,6 @@ static func _schedule_queue_free(tree: SceneTree, node: Node, delay: float) -> v
 static func _queue_free_on_tween_callback(tween: Tween, node: Node) -> void:
 	var node_ref: WeakRef = weakref(node)
 	tween.tween_callback(func() -> void:
-		var n: Node = node_ref.get_ref()
-		if n != null:
-			n.queue_free()
-	)
-
-
-## Аналог [_queue_free_on_tween_callback] для tween.finished сигнала (когда
-## tween — parallel и нет tween_callback хвоста). WeakRef капчит mesh.
-static func _queue_free_on_tween_finished(tween: Tween, node: Node) -> void:
-	var node_ref: WeakRef = weakref(node)
-	tween.finished.connect(func() -> void:
 		var n: Node = node_ref.get_ref()
 		if n != null:
 			n.queue_free()
@@ -207,9 +149,8 @@ static func spawn_pulse_sparks(root: Node, pos: Vector3, target_radius: float, s
 
 ## Полноценный взрыв: ядро-вспышка (sphere) + огненные частицы (быстрые,
 ## ярко-оранжевые, разлетаются радиально) + дымные (медленнее, темнее,
-## поднимаются вверх). Всё процедурно, без внешних ассетов. Замена для
-## связки spawn_wave + spawn_dust + spawn_radius_indicator — один вызов
-## вместо трёх.
+## поднимаются вверх). Всё процедурно, без внешних ассетов. Один вызов
+## под полный AOE-эффект — используется Fireball'ом, Mine'ой.
 static func spawn_explosion(root: Node, pos: Vector3, radius: float) -> void:
 	if root == null:
 		return
@@ -465,34 +406,3 @@ static func spawn_expanding_ring(
 	_queue_free_on_tween_callback(tween, mesh)
 
 
-## Solid translucent sphere фиксированного радиуса — явный «вижу габариты»
-## визуал. Используется поверх distortion-волны (она тоже расширяется до
-## radius, но за 0.45с с дисслв-шейдером — границу не видно мгновенно).
-## Здесь сразу stand-up на полном размере, alpha plays down.
-static func spawn_radius_indicator(root: Node, pos: Vector3, radius: float, color: Color = Color(1.0, 0.5, 0.15, 0.35), duration: float = 0.4) -> void:
-	if root == null:
-		return
-	var sphere := SphereMesh.new()
-	sphere.radius = VISUAL_BASE_RADIUS
-	sphere.height = VISUAL_BASE_HEIGHT
-	sphere.radial_segments = 24
-	sphere.rings = 12
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED  # видим и снаружи, и изнутри
-	mat.no_depth_test = false
-	mat.emission_enabled = true
-	mat.emission = Color(color.r, color.g, color.b, 1.0)
-	mat.emission_energy_multiplier = 0.6
-	var mesh := MeshInstance3D.new()
-	mesh.mesh = sphere
-	mesh.material_override = mat
-	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	root.add_child(mesh)
-	mesh.global_position = pos
-	mesh.scale = Vector3.ONE * (radius / sphere.radius)
-	var tween := mesh.create_tween()
-	tween.tween_property(mat, "albedo_color:a", 0.0, duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	_queue_free_on_tween_callback(tween, mesh)
