@@ -1158,10 +1158,21 @@ func _build_debug_tab(camp: Node) -> void:
 
 	var wd: Node = get_tree().get_first_node_in_group(WaveDirector.GROUP)
 
+	# Список читов длинный — вертикальный ScrollContainer оборачивает list.
+	# Горизонтальный скролл выключен, чтобы карточки растягивались на всю
+	# ширину панели как раньше. ScrollContainer берёт всю оставшуюся высоту
+	# вкладки (size_flags_vertical = EXPAND_FILL), list внутри растёт по
+	# содержимому и прокручивается колесом мыши.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_content.add_child(scroll)
+
 	var list := VBoxContainer.new()
 	list.add_theme_constant_override("separation", 8)
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_content.add_child(list)
+	scroll.add_child(list)
 
 	list.add_child(_build_cheat_card(
 		"Старт/рестарт волн",
@@ -1225,6 +1236,13 @@ func _build_debug_tab(camp: Node) -> void:
 		"+100",
 		camp,
 		func(): _grant_all_resources(camp, 100),
+	))
+	list.add_child(_build_cheat_card(
+		"+1000 золота",
+		"Накидывает 1000 единиц золота на склад. Триггер победы матча (цель: 1000 GOLD).",
+		"+1000",
+		camp,
+		func(): camp.economy.add_resource(int(ResourcePile.ResourceType.GOLD), 1000),
 	))
 	list.add_child(_build_cheat_card(
 		"Призвать копейщиков",

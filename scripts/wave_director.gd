@@ -256,7 +256,7 @@ func cheat_force_wave() -> void:
 	if stage == null:
 		return
 	if stage.has_groups():
-		_spawn_groups_wave(_select_groups_for_wave(stage))
+		_spawn_groups_wave(_select_groups_for_wave(stage), stage.simultaneous_groups > 1)
 	else:
 		_spawn_legacy_poi_wave(stage.skeletons_per_wave)
 	_wave_cd = stage.wave_interval
@@ -647,9 +647,11 @@ func _tick_active_poi(delta: float) -> void:
 	if _wave_cd <= 0.0:
 		# Новая модель — массив CombatGroup'ов (поддерживает многофронт +
 		# композицию). Legacy fallback — одиночный кластер скелетов.
-		# random_groups=true — один случайный preset за волну.
+		# random_groups=true — N preset'ов за волну (simultaneous_groups).
+		# multi_directional=true заставляет _spawn_groups_wave размещать
+		# группы под равно-распределёнными углами вокруг лагеря.
 		if stage.has_groups():
-			_spawn_groups_wave(_select_groups_for_wave(stage))
+			_spawn_groups_wave(_select_groups_for_wave(stage), stage.simultaneous_groups > 1)
 		else:
 			_spawn_legacy_poi_wave(stage.skeletons_per_wave)
 		_wave_count += 1
@@ -787,19 +789,30 @@ func _spawn_legacy_poi_wave(count: int) -> void:
 		])
 
 
-## Выбирает массив групп для текущей волны с учётом [WaveStage.random_groups].
-## random_groups=true → одна случайная группа из stage.groups (preset-режим,
-## каждая волна непредсказуемый сет с случайной стороны). False → все
-## группы стадии (legacy многофронт — все «фронты» одновременно).
+## Выбирает массив групп для текущей волны.
+## - random_groups=false → все группы (legacy, все «фронты» одновременно).
+## - random_groups=true + simultaneous_groups=1 → одна случайная группа.
+## - random_groups=true + simultaneous_groups=N → N УНИКАЛЬНЫХ случайных
+##   групп (без повторов). На спавне они получают разные направления
+##   через _spawn_groups_wave(multi_directional=true).
 func _select_groups_for_wave(stage: WaveStage) -> Array[CombatGroup]:
 	if not stage.random_groups or stage.groups.size() <= 1:
 		return stage.groups
-	var picked: CombatGroup = stage.groups[randi() % stage.groups.size()]
-	if picked == null:
-		return stage.groups
-	# Типизированный массив — иначе _spawn_groups_wave получит untyped Array
-	# и пройдёт через for, но Godot ругнётся на несовместимый параметр.
-	var out: Array[CombatGroup] = [picked]
+	var n: int = mini(stage.simultaneous_groups, stage.groups.size())
+	if n <= 1:
+		# Один preset на волну.
+		var picked: CombatGroup = stage.groups[randi() % stage.groups.size()]
+		if picked == null:
+			return stage.groups
+		var single: Array[CombatGroup] = [picked]
+		return single
+	# N уникальных: shuffle копию массива и взять первые n.
+	var pool: Array[CombatGroup] = stage.groups.duplicate()
+	pool.shuffle()
+	var out: Array[CombatGroup] = []
+	for i in range(n):
+		if pool[i] != null:
+			out.append(pool[i])
 	return out
 
 
@@ -813,7 +826,15 @@ func _select_groups_for_wave(stage: WaveStage) -> Array[CombatGroup]:
 ## на zone-резолв, не на UnitEntry). Это сохраняет старый budget: даже
 ## составная группа из 10 скелетов в 2 типах — всё ещё «одна волна»
 ## по budget'у zone'ы.
-func _spawn_groups_wave(groups: Array[CombatGroup]) -> void:
+## multi_directional=true: группы получают равно-распределённые углы вокруг
+## camp_center (для N=2 — противоположные стороны), origin вычисляется по
+## этому углу на дистанции [_caravan_spawn_distance]-аналоге. Это даёт
+## физический многофронт «слева И справа одновременно» — squad не закроет
+## оба, рука обязана работать на втором фронте.
+##
+## multi_directional=false (legacy): каждая группа берёт случайную safe-точку
+## в своей SpawnZone — стороны не гарантированы.
+func _spawn_groups_wave(groups: Array[CombatGroup], multi_directional: bool = false) -> void:
 	if _spawner == null or _active_camp == null:
 		return
 	if _active_camp.nearest_part_to(_active_camp.global_position) == null:
@@ -822,15 +843,28 @@ func _spawn_groups_wave(groups: Array[CombatGroup]) -> void:
 		return
 	var spawned_total: int = 0
 	var fronts_fired: int = 0
-	for group in groups:
+	# Базовый угол volume-рандомизируем чтобы пары фронтов не падали в
+	# одни и те же оси каждый раз; деление 360° на N даёт равно-распределённые
+	# направления. Для N=2: 0° и 180° относительно base_angle.
+	var base_angle: float = randf() * TAU
+	var count: int = groups.size()
+	for i in range(count):
+		var group: CombatGroup = groups[i]
 		if group == null or group.is_empty():
 			continue
-		if _spawn_single_group(group):
+		var ok: bool
+		if multi_directional and count > 1:
+			var angle: float = base_angle + TAU * float(i) / float(count)
+			ok = _spawn_single_group_at_angle(group, angle)
+		else:
+			ok = _spawn_single_group(group)
+		if ok:
 			spawned_total += group.total_count()
 			fronts_fired += 1
 	if debug_log and LogConfig.master_enabled:
-		print("[WaveDirector] groups-волна: %d фронтов, %d юнитов суммарно" % [
-			fronts_fired, spawned_total,
+		var mode: String = "multi-front" if multi_directional and count > 1 else "single/random"
+		print("[WaveDirector] groups-волна (%s): %d фронтов, %d юнитов суммарно" % [
+			mode, fronts_fired, spawned_total,
 		])
 
 
@@ -856,6 +890,46 @@ func _spawn_single_group(group: CombatGroup) -> bool:
 		_assign_forced_targets(enemies, target_part)
 		any_spawned = true
 	if any_spawned:
+		zone.consume_wave()
+	return any_spawned
+
+
+## Спавн группы под конкретным углом от центра лагеря. Используется в
+## multi_directional-режиме: точка origin = center + (cos(a), 0, sin(a))×dist,
+## где dist = wave_safe_radius + buffer. Это гарантирует разные стороны
+## периметра для каждого фронта. Zone берётся первой live (для consume_wave
+## budget'а); если нет — fallback на random.
+func _spawn_single_group_at_angle(group: CombatGroup, angle: float) -> bool:
+	if _active_camp == null or _spawner == null:
+		return false
+	var center: Vector3 = _active_camp.current_center()
+	# Дистанция спавна: чуть дальше safe-радиуса (volume имеет смысл «вне
+	# зоны защитников»). +8м буфера — комфортная свобода для гнома
+	# заметить пачку и среагировать.
+	var spawn_dist: float = wave_safe_radius + 8.0
+	var origin := Vector3(
+		center.x + cos(angle) * spawn_dist,
+		_spawner.spawn_y,
+		center.z + sin(angle) * spawn_dist,
+	)
+	var half: float = _spawner.map_half_extent
+	origin.x = clampf(origin.x, -half, half)
+	origin.z = clampf(origin.z, -half, half)
+	var target_part := _active_camp.nearest_part_to(origin)
+	if target_part == null:
+		return false
+	# Zone-budget: расходуем одну live zone (как legacy). Если нет живых —
+	# многофронт всё равно спавним (волна важнее budget'а), но без consume.
+	var zone: SpawnZone = _pick_random_live_zone()
+	var radius: float = wave_group_radius * group.cluster_spread
+	var any_spawned: bool = false
+	for entry in group.composition:
+		if entry == null or entry.scene == null or entry.count <= 0:
+			continue
+		var enemies := _spawner.spawn_group(entry.scene, entry.count, origin, radius)
+		_assign_forced_targets(enemies, target_part)
+		any_spawned = true
+	if any_spawned and zone != null:
 		zone.consume_wave()
 	return any_spawned
 

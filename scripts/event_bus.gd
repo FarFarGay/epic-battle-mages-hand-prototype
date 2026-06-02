@@ -98,6 +98,21 @@ signal collection_priority_changed(weights: Dictionary)
 ## слушатели бара — итоговый XP/level.
 signal squad_xp_gained_at(amount: int, world_position: Vector3)
 
+# --- Match goal ---
+## Условие победы матча выполнено. Эмитится один раз за партию из
+## [MatchGoal] когда выполнены ВСЕ условия (gold ≥ target И tower прошёл
+## через gate с ключом). WinOverlay слушает — показывает панель «Победа».
+signal match_won
+
+## Squad подобрал ключ в подземелье (KeyItem перешёл из IDLE в CARRIED).
+## HUD/звук слушает; MatchGoal обновляет внутренний прогресс.
+signal key_picked_up_by_squad
+## Ключ занесён в башню (KeyItem перешёл в AT_TOWER). Разблокирует Gate.
+signal key_delivered_to_tower
+## Tower прошёл через Gate. Эмитится один раз за жизнь сцены. Условие
+## победы дополнительно требует gold ≥ target.
+signal tower_passed_gate
+
 # --- Quests ---
 ## Прогресс сюжета продвинулся: new_index = новый QuestProgress.current_index.
 ## Слушают QuestActor (для перекраса) и потенциально HUD.

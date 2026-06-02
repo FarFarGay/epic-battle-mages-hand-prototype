@@ -12,6 +12,10 @@ const SENTINEL: Vector3 = Vector3(INF, INF, INF)
 
 var next_tower_pos: Vector3 = SENTINEL
 var next_poi_pos: Vector3 = SENTINEL
+## Случайная позиция Gate для нового матча. Не в подземелье; не вплотную к
+## Tower (иначе можно пройти случайно сразу при старте). Применяется
+## main_setup.gd при загрузке сцены.
+var next_gate_pos: Vector3 = SENTINEL
 
 ## True если игрок нажал «Начать игру» — WaveDirector использует флаг для
 ## автостарта кампании на _ready (фоновый прилив + caravan-волны сразу,
@@ -33,4 +37,10 @@ func consume_tower_pos() -> Vector3:
 func consume_poi_pos() -> Vector3:
 	var p: Vector3 = next_poi_pos
 	next_poi_pos = SENTINEL
+	return p
+
+
+func consume_gate_pos() -> Vector3:
+	var p: Vector3 = next_gate_pos
+	next_gate_pos = SENTINEL
 	return p

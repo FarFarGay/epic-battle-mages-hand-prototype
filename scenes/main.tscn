@@ -25,8 +25,12 @@
 [ext_resource type="PackedScene" path="res://scenes/archer_group.tscn" id="23_archer_group"]
 [ext_resource type="PackedScene" uid="uid://c5tyv5sieeeom" path="res://scenes/blocker_wall.tscn" id="25_og1vs"]
 [ext_resource type="PackedScene" path="res://scenes/dungeon_zone.tscn" id="26_2wyq8"]
-[ext_resource type="Script" path="res://scripts/main_setup.gd" id="27_main_setup"]
-[ext_resource type="PackedScene" path="res://scenes/start_menu.tscn" id="28_start_menu"]
+[ext_resource type="Script" uid="uid://s8qcnobw8yjo" path="res://scripts/main_setup.gd" id="27_main_setup"]
+[ext_resource type="PackedScene" uid="uid://startmenu001" path="res://scenes/start_menu.tscn" id="28_start_menu"]
+[ext_resource type="Script" uid="uid://bdmyhgso4vop7" path="res://scripts/match_goal.gd" id="29_match_goal"]
+[ext_resource type="PackedScene" path="res://scenes/win_overlay.tscn" id="30_win_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/key_item.tscn" id="31_key_item"]
+[ext_resource type="PackedScene" path="res://scenes/gate.tscn" id="32_gate"]
 
 [sub_resource type="Environment" id="Environment_atmo"]
 background_mode = 1
@@ -174,7 +178,21 @@ transform = Transform3D(22.95, 0, 0, 0, 1, 0, 0, 0, 1, 92.605, 0, 74)
 [node name="BlockerWall7" parent="Dungeon" unique_id=1921138407 instance=ExtResource("25_og1vs")]
 transform = Transform3D(23.380001, 0, 0, 0, 1, 0, 0, 0, 1, 101.80631, 0, 116)
 
+[node name="KeyItem" parent="Dungeon" unique_id=1844001144 instance=ExtResource("31_key_item")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 98, 0, 96)
+
 [node name="DungeonZone" parent="." unique_id=1606547872 instance=ExtResource("26_2wyq8")]
 transform = Transform3D(9.79, 0, 0, 0, 1, 0, 0, 0, 8.96, 98.105, 1, 96.728)
 
 [node name="StartMenu" parent="." unique_id=1771881234 instance=ExtResource("28_start_menu")]
+
+[node name="MatchGoal" type="Node" parent="." unique_id=1844001122]
+script = ExtResource("29_match_goal")
+
+[node name="WinOverlay" parent="." unique_id=1844001133 instance=ExtResource("30_win_overlay")]
+
+[node name="Gate" parent="." unique_id=1844001155 instance=ExtResource("32_gate")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 0, -50)
+
+[node name="KeyItem" parent="." unique_id=77961245 instance=ExtResource("31_key_item")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 139, 5, 131)

@@ -19,6 +19,7 @@ extends Node3D
 @export var tower_path: NodePath = ^"Tower"
 @export var poi_path: NodePath = ^"PointsOfInterest/Poi_Heart"
 @export var camp_path: NodePath = ^"Camp"
+@export var gate_path: NodePath = ^"Gate"
 
 
 func _ready() -> void:
@@ -34,3 +35,7 @@ func _ready() -> void:
 	if poi != null and MatchConfig.next_poi_pos != MatchConfig.SENTINEL:
 		var pp: Vector3 = MatchConfig.consume_poi_pos()
 		poi.global_position = Vector3(pp.x, poi.global_position.y, pp.z)
+	var gate := get_node_or_null(gate_path) as Node3D
+	if gate != null and MatchConfig.next_gate_pos != MatchConfig.SENTINEL:
+		var gp: Vector3 = MatchConfig.consume_gate_pos()
+		gate.global_position = Vector3(gp.x, gate.global_position.y, gp.z)

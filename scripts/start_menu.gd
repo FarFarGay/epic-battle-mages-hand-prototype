@@ -29,6 +29,12 @@ const PLAY_HALF: float = 120.0
 ## реально шёл его искать. 60м даёт ~3 сек пешком гному.
 const MIN_POI_TOWER_DISTANCE: float = 60.0
 
+## Минимальная дистанция Gate до Tower и POI. Tower не должен пройти ворота
+## случайно сразу при старте (gate ≥ 40м от tower); и Gate не должен ставиться
+## впритык к POI (gate ≥ 25м), чтобы он визуально читался отдельной целью,
+## а не «дополнением» к костру.
+const MIN_GATE_DISTANCE: float = 40.0
+
 ## Safety-margin вокруг bounds подземелья — POI и Tower не должны попадать
 ## ни в зону, ни вплотную к ней (чтобы скелетов на этапах рядом не валило).
 const DUNGEON_MARGIN: float = 8.0
@@ -84,7 +90,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _on_start_pressed() -> void:
-	_restart_match()
+	restart_match()
 
 
 func _on_close_pressed() -> void:
@@ -98,12 +104,26 @@ func _on_close_pressed() -> void:
 ##
 ## QuestProgress autoload переживает reload и НЕ обнуляется — сбрасываем
 ## руками. Это нужно чтобы новый матч начинался с первого квеста.
-func _restart_match() -> void:
+##
+## Публичная — WinOverlay переиспользует на кнопке «Новая партия».
+func restart_match() -> void:
 	var dungeon_bounds: AABB = _dungeon_bounds_xz()
-	var tower_pos: Vector3 = _pick_position_outside_dungeon(dungeon_bounds, Vector3.INF, 0.0)
-	var poi_pos: Vector3 = _pick_position_outside_dungeon(dungeon_bounds, tower_pos, MIN_POI_TOWER_DISTANCE)
+	var tower_pos: Vector3 = _pick_position_outside_dungeon(dungeon_bounds, [])
+	var poi_pos: Vector3 = _pick_position_outside_dungeon(
+		dungeon_bounds, [_avoid(tower_pos, MIN_POI_TOWER_DISTANCE)]
+	)
+	# Gate — далеко от обоих (Tower и POI). Иначе игрок может пройти его
+	# случайно при первом шаге или ворота сливаются с костром POI.
+	var gate_pos: Vector3 = _pick_position_outside_dungeon(
+		dungeon_bounds,
+		[
+			_avoid(tower_pos, MIN_GATE_DISTANCE),
+			_avoid(poi_pos, MIN_GATE_DISTANCE),
+		],
+	)
 	MatchConfig.next_tower_pos = tower_pos
 	MatchConfig.next_poi_pos = poi_pos
+	MatchConfig.next_gate_pos = gate_pos
 	MatchConfig.match_started = true
 	QuestProgress.current_index = 0
 	# Скрываем оверлей до reload'а — иначе игрок видит чёрный фон долю секунды,
@@ -139,23 +159,35 @@ func _aabb_from_dungeon(zone: DungeonZone) -> AABB:
 ## avoid_center с ненулевым avoid_radius) вне круга от центра-другой-сущности.
 ## Если за MAX_PLACEMENT_ATTEMPTS не нашли — возвращает (0, 0) и пишет
 ## предупреждение в лог: лучше плохой спавн, чем зависание.
-func _pick_position_outside_dungeon(dungeon_xz: AABB, avoid_center: Vector3, avoid_radius: float) -> Vector3:
-	var avoid_r_sq: float = avoid_radius * avoid_radius
-	var has_avoid: bool = avoid_center != Vector3.INF and avoid_radius > 0.0
+## Подбирает случайную точку в круге PLAY_HALF, вне dungeon-AABB и вне
+## кругов avoid'ов. avoids — массив Dictionary'ев `{center: Vector3, radius_sq: float}`,
+## создаваемый через [_avoid] helper. Пустой массив — фильтрация только
+## по dungeon.
+func _pick_position_outside_dungeon(dungeon_xz: AABB, avoids: Array) -> Vector3:
 	for i in range(MAX_PLACEMENT_ATTEMPTS):
 		var angle: float = randf() * TAU
 		var radius: float = sqrt(randf()) * PLAY_HALF  # uniform по площади
 		var pos := Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
 		if _point_in_xz_aabb(pos, dungeon_xz):
 			continue
-		if has_avoid:
-			var dx: float = pos.x - avoid_center.x
-			var dz: float = pos.z - avoid_center.z
-			if dx * dx + dz * dz < avoid_r_sq:
-				continue
-		return pos
+		var ok: bool = true
+		for a in avoids:
+			var center: Vector3 = a["center"]
+			var r_sq: float = a["radius_sq"]
+			var dx: float = pos.x - center.x
+			var dz: float = pos.z - center.z
+			if dx * dx + dz * dz < r_sq:
+				ok = false
+				break
+		if ok:
+			return pos
 	push_warning("[StartMenu] не нашли свободную точку за %d попыток — fallback в (0,0)" % MAX_PLACEMENT_ATTEMPTS)
 	return Vector3.ZERO
+
+
+## Helper для составления avoid-dictionary с предкэшированным r².
+func _avoid(center: Vector3, radius: float) -> Dictionary:
+	return {"center": center, "radius_sq": radius * radius}
 
 
 func _point_in_xz_aabb(p: Vector3, aabb: AABB) -> bool:
