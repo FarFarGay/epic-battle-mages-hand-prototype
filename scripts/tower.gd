@@ -69,7 +69,15 @@ var hp: float = 0.0
 var mana: float = 0.0
 
 @onready var _floor_normal_threshold: float = cos(get_floor_max_angle())
-@onready var _mesh: MeshInstance3D = $MeshInstance3D
+@onready var _mesh: MeshInstance3D = $VisualRoot/MeshInstance3D
+@onready var _visual_root: Node3D = $VisualRoot
+
+## Motion-feedback в caravan-mode. Tower — большое тяжёлое здание, эффекты
+## мелкие (амплитуды ≈половина палаточных), но дают «вес» при езде. На
+## stationary tower (стоит, lend не двигается) speed_norm ≈ 0 → fx гаснет.
+var _motion_fx: SegmentMotionFx = null
+var _visual_base_y: float = 0.0
+var _visual_base_basis: Basis = Basis()
 
 
 func _ready() -> void:
@@ -89,6 +97,19 @@ func _ready() -> void:
 	# раньше Tower'а, сначала возьмёт snapshot через get_first_node_in_group.
 	health_changed.emit(hp, max_hp)
 	mana_changed.emit(mana, max_mana)
+	# Motion-fx: bobbing/tilt/squash-stretch на VisualRoot.
+	if _visual_root != null:
+		_visual_base_y = _visual_root.position.y
+		_visual_base_basis = _visual_root.basis
+		_motion_fx = SegmentMotionFx.new()
+		# Мелкие амплитуды — башня тяжёлая, не картон. Низкая частота bob'а
+		# (1.5 Гц) даёт «медленный шаг» здания.
+		_motion_fx.bob_amplitude = 0.04
+		_motion_fx.bob_frequency = 1.5
+		_motion_fx.stretch_factor = 0.04
+		_motion_fx.ss_response = 4.5
+		_motion_fx.speed_reference = move_speed
+		_motion_fx.reset(global_position)
 
 
 # --- Публичный API ---
@@ -130,6 +151,14 @@ func try_consume_mana(amount: float) -> bool:
 	mana -= amount
 	mana_changed.emit(mana, max_mana)
 	return true
+
+
+func _process(delta: float) -> void:
+	if _motion_fx == null or _visual_root == null:
+		return
+	var fx: Dictionary = _motion_fx.tick(global_position, delta)
+	_visual_root.position.y = _visual_base_y + (fx["bob_y"] as float)
+	_visual_root.basis = _visual_base_basis * (fx["basis"] as Basis)
 
 
 func _physics_process(delta: float) -> void:

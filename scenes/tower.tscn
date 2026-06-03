@@ -20,17 +20,19 @@ script = ExtResource("1")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("BoxShape3D_tower")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+[node name="VisualRoot" type="Node3D" parent="."]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="VisualRoot"]
 mesh = SubResource("BoxMesh_tower")
 material_override = SubResource("Material_tower")
 
-[node name="MountSlot" type="Node3D" parent="."]
+[node name="MountSlot" type="Node3D" parent="VisualRoot"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
 script = ExtResource("2")
 module_offset = Vector3(0, 0.35, 0)
 snap_radius = 2.0
 
-[node name="GlowLight" type="OmniLight3D" parent="."]
+[node name="GlowLight" type="OmniLight3D" parent="VisualRoot"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.5, 0)
 light_color = Color(1, 0.82, 0.55, 1)
 light_energy = 2.0

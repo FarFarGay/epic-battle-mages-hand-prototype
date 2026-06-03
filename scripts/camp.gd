@@ -130,10 +130,15 @@ const CAMP_BUILDING_CATALOG: Dictionary = CampBuildings.CATALOG
 @export var follow_speed: float = 4.0
 ## Расстояние между палатками в цепочке и между башней и parts[0].
 @export var part_gap: float = 2.5
-## Дистанция «башня ↔ Harvester» и «Harvester ↔ первая палатка» в каравне.
-## Больше part_gap, потому что Harvester крупнее палатки и должен иметь
-## визуальное «дыхание» вокруг себя — иначе в строю всё налезает кучей.
+## Дистанция «башня ↔ Harvester» в caravan'е. Больше part_gap, потому что
+## Harvester крупнее палатки.
 @export var harvester_gap: float = 4.5
+## Дистанция «Harvester ↔ первая палатка» в caravan'е. Отдельный параметр
+## (вместо переиспользования part_gap) — Harvester сзади имеет drill и
+## выпуклости, ему нужен свой буфер до соседней палатки. Если в строю нет
+## Harvester'а — этот параметр не используется (первая палатка идёт за
+## tower'ом через part_gap).
+@export var harvester_to_part_gap: float = 4.0
 ## Базовое расстояние между гномами-followers в цепочке. Меньше part_gap —
 ## гномы идут плотнее палаток, как «толпа за караваном». Реальный gap
 ## раздёргивается per-гном через gnome_chain_gap_variance.
@@ -148,15 +153,29 @@ const CAMP_BUILDING_CATALOG: Dictionary = CampBuildings.CATALOG
 @export var gnome_chain_jitter: float = 0.7
 ## За этим порогом ведущая палатка перестаёт двигаться (башня «ушла далеко»).
 @export var follow_max_distance: float = 30.0
-## Cap на скорость палатки в caravan-follow (м/с). Без cap'а exp_decay при
-## большой дистанции (Tower ушёл далеко: после halt-resume или free-placement
-## вне строя) даёт пропорциональный дистанции «рывок» — палатка визуально
-## ускоряется. Cap делает движение равномерным: в обычных кадрах exp-step
-## ≪ max_step (палатка близко к цели), cap не активируется; на больших
-## разрывах step клампится — палатка догоняет с постоянной скоростью.
-## Дефолт 10 м/с — чуть выше Tower.move_speed=8, чтобы догонять, но не
-## телепортироваться.
+## Cap на скорость палатки в caravan-follow (м/с). Используется в
+## deployed-mode для подтяжки палаток в ring-формацию через exp_decay.
+## Snake-trail в caravan-mode игнорирует cap (скорость = скорости tower'а).
 @export var caravan_max_speed: float = 10.0
+
+## Шаг snake-trail. Tower записывает свою позицию в [_tower_trail] когда
+## смещается на ≥ этого значения в XZ. Меньше → плавнее следование (но
+## дороже sample-проход и больше памяти); больше → угловатость поворотов.
+## 0.1м даёт ~10 точек на метр пути — на скорости 8 м/с это 80
+## точек/сек, sample каждого сегмента — линейный проход ~30-100 точек.
+@export var trail_sample_step: float = 0.1
+## Запас длины trail сверх суммы gap'ов каравана. Точек хватает чтобы
+## сегменты не «упирались в хвост trail'а» когда tower резко тормозит и
+## стартует. 5м запаса с шагом 0.1 = +50 точек, копейки.
+@export var trail_buffer_extra: float = 5.0
+
+## Smoothing rate (1/с) для caravan-следования: фактическая позиция
+## сегмента lerp'ается к snake-target через exp-decay со скоростью этого
+## значения. 0 → чистый snake (точный snap к trail-точке). Высокое (25)
+## → лёгкая «инерция»: сегмент отстаёт от target'а на ~40мс, повороты
+## выглядят «жирнее», убираются резкие углы. Слишком низкое (<10) уже
+## размывает snake-feel.
+@export var trail_smoothing: float = 22.0
 ## Радиус «зоны каравана» — куда игрок может рукой вернуть палатку в строй.
 ## В CARAVAN_FOLLOWING зона измеряется от башни, в DEPLOYED — от _deploy_anchor.
 ## Если игрок аккуратно (тихий release) поставил палатку В этой зоне →
@@ -406,6 +425,13 @@ var deploy_anchor: Vector3:
 var _was_holding_stationary: bool = false
 var _was_out_of_range: bool = false
 
+# Snake-trail: история позиций Tower'а для caravan-following. Head=index 0
+# (новейшая записанная точка), tail = старейшая. Каждый сегмент каравана
+# (Harvester, палатки, гномы-followers) занимает точку на накопленной
+# дистанции от tower'а — это даёт snake-like следование «по тому же пути»
+# вместо exp_decay-рывков пропорциональных дистанции.
+var _tower_trail: Array[Vector3] = []
+
 # Кеш _find_poi_for_deploy — _handle_input зовётся каждый кадр на зажатой R
 # (60Гц), и в каждом вызове мы делаем `get_tree().get_nodes_in_group(POI_GROUP)`
 # + distance²-проход. Группа маленькая (3-7 POI), но Array-аллокация
@@ -443,6 +469,9 @@ func _ready() -> void:
 	_spawn_harvester()
 	_spawn_gnomes()
 	_build_anchor_drop_zone()
+	# Seed snake-trail синтетической линейкой за tower'ом, чтобы первый
+	# кадр _update_caravan_follow не сдвигал палатки рывком к (0,0,0).
+	_seed_tower_trail()
 	# Re-emit изменений плана сбора в EventBus (гномы слушают через EventBus,
 	# не через прямую ссылку на Camp — autoload-стиль). Подписка ДО _init,
 	# чтобы первый emit при инициализации тоже долетел.
@@ -2703,6 +2732,11 @@ func _finalize_pack() -> void:
 	_state = State.CARAVAN_FOLLOWING
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] лагерь свёрнут (все гномы дома)")
+	# Пересеять snake-trail: после deploy палатки разлетелись в ring-формацию,
+	# текущий trail (если был) указывает на старый путь tower'а ДО deploy.
+	# Сейчас нужна свежая линейка за tower'ом — палатки выстроятся в строй
+	# через первые кадры _update_caravan_follow.
+	_seed_tower_trail()
 	# Слот выключается → модуль с него отпадает (остаётся стоять на земле,
 	# где был лагерь — игрок может подобрать рукой и поставить заново).
 	if _center_slot:
@@ -2738,6 +2772,113 @@ func _set_parts_vulnerable(value: bool) -> void:
 
 # --- Движение палаток ---
 
+# --- Snake-trail helpers ---
+
+
+## Полная длина каравана в метрах. Используется для trim'а _tower_trail —
+## хранить больше точек чем нужно для последнего сегмента бессмысленно.
+func _caravan_total_length() -> float:
+	var total: float = 0.0
+	var has_harvester: bool = _harvester != null and is_instance_valid(_harvester) and not _harvester.is_deployed()
+	if has_harvester:
+		total += harvester_gap
+	var part_count: int = 0
+	for p in _parts:
+		if not is_instance_valid(p):
+			continue
+		if p is CampPart and (not (p as CampPart).is_in_caravan() or (p as CampPart).is_in_hand()):
+			continue
+		part_count += 1
+	if part_count > 0:
+		# Первая палатка: harvester_to_part_gap (если есть Harvester) или part_gap.
+		# Остальные палатки: по part_gap каждая.
+		if has_harvester:
+			total += harvester_to_part_gap + float(part_count - 1) * part_gap
+		else:
+			total += float(part_count) * part_gap
+	return total + trail_buffer_extra
+
+
+## Заполняет _tower_trail синтетической линейкой за tower'ом — N точек по
+## -X шагом trail_sample_step, длиной [_caravan_total_length]. Вызывается
+## когда trail пуст (spawn / pack-finalize / большой телепорт tower'а).
+##
+## -X выбран потому что _spawn_one_tent ставит палатки именно по -X от
+## tower'а (см. line 532). Так первый кадр snake-follow не дёргает их
+## искусственно вбок.
+func _seed_tower_trail() -> void:
+	_tower_trail.clear()
+	if _tower == null:
+		return
+	var pos: Vector3 = _tower.global_position
+	_tower_trail.append(pos)
+	var needed: float = _caravan_total_length()
+	if needed <= 0.0 or trail_sample_step <= 0.0:
+		return
+	var count: int = int(ceil(needed / trail_sample_step)) + 1
+	for i in range(1, count):
+		_tower_trail.append(Vector3(pos.x - float(i) * trail_sample_step, pos.y, pos.z))
+
+
+## Пишет новую точку в head trail'а если tower сдвинулся на ≥
+## trail_sample_step с прошлой записи. Trim'ит хвост до _caravan_total_length.
+func _record_tower_trail() -> void:
+	if _tower == null:
+		return
+	var pos: Vector3 = _tower.global_position
+	if _tower_trail.is_empty():
+		_seed_tower_trail()
+		return
+	var head: Vector3 = _tower_trail[0]
+	var dx: float = pos.x - head.x
+	var dz: float = pos.z - head.z
+	if dx * dx + dz * dz < trail_sample_step * trail_sample_step:
+		return
+	# Большой скачок (telepport tower'а) — переcеять. Иначе сегменты потащит
+	# по странной кривой через старую позицию.
+	var jump_threshold: float = trail_sample_step * 50.0
+	if dx * dx + dz * dz > jump_threshold * jump_threshold:
+		_seed_tower_trail()
+		return
+	_tower_trail.push_front(pos)
+	# Trim до needed-длины (cumulative-distance walk).
+	var needed: float = _caravan_total_length()
+	var accumulated: float = 0.0
+	var keep: int = _tower_trail.size()
+	for i in range(1, _tower_trail.size()):
+		var seg: float = _tower_trail[i - 1].distance_to(_tower_trail[i])
+		accumulated += seg
+		if accumulated >= needed:
+			keep = i + 1
+			break
+	if keep < _tower_trail.size():
+		_tower_trail.resize(keep)
+
+
+## Точка на trail'е на накопленной дистанции target_dist от текущей позиции
+## tower'а. Walk head→tail с накоплением длин сегментов; найден сегмент,
+## где target_dist попадает между accumulated и accumulated+seg_len —
+## возвращаем lerp(prev, curr, t). Если target_dist больше всей доступной
+## длины — возвращаем последнюю точку (lstайл tail).
+func _sample_trail_at(target_dist: float) -> Vector3:
+	if _tower == null:
+		return Vector3.ZERO
+	if _tower_trail.is_empty() or target_dist <= 0.0:
+		return _tower.global_position
+	var accumulated: float = 0.0
+	var prev: Vector3 = _tower.global_position
+	for p in _tower_trail:
+		var seg_len: float = prev.distance_to(p)
+		if accumulated + seg_len >= target_dist:
+			if seg_len < 1e-6:
+				return p
+			var t: float = (target_dist - accumulated) / seg_len
+			return prev.lerp(p, t)
+		accumulated += seg_len
+		prev = p
+	return _tower_trail[_tower_trail.size() - 1]
+
+
 func _update_caravan_follow(delta: float) -> void:
 	if _tower == null or _parts.is_empty():
 		return
@@ -2746,19 +2887,13 @@ func _update_caravan_follow(delta: float) -> void:
 	if _caravan_halted:
 		return
 
-	# Harvester (если есть и не на POI) едет первым звеном за башней. Палатки
-	# дальше следуют за ним вместо башни. После _finalize_pack харвестер сам
-	# is_deployed()=false — этим же путём встраивается обратно в строй.
-	var harvester_in_caravan: bool = _harvester != null and not _harvester.is_deployed()
-	if harvester_in_caravan:
-		_move_harvester_to_caravan(delta)
+	# Записываем новую точку trail'а если tower сдвинулся. Это база для
+	# snake-следования: сегменты читают точки по cumulative-distance от
+	# головы (tower'а), скорость сегментов = скорости tower'а ровно.
+	_record_tower_trail()
 
 	# Виртуальная цепочка: только палатки, которыми Camp реально может управлять.
-	# Skip'аются: torn_off (живут по физике), in_hand (Hand двигает), вне строя
-	# (флаг _outside_caravan, ставится в notify_part_settled при release вне
-	# placement-зоны и сбрасывается при следующем pickup). distance-фильтра
-	# здесь НЕТ — он каждый кадр выкидывал бы из строя «отстающие» палатки
-	# когда tower уезжает быстрее цепочки.
+	# Skip'аются: torn_off (живут по физике), in_hand (Hand двигает), вне строя.
 	var active_parts: Array[Node3D] = []
 	for part in _parts:
 		if not is_instance_valid(part):
@@ -2768,67 +2903,60 @@ func _update_caravan_follow(delta: float) -> void:
 			if not cp.is_in_caravan() or cp.is_in_hand():
 				continue
 		active_parts.append(part)
-	if active_parts.is_empty():
+	if active_parts.is_empty() and (_harvester == null or _harvester.is_deployed()):
 		return
 
-	# Лидер для проверки «башня ушла слишком далеко» — Tower, а не Harvester:
-	# follow_max_distance — это видимость самой башни, не звена-харвестера.
-	var lead_dist: float = active_parts[0].global_position.distance_to(_tower.global_position)
-	var leader_too_far := lead_dist > follow_max_distance
-
-	if debug_log and LogConfig.master_enabled and leader_too_far != _was_out_of_range:
+	# Лидер для проверки «башня ушла слишком далеко» — Tower vs первая
+	# палатка. Если ушла — snake-следование останавливаем (никто не двигается):
+	# семантика «башня скрылась из виду, караван ждёт».
+	var lead_check_node: Node3D = null
+	if not active_parts.is_empty():
+		lead_check_node = active_parts[0]
+	elif _harvester != null and not _harvester.is_deployed():
+		lead_check_node = _harvester
+	if lead_check_node != null:
+		var lead_dist: float = lead_check_node.global_position.distance_to(_tower.global_position)
+		var leader_too_far := lead_dist > follow_max_distance
+		if debug_log and LogConfig.master_enabled and leader_too_far != _was_out_of_range:
+			if leader_too_far:
+				print("[Camp] башня вне зоны видимости (dist=%.1f)" % lead_dist)
+			else:
+				print("[Camp] башня вернулась в зону видимости (dist=%.1f)" % lead_dist)
+			_was_out_of_range = leader_too_far
 		if leader_too_far:
-			print("[Camp] башня вне зоны видимости (dist=%.1f)" % lead_dist)
-		else:
-			print("[Camp] башня вернулась в зону видимости (dist=%.1f)" % lead_dist)
-		_was_out_of_range = leader_too_far
+			return
 
-	# Звено-лидер для первой палатки: Harvester (если в каравне) или сама башня.
-	var first_leader: Node3D = _harvester if harvester_in_caravan else _tower
+	# Накопленная дистанция от tower'а вдоль trail'а. Harvester — первое
+	# звено (harvester_gap), палатки — далее каждая на part_gap.
+	var cumulative_gap: float = 0.0
+	var harvester_in_caravan: bool = _harvester != null and not _harvester.is_deployed()
+	if harvester_in_caravan:
+		cumulative_gap = harvester_gap
+		var harvester_target: Vector3 = _sample_trail_at(cumulative_gap)
+		harvester_target.y = _ground_y_at(_harvester, harvester_target)
+		_move_part_kinematic(_harvester, _smooth_to(_harvester.global_position, harvester_target, delta))
 	for i in range(active_parts.size()):
-		var part := active_parts[i]
-		var leader_pos: Vector3 = first_leader.global_position if i == 0 else active_parts[i - 1].global_position
-
-		# Ведущая палатка стоит, если башня ушла за порог. Остальные всё равно
-		# подтягиваются к своему (стоящему) лидеру — цепочка собирается.
-		if i == 0 and leader_too_far:
-			continue
-
-		var to_leader := leader_pos - part.global_position
-		to_leader.y = 0.0
-		if to_leader.length_squared() < VecUtil.EPSILON_SQ:
-			continue
-		var dir := to_leader.normalized()
-		# gap зависит от того, кто ведёт это звено: если первая палатка идёт
-		# за Harvester'ом — берём harvester_gap (он крупнее, нужно дыхание).
-		# Остальные звенья — обычный part_gap между палатками.
-		var link_gap: float = harvester_gap if (i == 0 and harvester_in_caravan) else part_gap
-		var target_pos := leader_pos - dir * link_gap
-		# Y: ground + half-height — палатка стоит ровно на полу, не утопает.
-		# Без offset palatka.center на ground_y → её нижняя сторона уходит
-		# под пол на половину высоты (визуально незаметно из-за толщины
-		# Ground'а, но математически некорректно).
+		# Первая палатка после Harvester'а получает увеличенный gap
+		# (harvester_to_part_gap), остальные — обычный part_gap.
+		if i == 0 and harvester_in_caravan:
+			cumulative_gap += harvester_to_part_gap
+		else:
+			cumulative_gap += part_gap
+		var part: Node3D = active_parts[i]
+		var target_pos: Vector3 = _sample_trail_at(cumulative_gap)
 		var part_offset_y: float = (part as CampPart).floor_offset_y() if part is CampPart else 0.0
 		target_pos.y = _ground_y_at(part, target_pos) + part_offset_y
-		var step_pos := _exp_decay_capped(part.global_position, target_pos, follow_speed, caravan_max_speed, delta)
-		_move_part_kinematic(part, step_pos)
+		_move_part_kinematic(part, _smooth_to(part.global_position, target_pos, delta))
 
 
-## Двигает Harvester'а одной exp-decay-итерацией к точке «за башней на part_gap».
-## Используется только в IN_CARAVAN — на _start_deploy Harvester телепортируется
-## на anchor и сам себя не двигает. Y тянется к ground_y, чтобы не висел в
-## воздухе если башня едет по уклону.
-func _move_harvester_to_caravan(delta: float) -> void:
-	var to_leader := _tower.global_position - _harvester.global_position
-	to_leader.y = 0.0
-	if to_leader.length_squared() < VecUtil.EPSILON_SQ:
-		return
-	var dir := to_leader.normalized()
-	var target_pos: Vector3 = _tower.global_position - dir * harvester_gap
-	target_pos.y = _ground_y_at(_harvester, target_pos)
-	_harvester.global_position = _exp_decay_capped(
-		_harvester.global_position, target_pos, follow_speed, caravan_max_speed, delta
-	)
+## Лёгкая инерция поверх snake-target: фактическая позиция отстаёт от
+## трэйл-точки на ~1/trail_smoothing секунд. exp-decay-форма не зависит
+## от dt. Если smoothing = 0 — возвращаем target as-is (чистый snap).
+func _smooth_to(current: Vector3, target: Vector3, delta: float) -> Vector3:
+	if trail_smoothing <= 0.0:
+		return target
+	var t: float = 1.0 - exp(-trail_smoothing * delta)
+	return current.lerp(target, t)
 
 
 func _update_deployed(delta: float) -> void:

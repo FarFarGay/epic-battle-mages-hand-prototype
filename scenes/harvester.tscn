@@ -59,52 +59,54 @@ emission_energy_multiplier = 1.4
 [node name="Harvester" type="Node3D"]
 transform = Transform3D(1.8, 0, 0, 0, 1.8, 0, 0, 0, 1.8, 0, 0, 0)
 script = ExtResource("1_script")
-drill_node_path = NodePath("DrillAssembly")
+drill_node_path = NodePath("VisualRoot/DrillAssembly")
 
-[node name="Base" type="MeshInstance3D" parent="."]
+[node name="VisualRoot" type="Node3D" parent="."]
+
+[node name="Base" type="MeshInstance3D" parent="VisualRoot"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.125, 0)
 mesh = SubResource("CylinderMesh_base")
 material_override = SubResource("Material_base")
 
-[node name="StrutA" type="MeshInstance3D" parent="."]
+[node name="StrutA" type="MeshInstance3D" parent="VisualRoot"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.55, 0.95, 0.55)
 mesh = SubResource("BoxMesh_strut")
 material_override = SubResource("Material_metal")
 
-[node name="StrutB" type="MeshInstance3D" parent="."]
+[node name="StrutB" type="MeshInstance3D" parent="VisualRoot"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, 0.95, 0.55)
 mesh = SubResource("BoxMesh_strut")
 material_override = SubResource("Material_metal")
 
-[node name="StrutC" type="MeshInstance3D" parent="."]
+[node name="StrutC" type="MeshInstance3D" parent="VisualRoot"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.55, 0.95, -0.55)
 mesh = SubResource("BoxMesh_strut")
 material_override = SubResource("Material_metal")
 
-[node name="StrutD" type="MeshInstance3D" parent="."]
+[node name="StrutD" type="MeshInstance3D" parent="VisualRoot"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.55, 0.95, -0.55)
 mesh = SubResource("BoxMesh_strut")
 material_override = SubResource("Material_metal")
 
-[node name="Housing" type="MeshInstance3D" parent="."]
+[node name="Housing" type="MeshInstance3D" parent="VisualRoot"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.85, 0)
 mesh = SubResource("BoxMesh_housing")
 material_override = SubResource("Material_metal")
 
-[node name="GoldOrb" type="MeshInstance3D" parent="."]
+[node name="GoldOrb" type="MeshInstance3D" parent="VisualRoot"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.3, 0)
 mesh = SubResource("SphereMesh_orb")
 material_override = SubResource("Material_gold_orb")
 
-[node name="DrillAssembly" type="Node3D" parent="."]
+[node name="DrillAssembly" type="Node3D" parent="VisualRoot"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
 
-[node name="Shaft" type="MeshInstance3D" parent="DrillAssembly"]
+[node name="Shaft" type="MeshInstance3D" parent="VisualRoot/DrillAssembly"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0, 0)
 mesh = SubResource("CylinderMesh_shaft")
 material_override = SubResource("Material_drill")
 
-[node name="Bit" type="MeshInstance3D" parent="DrillAssembly"]
+[node name="Bit" type="MeshInstance3D" parent="VisualRoot/DrillAssembly"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.7, 0)
 mesh = SubResource("CylinderMesh_bit")
 material_override = SubResource("Material_drill")

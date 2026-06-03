@@ -40,6 +40,15 @@ var _economy: CampEconomy
 var _drill: Node3D
 var _harvest_particles: GPUParticles3D
 
+## Motion-feedback для caravan (snake-trail bobbing + tilt + squash-stretch).
+## VisualRoot — Node3D-обёртка над всеми мешами (Base/Struts/Housing/Orb/
+## DrillAssembly), позволяет применять fx-transform к одной ноде, не трогая
+## каждый mesh-child. См. harvester.tscn.
+var _motion_fx: SegmentMotionFx = null
+var _visual_root: Node3D = null
+var _visual_base_y: float = 0.0
+var _visual_base_basis: Basis = Basis()
+
 
 func _ready() -> void:
 	add_to_group(HARVESTER_GROUP)
@@ -47,6 +56,17 @@ func _ready() -> void:
 		_drill = get_node_or_null(drill_node_path) as Node3D
 	if not harvest_particles_path.is_empty():
 		_harvest_particles = get_node_or_null(harvest_particles_path) as GPUParticles3D
+	_visual_root = get_node_or_null("VisualRoot") as Node3D
+	if _visual_root != null:
+		_visual_base_y = _visual_root.position.y
+		_visual_base_basis = _visual_root.basis
+		_motion_fx = SegmentMotionFx.new()
+		# Harvester крупнее палаток — bob чуть мощнее, частота ниже (как
+		# тяжёлая машина шагает реже).
+		_motion_fx.bob_amplitude = 0.09
+		_motion_fx.bob_frequency = 2.0
+		_motion_fx.stretch_factor = 0.06
+		_motion_fx.reset(global_position)
 	_apply_visual_state()
 
 
@@ -68,6 +88,7 @@ func deploy_on(anchor: Vector3) -> void:
 	if _state == State.DEPLOYED:
 		return
 	_state = State.DEPLOYED
+	_reset_motion_visuals()
 	_apply_visual_state()
 	deployed.emit()
 
@@ -79,11 +100,29 @@ func pack_to_caravan() -> void:
 		return
 	_state = State.IN_CARAVAN
 	_gold_accumulator = 0.0
+	_reset_motion_visuals()
 	_apply_visual_state()
 	packed.emit()
 
 
+## Сбрасывает motion-fx state и нейтрализует VisualRoot — нужно после
+## телепорта (deploy/pack), иначе first tick посчитает огромную скорость
+## и Harvester «лягнётся».
+func _reset_motion_visuals() -> void:
+	if _motion_fx != null:
+		_motion_fx.reset(global_position)
+	if _visual_root != null:
+		_visual_root.position.y = _visual_base_y
+		_visual_root.basis = _visual_base_basis
+
+
 func _process(delta: float) -> void:
+	# Motion-fx работает в IN_CARAVAN (двигается за tower'ом). В DEPLOYED
+	# Harvester стоит — fx гасится естественно (low speed → speed_norm ≈ 0).
+	if _motion_fx != null and _visual_root != null and _state == State.IN_CARAVAN:
+		var fx: Dictionary = _motion_fx.tick(global_position, delta)
+		_visual_root.position.y = _visual_base_y + (fx["bob_y"] as float)
+		_visual_root.basis = _visual_base_basis * (fx["basis"] as Basis)
 	if _state != State.DEPLOYED:
 		return
 	if _drill != null:

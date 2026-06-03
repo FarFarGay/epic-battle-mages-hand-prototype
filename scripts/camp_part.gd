@@ -111,6 +111,13 @@ var _highlight_material: StandardMaterial3D = null
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 @onready var _shape: CollisionShape3D = $CollisionShape3D
 
+## Motion-feedback (snake-trail bobbing + tilt + squash-stretch). Применяется
+## к _mesh каждый кадр в _process. Базовые position.y и basis сохраняются
+## при инициализации — fx добавляет свой offset поверх.
+var _motion_fx: SegmentMotionFx = null
+var _mesh_base_y: float = 0.0
+var _mesh_base_basis: Basis = Basis()
+
 
 func _ready() -> void:
 	Damageable.register(self)
@@ -135,6 +142,10 @@ func _ready() -> void:
 		if src is StandardMaterial3D:
 			_highlight_material = (src as StandardMaterial3D).duplicate() as StandardMaterial3D
 			_mesh.material_override = _highlight_material
+		_mesh_base_y = _mesh.position.y
+		_mesh_base_basis = _mesh.basis
+		_motion_fx = SegmentMotionFx.new()
+		_motion_fx.reset(global_position)
 	if not effects_root_path.is_empty():
 		_effects_root = get_node_or_null(effects_root_path)
 	if _effects_root == null:
@@ -146,6 +157,25 @@ func _ready() -> void:
 	# Callable'ы оставались бы до GC. Палатки уничтожаются скелетами в матче
 	# (×4 палатки), эффект мелкий, но систематический.
 	tree_exiting.connect(_disconnect_eventbus)
+
+
+## Применяет motion-fx (bobbing + tilt + squash-stretch) к _mesh каждый
+## кадр. Подавляется когда палатка вышла из caravan-режима (в руке,
+## оторвана от строя физикой, разрушена) — там mesh подчиняется RigidBody-
+## физике и наш visual transform мешает.
+func _process(delta: float) -> void:
+	if _motion_fx == null or _mesh == null:
+		return
+	if _torn_off or _in_hand or _outside_caravan:
+		# Сброс visual'а к нейтрали, чтобы при возврате в строй palatka не
+		# имела «зависшего» наклона.
+		_mesh.position.y = _mesh_base_y
+		_mesh.basis = _mesh_base_basis
+		_motion_fx.reset(global_position)
+		return
+	var fx: Dictionary = _motion_fx.tick(global_position, delta)
+	_mesh.position.y = _mesh_base_y + fx["bob_y"]
+	_mesh.basis = _mesh_base_basis * (fx["basis"] as Basis)
 
 
 func _disconnect_eventbus() -> void:
