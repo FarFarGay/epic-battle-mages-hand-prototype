@@ -132,6 +132,16 @@ enum WanderPhase { RESTING, WANDERING }
 @export var windup_creep_speed: float = 1.5
 @export_group("")
 
+@export_group("Approach alarm (превентивный сигнал защитникам)")
+## На какой дистанции до camp-цели (CampPart / Gnome) скелет эмитит
+## [signal EventBus.skeleton_targeting_camp]. 10м (было 6м) даёт ~2-3с
+## предупреждения — лучник успевает выстрелить пока скелет ещё в подходе,
+## не давая ему дойти до палатки. Гиганты переопределяют через скрипт/
+## сцену — им нужен ещё больший радиус (идут медленнее, заметны издалека).
+## 0 → выключено (alarm срабатывает только на первом ударе).
+@export var approach_alarm_distance: float = 10.0
+@export_group("")
+
 @export_group("Shatter (рассыпание на смерти)")
 @export var shatter_fragment_count: int = 7
 @export var shatter_lifetime: float = 2.0
@@ -287,6 +297,12 @@ var _wander_target: Vector3 = Vector3.INF
 var _rest_timer: float = 0.0
 var _cached_target: Node3D = null
 var _vision_scan_timer: float = 0.0
+## Флаг «уже эмитнул EventBus.skeleton_targeting_camp по текущей цели». One-shot
+## per-target: сбрасывается в [_set_cached_target] на смене цели. Без флага
+## скелет спамил бы сигнал каждый тик пока в радиусе [approach_alarm_distance],
+## и handler'ы (ArcherSoldier alarm-lock / Gnome flee) перезаряжались бы в
+## непрерывный пинг — пропадал смысл «один раз предупредил, можно расслабиться».
+var _targeting_alarm_signaled: bool = false
 ## Персональный угол approach-кольца вокруг цели. Каждый скелет идёт не в
 ## саму точку цели, а в `target_pos + cos/sin × ring_radius`. Разные углы
 ## → скелеты окружают цель, не выстраиваются «в линию» по биссектрисе
@@ -486,12 +502,48 @@ func _on_damage_react_aggro(_amount: float) -> void:
 ## Также: пересчитываем hybrid-pathfinding decision (`_should_path_around`).
 ## Скелет обходит стены если путь вокруг них ≤ DETOUR_THRESHOLD × прямой
 ## дистанции; иначе идёт прямо и ломает (стена = отвлечение по дизайну).
+## Превентивный сигнал защитникам: эмитит [signal EventBus.skeleton_targeting_camp]
+## когда скелет подошёл к camp-цели на [approach_alarm_distance], но ещё не
+## ударил. Один раз per-цель — флаг [_targeting_alarm_signaled] взводится
+## и сбрасывается только в [_set_cached_target].
+##
+## Цель должна быть CampPart (палатка) или Gnome (включая subclass'ов:
+## SoldierGnome / ArcherSoldier). Tower не считается — для неё своя цепочка
+## (Tower-tank Giant подаёт другие сигналы), и она не «мирная цель».
+##
+## State-фильтр: эмитим только в APPROACH. В WINDUP/STRIKE/COOLDOWN сигнал
+## уже бесполезен — удар идёт или прошёл. После STRIKE'а handler'ы и так
+## ловят EventBus.skeleton_attacked_camp.
+func _tick_targeting_alarm() -> void:
+	if _targeting_alarm_signaled or approach_alarm_distance <= 0.0:
+		return
+	if _state != AttackState.APPROACH:
+		return
+	if not is_instance_valid(_cached_target):
+		return
+	var is_camp_target: bool = (
+		_cached_target is CampPart
+		or _cached_target.is_in_group(Gnome.GNOME_GROUP)
+	)
+	if not is_camp_target:
+		return
+	var dx: float = _cached_target.global_position.x - global_position.x
+	var dz: float = _cached_target.global_position.z - global_position.z
+	if dx * dx + dz * dz > approach_alarm_distance * approach_alarm_distance:
+		return
+	_targeting_alarm_signaled = true
+	EventBus.skeleton_targeting_camp.emit(self, _cached_target, _cached_target.global_position)
+
+
 func _set_cached_target(new_target: Node3D) -> void:
 	if new_target == _cached_target:
 		return
 	_cached_target = new_target
 	_approach_angle = randf() * TAU
 	_recompute_path_decision()
+	# Сбрасываем флаг targeting-alarm: новая цель → можно эмитить сигнал
+	# приближения снова один раз (см. [_tick_targeting_alarm]).
+	_targeting_alarm_signaled = false
 	# Цель найдена → выходим из local-wander (если были в нём). Следующий
 	# _ai_step увидит cached_target и пойдёт в APPROACH, _wander_tick не
 	# вызовется. Сбрасываем явно — иначе если позже цель снова потеряется,
@@ -718,6 +770,7 @@ func _ai_step(delta: float) -> void:
 		# тика. move_and_slide отработает коллизии нормально.
 		return
 	if get_active_target():
+		_tick_targeting_alarm()
 		super._ai_step(delta)
 	elif _last_known_target_pos != Vector3.INF:
 		_persist_toward_last_known(delta)

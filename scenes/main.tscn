@@ -32,6 +32,7 @@
 [ext_resource type="PackedScene" path="res://scenes/key_item.tscn" id="31_key_item"]
 [ext_resource type="PackedScene" path="res://scenes/gate.tscn" id="32_gate"]
 [ext_resource type="PackedScene" path="res://scenes/boss_warning_overlay.tscn" id="33_boss_warning"]
+[ext_resource type="PackedScene" path="res://scenes/day_night_overlay.tscn" id="34_day_night"]
 
 [sub_resource type="Environment" id="Environment_atmo"]
 background_mode = 1
@@ -193,6 +194,8 @@ script = ExtResource("29_match_goal")
 [node name="WinOverlay" parent="." unique_id=1844001133 instance=ExtResource("30_win_overlay")]
 
 [node name="BossWarningOverlay" parent="." unique_id=1844001144 instance=ExtResource("33_boss_warning")]
+
+[node name="DayNightOverlay" parent="." unique_id=1844001166 instance=ExtResource("34_day_night")]
 
 [node name="Gate" parent="." unique_id=1844001155 instance=ExtResource("32_gate")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 0, -50)

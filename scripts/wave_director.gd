@@ -23,6 +23,11 @@ extends Node
 ## + сброс background-таргета + остановка активного POI. С нуля.
 
 enum Phase { IDLE, RUNNING }
+## Day/Night фаза. День — тихая фаза «отдыха» (короткая, ~12с), ночь —
+## боевая «защити лагерь» (длинная, ~60с). Циклится бесконечно пока
+## кампания идёт (Phase.RUNNING). Старт всегда с дня — игрок получает
+## дыхание перед первой ночью.
+enum DayNight { DAY, NIGHT }
 
 @export_group("Refs")
 @export_node_path("EnemySpawner") var spawner_path: NodePath
@@ -52,6 +57,34 @@ enum Phase { IDLE, RUNNING }
 ## и другой (счётчики независимы, не блокируют друг друга). 0 = выключено.
 @export var thrower_every_n_waves: int = 4
 
+@export_group("Day/Night cycle")
+## Длительность дня в секундах. День = «безопасное окно»: POI-волны выключены
+## полностью (см. [day_poi_waves_enabled]), фон не растёт. Игрок может
+## оставить лагерь без присмотра и идти на квест (искать ключ, разведывать
+## ресурсы, тестить стены). 180с = 3 минуты — достаточно сходить туда-сюда.
+@export var day_duration_seconds: float = 180.0
+## Длительность ночи в секундах. Ночь = «защити лагерь»: POI-волны идут,
+## фон растёт, Giant/Thrower/Boss-триггеры активны. 120с = 2 минуты —
+## пик плотного геймплея.
+@export var night_duration_seconds: float = 120.0
+## POI-волны днём вообще не идут. False (default) — день полностью безопасный
+## от POI-осады (фон и caravan-волны остаются по своим правилам — но caravan
+## triggerit только если лагерь в caravan-стадии, не в DEPLOYED, так что
+## развёрнутый лагерь днём НЕ получает waves at all). True — днём идут
+## волны с множителем [day_wave_interval_multiplier]. Раньше day был «волны
+## редкие», теперь — «волн вообще нет».
+@export var day_poi_waves_enabled: bool = false
+## Множитель wave_interval'а POI-стадии днём (актуально только если
+## [day_poi_waves_enabled] = true). Используется как escape-hatch для
+## A/B-тестинга «полностью безопасный день» vs «редкие дневные волны».
+@export var day_wave_interval_multiplier: float = 2.5
+## Растёт ли фоновая популяция днём. False (default) — фон стоит на текущем
+## уровне до ночи. Скелеты которые УЖЕ на карте wander'ят и могут агриться
+## на одинокого гнома, но новые не появляются. На ночь рост возобновляется
+## (см. [_tick_background]).
+@export var day_background_grows: bool = false
+@export_group("")
+
 @export_group("Boss wave")
 ## Каждые N волн POI-осады — «боссовая волна»: 1 Giant + N Throwers'ов
 ## одновременно с разных сторон, предупреждение в HUD за несколько секунд
@@ -75,14 +108,18 @@ enum Phase { IDLE, RUNNING }
 
 @export_group("Background tide (фоновая угроза)")
 ## Сколько скелетов мгновенно спавнится на P (стартовое население карты).
-## Они wander-ят и агрятся на караван/гномов по vision'у.
-@export var background_initial_count: int = 50
+## Они wander-ят и агрятся на караван/гномов по vision'у. 25 (было 50) —
+## понижено для менее агрессивного старта: при дне=120с игрок успевает
+## осмотреться без давления.
+@export var background_initial_count: int = 25
 ## Темп роста таргет-популяции в **скелетах в минуту** wall-clock времени.
-## Через 10 минут после P при growth=30 target = 50 + 300 = 350 скелетов.
-@export var background_growth_per_minute: float = 30.0
-## Потолок таргет-популяции. Дальше фон не растёт. Подбирается по PerfHUD —
-## на нашей оптимизированной симуляции 600 держит 60fps; за порог не лезем.
-@export var background_cap: int = 600
+## Через 10 минут после P при growth=15 target = 25 + 150 = 175 скелетов
+## (раньше было 350 на тех же минутах).
+@export var background_growth_per_minute: float = 15.0
+## Потолок таргет-популяции. Дальше фон не растёт. 300 (было 600) — фон
+## всё ещё «живой», но не давит постоянной осадой; основной challenge
+## переехал на POI/боссовые волны.
+@export var background_cap: int = 300
 ## Период подспавна одного скелета при дефиците (live < target). 1.0с —
 ## плавный «прилив», не залп. Если просадка большая (например после
 ## зачистки POI игроком), подкачка идёт ровно по 1/сек до возврата к target.
@@ -96,14 +133,16 @@ enum Phase { IDLE, RUNNING }
 ## таймер засыпает — POI-осада ведёт атаки сама. На camp_packed —
 ## возобновляется.
 @export var caravan_wave_interval: float = 25.0
-## Стартовый размер caravan-волны. Растёт линейно по wall-clock минутам
-## с момента старта кампании.
-@export var caravan_wave_size_initial: int = 3
+## Стартовый размер caravan-волны. 2 (было 3) — две слабых для аккуратного
+## старта пока игрок ещё учится управлять караваном.
+@export var caravan_wave_size_initial: int = 2
 ## Прирост размера caravan-волны в минуту wall-clock. Через 5 минут при
-## initial=3, growth=0.6 → 3 + 0.6×5 = 6 скелетов на волну.
-@export var caravan_wave_size_growth_per_minute: float = 0.6
-## Потолок размера caravan-волны.
-@export var caravan_wave_size_cap: int = 12
+## initial=2, growth=0.3 → 2 + 0.3×5 = 3.5 скелетов на волну (≈4).
+@export var caravan_wave_size_growth_per_minute: float = 0.3
+## Потолок размера caravan-волны. 6 (было 12) — даже на длинной партии
+## караван не сталкивается с осадным числом противников по дороге; этим
+## занимается POI-осада, не caravan-тик.
+@export var caravan_wave_size_cap: int = 6
 ## Дистанция от центра каравана до точки спавна caravan-волны. 28м =
 ## чуть за пределами tower-вижена (20м), скелеты появляются «из ниоткуда»,
 ## но физически близко чтобы успеть догнать караван.
@@ -180,6 +219,15 @@ var _caravan_wave_cd: float = 0.0
 ## для линейного роста размера caravan-волн. На рестарте обновляется.
 var _campaign_started_at_ms: int = 0
 
+## Текущая фаза day/night. Тикает только в Phase.RUNNING, сбрасывается на
+## DAY при старте/рестарте кампании. Меняется в [_tick_day_night] когда
+## [_day_night_remaining] доходит до нуля.
+var _day_night: int = DayNight.DAY
+## Сколько секунд осталось до смены фазы. Тикается в [_tick_day_night];
+## на ≤0 → переключаем фазу, эмитим [signal EventBus.day_phase_changed],
+## взводим обратно на новое значение из @export'ов.
+var _day_night_remaining: float = 0.0
+
 ## Кулдаун до фактического спавна боссовой волны после предупреждения.
 ## -1 = нет pending волны. Взводится в [_tick_active_poi] когда счётчик
 ## волн попадает на [member boss_wave_every_n], в этот же момент летит
@@ -252,6 +300,7 @@ func _collect_pois_deferred() -> void:
 
 func _process(delta: float) -> void:
 	if _phase == Phase.RUNNING:
+		_tick_day_night(delta)
 		_tick_background(delta)
 		if _active_camp != null and _active_schedule != null:
 			_tick_active_poi(delta)
@@ -265,6 +314,61 @@ func _process(delta: float) -> void:
 		_tick_pending_boss_wave(delta)
 
 	_tick_safe_zone_monitor(delta)
+
+
+## Кампания активна? Используется DayNightOverlay'ем для sync'а состояния
+## в `_ready` — если overlay подключился к сигналу позже эмита (порядок
+## _ready сиблингов в main.tscn), он должен видеть что фаза уже идёт.
+func is_running() -> bool:
+	return _phase == Phase.RUNNING
+
+
+## Сейчас ночь? Гейтит giant/thrower/boss-спавн в [_tick_active_poi] и
+## используется HUD'ом через [get_day_night_state] / [get_day_night_remaining].
+func is_night() -> bool:
+	return _day_night == DayNight.NIGHT
+
+
+## Public для HUD: текущая фаза и оставшееся время. HUD пуллит раз в кадр
+## (дёшево) — на сигналы реагирует только на смену фазы (звук/тинт).
+func get_day_night_state() -> int:
+	return _day_night
+
+func get_day_night_remaining() -> float:
+	return maxf(_day_night_remaining, 0.0)
+
+
+## Тик day/night-цикла. Уменьшает _day_night_remaining; при ≤0 меняет фазу
+## и эмитит сигнал. Не пытаемся «дожать» волну до конца — если ночь
+## закончилась, волны просто становятся редкими (день начинается, переключатель
+## в `_tick_active_poi`).
+func _tick_day_night(delta: float) -> void:
+	_day_night_remaining -= delta
+	if _day_night_remaining > 0.0:
+		return
+	# Переключаем фазу. Carryover отрицательного остатка в новую фазу —
+	# чтобы цикл не «отставал» по wall-clock.
+	var carryover: float = _day_night_remaining
+	if _day_night == DayNight.DAY:
+		_day_night = DayNight.NIGHT
+		_day_night_remaining = night_duration_seconds + carryover
+	else:
+		_day_night = DayNight.DAY
+		_day_night_remaining = day_duration_seconds + carryover
+	EventBus.day_phase_changed.emit(is_night(), _phase_duration())
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] фаза → %s на %.0fс" % [
+			"НОЧЬ" if is_night() else "ДЕНЬ", _phase_duration(),
+		])
+
+
+## Полная длительность текущей фазы (для сигнала / HUD-старта countdown'а).
+func _phase_duration() -> float:
+	return night_duration_seconds if is_night() else day_duration_seconds
+
+
+## Тик отложенной боссовой волны. Если cd взведён (≥0) — тикает; на ≤0
+## вызывает фактический спавн и сбрасывает в -1.
 
 
 ## Тик отложенной боссовой волны. Если cd взведён (≥0) — тикает; на ≤0
@@ -481,6 +585,10 @@ func _start_campaign() -> void:
 	_background_replenish_cd = background_replenish_interval
 	_caravan_wave_cd = caravan_wave_interval
 	_campaign_started_at_ms = Time.get_ticks_msec()
+	# Стартуем с дня — игрок получает короткое окно дыхания до первой ночи.
+	_day_night = DayNight.DAY
+	_day_night_remaining = day_duration_seconds
+	EventBus.day_phase_changed.emit(false, day_duration_seconds)
 	_phase = Phase.RUNNING
 
 
@@ -493,11 +601,16 @@ func _start_campaign() -> void:
 ##    стабильности первая просадка ждала бы полный interval).
 func _tick_background(delta: float) -> void:
 	# Рост target. growth_per_minute / 60 = скелетов в секунду target-увеличения.
-	# float-точность не теряется: после 10 минут roughly +300, в float это OK.
-	_background_target = minf(
-		_background_target + (background_growth_per_minute / 60.0) * delta,
-		float(background_cap),
-	)
+	# Днём рост паузим (см. [day_background_grows]) — игроку нужно «безопасное
+	# окно» исследования без накопления новых скелетов на карте. Уже-живые
+	# скелеты остаются и могут wander'ить, но новые не подспавниваются.
+	# Replenish (подкачка до текущего target после убийств) идёт всегда —
+	# иначе игрок мог бы зачистить фон днём и встретить пустую ночь.
+	if is_night() or day_background_grows:
+		_background_target = minf(
+			_background_target + (background_growth_per_minute / 60.0) * delta,
+			float(background_cap),
+		)
 
 	_background_replenish_cd -= delta
 	if _background_replenish_cd > 0.0:
@@ -688,6 +801,13 @@ func _tick_active_poi(delta: float) -> void:
 			print("[WaveDirector] осада прервана: лагерь %s уничтожен" % (_active_camp.name if _active_camp else "?"))
 		_clear_active_poi()
 		return
+	# Day-gate: днём POI-волны выключены через day_poi_waves_enabled. Stage
+	# advance (_stage_elapsed) тоже паузим — иначе на длинных днях лагерь
+	# проходил бы все стадии до первой ночной волны. Pending boss-таймер
+	# тоже не страдает — он тикается в [_tick_pending_boss_wave] и запущен
+	# только из ночного спавна, в дневной режим не попадает.
+	if not is_night() and not day_poi_waves_enabled:
+		return
 	var stage := _active_schedule.get_stage(_stage_index)
 	if stage == null:
 		return
@@ -705,36 +825,45 @@ func _tick_active_poi(delta: float) -> void:
 		else:
 			_spawn_legacy_poi_wave(stage.skeletons_per_wave)
 		_wave_count += 1
-		# Боссовая волна: каждые `boss_wave_every_n` волн. ЗАПЛАНИРОВАНА
-		# (не спавнится сразу) — за `boss_wave_warning_seconds` секунд до
-		# фактического спавна летит EventBus.boss_wave_incoming, HUD показывает
-		# предупреждение. На боссовой волне обычные giant/thrower-триггеры
-		# подавляются — их роль уже в боссовой связке (Giant + N Throwers).
-		var is_boss_wave: bool = (
-			boss_wave_every_n > 0
-			and giant_scene != null
-			and giant_thrower_scene != null
-			and _wave_count % boss_wave_every_n == 0
-		)
-		if is_boss_wave:
-			_pending_boss_wave_cd = boss_wave_warning_seconds
-			EventBus.boss_wave_incoming.emit(boss_wave_warning_seconds)
-			if debug_log and LogConfig.master_enabled:
-				print("[WaveDirector] БОССОВАЯ ВОЛНА #%d запланирована, спавн через %.1fс" % [
-					_wave_count, boss_wave_warning_seconds,
-				])
-		else:
-			# Гигант: каждые `giant_every_n_waves` волн дополнительно к основной
-			# волне. Отдельный спавн со своей spawn-zone, чтобы танк не сливался
-			# с пачкой обычных скелетов визуально.
-			if giant_every_n_waves > 0 and giant_scene != null and _wave_count % giant_every_n_waves == 0:
-				_spawn_giant()
-			# Каменщик: каждые `thrower_every_n_waves` волн дополнительно.
-			# Параллельный канал с Giant'ом — на одной волне могут быть оба
-			# (если счётчики сошлись), это «двойная угроза Tower'у», норм.
-			if thrower_every_n_waves > 0 and giant_thrower_scene != null and _wave_count % thrower_every_n_waves == 0:
-				_spawn_giant_thrower()
-		_wave_cd = stage.wave_interval
+		# Day/Night-gate для крупных угроз: Giant/Thrower/Boss спавнятся ТОЛЬКО
+		# ночью. Днём идут только базовые волны — короткое «окно дыхания» для
+		# починки/строительства. Счётчики (_wave_count % N) тикают независимо
+		# от фазы: волна 6 ночью триггерит boss, дневная волна 6 просто
+		# проходит без boss.
+		if is_night():
+			# Боссовая волна: каждые `boss_wave_every_n` волн. ЗАПЛАНИРОВАНА
+			# (не спавнится сразу) — за `boss_wave_warning_seconds` секунд до
+			# фактического спавна летит EventBus.boss_wave_incoming, HUD показывает
+			# предупреждение. На боссовой волне обычные giant/thrower-триггеры
+			# подавляются — их роль уже в боссовой связке (Giant + N Throwers).
+			var is_boss_wave: bool = (
+				boss_wave_every_n > 0
+				and giant_scene != null
+				and giant_thrower_scene != null
+				and _wave_count % boss_wave_every_n == 0
+			)
+			if is_boss_wave:
+				_pending_boss_wave_cd = boss_wave_warning_seconds
+				EventBus.boss_wave_incoming.emit(boss_wave_warning_seconds)
+				if debug_log and LogConfig.master_enabled:
+					print("[WaveDirector] БОССОВАЯ ВОЛНА #%d запланирована, спавн через %.1fс" % [
+						_wave_count, boss_wave_warning_seconds,
+					])
+			else:
+				# Гигант: каждые `giant_every_n_waves` волн дополнительно к основной
+				# волне. Отдельный спавн со своей spawn-zone, чтобы танк не сливался
+				# с пачкой обычных скелетов визуально.
+				if giant_every_n_waves > 0 and giant_scene != null and _wave_count % giant_every_n_waves == 0:
+					_spawn_giant()
+				# Каменщик: каждые `thrower_every_n_waves` волн дополнительно.
+				# Параллельный канал с Giant'ом — на одной волне могут быть оба
+				# (если счётчики сошлись), это «двойная угроза Tower'у», норм.
+				if thrower_every_n_waves > 0 and giant_thrower_scene != null and _wave_count % thrower_every_n_waves == 0:
+					_spawn_giant_thrower()
+		# Wave_interval днём растягивается множителем — за короткий день обычно
+		# успевает 0-1 волна. Ночью идёт по дефолту stage.wave_interval.
+		var interval_multiplier: float = 1.0 if is_night() else day_wave_interval_multiplier
+		_wave_cd = stage.wave_interval * interval_multiplier
 
 	# Scout-канал: одиночные «разведчики» между основными волнами. Параллельно
 	# _wave_cd, со своим интервалом. Если stage.scout_interval=0 — выключено.

@@ -16,9 +16,17 @@ extends SoldierGnome
 ##    «штрафуется» через [target_share_penalty] — близкая с 1 стрелком
 ##    может уступить более дальней свободной.
 ##
-## Стационарности НЕТ: если cone-цель за пределами attack_range, archer
-## подходит ближе (как любой squad-юнит). Это отличает его от старого
-## DefenderGnome — там был фиксированный patrol_radius.
+## Стационарная защита (2026-06-03): pursue cone-цели УБРАН. Раньше archer
+## видел врага в cone_vision_radius (35м), бежал к нему пока не войдёт в
+## attack_range (22.5м), потом стрелял. Игрок описал это как «как только
+## враг в зоне базы — лучник СРАЗУ к нему, не по конусу». Теперь логика:
+##   - враг в cone + attack_range → выстрел, archer стоит/patrol'ит на месте
+##   - враг в cone, но дальше attack_range → archer игнорирует, продолжает
+##     patrol/holding (cone сам подметает периметр движением)
+##   - враг попадает в attack_range через patrol-движение или сам подойдя —
+##     archer фиксирует и стреляет.
+## DEFENDING_CAMP-patrol уже даёт cone-sweep по периметру; HOLDING — cone
+## смотрит наружу от лагеря. Этого достаточно для point-defense.
 ##
 ## Прокачка точности — per-instance счётчик `_shots_fired`, теряется на
 ## смерти. Дизайн: «храни ветеранов».
@@ -127,12 +135,21 @@ func _ready() -> void:
 	_vision_cone_cos = cos(deg_to_rad(vision_half_angle_deg))
 	# Фазовый сдвиг — N лучников не сканируют в одном кадре.
 	_target_scan_timer = randf() * TARGET_SCAN_INTERVAL
+	# Реактивный alarm (по первому удару) и превентивный (по подходу к жертве).
+	# Handler фильтрует victim — лучник реагирует только на атаки палаток
+	# (CampPart), не на атаки гномов: за гномов отвечают они сами (FLEE
+	# в лагерь, см. Gnome._on_skeleton_targeting_camp). Подписка на оба
+	# сигнала с одним handler'ом — поведение одинаковое, отличается только
+	# timing (targeting → ~1с раньше).
 	EventBus.skeleton_attacked_camp.connect(_on_skeleton_attacked_camp)
+	EventBus.skeleton_targeting_camp.connect(_on_skeleton_attacked_camp)
 
 
 func _exit_tree() -> void:
 	if EventBus.skeleton_attacked_camp.is_connected(_on_skeleton_attacked_camp):
 		EventBus.skeleton_attacked_camp.disconnect(_on_skeleton_attacked_camp)
+	if EventBus.skeleton_targeting_camp.is_connected(_on_skeleton_attacked_camp):
+		EventBus.skeleton_targeting_camp.disconnect(_on_skeleton_attacked_camp)
 
 
 ## Override базового AI копейщика. Stand-and-shoot с cone-зрением + alarm.
@@ -140,8 +157,9 @@ func _exit_tree() -> void:
 ##   1. Strict-march HOLD: дойти до слота, по дороге combat-assist если враг
 ##      попал в attack_range (так же как pikeman lunge'ит проходящих скелетов).
 ##   2. Cone/alarm-цель в attack_range + cd готов → выстрел, velocity=0.
-##   3. Cone/alarm-цель есть, но вне attack_range → подходим ближе.
-##   4. Нет цели — squad-positioning (HOLD/ESCORT/DEFEND).
+##   3. Нет цели в attack_range — squad-positioning (HOLD/ESCORT/DEFEND).
+##      Pursuit вне attack_range НЕ делаем — archer point-defense, не бежит
+##      на видимого, но далёкого врага (см. doc-блок класса выше).
 func _active_tick(delta: float) -> void:
 	if _attack_cd > 0.0:
 		_attack_cd -= delta
@@ -166,22 +184,6 @@ func _active_tick(delta: float) -> void:
 	# Combat-приоритет: cone/alarm-цель в attack_range + cd готов → выстрел.
 	if _try_fire_at_resolved_target(delta):
 		return
-
-	# Pursuit: cone/alarm-цель есть, но вне attack_range → подходим ближе.
-	# Берём ту же цель, что в combat (через _resolve_target) — единое
-	# восприятие, без рассинхрона «иду к A, стреляю в B».
-	var pursue_target: Node3D = _resolve_target(0.0)
-	if pursue_target != null:
-		var to_pursue := Vector3(
-			pursue_target.global_position.x - global_position.x,
-			0.0,
-			pursue_target.global_position.z - global_position.z,
-		)
-		var pursue_dist: float = to_pursue.length()
-		if pursue_dist > attack_range:
-			_face_horizontal(to_pursue, pursue_dist)
-			_move_toward(to_pursue, pursue_dist)
-			return
 
 	# Нет цели — squad-positioning (как у pikeman'а).
 	if _squad == null or _camp == null:
@@ -407,14 +409,15 @@ func _on_skeleton_attacked_camp(attacker: Node3D, victim: Node3D, _position: Vec
 		return
 	if not is_instance_valid(attacker) or not is_instance_valid(victim):
 		return
-	# Фильтр «наш лагерь»:
-	#  - CampPart: parent == _camp (палатки лежат как прямые дети Camp-ноды).
-	#  - Gnome: входит в _camp.get_gnomes().
+	# Фильтр «наш лагерь + это CampPart»: алярм лучника = «по палатке бьют».
+	# Атаки на гномов archer'а НЕ интересуют — гном сам убежит в лагерь
+	# (см. Gnome._on_skeleton_targeting_camp). Защищать гномов точечными
+	# выстрелами малопродуктивно: они мелкие, разбросаны, перекрывают друг
+	# друга — лучше дать им сбежать в зону archer'ов, где общий cone-обзор
+	# уже работает.
 	var ours: bool = false
 	if victim is CampPart:
 		ours = victim.get_parent() == _camp
-	elif victim.is_in_group(Gnome.GNOME_GROUP):
-		ours = _camp.get_gnomes().has(victim)
 	if not ours:
 		return
 	# Дистанционный фильтр: если атакующий далеко от нас, alarm не наш —

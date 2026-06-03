@@ -60,6 +60,13 @@ enum State {
 	## в SEARCHING. Если орб коснулся другой союзник раньше или истёк
 	## lifetime — `_assigned_orb` инвалидируется, переход в SEARCHING.
 	COMMUTING_TO_ORB,
+	## Гном-собиратель бежит в лагерь от подходящего к нему скелета. Вход:
+	## EventBus.skeleton_targeting_camp/attacked_camp с victim=self —
+	## триггерит [_enter_fleeing] на [flee_persist_sec] секунд. Гном бежит
+	## к [Camp.deploy_anchor] на скорости [flee_speed] (быстрее обычной
+	## ходьбы), несомый ресурс НЕ дропается (вернёт в банк по приходу).
+	## Выход: таймер истёк ИЛИ дошёл до anchor → SEARCHING (продолжит сбор).
+	FLEEING,
 }
 
 @export_group("Stats")
@@ -69,8 +76,41 @@ enum State {
 @export var knockback_friction: float = 6.0
 
 @export_group("Movement")
-@export var move_speed: float = 1.6
+## Базовая скорость гнома-собирателя (1.6 → 2.4 в этой ревизии). На текущей
+## карте челнок ресурс↔лагерь до 30м, на 1.6 один рейс занимал ~30с —
+## слишком медленно для ритма «день=120с, надо успеть до ночи».
+## SoldierGnome override'ит через soldier-catalog stats — пехота/лучники
+## остаются на своей скорости.
+@export var move_speed: float = 2.4
 @export var gravity: float = 20.0
+
+@export_group("Carry")
+## Сколько единиц ресурса гном кредитует лагерю за один донос. ResourcePile
+## всегда теряет 1 единицу на take_one — это «один чанк», но гном «несёт
+## связку» (нарратив: chunk = небольшая порция, но обработанная). 3 (было 1)
+## ускоряет добычу втрое без правок ResourcePile или скорости — игроку
+## легче видеть прогресс ресурсов лагеря и переход от нищеты к строительству.
+## Меняй здесь если хочется иначе балансить экономику.
+@export var carry_amount: int = 3
+@export_group("")
+
+@export_group("Flee from threat (FLEEING state)")
+## Скорость гнома в FLEE. Заметно быстрее обычной (1.6) — гном испуган,
+## не идёт челноком. 3.0 ≈ почти бег. Скелет (move_speed=2.7) формально
+## медленнее — гном УСПЕЕТ убежать к лагерю если стартует в правильную
+## сторону. Если стартует «не туда» — догонит.
+@export var flee_speed: float = 3.0
+## Сколько секунд гном держит FLEE-состояние после получения сигнала
+## угрозы. По истечении (или по достижению anchor'а) → SEARCHING.
+## 4с — успеть добежать с patrol_radius (~12м) до anchor (0м) на
+## flee_speed=3 = ровно 4с. Если угроза продолжается, новый сигнал
+## продлевает.
+@export var flee_persist_sec: float = 4.0
+## Дистанция от deploy_anchor, ближе которой гном считается «в безопасности»
+## и может прервать FLEE (вернуться в SEARCHING без ожидания таймера).
+## 3м — внутри ring'а палаток, скелеты обычно не пробивают этот периметр
+## без серьёзной осады.
+@export var flee_safe_radius: float = 3.0
 
 @export_group("Friendly separation")
 ## Радиус соседского расталкивания. Гномы (включая subclass'ов — defender'ов
@@ -195,6 +235,10 @@ var _carry_type: int = -1
 ## Camp'у и queue_free); проверка через is_instance_valid + as XpOrb.
 var _assigned_orb: XpOrb = null
 var _wander_target: Vector3 = Vector3.INF
+## Время (Time.get_ticks_msec) до которого гном находится в FLEEING. 0 =
+## не флитит. Сбрасывается на смене состояния. Продлевается повторным
+## сигналом угрозы.
+var _flee_until_msec: int = 0
 ## Время (Time.get_ticks_msec) следующего rescan'а pile-ов в IDLE_NEAR_BASE.
 ## 0 = пересканировать сразу. Сбрасывается на enter в idle и после каждого
 ## rescan'а. См. idle_pile_rescan_sec.
@@ -338,6 +382,12 @@ func _ready() -> void:
 	# NavMesh re-bake → сбрасываем кэш `_nav_last_target`, иначе set_target_position
 	# с тем же goal'ом игнорируется и старый невалидный path остаётся.
 	EventBus.navmesh_baked.connect(_on_navmesh_baked)
+	# Реакция на угрозу: скелет ПРИБЛИЖАЕТСЯ к этому гному или УЖЕ УДАРИЛ.
+	# Превентивный сигнал — основной (бежим до первого удара); attacked —
+	# подстраховка если targeting не сработал (например, скелет вышел из
+	# тумана сразу в strike-радиус). Оба handler'а одинаковые.
+	EventBus.skeleton_targeting_camp.connect(_on_skeleton_threatens_me)
+	EventBus.skeleton_attacked_camp.connect(_on_skeleton_threatens_me)
 	# Явная отписка на free. EventBus — autoload (жив всю сессию), без
 	# disconnect фантомные Callable'ы накапливались бы до GC; на 100+ гномах
 	# за матч это сотни мёртвых подписок.
@@ -357,6 +407,10 @@ func _disconnect_eventbus() -> void:
 		EventBus.collection_priority_changed.disconnect(_on_collection_priority_changed)
 	if EventBus.navmesh_baked.is_connected(_on_navmesh_baked):
 		EventBus.navmesh_baked.disconnect(_on_navmesh_baked)
+	if EventBus.skeleton_targeting_camp.is_connected(_on_skeleton_threatens_me):
+		EventBus.skeleton_targeting_camp.disconnect(_on_skeleton_threatens_me)
+	if EventBus.skeleton_attacked_camp.is_connected(_on_skeleton_threatens_me):
+		EventBus.skeleton_attacked_camp.disconnect(_on_skeleton_threatens_me)
 
 
 func _apply_visual() -> void:
@@ -688,6 +742,73 @@ func _active_tick(_delta: float) -> void:
 			_tick_returning()
 		State.FOLLOWING_CARAVAN:
 			_tick_following_caravan()
+		State.FLEEING:
+			_tick_fleeing()
+
+
+## Реакция на угрозу: скелет нацелился на этого гнома (или уже ударил).
+## Если victim — этот гном и мы НЕ в специальном «безопасном» состоянии
+## (палатка / возврат в палатку / караван) — переключаемся в FLEEING на
+## [flee_persist_sec]. Повторные сигналы продлевают таймер.
+##
+## Подклассы могут override'ить [_can_flee] чтобы выключить flee (соратники-
+## комбатанты не убегают, они сражаются — см. [SoldierGnome._can_flee]).
+func _on_skeleton_threatens_me(_attacker: Node3D, victim: Node3D, _position: Vector3) -> void:
+	if victim != self or _dying or _camp == null:
+		return
+	if not _can_flee():
+		return
+	# Безопасные / специальные state'ы не прерываем: в палатке гном неуязвим,
+	# на возврате уже идёт домой, в караване — нет лагеря для бегства.
+	if _state == State.IN_TENT or _state == State.RETURNING_TO_TENT \
+			or _state == State.FOLLOWING_CARAVAN:
+		return
+	_enter_fleeing()
+
+
+## Virtual: «может ли этот гном убегать?». Базовый Gnome (collector) — да.
+## SoldierGnome override'ит в false — комбатанты сражаются. Если в будущем
+## понадобится condition'ный flee (например HP < threshold), подклассы
+## могут вернуть true только на низком HP.
+func _can_flee() -> bool:
+	return true
+
+
+## Переключение в FLEEING. Если уже флитим — только продлеваем таймер.
+## Несомый ресурс НЕ дропается (гном принесёт его в банк по приходу через
+## SEARCHING → COMMUTING_TO_BASE если жив). Assigned pile сбрасываем —
+## после FLEE гном пересканит ближайший.
+func _enter_fleeing() -> void:
+	_flee_until_msec = Time.get_ticks_msec() + int(flee_persist_sec * 1000.0)
+	if _state == State.FLEEING:
+		return
+	# Сброс assigned pile/orb — claim'ов в [Camp] нет, владение читается из
+	# самого gnome._assigned_pile (см. Camp.is_pile_claimed). Просто null'им —
+	# другие гномы сразу могут взять.
+	_assigned_pile = null
+	_assigned_orb = null
+	_state = State.FLEEING
+
+
+## FLEEING-тик: бежим к [Camp.deploy_anchor] на [flee_speed]. Выход:
+## (1) таймер истёк или (2) расстояние до anchor'а ≤ [flee_safe_radius] —
+## внутри ring'а палаток, считаем безопасным. Возврат в SEARCHING (если
+## несём ресурс, _tick_searching сразу переключит в COMMUTING_TO_BASE
+## через проверку _carry_type).
+func _tick_fleeing() -> void:
+	if _camp == null:
+		velocity = Vector3.ZERO
+		return
+	var anchor: Vector3 = _camp.deploy_anchor
+	var dist: float = _horizontal_distance(anchor)
+	if Time.get_ticks_msec() >= _flee_until_msec or dist <= flee_safe_radius:
+		# Если несём — switch в COMMUTING_TO_BASE (deposit). Иначе SEARCHING.
+		if _carry_type >= 0:
+			_state = State.COMMUTING_TO_BASE
+		else:
+			_state = State.SEARCHING
+		return
+	_step_toward(anchor, flee_speed)
 
 
 ## Бездомный гном — идёт в свой слот цепочки каравана за палатками. Camp
@@ -827,7 +948,7 @@ func _tick_commuting_to_base() -> void:
 		# и при свёртке (RETURNING_TO_TENT) — в этих случаях ресурс теряется
 		# (буквально: упал по дороге). Кредит только на честной доставке.
 		if _carry_type >= 0:
-			_camp.economy.add_resource(_carry_type, 1)
+			_camp.economy.add_resource(_carry_type, carry_amount)
 			ResourceFx.pulse(global_position, ResourcePile.color_for_type(_carry_type))
 		_drop_carry()
 		# После каждой доставки полный rescan через SEARCHING — гном пере-

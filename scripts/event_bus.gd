@@ -52,6 +52,15 @@ signal camp_packed
 ## стреляют, сам бы развернулся в свой обстрел.
 signal skeleton_attacked_camp(attacker: Node3D, victim: Node3D, position: Vector3)
 
+## Превентивный сигнал: скелет ПРИБЛИЗИЛСЯ к цели в лагере (палатка/гном)
+## на дистанцию [Skeleton.approach_alarm_distance], но ещё не ударил. Один
+## раз per-цель — флаг сбрасывается на смене _cached_target. Цель сигнала —
+## дать защитникам ~1с предупреждения до первого удара:
+##  - ArcherSoldier при victim=CampPart развернётся/выстрелит, как и на
+##    attacked_camp (тот же handler).
+##  - Gnome при victim=self переключается в FLEE — бежит к лагерю.
+signal skeleton_targeting_camp(attacker: Node3D, victim: Node3D, position: Vector3)
+
 # --- Defender squad: общий опыт отряда лучников + апгрейды ---
 ## XP отряда изменился (накапливается за убийства скелетов). HUD/UI слушает
 ## для отображения шкалы прогресса.
@@ -119,6 +128,14 @@ signal tower_passed_gate
 ## слушает чтобы показать предупреждающий баннер «Гигант приближается»
 ## — даёт игроку время приготовить super/мины/защиту.
 signal boss_wave_incoming(seconds_until_spawn: float)
+
+# --- Day/Night cycle ---
+## Фаза day/night сменилась. is_night=true → ночь (волны крупные, Giant/
+## Thrower/Boss-триггеры активны), false → день (волны редкие, слабые,
+## большие угрозы выключены). duration_seconds — длительность новой фазы
+## (HUD рисует countdown от этой величины). Эмитится из [WaveDirector] на
+## каждой смене + один раз на старте кампании (initial day).
+signal day_phase_changed(is_night: bool, duration_seconds: float)
 
 # --- Quests ---
 ## Прогресс сюжета продвинулся: new_index = новый QuestProgress.current_index.

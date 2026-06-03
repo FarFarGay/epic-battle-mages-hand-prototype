@@ -200,6 +200,15 @@ func _ready() -> void:
 	add_to_group(SOLDIER_GROUP)
 
 
+## Override [Gnome._can_flee]: солдат НЕ убегает от угрозы (в отличие от
+## мирного гнома-собирателя). Squad-логика управляет его поведением сама —
+## копейщик нападает на ближайшего, archer стреляет с позиции. Без override'а
+## handler в Gnome'е переключил бы солдата в State.FLEEING на любой alarm,
+## ломая squad-AI и убегая прочь.
+func _can_flee() -> bool:
+	return false
+
+
 ## Конфиг приходит от Camp.recruit_squad на основе SoldierSystem.SOLDIER_CATALOG.
 ## Stats — Dictionary с ключами hp / enemy_detect_radius / attack_range / damage_min /
 ## damage_max / cooldown_min / cooldown_max / move_speed. Отсутствующие ключи —
