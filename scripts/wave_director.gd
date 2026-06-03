@@ -36,13 +36,38 @@ enum Phase { IDLE, RUNNING }
 ## гиганты не спавнятся.
 @export var giant_scene: PackedScene
 ## Каждые N волн POI-осады дополнительно спавнится 1 гигант (расчёт идёт
-## глобально по счётчику волн, не per-stage). 0 = выключено (текущий дефолт —
-## большие в осаде не участвуют, balance-этап).
-@export var giant_every_n_waves: int = 0
+## глобально по счётчику волн, не per-stage). 0 = выключено.
+## Дизайн: «фокусная угроза Tower'у» — гигант идёт прямо на башню (override
+## `_scan_target` в [SkeletonGiant]), форсит мобильность игрока. Каждая 3-я
+## волна — нормальный темп: достаточно часто чтобы Tower не была безопасной
+## точкой, не слишком чтобы карта не превращалась в зоопарк гигантов.
+@export var giant_every_n_waves: int = 3
 ## Сцена гиганта-каменщика (ranged-танк, кидает камни в Tower с 25-35м).
-## Сейчас спавнится только через чит-карточку для playtest'а; авто-волны
-## не настроены — это отдельный balance-этап. Если null — чит no-op.
+## Спавнится каждые [member thrower_every_n_waves] волн (как Giant, но реже)
+## + входит в состав боссовой волны. Без неё — Tower не имеет ranged-угрозы.
 @export var giant_thrower_scene: PackedScene
+## Каждые N волн POI-осады дополнительно спавнится 1 каменщик. Чуть реже
+## Giant'а (4 vs 3) — у него ranged-AOE болевые камни, не должен быть
+## фоновым явлением. Связка с Giant'ом: на одной волне может быть и тот,
+## и другой (счётчики независимы, не блокируют друг друга). 0 = выключено.
+@export var thrower_every_n_waves: int = 4
+
+@export_group("Boss wave")
+## Каждые N волн POI-осады — «боссовая волна»: 1 Giant + N Throwers'ов
+## одновременно с разных сторон, предупреждение в HUD за несколько секунд
+## до спавна. Это пик нарратива, под который игрок планирует super/мины.
+## 0 = выключено. Боссовая волна не дублируется обычными giant/thrower
+## триггерами на той же _wave_count'е.
+@export var boss_wave_every_n: int = 6
+## Сколько секунд показывать предупреждение «Гигант приближается» до
+## фактического спавна. 6с — успеть переориентировать squad, скастовать
+## мины, отойти к Tower'у.
+@export var boss_wave_warning_seconds: float = 6.0
+## Сколько Thrower'ов спавнить в боссовой волне (вокруг Giant'а с разных
+## сторон). 2 — комфортный минимум для ощущения «давления со всех сторон»,
+## не превращает Tower в pinata.
+@export var boss_wave_thrower_count: int = 2
+@export_group("")
 ## Сцена ArcherGroup — координатор группы из 4 лучников. Спавнится через
 ## cheat_spawn_archer_group; в авто-волнах пока не используется.
 @export var archer_group_scene: PackedScene
@@ -155,6 +180,15 @@ var _caravan_wave_cd: float = 0.0
 ## для линейного роста размера caravan-волн. На рестарте обновляется.
 var _campaign_started_at_ms: int = 0
 
+## Кулдаун до фактического спавна боссовой волны после предупреждения.
+## -1 = нет pending волны. Взводится в [_tick_active_poi] когда счётчик
+## волн попадает на [member boss_wave_every_n], в этот же момент летит
+## [signal EventBus.boss_wave_incoming] для HUD'а. Тикает в [_process],
+## при ≤0 → [_spawn_boss_wave]. Не сбрасывается рестартом активного POI:
+## если игрок сменит POI пока волна летит — она просто спавнится на
+## новом лагере (это редкий edge case, нормально).
+var _pending_boss_wave_cd: float = -1.0
+
 
 ## Группа для discovery извне без явных NodePath. WaveDirector один на сцену;
 ## ResourceZone, Camp и другие потребители safe/POI-логики находят его
@@ -228,8 +262,21 @@ func _process(delta: float) -> void:
 		# другого лагеря», либо одно из двух — на нашей одной-Camp-сцене это
 		# просто переключение.
 		_tick_caravan_waves(delta)
+		_tick_pending_boss_wave(delta)
 
 	_tick_safe_zone_monitor(delta)
+
+
+## Тик отложенной боссовой волны. Если cd взведён (≥0) — тикает; на ≤0
+## вызывает фактический спавн и сбрасывает в -1.
+func _tick_pending_boss_wave(delta: float) -> void:
+	if _pending_boss_wave_cd < 0.0:
+		return
+	_pending_boss_wave_cd -= delta
+	if _pending_boss_wave_cd > 0.0:
+		return
+	_pending_boss_wave_cd = -1.0
+	_spawn_boss_wave()
 
 
 # --- Public cheat API (вызывается из JournalPanel вкладки «Читы») ---
@@ -628,6 +675,9 @@ func _clear_active_poi() -> void:
 	_wave_cd = 0.0
 	_scout_cd = 0.0
 	_wave_count = 0
+	# Отменяем pending boss-wave: предупреждение игрок мог уже забыть, и
+	# на новом POI оно непредсказуемо «дожило бы» спавна.
+	_pending_boss_wave_cd = -1.0
 
 
 ## Тик активной осады. Stage advance + wave timer.
@@ -655,11 +705,35 @@ func _tick_active_poi(delta: float) -> void:
 		else:
 			_spawn_legacy_poi_wave(stage.skeletons_per_wave)
 		_wave_count += 1
-		# Гигант: каждые `giant_every_n_waves` волн дополнительно к основной
-		# волне. Отдельный спавн со своей spawn-zone, чтобы танк не сливался
-		# с пачкой обычных скелетов визуально.
-		if giant_every_n_waves > 0 and giant_scene != null and _wave_count % giant_every_n_waves == 0:
-			_spawn_giant()
+		# Боссовая волна: каждые `boss_wave_every_n` волн. ЗАПЛАНИРОВАНА
+		# (не спавнится сразу) — за `boss_wave_warning_seconds` секунд до
+		# фактического спавна летит EventBus.boss_wave_incoming, HUD показывает
+		# предупреждение. На боссовой волне обычные giant/thrower-триггеры
+		# подавляются — их роль уже в боссовой связке (Giant + N Throwers).
+		var is_boss_wave: bool = (
+			boss_wave_every_n > 0
+			and giant_scene != null
+			and giant_thrower_scene != null
+			and _wave_count % boss_wave_every_n == 0
+		)
+		if is_boss_wave:
+			_pending_boss_wave_cd = boss_wave_warning_seconds
+			EventBus.boss_wave_incoming.emit(boss_wave_warning_seconds)
+			if debug_log and LogConfig.master_enabled:
+				print("[WaveDirector] БОССОВАЯ ВОЛНА #%d запланирована, спавн через %.1fс" % [
+					_wave_count, boss_wave_warning_seconds,
+				])
+		else:
+			# Гигант: каждые `giant_every_n_waves` волн дополнительно к основной
+			# волне. Отдельный спавн со своей spawn-zone, чтобы танк не сливался
+			# с пачкой обычных скелетов визуально.
+			if giant_every_n_waves > 0 and giant_scene != null and _wave_count % giant_every_n_waves == 0:
+				_spawn_giant()
+			# Каменщик: каждые `thrower_every_n_waves` волн дополнительно.
+			# Параллельный канал с Giant'ом — на одной волне могут быть оба
+			# (если счётчики сошлись), это «двойная угроза Tower'у», норм.
+			if thrower_every_n_waves > 0 and giant_thrower_scene != null and _wave_count % thrower_every_n_waves == 0:
+				_spawn_giant_thrower()
 		_wave_cd = stage.wave_interval
 
 	# Scout-канал: одиночные «разведчики» между основными волнами. Параллельно
@@ -729,6 +803,84 @@ func _spawn_giant() -> void:
 		print("[WaveDirector] ГИГАНТ #%d спавн @ (%.0f, %.0f) → %s" % [
 			_wave_count, origin.x, origin.z,
 			tower.name if tower != null else "no-tower",
+		])
+
+
+## Спавн одного каменщика-thrower'а. Аналог [_spawn_giant], но для ranged-
+## танка. Берёт случайную живую SpawnZone, ставит одного thrower'а с
+## forced_target = Tower. Не консумит SpawnZone.waves_left — как и Giant,
+## это бонус-юнит сверх обычной волны.
+##
+## Дизайн: вторая ось давления на Tower'а в дополнение к Giant'у. Giant
+## форсит мобильность (slam-AoE заставляет двигаться), Thrower форсит
+## внимание (камень прилетает по point, телеграф на земле). Вместе =
+## вилка: убегая от Giant'а, попадёшь под Thrower'а.
+func _spawn_giant_thrower() -> void:
+	if _spawner == null or _active_camp == null or giant_thrower_scene == null:
+		return
+	var zone: SpawnZone = _pick_random_live_zone()
+	if zone == null:
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] thrower пропущен — нет живых SpawnZone")
+		return
+	var origin := _pick_safe_point_in_zone(zone)
+	origin.y = _spawner.spawn_y
+	var throwers := _spawner.spawn_group(giant_thrower_scene, 1, origin, 1.0)
+	var tower: Node3D = _active_camp.get_tower() if _active_camp != null else null
+	if tower != null:
+		_assign_forced_targets(throwers, tower)
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] КАМЕНЩИК #%d спавн @ (%.0f, %.0f) → %s" % [
+			_wave_count, origin.x, origin.z,
+			tower.name if tower != null else "no-tower",
+		])
+
+
+## Боссовая волна: 1 Giant + N Thrower'ов одновременно, размещённые на
+## равно-распределённых углах вокруг центра лагеря (как multi-front в
+## [_spawn_groups_wave]). Это пик давления: Tower не может сосредоточиться
+## на одной угрозе — Giant идёт прямо, Throwers бросают камни с разных
+## сторон. Игрок планирует super/мины во время [boss_wave_warning_seconds]
+## предупреждения.
+##
+## Не использует SpawnZone.waves_left и safe-фильтры — спавн строго по
+## геометрии вокруг центра лагеря на дистанции wave_safe_radius+8 (как
+## multi-front), чтобы стороны были честно противоположными. Если активного
+## лагеря уже нет (игрок свернул) — silent skip.
+func _spawn_boss_wave() -> void:
+	if _spawner == null or _active_camp == null:
+		if debug_log and LogConfig.master_enabled:
+			print("[WaveDirector] boss-wave skip — нет активного лагеря")
+		return
+	if giant_scene == null or giant_thrower_scene == null:
+		push_warning("[WaveDirector] boss-wave: giant_scene или giant_thrower_scene не заданы")
+		return
+	var center: Vector3 = _active_camp.current_center()
+	var spawn_dist: float = wave_safe_radius + 8.0
+	var tower: Node3D = _active_camp.get_tower()
+	# Boss-wave всего N+1 фронт: Giant + boss_wave_thrower_count Throwers.
+	# Распределяем по равным углам на окружности, base_angle случайный для
+	# вариации.
+	var total_fronts: int = 1 + boss_wave_thrower_count
+	var base_angle: float = randf() * TAU
+	var half: float = _spawner.map_half_extent
+	for i in range(total_fronts):
+		var angle: float = base_angle + TAU * float(i) / float(total_fronts)
+		var origin := Vector3(
+			center.x + cos(angle) * spawn_dist,
+			_spawner.spawn_y,
+			center.z + sin(angle) * spawn_dist,
+		)
+		origin.x = clampf(origin.x, -half, half)
+		origin.z = clampf(origin.z, -half, half)
+		# Первый фронт — Giant, остальные — Throwers.
+		var scene: PackedScene = giant_scene if i == 0 else giant_thrower_scene
+		var spawned := _spawner.spawn_group(scene, 1, origin, 1.0)
+		if tower != null:
+			_assign_forced_targets(spawned, tower)
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] БОССОВАЯ ВОЛНА спавн: Giant + %d Throwers вокруг лагеря (r=%.0f)" % [
+			boss_wave_thrower_count, spawn_dist,
 		])
 
 

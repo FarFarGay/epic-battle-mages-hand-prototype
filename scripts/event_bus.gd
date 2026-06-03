@@ -113,6 +113,13 @@ signal key_delivered_to_tower
 ## победы дополнительно требует gold ≥ target.
 signal tower_passed_gate
 
+# --- Boss wave warning (предупреждение о приближающейся боссовой волне) ---
+## Эмитится из [WaveDirector] за `seconds_until_spawn` секунд до спавна
+## боссовой волны (Giant + N Throwers с разных сторон). HUD/overlay
+## слушает чтобы показать предупреждающий баннер «Гигант приближается»
+## — даёт игроку время приготовить super/мины/защиту.
+signal boss_wave_incoming(seconds_until_spawn: float)
+
 # --- Quests ---
 ## Прогресс сюжета продвинулся: new_index = новый QuestProgress.current_index.
 ## Слушают QuestActor (для перекраса) и потенциально HUD.
