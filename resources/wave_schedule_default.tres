@@ -28,13 +28,13 @@ metadata/_custom_type_script = "uid://dyuckha78cek"
 [sub_resource type="Resource" id="Entry_skel_6"]
 script = ExtResource("4_entry")
 scene = ExtResource("5_skel")
-count = 6
+count = 7
 metadata/_custom_type_script = "uid://j0tr35r42ex5"
 
 [sub_resource type="Resource" id="Entry_archer_4"]
 script = ExtResource("4_entry")
 scene = ExtResource("6_archer")
-count = 4
+count = 3
 metadata/_custom_type_script = "uid://j0tr35r42ex5"
 
 [sub_resource type="Resource" id="Group_mixed_10"]
@@ -65,7 +65,7 @@ metadata/_custom_type_script = "uid://fqose6y31knl"
 [sub_resource type="Resource" id="Stage_2_siege"]
 script = ExtResource("2_stage")
 duration = 999999.0
-wave_interval = 30.0
+wave_interval = 25.0
 groups = Array[ExtResource("3_group")]([SubResource("Group_skel_10"), SubResource("Group_skel_8"), SubResource("Group_mixed_10")])
 random_groups = true
 simultaneous_groups = 2

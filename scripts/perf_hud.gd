@@ -11,6 +11,11 @@ extends CanvasLayer
 ## строку по таймеру 0.25с. Не подписан ни на чьи сигналы — только пуллит
 ## состояние группы `Skeleton.SKELETON_GROUP` и `Performance.get_monitor(...)`.
 ##
+## Toggle на L. По умолчанию скрыт (visible=false в perf_hud.tscn) — игровой
+## HUD это не должен ловить глаза, открывается только когда нужно проверить
+## просадку. Раньше был F3 + visible by default, но HUD занимал верхний
+## левый угол постоянно и мешал.
+##
 ## Стоимость HUD'а сама по себе: один проход по группе скелетов + 6 monitor
 ## reads раз в 0.25с + один Label.text setter. На 2000 врагов — < 0.1мс/обновление.
 
@@ -39,11 +44,11 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# F3 — стандартный hotkey для перфоманс-оверлея в играх. Не регистрируем
-	# в InputMap (это debug-инструмент), читаем напрямую из event'а.
+	# L — toggle перф-оверлея. Не регистрируем в InputMap (это debug-инструмент,
+	# не геймплей), читаем напрямую из event'а.
 	if event is InputEventKey and event.pressed and not event.echo:
 		var key := event as InputEventKey
-		if key.keycode == KEY_F3:
+		if key.keycode == KEY_L:
 			visible = not visible
 			if debug_log and LogConfig.master_enabled:
 				print("[PerfHud] visible=%s" % visible)

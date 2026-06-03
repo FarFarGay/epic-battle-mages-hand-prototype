@@ -71,6 +71,26 @@ const PLAN_PRESETS: Array = [
 			ResourcePile.ResourceType.FOOD: 55.0,
 		},
 	},
+	# Фокус на защитной инфраструктуре. Сводный анализ ресурсов по
+	# CampBuildings.CATALOG:
+	#   - PALISADE (частокол): WOOD 2 / сегмент — основной материал стен,
+	#     при brush-mode расходуется десятками за заборную линию;
+	#   - ARCHER_POST (стрелковый пост): WOOD 8 + IRON 3 — IRON нужен только
+	#     здесь, поэтому он получает второй по величине вес.
+	# STONE и FOOD оставлены ненулевыми (5%) — STONE как буфер на возможные
+	# будущие постройки, FOOD для прокорма гномов (новые палатки требуют 5
+	# единиц при NEW_TENT). Нулевые веса не ставим — тогда новые палатки
+	# будут невозможны и лагерь упрётся в потолок численности.
+	{
+		"id": &"defense_focus",
+		"label": "Защита (стены и башни)",
+		"weights": {
+			ResourcePile.ResourceType.WOOD: 55.0,
+			ResourcePile.ResourceType.STONE: 5.0,
+			ResourcePile.ResourceType.IRON: 35.0,
+			ResourcePile.ResourceType.FOOD: 5.0,
+		},
+	},
 ]
 
 var _camp: Node = null

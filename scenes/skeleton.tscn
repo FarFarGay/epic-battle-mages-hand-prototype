@@ -14,7 +14,7 @@ height = 2.0
 collision_layer = 16
 collision_mask = 39
 script = ExtResource("1")
-move_speed = 2.7
+move_speed = 2.0
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("CapsuleShape3D_skel")
