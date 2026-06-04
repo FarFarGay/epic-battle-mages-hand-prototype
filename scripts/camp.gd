@@ -1897,14 +1897,18 @@ const PALISADE_REBAKE_DEBOUNCE: float = 0.3
 
 
 func _on_palisade_segment_destroyed(dying: Node) -> void:
-	# При смерти сегмента НИКАКИЕ posts не спавнятся — только original posts
-	# (поставленные при build'е на углах ломаной) остаются на сцене. Чистка:
-	# глобальный обход PALISADE_VERTEX_GROUP, любой post без живой
-	# wall-соседки в 1.5м → queue_free. Это убирает posts которые
-	# «отвалились» от своей единственной стены.
+	# (1) Ставим post на каждом «обнажённом» конце уцелевших соседей.
+	#     Обнажённый конец = endpoint умирающего сегмента, который теперь
+	#     стал концом обрубка стены. Post должен быть на каждом конце
+	#     каждого обрубка — игрок видит границы и может snap'нуть ремонт.
+	# (2) Глобальный orphan-check: post без живой wall-соседки в 1.5м →
+	#     queue_free. Это убирает post'ы которые «отвалились» от своих
+	#     стен (chain-разрушения).
 	if is_instance_valid(dying):
 		var seg := dying as PalisadeSegment
 		if seg != null and not seg.is_post:
+			if palisade_post_scene != null:
+				_place_posts_at_exposed_endpoints(seg)
 			_cleanup_orphan_posts_near(seg)
 	# Debounced re-bake navmesh'а (как раньше — несколько разрушений в
 	# одном кадре дают один bake).
@@ -1912,6 +1916,54 @@ func _on_palisade_segment_destroyed(dying: Node) -> void:
 		return
 	_palisade_rebake_pending = true
 	get_tree().create_timer(PALISADE_REBAKE_DEBOUNCE).timeout.connect(_do_palisade_rebake)
+
+
+## Радиус «уже есть post здесь» — если столбик в этом радиусе от endpoint'а,
+## пропускаем (не дублируем).
+const PALISADE_POST_DUP_RADIUS: float = 0.5
+
+
+## Спавнит post на каждом endpoint'е умирающего сегмента ЕСЛИ:
+##   (а) на endpoint'е ещё нет post'а (дубликата), И
+##   (б) в [PALISADE_POST_NEIGHBOR_RADIUS] есть живая wall-секция кроме
+##       умирающего — это endpoint обрубка-соседа, не пустота.
+## Endpoint = центр умирающего сегмента ± axis × 1м (длина сегмента 2м).
+func _place_posts_at_exposed_endpoints(dying: PalisadeSegment) -> void:
+	var axis: Vector3 = dying.global_transform.basis.x
+	axis.y = 0.0
+	if axis.length_squared() < 0.0001:
+		return
+	axis = axis.normalized()
+	var endpoints: Array[Vector3] = [
+		dying.global_position + axis,
+		dying.global_position - axis,
+	]
+	for ep in endpoints:
+		if _has_palisade_vertex_near(ep, PALISADE_POST_DUP_RADIUS):
+			continue
+		if not _has_other_wall_near(ep, PALISADE_POST_NEIGHBOR_RADIUS, dying):
+			continue
+		var post: Node3D = palisade_post_scene.instantiate() as Node3D
+		if post == null:
+			continue
+		get_tree().current_scene.add_child(post)
+		post.global_position = Vector3(ep.x, _deploy_anchor.y, ep.z)
+
+
+## True если в радиусе [radius] есть нода из [PALISADE_VERTEX_GROUP].
+func _has_palisade_vertex_near(pos: Vector3, radius: float) -> bool:
+	var rsq: float = radius * radius
+	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_VERTEX_GROUP):
+		if not is_instance_valid(node):
+			continue
+		var n: Node3D = node as Node3D
+		if n == null:
+			continue
+		var dx: float = n.global_position.x - pos.x
+		var dz: float = n.global_position.z - pos.z
+		if dx * dx + dz * dz < rsq:
+			return true
+	return false
 
 
 ## Порог «прямой» vertex для skip'а post'а: dot(prev_dir, next_dir) > этого
