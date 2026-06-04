@@ -1894,19 +1894,44 @@ const PALISADE_REBAKE_DEBOUNCE: float = 0.3
 
 
 func _on_palisade_segment_destroyed(dying: Node) -> void:
-	# Помечаем концы уцелевших соседей post'ами — игроку их видно, snap
-	# к ним в brush-режиме срабатывает, дыры заделываются точно в линию
-	# исходной стены.
-	if palisade_post_scene != null and is_instance_valid(dying):
+	# (1) Помечаем концы уцелевших соседей post'ами — игроку их видно, snap
+	# к ним в brush-режиме срабатывает, дыры заделываются точно в линию.
+	# (2) Чистим orphan-post'ы рядом с дыpой — post без любой соседней стены
+	# не нужен (пустой столбик в траве смотрится мусором).
+	if is_instance_valid(dying):
 		var seg := dying as PalisadeSegment
 		if seg != null and not seg.is_post:
-			_place_posts_at_exposed_endpoints(seg)
+			if palisade_post_scene != null:
+				_place_posts_at_exposed_endpoints(seg)
+			_cleanup_orphan_posts_near(seg)
 	# Debounced re-bake navmesh'а (как раньше — несколько разрушений в
 	# одном кадре дают один bake).
 	if _palisade_rebake_pending:
 		return
 	_palisade_rebake_pending = true
 	get_tree().create_timer(PALISADE_REBAKE_DEBOUNCE).timeout.connect(_do_palisade_rebake)
+
+
+## Удаляет post'ы возле умирающего сегмента у которых не осталось ни одной
+## соседней wall-секции (кроме самого dying). Используем тот же
+## NEIGHBOR_RADIUS=1.5 как при размещении. Pos'ы в радиусе 3м от dying-центра
+## проверяются — достаточно широкий охват чтобы поймать оба original-vertex'а
+## по 1-сегментной стене (vertex'ы по концам, 2м длина) и новые post'ы у
+## концов (если их сосед тоже только что умер).
+const PALISADE_ORPHAN_SCAN_RADIUS_SQ: float = 3.0 * 3.0
+func _cleanup_orphan_posts_near(dying: PalisadeSegment) -> void:
+	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_VERTEX_GROUP):
+		if not is_instance_valid(node):
+			continue
+		var post: Node3D = node as Node3D
+		if post == null:
+			continue
+		var dx: float = post.global_position.x - dying.global_position.x
+		var dz: float = post.global_position.z - dying.global_position.z
+		if dx * dx + dz * dz > PALISADE_ORPHAN_SCAN_RADIUS_SQ:
+			continue
+		if not _has_other_wall_near(post.global_position, PALISADE_POST_NEIGHBOR_RADIUS, dying):
+			post.queue_free()
 
 
 ## Спавнит posts на концах умирающего сегмента ЕСЛИ:
