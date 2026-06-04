@@ -599,6 +599,12 @@ func _equip_slot(slot_idx: int) -> void:
 	var hand := _resolve_hand()
 	if hand == null:
 		return
+	# Гейт: в BUILD_AIM (строим частокол/пост/ворота) equip-клавиши не
+	# переключают категорию. Иначе нажатие 3 (фаербол) посреди постройки
+	# сбрасывало бы курсор с превью на боевую категорию, постройка теряла
+	# контекст. По симметрии с HandSuper.gd (там Space заглушён).
+	if hand.active_category == Hand.Category.BUILD_AIM:
+		return
 	match meta.category_str:
 		"PHYSICAL":
 			if hand.physical_actions != null:
