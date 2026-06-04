@@ -1992,23 +1992,18 @@ func _has_palisade_vertex_near(pos: Vector3, radius: float) -> bool:
 	return false
 
 
-## Удаляет post'ы возле умирающего сегмента у которых не осталось ни одной
-## соседней wall-секции (кроме самого dying). Используем тот же
-## NEIGHBOR_RADIUS=1.5 как при размещении. Pos'ы в радиусе 3м от dying-центра
-## проверяются — достаточно широкий охват чтобы поймать оба original-vertex'а
-## по 1-сегментной стене (vertex'ы по концам, 2м длина) и новые post'ы у
-## концов (если их сосед тоже только что умер).
-const PALISADE_ORPHAN_SCAN_RADIUS_SQ: float = 3.0 * 3.0
+## Удаляет ВСЕ post'ы у которых не осталось ни одной соседней wall-секции
+## (кроме самого dying). Глобальный скан вместо локального — раньше chain
+## разрушений мог оставлять «потерянный» post если он был дальше 3м от
+## конкретного умирающего сегмента, а его сосед-стена умерла раньше.
+## O(P × W) где P=posts, W=walls — на типичной стене ≤30 элементов суммарно,
+## дешёво.
 func _cleanup_orphan_posts_near(dying: PalisadeSegment) -> void:
 	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_VERTEX_GROUP):
 		if not is_instance_valid(node):
 			continue
 		var post: Node3D = node as Node3D
 		if post == null:
-			continue
-		var dx: float = post.global_position.x - dying.global_position.x
-		var dz: float = post.global_position.z - dying.global_position.z
-		if dx * dx + dz * dz > PALISADE_ORPHAN_SCAN_RADIUS_SQ:
 			continue
 		if not _has_other_wall_near(post.global_position, PALISADE_POST_NEIGHBOR_RADIUS, dying):
 			post.queue_free()
