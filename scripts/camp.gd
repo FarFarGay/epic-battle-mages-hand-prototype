@@ -1850,7 +1850,7 @@ func try_build_palisade_line(vertices: Array) -> Dictionary:
 		# пробивают дыру в стене, но navmesh остаётся целым → гномы и сами
 		# скелеты не видят новый проход. Debounce 0.3с защищает от шквала
 		# (волна ломает 5 сегментов в одном кадре → 1 bake, не 5).
-		inst.destroyed.connect(_on_palisade_segment_destroyed)
+		inst.destroyed.connect(_on_palisade_segment_destroyed.bind(inst))
 		built += 1
 	# Corner-posts: на каждом vertex'е спавним короткий столбик. Закрывает
 	# треугольную щель на внешней стороне углов (соседние сегменты под разным
@@ -1893,11 +1893,83 @@ var _palisade_rebake_pending: bool = false
 const PALISADE_REBAKE_DEBOUNCE: float = 0.3
 
 
-func _on_palisade_segment_destroyed() -> void:
+func _on_palisade_segment_destroyed(dying: Node) -> void:
+	# Помечаем концы уцелевших соседей post'ами — игроку их видно, snap
+	# к ним в brush-режиме срабатывает, дыры заделываются точно в линию
+	# исходной стены.
+	if palisade_post_scene != null and is_instance_valid(dying):
+		var seg := dying as PalisadeSegment
+		if seg != null and not seg.is_post:
+			_place_posts_at_exposed_endpoints(seg)
+	# Debounced re-bake navmesh'а (как раньше — несколько разрушений в
+	# одном кадре дают один bake).
 	if _palisade_rebake_pending:
 		return
 	_palisade_rebake_pending = true
 	get_tree().create_timer(PALISADE_REBAKE_DEBOUNCE).timeout.connect(_do_palisade_rebake)
+
+
+## Спавнит posts на концах умирающего сегмента ЕСЛИ:
+## (а) на этом конце ещё нет post'а (vertex с post'ом был изначально), И
+## (б) рядом есть другой wall-segment (т.е. умирающий сегмент стоял в
+##     середине цепочки, не одиноко).
+const PALISADE_POST_DUP_RADIUS: float = 0.5
+const PALISADE_POST_NEIGHBOR_RADIUS: float = 1.5
+func _place_posts_at_exposed_endpoints(dying: PalisadeSegment) -> void:
+	var axis: Vector3 = dying.global_transform.basis.x
+	axis.y = 0.0
+	if axis.length_squared() < 0.0001:
+		return
+	axis = axis.normalized()
+	# Сегмент 2м, endpoint'ы на ±1м от центра вдоль оси.
+	var endpoints: Array[Vector3] = [
+		dying.global_position + axis,
+		dying.global_position - axis,
+	]
+	for ep in endpoints:
+		if _has_palisade_vertex_near(ep, PALISADE_POST_DUP_RADIUS):
+			continue
+		if not _has_other_wall_near(ep, PALISADE_POST_NEIGHBOR_RADIUS, dying):
+			continue
+		var post: Node3D = palisade_post_scene.instantiate() as Node3D
+		if post == null:
+			continue
+		get_tree().current_scene.add_child(post)
+		post.global_position = Vector3(ep.x, _deploy_anchor.y, ep.z)
+
+
+## True если в радиусе [radius] есть нода из [PALISADE_VERTEX_GROUP] (post).
+## Защита от дублирования post'ов на уже-помеченных vertex'ах.
+func _has_palisade_vertex_near(pos: Vector3, radius: float) -> bool:
+	var rsq: float = radius * radius
+	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_VERTEX_GROUP):
+		if not is_instance_valid(node):
+			continue
+		var n: Node3D = node as Node3D
+		if n == null:
+			continue
+		var dx: float = n.global_position.x - pos.x
+		var dz: float = n.global_position.z - pos.z
+		if dx * dx + dz * dz < rsq:
+			return true
+	return false
+
+
+## True если в радиусе [radius] есть wall-сегмент кроме [exclude]. Используется
+## чтобы понять «стоял ли умирающий сегмент в середине цепочки».
+func _has_other_wall_near(pos: Vector3, radius: float, exclude: PalisadeSegment) -> bool:
+	var rsq: float = radius * radius
+	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_WALL_GROUP):
+		if not is_instance_valid(node) or node == exclude:
+			continue
+		var n: Node3D = node as Node3D
+		if n == null:
+			continue
+		var dx: float = n.global_position.x - pos.x
+		var dz: float = n.global_position.z - pos.z
+		if dx * dx + dz * dz < rsq:
+			return true
+	return false
 
 
 func _do_palisade_rebake() -> void:
