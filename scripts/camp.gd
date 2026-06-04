@@ -1914,86 +1914,96 @@ func _on_palisade_segment_destroyed(dying: Node) -> void:
 	get_tree().create_timer(PALISADE_REBAKE_DEBOUNCE).timeout.connect(_do_palisade_rebake)
 
 
-## Tolerance совпадения позиций endpoint'ов / постов. 0.25м — segment'ы
-## позиционируются с float-precision, в разрывах вдоль одной оси они должны
-## точно совпадать. Если 2 endpoint'а в этом радиусе → считаем «общая
-## точка» (потенциальный stitch или corner).
-const PALISADE_POST_MATCH_EPS_SQ: float = 0.25 * 0.25
+## Радиус «совпадение позиций» для сравнения endpoint'ов и постов. 0.4м с
+## запасом — палисадные сегменты могут overlap'аться (если polyline не
+## кратен segment_length), нужно ловить близкие пары как «один stitch».
+const PALISADE_POST_MATCH_EPS_SQ: float = 0.4 * 0.4
+## Half-length сегмента (длина mesh'а 2м, центр в середине).
+const PALISADE_SEGMENT_HALF: float = 1.0
 
 
-## Пересоздаёт набор posts'ов исходя из текущего положения wall-сегментов:
-##   1. Собираем endpoint'ы всех живых стен (кроме [exclude] — он умирает).
-##   2. Группируем endpoint'ы по позиции (± EPS).
-##   3. Группа размером 1 → endpoint обнажён → нужен post.
-##      Группа ≥2 со СХОДНЫМИ осями (dot > 0.97) → прямой стык, post не нужен.
-##      Группа ≥2 с РАЗНЫМИ осями → угол, нужен post (закрывает щель).
-##   4. Удаляем posts не совпадающие ни с одной target-позицией.
-##   5. Добавляем posts на target-позициях где их ещё нет.
+## Re-sync постов от текущего состояния стен. Алгоритм:
+##   1. Собираем для каждой стены 2 endpoint'а (center ± axis × 1м).
+##   2. Endpoint считается «обнажённым» ⟺ не лежит внутри другого
+##      сегмента (footprint = along ≤ 1м, perp ≤ 0.3м от его оси).
+##   3. На каждой уникальной обнажённой позиции должен быть пост.
+##   4. Удаляем посты не на этих позициях, добавляем на тех, где нет.
 ##
-## Идемпотентность: повторный вызов с тем же состоянием даёт тот же набор
-## posts'ов. Устраняет «миграции» — каждое разрушение пересчитывает с нуля.
+## Это даёт ровно правило: «на краях каждого обрубка стоит ребро». Углы
+## (где встречаются 2 не-collinear сегмента) — НЕ обнажены, общая точка
+## внутри обоих footprint'ов, post не нужен.
 func _sync_palisade_posts(exclude: PalisadeSegment) -> void:
-	# Шаг 1+2: endpoint_info → группы по позиции.
-	var groups: Array = []  # [{pos: Vector3, axes: Array[Vector3]}]
+	# Собираем живые сегменты с предвычисленными axis/center.
+	var segs: Array = []
 	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_WALL_GROUP):
 		if not is_instance_valid(node) or node == exclude:
 			continue
-		var seg: PalisadeSegment = node as PalisadeSegment
-		if seg == null:
+		var s: PalisadeSegment = node as PalisadeSegment
+		if s == null:
 			continue
-		var axis: Vector3 = seg.global_transform.basis.x
-		axis.y = 0.0
-		if axis.length_squared() < 0.0001:
+		var ax: Vector3 = s.global_transform.basis.x
+		ax.y = 0.0
+		if ax.length_squared() < 0.0001:
 			continue
-		axis = axis.normalized()
+		segs.append({"axis": ax.normalized(), "center": s.global_position})
+	# Находим обнажённые endpoint'ы.
+	var targets: Array[Vector3] = []
+	var perp_max: float = 0.5  # tolerance по перпендикуляру к чужой оси
+	for i in range(segs.size()):
+		var axis: Vector3 = segs[i]["axis"]
+		var center: Vector3 = segs[i]["center"]
 		var endpoints: Array[Vector3] = [
-			seg.global_position + axis,
-			seg.global_position - axis,
+			center + axis * PALISADE_SEGMENT_HALF,
+			center - axis * PALISADE_SEGMENT_HALF,
 		]
 		for ep in endpoints:
-			var found: bool = false
-			for g in groups:
-				var dx: float = g["pos"].x - ep.x
-				var dz: float = g["pos"].z - ep.z
-				if dx * dx + dz * dz < PALISADE_POST_MATCH_EPS_SQ:
-					g["axes"].append(axis)
-					found = true
+			var exposed: bool = true
+			# Проверяем, лежит ли ep ВНУТРИ другого сегмента.
+			for j in range(segs.size()):
+				if j == i:
+					continue
+				var other_axis: Vector3 = segs[j]["axis"]
+				var other_center: Vector3 = segs[j]["center"]
+				var offset: Vector3 = ep - other_center
+				offset.y = 0.0
+				var along: float = offset.dot(other_axis)
+				# Pere-projection: offset минус компонент вдоль оси.
+				var perp_vec: Vector3 = offset - other_axis * along
+				var perp_dist: float = perp_vec.length()
+				if absf(along) <= PALISADE_SEGMENT_HALF and perp_dist <= perp_max:
+					exposed = false
 					break
-			if not found:
-				groups.append({"pos": ep, "axes": [axis]})
-	# Шаг 3: вычисляем target-позиции для posts'ов.
-	var targets: Array[Vector3] = []
-	for g in groups:
-		var axes: Array = g["axes"]
-		if axes.size() == 1:
-			targets.append(g["pos"])
-			continue
-		# Несколько axes — corner если хоть одна пара не-collinear.
-		var first: Vector3 = axes[0]
-		var is_corner: bool = false
-		for i in range(1, axes.size()):
-			if absf(first.dot(axes[i])) < 0.97:
-				is_corner = true
-				break
-		if is_corner:
-			targets.append(g["pos"])
-	# Шаг 4: удаляем posts не на target'ах.
+			if not exposed:
+				continue
+			# Дедупликация: один обнажённый endpoint = одна target позиция.
+			var dup: bool = false
+			for t in targets:
+				var dx: float = t.x - ep.x
+				var dz: float = t.z - ep.z
+				if dx * dx + dz * dz < PALISADE_POST_MATCH_EPS_SQ:
+					dup = true
+					break
+			if not dup:
+				targets.append(ep)
+	# Сверяем существующие посты с target'ами.
 	var existing: Array = []
 	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_VERTEX_GROUP):
 		if not is_instance_valid(node):
 			continue
 		existing.append(node)
+	# Удаляем посты не на target'ах.
 	for post in existing:
 		var keep: bool = false
+		var n: Node3D = post as Node3D
 		for t in targets:
-			var dx: float = (post as Node3D).global_position.x - t.x
-			var dz: float = (post as Node3D).global_position.z - t.z
+			var dx: float = n.global_position.x - t.x
+			var dz: float = n.global_position.z - t.z
 			if dx * dx + dz * dz < PALISADE_POST_MATCH_EPS_SQ:
 				keep = true
 				break
 		if not keep:
-			(post as Node3D).queue_free()
-	# Шаг 5: добавляем posts на target'ах где их нет.
+			n.queue_free()
+	# Добавляем посты на target'ах где их нет.
 	if palisade_post_scene == null:
 		return
 	for t in targets:
