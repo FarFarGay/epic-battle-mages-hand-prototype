@@ -413,14 +413,18 @@ func _process_brush() -> void:
 		_add_brush_vertex(cursor)
 
 
-## Ищет ближайший palisade-vertex (PalisadePost из группы palisade_vertex)
-## в радиусе [BRUSH_SNAP_RADIUS] от cursor'а. Если нашёл — возвращает его
-## позицию, иначе Vector3.INF. Используется для snap'а первой вершины новой
-## цепочки — игрок может продолжить от любого угла без пикселя в пиксель.
+## Ищет ближайший snap-кандидат (palisade-vertex существующей стены ИЛИ
+## первая вершина текущей цепочки если включён `include_chain_start`) в
+## радиусе [BRUSH_SNAP_RADIUS] от cursor'а. Возвращает позицию или Vector3.INF.
 ##
-## Горизонтальная дистанция (Y игнорируется) — palisade всегда на земле
-## лагеря, snap по XZ.
-func _find_snap_vertex(cursor: Vector3) -> Vector3:
+## Сценарии:
+##   - Первая вершина новой цепочки → snap только к существующим
+##     palisade-posts (continuation от чужой стены).
+##   - Последующие vertex'ы (включая ПКМ-commit closure) → snap и к чужим
+##     post'ам, и к собственной первой вершине цепочки (замыкание петли).
+##
+## Горизонтальная дистанция (Y игнорируется) — palisade всегда на земле.
+func _find_snap_vertex(cursor: Vector3, include_chain_start: bool) -> Vector3:
 	var best_pos: Vector3 = Vector3.INF
 	var best_d_sq: float = BRUSH_SNAP_RADIUS * BRUSH_SNAP_RADIUS
 	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_VERTEX_GROUP):
@@ -435,6 +439,16 @@ func _find_snap_vertex(cursor: Vector3) -> Vector3:
 		if d_sq < best_d_sq:
 			best_d_sq = d_sq
 			best_pos = post.global_position
+	# Замыкание на собственную первую вершину цепочки. Разрешено только
+	# когда уже >=2 vertex'а (иначе snap первого vertex'а на самого себя
+	# даёт zero-length цепочку).
+	if include_chain_start and _brush_vertices.size() >= 2:
+		var first: Vector3 = _brush_vertices[0]
+		var dx_f: float = first.x - cursor.x
+		var dz_f: float = first.z - cursor.z
+		var d_sq_f: float = dx_f * dx_f + dz_f * dz_f
+		if d_sq_f < best_d_sq:
+			best_pos = first
 	return best_pos
 
 
@@ -454,12 +468,13 @@ func _add_brush_vertex(cursor: Vector3) -> void:
 	if anchor == Vector3.INF:
 		anchor = Vector3.ZERO
 	var pt: Vector3 = Vector3(cursor.x, anchor.y, cursor.z)
-	# Snap первой вершины новой цепочки к существующему palisade-vertex.
-	# Игрок может «продолжить» от любого угла уже построенной стены.
+	# Snap к существующему palisade-vertex'у И к собственной первой вершине
+	# цепочки (только если size >= 2, см. _find_snap_vertex). Игрок может
+	# «продолжить» от чужого угла или замкнуть петлю на свою стартовую точку.
+	var snap: Vector3 = _find_snap_vertex(cursor, true)
+	if snap != Vector3.INF:
+		pt = Vector3(snap.x, anchor.y, snap.z)
 	if _brush_vertices.is_empty():
-		var snap: Vector3 = _find_snap_vertex(cursor)
-		if snap != Vector3.INF:
-			pt = Vector3(snap.x, anchor.y, snap.z)
 		_brush_vertices.append(pt)
 		if debug_log and LogConfig.master_enabled:
 			var snap_note: String = " [SNAP]" if snap != Vector3.INF else ""
@@ -498,20 +513,21 @@ func _update_brush_active_preview(cursor: Vector3) -> void:
 		if is_instance_valid(m):
 			m.visible = false
 	var used: int = 0
+	# Snap-индикатор работает на любом vertex'е: для первого — кандидаты
+	# только чужие palisade-posts; для последующих — плюс собственная
+	# первая вершина (замыкание петли).
+	var snap_pos: Vector3 = _find_snap_vertex(cursor, not _brush_vertices.is_empty())
+	_update_brush_snap_indicator(snap_pos)
+	# Эффективная позиция курсора для preview: snap'нутая если есть кандидат.
+	var effective_cursor: Vector3 = snap_pos if snap_pos != Vector3.INF else cursor
 	if _brush_vertices.is_empty():
-		# Snap-индикатор: если рядом с курсором есть palisade-vertex, рисуем
-		# маленькое кольцо на нём — игрок видит «здесь начнётся новая стена».
-		var snap_pos: Vector3 = _find_snap_vertex(cursor)
-		_update_brush_snap_indicator(snap_pos)
 		# Ещё не поставили первый vertex — показываем «фантомный сегмент»
 		# в точке курсора (горизонтально, дефолтная ориентация). Подсказка:
 		# «ЛКМ поставит первую точку».
-		_acquire_preview_segment(used, cursor, 0.0, brush_preview_color_valid)
+		_acquire_preview_segment(used, effective_cursor, 0.0, brush_preview_color_valid)
 		return
-	# После постановки первого vertex'а snap-индикатор не нужен.
-	_update_brush_snap_indicator(Vector3.INF)
 	var last: Vector3 = _brush_vertices[-1]
-	var pt: Vector3 = Vector3(cursor.x, last.y, cursor.z)
+	var pt: Vector3 = Vector3(effective_cursor.x, last.y, effective_cursor.z)
 	var dir: Vector3 = pt - last
 	var length: float = dir.length()
 	if length < BRUSH_MIN_SEGMENT_LENGTH:
@@ -695,13 +711,17 @@ func _commit_brush() -> void:
 		return
 	# Добавляем cursor как последний vertex (если он валиден и достаточно
 	# далеко от last). Это даёт игроку «закрытие» ломаной одним ПКМ'ом без
-	# лишнего ЛКМ-клика.
+	# лишнего ЛКМ-клика. Snap применяется и здесь — ПКМ возле существующего
+	# угла / первой вершины своей цепочки замкнёт «ровно» на vertex.
 	var cursor: Vector3 = _hand.cursor_world_position()
 	cursor.y -= _hand.hand_height
 	var anchor: Vector3 = _camp.build_zone_center()
 	if anchor == Vector3.INF:
 		anchor = Vector3.ZERO
 	cursor.y = anchor.y
+	var snap_final: Vector3 = _find_snap_vertex(cursor, true)
+	if snap_final != Vector3.INF:
+		cursor = Vector3(snap_final.x, anchor.y, snap_final.z)
 	var final_vertices: Array[Vector3] = _brush_vertices.duplicate()
 	if not final_vertices.is_empty():
 		var last: Vector3 = final_vertices[-1]
