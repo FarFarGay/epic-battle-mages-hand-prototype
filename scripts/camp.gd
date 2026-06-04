@@ -1909,6 +1909,12 @@ const PALISADE_POST_MATCH_EPS_SQ: float = 0.4 * 0.4
 const PALISADE_SEGMENT_HALF: float = 1.0
 
 
+## Debug-лог sync'а — выводит targets/existing/removed/added. Включается
+## когда [debug_log] и [LogConfig.master_enabled]. Используется для диагностики
+## жалоб «пост остался не там где надо».
+var _palisade_sync_debug: bool = true
+
+
 ## Re-sync постов от текущего состояния стен. Алгоритм:
 ##   1. Для каждой стены 2 endpoint'а (center ± axis × 1м).
 ##   2. Для каждого endpoint'а считаем сколько endpoint'ов ДРУГИХ сегментов
@@ -1977,7 +1983,19 @@ func _sync_palisade_posts(exclude: PalisadeSegment) -> void:
 		if not is_instance_valid(node):
 			continue
 		existing.append(node)
+	# Debug-log: вывод состояния sync'а.
+	if _palisade_sync_debug and LogConfig.master_enabled:
+		print("[Palisade:Sync] segs=%d targets=%d existing=%d (exclude=%s)" % [
+			segs.size(), targets.size(), existing.size(),
+			str(exclude.name) if is_instance_valid(exclude) else "none",
+		])
+		for i in range(targets.size()):
+			print("  target[%d] = (%.2f, %.2f)" % [i, targets[i].x, targets[i].z])
+		for i in range(existing.size()):
+			var ep := (existing[i] as Node3D).global_position
+			print("  existing[%d] = (%.2f, %.2f)" % [i, ep.x, ep.z])
 	# Удаляем посты не на target'ах.
+	var removed: int = 0
 	for post in existing:
 		var n: Node3D = post as Node3D
 		var keep: bool = false
@@ -1986,9 +2004,15 @@ func _sync_palisade_posts(exclude: PalisadeSegment) -> void:
 				keep = true
 				break
 		if not keep:
+			if _palisade_sync_debug and LogConfig.master_enabled:
+				print("  REMOVE post @ (%.2f, %.2f)" % [n.global_position.x, n.global_position.z])
 			n.queue_free()
+			removed += 1
 	# Добавляем посты на target'ах где нет.
+	var added: int = 0
 	if palisade_post_scene == null:
+		if _palisade_sync_debug and LogConfig.master_enabled:
+			print("  → final: removed=%d added=0 (no scene)" % removed)
 		return
 	for t in targets:
 		var has_post: bool = false
@@ -2005,6 +2029,11 @@ func _sync_palisade_posts(exclude: PalisadeSegment) -> void:
 			continue
 		get_tree().current_scene.add_child(new_post)
 		new_post.global_position = Vector3(t.x, _deploy_anchor.y, t.z)
+		added += 1
+		if _palisade_sync_debug and LogConfig.master_enabled:
+			print("  ADD post @ (%.2f, %.2f)" % [t.x, t.z])
+	if _palisade_sync_debug and LogConfig.master_enabled:
+		print("  → final: removed=%d added=%d" % [removed, added])
 
 
 ## Helper: близость 2 точек по XZ (ignore Y) в радиусе [PALISADE_POST_MATCH_EPS].
