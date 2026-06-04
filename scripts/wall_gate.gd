@@ -5,11 +5,14 @@ extends StaticBody3D
 ## дружественные юниты (гномы, солдаты) на `FRIENDLY_UNIT` слое имеют
 ## маску `TERRAIN`-only и физически проходят сквозь стены/ворота всегда.
 ##
-## **Open/close — чисто визуальный**. Физика не меняется: своим всегда
-## открыто, врагам всегда закрыто. Анимация дверей — feedback для игрока
-## («ворота меня узнали, открылись»), не реальный gating. Это упрощает
-## state-machine: не надо переключать collision_layer'ы, синхронизировать
-## с pathfinding'ом и т.п.
+## **Open/close** — двойной эффект:
+## 1. Анимация дверей (визуал) на любого друга в trigger-зоне.
+## 2. **Body-collider отключается** пока в зоне есть друзья. Это нужно для
+##    Tower: её маска включает CAMP_OBSTACLE → без disable'а она физически
+##    упиралась бы в ворота как в стену, несмотря на анимацию. Гномы и так
+##    проходят (mask=TERRAIN-only). Скелетов триггер не ловит (mask их слой
+##    не включает), но **они могут проскочить пока другой свой в зоне** —
+##    дизайнерски acceptable edge case: «ворота не закрылись вовремя».
 ##
 ## Архитектура:
 ## - Триггер-Area3D детектит дружественных юнитов в радиусе [trigger_radius].
@@ -46,6 +49,7 @@ signal destroyed
 @onready var _door_left_pivot: Node3D = $DoorLeftPivot
 @onready var _door_right_pivot: Node3D = $DoorRightPivot
 @onready var _trigger: Area3D = $Trigger
+@onready var _body_collider: CollisionShape3D = $BodyCollider
 
 var _friendlies_inside: int = 0
 var _is_open: bool = false
@@ -89,6 +93,10 @@ func _open() -> void:
 	if _is_open or _destroyed:
 		return
 	_is_open = true
+	# Отключаем body-collider — Tower (collision_mask включает CAMP_OBSTACLE)
+	# сможет проехать. Гномам не нужно (их mask=TERRAIN-only).
+	if _body_collider != null:
+		_body_collider.disabled = true
 	_play_door_tween(_door_left_pivot, -OPEN_ANGLE, _tween_left)
 	_play_door_tween(_door_right_pivot, OPEN_ANGLE, _tween_right)
 
@@ -97,6 +105,9 @@ func _close() -> void:
 	if not _is_open or _destroyed:
 		return
 	_is_open = false
+	# Возвращаем стену — Tower и скелеты снова блокируются.
+	if _body_collider != null:
+		_body_collider.disabled = false
 	_play_door_tween(_door_left_pivot, 0.0, _tween_left)
 	_play_door_tween(_door_right_pivot, 0.0, _tween_right)
 
