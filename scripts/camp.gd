@@ -40,7 +40,9 @@ enum State { CARAVAN_FOLLOWING, DEPLOYED, PACKING_RETURNING }
 ## продолжают защищать (у них собственный override request_return, который мы
 ## специально пропускаем). Режим имеет смысл только в DEPLOYED — в каравне
 ## гномы и так в палатках, в PACKING — уже идут домой.
-enum CollectionMode { WORK, ALARM }
+## FREE — «жизнь лагеря» (idle): гномы у костров / бродят, НЕ собирают (дефолт
+## на развёртке). WORK — добыча. ALARM — в палатки. FREE=0 первым: дефолт лагеря.
+enum CollectionMode { FREE, WORK, ALARM }
 
 @export_node_path("Node3D") var target_path: NodePath
 
@@ -60,6 +62,33 @@ enum CollectionMode { WORK, ALARM }
 ## R-toggle отключён — такой лагерь не сворачивается. Используется для
 ## статических поселений на POI (карта-локация без следования за башней).
 @export var start_deployed: bool = false
+@export_group("")
+
+@export_group("Idle camp life (FREE mode)")
+## Сцена костра (campfire.tscn). По одному спавнится у каждой палатки на
+## развёртке; гном-разжигатель доходит и поджигает. Если не задана — idle-жизнь
+## работает без костров (все гномы — бродяги).
+@export var campfire_scene: PackedScene
+## Доля гномов, садящихся у костров (остальные бродят по лагерю). 0.7 = ~70%.
+@export_range(0.0, 1.0) var fire_slot_ratio: float = 0.7
+## Смещение костра от палатки в сторону anchor'а (костёр между палаткой и
+## центром лагеря, чтобы кольцо костров смотрело внутрь).
+@export var campfire_offset: float = 3.0
+## Радиус кольца слотов вокруг костра, на котором рассаживаются гномы.
+@export var fire_slot_radius: float = 1.2
+## Сколько слотов (мест) у одного костра.
+@export var fire_slots_per_fire: int = 6
+@export_group("")
+
+@export_group("Construction (build time)")
+## Сцена стройплощадки (construction_site.tscn). Если не задана — постройки
+## возводятся мгновенно (старое поведение, graceful fallback).
+@export var construction_site_scene: PackedScene
+## Базовое время возведения здания, сек. Может быть переопределено на конкретную
+## постройку полем `build_time` в CAMP_BUILDING_CATALOG.
+@export var build_time: float = 2.5
+## Задержка старта между сегментами палисада — даёт «волну» стройки вдоль линии.
+@export var palisade_segment_stagger: float = 0.15
 @export_group("")
 
 ## Группа целей для скелетов (см. Skeleton.TARGET_GROUP). Camp ставит/убирает
@@ -346,6 +375,14 @@ var _deploy_hold: float = 0.0
 var _pack_hold: float = 0.0
 var _deploy_anchor: Vector3 = Vector3.ZERO
 var _deployed_targets: Array[Vector3] = []
+## Костры idle-жизни (campfire.tscn), по одному на палатку. Индекс СИНХРОНЕН
+## с _parts/_deployed_targets: _campfires[i] — костёр палатки _parts[i].
+## Спавнятся в _start_deploy, убираются в _start_pack / _on_part_destroyed.
+var _campfires: Array[Node3D] = []
+## Активные стройплощадки (construction_site.tscn) — здания в процессе возведения.
+## Убираются на свёртке лагеря (_start_pack); каждая сама queue_free'ится на
+## завершении/разрушении и erase'ится через destroyed-сигнал.
+var _construction_sites: Array[Node] = []
 ## Часы PACKING_RETURNING: тикают с момента _start_pack. По достижении
 ## pack_timeout — _finalize_pack принудительно, даже если кто-то не дома.
 var _pack_elapsed: float = 0.0
@@ -402,7 +439,7 @@ var _anchor_drop_zone: Area3D = null
 
 ## Текущий режим сбора (см. CollectionMode). Меняется через set_collection_mode
 ## (хоткеи C / V в _handle_input, или из API). HUD рисует индикатор.
-var _collection_mode: CollectionMode = CollectionMode.WORK
+var _collection_mode: CollectionMode = CollectionMode.FREE
 
 ## Караван «остановлен на месте» в State.CARAVAN_FOLLOWING. Палатки не
 ## двигаются за башней (`_update_caravan_follow` ранний return), но и не
@@ -1408,11 +1445,11 @@ func dismiss_squad(squad: Squad) -> bool:
 		var gatherer := _spawn_one_gnome(gnome_scene, tent, "gatherer")
 		if gatherer != null:
 			gatherer.global_position = pos
-			# В DEPLOYED — сразу выходим в SEARCHING, иначе сидели бы в IN_TENT.
+			# В DEPLOYED — выходим согласно режиму (FREE: idle / WORK: сбор / ALARM).
 			# В CARAVAN-фазе оставляем как есть: setup → IN_TENT → старт следующей
 			# свёртки/развёртки выведет наружу нормальным путём.
 			if _state == State.DEPLOYED:
-				gatherer.enter_deployed()
+				_apply_mode_to_one(gatherer)
 		_gnomes.erase(soldier)
 		squad.remove_member(soldier)
 		soldier.queue_free()
@@ -1624,13 +1661,65 @@ func try_build(id: StringName, params: Dictionary = {}) -> Dictionary:
 			for type in cost:
 				economy.add_resource(type, int(cost[type]))
 			return {"success": false, "reason": "нужен 1 свободный гном"}
-	if not _apply_building(id, params):
-		push_error("Camp.try_build: apply провалился для id=%s после успешного списания" % id)
-		return {"success": false, "reason": "ошибка постройки"}
+	# Возведение через стройплощадку (время + прогресс): реальный _apply_building
+	# откладывается до завершения. Ресурсы/гном уже списаны (commit). Сорвут
+	# стройку скелеты — здание не появится (см. ConstructionSite). camp_buildings_changed
+	# эмитится по факту появления здания (в колбэке), не на старте.
+	var site_pos: Vector3 = params.get("position", _deploy_anchor)
+	var on_complete := func() -> void:
+		if _apply_building(id, params):
+			EventBus.camp_buildings_changed.emit()
+			if debug_log and LogConfig.master_enabled:
+				print("[Camp:Build] %s построено" % id)
+		else:
+			push_warning("Camp.try_build: apply провалился для id=%s на завершении стройки" % id)
+	_spawn_construction_site(site_pos, _build_time_for(id), on_complete, 0.0, str(id))
 	if debug_log and LogConfig.master_enabled:
-		print("[Camp:Build] %s построено" % id)
-	EventBus.camp_buildings_changed.emit()
+		print("[Camp:Build] %s — стройка началась" % id)
 	return {"success": true, "reason": ""}
+
+
+# --- Стройплощадки (время возведения) ---
+
+## Время возведения для постройки id. CAMP_BUILDING_CATALOG[id].build_time
+## переопределяет общий build_time, если задано.
+func _build_time_for(id: StringName) -> float:
+	var data: Dictionary = CAMP_BUILDING_CATALOG.get(id, {})
+	return float(data.get("build_time", build_time))
+
+
+## Ставит стройплощадку на pos: показывает прогресс dur секунд, по завершении
+## зовёт on_complete (спавн настоящего здания). start_delay>0 — для «волны»
+## палисада. Если construction_site_scene не задана / сцена не резолвится —
+## graceful fallback: строим сразу (старое мгновенное поведение).
+func _spawn_construction_site(pos: Vector3, dur: float, on_complete: Callable, start_delay: float, label: String, light_fx: bool = false) -> void:
+	var scene_root: Node = get_tree().current_scene
+	if construction_site_scene == null or not is_instance_valid(scene_root):
+		if on_complete.is_valid():
+			on_complete.call()
+		return
+	var site := construction_site_scene.instantiate() as ConstructionSite
+	if site == null:
+		push_warning("Camp: construction_site_scene не инстанцируется как ConstructionSite")
+		if on_complete.is_valid():
+			on_complete.call()
+		return
+	scene_root.add_child(site)
+	site.setup(pos, dur, on_complete, start_delay, label, light_fx)
+	_construction_sites.append(site)
+	# tree_exited (не destroyed) — erase и на завершении (_complete), и на сломе
+	# (_fail), и на despawn'е. destroyed шлётся только при сломе → копились бы
+	# freed-ссылки от достроенных.
+	site.tree_exited.connect(func() -> void: _construction_sites.erase(site))
+
+
+## Убирает все незавершённые стройплощадки (свёртка лагеря). Ресурсы уже
+## потрачены — не возвращаем (как и при разрушении стройки скелетами).
+func _despawn_construction_sites() -> void:
+	for s in _construction_sites:
+		if is_instance_valid(s):
+			s.queue_free()
+	_construction_sites.clear()
 
 
 ## Применяет эффект постройки по id. Вынесен в отдельную функцию (а не switch
@@ -1834,36 +1923,56 @@ func try_build_palisade_line(vertices: Array) -> Dictionary:
 		# Godot не случится, но страховка.
 		return {"success": false, "reason": "не хватает ресурсов", "segments_built": 0}
 
-	# Spawn'им. На этом этапе всё списано, провалов быть не должно — если
-	# instantiate падает, логируем (но мы уже за деньги).
-	var built: int = 0
-	var parent: Node = get_tree().current_scene
-	for seg in segments:
-		var inst := palisade_segment_scene.instantiate() as PalisadeSegment
-		if inst == null:
-			push_error("Camp.try_build_palisade_line: scene не инстанцируется как PalisadeSegment")
-			continue
-		parent.add_child(inst)
-		inst.global_position = seg["pos"]
-		inst.rotation.y = seg["rot_y"]
-		# При разрушении сегмента — debounced re-bake. Без этого скелеты
-		# пробивают дыру в стене, но navmesh остаётся целым → гномы и сами
-		# скелеты не видят новый проход. Debounce 0.3с защищает от шквала
-		# (волна ломает 5 сегментов в одном кадре → 1 bake, не 5).
-		inst.destroyed.connect(_on_palisade_segment_destroyed.bind(inst))
-		built += 1
-	# Posts'ы определяются sync'ом из текущих сегментов после build'а —
-	# не плодим вручную при создании. Sync ниже точно поставит на каждом
-	# обнажённом конце и угле, никаких посторонних.
-	_sync_palisade_posts(null)
+	# Возведение ВОЛНОЙ: на каждый сегмент — стройплощадка со staggered стартом
+	# (segment i стартует через i × palisade_segment_stagger). Реальный сегмент
+	# появляется по завершении его площадки (_spawn_one_palisade_segment), которая
+	# сама пере-sync'ит posts и запросит navmesh-rebake. Ресурсы уже списаны
+	# (commit); сорванные стройплощадки = потерянные сегменты.
+	for i in range(segments.size()):
+		var seg: Dictionary = segments[i]
+		var seg_pos: Vector3 = seg["pos"]
+		var seg_rot: float = seg["rot_y"]
+		var on_done := func() -> void:
+			_spawn_one_palisade_segment(seg_pos, seg_rot)
+		# light_fx=true: палисад строится десятками — без dust/колец, чтобы не
+		# топить FPS. Растущий каркас остаётся индикатором.
+		_spawn_construction_site(seg_pos, build_time, on_done, float(i) * palisade_segment_stagger, "palisade", true)
 	if debug_log and LogConfig.master_enabled:
-		print("[Camp:Palisade] построено %d сегментов" % built)
-	# Re-bake NavMesh — палисад добавил препятствия на слое CAMP_OBSTACLE,
-	# гномам нужен новый путь вокруг. Async, гномы продолжают по старому
-	# пути ≈100-300мс пока bake не закончится.
-	_rebake_navmesh()
+		print("[Camp:Palisade] стройка началась: %d сегментов (волна)" % segments.size())
+	return {"success": true, "reason": "", "segments_built": segments.size()}
+
+
+## Спавнит ОДИН сегмент палисада (по завершении его стройплощадки). Сразу
+## пере-sync'ит posts и запрашивает debounced navmesh-rebake — стена
+## «достраивается» волной, posts и проходы догоняют по мере готовности.
+func _spawn_one_palisade_segment(pos: Vector3, rot_y: float) -> void:
+	if palisade_segment_scene == null:
+		return
+	var parent: Node = get_tree().current_scene
+	if not is_instance_valid(parent):
+		return
+	var inst := palisade_segment_scene.instantiate() as PalisadeSegment
+	if inst == null:
+		push_error("Camp._spawn_one_palisade_segment: scene не инстанцируется как PalisadeSegment")
+		return
+	parent.add_child(inst)
+	inst.global_position = pos
+	inst.rotation.y = rot_y
+	inst.destroyed.connect(_on_palisade_segment_destroyed.bind(inst))
+	_sync_palisade_posts(null)
+	_request_debounced_rebake()
 	EventBus.camp_buildings_changed.emit()
-	return {"success": true, "reason": "", "segments_built": built}
+
+
+## Debounced navmesh-rebake (общий для build-волны и разрушений). Несколько
+## событий за окно PALISADE_REBAKE_DEBOUNCE дают один bake.
+func _request_debounced_rebake() -> void:
+	# Каждый запрос отодвигает дедлайн (trailing) — см. _do_palisade_rebake.
+	_palisade_rebake_due_msec = Time.get_ticks_msec() + int(PALISADE_REBAKE_DEBOUNCE * 1000.0)
+	if _palisade_rebake_pending:
+		return
+	_palisade_rebake_pending = true
+	get_tree().create_timer(PALISADE_REBAKE_DEBOUNCE).timeout.connect(_do_palisade_rebake)
 
 
 ## Зовёт async re-bake у NavigationRegion3D в сцене. Если region не найден
@@ -1880,6 +1989,9 @@ func _rebake_navmesh() -> void:
 ## один bake через 0.3с. Без debounce'а волна на 5 сегментов давала бы
 ## 5 sync bake'ов = 0.5-1.5с лагов.
 var _palisade_rebake_pending: bool = false
+## Дедлайн trailing-debounce'а (Time.get_ticks_msec). Каждый запрос отодвигает —
+## bake срабатывает, когда поток запросов (волна стройки/сломов) утих.
+var _palisade_rebake_due_msec: int = 0
 const PALISADE_REBAKE_DEBOUNCE: float = 0.3
 
 
@@ -1893,12 +2005,8 @@ func _on_palisade_segment_destroyed(dying: Node) -> void:
 		var seg := dying as PalisadeSegment
 		if seg != null and not seg.is_post:
 			_sync_palisade_posts(seg)
-	# Debounced re-bake navmesh'а (как раньше — несколько разрушений в
-	# одном кадре дают один bake).
-	if _palisade_rebake_pending:
-		return
-	_palisade_rebake_pending = true
-	get_tree().create_timer(PALISADE_REBAKE_DEBOUNCE).timeout.connect(_do_palisade_rebake)
+	# Debounced re-bake navmesh'а (trailing — волна сломов даёт один bake).
+	_request_debounced_rebake()
 
 
 ## Радиус «совпадение позиций». 0.4м с запасом — соседние сегменты с
@@ -2044,6 +2152,11 @@ func _pos_close(a: Vector3, b: Vector3) -> bool:
 
 
 func _do_palisade_rebake() -> void:
+	# Trailing: пока приходят запросы (due в будущем) — переарм, не bake'аем.
+	# Так волна стройки/сломов даёт ОДИН bake в конце, а не десятки подряд.
+	if Time.get_ticks_msec() < _palisade_rebake_due_msec:
+		get_tree().create_timer(PALISADE_REBAKE_DEBOUNCE).timeout.connect(_do_palisade_rebake)
+		return
 	_palisade_rebake_pending = false
 	_rebake_navmesh()
 
@@ -2085,9 +2198,10 @@ func _respawn_garrison_gatherer(spawn_pos: Vector3, log_tag: String) -> Gnome:
 	if gnome == null:
 		return null
 	gnome.global_position = spawn_pos
-	# В DEPLOYED — gatherer-flow, в PACKING — догоняет караван.
+	# В DEPLOYED — по текущему режиму (FREE: idle / WORK: сбор / ALARM: домой),
+	# в PACKING — догоняет караван.
 	if _state == State.DEPLOYED:
-		gnome.enter_deployed()
+		_apply_mode_to_one(gnome)
 	elif _state == State.PACKING_RETURNING:
 		gnome.request_return()
 	return gnome
@@ -2170,6 +2284,13 @@ func _build_new_tent() -> bool:
 			_deploy_anchor.z,
 		)
 		_rebuild_deployed_targets()
+		# Костёр для новой палатки. _spawn_one_tent добавил её в конец _parts —
+		# append в конец _campfires держит индексы синхронными (нужно
+		# _on_part_destroyed). Существующие костры остаются на месте (кольцо чуть
+		# расширилось, лёгкий дрифт — допустимо для рантайм-постройки).
+		var new_idx: int = _parts.size() - 1
+		if new_idx >= 0 and new_idx < _deployed_targets.size():
+			_campfires.append(_make_campfire_for(_parts[new_idx], _deployed_targets[new_idx]))
 	if tent is CampPart:
 		var part := tent as CampPart
 		var new_gnomes: Array[Gnome] = []
@@ -2177,11 +2298,14 @@ func _build_new_tent() -> bool:
 			var g := _spawn_one_gnome(gnome_scene, tent, "gatherer")
 			if g != null:
 				new_gnomes.append(g)
-		# В DEPLOYED новые гномы должны сразу выйти на сбор, как и
-		# существующие — иначе сидели бы в палатке до следующего deploy'я.
+		# В DEPLOYED выводим наружу по текущему режиму. В FREE — перераздаём
+		# idle-жизнь всем (новый костёр + новые гномы встроятся в распределение).
 		if _state == State.DEPLOYED:
-			for g in new_gnomes:
-				g.enter_deployed()
+			if _collection_mode == CollectionMode.FREE:
+				_assign_idle_life()
+			else:
+				for g in new_gnomes:
+					_apply_mode_to_one(g)
 	return true
 
 
@@ -2324,9 +2448,13 @@ func set_collection_mode(mode: int) -> void:
 	_collection_mode = mode
 	EventBus.collection_mode_changed.emit(mode)
 	if debug_log and LogConfig.master_enabled:
-		var mode_label: String = "WORK" if mode == CollectionMode.WORK else "ALARM"
-		print("[Camp] режим сбора: %s" % mode_label)
+		print("[Camp] режим сбора: %s" % CollectionMode.keys()[mode])
 	if _state != State.DEPLOYED:
+		return
+	# FREE раздаётся глобально (распределение по кострам/слотам — _assign_idle_life),
+	# WORK/ALARM — per-gnome.
+	if mode == CollectionMode.FREE:
+		_assign_idle_life()
 		return
 	for g in _gnomes:
 		if not is_instance_valid(g):
@@ -2384,12 +2512,10 @@ func reset_population() -> void:
 			gnome.queue_free()
 	_gnomes.clear()
 	_spawn_gnomes()
-	# Если лагерь уже DEPLOYED — новые гномы должны выйти бродить, иначе
-	# останутся IN_TENT и не будут собирать ресурсы / отстреливать скелетов.
+	# Если лагерь уже DEPLOYED — новые гномы выходят согласно текущему режиму
+	# (FREE: idle-жизнь / WORK: сбор / ALARM: в палатки), иначе сидели бы IN_TENT.
 	if _state == State.DEPLOYED:
-		for g in _gnomes:
-			if is_instance_valid(g):
-				g.enter_deployed()
+		_reapply_collection_mode()
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] популяция сброшена (гномов: %d)" % _gnomes.size())
 
@@ -2404,6 +2530,12 @@ func _on_part_destroyed(part: Node3D) -> void:
 	_parts.remove_at(idx)
 	if idx < _deployed_targets.size():
 		_deployed_targets.remove_at(idx)
+	# Костёр этой палатки (индекс синхронен) — убираем синхронно.
+	if idx < _campfires.size():
+		var fire: Node3D = _campfires[idx]
+		if is_instance_valid(fire):
+			fire.queue_free()
+		_campfires.remove_at(idx)
 	# Переназначаем сиротских гномов на ближайшую живую палатку. Без этого
 	# гном с _home_tent → freed-инстансом застревает: при request_return
 	# _tick_returning видит null tent и сразу _enter_in_tent на текущей
@@ -2412,6 +2544,10 @@ func _on_part_destroyed(part: Node3D) -> void:
 	# Если живых палаток вообще не осталось — просто оставляем _home_tent=null,
 	# гномы продолжают жить на местах (Camp всё равно невалиден для волн).
 	_reassign_orphan_gnomes(part)
+	# В FREE перераспределяем idle-жизнь: tender'ы исчезнувшего костра и
+	# осиротевшие гномы встанут к оставшимся кострам / станут бродягами.
+	if _state == State.DEPLOYED and _collection_mode == CollectionMode.FREE:
+		_assign_idle_life()
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] палатка %s уничтожена (осталось: %d)" % [part.name, _parts.size()])
 
@@ -2927,12 +3063,15 @@ func _start_deploy() -> void:
 	# Tower уходит из аггро-цели — скелеты переключаются на палатки/гномов.
 	# Если игрок свернёт лагерь, _finalize_pack вернёт tower в группу.
 	_set_tower_aggro(false)
-	# Гномы выходят бродить — каждый из своей палатки (setup() в _spawn_one_gnome
-	# привязал их к конкретному tent'у). Harvester для гномов — не дом, просто
-	# объект в центре кольца.
-	for g in _gnomes:
-		if is_instance_valid(g):
-			g.enter_deployed()
+	# Idle-«жизнь лагеря»: спавним костры у палаток и переводим лагерь в FREE.
+	# Гномы выходят НЕ работать, а жить (часть садится у костров, часть бродит).
+	# Добыча — по кнопке «Работа» (set_collection_mode(WORK)). setup() в
+	# _spawn_one_gnome привязал гнома к палатке — учитывается при раздаче «своего»
+	# костра. Harvester для гномов — не дом, просто объект в центре кольца.
+	_spawn_campfires_for_deploy()
+	_collection_mode = CollectionMode.FREE
+	EventBus.collection_mode_changed.emit(CollectionMode.FREE)
+	_assign_idle_life()
 	# Центральный слот для модулей переезжает в anchor и активируется.
 	# Y берём с пола, а не с anchor'а: anchor — позиция башни (y≈3, центр меша),
 	# а модуль должен стоять на земле, а не висеть в воздухе.
@@ -2954,6 +3093,149 @@ func _start_deploy() -> void:
 		if not _parts.is_empty():
 			harv_ground_y = _ground_y_at(_parts[0], _deploy_anchor)
 		_harvester.deploy_on(Vector3(_deploy_anchor.x, harv_ground_y, _deploy_anchor.z))
+
+
+# --- Idle-«жизнь лагеря» (режим FREE): костры + распределение гномов ---
+
+## Создаёт костёр для палатки на её ring-target'е, смещённый к центру лагеря
+## (костёр между палаткой и anchor'ом — кольцо костров смотрит внутрь). Старт
+## UNLIT. Возвращает ноду костра или null (scene не задана / не инстанцируется).
+func _make_campfire_for(tent: Node3D, tent_target: Vector3) -> Node3D:
+	if campfire_scene == null:
+		return null
+	var scene_root := get_tree().current_scene
+	if not is_instance_valid(scene_root):
+		return null
+	var to_center: Vector3 = _deploy_anchor - tent_target
+	to_center.y = 0.0
+	var dir: Vector3 = to_center.normalized() if to_center.length() > 0.01 else Vector3.FORWARD
+	var fire_pos: Vector3 = tent_target + dir * campfire_offset
+	fire_pos.y = _ground_y_at(tent, fire_pos)
+	var fire := campfire_scene.instantiate() as Node3D
+	if fire == null:
+		push_warning("Camp: campfire_scene не инстанцируется как Node3D")
+		return null
+	scene_root.add_child(fire)
+	fire.global_position = fire_pos
+	return fire
+
+
+## Спавнит по одному костру у каждой палатки. Индекс _campfires СИНХРОНЕН с
+## _parts/_deployed_targets (даже если костёр null при незаданной scene) —
+## _on_part_destroyed удаляет по idx. Зовётся из _start_deploy.
+func _spawn_campfires_for_deploy() -> void:
+	_despawn_campfires()
+	for i in range(_parts.size()):
+		if i >= _deployed_targets.size():
+			break
+		_campfires.append(_make_campfire_for(_parts[i], _deployed_targets[i]))
+
+
+func _despawn_campfires() -> void:
+	for f in _campfires:
+		if is_instance_valid(f):
+			f.queue_free()
+	_campfires.clear()
+
+
+## count точек по кольцу fire_slot_radius вокруг костра — слоты, на которые
+## садятся гномы. Слоты считает Camp (единый источник истины, как ring палаток),
+## сам Campfire их не хранит.
+func _fire_slot_positions(fire_pos: Vector3, count: int) -> Array:
+	var slots: Array = []
+	var n: int = maxi(count, 1)
+	for i in range(n):
+		var angle: float = float(i) * TAU / float(n)
+		slots.append(Vector3(
+			fire_pos.x + cos(angle) * fire_slot_radius,
+			fire_pos.y,
+			fire_pos.z + sin(angle) * fire_slot_radius,
+		))
+	return slots
+
+
+## Раздаёт живым gatherer'ам idle-роли (режим FREE). Первые ~fire_slot_ratio
+## садятся у костров по слотам (round-robin по кострам — каждый получает хотя бы
+## одного, первый поджигает), остальные — бродяги. Пропускает SoldierGnome
+## (свой squad-flow) и бездомных (идут за караваном). Костров нет → все бродяги.
+func _assign_idle_life() -> void:
+	var gatherers: Array = []
+	for g in _gnomes:
+		if not is_instance_valid(g):
+			continue
+		if g is SoldierGnome:
+			continue
+		if g.is_following_caravan():
+			continue
+		gatherers.append(g)
+
+	var fires: Array = []
+	for f in _campfires:
+		if is_instance_valid(f):
+			fires.append(f)
+
+	if fires.is_empty():
+		for g in gatherers:
+			g.enter_idle_life(Gnome.IdleRole.WANDERER, null, Vector3.INF, false)
+		return
+
+	# Параллельные массивы состояния по кострам (слоты / курсор слота / зажжён ли
+	# назначен разжигатель).
+	var fire_slots: Array = []
+	var fire_next: Array = []
+	var fire_lit_assigned: Array = []
+	for f in fires:
+		fire_slots.append(_fire_slot_positions(f.global_position, fire_slots_per_fire))
+		fire_next.append(0)
+		fire_lit_assigned.append(false)
+
+	var total: int = gatherers.size()
+	var n_fire: int = int(round(float(total) * fire_slot_ratio))
+	# Гарантируем разжигателя на каждый костёр (но не больше, чем всего гномов).
+	n_fire = clampi(n_fire, mini(fires.size(), total), total)
+
+	for idx in range(total):
+		var g = gatherers[idx]
+		if idx < n_fire:
+			var fi: int = idx % fires.size()
+			var slots: Array = fire_slots[fi]
+			var slot_i: int = fire_next[fi] % maxi(slots.size(), 1)
+			fire_next[fi] = fire_next[fi] + 1
+			var should_light: bool = not fire_lit_assigned[fi]
+			fire_lit_assigned[fi] = true
+			g.enter_idle_life(Gnome.IdleRole.FIRE_TENDER, fires[fi], slots[slot_i], should_light)
+		else:
+			g.enter_idle_life(Gnome.IdleRole.WANDERER, null, Vector3.INF, false)
+
+
+## Применяет ТЕКУЩИЙ режим ко всем gatherer'ам (новый набор гномов на deploy'е
+## уже стоит). Используется reset_population. FREE раздаётся глобально.
+func _reapply_collection_mode() -> void:
+	if _collection_mode == CollectionMode.FREE:
+		_assign_idle_life()
+		return
+	for g in _gnomes:
+		if not is_instance_valid(g) or g is SoldierGnome:
+			continue
+		if _collection_mode == CollectionMode.WORK:
+			g.enter_deployed()
+		else:
+			g.request_return()
+
+
+## Применяет текущий режим к ОДНОМУ новому гному (постройка палатки, рекрут,
+## конверсия солдата обратно). В FREE — бродяга (общий _assign_idle_life
+## перераздаст костры при следующем общем событии). SoldierGnome не трогаем.
+func _apply_mode_to_one(g) -> void:
+	if g == null or not is_instance_valid(g) or g is SoldierGnome:
+		return
+	match _collection_mode:
+		CollectionMode.FREE:
+			g.enter_idle_life(Gnome.IdleRole.WANDERER, null, Vector3.INF, false)
+		CollectionMode.WORK:
+			g.enter_deployed()
+		CollectionMode.ALARM:
+			g.request_return()
 
 
 func _start_pack() -> void:
@@ -2982,6 +3264,10 @@ func _start_pack() -> void:
 	# в строй будет уже из _update_caravan_follow после _finalize_pack.
 	if _harvester != null:
 		_harvester.pack_to_caravan()
+	# Костры idle-жизни демонтируются — лагерь снимается с места.
+	_despawn_campfires()
+	# Незавершённые стройки отменяются (лагерь уходит). Ресурсы не возвращаем.
+	_despawn_construction_sites()
 	for g in _gnomes:
 		if is_instance_valid(g):
 			g.request_return()
@@ -3139,7 +3425,11 @@ func _sample_trail_at(target_dist: float) -> Vector3:
 
 
 func _update_caravan_follow(delta: float) -> void:
-	if _tower == null or _parts.is_empty():
+	# NB: раньше тут был ранний `or _parts.is_empty()` — он оставлял Harvester'а
+	# позади, если все палатки уничтожены (Harvester живёт отдельным полем, не в
+	# _parts). Единственная корректная проверка «нечего двигать» — харвестер-aware
+	# guard ниже, после _record_tower_trail. Всё между ними empty-safe.
+	if _tower == null:
 		return
 	# Halted: палатки замораживаются на текущих позициях, башня едет дальше.
 	# Гномы IN_TENT в каравне и так не двигаются — не нужно их трогать.

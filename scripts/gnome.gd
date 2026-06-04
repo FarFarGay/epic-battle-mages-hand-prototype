@@ -67,7 +67,18 @@ enum State {
 	## ходьбы), несомый ресурс НЕ дропается (вернёт в банк по приходу).
 	## Выход: таймер истёк ИЛИ дошёл до anchor → SEARCHING (продолжит сбор).
 	FLEEING,
+	## Idle-«жизнь лагеря» (режим Camp.CollectionMode.FREE). Гном НЕ собирает
+	## ресурсы: либо греется у костра в слоте (FIRE_TENDER), либо бродит по
+	## лагерю с паузами «осмотреться» (WANDERER). Роль/цель назначает Camp
+	## через enter_idle_life. Выход — смена режима (Работа/Тревога) или свёртка.
+	IDLE_LIFE,
 }
+
+## Под-роль гнома в IDLE_LIFE (см. State.IDLE_LIFE). Назначается Camp'ом.
+enum IdleRole { WANDERER, FIRE_TENDER }
+## Под-фаза IDLE_LIFE. Держится отдельно от _state, чтобы не плодить
+## комбинаторику переходов основного FSM.
+enum IdlePhase { GOING_TO_FIRE, LIGHTING, AT_FIRE, WANDERING, LOOKING_AROUND }
 
 @export_group("Stats")
 @export var hp: float = 20.0
@@ -148,6 +159,13 @@ enum State {
 ## когда кто-то освободил pile (доставил, забрал последний unit). Без этого
 ## гном залипал в idle до следующего deploy'я.
 @export var idle_pile_rescan_sec: float = 1.5
+## Idle-«жизнь лагеря» (State.IDLE_LIFE, режим Camp.CollectionMode.FREE).
+## Пауза «разжигание костра» у гнома-разжигателя (FIRE_TENDER, should_light).
+@export var idle_light_duration: float = 1.2
+## Сколько гном-бродяга (WANDERER) стоит «осматриваясь» перед новой точкой.
+@export var idle_look_around_duration: float = 1.5
+## Дистанция до слота/точки костра, на которой считаем «дошёл».
+@export var idle_fire_arrival: float = 0.5
 
 @export_group("Caravan follow (для бездомных гномов)")
 ## Sprint-cap для FOLLOWING_CARAVAN: чем дальше гном от своего слота в
@@ -243,6 +261,19 @@ var _flee_until_msec: int = 0
 ## 0 = пересканировать сразу. Сбрасывается на enter в idle и после каждого
 ## rescan'а. См. idle_pile_rescan_sec.
 var _idle_pile_rescan_msec: int = 0
+## Idle-«жизнь лагеря» (State.IDLE_LIFE). Роль и под-фаза держатся отдельно,
+## чтобы не плодить комбинаторику основного FSM. Назначаются Camp'ом.
+var _idle_role: int = IdleRole.WANDERER
+var _idle_phase: int = IdlePhase.WANDERING
+## Костёр, у которого греется/который разжигает FIRE_TENDER. Untyped (Node3D),
+## проверяется через is_instance_valid — Camp может queue_free костёр при
+## разрушении палатки между назначением и тиком.
+var _idle_fire: Node3D = null
+var _idle_slot_pos: Vector3 = Vector3.INF
+## Время (Time.get_ticks_msec) конца текущей паузы (LIGHTING / LOOKING_AROUND).
+var _idle_phase_until_msec: int = 0
+## True если этот гном — назначенный разжигатель своего костра.
+var _idle_should_light: bool = false
 var _carry_visual: MeshInstance3D = null
 var _knockback := KnockbackState.new()
 ## Время (Time.get_ticks_msec) до которого гном неуязвим после eject'а из
@@ -433,6 +464,27 @@ func enter_deployed() -> void:
 	add_to_group(SKELETON_TARGET_GROUP)
 	if debug_log and LogConfig.master_enabled:
 		print("[Gnome:%s] вышел из палатки" % name)
+
+
+## Лагерь развернулся в режиме FREE — гном выходит в IDLE-«жизнь лагеря»
+## вместо добычи. Роль и цель назначает Camp (_assign_idle_life):
+##  - FIRE_TENDER: идёт к слоту у костра slot_pos; если should_light — по
+##    приходу разжигает свой костёр (фаза LIGHTING → костёр.light()).
+##  - WANDERER: бродит по лагерю (fire/slot не заданы).
+## Несомый ресурс роняем — смена режима не должна «телепортировать» ношу.
+func enter_idle_life(role: int, fire: Node3D, slot_pos: Vector3, should_light: bool) -> void:
+	visible = true
+	_drop_carry()
+	_assigned_pile = null
+	_assigned_orb = null
+	_wander_target = Vector3.INF
+	_idle_role = role
+	_idle_fire = fire
+	_idle_slot_pos = slot_pos
+	_idle_should_light = should_light
+	add_to_group(SKELETON_TARGET_GROUP)
+	_idle_phase = IdlePhase.GOING_TO_FIRE if role == IdleRole.FIRE_TENDER else IdlePhase.WANDERING
+	_state = State.IDLE_LIFE
 
 
 ## Палатка-дом получила удар (отрыв от каравана, удар о землю, разрушение).
@@ -744,6 +796,8 @@ func _active_tick(_delta: float) -> void:
 			_tick_following_caravan()
 		State.FLEEING:
 			_tick_fleeing()
+		State.IDLE_LIFE:
+			_tick_idle_life()
 
 
 ## Реакция на угрозу: скелет нацелился на этого гнома (или уже ударил).
@@ -802,8 +856,12 @@ func _tick_fleeing() -> void:
 	var anchor: Vector3 = _camp.deploy_anchor
 	var dist: float = _horizontal_distance(anchor)
 	if Time.get_ticks_msec() >= _flee_until_msec or dist <= flee_safe_radius:
-		# Если несём — switch в COMMUTING_TO_BASE (deposit). Иначе SEARCHING.
-		if _carry_type >= 0:
+		# В режиме FREE гном не работает — возвращается в idle-«жизнь лагеря»
+		# бродягой (Camp перераспределит на следующем _assign_idle_life). Иначе:
+		# несём → COMMUTING_TO_BASE (сдать), пусто → SEARCHING (к добыче).
+		if _camp.get_collection_mode() == Camp.CollectionMode.FREE:
+			enter_idle_life(IdleRole.WANDERER, null, Vector3.INF, false)
+		elif _carry_type >= 0:
 			_state = State.COMMUTING_TO_BASE
 		else:
 			_state = State.SEARCHING
@@ -1034,6 +1092,67 @@ func _tick_idle_near_base() -> void:
 	if _wander_target == Vector3.INF or _horizontal_distance(_wander_target) < wander_arrival:
 		_wander_target = _random_point_around(anchor, idle_radius)
 	_move_toward_xz(_wander_target)
+
+
+## Idle-«жизнь лагеря» (State.IDLE_LIFE, режим Camp.CollectionMode.FREE).
+## В ОТЛИЧИЕ от _tick_idle_near_base НЕ сканит орбы и pile-ы — добыча начинается
+## только по кнопке «Работа» (Camp переведёт всех в SEARCHING через WORK-ветку).
+## Стоять = обнулять лишь x/z: velocity.y уже получил гравитацию в _physics_process.
+func _tick_idle_life() -> void:
+	if _camp == null:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		return
+	var now: int = Time.get_ticks_msec()
+	match _idle_phase:
+		IdlePhase.GOING_TO_FIRE:
+			# Костёр исчез (палатка разрушена) до перерасчёта Camp'ом — в бродяги.
+			if not is_instance_valid(_idle_fire):
+				_idle_role = IdleRole.WANDERER
+				_idle_phase = IdlePhase.WANDERING
+				return
+			if _horizontal_distance(_idle_slot_pos) <= idle_fire_arrival:
+				velocity.x = 0.0
+				velocity.z = 0.0
+				var fire := _idle_fire as Campfire
+				if _idle_should_light and fire != null and not fire.is_lit():
+					_idle_phase = IdlePhase.LIGHTING
+					_idle_phase_until_msec = now + int(idle_light_duration * 1000.0)
+				else:
+					_idle_phase = IdlePhase.AT_FIRE
+				return
+			_move_toward_xz(_idle_slot_pos)
+		IdlePhase.LIGHTING:
+			velocity.x = 0.0
+			velocity.z = 0.0
+			if now >= _idle_phase_until_msec:
+				var fire := _idle_fire as Campfire
+				if fire != null:
+					fire.light()
+				_idle_should_light = false
+				_idle_phase = IdlePhase.AT_FIRE
+		IdlePhase.AT_FIRE:
+			velocity.x = 0.0
+			velocity.z = 0.0
+			# Костёр снесли — становимся бродягой (Camp перераспределит при
+			# следующем _assign_idle_life, но не зависаем до того).
+			if not is_instance_valid(_idle_fire):
+				_idle_role = IdleRole.WANDERER
+				_idle_phase = IdlePhase.WANDERING
+		IdlePhase.WANDERING:
+			if _wander_target == Vector3.INF or _horizontal_distance(_wander_target) < wander_arrival:
+				velocity.x = 0.0
+				velocity.z = 0.0
+				_idle_phase = IdlePhase.LOOKING_AROUND
+				_idle_phase_until_msec = now + int(idle_look_around_duration * 1000.0)
+				return
+			_move_toward_xz(_wander_target)
+		IdlePhase.LOOKING_AROUND:
+			velocity.x = 0.0
+			velocity.z = 0.0
+			if now >= _idle_phase_until_msec:
+				_wander_target = _random_point_around(_camp.deploy_anchor, idle_radius)
+				_idle_phase = IdlePhase.WANDERING
 
 
 func _tick_returning() -> void:

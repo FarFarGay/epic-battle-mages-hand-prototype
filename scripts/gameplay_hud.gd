@@ -159,6 +159,7 @@ var _drag_state: Dictionary = {}
 ## счётчик живых gatherer'ов + кнопки переключения режима «Работа» (C) /
 ## «Тревога» (V). Активный режим подсвечивается через font_color.
 var _gatherer_card_count_label: Label
+var _gatherer_free_btn: Button
 var _gatherer_work_btn: Button
 var _gatherer_alarm_btn: Button
 ## Сама карточка собирателей (PanelContainer). Скрывается когда 0 gatherer'ов.
@@ -327,6 +328,14 @@ func _build_gatherer_card() -> void:
 	btn_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(btn_row)
 
+	_gatherer_free_btn = Button.new()
+	_gatherer_free_btn.text = "Свободны"
+	_gatherer_free_btn.focus_mode = Control.FOCUS_NONE
+	_gatherer_free_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_gatherer_free_btn.add_theme_font_size_override("font_size", 11)
+	_gatherer_free_btn.pressed.connect(_on_gatherer_free_pressed)
+	btn_row.add_child(_gatherer_free_btn)
+
 	_gatherer_work_btn = Button.new()
 	_gatherer_work_btn.text = "Работа [C]"
 	_gatherer_work_btn.focus_mode = Control.FOCUS_NONE
@@ -364,6 +373,11 @@ func _on_gatherer_alarm_pressed() -> void:
 		_camp.set_collection_mode(Camp.CollectionMode.ALARM)
 
 
+func _on_gatherer_free_pressed() -> void:
+	if is_instance_valid(_camp):
+		_camp.set_collection_mode(Camp.CollectionMode.FREE)
+
+
 ## Обновляет счётчик собирателей + подсветку активной кнопки. Дёргается
 ## из _update_counts (0.25с) для счётчика и из _on_collection_mode_changed
 ## для кнопок.
@@ -386,14 +400,14 @@ func _refresh_gatherer_card() -> void:
 ## было бы менять, но через theme override font_color проще и работает
 ## кроссплатформенно.
 func _refresh_gatherer_mode_buttons(mode: int) -> void:
-	if _gatherer_work_btn == null or _gatherer_alarm_btn == null:
+	if _gatherer_free_btn == null or _gatherer_work_btn == null or _gatherer_alarm_btn == null:
 		return
-	if mode == Camp.CollectionMode.WORK:
-		_gatherer_work_btn.add_theme_color_override("font_color", COLOR_MODE_FONT_ACTIVE)
-		_gatherer_alarm_btn.add_theme_color_override("font_color", COLOR_MODE_FONT_INACTIVE)
-	else:
-		_gatherer_work_btn.add_theme_color_override("font_color", COLOR_MODE_FONT_INACTIVE)
-		_gatherer_alarm_btn.add_theme_color_override("font_color", COLOR_MODE_FONT_ACTIVE)
+	var free_c: Color = COLOR_MODE_FONT_ACTIVE if mode == Camp.CollectionMode.FREE else COLOR_MODE_FONT_INACTIVE
+	var work_c: Color = COLOR_MODE_FONT_ACTIVE if mode == Camp.CollectionMode.WORK else COLOR_MODE_FONT_INACTIVE
+	var alarm_c: Color = COLOR_MODE_FONT_ACTIVE if mode == Camp.CollectionMode.ALARM else COLOR_MODE_FONT_INACTIVE
+	_gatherer_free_btn.add_theme_color_override("font_color", free_c)
+	_gatherer_work_btn.add_theme_color_override("font_color", work_c)
+	_gatherer_alarm_btn.add_theme_color_override("font_color", alarm_c)
 
 
 ## Обновляет текст карточки защитников + disabled-флаг «Расформировать»-кнопки.
@@ -1030,8 +1044,8 @@ func _refresh_mode_label(mode: int) -> void:
 		_mode_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_mode_label.add_theme_font_size_override("font_size", 13)
 		add_child(_mode_label)
-	# 1 = ALARM, 0 = WORK (Camp.CollectionMode значения).
-	if mode == 1:
+	# Акцент только на ALARM. FREE/WORK — спокойные режимы, label скрыт.
+	if mode == Camp.CollectionMode.ALARM:
 		_mode_label.text = "⚠ тревога [V→C сброс]"
 		_mode_label.add_theme_color_override("font_color", Color(1.0, 0.4, 0.4, 1.0))
 		_mode_label.visible = true

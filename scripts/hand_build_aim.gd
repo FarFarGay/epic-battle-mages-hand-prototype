@@ -31,6 +31,9 @@ const PREVIEW_MESH_CENTER_HEIGHT: float = 0.75
 ## Цвет большого круга зоны строительства (вокруг лагеря). Полупрозрачный
 ## голубой — отличается от preview-кольца постройки и aim-ring'а squad'а.
 @export var build_zone_color: Color = Color(0.45, 0.75, 1.0, 0.55)
+## Цвет ЗАЛИВКИ зоны строительства (диск внутри кольца). Низкая alpha — мягкая
+## подсветка площади «где можно строить», не забивающая сцену.
+@export var build_zone_fill_color: Color = Color(0.45, 0.75, 1.0, 0.07)
 ## Цвет preview-сегмента в активной части ломаной (от последнего vertex'а к
 ## курсору) когда сегмент в build_zone. Полупрозрачный зелёный — «строится сюда».
 @export var brush_preview_color_valid: Color = Color(0.3, 0.9, 0.3, 0.55)
@@ -59,6 +62,9 @@ var _aim_indicator: MeshInstance3D = null
 ## Большой круг зоны строительства вокруг центра лагеря — видим только в
 ## активном aim'е. Не двигается (camp.build_zone_center статичен в DEPLOYED).
 var _build_zone_indicator: MeshInstance3D = null
+## Залитый диск зоны строительства (площадь под кольцом) — подсветка «где можно
+## строить». Спавнится/чистится вместе с _build_zone_indicator.
+var _build_zone_fill: MeshInstance3D = null
 ## Direction-aim режим (drag-направление: ЛКМ-зажим → origin → drag → release).
 ## _direction_aim_mode определяет что вызвать на commit:
 ##   "" — выкл, обычный single-point aim.
@@ -193,6 +199,10 @@ func _spawn_build_zone_only_indicator() -> void:
 	if is_instance_valid(_camp):
 		var zone_center: Vector3 = _camp.build_zone_center()
 		if zone_center != Vector3.INF:
+			# Заливка площади (под кольцом) + контур-граница поверх неё.
+			_build_zone_fill = AoeVisual.spawn_ground_disc(
+				_effects_root, zone_center, _camp.build_radius, build_zone_fill_color,
+			)
 			_build_zone_indicator = AoeVisual.spawn_ground_ring(
 				_effects_root, zone_center, _camp.build_radius, 0.0, build_zone_color,
 			)
@@ -1072,6 +1082,10 @@ func _spawn_indicator() -> void:
 	if is_instance_valid(_camp):
 		var zone_center: Vector3 = _camp.build_zone_center()
 		if zone_center != Vector3.INF:
+			# Заливка площади (под кольцом) + контур-граница поверх неё.
+			_build_zone_fill = AoeVisual.spawn_ground_disc(
+				_effects_root, zone_center, _camp.build_radius, build_zone_fill_color,
+			)
 			_build_zone_indicator = AoeVisual.spawn_ground_ring(
 				_effects_root, zone_center, _camp.build_radius, 0.0, build_zone_color,
 			)
@@ -1093,3 +1107,6 @@ func _clear_indicator() -> void:
 	if is_instance_valid(_build_zone_indicator):
 		_build_zone_indicator.queue_free()
 	_build_zone_indicator = null
+	if is_instance_valid(_build_zone_fill):
+		_build_zone_fill.queue_free()
+	_build_zone_fill = null

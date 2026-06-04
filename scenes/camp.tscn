@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/camp.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/gnome.tscn" id="2"]
@@ -8,6 +8,8 @@
 [ext_resource type="PackedScene" path="res://scenes/palisade_post.tscn" id="8_palisade_post"]
 [ext_resource type="PackedScene" path="res://scenes/archer_post.tscn" id="10_archer_post"]
 [ext_resource type="PackedScene" path="res://scenes/wall_gate.tscn" id="11_wall_gate"]
+[ext_resource type="PackedScene" path="res://scenes/campfire.tscn" id="12_campfire"]
+[ext_resource type="PackedScene" path="res://scenes/construction_site.tscn" id="13_construction"]
 
 [node name="Camp" type="Node3D"]
 script = ExtResource("1")
@@ -17,6 +19,8 @@ palisade_segment_scene = ExtResource("7_palisade")
 palisade_post_scene = ExtResource("8_palisade_post")
 archer_post_scene = ExtResource("10_archer_post")
 wall_gate_scene = ExtResource("11_wall_gate")
+campfire_scene = ExtResource("12_campfire")
+construction_site_scene = ExtResource("13_construction")
 
 [node name="CenterMountSlot" type="Node3D" parent="."]
 script = ExtResource("4")

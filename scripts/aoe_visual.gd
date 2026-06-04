@@ -354,6 +354,44 @@ static func spawn_ground_ring(
 	return mesh
 
 
+## Плоский ЗАЛИТЫЙ диск на земле радиуса `radius` — заливка области (в отличие
+## от контурного [spawn_ground_ring]). Используется для подсветки зоны
+## строительства: игрок видит не только границу-кольцо, но и саму площадь
+## «где можно строить». duration<=0 → постоянный, caller владеет жизненным
+## циклом (queue_free). Низкая alpha рекомендуется — диск не должен забивать
+## сцену. Возвращает MeshInstance3D.
+static func spawn_ground_disc(
+	root: Node,
+	pos: Vector3,
+	radius: float,
+	color: Color = Color(0.45, 0.75, 1.0, 0.13),
+) -> MeshInstance3D:
+	if root == null or radius <= 0.0:
+		return null
+	# Тонкий цилиндр = плоский диск. Только верхняя крышка нужна (вид сверху).
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = radius
+	cyl.bottom_radius = radius
+	cyl.height = 0.02
+	cyl.radial_segments = 64
+	cyl.rings = 0
+	cyl.cap_top = true
+	cyl.cap_bottom = false
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = cyl
+	mesh.material_override = mat
+	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(mesh)
+	# Чуть над землёй, но НИЖЕ контурного ring'а (0.05) — без z-fight'а.
+	mesh.global_position = pos + Vector3.UP * 0.03
+	return mesh
+
+
 ## Расширяющееся плоское кольцо ПОСТОЯННОЙ толщины: outer_radius растёт
 ## линейно от 0 до `max_radius` за `duration`, inner_radius всегда =
 ## outer − thickness. Без скейла меша — иначе фронт расплывался бы вширь
