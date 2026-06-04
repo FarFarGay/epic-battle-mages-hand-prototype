@@ -1910,9 +1910,9 @@ const PALISADE_SEGMENT_HALF: float = 1.0
 
 
 ## Debug-лог sync'а — выводит targets/existing/removed/added. Включается
-## когда [debug_log] и [LogConfig.master_enabled]. Используется для диагностики
-## жалоб «пост остался не там где надо».
-var _palisade_sync_debug: bool = true
+## при диагностике жалоб «пост остался не там где надо». По умолчанию
+## выключен (на каждом ударе по палисаду 20+ строк лога — шумно).
+var _palisade_sync_debug: bool = false
 
 
 ## Re-sync постов от текущего состояния стен. Алгоритм:
