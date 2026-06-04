@@ -44,72 +44,163 @@ hand_gameplay_prot/
 │   └── slam_dust_process.tres      — `ParticleProcessMaterial` для пыли: emission sphere + spread 80° + scale_curve + color_ramp бело-серый → прозрачный
 ├── scenes/
 │   ├── main.tscn              — корневая сцена (композиция уровня)
-│   ├── tower.tscn             — модуль "башня"
-│   ├── hand.tscn              — модуль "рука" + два под-узла-категории
-│   ├── camera_rig.tscn        — модуль "камера"
+│   ├── tower.tscn             — модуль "башня" (VisualRoot-обёртка для motion-fx, 2026-06-03)
+│   ├── hand.tscn              — модуль "рука" + категории под-узлов
+│   ├── camera_rig.tscn        — модуль "камера" (focus-override на отряде в зоне данжа)
 │   ├── item.tscn              — модуль "предмет" (шаблон)
-│   ├── skeleton.tscn          — конкретный враг (Skeleton extends Enemy)
-│   ├── camp.tscn              — лагерь (4 палатки + спавн гномов + центральный mount-slot)
-│   ├── gnome.tscn             — обитатель лагеря (CharacterBody3D)
-│   ├── defender_gnome.tscn    — защитник-лучник (Gnome extends, красный, стреляет стрелами)
-│   ├── resource_pile.tscn     — куча ресурсов на полу (типы: WOOD/STONE/IRON/FOOD/GENERIC + форма)
-│   ├── resource_zone.tscn     — зона расставлятель куч (`@tool`-нода: drag → выставить тип/count/size → spawn на _ready)
-│   ├── octagon_turret.tscn    — защитный модуль (CampModule), стреляет стрелами
-│   ├── arrow.tscn             — снаряд защитного модуля
-│   ├── poi_marker.tscn        — маркер точки интереса (тёмный круг золы под костром, ~0.95м)
-│   ├── quest_actor.tscn       — актор-выдатчик квеста: костёр (3 полена крест-накрест + FlameCore + FlameParticles + SmokeParticles + OmniLight)
-│   ├── spawn_zone.tscn        — зона спавна врагов (плоский красный box-индикатор, виден только в редакторе)
-│   ├── perf_hud.tscn          — оверлей FPS / process+physics ms / draw calls / скелеты+LOD
-│   ├── gameplay_hud.tscn      — игровой HUD (способности слева, статус лагеря справа)
-│   ├── grass_chunk.tscn       — `MultiMeshInstance3D` с blade-mesh + grass-материалом (шаблон для GrassField._spawn_chunks)
-│   └── grass_field.tscn       — корневой Node3D с GrassField-скриптом, сеткой ChunkCount×ChunkCount чанков по карте
+│   ├── skeleton.tscn          — обычный скелет (Skeleton extends Enemy)
+│   ├── skeleton_archer.tscn   — скелет-лучник (kite-AI, фиолетовый)
+│   ├── skeleton_giant.tscn    — гигант-танк, идёт на Tower, AOE-slam
+│   ├── skeleton_giant_thrower.tscn — каменщик-гигант, ranged AOE, бросает камень с телеграфом
+│   ├── giant_stone.tscn       — снаряд каменщика
+│   ├── archer_group.tscn      — координатор группы из 4 лучников (волейный залп по точке)
+│   ├── enemy_arrow.tscn       — стрела вражеского лучника
+│   ├── aoe_arrow.tscn         — стрела с AOE-импактом (групповой залп)
+│   ├── camp.tscn              — лагерь (палатки + спавн гномов + центральный mount-slot + ring-формация развёртки)
+│   ├── tent.tscn              — палатка (CampPart, RigidBody3D с freeze=true)
+│   ├── gnome.tscn             — обитатель лагеря (CharacterBody3D, base для Soldier/Archer)
+│   ├── soldier_pikeman.tscn   — копейщик (мобильный squad-юнит)
+│   ├── archer_soldier.gd      — лучник-защитник (point-defense с cone-vision, 2026-06-03)
+│   ├── harvester.tscn         — модуль-харвестер каравана (золото из POI)
+│   ├── resource_pile.tscn     — куча ресурсов на полу (WOOD/STONE/IRON/FOOD/GENERIC × форма)
+│   ├── resource_zone.tscn     — зона расставлятель куч (`@tool`-нода)
+│   ├── xp_orb.tscn            — XP-орб (CharacterBody3D, IDLE → MAGNETIZED → arrival)
+│   ├── octagon_turret.tscn    — защитный модуль (CampModule), стрелы
+│   ├── archer_post.tscn       — стрелковый пост (стационарный лучник на башенке, направленный)
+│   ├── palisade_segment.tscn  — сегмент частокола (brush-mode build)
+│   ├── palisade_post.tscn     — угловой столб частокола (auto-place в polyline)
+│   ├── arrow.tscn             — снаряд защитного модуля (Arrow class)
+│   ├── poi_marker.tscn        — маркер POI (тёмный круг золы под костром)
+│   ├── quest_actor.tscn       — POI-актор: костёр + safe_radius + wave_schedule
+│   ├── dungeon_zone.tscn      — зона данжа (camera focus-override + spawn-zone)
+│   ├── spawn_zone.tscn        — зона спавна врагов (плоский красный box)
+│   ├── camp_fire_particles.tscn — общий particles для всех костров (POI / camp deploy)
+│   ├── fog_of_war.tscn        — туман войны (sprite-based decal + reveal-через group)
+│   ├── mine.tscn / mine_projectile.tscn — мины + снаряд для рассеивания
+│   ├── fireball.tscn / frost_bolt.tscn / frost_patch.tscn / burn_patch.tscn — снаряды и AOE-патчи заклинаний
+│   ├── spark_bolt.tscn        — снаряд Spark (single-target жёлтый зигзаг, 2026-06-02)
+│   ├── super_carrier.tscn / super_pattern_overlay.tscn — Super-удар (snake-pattern QTE)
+│   ├── key_item.tscn          — золотой куб-ключ (IDLE→CARRIED→AT_TOWER→CONSUMED, 2026-06-02)
+│   ├── gate.tscn              — ворота (LOCKED→UNLOCKED→PASSED, win condition, 2026-06-02)
+│   ├── start_menu.tscn        — меню начала игры (Esc, «Начать игру»/«Закрыть», 2026-06-02)
+│   ├── win_overlay.tscn       — оверлей победы (золотая панель, новая партия, 2026-06-02)
+│   ├── boss_warning_overlay.tscn — пульсирующий красный баннер «Гигант приближается» (2026-06-03)
+│   ├── day_night_overlay.tscn — индикатор day/night фазы + countdown (2026-06-04)
+│   ├── perf_hud.tscn          — debug-оверлей (F-stats, скрыт по умолчанию, toggle L, 2026-06-04)
+│   ├── gameplay_hud.tscn      — игровой HUD (статус лагеря, ресурсы, ability bar)
+│   ├── blocker_*.tscn         — набор greybox-блокеров для прототипирования уровней
+│   ├── level_forest_draft.tscn — драфтовая лесная зона
+│   ├── grass_chunk.tscn       — `MultiMeshInstance3D` с blade-mesh
+│   └── grass_field.tscn       — корневой Node3D с GrassField-скриптом (8×8 чанков)
 └── scripts/
-    ├── tower.gd               — class_name Tower
-    ├── hand.gd                — class_name Hand (координатор)
-    ├── hand_physical.gd       — class_name HandPhysicalActions (LMB-grab + диспатч RMB)
-    ├── hand_physical_slam.gd  — class_name HandPhysicalSlam
-    ├── hand_physical_flick.gd — class_name HandPhysicalFlick
-    ├── hand_spell.gd          — class_name HandSpell (заглушка)
-    ├── camera_rig.gd
-    ├── item.gd                — class_name Item
-    ├── enemy.gd               — class_name Enemy (база с FSM APPROACH/WINDUP/STRIKE/COOLDOWN)
-    ├── skeleton.gd            — class_name Skeleton extends Enemy
-    ├── enemy_spawner.gd       — class_name EnemySpawner — низкоуровневый спавн (spawn_at/uniform/ring/group + zones)
-    ├── wave_director.gd       — class_name WaveDirector — режиссёр фаз кампании врагов
-    ├── spawn_zone.gd          — class_name SpawnZone (@tool, прямоугольник с budget'ом волн)
-    ├── camp.gd                — class_name Camp
-    ├── gnome.gd               — class_name Gnome
-    ├── defender_gnome.gd      — class_name DefenderGnome extends Gnome (лучник с прокачкой точности)
-    ├── resource_pile.gd       — class_name ResourcePile (4 типа ресурса × 4 формы pile'а с дефолтами и override-экспортами)
-    ├── resource_zone.gd       — class_name ResourceZone (`@tool`, спавнит count pile'ов в прямоугольнике на _ready через await process_frame + rejection sampling)
-    ├── quest_progress.gd      — autoload QuestProgress (линейный прогресс сюжета + Q-debug)
-    ├── quest_actor.gd         — class_name QuestActor (POI-зона + выдатчик квеста: костёр, safe_radius, wave_schedule)
-    ├── wave_stage.gd          — class_name WaveStage (Resource): одна стадия осады POI
-    ├── wave_schedule.gd       — class_name WaveSchedule (Resource): массив стадий для QuestActor.wave_schedule
-    ├── combat_group.gd        — class_name CombatGroup (Resource): атомарная единица волны (composition + spawn_zone + кластер)
-    ├── unit_entry.gd          — class_name UnitEntry (Resource): пара (scene, count) внутри CombatGroup
-    ├── roads.gd               — генератор-меш дорог между POI (orphan, не подключён в main.tscn)
-    ├── layers.gd              — class_name Layers (именованные физические слои + маски)
-    ├── damageable.gd          — class_name Damageable (group-контракт + try_damage)
-    ├── pushable.gd            — class_name Pushable (group-контракт + try_push)
-    ├── grabbable.gd           — class_name Grabbable (group-контракт для LMB-grab)
-    ├── camp_module.gd         — class_name CampModule (база для апгрейдов лагеря/башни)
-    ├── mount_slot.gd          — class_name MountSlot (точка монтажа модулей)
-    ├── octagon_turret.gd      — class_name OctagonTurret extends CampModule
-    ├── arrow.gd               — class_name Arrow (снаряд защитного модуля)
-    ├── knockback_state.gd     — class_name KnockbackState (RefCounted helper, общий kinematic-knockback)
-    ├── shatter_effect.gd      — class_name ShatterEffect (визуал смерти, общий для врагов и т.п.)
-    ├── vec_util.gd            — class_name VecUtil (горизонтальные хелперы Vector3)
-    ├── perf_hud.gd            — class_name PerfHud (оверлей FPS/ms/draw calls/скелеты/LOD, F3 toggle)
-    ├── gameplay_hud.gd        — игровой HUD (способности + статус лагеря)
-    ├── grass_field.gd         — class_name GrassField (Node3D, корень chunked-grass'a; на _ready спавнит 8×8 GrassChunk-нод по карте 400×400)
-    ├── xp_orb.gd              — class_name XpOrb (этап 49, осязаемый XP-дроп; Node3D + Area3D, IDLE → MAGNETIZED)
-    ├── xp_orb_spawner.gd      — autoload XpOrbSpawner (слушает EventBus.enemy_destroyed, спавнит XpOrb)
-    ├── squad_xp_fx.gd         — autoload SquadXpFx (popup'ы «+N» в точке arrival орба к anchor'у)
-    ├── journal_panel.gd       — autoload JournalPanel (J открывает CanvasLayer с тремя вкладками: Юниты/Лагерь/План; level-gated апгрейды отряда, постройки за ресурсы, preset'ы плана сбора)
-    ├── resource_fx.gd         — autoload ResourceFx (одноразовый GPUParticles3D-всплеск при сборе единицы / consume pile'а; цвет = ResourcePile.color_for_type)
-    ├── event_bus.gd           — autoload EventBus
-    └── log_config.gd          — autoload LogConfig
+    # Core
+    ├── tower.gd                — class_name Tower (CharacterBody3D; HP/MP, motion-fx через VisualRoot)
+    ├── hand.gd                 — class_name Hand (координатор категорий)
+    ├── hand_physical.gd        — class_name HandPhysicalActions (LMB-grab + RMB-dispatch)
+    ├── hand_physical_slam.gd   — class_name HandPhysicalSlam
+    ├── hand_physical_flick.gd  — class_name HandPhysicalFlick
+    ├── hand_spell.gd           — class_name HandSpell (dispatch: fireball/firestorm/mine/frost/spark)
+    ├── hand_spell_fireball.gd  — class_name HandSpellFireball
+    ├── hand_spell_firestorm.gd — class_name HandSpellFirestorm
+    ├── hand_spell_mine_scatter.gd — class_name HandSpellMineScatter
+    ├── hand_spell_frost.gd     — class_name HandSpellFrost
+    ├── hand_spell_spark.gd     — class_name HandSpellSpark (single-target, 2026-06-02)
+    ├── hand_super.gd           — class_name HandSuper (QTE-нашествие)
+    ├── hand_squad_aim.gd       — class_name HandSquadAim («Иди сюда» на squad, sticky-mode)
+    ├── hand_build_aim.gd       — class_name HandBuildAim (постройки: палисад brush, archer post direction)
+    ├── camera_rig.gd           — class_name CameraRig (focus-override на отряде в зоне данжа)
+    ├── item.gd                 — class_name Item
+
+    # Enemy
+    ├── enemy.gd                — class_name Enemy (база с FSM APPROACH/WINDUP/STRIKE/COOLDOWN)
+    ├── skeleton.gd             — class_name Skeleton extends Enemy (targeting-alarm 2026-06-04)
+    ├── skeleton_archer.gd      — class_name SkeletonArcher extends Skeleton (kite-AI, baseline для thrower'а)
+    ├── skeleton_giant.gd       — class_name SkeletonGiant extends Skeleton (Tower-hunter, AOE-slam)
+    ├── skeleton_giant_thrower.gd — class_name SkeletonGiantThrower extends SkeletonArcher (Tower-hunter ranged, GiantStone)
+    ├── giant_stone.gd          — class_name GiantStone (AOE-impact камень)
+    ├── archer_group.gd         — class_name ArcherGroup (координатор групповых залпов)
+    ├── arrow.gd                — class_name Arrow (стрела)
+    ├── aoe_arrow.gd            — class_name AoeArrow (AOE-варианта)
+
+    # Spawn / Waves
+    ├── enemy_spawner.gd        — class_name EnemySpawner (низкоуровневый спавн + zones)
+    ├── wave_director.gd        — class_name WaveDirector (режиссёр: caravan/POI/giant/thrower/boss + day/night)
+    ├── spawn_zone.gd           — class_name SpawnZone (`@tool`, прямоугольник с waves_left budget'ом)
+    ├── wave_stage.gd           — class_name WaveStage (Resource, одна стадия осады)
+    ├── wave_schedule.gd        — class_name WaveSchedule (Resource, массив стадий)
+    ├── combat_group.gd         — class_name CombatGroup (Resource, composition + spawn_zone + кластер)
+    ├── unit_entry.gd           — class_name UnitEntry (Resource, scene+count внутри CombatGroup)
+
+    # Camp / Gnome / Squad
+    ├── camp.gd                 — class_name Camp (caravan-trail, ring-deploy, squad lifecycle)
+    ├── camp_part.gd            — class_name CampPart (палатка с motion-fx)
+    ├── camp_economy.gd         — class_name CampEconomy (RefCounted, ресурсы)
+    ├── camp_collection_plan.gd — class_name CampCollectionPlan (RefCounted, веса сбора)
+    ├── camp_buildings.gd       — class_name CampBuildings (RefCounted, каталог построек)
+    ├── camp_module.gd          — class_name CampModule (база модулей башни)
+    ├── mount_slot.gd           — class_name MountSlot
+    ├── octagon_turret.gd       — class_name OctagonTurret extends CampModule
+    ├── harvester.gd            — class_name Harvester (caravan-звено золота на POI)
+    ├── palisade_segment.gd     — class_name PalisadeSegment
+    ├── archer_post.gd          — class_name ArcherPost (стационарный лучник)
+    ├── gnome.gd                — class_name Gnome (FSM, +FLEEING state 2026-06-04, carry_amount @export)
+    ├── soldier_gnome.gd        — class_name SoldierGnome extends Gnome (база squad-юнитов)
+    ├── soldier_system.gd       — class_name SoldierSystem (autoload, SOLDIER_CATALOG: pikeman/archer stats)
+    ├── archer_soldier.gd       — class_name ArcherSoldier extends SoldierGnome (point-defense с cone, 2026-06-03)
+    ├── squad.gd                — class_name Squad (RefCounted, состав+state)
+    ├── squad_charge_marker.gd  — class_name SquadChargeMarker (ULT-маркер для волейного залпа)
+    ├── squad_xp_popup.gd       — popup «+N» (per-instance)
+
+    # Resources / Quests / Match flow
+    ├── resource_pile.gd        — class_name ResourcePile (4 типа × 4 формы)
+    ├── resource_zone.gd        — class_name ResourceZone (`@tool`, спавн куч в прямоугольнике)
+    ├── quest_progress.gd       — autoload QuestProgress (линейный прогресс)
+    ├── quest_actor.gd          — class_name QuestActor (POI: костёр, safe_radius, wave_schedule, resources_around)
+    ├── dungeon_zone.gd         — class_name DungeonZone (camera focus-override)
+    ├── key_item.gd             — class_name KeyItem (IDLE→CARRIED→AT_TOWER, 2026-06-02)
+    ├── gate.gd                 — class_name Gate (LOCKED→UNLOCKED→PASSED, 2026-06-02)
+    ├── match_goal.gd           — class_name MatchGoal (gold ≥ 1000 ∧ tower_passed_gate, 2026-06-02)
+    ├── match_config.gd         — autoload MatchConfig (next_tower_pos / next_poi_pos / next_gate_pos через reload, 2026-06-02)
+    ├── main_setup.gd           — class_name MainSetup (применяет MatchConfig на _ready, 2026-06-02)
+    ├── start_menu.gd           — class_name StartMenu (Esc, restart_match с рандомизацией POI/Tower/Gate, 2026-06-02)
+    ├── spell_system.gd         — autoload SpellSystem (каталог + unlock/upgrade)
+
+    # Layers / контракты
+    ├── layers.gd               — class_name Layers (физические слои + маски)
+    ├── damageable.gd / pushable.gd / grabbable.gd — group-контракты
+
+    # Visual / Combat helpers
+    ├── knockback_state.gd      — class_name KnockbackState (RefCounted)
+    ├── shatter_effect.gd       — class_name ShatterEffect
+    ├── hit_flash.gd / hit_punch.gd — единые FX для damage (flash + scale-punch)
+    ├── aoe_visual.gd           — class_name AoeVisual (рябь, телеграф, sparks)
+    ├── aoe_damage.gd           — class_name AoeDamage (единый AOE-dispatch)
+    ├── ballistic_util.gd / ballistic_config.gd — баллистика снарядов
+    ├── segment_motion_fx.gd    — class_name SegmentMotionFx (RefCounted, bob+squash-stretch, 2026-06-03)
+    ├── fog_of_war.gd           — class_name FogOfWar (visibility + reveal-группа)
+    ├── nav_region.gd           — class_name NavRegion (NavMesh re-bake API)
+    ├── vec_util.gd             — class_name VecUtil
+
+    # HUD / Overlays
+    ├── perf_hud.gd             — class_name PerfHud (hidden default, toggle L, 2026-06-04)
+    ├── gameplay_hud.gd         — игровой HUD (без «хлоп/щелк»-виджета, action bar 7 слотов)
+    ├── journal_panel.gd        — autoload JournalPanel (7 вкладок: Юниты/Лагерь/План/Заклинания/Армия/Задания/Читы)
+    ├── day_night_overlay.gd    — class_name DayNightOverlay (countdown фазы, 2026-06-04)
+    ├── boss_warning_overlay.gd — class_name BossWarningOverlay (баннер «Гигант приближается», 2026-06-03)
+    ├── win_overlay.gd          — class_name WinOverlay (победа, 2026-06-02)
+
+    # FX / Autoloads / Misc
+    ├── grass_field.gd          — class_name GrassField
+    ├── xp_orb.gd               — class_name XpOrb
+    ├── xp_orb_spawner.gd       — autoload XpOrbSpawner
+    ├── squad_xp_fx.gd          — autoload SquadXpFx
+    ├── resource_fx.gd          — autoload ResourceFx
+    ├── mine.gd                 — class_name Mine
+    ├── burn_patch.gd / frost_patch.gd / fireball.gd / frost_bolt.gd / spark_bolt.gd — снаряды/AOE-патчи
+    ├── super_carrier.gd / super_pattern_overlay.gd — super-удар
+    ├── blocker.gd              — greybox-блокеры
+    ├── event_bus.gd            — autoload EventBus
+    └── log_config.gd           — autoload LogConfig
 ```
 
 ---
@@ -687,13 +778,15 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 
 **Назначение:** простейший враг — конкретизация базы. Идёт к ближайшей живой цели, в `attack_range` входит в `WINDUP` (телеграф), на завершении замаха выполняет физический выпад с уроном. Большая часть логики унаследована от `Enemy`; подкласс заполняет три слота: визуал замаха (через хуки состояний), сам удар (`_perform_strike`) и эффект смерти (`_on_destroyed`).
 
+> **Update 2026-06-04:** Skeleton эмитит `EventBus.skeleton_targeting_camp` за `approach_alarm_distance=10м` до удара (превентивный alarm для ArcherSoldier / Gnome-flee, см. §5.15.4). Балансное замедление: `move_speed = 2.0` (было 2.7), `SkeletonArcher.move_speed = 1.8` (было 2.4). Гиганты не трогаются — у них уже свои значения 1.6 / 1.4.
+
 **Дочерние узлы:**
 - `CollisionShape3D` — `CapsuleShape3D` r=0.4, h=2.
 - `MeshInstance3D` — `CapsuleMesh` того же размера.
 
 **Слой/маска (в `.tscn`):** `collision_layer = 16` (Enemies), `collision_mask = 39` (Terrain + Items + Actors + CampObstacle, **без Enemies**). См. §4.1: skel-skel коллизии отключены ради перфоманса (broad-phase + slide-iterations были главным пожирателем physics_ms на 400+ кластерах вокруг Tower).
 
-**Override на инстансе:** `move_speed = 2.7` (медленнее общего дефолта Enemy=4.0).
+**Override на инстансе:** `move_speed = 2.0` (2026-06-04, было 2.7; ещё раньше дефолт Enemy=4.0).
 
 **Vision-таргетинг (override базового `_targets`):**
 
@@ -1089,15 +1182,18 @@ static func spawn(
 
 **Назначение:** режиссёр угрозы. POI-driven архитектура (с этапа 42): фоновый прилив скелетов растёт всегда, а POI-осады включаются по событию `EventBus.camp_deployed`. Сам не считает «когда у нас уже 50 скелетов» — это работа фонового таймера. Не считает «когда осаждать» — это работа подписки.
 
+> **Update 2026-06-02..06-04:** Поверх POI/caravan-модели появились новые слои — **day/night-цикл** (§5.15.2), **Giant/Thrower/Boss-волны** (§5.15.3), **targeting alarm** (§5.15.4), **caravan-волны** для пути к POI. Балансные числа ниже (background 50/30/600, etc.) ОБНОВЛЕНЫ в 2026-06-04: `background_initial_count=25`, `growth=15`, `cap=300`, `caravan_wave_size_initial=2`. См. также §5.15 для полного контекста.
+
 **Фазы:**
-- `IDLE` — до первого нажатия P. Ничего не делается.
-- `RUNNING` — после P. Тикает фон + (если есть активный POI) тикает осада.
+- `IDLE` — до первого нажатия P / клика «Начать игру». Ничего не делается.
+- `RUNNING` — после старта. Тикает фон + (если есть активный POI) тикает осада + day/night-цикл + pending boss + caravan-волны.
 
 **Старая RAMP/MAINTAIN-фаза удалена** на этапе 42 — простота вместо двух раздельных state-machine'ов. См. этап 42 в §7.2.
 
 **Фоновый прилив (`_tick_background`):**
-- На P: `background_initial_count=50` спавнится мгновенно через `_spawn_safe_uniform`, `_background_target = 50.0`.
-- Каждый кадр: `_background_target += background_growth_per_minute / 60 × delta`, кламп до `background_cap`. По умолчанию `growth=30` скел/мин wall-clock, `cap=600`.
+- На старте: `background_initial_count=25` (было 50, понижено 2026-06-04) спавнится мгновенно через `_spawn_safe_uniform`, `_background_target = 25.0`.
+- Каждый кадр: `_background_target += background_growth_per_minute / 60 × delta`, кламп до `background_cap=300` (было 600). По умолчанию `growth=15` скел/мин wall-clock.
+- **Day-gate:** если `is_night() == false` и `day_background_grows == false` — target замёрз. Replenish продолжается (см. §5.15.2).
 - Каждые `background_replenish_interval=1.0с`: если живых < target — спавним одного скелета (uniform safe). Темп подкачки 1/сек — плавный «прилив», не залп.
 - На P-рестарте target сбрасывается в initial. Стартовый initial-спавн снова идёт.
 
@@ -1610,6 +1706,8 @@ Polling в `_process` через `_consume_piles_in_drop_zone()`: иду по `g
 
 **Назначение:** обитатель лагеря. Базовый класс — гном-собиратель. Спавнится `Camp` по `(gnomes_per_tent − defenders_per_tent)` штук на каждую палатку. Сам ищет ресурсы (двухфазная FSM: поиск глазами + патруль / челнок к найденной куче), сам носит их к anchor'у лагеря. По сигналу свёртки — возвращается в свою палатку.
 
+> **Update 2026-06-04:** Новое состояние **State.FLEEING** — гном бежит к лагерю при угрозе скелета (см. §5.15.4 targeting alarm). Скорость подняли `move_speed: 1.6 → 2.4`; добавили `@export carry_amount: int = 3` (было захардкожено 1) — гном кредитует лагерю 3 единицы за рейс вместо 1. Добыча ресурсов ускорена примерно ×4 (×1.5 от скорости × ×3 от carry). Virtual `_can_flee()` — base возвращает true, SoldierGnome override'ит false.
+
 Имеет подкласс `DefenderGnome` (см. §5.8.1) — гном-защитник, переопределяет «активный» AI на «стой и стреляй».
 
 **Дочерние узлы:**
@@ -1620,7 +1718,9 @@ Polling в `_process` через `_consume_piles_in_drop_zone()`: иду по `g
 **Слой/маска:** `collision_layer = Layers.FRIENDLY_UNIT = 256`, `collision_mask = Layers.TERRAIN = 1`. Гномы проходят сквозь башню, врагов, предметы и друг друга — не толкаются и не блокируют игрока. Гравитация — единственное физическое взаимодействие. **Главное:** `MASK_SKELETON = 39` НЕ включает FRIENDLY_UNIT → скелет в broad-phase гнома не видит → пар нет → `move_and_slide` скелета проходит сквозь гнома без collision-iteration. На 126 гномах в плотной толпе скелетов это была одна из главных нагрузок (каждый skel в кадре обходил contact-list по каждому соседнему гному). Урон по гномам идёт через `Damageable.try_damage` на STRIKE-фазе (контракт, не physics-collision) — смена слоя не сломала геймплей, только визуально скелет проходит сквозь гнома.
 
 **Экспорты:**
-- Группа **Movement:** `move_speed: float = 1.6`, `gravity: float = 20.0`.
+- Группа **Movement:** `move_speed: float = 2.4` (2026-06-04, было 1.6), `gravity: float = 20.0`.
+- Группа **Carry:** `carry_amount: int = 3` (2026-06-04) — единиц ресурса в лагерь за один донос. ResourcePile теряет 1 единицу на `take_one`, но гном «несёт связку» (нарратив).
+- Группа **Flee from threat:** `flee_speed: float = 3.0` (заметно быстрее обычной), `flee_persist_sec: float = 4.0` (хватит чтобы добежать с patrol_radius=12м), `flee_safe_radius: float = 3.0` (внутри ring'а палаток).
 - Группа **Behaviour:**
   - `vision_radius: float = 10.0` — дальность зрения только для XP-орбов (`_scan_orb`). Pile-ам не нужна: гном ищет ближайший годный pile **глобально** через `_find_nearest_pile` (без cap'а дистанции, weight'ы из `Camp._collection_priority` управляют выбором). Изменено 2026-05-08: раньше был `search_radius=300` random-wander, гномы бегали через всю карту; теперь идут целенаправленно.
   - `idle_radius: float = 4.0` — радиус ошивания возле anchor'а, когда куч нет / все claim'нуты другими.
@@ -2865,6 +2965,208 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 
 ---
 
+### 5.15 Match flow и системы 2026-06-02..06-04
+
+Подборка крупных подсистем, добавленных в шесть фич-коммитов после `a354e8b` (предыдущая полная синхронизация SPEC). Описаны вместе как «новый горизонт цикла матча»: одна партия идёт через start menu → POI → POI-defense → key chain → выход через ворота, с day/night-таймингом и tower-угрозами.
+
+#### 5.15.1 Match-loop: StartMenu / MatchConfig / MainSetup / MatchGoal / WinOverlay (2026-06-02)
+
+**Цикл матча.** Esc открывает [StartMenu]: «Начать игру» / «Закрыть». «Начать» — `StartMenu.restart_match()`:
+1. Генерирует **3 случайные позиции** на карте 240×240 (`PLAY_HALF=120`): `next_tower_pos`, `next_poi_pos`, `next_gate_pos`.
+   - Constraints: `MIN_POI_TOWER_DISTANCE=60` (POI не рядом с Tower), `MIN_GATE_DISTANCE=40` (Gate не на других объектах), `DUNGEON_MARGIN=8` (не в подземелье).
+   - `_pick_position_outside_dungeon(dungeon_xz, avoids[])`: avoids — массив `{center, radius_sq}` объектов, от которых надо держать дистанцию.
+2. Сохраняет позиции в autoload [MatchConfig] (`next_tower_pos`, `next_poi_pos`, `next_gate_pos`, `match_started=true`).
+3. `get_tree().reload_current_scene()` — сцена пересоздаётся с нуля.
+
+**Применение позиций после reload.** [MainSetup] (`scripts/main_setup.gd` на корне Main) в `_ready`:
+- Берёт `next_tower_pos / next_poi_pos / next_gate_pos` из MatchConfig (через SENTINEL = `Vector3(INF, INF, INF)` отличает «не задано»).
+- Двигает Tower на `next_tower_pos`; Camp на той же XZ-delta что Tower (палатки и harvester как children едут с ним).
+- Двигает POI (QuestActor) на `next_poi_pos`. Ресурсы вокруг POI генерируются QuestActor'ом сам.
+- Двигает Gate на `next_gate_pos`.
+
+**MatchConfig** — autoload без логики, просто bag-of-fields. `match_started` — флаг что StartMenu уже клик'нули хотя бы раз; WaveDirector в `_ready` его смотрит чтобы автостартовать кампанию (без флага первая загрузка сцены — «спокойный режим до клика»).
+
+**Условия победы.** [MatchGoal] (group `&"match_goal"`) слушает:
+- `EventBus.resources_changed` с фильтром GOLD → проверяет `gold ≥ target_gold` (default 1000).
+- `EventBus.tower_passed_gate` → флаг `_gate_passed = true`.
+- `_check_win()`: оба = true → `EventBus.match_won.emit()` (edge-trigger, один раз).
+
+**[KeyItem]** — золотой куб в подземелье. State machine:
+- `IDLE` (CARRIED флажок false) — в подземелье, ждёт. Раз в `scan_interval=0.2с` сканит SOLDIER_GROUP (squad-юниты игрока), если кто-то в `pickup_radius=2.5м` → переход в CARRIED. Floats over carrier на `carry_offset_y=1.6`.
+- `CARRIED` — летит над carrier'ом. Каждый кадр проверяет дистанцию до Tower; если ≤ `tower_pickup_radius=5.0м` → AT_TOWER.
+- `AT_TOWER` — парит над Tower (`carry_offset_y` выше Tower-mesh). Эмитит `key_delivered_to_tower`.
+- `CONSUMED` — после `Gate._on_pass` зовётся `key.consume()` → queue_free.
+
+**[Gate]** (group `&"gate"`) — Torus mesh, цвет меняется по state:
+- `LOCKED` (default): красный. Не пускает.
+- `UNLOCKED`: зелёный. Триггер: `EventBus.key_delivered_to_tower`.
+- `PASSED`: тусклый. Триггер: в `_process` UNLOCKED + Tower в `pass_radius=3.5м` → PASSED + `key.consume()` + `EventBus.tower_passed_gate.emit()`.
+
+**[WinOverlay]** — `CanvasLayer layer=110`, золотая панель «ПОБЕДА!» + кнопка «Новая партия» → `StartMenu.restart_match()` (reuse). Слушает `EventBus.match_won`.
+
+#### 5.15.2 Day/Night-цикл — `WaveDirector` (2026-06-04)
+
+**Идея.** Матч идёт чередующимися фазами «день — иди по квестам, лагерь без присмотра», «ночь — пережить волны». Не уровень-дизайн (статичный график волн), а **глобальное состояние WaveDirector'а** поверх POI-логики.
+
+**Параметры (через инспектор WaveDirector):**
+- `day_duration_seconds = 180` (3 мин), `night_duration_seconds = 120` (2 мин).
+- `day_poi_waves_enabled = false` — днём POI-волны вообще не идут (escape-hatch для A/B-теста: true — днём редкие волны через `day_wave_interval_multiplier`).
+- `day_background_grows = false` — фоновая популяция растёт только ночью. Replenish-подкачка (до текущего target) работает всегда — иначе игрок мог бы вырезать всех днём и встретить пустую ночь.
+- `_day_night: DayNight` enum (DAY/NIGHT), `_day_night_remaining: float`.
+
+**Тик.** `_tick_day_night(delta)` уменьшает `_day_night_remaining`; на ≤0 переключает фазу с carryover отрицательного остатка (cycle не отстаёт от wall-clock):
+- DAY → NIGHT: `_day_night_remaining = night_duration_seconds + carryover`
+- NIGHT → DAY: `_day_night_remaining = day_duration_seconds + carryover`
+- Эмит `EventBus.day_phase_changed(is_night, _phase_duration())`.
+
+**Гейтинг.**
+- `_tick_active_poi`: `if not is_night() and not day_poi_waves_enabled: return` — днём stage не advance'ится, wave_cd не тикается. Pending boss-таймер продолжает (он включается только из ночного спавна).
+- `_tick_background`: `if is_night() or day_background_grows: _background_target += ...` — днём target замёрз.
+- Caravan-волны и pending boss-wave тикаются независимо.
+
+**Public API для HUD'ов:**
+- `is_running() -> bool` — кампания в RUNNING-phase.
+- `is_night() -> bool`.
+- `get_day_night_state() -> int` (enum), `get_day_night_remaining() -> float`.
+
+**Старт.** `_start_campaign()` инициализирует `_day_night = DAY` + `_day_night_remaining = day_duration_seconds` и эмитит `day_phase_changed(false, day_duration_seconds)` — для overlay'а sync на старте.
+
+#### 5.15.3 Tower-угрозы: Giant / Каменщик-Thrower / Boss-волна (2026-06-03)
+
+**Проблема.** До этого этапа Tower — мобильная башня с дальними спеллами, ничего конкретно за ней не охотилось. Все враги шли в Camp. Tower сшибала их по пути → нет давления.
+
+**Решение — Tower-таргетящиеся враги через override `_scan_target` / `_resolve_target`:**
+
+- **[SkeletonGiant]** (extends Skeleton, `class_name SkeletonGiant`): танк-приоритет на Tower, AOE-slam, `knockback_resistance=0.2` (не сбивается со штриха стрелами/слемом). FOG_REVEAL_GROUP — рассеивает туман вокруг себя (виден издалека). Override `_scan_target` → Tower имеет абсолютный приоритет; `_target_still_valid` → Tower валидна пока damageable; `_perform_strike` → добавляет Tower в AoE-итерацию (база итерирует только TARGET_GROUP).
+- **[SkeletonGiantThrower]** (extends SkeletonArcher): ranged-танк, бросает [GiantStone] (AOE-камень с волной от импакта) с дистанции 25-35м. Override `_resolve_target` → Tower priority. Кидание с телеграфом (`telegraph_radius`, цвет красно-оранжевый) — игрок видит куда полетит.
+
+**WaveDirector orchestration** (через инспектор):
+- `giant_every_n_waves = 3` — каждая 3-я ночная волна спавнит +1 гиганта.
+- `thrower_every_n_waves = 4` — каждая 4-я добавляет +1 каменщика.
+- `boss_wave_every_n = 6` — каждая 6-я: **боссовая волна**: Giant + N Thrower'ов на равно-распределённых углах вокруг лагеря (равные углы как multi-front).
+  - Регулярные giant/thrower-триггеры на боссовой волне подавляются.
+  - **Предупреждение** за `boss_wave_warning_seconds = 6с` до спавна: `EventBus.boss_wave_incoming.emit(seconds)` → BossWarningOverlay рисует пульсирующий красный баннер «ВНИМАНИЕ! ГИГАНТ ПРИБЛИЖАЕТСЯ». Pending state в `_pending_boss_wave_cd`, тикается в `_tick_pending_boss_wave`.
+  - Cancellation: `_clear_active_poi()` сбрасывает `_pending_boss_wave_cd = -1.0` (если игрок свернул лагерь до спавна — отменяется).
+
+**Все Tower-угрозы гейтятся `is_night()`** — днём не спавнятся (см. §5.15.2).
+
+#### 5.15.4 Targeting alarm и Gnome FLEE (2026-06-04)
+
+**Цель.** Защитники (ArcherSoldier / ArcherPost) должны реагировать на скелетов **до первого удара**, а не после. Гном-собиратель — убегать в лагерь от подходящего скелета.
+
+**Сигнал `EventBus.skeleton_targeting_camp(attacker, victim, position)`.** Эмитится из [Skeleton._tick_targeting_alarm]:
+- Когда `_state == APPROACH`, цель валидна, `_targeting_alarm_signaled == false`, target — CampPart или Gnome, дистанция ≤ `approach_alarm_distance` (default 10м, было 6 после playtest'а).
+- Флаг `_targeting_alarm_signaled` — one-shot per-target, сбрасывается в `_set_cached_target` при смене цели. Без него скелет спамил бы сигнал каждый тик в радиусе — handler'ы перезаряжались бы непрерывно.
+- На гигантов `approach_alarm_distance` через .tscn можно поднять выше (они медленнее и заметнее).
+
+**Реакция по типу жертвы:**
+
+- **victim = CampPart** (палатка): [ArcherSoldier._on_skeleton_attacked_camp] (subscribed на оба сигнала — `targeting_camp` и `attacked_camp` через один handler) фильтрует только CampPart-жертвы (через `victim is CampPart`). Атаки на гномов **не интересуют** archer'а — гном сам убежит. Alarm-цель overrides cone-vision (даже за спиной), archer разворачивается + стреляет если в attack_range. Alarm живёт `alarm_persist_sec=1.5с` (короткий, чтобы при потоке волн alarm не «дёргался» постоянно).
+- **victim = Gnome** (он сам): [Gnome._on_skeleton_threatens_me] — если victim == self, переключается в `State.FLEEING` через `_enter_fleeing()`.
+
+**Gnome.State.FLEEING** (новое состояние 2026-06-04):
+- Триггер: `_on_skeleton_threatens_me` (фильтр `victim == self`) или `targeting_camp/attacked_camp` для self.
+- Не прерывает безопасные state'ы: IN_TENT, RETURNING_TO_TENT, FOLLOWING_CARAVAN (там гном уже в спецрежиме).
+- `_enter_fleeing()`: сбрасывает `_assigned_pile`, `_assigned_orb` в null (другие гномы могут забрать). State = FLEEING. `_flee_until_msec = now + flee_persist_sec*1000`.
+- `_tick_fleeing()`: бежит к `Camp.deploy_anchor` на `flee_speed=3` (быстрее обычного 2.4). Выход:
+  - таймер истёк (`flee_persist_sec=4с`) ИЛИ
+  - дистанция до anchor ≤ `flee_safe_radius=3м` (внутри ring'а палаток, считаем безопасным)
+  - → если `_carry_type >= 0`: state = COMMUTING_TO_BASE (донести ресурс). Иначе SEARCHING.
+
+**Virtual `Gnome._can_flee() -> bool`** — base возвращает true (мирный гном убегает). **Override в SoldierGnome** возвращает false: солдаты/лучники не убегают, они сражаются. Без override handler в Gnome'е переключал бы их в FLEEING на любой alarm.
+
+**Связь с реактивным alarm'ом.** `EventBus.skeleton_attacked_camp` (старый сигнал «уже ударил» — emits из `Skeleton._perform_strike`) подписан как backup'ы:
+- Archer'у — если targeting не успел сработать (скелет вышел из тумана сразу в strike-радиус).
+- Gnome'у — если FLEE триггер пропустили; гном среагирует хотя бы на первый удар.
+
+#### 5.15.5 ArcherSoldier point-defense (2026-06-03)
+
+**Контекст.** ArcherSoldier — лучник в squad'е (extends SoldierGnome). До 2026-06-03 у него был pursue: cone-зрение видит врага в 35м (`cone_vision_radius`), он бежал к нему пока не войдёт в attack_range (22.5м). На playtest'е выглядело как «лучник СРАЗУ бежит ко всему, не по конусу».
+
+**Решение.** Pursue-шаг удалён, стационарная защита:
+- Враг в cone + attack_range → выстрел (rotate face + fire), velocity=0.
+- Враг в cone, но за attack_range → archer **игнорирует** (раньше pursued).
+- Враг сам подошёл / patrol-движением cone подмёл → выстрел.
+
+**Состояния AI:**
+- DEFENDING_CAMP — patrol по `defend_patrol_radius=12м` вокруг центра лагеря. _facing tracks velocity direction → cone подметает периметр.
+- HOLDING_POSITION — стоит в squad-formation slot. _facing = `_outward_facing()` (наружу от центра лагеря).
+- ESCORTING — следует за tower (slot relative).
+- Strict-march (HOLDING_POSITION + `is_strict_move()`) — идёт к slot'у, combat-assist по пути (fire if target in attack_range).
+
+**Cone-vision параметры** (унаследовано от старого DefenderGnome AI):
+- `cone_vision_radius = 35м`, `vision_half_angle_deg = 45°` (90° FOV).
+- `TARGET_SCAN_INTERVAL = 0.25с` — throttled-скан через `PhysicsShapeQuery` (sphere broadphase + cone-фильтр).
+- `PROXIMITY_OVERRIDE_RADIUS = 1.8м` — враг в упор → cone bypass'ится (видим даже если сзади).
+- `target_share_penalty = 0.5` — цель, по которой уже стреляют N лучников, штрафуется через distance × (1 + N × penalty). Распределение огня.
+
+**Alarm-фильтр (2026-06-04 уточнение):**
+- `alarm_max_distance = 25м` — не реагируем на удары по лагерю если attacker дальше 25м от нас.
+- `alarm_persist_sec = 1.5с` — короткий, чтобы при потоке волн alarm не вертелся.
+
+#### 5.15.6 Snake-trail caravan + SegmentMotionFx (2026-06-03)
+
+**Замена leader-chase на snake-following.** Camp вёл караван классической формулой «каждый сегмент идёт за лидером минус gap-offset». На поворотах это давало угловатую траекторию (палатки телепортировались в новую позицию). Новая модель — **snake-trail-following** (как в игре «Змейка»):
+
+**Алгоритм.**
+- Tower (голова каравана) записывает свои позиции в массив `_tower_trail: Array[Vector3]` через `_record_tower_trail()`. Шаг записи `trail_sample_step=0.1м` (накопительная дистанция), buffer длиной `_caravan_total_length() + trail_buffer_extra=5м`. Jump-detection threshold 50× step (телепорт Tower'а очищает trail).
+- Каждый сегмент (Harvester, палатки) сэмплирует trail по cumulative-distance:
+  - Harvester: `harvester_gap=4.5м` после Tower.
+  - Первая палатка: `harvester_to_part_gap=4.0м` после Harvester'а (или `part_gap=2.5м` после Tower если Harvester'а нет в строю).
+  - Остальные палатки: `part_gap=2.5м` друг за другом.
+- `_sample_trail_at(target_dist)`: walk head→tail с cumulative distances, lerp на сегменте — даёт сглаженную позицию между sample-точками.
+- `_smooth_to(current, target, delta)`: exp-decay lerp с rate `trail_smoothing=22.0` — добавляет инерцию каждому segmentу (не телепорт на trail-точку).
+
+**Seed.** `_seed_tower_trail()` — синтетическая линия вдоль `-X` от Tower'а длиной `_caravan_total_length()`. Зовётся в `_ready` после `_spawn_*` и в `_finalize_pack`.
+
+**Leader-too-far guard.** Если Tower резко уехал (Halt/Recall), `_update_caravan_follow` детектит «leader too far» → все сегменты стопят на месте, чтобы trail догнал.
+
+**SegmentMotionFx (`scripts/segment_motion_fx.gd`, RefCounted).** Motion-feedback helper, считает velocity из diff'а позиций. Возвращает Dictionary с `bob_y: float` и `basis: Basis` для применения к **VisualRoot** сегмента (не корню, чтобы не ломать collision).
+
+Три эффекта в одном:
+- **Bobbing** — вертикальная синусоида `sin(_bob_phase) × bob_amplitude × speed_norm`. Phase растёт только при движении (стопе фаза замирает).
+- **Tilt forward** — наклон по горизонтальной оси `UP × direction`. **По умолчанию выключен** (`tilt_max_rad = 0`): игрок 2026-06-03 решил «не нравится». Per-segment override через `_motion_fx.tilt_max_rad = ...` в их `_ready`.
+- **Squash-stretch** — на старте растяжение по dir / сжатие по Y, на стопе возврат к ONE. exp-decay через `ss_response=6`.
+
+Параметры per-segment:
+- Harvester: `bob_amplitude=0.09`, `bob_frequency=2.0`, `stretch_factor=0.06` (крупная машина, тяжёлые шаги).
+- Tower: `bob_amplitude=0.04`, `bob_frequency=1.5`, `stretch_factor=0.04`, `ss_response=4.5` (массивная башня, мягче и плавнее).
+- CampPart (палатки): дефолты — `bob_amplitude=0.06`, `bob_frequency=3.0`, `stretch_factor=0.08`.
+
+**VisualRoot pattern.** Каждая сцена с motion-fx (`harvester.tscn`, `tower.tscn`, `camp_part.tscn`) имеет дочерний `Node3D VisualRoot`, в который перепарентены все mesh'и. CollisionShape остаётся на body root — fx не ломает физику. Motion-fx применяется как `_visual_root.position.y = _visual_base_y + bob_y` и `_visual_root.basis = _visual_base_basis × fx_basis`.
+
+**Reset на телепорт.** `_motion_fx.reset(at_pos)` зовётся при deploy/pack — иначе следующий tick посчитает огромную «velocity» и сегмент «лягнётся».
+
+#### 5.15.7 Spark spell (2026-06-02)
+
+**Дизайн.** Дешёвое заклинание с почти-нулевым cooldown'ом, single-target. Контраст с Fireball (AOE-burst) и Frost (zone-control). Желтый зигзагообразный снаряд, как искра/молния.
+
+**Параметры (через `SpellSystem.SPELL_CATALOG[&"spark"]`):**
+- `damage=35`, `cooldown=0.15с`, `mana_cost=3`, `impact_radius=1.5м` (single-nearest-in-AoE).
+
+**Поведение.**
+- ПКМ при equip'е → телеграф на земле (жёлтый ring через `AoeVisual.spawn_ground_ring`).
+- Релиз → запуск **[SparkBolt]** (snake-trail particles + yellow point light) в target-точку с зигзагообразным трейлом (`zigzag_amplitude=1.2`, `zigzag_frequency=9 Hz`).
+- На arrival (`arrival_radius=0.4м` от target): `_find_nearest_enemy_in_radius(impact_radius)` → `Damageable.try_damage` ближайшего + `AoeVisual.spawn_pulse_sparks` визуал.
+- Если ни одного врага в impact_radius — снаряд исчезает без damage (можно стрелять в землю «вхолостую»). `max_lifetime=4с` страховка от подвисших снарядов.
+
+**Архитектура.** `[HandSpellSpark]` (caster координатор) аналогичен другим spell-skript'ам: telegraph → spawn → setup → emit cast.
+
+#### 5.15.8 DayNightOverlay / BossWarningOverlay (2026-06-03..06-04)
+
+**[DayNightOverlay]** (`scenes/day_night_overlay.tscn`, layer=95): индикатор фазы в верхнем левом углу.
+- Скрыт до `EventBus.day_phase_changed` (или sync в `_ready` если WaveDirector уже started). Sync нужен из-за порядка `_ready` сиблингов в main.tscn — WaveDirector один раз эмитит на старте кампании, overlay может пропустить сигнал.
+- Label с цветом: `DAY_COLOR = (1.0, 0.9, 0.45)` тёплый жёлтый, `NIGHT_COLOR = (0.62, 0.65, 1.0)` холодный сине-фиолетовый.
+- В `_process` пуллит `_wave_director.get_day_night_remaining()` и форматит `«День 2:00» / «Ночь 1:30»` (округление вверх — игроку проще видеть «1с» на последнем тике).
+- `mouse_filter = ignore` — click-through, не блокирует ввод.
+
+**[BossWarningOverlay]** (`scenes/boss_warning_overlay.tscn`, layer=105): пульсирующий красный баннер.
+- Подписан на `EventBus.boss_wave_incoming(seconds)`. Показывается на переданное число секунд (= `boss_wave_warning_seconds`), потом авто-скрывается через `_visible_cd` тик в `_process`.
+- Pulse через `_pulse_tween`: `tween_property(_label, "modulate:a", 0.55 ↔ 1.0, 0.3с)` в loop. Перезапускается на каждом show'е.
+- Click-through (`mouse_filter = ignore`). Layer 105 — над gameplay HUD (10), под WinOverlay (110).
+
+---
+
 ## 6. Управление и инпуты
 
 Регистрируются в `project.godot → [input]`:
@@ -2882,12 +3184,16 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 | `equip_fireball` | 3 | Hand:Spell (экипировать фаербол) → category MAGIC |
 | `equip_firestorm` | 4 | Hand:Spell (экипировать огненный шквал) → category MAGIC |
 | `equip_mine_scatter` | 5 | Hand:Spell (экипировать минное рассеивание) → category MAGIC |
+| `equip_frost` | 6 | Hand:Spell (экипировать мороз — frost-болт с расширяющимся кольцом) → category MAGIC |
+| `equip_spark` | 7 | Hand:Spell (экипировать искру — single-target жёлтый зигзаг, 2026-06-02) → category MAGIC |
 | `cast_super` | Space | Hand:Super — старт супер-удара (когда Camp.is_super_ready). В AIMING_TARGET повторное нажатие = бесплатная отмена. |
 | `camp_toggle` | R | Camp (зажать для развёртки/свёртки на POI). В DEPLOYED отсчёт pack'а гейтится `is_tower_in_camp_recall_zone()` — если башня вне `recall_zone_radius` от anchor'а, pack не запускается («оставить лагерь и уйти с солдатами»). |
 | `caravan_halt_toggle` | Q | Composite-команда: (1) toggle halted-режима в CARAVAN_FOLLOWING; (2) squad-recall для всех отрядов в recall-зоне башни (toggle ESCORT/HOLD-soft); (3) спавн волны вызова (expanding-ring визуал, команды применяются по `dist / wave_speed` задержке). Подробнее — §5.8.2.6. |
 | `ui_journal` | J | JournalPanel (открыть/закрыть журнал — семь вкладок: Юниты / Лагерь / План / Заклинания / Армия / Задания / Читы) |
 | `gnome_collect` | C | Camp.set_collection_mode(WORK) — gatherer'ы возвращаются на сбор |
 | `gnome_alarm` | V | Camp.set_collection_mode(ALARM) — gatherer'ы бегут в палатки (request_return); defender'ы продолжают защищать |
+| — | Esc | StartMenu (toggle, 2026-06-02) — три стадии: открыть меню / закрыть меню / выйти из aim'а если активен |
+| — | L | PerfHud (toggle visibility, 2026-06-04) — debug-оверлей скрыт по умолчанию; не зарегистрирован в InputMap (debug, читается через `_unhandled_input`). Раньше был F3 + visible by default |
 
 **UI-гейт мыше-инпутов:** `Hand.is_pointer_over_ui()` → `get_viewport().gui_get_hovered_control() != null`. Все мыше-зависимые действия (LMB grab/marker-trigger/squad-commit в `hand_physical`/`squad_charge_marker`/`hand_squad_aim`, ПКМ ability/spell) гейтятся этим — клик по HUD-кнопке не тригерит параллельный grab/cast/aim под виджетом. Уже-активные действия (release удерживаемого) не трогаются. Клавиатурные хоткеи (equip 1/2/3/4, Space, Q, R) гейтом не покрыты — они работают и над UI.
 
@@ -3566,8 +3872,11 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
     **(а) ArcherSoldier (Phase 1).** `extends SoldierGnome`, переопределяет только `_active_tick`. Логика:
     - Strict-march: дойти до слота, combat-assist (выстрел в цель в `attack_range`) во время марша, как у pikeman'а lunge'и.
     - Цель в `attack_range` + cd готов → выстрел, velocity=0.
-    - Цель в leash но вне range → подходим ближе.
-    - Нет цели → squad-positioning.
+    - ~~Цель в leash но вне range → подходим ближе~~ **(2026-06-03 убрано: см. §5.15.5 point-defense)**. Теперь без pursue — лучник стационарен, не бежит за далёкими целями.
+    - Нет цели → squad-positioning (DEFENDING_CAMP patrol / HOLDING).
+
+    > **Update 2026-06-03..06-04:** ArcherSoldier стал чистым point-defense'ом: cone-vision (35м × 90° FOV, см. §5.15.5), throttled scan, alarm-handler для CampPart-жертв (без gnome'ов — гном сам убегает), фильтр alarm по `alarm_max_distance=25м` + `alarm_persist_sec=1.5с`. Параметры подробно — §5.15.5.
+
     Параметры через [member SoldierGnome.attack_range/damage/cooldown] (унаследованы), специфика лучника — `arrow_speed`, `arrow_spawn_offset`, `base_inaccuracy_radius`, `experience_half_shots`. Per-soldier `_shots_fired` теряется на смерти (как у DefenderGnome'а до этапа 55). Сцена `archer_soldier.tscn` — клон pikeman'а с цветом `Color(0.55, 0.35, 0.75)` (тёмно-фиолетовый).
 
     **(б) Каталог (Phase 2).** `&"archer_squad"` в SoldierSystem.SOLDIER_CATALOG. Без `gnome_class` поля → стандартный SoldierGnome-flow в `Camp.recruit_squad → _build_and_register_squad`. Squad-команды (hold/escort/defend/dismiss) идентичны pikeman'у, без специальных кодопутей.
@@ -3581,6 +3890,15 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
     **Что не доделано** (отложено):
     - `Camp._squad_xp` / `_squad_level` / UPGRADE_CATALOG — system жива (XpOrb feeds, EventBus сигналы идут), но привязки в UI убраны и `has_upgrade(id)` не применяется ни к чему. Cleanup отдельным проходом.
     - SPEC.md разделы §5.8.1 / §5.8.1.1 / §5.7 BUILDING_WATCH_BELL помечены REMOVED но не вычищены полностью — историческая справка осталась. Полная зачистка SPEC — отдельный проход документации.
+
+56. **Match flow + Day/Night + Tower threats** (2026-06-02..06-04). Шесть фич-коммитов после этапа 55 — крупный горизонт цикла матча. Полное описание в §5.15, тут только tl;dr:
+
+    - **`212181c`** start menu + caravan/camp волны + Spark + POI-ресурсы: меню начала игры на Esc, рандомный POI каждый матч, ресурсы спавнятся вокруг POI на `_ready`, caravan-волны на пути к POI, Spark-spell (single-target жёлтая молния, клавиша 7), читы переехали в ScrollContainer.
+    - **`9d0278f`** win condition + Key+Gate + archer AI port + multi-front siege: ключ из подземелья → башня → ворота → победа при gold ≥ 1000 + tower_passed_gate. ArcherSoldier получил cone-AI с DefenderGnome (alarm-фильтрация по дистанции, PROXIMITY_OVERRIDE_RADIUS=1.8м). Multi-front siege wave (`simultaneous_groups`, equispaced углы вокруг лагеря).
+    - **`92be0ef`** snake-trail caravan + motion-fx: караван следует по trail-точкам Tower'а (не leader-chase). VisualRoot-обёртка для motion-fx (bob + squash-stretch без tilt — игроку не зашло). `harvester_to_part_gap` отдельный параметр.
+    - **`19ecc46`** Giant + Каменщик как Tower-угрозы + боссовая волна: SkeletonGiant + SkeletonGiantThrower (приоритет на Tower), boss_wave_every_n=6 с предупреждением. BossWarningOverlay (пульсирующий красный баннер).
+    - **`1a71721`** day/night cycle: WaveDirector.DayNight enum, день=180с safe / ночь=120с danger. POI-волны и фон gate'ятся `is_night()`. DayNightOverlay countdown. Targeting alarm (`skeleton_targeting_camp` за 10м до удара). Gnome.FLEEING state — мирный гном убегает к лагерю.
+    - **`36a3bc5`** chore-balance: Skeleton 2.7→2.0, SkeletonArcher 2.4→1.8; Gnome 1.6→2.4, carry_amount 1→3; ArcherPost inaccuracy 1.2→0.15; wave_schedule sizes увеличены. PerfHud скрыт по умолчанию, toggle F3→L. «Хлоп 1/Щелк 2» виджет удалён. JournalPanel preset «Защита (стены и башни)».
 
 ### 7.3 Решённые ошибки
 
@@ -3683,6 +4001,14 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 | `squad_disbanded` | `(squad: RefCounted)` | `Camp._on_squad_disbanded` — после потери последнего члена. HUD убирает карточку. |
 | `squad_recall_ignored` | `(squad: RefCounted)` | `Camp._handle_halt_input` — на каждый отряд вне recall-зоны при Q. HUD флешит карточку красным modulate-tween'ом. |
 | `recall_zone_pulsed` | `(center: Vector3, radius: float, duration: float)` | `Camp._handle_halt_input` — на любое нажатие Q. HUD спавнит expanding-ring (тонкий фронт + размытый тейл) через `AoeVisual.spawn_expanding_ring`. |
+| `navmesh_baked` | — | `NavRegion.rebake` после async-rebake'а NavMesh. Гномы / Skeleton'ы / NavAgent3D-listener'ы сбрасывают `_nav_last_target = Vector3.INF`, иначе `set_target_position` с тем же goal'ом игнорируется и старый невалидный path остаётся. |
+| `skeleton_targeting_camp` | `(attacker: Node3D, victim: Node3D, position: Vector3)` | **Превентивный** alarm (до первого удара). `Skeleton._tick_targeting_alarm` эмитит когда `_cached_target` (CampPart/Gnome) на дистанции ≤ `approach_alarm_distance` (10м, override'абельный на гигантов). One-shot per-цель — флаг `_targeting_alarm_signaled` сбрасывается в `_set_cached_target`. ArcherSoldier подписан для CampPart-жертв; Gnome (мирный) подписан для self → FLEEING. См. §5.x Targeting alarm. |
+| `boss_wave_incoming` | `(seconds_until_spawn: float)` | `WaveDirector._tick_active_poi` при попадании счётчика волн на `boss_wave_every_n` (6). За `boss_wave_warning_seconds` (6с) до фактического спавна Boss-волны. BossWarningOverlay рисует пульсирующий красный баннер. |
+| `day_phase_changed` | `(is_night: bool, duration_seconds: float)` | `WaveDirector._tick_day_night` на смене фазы + один раз на старте кампании (initial day). DayNightOverlay перерисовывает цвет/текст. |
+| `match_won` | — | `MatchGoal._check_win` когда выполнены ВСЕ условия: gold ≥ target И tower_passed_gate. WinOverlay показывает панель «Победа». |
+| `key_picked_up_by_squad` | — | `KeyItem._enter_carried` (state IDLE→CARRIED). HUD / звук слушают. |
+| `key_delivered_to_tower` | — | `KeyItem._enter_at_tower` (state CARRIED→AT_TOWER). Разблокирует Gate (Gate переключается LOCKED→UNLOCKED). |
+| `tower_passed_gate` | — | `Gate._process` когда UNLOCKED + Tower в `pass_radius` → PASSED. Эмитится один раз за жизнь сцены. Часть условия победы (`match_won`). |
 
 `ResourcePile.take_one` через шину **не эмитит** (декремент `units` пока не нужен наружу — счётчика ресурсов ещё нет). При появлении HUD-счётчика добавится отдельный сигнал — типизированный как `Node3D`, как и остальные.
 
@@ -3732,7 +4058,7 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 
 Используется в паре с cheat-кнопкой «Stress 2000 скелетов» (Журнал → вкладка «Читы», метод `WaveDirector.cheat_stress_2000`): спавн 2000 скелетов async-батчами и измерение, во что упирается. До 2026-05-08 этот же эффект был на keyboard-action `debug_stress_2000` (`]`).
 
-**Структура:** `CanvasLayer → PanelContainer (полупрозрачный фон) → Label`. Position top-left, offset `(10, 10)`. Готово принимать клавишу `F3` через `_unhandled_input` (toggle visibility) — не зарегистрировано в InputMap, потому что debug-инструмент не должен засорять конфиг проекта.
+**Структура:** `CanvasLayer → PanelContainer (полупрозрачный фон) → Label`. Position top-left, offset `(10, 10)`. Toggle на `L` через `_unhandled_input` (2026-06-04, было F3) — не зарегистрировано в InputMap, потому что debug-инструмент не должен засорять конфиг проекта. По умолчанию **скрыт** (`visible = false` в perf_hud.tscn): debug-overlay не должен ловить глаза в обычной игре, открывается только когда нужно профилировать.
 
 **Цикл:** в `_process` тикает `_update_timer`; при истечении (`UPDATE_INTERVAL = 0.25с`) — `_update_label()`. Внутри: `Engine.get_frames_per_second()` для FPS + проход по `Skeleton.SKELETON_GROUP` (группа `&"skeleton"`) с подсчётом по `sk.get_lod_level()`.
 
@@ -3741,7 +4067,7 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 - Список скелетов — `get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP)`. Skeleton добавляется в эту группу в `_ready` (рядом с `add_to_group(SKELETON_GROUP)` после `super._ready()`). Группа ОТДЕЛЬНАЯ от `Damageable.GROUP`/`skeleton_target` — чтобы HUD не фильтровал по `is Skeleton` через type-check на каждом тике.
 - LOD-уровень — публичный геттер `Skeleton.get_lod_level() -> int`. Приватное `_lod_level` снаружи не читается.
 
-**Где живёт:** инстанс в `main.tscn` как ребёнок Main. Видим по умолчанию.
+**Где живёт:** инстанс в `main.tscn` как ребёнок Main. **Скрыт по умолчанию** (см. структуру выше); открывается клавишей L.
 
 **Стоимость:** один проход по группе скелетов + 6 `Performance.get_monitor` reads раз в 0.25с + один `Label.text` setter. На 2000 врагов — < 0.1мс/обновление. Сам HUD не учтён в FPS-сглаживании специально — погрешность одного кадра поглощается буфером.
 
@@ -3749,7 +4075,7 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 
 **Тип корня:** `CanvasLayer`. Игровой UI.
 
-**Левая панель (под PerfHud):** два «окошка» способностей с цифрой клавиши и подписью: `[1]` хлоп, `[2]` щелк.
+**Левая панель (вверху):** static-виджет «хлоп 1 / щелк 2» удалён 2026-06-04 (был легаси). Activity bar action-slot'ов (drag-and-drop, см. ниже) теперь единственный источник «что на какой клавише».
 
 **Правая панель (top-right):** статус лагеря, программно дополняется двумя блоками (раньше было три, gatherer-row и squad_row вынесены):
 1. Базовые строки из `.tscn`: 🟥 лучник (`Camp.defender_count()`), 🟫 палатки (`Camp.tent_count_alive()`). GnomeRow удалён 2026-05-16 — счётчик собирателей переехал в gatherer-card в squad_panel.
@@ -3772,7 +4098,7 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 
 **Открытие:** хоткей `J` (action `ui_journal`), либо клик кнопки в HUD'е. **Не ставит игру на паузу** — игрок выбирает апгрейд / постройку когда удобно. Закрытие: повторное `J`, крестик «×» в углу панели. Клики по полупрозрачному фону НЕ закрывают (легко промахнуться).
 
-**Три вкладки:**
+**Семь вкладок:**
 
 1. **Юниты** — апгрейды отряда из `Camp.UPGRADE_CATALOG`. Сортировка по `level`. Карточка показывает `name + description + level-tag`, состояние:
    - `✓ активен` — взят (карточка притенена)
@@ -3780,12 +4106,30 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
    - `нет очков` — уровень есть, но банк `pending_upgrade_choices` пуст
    - `выбрать` — берётся, тратит очко из банка
 
-2. **Лагерь** — постройки из `Camp.CAMP_BUILDING_CATALOG`. Карточка: `name + description + cost-row` (для каждого ресурса в cost — цветной квадратик + `имеется/требуется`, недостающие красным). Кнопка-состояние:
+2. **Лагерь** — постройки из `CampBuildings.CATALOG` (split в отдельный модуль 2026-05-30, был `Camp.CAMP_BUILDING_CATALOG`). Карточка: `name + description + cost-row` (для каждого ресурса в cost — цветной квадратик + `имеется/требуется`, недостающие красным). Кнопка-состояние:
    - `только в развёрнутом лагере` — `deployed_only=true` и не в DEPLOYED
    - `не хватает ресурсов` — afford failed
    - `построить` — активна
+   Каталог: NEW_TENT, PALISADE (brush-mode, cost_per_segment), ARCHER_POST (requires_gatherer + requires_direction).
 
-3. **План** — preset'ы распределения сбора (`PLAN_PRESETS` const): Равномерно / Больше дерева/камня/железа/еды. Активный preset (тот, чьи нормализованные веса совпадают с `Camp.get_collection_priority()` с эпсилон 0.005) показан как `✓ активен`. На клик другого — `Camp.set_collection_priority(weights)`.
+3. **План** — preset'ы распределения сбора (`PLAN_PRESETS` const): Равномерно / Больше дерева/камня/железа/еды / **Защита (стены и башни)** (2026-06-04, WOOD 55 / IRON 35 / STONE 5 / FOOD 5 под палисад + archer post). Активный preset (тот, чьи нормализованные веса совпадают с `Camp.get_collection_priority()` с эпсилон 0.005) показан как `✓ активен`. На клик другого — `Camp.set_collection_priority(weights)`.
+
+4. **Заклинания** — каталог из `SpellSystem.SPELL_CATALOG` (fireball, firestorm, mine_scatter, frost, **spark** добавлен 2026-06-02). Карточка: иконка / описание / status-label:
+   - `locked` → кнопка «открыть» (списывает `unlock_cost` через `Camp.try_spend`)
+   - `unlocked, есть апгрейды` → «улучшить → ур. N+1» (списывает `upgrade_costs[N]`)
+   - `max level` → disabled «макс. уровень»
+
+5. **Армия** — призыв squad'ов через `SoldierSystem.SOLDIER_CATALOG` (pikeman, archer). Карточка: stats / cost / кнопка «призвать N» (требует gatherer-резерв).
+
+6. **Задания** — карточки квестов из `QuestProgress.QUESTS`. Status-label (active / done) вместо кнопки.
+
+7. **Читы** — debug-вкладка (2026-05-08, перенос с keyboard-actions). Обёрнута в ScrollContainer (2026-06-02). Кнопки вызывают public-API:
+   - Старт/рестарт волн (`cheat_start_campaign`)
+   - Немедленная волна (`cheat_force_wave`)
+   - Multi-front demo wave (`cheat_force_multifront_wave`)
+   - +100 скелетов, Stress 2000, Спавн giant, Спавн каменщика, Спавн archer-group
+   - +100 каждого ресурса, +1000 золота (2026-06-02)
+   - Продвинуть квест
 
 **Реактивность:** подписки на `pending_upgrade_choices_changed`, `squad_xp_changed`, `squad_upgrade_granted`, `resources_changed`, `camp_deployed/packed`, `camp_buildings_changed`, `collection_priority_changed` — `_refresh()` пересобирает только активную вкладку (если visible).
 
