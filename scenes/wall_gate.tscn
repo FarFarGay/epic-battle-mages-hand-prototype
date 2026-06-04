@@ -1,0 +1,77 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://scripts/wall_gate.gd" id="1_gate"]
+
+[sub_resource type="BoxShape3D" id="BoxShape_gate_body"]
+size = Vector3(4, 1.5, 0.3)
+
+[sub_resource type="BoxMesh" id="BoxMesh_door"]
+size = Vector3(2, 1.5, 0.3)
+
+[sub_resource type="StandardMaterial3D" id="Material_door"]
+albedo_color = Color(0.45, 0.3, 0.18, 1)
+roughness = 0.85
+metallic = 0.15
+metallic_specular = 0.2
+emission_enabled = false
+
+[sub_resource type="BoxMesh" id="BoxMesh_post"]
+size = Vector3(0.4, 2.0, 0.4)
+
+[sub_resource type="StandardMaterial3D" id="Material_post"]
+albedo_color = Color(0.3, 0.2, 0.12, 1)
+roughness = 0.95
+
+[sub_resource type="SphereShape3D" id="SphereShape_trigger"]
+radius = 3.0
+
+[node name="WallGate" type="StaticBody3D"]
+collision_layer = 32
+collision_mask = 0
+script = ExtResource("1_gate")
+
+; Закрытая ворота-стена — физический blocker (как палисад).
+; Длина 4м по X, толщина 0.3м по Z, высота 1.5м.
+[node name="BodyCollider" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
+shape = SubResource("BoxShape_gate_body")
+
+; Левая дверь. Pivot на левом краю (x=-2), меш сдвинут на +1 по X
+; чтобы шарнир сидел в начале меша.
+[node name="DoorLeftPivot" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 0.75, 0)
+
+[node name="DoorLeftMesh" type="MeshInstance3D" parent="DoorLeftPivot"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0)
+mesh = SubResource("BoxMesh_door")
+material_override = SubResource("Material_door")
+
+; Правая дверь. Pivot на правом краю (x=+2), меш сдвинут на -1 по X.
+[node name="DoorRightPivot" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0.75, 0)
+
+[node name="DoorRightMesh" type="MeshInstance3D" parent="DoorRightPivot"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1, 0, 0)
+mesh = SubResource("BoxMesh_door")
+material_override = SubResource("Material_door")
+
+; Опорные столбы по краям (визуал «арка»).
+[node name="PostLeft" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.1, 1, 0)
+mesh = SubResource("BoxMesh_post")
+material_override = SubResource("Material_post")
+
+[node name="PostRight" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.1, 1, 0)
+mesh = SubResource("BoxMesh_post")
+material_override = SubResource("Material_post")
+
+; Триггер-зона для друзей. Mask = FRIENDLY_UNIT (256) | ACTORS (4) = 260.
+; ENEMIES (16) НЕ в маске — враги не открывают ворота.
+[node name="Trigger" type="Area3D" parent="."]
+collision_layer = 0
+collision_mask = 260
+
+[node name="TriggerShape" type="CollisionShape3D" parent="Trigger"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
+shape = SubResource("SphereShape_trigger")

@@ -216,6 +216,10 @@ const CAMP_BUILDING_CATALOG: Dictionary = CampBuildings.CATALOG
 ## Сцена стрелкового поста (ArcherPost). Спавнится через BUILDING_ARCHER_POST.
 ## Если null — постройка молча провалится.
 @export var archer_post_scene: PackedScene
+## Сцена ворот в частоколе ([WallGate]). Спавнится через BUILDING_WALL_GATE,
+## заменяет ≥2 сегмента палисада на едином участке стены. Если null —
+## постройка молча провалится.
+@export var wall_gate_scene: PackedScene
 ## Радиус «зоны строительства» от центра развёрнутого лагеря. Постройки,
 ## требующие интерактивного выбора места (флаг `requires_aim` в каталоге),
 ## не ставятся за пределами этого круга. Преимущественно для сторожевого
@@ -1596,6 +1600,13 @@ func try_build(id: StringName, params: Dictionary = {}) -> Dictionary:
 	var reason := can_build_reason(id)
 	if reason != "":
 		return {"success": false, "reason": reason}
+	# Pre-apply валидация: проверка которая требует params (position/facing).
+	# Делается ДО списания ресурсов — иначе на неудачную постройку игрок
+	# терял бы 15 wood. Используется ворот'ами (нужна стена под gate-zone),
+	# можно расширить на будущие постройки с param-driven constraints.
+	var params_reason := _pre_apply_validation(id, params)
+	if params_reason != "":
+		return {"success": false, "reason": params_reason}
 	var data: Dictionary = CAMP_BUILDING_CATALOG.get(id, {})
 	var cost: Dictionary = data.get("cost", {})
 	if not economy.can_afford(cost):
@@ -1632,8 +1643,101 @@ func _apply_building(id: StringName, params: Dictionary) -> bool:
 			return _build_new_tent()
 		BUILDING_ARCHER_POST:
 			return _build_archer_post(params)
+		CampBuildings.WALL_GATE:
+			return _build_wall_gate(params)
 	push_error("Camp._apply_building: нет handler для id=%s" % id)
 	return false
+
+
+## Параметрическая валидация (требует params, поэтому не в can_build_reason).
+## Возвращает причину failure или "" если всё OK. Сейчас используется только
+## воротами (проверка наличия стены под gate-zone); расширяется по мере того
+## как появляются другие постройки с param-driven constraints.
+func _pre_apply_validation(id: StringName, params: Dictionary) -> String:
+	match id:
+		CampBuildings.WALL_GATE:
+			var pos: Vector3 = params.get("position", Vector3.INF)
+			var facing: Vector3 = params.get("facing_dir", Vector3.FORWARD)
+			if pos == Vector3.INF:
+				return "ошибка прицеливания"
+			var walls: Array = _find_palisade_walls_under_gate(pos, facing)
+			if walls.size() < 2:
+				return "стена под воротами короче 4м (нужно ≥2 сегмента)"
+	return ""
+
+
+## Ищет сегменты палисада (PalisadeSegment.is_post=false) под зоной ворот:
+## линия от pos+facing*GATE_WIDTH/2 до pos-facing*GATE_WIDTH/2, толщина
+## по перпендикуляру ≤ wall_match_perp. Возвращает массив PalisadeSegment'ов.
+## GATE_WALL_MATCH_HALF_WIDTH должен совпадать с [WallGate.GATE_WIDTH]/2
+## (4.0 / 2 = 2.0) — литерал т.к. constant cross-class не считается
+## constant expression в GDScript.
+const GATE_WALL_MATCH_PERP: float = 1.0
+const GATE_WALL_MATCH_HALF_WIDTH: float = 2.0
+func _find_palisade_walls_under_gate(pos: Vector3, facing: Vector3) -> Array:
+	var facing_h := Vector3(facing.x, 0.0, facing.z)
+	if facing_h.length_squared() < 0.0001:
+		return []
+	facing_h = facing_h.normalized()
+	var perp_h := facing_h.cross(Vector3.UP).normalized()
+	var found: Array = []
+	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_WALL_GROUP):
+		if not is_instance_valid(node):
+			continue
+		var seg: PalisadeSegment = node as PalisadeSegment
+		if seg == null:
+			continue
+		var to_seg: Vector3 = seg.global_position - pos
+		to_seg.y = 0.0
+		var along: float = to_seg.dot(facing_h)
+		var perp: float = to_seg.dot(perp_h)
+		if absf(along) <= GATE_WALL_MATCH_HALF_WIDTH and absf(perp) <= GATE_WALL_MATCH_PERP:
+			found.append(seg)
+	return found
+
+
+## Эффект BUILDING_WALL_GATE: удаляет найденные сегменты палисада, спавнит
+## ворота в найденную ось. Вызывается после успешной [_pre_apply_validation],
+## поэтому валидность стены гарантирована.
+func _build_wall_gate(params: Dictionary) -> bool:
+	if wall_gate_scene == null:
+		push_warning("Camp._build_wall_gate: wall_gate_scene не задан")
+		return false
+	var pos: Vector3 = params.get("position", Vector3.INF)
+	var facing: Vector3 = params.get("facing_dir", Vector3.FORWARD)
+	if pos == Vector3.INF:
+		push_error("Camp._build_wall_gate: position не задан")
+		return false
+	var walls: Array = _find_palisade_walls_under_gate(pos, facing)
+	if walls.size() < 2:
+		# Должно было отвалиться в _pre_apply_validation — но защита от race
+		# (палатка/стена могла рухнуть между валидацией и applу).
+		push_warning("Camp._build_wall_gate: стена пропала между валидацией и apply")
+		return false
+	# Удаляем сегменты под зоной ворот.
+	for seg in walls:
+		if is_instance_valid(seg):
+			seg.queue_free()
+	# Спавним ворота. Якорь в current_scene — ворота переживут queue_free
+	# Camp'а и не двигаются с лагерем (как ArcherPost / PalisadeSegment).
+	var gate := wall_gate_scene.instantiate() as WallGate
+	if gate == null:
+		push_error("Camp._build_wall_gate: scene не инстанцируется как WallGate")
+		return false
+	get_tree().current_scene.add_child(gate)
+	gate.global_position = Vector3(pos.x, _deploy_anchor.y, pos.z)
+	# Ориентация: локальная +X ворот вдоль facing (= оси стены). look_at не
+	# подходит — он крутит -Z; используем atan2 прямо.
+	var facing_h := Vector3(facing.x, 0.0, facing.z).normalized()
+	gate.rotation.y = atan2(-facing_h.z, facing_h.x)
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp:WallGate] построены @ (%.1f, %.1f) face=(%.2f, %.2f), удалено %d сегментов" % [
+			pos.x, pos.z, facing.x, facing.z, walls.size(),
+		])
+	# Re-bake NavMesh — ворота добавили препятствие на слое CAMP_OBSTACLE,
+	# гномам нужен новый путь (через ворота для своих и так свободно).
+	_rebake_navmesh()
+	return true
 
 
 ## Атомарная попытка построить ломаную из сегментов частокола вдоль массива

@@ -19,6 +19,7 @@ extends RefCounted
 const NEW_TENT := &"new_tent"
 const PALISADE := &"palisade"
 const ARCHER_POST := &"archer_post"
+const WALL_GATE := &"wall_gate"
 
 const CATALOG: Dictionary = {
 	NEW_TENT: {
@@ -67,6 +68,22 @@ const CATALOG: Dictionary = {
 		"requires_direction": true,
 		# Preview-кольцо размером с площадку поста, ~1.5м.
 		"aim_radius": 1.5,
+	},
+	WALL_GATE: {
+		"name": "Ворота",
+		"description": "Ворота в частоколе шириной 4м. Своих юнитов пропускают (автоматически открываются), врагов блокируют физически (как обычная стена). Можно строить ТОЛЬКО на готовой стене длиной ≥ 4м. Drag для направления = ось стены. На месте ворот удаляются 2 сегмента частокола.",
+		"cost": {
+			ResourcePile.ResourceType.WOOD: 15,
+			ResourcePile.ResourceType.IRON: 5,
+		},
+		"deployed_only": true,
+		"repeatable": true,
+		"requires_aim": true,
+		# Direction-aim: drag задаёт ось ворот (= ось стены).
+		"requires_direction": true,
+		# Preview-кольцо чуть больше ширины ворот (4м) — игрок видит зону под
+		# которой ворота заменят сегменты частокола.
+		"aim_radius": 2.5,
 	},
 }
 

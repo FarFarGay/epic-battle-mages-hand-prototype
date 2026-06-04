@@ -19,6 +19,10 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 ## стене — игрок может «продолжить» от любого угла. Сегменты-стены в
 ## этой группе НЕ состоят (palisade_post.tscn ставит `is_post=true`).
 const PALISADE_VERTEX_GROUP := &"palisade_vertex"
+## Группа собственно сегментов-стен (не posts). Используется в Camp для
+## валидации постройки Ворот — ищет участок стены ≥ gate-ширины. Posts
+## в эту группу НЕ входят (они маркеры углов, не стена).
+const PALISADE_WALL_GROUP := &"palisade_wall"
 
 @export var hp: float = 30.0
 ## True если этот инстанс — угловой столб (palisade_post.tscn), не stretched
@@ -54,8 +58,11 @@ func _ready() -> void:
 	# навмеша, чтобы гномы и скелеты-обходники её огибали.
 	add_to_group(&"navmesh_source")
 	# Posts (углы / endpoint'ы) — snap-цели для HandBuildAim brush'а.
+	# Walls (сегменты) — кандидаты для замены при постройке Ворот.
 	if is_post:
 		add_to_group(PALISADE_VERTEX_GROUP)
+	else:
+		add_to_group(PALISADE_WALL_GROUP)
 	# Дублируем материал per-instance для hover-эффекта.
 	if _mesh != null and _mesh.material_override is StandardMaterial3D:
 		var src := _mesh.material_override as StandardMaterial3D
