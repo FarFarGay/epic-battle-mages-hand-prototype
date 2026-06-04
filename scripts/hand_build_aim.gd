@@ -68,6 +68,19 @@ var _direction_aim_mode: String = ""
 var _direction_origin: Vector3 = Vector3.INF
 ## Визуал линии направления — стрелка от origin к курсору во время drag'а.
 var _direction_arrow: MeshInstance3D = null
+
+## Wall-snap aim (ворота): курсор магнитится к ближайшей секции палисада,
+## ось ворот = ось стены, превью green/red по валидности (≥2 сегмента под
+## зоной ворот). ЛКМ → строит если valid.
+var _wall_snap_aim: bool = false
+## Превью-mesh ворот (BoxMesh 4×1.5×0.3). Spawn'ится в start_aim'е для
+## wall-snap-постройки, queue_free на finish. Цвет меняем через material.
+var _wall_snap_preview: MeshInstance3D = null
+## Кэшированное состояние snap'а с последнего тика — используется в
+## _commit_aim. INF = нет snap'а, ЛКМ no-op.
+var _wall_snap_pos: Vector3 = Vector3.INF
+var _wall_snap_facing: Vector3 = Vector3.FORWARD
+var _wall_snap_valid: bool = false
 ## Радиус «захвата» от точки курсора для будущих pickup-объектов.
 ## Совпадает с [Hand.PICKUP_HIGHLIGHT_RADIUS] — игрок видит подсветку, видит и точку
 ## действия. 1.5м комфортно — попадать пиксель-в-пиксель не нужно.
@@ -217,12 +230,19 @@ func start_aim(building_id: StringName) -> void:
 		_direction_aim_mode = "_generic"
 	else:
 		_direction_aim_mode = ""
+	# Wall-snap aim для ворот: превью магнитится к стене, без drag.
+	_wall_snap_aim = data.get("requires_wall_snap", false)
+	_wall_snap_pos = Vector3.INF
 	_direction_origin = Vector3.INF
 	_hand.push_category(Hand.Category.BUILD_AIM)
-	_spawn_indicator()
+	if _wall_snap_aim:
+		_spawn_wall_snap_preview()
+		_spawn_build_zone_only_indicator()
+	else:
+		_spawn_indicator()
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:BuildAim] aim старт для %s, radius=%.1f, direction=%s" % [
-			building_id, _aim_radius, str(_direction_aim_mode != ""),
+		print("[Hand:BuildAim] aim старт для %s, radius=%.1f, direction=%s, wall_snap=%s" % [
+			building_id, _aim_radius, str(_direction_aim_mode != ""), str(_wall_snap_aim),
 		])
 
 
@@ -248,6 +268,10 @@ func _process(_delta: float) -> void:
 		return
 	var ground: Vector3 = _hand.cursor_world_position()
 	ground.y -= _hand.hand_height
+	# Wall-snap-aim (ворота): отдельный flow без drag, magnet к стене.
+	if _wall_snap_aim:
+		_process_wall_snap_aim(ground)
+		return
 	# Direction-aim — отдельный flow с ЛКМ-зажимом для origin'а и release'ом
 	# для commit'а. Превью включает стрелку от origin к курсору.
 	if _direction_aim_mode != "":
@@ -388,6 +412,146 @@ func _commit_direction_aim(ground: Vector3) -> void:
 			"success" if result.get("success", false) else "FAIL",
 			str(result.get("reason", "")),
 		])
+	_finish_aim()
+
+
+# --- Wall-snap aim (ворота) ---
+
+## Цвет превью ворот когда позиция валидна (на стене длиной ≥4м).
+const WALL_SNAP_COLOR_VALID := Color(0.3, 0.95, 0.3, 0.55)
+## Цвет превью когда невалидна (нет стены / слишком короткая).
+const WALL_SNAP_COLOR_INVALID := Color(0.95, 0.3, 0.3, 0.6)
+## Радиус поиска ближайшей секции стены (горизонтальный). Курсор внутри
+## — превью магнитится к стене; снаружи — превью у курсора с invalid-цветом.
+const WALL_SNAP_RADIUS: float = 2.0
+## Должно совпадать с [Camp.GATE_WALL_MATCH_HALF_WIDTH] и [WallGate.GATE_WIDTH]/2.
+const WALL_SNAP_GATE_HALF_WIDTH: float = 2.0
+const WALL_SNAP_PREVIEW_SIZE := Vector3(4.0, 1.5, 0.3)
+const WALL_SNAP_PREVIEW_CENTER_Y: float = 0.75
+
+
+## Спавнит превью-меш ворот (зелёный/красный box). Material/visible меняются
+## в _process_wall_snap_aim, тут только создание.
+func _spawn_wall_snap_preview() -> void:
+	if _effects_root == null:
+		_effects_root = get_tree().current_scene
+	if _effects_root == null:
+		return
+	if is_instance_valid(_wall_snap_preview):
+		_wall_snap_preview.queue_free()
+	_wall_snap_preview = MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = WALL_SNAP_PREVIEW_SIZE
+	_wall_snap_preview.mesh = box
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.emission_enabled = true
+	mat.emission_energy_multiplier = 0.5
+	_wall_snap_preview.material_override = mat
+	_wall_snap_preview.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_effects_root.add_child(_wall_snap_preview)
+
+
+## Wall-snap-процесс: ищет ближайшую секцию стены, snap'ит превью на её ось,
+## цвет = green/red по валидности (≥2 сегмента в зоне ворот). ЛКМ → строит
+## если valid. Esc → cancel.
+func _process_wall_snap_aim(cursor: Vector3) -> void:
+	if Input.is_action_just_pressed(ACTION_AIM_CANCEL):
+		cancel_aim()
+		return
+	# Найти ближайший сегмент-стену (PALISADE_WALL_GROUP).
+	var nearest: PalisadeSegment = _find_nearest_wall_segment(cursor)
+	if nearest == null:
+		# Нет стены под курсором — превью у курсора, invalid-цвет.
+		_wall_snap_pos = Vector3.INF
+		_wall_snap_valid = false
+		if is_instance_valid(_wall_snap_preview):
+			_wall_snap_preview.visible = true
+			_wall_snap_preview.global_position = cursor + Vector3.UP * WALL_SNAP_PREVIEW_CENTER_Y
+			_wall_snap_preview.rotation.y = 0.0
+			_set_wall_snap_color(WALL_SNAP_COLOR_INVALID)
+		return
+	# Ось стены = локальная +X сегмента. Snap'аем cursor на линию проходящую
+	# через segment.global_position вдоль axis.
+	var axis: Vector3 = nearest.global_transform.basis.x
+	axis.y = 0.0
+	if axis.length_squared() < 0.0001:
+		axis = Vector3.RIGHT
+	axis = axis.normalized()
+	var to_cursor: Vector3 = cursor - nearest.global_position
+	to_cursor.y = 0.0
+	var along: float = to_cursor.dot(axis)
+	var snapped: Vector3 = nearest.global_position + axis * along
+	snapped.y = cursor.y
+	# Валидация: считаем сегменты под gate-зоной.
+	var walls_count: int = 0
+	if is_instance_valid(_camp):
+		walls_count = _camp.find_palisade_walls_under_gate(snapped, axis).size()
+	_wall_snap_pos = snapped
+	_wall_snap_facing = axis
+	_wall_snap_valid = walls_count >= 2
+	# Превью.
+	if is_instance_valid(_wall_snap_preview):
+		_wall_snap_preview.visible = true
+		_wall_snap_preview.global_position = snapped + Vector3.UP * WALL_SNAP_PREVIEW_CENTER_Y
+		_wall_snap_preview.rotation.y = atan2(-axis.z, axis.x)
+		_set_wall_snap_color(WALL_SNAP_COLOR_VALID if _wall_snap_valid else WALL_SNAP_COLOR_INVALID)
+	if Input.is_action_just_pressed(ACTION_BRUSH_VERTEX) and not _hand.is_pointer_over_ui():
+		_commit_wall_snap()
+
+
+## Линейный скан группы стен — обычно ≤30 сегментов, O(N) дёшево. Возвращает
+## ближайший по XZ-дистанции в радиусе [WALL_SNAP_RADIUS], иначе null.
+func _find_nearest_wall_segment(cursor: Vector3) -> PalisadeSegment:
+	var best: PalisadeSegment = null
+	var best_d_sq: float = WALL_SNAP_RADIUS * WALL_SNAP_RADIUS
+	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_WALL_GROUP):
+		if not is_instance_valid(node):
+			continue
+		var seg: PalisadeSegment = node as PalisadeSegment
+		if seg == null:
+			continue
+		var dx: float = seg.global_position.x - cursor.x
+		var dz: float = seg.global_position.z - cursor.z
+		var d_sq: float = dx * dx + dz * dz
+		if d_sq < best_d_sq:
+			best_d_sq = d_sq
+			best = seg
+	return best
+
+
+func _set_wall_snap_color(color: Color) -> void:
+	if not is_instance_valid(_wall_snap_preview):
+		return
+	var mat: StandardMaterial3D = _wall_snap_preview.material_override as StandardMaterial3D
+	if mat == null:
+		return
+	mat.albedo_color = color
+	mat.emission = Color(color.r, color.g, color.b, 1.0)
+
+
+## ЛКМ-commit для wall-snap aim'а: строит ворота если _wall_snap_valid.
+## Если invalid — silent no-op (игрок не теряет ресурсы / контекст).
+func _commit_wall_snap() -> void:
+	if not _wall_snap_valid or _wall_snap_pos == Vector3.INF:
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:BuildAim:WallSnap] ЛКМ invalid — no-op")
+		return
+	if not is_instance_valid(_camp):
+		return
+	var result: Dictionary = _camp.try_build(_active_building, {
+		"position": _wall_snap_pos,
+		"facing_dir": _wall_snap_facing,
+	})
+	if debug_log and LogConfig.master_enabled:
+		print("[Hand:BuildAim:WallSnap] commit %s @ (%.1f, %.1f) → %s/%s" % [
+			_active_building, _wall_snap_pos.x, _wall_snap_pos.z,
+			"success" if result.get("success", false) else "fail",
+			str(result.get("reason", "")),
+		])
+	# После успеха не остаёмся в aim'е — постройка одноразовая (в отличие от
+	# brush'а). Выходим в normal режим.
 	_finish_aim()
 
 
@@ -834,6 +998,13 @@ func _finish_aim() -> void:
 	_direction_arrow = null
 	_direction_origin = Vector3.INF
 	_direction_aim_mode = ""
+	# Wall-snap state cleanup.
+	if is_instance_valid(_wall_snap_preview):
+		_wall_snap_preview.queue_free()
+	_wall_snap_preview = null
+	_wall_snap_aim = false
+	_wall_snap_pos = Vector3.INF
+	_wall_snap_valid = false
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
 		_hand.pop_category()
 	_active_building = &""

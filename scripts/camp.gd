@@ -1660,7 +1660,7 @@ func _pre_apply_validation(id: StringName, params: Dictionary) -> String:
 			var facing: Vector3 = params.get("facing_dir", Vector3.FORWARD)
 			if pos == Vector3.INF:
 				return "ошибка прицеливания"
-			var walls: Array = _find_palisade_walls_under_gate(pos, facing)
+			var walls: Array = find_palisade_walls_under_gate(pos, facing)
 			if walls.size() < 2:
 				return "стена под воротами короче 4м (нужно ≥2 сегмента)"
 	return ""
@@ -1671,10 +1671,11 @@ func _pre_apply_validation(id: StringName, params: Dictionary) -> String:
 ## по перпендикуляру ≤ wall_match_perp. Возвращает массив PalisadeSegment'ов.
 ## GATE_WALL_MATCH_HALF_WIDTH должен совпадать с [WallGate.GATE_WIDTH]/2
 ## (4.0 / 2 = 2.0) — литерал т.к. constant cross-class не считается
-## constant expression в GDScript.
+## constant expression в GDScript. Публичный — HandBuildAim вызывает для
+## превью валидности перед самой постройкой.
 const GATE_WALL_MATCH_PERP: float = 1.0
 const GATE_WALL_MATCH_HALF_WIDTH: float = 2.0
-func _find_palisade_walls_under_gate(pos: Vector3, facing: Vector3) -> Array:
+func find_palisade_walls_under_gate(pos: Vector3, facing: Vector3) -> Array:
 	var facing_h := Vector3(facing.x, 0.0, facing.z)
 	if facing_h.length_squared() < 0.0001:
 		return []
@@ -1708,7 +1709,7 @@ func _build_wall_gate(params: Dictionary) -> bool:
 	if pos == Vector3.INF:
 		push_error("Camp._build_wall_gate: position не задан")
 		return false
-	var walls: Array = _find_palisade_walls_under_gate(pos, facing)
+	var walls: Array = find_palisade_walls_under_gate(pos, facing)
 	if walls.size() < 2:
 		# Должно было отвалиться в _pre_apply_validation — но защита от race
 		# (палатка/стена могла рухнуть между валидацией и applу).
