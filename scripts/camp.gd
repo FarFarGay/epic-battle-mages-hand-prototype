@@ -1897,19 +1897,15 @@ const PALISADE_REBAKE_DEBOUNCE: float = 0.3
 
 
 func _on_palisade_segment_destroyed(dying: Node) -> void:
-	# (1) Ставим post на каждом «обнажённом» конце уцелевших соседей.
-	#     Обнажённый конец = endpoint умирающего сегмента, который теперь
-	#     стал концом обрубка стены. Post должен быть на каждом конце
-	#     каждого обрубка — игрок видит границы и может snap'нуть ремонт.
-	# (2) Глобальный orphan-check: post без живой wall-соседки в 1.5м →
-	#     queue_free. Это убирает post'ы которые «отвалились» от своих
-	#     стен (chain-разрушения).
+	# Полный re-sync posts'ов: после смерти сегмента пересчитываем все
+	# endpoint'ы всех уцелевших стен и ставим post РОВНО на каждом
+	# «обнажённом» (= не разделённом с другой стеной на той же оси). Это
+	# идемпотентно и устраняет «миграции» постов между дырами — каждый раз
+	# результат тот же, что и при первой постройке + всех текущих сломов.
 	if is_instance_valid(dying):
 		var seg := dying as PalisadeSegment
 		if seg != null and not seg.is_post:
-			if palisade_post_scene != null:
-				_place_posts_at_exposed_endpoints(seg)
-			_cleanup_orphan_posts_near(seg)
+			_sync_palisade_posts(seg)
 	# Debounced re-bake navmesh'а (как раньше — несколько разрушений в
 	# одном кадре дают один bake).
 	if _palisade_rebake_pending:
@@ -1918,52 +1914,106 @@ func _on_palisade_segment_destroyed(dying: Node) -> void:
 	get_tree().create_timer(PALISADE_REBAKE_DEBOUNCE).timeout.connect(_do_palisade_rebake)
 
 
-## Радиус «уже есть post здесь» — если столбик в этом радиусе от endpoint'а,
-## пропускаем (не дублируем).
-const PALISADE_POST_DUP_RADIUS: float = 0.5
+## Tolerance совпадения позиций endpoint'ов / постов. 0.25м — segment'ы
+## позиционируются с float-precision, в разрывах вдоль одной оси они должны
+## точно совпадать. Если 2 endpoint'а в этом радиусе → считаем «общая
+## точка» (потенциальный stitch или corner).
+const PALISADE_POST_MATCH_EPS_SQ: float = 0.25 * 0.25
 
 
-## Спавнит post на каждом endpoint'е умирающего сегмента ЕСЛИ:
-##   (а) на endpoint'е ещё нет post'а (дубликата), И
-##   (б) в [PALISADE_POST_NEIGHBOR_RADIUS] есть живая wall-секция кроме
-##       умирающего — это endpoint обрубка-соседа, не пустота.
-## Endpoint = центр умирающего сегмента ± axis × 1м (длина сегмента 2м).
-func _place_posts_at_exposed_endpoints(dying: PalisadeSegment) -> void:
-	var axis: Vector3 = dying.global_transform.basis.x
-	axis.y = 0.0
-	if axis.length_squared() < 0.0001:
-		return
-	axis = axis.normalized()
-	var endpoints: Array[Vector3] = [
-		dying.global_position + axis,
-		dying.global_position - axis,
-	]
-	for ep in endpoints:
-		if _has_palisade_vertex_near(ep, PALISADE_POST_DUP_RADIUS):
+## Пересоздаёт набор posts'ов исходя из текущего положения wall-сегментов:
+##   1. Собираем endpoint'ы всех живых стен (кроме [exclude] — он умирает).
+##   2. Группируем endpoint'ы по позиции (± EPS).
+##   3. Группа размером 1 → endpoint обнажён → нужен post.
+##      Группа ≥2 со СХОДНЫМИ осями (dot > 0.97) → прямой стык, post не нужен.
+##      Группа ≥2 с РАЗНЫМИ осями → угол, нужен post (закрывает щель).
+##   4. Удаляем posts не совпадающие ни с одной target-позицией.
+##   5. Добавляем posts на target-позициях где их ещё нет.
+##
+## Идемпотентность: повторный вызов с тем же состоянием даёт тот же набор
+## posts'ов. Устраняет «миграции» — каждое разрушение пересчитывает с нуля.
+func _sync_palisade_posts(exclude: PalisadeSegment) -> void:
+	# Шаг 1+2: endpoint_info → группы по позиции.
+	var groups: Array = []  # [{pos: Vector3, axes: Array[Vector3]}]
+	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_WALL_GROUP):
+		if not is_instance_valid(node) or node == exclude:
 			continue
-		if not _has_other_wall_near(ep, PALISADE_POST_NEIGHBOR_RADIUS, dying):
+		var seg: PalisadeSegment = node as PalisadeSegment
+		if seg == null:
 			continue
-		var post: Node3D = palisade_post_scene.instantiate() as Node3D
-		if post == null:
+		var axis: Vector3 = seg.global_transform.basis.x
+		axis.y = 0.0
+		if axis.length_squared() < 0.0001:
 			continue
-		get_tree().current_scene.add_child(post)
-		post.global_position = Vector3(ep.x, _deploy_anchor.y, ep.z)
-
-
-## True если в радиусе [radius] есть нода из [PALISADE_VERTEX_GROUP].
-func _has_palisade_vertex_near(pos: Vector3, radius: float) -> bool:
-	var rsq: float = radius * radius
+		axis = axis.normalized()
+		var endpoints: Array[Vector3] = [
+			seg.global_position + axis,
+			seg.global_position - axis,
+		]
+		for ep in endpoints:
+			var found: bool = false
+			for g in groups:
+				var dx: float = g["pos"].x - ep.x
+				var dz: float = g["pos"].z - ep.z
+				if dx * dx + dz * dz < PALISADE_POST_MATCH_EPS_SQ:
+					g["axes"].append(axis)
+					found = true
+					break
+			if not found:
+				groups.append({"pos": ep, "axes": [axis]})
+	# Шаг 3: вычисляем target-позиции для posts'ов.
+	var targets: Array[Vector3] = []
+	for g in groups:
+		var axes: Array = g["axes"]
+		if axes.size() == 1:
+			targets.append(g["pos"])
+			continue
+		# Несколько axes — corner если хоть одна пара не-collinear.
+		var first: Vector3 = axes[0]
+		var is_corner: bool = false
+		for i in range(1, axes.size()):
+			if absf(first.dot(axes[i])) < 0.97:
+				is_corner = true
+				break
+		if is_corner:
+			targets.append(g["pos"])
+	# Шаг 4: удаляем posts не на target'ах.
+	var existing: Array = []
 	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_VERTEX_GROUP):
 		if not is_instance_valid(node):
 			continue
-		var n: Node3D = node as Node3D
-		if n == null:
+		existing.append(node)
+	for post in existing:
+		var keep: bool = false
+		for t in targets:
+			var dx: float = (post as Node3D).global_position.x - t.x
+			var dz: float = (post as Node3D).global_position.z - t.z
+			if dx * dx + dz * dz < PALISADE_POST_MATCH_EPS_SQ:
+				keep = true
+				break
+		if not keep:
+			(post as Node3D).queue_free()
+	# Шаг 5: добавляем posts на target'ах где их нет.
+	if palisade_post_scene == null:
+		return
+	for t in targets:
+		var has_post: bool = false
+		for post in existing:
+			if not is_instance_valid(post):
+				continue
+			var n: Node3D = post as Node3D
+			var dx: float = n.global_position.x - t.x
+			var dz: float = n.global_position.z - t.z
+			if dx * dx + dz * dz < PALISADE_POST_MATCH_EPS_SQ:
+				has_post = true
+				break
+		if has_post:
 			continue
-		var dx: float = n.global_position.x - pos.x
-		var dz: float = n.global_position.z - pos.z
-		if dx * dx + dz * dz < rsq:
-			return true
-	return false
+		var new_post: Node3D = palisade_post_scene.instantiate() as Node3D
+		if new_post == null:
+			continue
+		get_tree().current_scene.add_child(new_post)
+		new_post.global_position = Vector3(t.x, _deploy_anchor.y, t.z)
 
 
 ## Порог «прямой» vertex для skip'а post'а: dot(prev_dir, next_dir) > этого
@@ -1991,44 +2041,6 @@ func _is_corner_vertex(vertices: Array, i: int) -> bool:
 	d1 = d1.normalized()
 	d2 = d2.normalized()
 	return d1.dot(d2) < PALISADE_VERTEX_COLLINEAR_DOT
-
-
-## Удаляет ВСЕ post'ы у которых не осталось ни одной соседней wall-секции
-## (кроме самого dying). Глобальный скан вместо локального — раньше chain
-## разрушений мог оставлять «потерянный» post если он был дальше 3м от
-## конкретного умирающего сегмента, а его сосед-стена умерла раньше.
-## O(P × W) где P=posts, W=walls — на типичной стене ≤30 элементов суммарно,
-## дешёво.
-func _cleanup_orphan_posts_near(dying: PalisadeSegment) -> void:
-	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_VERTEX_GROUP):
-		if not is_instance_valid(node):
-			continue
-		var post: Node3D = node as Node3D
-		if post == null:
-			continue
-		if not _has_other_wall_near(post.global_position, PALISADE_POST_NEIGHBOR_RADIUS, dying):
-			post.queue_free()
-
-
-## Радиус соседства wall-секции для решения «post всё ещё нужен».
-const PALISADE_POST_NEIGHBOR_RADIUS: float = 1.5
-
-
-## True если в радиусе [radius] есть wall-сегмент кроме [exclude]. Используется
-## чтобы понять «стоял ли умирающий сегмент в середине цепочки».
-func _has_other_wall_near(pos: Vector3, radius: float, exclude: PalisadeSegment) -> bool:
-	var rsq: float = radius * radius
-	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_WALL_GROUP):
-		if not is_instance_valid(node) or node == exclude:
-			continue
-		var n: Node3D = node as Node3D
-		if n == null:
-			continue
-		var dx: float = n.global_position.x - pos.x
-		var dz: float = n.global_position.z - pos.z
-		if dx * dx + dz * dz < rsq:
-			return true
-	return false
 
 
 func _do_palisade_rebake() -> void:
