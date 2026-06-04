@@ -19,7 +19,7 @@ emission_energy_multiplier = 0.35
 
 [node name="SkeletonArcher" type="CharacterBody3D"]
 collision_layer = 16
-collision_mask = 39
+collision_mask = 2087
 script = ExtResource("1")
 hp = 20.0
 move_speed = 1.8

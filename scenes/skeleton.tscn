@@ -12,7 +12,7 @@ height = 2.0
 
 [node name="Skeleton" type="CharacterBody3D"]
 collision_layer = 16
-collision_mask = 39
+collision_mask = 2087
 script = ExtResource("1")
 move_speed = 2.0
 

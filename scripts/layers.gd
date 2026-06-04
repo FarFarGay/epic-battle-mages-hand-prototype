@@ -66,6 +66,13 @@ const PALISADE_OBSTACLE := 1 << 9   # 512 — bit 9 = layer 10
 ## но Tower/Skeleton проходят сквозь.
 const MINE_HAZARD := 1 << 10        # 1024 — bit 10 = layer 11
 
+## Слой ворот (WallGate). Отдельный от [CAMP_OBSTACLE] / [PALISADE_OBSTACLE]
+## специально чтобы Tower проходила сквозь, а скелеты — нет. Tower маска
+## (575) НЕ включает этот слой → ворота для неё прозрачные. MASK_SKELETON
+## его ВКЛЮЧАЕТ → enemies заблокированы как стеной. Открытие/закрытие
+## анимации дверей — чисто визуальное, физика не переключается.
+const WALL_GATE_BLOCK := 1 << 11    # 2048 — bit 11 = layer 12
+
 # Композитные маски — собирай через OR из именованных битов.
 
 ## Hand cursor raycast: пол + предметы + смонтированные модули. Под цели
@@ -116,7 +123,7 @@ const MASK_ALL_GAMEPLAY := TERRAIN | ITEMS | ACTORS | PROJECTILES | ENEMIES   # 
 ## физически отбрасывает соседа через get_slide_collision) не работает,
 ## так как slide-collision между скелетами не регистрируется. Если
 ## понадобится восстановить — paттерн group+dist push, как Slam-fallback.
-const MASK_SKELETON := TERRAIN | ITEMS | ACTORS | CAMP_OBSTACLE     # 39
+const MASK_SKELETON := TERRAIN | ITEMS | ACTORS | CAMP_OBSTACLE | WALL_GATE_BLOCK     # 2087
 
 ## Shatter-фрагменты: видят только пол.
 const MASK_TERRAIN_ONLY := TERRAIN                              # 1

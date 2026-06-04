@@ -143,3 +143,4 @@ gnome_alarm={
 3d_physics/layer_9="FriendlyUnit"
 3d_physics/layer_10="PalisadeObstacle"
 3d_physics/layer_11="MineHazard"
+3d_physics/layer_12="WallGateBlock"

@@ -5,14 +5,17 @@ extends StaticBody3D
 ## дружественные юниты (гномы, солдаты) на `FRIENDLY_UNIT` слое имеют
 ## маску `TERRAIN`-only и физически проходят сквозь стены/ворота всегда.
 ##
-## **Open/close** — двойной эффект:
-## 1. Анимация дверей (визуал) на любого друга в trigger-зоне.
-## 2. **Body-collider отключается** пока в зоне есть друзья. Это нужно для
-##    Tower: её маска включает CAMP_OBSTACLE → без disable'а она физически
-##    упиралась бы в ворота как в стену, несмотря на анимацию. Гномы и так
-##    проходят (mask=TERRAIN-only). Скелетов триггер не ловит (mask их слой
-##    не включает), но **они могут проскочить пока другой свой в зоне** —
-##    дизайнерски acceptable edge case: «ворота не закрылись вовремя».
+## **Open/close — чисто визуальный**. Физика не меняется:
+##   - Tower: маска (575) НЕ включает [Layers.WALL_GATE_BLOCK] (2048) → ворота
+##     для неё прозрачны, проезжает всегда. Других стен (CAMP_OBSTACLE/
+##     PALISADE_OBSTACLE) Tower по-прежнему упирается.
+##   - Гномы / SoldierGnome: mask=TERRAIN-only → проходят всегда (как через
+##     любую стену).
+##   - Скелеты: mask=2087 (MASK_SKELETON | WALL_GATE_BLOCK) → ворота для них
+##     стена. Никогда не пройдут.
+## Анимация дверей — feedback для игрока («ворота меня узнали»), не реальный
+## gating. Это упрощает state-machine: не надо переключать collision-shape'ы
+## и синхронизировать с навмешем.
 ##
 ## Архитектура:
 ## - Триггер-Area3D детектит дружественных юнитов в радиусе [trigger_radius].
@@ -49,7 +52,6 @@ signal destroyed
 @onready var _door_left_pivot: Node3D = $DoorLeftPivot
 @onready var _door_right_pivot: Node3D = $DoorRightPivot
 @onready var _trigger: Area3D = $Trigger
-@onready var _body_collider: CollisionShape3D = $BodyCollider
 
 var _friendlies_inside: int = 0
 var _is_open: bool = false
@@ -77,22 +79,14 @@ func _ready() -> void:
 
 # --- Open/close (визуал) ---
 
-func _on_friendly_entered(body: Node3D) -> void:
+func _on_friendly_entered(_body: Node3D) -> void:
 	_friendlies_inside += 1
-	if LogConfig.master_enabled:
-		print("[WallGate:%s] friendly ENTERED: %s (layer=%d), count=%d" % [
-			name, body.name, body.collision_layer, _friendlies_inside,
-		])
 	if _friendlies_inside == 1:
 		_open()
 
 
-func _on_friendly_exited(body: Node3D) -> void:
+func _on_friendly_exited(_body: Node3D) -> void:
 	_friendlies_inside = maxi(_friendlies_inside - 1, 0)
-	if LogConfig.master_enabled:
-		print("[WallGate:%s] friendly EXITED: %s, count=%d" % [
-			name, body.name, _friendlies_inside,
-		])
 	if _friendlies_inside == 0:
 		_close()
 
@@ -101,12 +95,6 @@ func _open() -> void:
 	if _is_open or _destroyed:
 		return
 	_is_open = true
-	if LogConfig.master_enabled:
-		print("[WallGate:%s] OPEN — body-collider disabled, doors swing out" % name)
-	# Отключаем body-collider — Tower (collision_mask включает CAMP_OBSTACLE)
-	# сможет проехать. Гномам не нужно (их mask=TERRAIN-only).
-	if _body_collider != null:
-		_body_collider.disabled = true
 	_play_door_tween(_door_left_pivot, -OPEN_ANGLE, _tween_left)
 	_play_door_tween(_door_right_pivot, OPEN_ANGLE, _tween_right)
 
@@ -115,11 +103,6 @@ func _close() -> void:
 	if not _is_open or _destroyed:
 		return
 	_is_open = false
-	if LogConfig.master_enabled:
-		print("[WallGate:%s] CLOSE — body-collider enabled, doors swing back" % name)
-	# Возвращаем стену — Tower и скелеты снова блокируются.
-	if _body_collider != null:
-		_body_collider.disabled = false
 	_play_door_tween(_door_left_pivot, 0.0, _tween_left)
 	_play_door_tween(_door_right_pivot, 0.0, _tween_right)
 
