@@ -935,31 +935,15 @@ func _commit_brush() -> void:
 	if not is_instance_valid(_hand) or not is_instance_valid(_camp):
 		_finish_brush()
 		return
-	# Добавляем cursor как последний vertex (если он валиден и достаточно
-	# далеко от last). Это даёт игроку «закрытие» ломаной одним ПКМ'ом без
-	# лишнего ЛКМ-клика. Snap применяется и здесь — ПКМ возле существующего
-	# угла / первой вершины своей цепочки замкнёт «ровно» на vertex.
-	var cursor: Vector3 = _hand.cursor_world_position()
-	cursor.y -= _hand.hand_height
-	var anchor: Vector3 = _camp.build_zone_center()
-	if anchor == Vector3.INF:
-		anchor = Vector3.ZERO
-	cursor.y = anchor.y
-	var snap_final: Vector3 = _find_snap_vertex(cursor, true)
-	if snap_final != Vector3.INF:
-		cursor = Vector3(snap_final.x, anchor.y, snap_final.z)
-	var final_vertices: Array[Vector3] = _brush_vertices.duplicate()
-	if not final_vertices.is_empty():
-		var last: Vector3 = final_vertices[-1]
-		if (last - cursor).length() >= BRUSH_MIN_SEGMENT_LENGTH:
-			final_vertices.append(cursor)
-	if final_vertices.size() < 2:
-		# ПКМ без достаточного количества vertex'ов — silent (НЕ выходим из
-		# режима). Игрок мог случайно ткнуть ПКМ; режим должен пережить это.
+	# Строим РОВНО по vertex'ам, поставленным ЛКМ. Раньше ПКМ авто-добавлял
+	# текущую позицию курсора как финальную точку — это давало «отросток»
+	# от последнего vertex'а до курсора, если игрок жал ПКМ до завершения
+	# отрезка. Игроку запутывало. Теперь: одна стена = строго пара ЛКМ.
+	if _brush_vertices.size() < 2:
 		if debug_log and LogConfig.master_enabled:
-			print("[Hand:BuildAim:Brush] ПКМ no-op — нужно ≥2 vertex'а")
+			print("[Hand:BuildAim:Brush] ПКМ no-op — нужно ≥2 vertex'а ЛКМ'ом")
 		return
-	var result: Dictionary = _camp.try_build_palisade_line(final_vertices)
+	var result: Dictionary = _camp.try_build_palisade_line(_brush_vertices)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:BuildAim:Brush] commit → %s/%s/segments=%d" % [
 			"success" if result.get("success", false) else "fail",
