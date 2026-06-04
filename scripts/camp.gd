@@ -1667,8 +1667,14 @@ func _pre_apply_validation(id: StringName, params: Dictionary) -> String:
 
 
 ## Ищет сегменты палисада (PalisadeSegment.is_post=false) под зоной ворот:
-## линия от pos+facing*GATE_WIDTH/2 до pos-facing*GATE_WIDTH/2, толщина
-## по перпендикуляру ≤ wall_match_perp. Возвращает массив PalisadeSegment'ов.
+## зона = pos ± facing × GATE_WALL_MATCH_HALF_WIDTH (вдоль оси ворот) ×
+## ± perp_h × GATE_WALL_MATCH_PERP (поперёк). Возвращает **до 2 ближайших
+## по abs(along) сегментов** — те, которые ворота физически перекрывают.
+## Если в зоне больше 2 (например ворота посажены ровно на центр сегмента
+## и захватывают и левого, и правого соседа), берём 2 ближайших, остальные
+## оставляем — иначе получалась бы дыра шире ворот. HandBuildAim снапит
+## позицию в середину между двумя соседями, чтобы always-2.
+##
 ## GATE_WALL_MATCH_HALF_WIDTH должен совпадать с [WallGate.GATE_WIDTH]/2
 ## (4.0 / 2 = 2.0) — литерал т.к. constant cross-class не считается
 ## constant expression в GDScript. Публичный — HandBuildAim вызывает для
@@ -1681,7 +1687,8 @@ func find_palisade_walls_under_gate(pos: Vector3, facing: Vector3) -> Array:
 		return []
 	facing_h = facing_h.normalized()
 	var perp_h := facing_h.cross(Vector3.UP).normalized()
-	var found: Array = []
+	# Собираем кандидатов с along-distance, потом сортируем и берём 2 ближайших.
+	var candidates: Array = []
 	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_WALL_GROUP):
 		if not is_instance_valid(node):
 			continue
@@ -1693,8 +1700,12 @@ func find_palisade_walls_under_gate(pos: Vector3, facing: Vector3) -> Array:
 		var along: float = to_seg.dot(facing_h)
 		var perp: float = to_seg.dot(perp_h)
 		if absf(along) <= GATE_WALL_MATCH_HALF_WIDTH and absf(perp) <= GATE_WALL_MATCH_PERP:
-			found.append(seg)
-	return found
+			candidates.append({"seg": seg, "abs_along": absf(along)})
+	candidates.sort_custom(func(a, b): return a["abs_along"] < b["abs_along"])
+	var out: Array = []
+	for i in range(mini(2, candidates.size())):
+		out.append(candidates[i]["seg"])
+	return out
 
 
 ## Эффект BUILDING_WALL_GATE: удаляет найденные сегменты палисада, спавнит

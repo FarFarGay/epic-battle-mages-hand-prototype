@@ -453,9 +453,16 @@ func _spawn_wall_snap_preview() -> void:
 	_effects_root.add_child(_wall_snap_preview)
 
 
-## Wall-snap-процесс: ищет ближайшую секцию стены, snap'ит превью на её ось,
-## цвет = green/red по валидности (≥2 сегмента в зоне ворот). ЛКМ → строит
-## если valid. Esc → cancel.
+## Допуск по перпендикуляру при поиске соседнего сегмента — ось стены.
+const WALL_SNAP_ADJACENT_PERP: float = 0.6
+## Макс. дистанция вдоль оси до соседа. Сегменты стены обычно 2-2.5м, 3.5м
+## с запасом покрывает кейс «между двумя есть post-столбик».
+const WALL_SNAP_ADJACENT_MAX_ALONG: float = 3.5
+
+
+## Wall-snap-процесс: ищет два соседних сегмента стены, snap'ит ворота в
+## середину между ними, цвет = green/red по валидности. ЛКМ → строит если
+## valid. Esc → cancel.
 func _process_wall_snap_aim(cursor: Vector3) -> void:
 	if Input.is_action_just_pressed(ACTION_AIM_CANCEL):
 		cancel_aim()
@@ -472,19 +479,35 @@ func _process_wall_snap_aim(cursor: Vector3) -> void:
 			_wall_snap_preview.rotation.y = 0.0
 			_set_wall_snap_color(WALL_SNAP_COLOR_INVALID)
 		return
-	# Ось стены = локальная +X сегмента. Snap'аем cursor на линию проходящую
-	# через segment.global_position вдоль axis.
+	# Ось стены = локальная +X сегмента.
 	var axis: Vector3 = nearest.global_transform.basis.x
 	axis.y = 0.0
 	if axis.length_squared() < 0.0001:
 		axis = Vector3.RIGHT
 	axis = axis.normalized()
+	# Найти соседний сегмент по той же оси (в направлении курсора если есть).
 	var to_cursor: Vector3 = cursor - nearest.global_position
 	to_cursor.y = 0.0
-	var along: float = to_cursor.dot(axis)
-	var snapped: Vector3 = nearest.global_position + axis * along
+	var prefer_dir: float = signf(to_cursor.dot(axis))
+	if prefer_dir == 0.0:
+		prefer_dir = 1.0
+	var adjacent: PalisadeSegment = _find_adjacent_wall_segment(nearest, axis, prefer_dir)
+	if adjacent == null:
+		# Только 1 сегмент рядом — стена слишком короткая для ворот. Показываем
+		# красное превью на этом сегменте.
+		_wall_snap_pos = nearest.global_position
+		_wall_snap_facing = axis
+		_wall_snap_valid = false
+		if is_instance_valid(_wall_snap_preview):
+			_wall_snap_preview.visible = true
+			_wall_snap_preview.global_position = nearest.global_position + Vector3.UP * WALL_SNAP_PREVIEW_CENTER_Y
+			_wall_snap_preview.rotation.y = atan2(-axis.z, axis.x)
+			_set_wall_snap_color(WALL_SNAP_COLOR_INVALID)
+		return
+	# Середина между двумя соседями = центр ворот.
+	var snapped: Vector3 = (nearest.global_position + adjacent.global_position) * 0.5
 	snapped.y = cursor.y
-	# Валидация: считаем сегменты под gate-зоной.
+	# Финальная валидация Camp'ом (захватывает ровно 2 сегмента после snap'а).
 	var walls_count: int = 0
 	if is_instance_valid(_camp):
 		walls_count = _camp.find_palisade_walls_under_gate(snapped, axis).size()
@@ -499,6 +522,42 @@ func _process_wall_snap_aim(cursor: Vector3) -> void:
 		_set_wall_snap_color(WALL_SNAP_COLOR_VALID if _wall_snap_valid else WALL_SNAP_COLOR_INVALID)
 	if Input.is_action_just_pressed(ACTION_BRUSH_VERTEX) and not _hand.is_pointer_over_ui():
 		_commit_wall_snap()
+
+
+## Ищет сегмент-сосед на той же оси что nearest, в направлении prefer_dir
+## (=±1). Если в prefer_dir не нашёлся — пробует противоположное. Возвращает
+## ближайший по abs(along) в радиусе WALL_SNAP_ADJACENT_MAX_ALONG с
+## perp-tolerance WALL_SNAP_ADJACENT_PERP. null если стена изолированная.
+func _find_adjacent_wall_segment(nearest: PalisadeSegment, axis: Vector3, prefer_dir: float) -> PalisadeSegment:
+	var perp: Vector3 = axis.cross(Vector3.UP).normalized()
+	var best_pref: PalisadeSegment = null
+	var best_pref_along: float = INF
+	var best_other: PalisadeSegment = null
+	var best_other_along: float = INF
+	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_WALL_GROUP):
+		if not is_instance_valid(node) or node == nearest:
+			continue
+		var seg: PalisadeSegment = node as PalisadeSegment
+		if seg == null:
+			continue
+		var to_seg: Vector3 = seg.global_position - nearest.global_position
+		to_seg.y = 0.0
+		var along: float = to_seg.dot(axis)
+		var perp_dist: float = absf(to_seg.dot(perp))
+		if perp_dist > WALL_SNAP_ADJACENT_PERP:
+			continue
+		var abs_along: float = absf(along)
+		if abs_along > WALL_SNAP_ADJACENT_MAX_ALONG or abs_along < 0.1:
+			continue
+		if signf(along) == prefer_dir:
+			if abs_along < best_pref_along:
+				best_pref_along = abs_along
+				best_pref = seg
+		else:
+			if abs_along < best_other_along:
+				best_other_along = abs_along
+				best_other = seg
+	return best_pref if best_pref != null else best_other
 
 
 ## Линейный скан группы стен — обычно ≤30 сегментов, O(N) дёшево. Возвращает

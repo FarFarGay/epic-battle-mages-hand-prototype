@@ -77,14 +77,22 @@ func _ready() -> void:
 
 # --- Open/close (визуал) ---
 
-func _on_friendly_entered(_body: Node3D) -> void:
+func _on_friendly_entered(body: Node3D) -> void:
 	_friendlies_inside += 1
+	if LogConfig.master_enabled:
+		print("[WallGate:%s] friendly ENTERED: %s (layer=%d), count=%d" % [
+			name, body.name, body.collision_layer, _friendlies_inside,
+		])
 	if _friendlies_inside == 1:
 		_open()
 
 
-func _on_friendly_exited(_body: Node3D) -> void:
+func _on_friendly_exited(body: Node3D) -> void:
 	_friendlies_inside = maxi(_friendlies_inside - 1, 0)
+	if LogConfig.master_enabled:
+		print("[WallGate:%s] friendly EXITED: %s, count=%d" % [
+			name, body.name, _friendlies_inside,
+		])
 	if _friendlies_inside == 0:
 		_close()
 
@@ -93,6 +101,8 @@ func _open() -> void:
 	if _is_open or _destroyed:
 		return
 	_is_open = true
+	if LogConfig.master_enabled:
+		print("[WallGate:%s] OPEN — body-collider disabled, doors swing out" % name)
 	# Отключаем body-collider — Tower (collision_mask включает CAMP_OBSTACLE)
 	# сможет проехать. Гномам не нужно (их mask=TERRAIN-only).
 	if _body_collider != null:
@@ -105,6 +115,8 @@ func _close() -> void:
 	if not _is_open or _destroyed:
 		return
 	_is_open = false
+	if LogConfig.master_enabled:
+		print("[WallGate:%s] CLOSE — body-collider enabled, doors swing back" % name)
 	# Возвращаем стену — Tower и скелеты снова блокируются.
 	if _body_collider != null:
 		_body_collider.disabled = false
