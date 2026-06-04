@@ -105,6 +105,14 @@ func _die() -> void:
 		return
 	_destroyed = true
 	remove_from_group(SKELETON_TARGET_GROUP)
+	# Удаляем СРАЗУ из wall/vertex групп — queue_free отложен на конец
+	# кадра, в это время Camp._sync_palisade_posts ещё может бегать (если
+	# slam задел несколько сегментов в одном кадре). Без этого remove sync
+	# считал бы мёртвые-но-не-удалённые сегменты живыми и видел бы fake
+	# straight-stitch'и с соседями → удалял ПРАВИЛЬНЫЕ посты соседних
+	# обрубков.
+	remove_from_group(PALISADE_WALL_GROUP)
+	remove_from_group(PALISADE_VERTEX_GROUP)
 	destroyed.emit()
 	# call_deferred — Camp подписан на сигнал и может ещё реагировать
 	# (например, для счётчика).
