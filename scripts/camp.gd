@@ -1852,19 +1852,22 @@ func try_build_palisade_line(vertices: Array) -> Dictionary:
 		# (волна ломает 5 сегментов в одном кадре → 1 bake, не 5).
 		inst.destroyed.connect(_on_palisade_segment_destroyed.bind(inst))
 		built += 1
-	# Corner-posts: на каждом vertex'е спавним короткий столбик. Закрывает
-	# треугольную щель на внешней стороне углов (соседние сегменты под разным
-	# углом не стыкуются плотно) и дробные хвосты (последний сегмент линии
-	# может кончаться раньше vertex'а на ≤ segment_length метров — пустота
-	# заглушается постом). Бесплатные — игрок уже платит per-segment.
+	# Corner-posts: спавним столбик ТОЛЬКО на (а) концах ломаной (start/end)
+	# и (б) промежуточных vertex'ах с реальным углом — чтобы закрыть
+	# треугольную щель между сегментами разного направления. На «прямых»
+	# vertex'ах (segment до = направлению segment'а после) post бесполезен:
+	# он висит посреди ровной стены как мусор (явно видно после смерти
+	# одного сегмента — 2 столба в середине дыры на ровной линии).
 	var posts: int = 0
 	if palisade_post_scene != null:
-		for v in vertices:
+		for i in range(vertices.size()):
+			if not _is_corner_vertex(vertices, i):
+				continue
 			var post: Node3D = palisade_post_scene.instantiate() as Node3D
 			if post == null:
 				continue
 			parent.add_child(post)
-			post.global_position = Vector3(v.x, _deploy_anchor.y, v.z)
+			post.global_position = Vector3(vertices[i].x, _deploy_anchor.y, vertices[i].z)
 			posts += 1
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp:Palisade] построено %d сегментов + %d столбиков" % [built, posts])
@@ -1912,6 +1915,33 @@ func _on_palisade_segment_destroyed(dying: Node) -> void:
 		return
 	_palisade_rebake_pending = true
 	get_tree().create_timer(PALISADE_REBAKE_DEBOUNCE).timeout.connect(_do_palisade_rebake)
+
+
+## Порог «прямой» vertex для skip'а post'а: dot(prev_dir, next_dir) > этого
+## значения = vertices_collinear, post не нужен. 0.97 ≈ 14° допуска. Игрок
+## ставит точки мышью, точное попадание в линию редкое, но угол > 14° уже
+## явно «корнер».
+const PALISADE_VERTEX_COLLINEAR_DOT: float = 0.97
+
+
+## True если vertex i — настоящий угол (или start/end ломаной), и нуждается
+## в post'е. False если vertex прямой («лежит на линии») — post бесполезен.
+func _is_corner_vertex(vertices: Array, i: int) -> bool:
+	# Концы ломаной — всегда «угол» (закрывает стену стуб'ом).
+	if i == 0 or i == vertices.size() - 1:
+		return true
+	var prev: Vector3 = vertices[i - 1]
+	var here: Vector3 = vertices[i]
+	var next: Vector3 = vertices[i + 1]
+	var d1: Vector3 = here - prev
+	d1.y = 0.0
+	var d2: Vector3 = next - here
+	d2.y = 0.0
+	if d1.length_squared() < 0.0001 or d2.length_squared() < 0.0001:
+		return true  # дегенерат — на всякий случай post
+	d1 = d1.normalized()
+	d2 = d2.normalized()
+	return d1.dot(d2) < PALISADE_VERTEX_COLLINEAR_DOT
 
 
 ## Радиус «уже есть post» — endpoint считается «помечен» если столбик в
