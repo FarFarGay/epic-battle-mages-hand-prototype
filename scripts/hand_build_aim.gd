@@ -99,11 +99,24 @@ var _brush_active_meshes: Array[MeshInstance3D] = []
 ## при спавне committed-preview). Используется для affordability-проверки —
 ## считать длины committed-пар каждый кадр было бы лишним.
 var _brush_committed_segments_count: int = 0
+## Маленькое кольцо вокруг кандидата snap'а (если первый vertex попадёт
+## близко к существующему palisade-vertex'у). Spawn'ится / hide'ится в
+## [_update_brush_active_preview]. Persistent — переиспользуется между
+## кадрами через visibility.
+var _brush_snap_indicator: MeshInstance3D = null
 ## Анти-spam: жёсткий лимит вершин в одной ломаной. 20 = ~38 сегментов × 2м =
 ## линия длиной 76м, перекрывает разумную «оборонную стену».
 const BRUSH_MAX_VERTICES: int = 20
 ## Минимальная длина отрезка для постройки сегмента. Короче — игнорируется.
 const BRUSH_MIN_SEGMENT_LENGTH: float = 0.5
+## Радиус snap'а первой вершины к существующему palisade-vertex (углу
+## уже построенной стены). Игрок может «продолжить» от любого угла без
+## точного попадания пикселем — в этом радиусе курсор магнитит к vertex'у.
+## 1.5м совпадает с [PICKUP_RADIUS] — единый «handler-радиус» руки.
+const BRUSH_SNAP_RADIUS: float = 1.5
+## Цвет snap-индикатора (маленькое кольцо вокруг кандидата на snap).
+## Чуть ярче active-preview — глаз цепляется.
+const BRUSH_SNAP_COLOR := Color(0.55, 1.0, 0.55, 0.85)
 
 
 func _ready() -> void:
@@ -400,6 +413,31 @@ func _process_brush() -> void:
 		_add_brush_vertex(cursor)
 
 
+## Ищет ближайший palisade-vertex (PalisadePost из группы palisade_vertex)
+## в радиусе [BRUSH_SNAP_RADIUS] от cursor'а. Если нашёл — возвращает его
+## позицию, иначе Vector3.INF. Используется для snap'а первой вершины новой
+## цепочки — игрок может продолжить от любого угла без пикселя в пиксель.
+##
+## Горизонтальная дистанция (Y игнорируется) — palisade всегда на земле
+## лагеря, snap по XZ.
+func _find_snap_vertex(cursor: Vector3) -> Vector3:
+	var best_pos: Vector3 = Vector3.INF
+	var best_d_sq: float = BRUSH_SNAP_RADIUS * BRUSH_SNAP_RADIUS
+	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_VERTEX_GROUP):
+		if not is_instance_valid(node):
+			continue
+		var post: Node3D = node as Node3D
+		if post == null:
+			continue
+		var dx: float = post.global_position.x - cursor.x
+		var dz: float = post.global_position.z - cursor.z
+		var d_sq: float = dx * dx + dz * dz
+		if d_sq < best_d_sq:
+			best_d_sq = d_sq
+			best_pos = post.global_position
+	return best_pos
+
+
 ## Добавляет vertex в ломаную. Если это первая точка — просто сохраняем
 ## (нет committed-segment'ов от него до предыдущей). Иначе считаем сегменты
 ## от last_vertex до новой точки и спавним committed-preview'ы.
@@ -416,10 +454,16 @@ func _add_brush_vertex(cursor: Vector3) -> void:
 	if anchor == Vector3.INF:
 		anchor = Vector3.ZERO
 	var pt: Vector3 = Vector3(cursor.x, anchor.y, cursor.z)
+	# Snap первой вершины новой цепочки к существующему palisade-vertex.
+	# Игрок может «продолжить» от любого угла уже построенной стены.
 	if _brush_vertices.is_empty():
+		var snap: Vector3 = _find_snap_vertex(cursor)
+		if snap != Vector3.INF:
+			pt = Vector3(snap.x, anchor.y, snap.z)
 		_brush_vertices.append(pt)
 		if debug_log and LogConfig.master_enabled:
-			print("[Hand:BuildAim:Brush] vertex 1 @ (%.1f, %.1f)" % [pt.x, pt.z])
+			var snap_note: String = " [SNAP]" if snap != Vector3.INF else ""
+			print("[Hand:BuildAim:Brush] vertex 1 @ (%.1f, %.1f)%s" % [pt.x, pt.z, snap_note])
 		return
 	var last: Vector3 = _brush_vertices[-1]
 	if (last - pt).length() < BRUSH_MIN_SEGMENT_LENGTH:
@@ -455,11 +499,17 @@ func _update_brush_active_preview(cursor: Vector3) -> void:
 			m.visible = false
 	var used: int = 0
 	if _brush_vertices.is_empty():
+		# Snap-индикатор: если рядом с курсором есть palisade-vertex, рисуем
+		# маленькое кольцо на нём — игрок видит «здесь начнётся новая стена».
+		var snap_pos: Vector3 = _find_snap_vertex(cursor)
+		_update_brush_snap_indicator(snap_pos)
 		# Ещё не поставили первый vertex — показываем «фантомный сегмент»
 		# в точке курсора (горизонтально, дефолтная ориентация). Подсказка:
 		# «ЛКМ поставит первую точку».
 		_acquire_preview_segment(used, cursor, 0.0, brush_preview_color_valid)
 		return
+	# После постановки первого vertex'а snap-индикатор не нужен.
+	_update_brush_snap_indicator(Vector3.INF)
 	var last: Vector3 = _brush_vertices[-1]
 	var pt: Vector3 = Vector3(cursor.x, last.y, cursor.z)
 	var dir: Vector3 = pt - last
@@ -506,6 +556,24 @@ func _update_brush_active_preview(cursor: Vector3) -> void:
 	var committed_color: Color = brush_committed_color if can_afford else brush_preview_color_invalid
 	for m in _brush_committed_meshes:
 		_apply_color_to_mesh(m, committed_color)
+
+
+## Показывает / прячет маленький snap-индикатор на palisade-vertex'е.
+## Принимает Vector3.INF чтобы спрятать (snap не найден или первый vertex
+## уже поставлен).
+func _update_brush_snap_indicator(target: Vector3) -> void:
+	if target == Vector3.INF:
+		if is_instance_valid(_brush_snap_indicator):
+			_brush_snap_indicator.visible = false
+		return
+	if not is_instance_valid(_brush_snap_indicator):
+		if _effects_root == null:
+			_effects_root = get_tree().current_scene
+		_brush_snap_indicator = AoeVisual.spawn_ground_ring(
+			_effects_root, target, BRUSH_SNAP_RADIUS, 0.0, BRUSH_SNAP_COLOR,
+		)
+	_brush_snap_indicator.global_position = target + Vector3.UP * AIM_RING_HEIGHT
+	_brush_snap_indicator.visible = true
 
 
 ## Pool-API: переиспользует mesh из [_brush_active_meshes] по индексу `slot`,
@@ -612,6 +680,15 @@ func _make_preview_segment(pos: Vector3, rot_y: float, color: Color) -> MeshInst
 ## ПКМ — построить ломаную. К существующим vertex'ам добавляется текущая
 ## позиция курсора как последняя точка (если курсор дальше MIN от last).
 ## Атомарный try_build_palisade_line — либо всё, либо ничего.
+##
+## **После успешного commit'а brush-режим НЕ выходит** — игрок может тут
+## же кликать ЛКМ и начать новую цепочку (возможно snap'нувшись к только
+## что построенной). Это паттерн «continuous build mode»: вошёл один раз
+## через журнал, строишь сколько хочешь, Esc для выхода. Реализован через
+## [_reset_brush_for_next_chain] вместо [_finish_brush] — категория Hand'а,
+## visual-zone, brush_building остаются. Если игрок нажал ПКМ без vertex'ов
+## или с одним — silent no-op (без выхода): иначе случайный ПКМ ломал бы
+## flow «строй продолжение».
 func _commit_brush() -> void:
 	if not is_instance_valid(_hand) or not is_instance_valid(_camp):
 		_finish_brush()
@@ -631,9 +708,10 @@ func _commit_brush() -> void:
 		if (last - cursor).length() >= BRUSH_MIN_SEGMENT_LENGTH:
 			final_vertices.append(cursor)
 	if final_vertices.size() < 2:
+		# ПКМ без достаточного количества vertex'ов — silent (НЕ выходим из
+		# режима). Игрок мог случайно ткнуть ПКМ; режим должен пережить это.
 		if debug_log and LogConfig.master_enabled:
-			print("[Hand:BuildAim:Brush] недостаточно vertex'ов для постройки (нужно ≥2)")
-		_finish_brush()
+			print("[Hand:BuildAim:Brush] ПКМ no-op — нужно ≥2 vertex'а")
 		return
 	var result: Dictionary = _camp.try_build_palisade_line(final_vertices)
 	if debug_log and LogConfig.master_enabled:
@@ -642,10 +720,31 @@ func _commit_brush() -> void:
 			str(result.get("reason", "")),
 			int(result.get("segments_built", 0)),
 		])
-	_finish_brush()
+	# НЕ выходим из brush'а — игрок может сразу начать следующую цепочку.
+	_reset_brush_for_next_chain()
 
 
-## Cleanup и возврат категории. Зовётся и из _commit_brush, и из cancel_aim.
+## Сброс vertex-state'а для новой цепочки без выхода из brush-режима.
+## Очищает vertex-array, committed/active-preview-меши, счётчик сегментов.
+## Не трогает: _brush_mode, _brush_building, _brush_segment_length, Hand-
+## category, build-zone-индикатор — всё это валидно для следующей цепочки.
+func _reset_brush_for_next_chain() -> void:
+	_brush_vertices.clear()
+	_brush_committed_segments_count = 0
+	for m in _brush_committed_meshes:
+		if is_instance_valid(m):
+			m.queue_free()
+	_brush_committed_meshes.clear()
+	# Active-preview меши не освобождаем — переиспользуются по pool-API на
+	# следующем _update_brush_active_preview (visibility off + reset).
+	for m in _brush_active_meshes:
+		if is_instance_valid(m):
+			m.visible = false
+
+
+## Cleanup и возврат категории. Зовётся ТОЛЬКО из cancel_aim (Esc) —
+## _commit_brush'а теперь сюда не зовёт, а уходит в [_reset_brush_for_next_chain]
+## оставляя brush-режим живым.
 func _finish_brush() -> void:
 	_brush_mode = false
 	_brush_building = &""
@@ -659,6 +758,9 @@ func _finish_brush() -> void:
 		if is_instance_valid(m):
 			m.queue_free()
 	_brush_active_meshes.clear()
+	if is_instance_valid(_brush_snap_indicator):
+		_brush_snap_indicator.queue_free()
+	_brush_snap_indicator = null
 	_clear_indicator()
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
 		_hand.pop_category()

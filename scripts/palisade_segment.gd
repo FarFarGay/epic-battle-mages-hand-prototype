@@ -14,8 +14,18 @@ extends StaticBody3D
 ## караван уехал. «Забытые крепости» на пути.
 
 const SKELETON_TARGET_GROUP := &"skeleton_target"
+## Группа угловых столбов / endpoint'ов частокола. Используется в
+## HandBuildAim для snap'а первой вершины новой цепочки к существующей
+## стене — игрок может «продолжить» от любого угла. Сегменты-стены в
+## этой группе НЕ состоят (palisade_post.tscn ставит `is_post=true`).
+const PALISADE_VERTEX_GROUP := &"palisade_vertex"
 
 @export var hp: float = 30.0
+## True если этот инстанс — угловой столб (palisade_post.tscn), не stretched
+## сегмент-стена (palisade_segment.tscn). Posts добавляются в
+## [PALISADE_VERTEX_GROUP] для snap'а в HandBuildAim. Дизайнерский путь:
+## `palisade_post.tscn` ставит is_post=true в scene-override (см. .tscn).
+@export var is_post: bool = false
 ## Цвет emission при hover-подсветке. Тёплый жёлтый — единый язык с
 ## остальными pickup-объектами (колокол, Grabbable RB'и).
 @export var highlight_color: Color = Color(1.0, 0.85, 0.4, 1.0)
@@ -43,6 +53,9 @@ func _ready() -> void:
 	# Источник геометрии для NavMesh bake'а — стена должна вырезать кусок
 	# навмеша, чтобы гномы и скелеты-обходники её огибали.
 	add_to_group(&"navmesh_source")
+	# Posts (углы / endpoint'ы) — snap-цели для HandBuildAim brush'а.
+	if is_post:
+		add_to_group(PALISADE_VERTEX_GROUP)
 	# Дублируем материал per-instance для hover-эффекта.
 	if _mesh != null and _mesh.material_override is StandardMaterial3D:
 		var src := _mesh.material_override as StandardMaterial3D
