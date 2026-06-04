@@ -1852,25 +1852,12 @@ func try_build_palisade_line(vertices: Array) -> Dictionary:
 		# (волна ломает 5 сегментов в одном кадре → 1 bake, не 5).
 		inst.destroyed.connect(_on_palisade_segment_destroyed.bind(inst))
 		built += 1
-	# Corner-posts: спавним столбик ТОЛЬКО на (а) концах ломаной (start/end)
-	# и (б) промежуточных vertex'ах с реальным углом — чтобы закрыть
-	# треугольную щель между сегментами разного направления. На «прямых»
-	# vertex'ах (segment до = направлению segment'а после) post бесполезен:
-	# он висит посреди ровной стены как мусор (явно видно после смерти
-	# одного сегмента — 2 столба в середине дыры на ровной линии).
-	var posts: int = 0
-	if palisade_post_scene != null:
-		for i in range(vertices.size()):
-			if not _is_corner_vertex(vertices, i):
-				continue
-			var post: Node3D = palisade_post_scene.instantiate() as Node3D
-			if post == null:
-				continue
-			parent.add_child(post)
-			post.global_position = Vector3(vertices[i].x, _deploy_anchor.y, vertices[i].z)
-			posts += 1
+	# Posts'ы определяются sync'ом из текущих сегментов после build'а —
+	# не плодим вручную при создании. Sync ниже точно поставит на каждом
+	# обнажённом конце и угле, никаких посторонних.
+	_sync_palisade_posts(null)
 	if debug_log and LogConfig.master_enabled:
-		print("[Camp:Palisade] построено %d сегментов + %d столбиков" % [built, posts])
+		print("[Camp:Palisade] построено %d сегментов" % built)
 	# Re-bake NavMesh — палисад добавил препятствия на слое CAMP_OBSTACLE,
 	# гномам нужен новый путь вокруг. Async, гномы продолжают по старому
 	# пути ≈100-300мс пока bake не закончится.
@@ -1914,26 +1901,26 @@ func _on_palisade_segment_destroyed(dying: Node) -> void:
 	get_tree().create_timer(PALISADE_REBAKE_DEBOUNCE).timeout.connect(_do_palisade_rebake)
 
 
-## Радиус «совпадение позиций» для сравнения endpoint'ов и постов. 0.4м с
-## запасом — палисадные сегменты могут overlap'аться (если polyline не
-## кратен segment_length), нужно ловить близкие пары как «один stitch».
+## Радиус «совпадение позиций». 0.4м с запасом — соседние сегменты с
+## non-2м step_length чуть-чуть overlap'аются, их endpoint'ы не точно
+## совпадают (~0.33м mismatch); 0.4м ловит обе пары как «один stitch».
 const PALISADE_POST_MATCH_EPS_SQ: float = 0.4 * 0.4
 ## Half-length сегмента (длина mesh'а 2м, центр в середине).
 const PALISADE_SEGMENT_HALF: float = 1.0
 
 
 ## Re-sync постов от текущего состояния стен. Алгоритм:
-##   1. Собираем для каждой стены 2 endpoint'а (center ± axis × 1м).
-##   2. Endpoint считается «обнажённым» ⟺ не лежит внутри другого
-##      сегмента (footprint = along ≤ 1м, perp ≤ 0.3м от его оси).
-##   3. На каждой уникальной обнажённой позиции должен быть пост.
-##   4. Удаляем посты не на этих позициях, добавляем на тех, где нет.
+##   1. Для каждой стены 2 endpoint'а (center ± axis × 1м).
+##   2. Для каждого endpoint'а считаем сколько endpoint'ов ДРУГИХ сегментов
+##      попадают в радиус EPS.
+##   3. Если 0 матчей → обнажённый endpoint → пост.
+##      Если ≥1 матч с РАЗНОЙ осью → угол → пост (закрывает щель).
+##      Если ≥1 матч с той же осью (collinear) → прямой стык → пост не нужен.
+##   4. Удаляем посты не на target'ах, добавляем на target'ах где нет.
 ##
-## Это даёт ровно правило: «на краях каждого обрубка стоит ребро». Углы
-## (где встречаются 2 не-collinear сегмента) — НЕ обнажены, общая точка
-## внутри обоих footprint'ов, post не нужен.
+## Идемпотентно. Должно запускаться И на build, И на destroy.
 func _sync_palisade_posts(exclude: PalisadeSegment) -> void:
-	# Собираем живые сегменты с предвычисленными axis/center.
+	# Шаг 1: собираем сегменты + endpoint'ы.
 	var segs: Array = []
 	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_WALL_GROUP):
 		if not is_instance_valid(node) or node == exclude:
@@ -1945,47 +1932,46 @@ func _sync_palisade_posts(exclude: PalisadeSegment) -> void:
 		ax.y = 0.0
 		if ax.length_squared() < 0.0001:
 			continue
-		segs.append({"axis": ax.normalized(), "center": s.global_position})
-	# Находим обнажённые endpoint'ы.
+		ax = ax.normalized()
+		segs.append({
+			"axis": ax,
+			"ep1": s.global_position + ax * PALISADE_SEGMENT_HALF,
+			"ep2": s.global_position - ax * PALISADE_SEGMENT_HALF,
+		})
+	# Шаг 2+3: для каждой endpoint'а находим матчи в других сегментах.
 	var targets: Array[Vector3] = []
-	var perp_max: float = 0.5  # tolerance по перпендикуляру к чужой оси
 	for i in range(segs.size()):
-		var axis: Vector3 = segs[i]["axis"]
-		var center: Vector3 = segs[i]["center"]
-		var endpoints: Array[Vector3] = [
-			center + axis * PALISADE_SEGMENT_HALF,
-			center - axis * PALISADE_SEGMENT_HALF,
-		]
-		for ep in endpoints:
-			var exposed: bool = true
-			# Проверяем, лежит ли ep ВНУТРИ другого сегмента.
+		var my_axis: Vector3 = segs[i]["axis"]
+		var my_eps: Array[Vector3] = [segs[i]["ep1"], segs[i]["ep2"]]
+		for ep in my_eps:
+			var matching_axes: Array[Vector3] = []
 			for j in range(segs.size()):
 				if j == i:
 					continue
-				var other_axis: Vector3 = segs[j]["axis"]
-				var other_center: Vector3 = segs[j]["center"]
-				var offset: Vector3 = ep - other_center
-				offset.y = 0.0
-				var along: float = offset.dot(other_axis)
-				# Pere-projection: offset минус компонент вдоль оси.
-				var perp_vec: Vector3 = offset - other_axis * along
-				var perp_dist: float = perp_vec.length()
-				if absf(along) <= PALISADE_SEGMENT_HALF and perp_dist <= perp_max:
-					exposed = false
-					break
-			if not exposed:
+				var other_ep1: Vector3 = segs[j]["ep1"]
+				var other_ep2: Vector3 = segs[j]["ep2"]
+				if _pos_close(ep, other_ep1) or _pos_close(ep, other_ep2):
+					matching_axes.append(segs[j]["axis"])
+			var should_have_post: bool = false
+			if matching_axes.is_empty():
+				should_have_post = true  # обнажённый endpoint
+			else:
+				# Любой не-collinear matching → угол.
+				for ax in matching_axes:
+					if absf(my_axis.dot(ax)) < 0.97:
+						should_have_post = true
+						break
+			if not should_have_post:
 				continue
-			# Дедупликация: один обнажённый endpoint = одна target позиция.
+			# Дедуп: один target на позицию.
 			var dup: bool = false
 			for t in targets:
-				var dx: float = t.x - ep.x
-				var dz: float = t.z - ep.z
-				if dx * dx + dz * dz < PALISADE_POST_MATCH_EPS_SQ:
+				if _pos_close(t, ep):
 					dup = true
 					break
 			if not dup:
 				targets.append(ep)
-	# Сверяем существующие посты с target'ами.
+	# Шаг 4: применить targets к существующим постам.
 	var existing: Array = []
 	for node in get_tree().get_nodes_in_group(PalisadeSegment.PALISADE_VERTEX_GROUP):
 		if not is_instance_valid(node):
@@ -1993,17 +1979,15 @@ func _sync_palisade_posts(exclude: PalisadeSegment) -> void:
 		existing.append(node)
 	# Удаляем посты не на target'ах.
 	for post in existing:
-		var keep: bool = false
 		var n: Node3D = post as Node3D
+		var keep: bool = false
 		for t in targets:
-			var dx: float = n.global_position.x - t.x
-			var dz: float = n.global_position.z - t.z
-			if dx * dx + dz * dz < PALISADE_POST_MATCH_EPS_SQ:
+			if _pos_close(n.global_position, t):
 				keep = true
 				break
 		if not keep:
 			n.queue_free()
-	# Добавляем посты на target'ах где их нет.
+	# Добавляем посты на target'ах где нет.
 	if palisade_post_scene == null:
 		return
 	for t in targets:
@@ -2011,10 +1995,7 @@ func _sync_palisade_posts(exclude: PalisadeSegment) -> void:
 		for post in existing:
 			if not is_instance_valid(post):
 				continue
-			var n: Node3D = post as Node3D
-			var dx: float = n.global_position.x - t.x
-			var dz: float = n.global_position.z - t.z
-			if dx * dx + dz * dz < PALISADE_POST_MATCH_EPS_SQ:
+			if _pos_close((post as Node3D).global_position, t):
 				has_post = true
 				break
 		if has_post:
@@ -2026,31 +2007,11 @@ func _sync_palisade_posts(exclude: PalisadeSegment) -> void:
 		new_post.global_position = Vector3(t.x, _deploy_anchor.y, t.z)
 
 
-## Порог «прямой» vertex для skip'а post'а: dot(prev_dir, next_dir) > этого
-## значения = vertices_collinear, post не нужен. 0.97 ≈ 14° допуска. Игрок
-## ставит точки мышью, точное попадание в линию редкое, но угол > 14° уже
-## явно «корнер».
-const PALISADE_VERTEX_COLLINEAR_DOT: float = 0.97
-
-
-## True если vertex i — настоящий угол (или start/end ломаной), и нуждается
-## в post'е. False если vertex прямой («лежит на линии») — post бесполезен.
-func _is_corner_vertex(vertices: Array, i: int) -> bool:
-	# Концы ломаной — всегда «угол» (закрывает стену стуб'ом).
-	if i == 0 or i == vertices.size() - 1:
-		return true
-	var prev: Vector3 = vertices[i - 1]
-	var here: Vector3 = vertices[i]
-	var next: Vector3 = vertices[i + 1]
-	var d1: Vector3 = here - prev
-	d1.y = 0.0
-	var d2: Vector3 = next - here
-	d2.y = 0.0
-	if d1.length_squared() < 0.0001 or d2.length_squared() < 0.0001:
-		return true  # дегенерат — на всякий случай post
-	d1 = d1.normalized()
-	d2 = d2.normalized()
-	return d1.dot(d2) < PALISADE_VERTEX_COLLINEAR_DOT
+## Helper: близость 2 точек по XZ (ignore Y) в радиусе [PALISADE_POST_MATCH_EPS].
+func _pos_close(a: Vector3, b: Vector3) -> bool:
+	var dx: float = a.x - b.x
+	var dz: float = a.z - b.z
+	return dx * dx + dz * dz < PALISADE_POST_MATCH_EPS_SQ
 
 
 func _do_palisade_rebake() -> void:
