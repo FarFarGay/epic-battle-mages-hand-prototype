@@ -218,7 +218,10 @@ func start_aim(building_id: StringName) -> void:
 	if not is_instance_valid(_hand):
 		push_warning("[Hand:BuildAim] start_aim — _hand не задан")
 		return
-	if _active_building != &"":
+	# Любой активный aim (включая brush палисада) сбрасываем перед стартом
+	# новой постройки. Игрок не должен «носить в руке» две постройки
+	# одновременно — журналом всегда выбирается ровно одна.
+	if is_aiming_any():
 		cancel_aim()
 	_active_building = building_id
 	var data: Dictionary = Camp.CAMP_BUILDING_CATALOG.get(building_id, {})
