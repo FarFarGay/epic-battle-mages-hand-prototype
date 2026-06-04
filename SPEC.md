@@ -68,7 +68,8 @@ hand_gameplay_prot/
 │   ├── octagon_turret.tscn    — защитный модуль (CampModule), стрелы
 │   ├── archer_post.tscn       — стрелковый пост (стационарный лучник на башенке, направленный)
 │   ├── palisade_segment.tscn  — сегмент частокола (brush-mode build)
-│   ├── palisade_post.tscn     — угловой столб частокола (auto-place в polyline)
+│   ├── palisade_post.tscn     — угловой столб частокола (re-sync постов на build/destroy)
+│   ├── wall_gate.tscn         — ворота в частоколе (4м, авто-открытие для своих, 2026-06-04)
 │   ├── arrow.tscn             — снаряд защитного модуля (Arrow class)
 │   ├── poi_marker.tscn        — маркер POI (тёмный круг золы под костром)
 │   ├── quest_actor.tscn       — POI-актор: костёр + safe_radius + wave_schedule
@@ -107,7 +108,7 @@ hand_gameplay_prot/
     ├── hand_spell_spark.gd     — class_name HandSpellSpark (single-target, 2026-06-02)
     ├── hand_super.gd           — class_name HandSuper (QTE-нашествие)
     ├── hand_squad_aim.gd       — class_name HandSquadAim («Иди сюда» на squad, sticky-mode)
-    ├── hand_build_aim.gd       — class_name HandBuildAim (постройки: палисад brush, archer post direction)
+    ├── hand_build_aim.gd       — class_name HandBuildAim (постройки: палисад brush continuous + snap, archer post direction, wall_gate wall-snap)
     ├── camera_rig.gd           — class_name CameraRig (focus-override на отряде в зоне данжа)
     ├── item.gd                 — class_name Item
 
@@ -141,7 +142,8 @@ hand_gameplay_prot/
     ├── mount_slot.gd           — class_name MountSlot
     ├── octagon_turret.gd       — class_name OctagonTurret extends CampModule
     ├── harvester.gd            — class_name Harvester (caravan-звено золота на POI)
-    ├── palisade_segment.gd     — class_name PalisadeSegment
+    ├── palisade_segment.gd     — class_name PalisadeSegment (groups: PALISADE_WALL/VERTEX, 2026-06-04)
+    ├── wall_gate.gd            — class_name WallGate (4м, авто-открытие триггером, layer WALL_GATE_BLOCK, 2026-06-04)
     ├── archer_post.gd          — class_name ArcherPost (стационарный лучник)
     ├── gnome.gd                — class_name Gnome (FSM, +FLEEING state 2026-06-04, carry_amount @export)
     ├── soldier_gnome.gd        — class_name SoldierGnome extends Gnome (база squad-юнитов)
@@ -250,6 +252,7 @@ hand_gameplay_prot/
 | 9 | FriendlyUnit | `Gnome`, `DefenderGnome` — отдельный от ACTORS, чтобы скелеты могли блокироваться об башню (ACTORS в `MASK_SKELETON`) и при этом **физически проходить сквозь гномов** (FRIENDLY_UNIT не в `MASK_SKELETON`) | Hand.GrabArea / Slam — теперь **смотрят** на FRIENDLY_UNIT (изменение 2026-05-03, унификация рукой и магии: рука одинаково действует на врагов и на гномов). Arrow на FRIENDLY_UNIT не смотрит — стрелы дружественные, по гномам не бьют |
 | 10 | PalisadeObstacle | `PalisadeSegment`, `PalisadePost` — **dual-layer**: `collision_layer = CAMP_OBSTACLE \| PALISADE_OBSTACLE = 544`. Отдельный слой нужен чтобы развязать «упирается в стену» от «упирается в палатку»: Tower и CampPart маскируют PALISADE_OBSTACLE → блокируются стеной, но **не друг другом** (CampPart не в их собственной маске). Skeleton (MASK_SKELETON включает CAMP_OBSTACLE) блокируется стеной как палаткой через бит CAMP_OBSTACLE. Hand-slam/магия (MASK_HAND_SLAM включает CAMP_OBSTACLE) задевают стену | Tower (mask=575), CampPart (mask=529). NavMesh.geometry_collision_mask=33 баков'ит через бит CAMP_OBSTACLE. |
 | 11 | MineHazard | `Mine` — собственный слой ловушек. Раньше мина была на ITEMS (для того чтобы AOE-силы с MASK_HAND_SLAM находили её shape-query'ем), но Tower (mask=575 включает ITEMS) физически врезался в мины как в стены. Перевод на MINE_HAZARD (2026-05-15) развязывает: Tower и Skeleton (мaski 39, 575) **не** сканируют MINE_HAZARD → проходят сквозь мину; огневые силы расширили MASK_HAND_SLAM до 1462 (добавлен MINE_HAZARD) → детонируют через `Damageable.try_damage` как раньше | MASK_HAND_SLAM (1462) — Slam/Fireball/Firestorm/Super/BurnPatch. NavMesh не бакает (мины не препятствие для гномов) |
+| 12 | WallGateBlock | `WallGate` (2026-06-04) — отдельный слой ворот в частоколе. Не наследует CAMP_OBSTACLE / PALISADE_OBSTACLE намеренно: ворота должны **физически блокировать только скелетов**, для Tower быть полностью прозрачными (своя башня проезжает через свои же ворота всегда). MASK_SKELETON расширен с 39 до **2087** (добавлен WALL_GATE_BLOCK) — скелет упирается в ворота как в стену. Tower mask (575) не включает → ворота для неё no-op. Гномы (mask=TERRAIN-only) проходят как через любую стену. Анимация дверей чисто визуальная — физика не переключается, нет race-condition'ов «дверь анимируется vs collision-shape disabled». Гейт «свой/враг» делает не физика, а маски слоёв | MASK_SKELETON (2087). NavMesh **НЕ** бакает (ворота не в группе `navmesh_source`) — гномы строят путь через проём, как через открытый сегмент стены |
 
 В коде GDScript маски берутся именованными константами из `Layers`; в `.tscn` Godot хранит ints, поэтому там — литералы (значения должны соответствовать `Layers.MASK_*`).
 
@@ -257,10 +260,11 @@ hand_gameplay_prot/
 - `Item`, `Ground`, `ResourcePile`: `Layers.MASK_ALL_GAMEPLAY = 31` (Terrain + Items + Actors + Projectiles + Enemies) — взаимодействуют со всем «обычным», но **не с CampObstacle**: палатки намеренно не блокируют ящики/кучи.
 - `Mine`: `collision_layer = Layers.MINE_HAZARD = 1024`, `collision_mask = 0` — сама ничего не сканирует, только присутствует как трap-объект. Никто кроме MASK_HAND_SLAM на этот слой не смотрит, поэтому башня/скелеты/гномы свободно проходят. TriggerArea внутри сцены отдельно сканирует ENEMIES|COLD_ENEMY|FRIENDLY_UNIT = 400 для on-step детонации; FAR-LOD скелеты ловятся group-scan'ом по SKELETON_GROUP (см. §5.5/Mine).
 - `Tower`: `575` = `Terrain + Items + Actors + Projectiles + CampObstacle + PalisadeObstacle` (15 + 32 + 512). С 2026-05-13 башня **упирается в палатки своего лагеря и в палисад**. Раньше было 15 (без ENEMIES для перф-причин, без CAMP_OBSTACLE для удобства движения). После добавления палисада дизайнер запросил «башня не должна сквозить караван и стены»: добавили CAMP_OBSTACLE (палатки на нём) и новый PALISADE_OBSTACLE. Скелеты по-прежнему сквозят (бит ENEMIES не в маске Tower).
-- `Skeleton`: `Layers.MASK_SKELETON = 39` (Terrain + Items + Actors + CampObstacle, **без ENEMIES**) — скелеты **проходят сквозь друг друга** (perf-фикс на 400+ кластерах: skel-skel пары были главным пожирателем broad-phase + slide-iterations об соседей). Цена: `Enemy._push_neighbor` lunge-domino не работает (slide-collision между скелетами не регистрируется). Восстановление — через group+dist push, по аналогии со Slam-fallback. Визуально лечится через `_apply_neighbor_avoidance` (boids-style раздвигание, см. §5.5.2).
+- `Skeleton`: `Layers.MASK_SKELETON = 2087` (Terrain + Items + Actors + CampObstacle + WallGateBlock, **без ENEMIES**) — скелеты **проходят сквозь друг друга** (perf-фикс на 400+ кластерах: skel-skel пары были главным пожирателем broad-phase + slide-iterations об соседей). Цена: `Enemy._push_neighbor` lunge-domino не работает (slide-collision между скелетами не регистрируется). Восстановление — через group+dist push, по аналогии со Slam-fallback. Визуально лечится через `_apply_neighbor_avoidance` (boids-style раздвигание, см. §5.5.2). С 2026-06-04 включает WALL_GATE_BLOCK → ворота для скелета — стена.
 - `Gnome` / `DefenderGnome`: `collision_layer = Layers.FRIENDLY_UNIT = 256`, `collision_mask = Layers.TERRAIN = 1` — гномы видят только пол. Не блокируются скелетами, не толкают друг друга, проходят сквозь Tower и Item, **физически проходят сквозь палисад тоже** (PALISADE_OBSTACLE не в маске). Обход стен у гномов — через **NavMesh-pathfinding** (см. §5.13), не через физический slide. Если pathfinding провалился (близкая цель, направление NAV_DIRECT_RADIUS) — гном пройдёт сквозь стену. Это by-design: гномы лёгкие, физика их не должна тормозить, маршрут диктует NavAgent. Урон по гномам приходит через `Damageable.try_damage` — раньше только от STRIKE скелета, с 2026-05-03 ещё и от Slam/Flick (рука стала «вездесущей» по дизайнерскому решению, см. §4.1.bis). Push от Slam применяется через `Pushable.try_push` → `gnome.apply_push` (knockback-механизм гнома, AI глушится на `slam_knockback_duration`).
 - `Tent` (CampPart): `collision_layer = CAMP_OBSTACLE = 32`, `collision_mask = 529` = `Terrain + Enemies + PalisadeObstacle` (17 + 512). Палатки блокируются землёй, скелетами (которые их атакуют) и палисадом — но **не друг другом** (CAMP_OBSTACLE не в маске). С 2026-05-13 добавлен PALISADE_OBSTACLE: палатки в каравне упираются в стены. Поскольку Tent — `RigidBody3D` с `freeze=true` (позиционируется прямым присвоением `global_position`), обычный collision-check не срабатывает; Camp использует [Camp._move_part_kinematic] через `PhysicsServer3D.body_test_motion` (см. §5.7).
-- `PalisadeSegment` / `PalisadePost`: `collision_layer = CAMP_OBSTACLE \| PALISADE_OBSTACLE = 544`, `collision_mask = 0` — стены сами никого не сканируют, только присутствуют как препятствие. Группы: `skeleton_target` (скелеты атакуют как палатку), `navmesh_source` (NavMesh бакает как препятствие).
+- `PalisadeSegment` / `PalisadePost`: `collision_layer = CAMP_OBSTACLE \| PALISADE_OBSTACLE = 544`, `collision_mask = 0` — стены сами никого не сканируют, только присутствуют как препятствие. Группы: `skeleton_target` (скелеты атакуют как палатку), `navmesh_source` (NavMesh бакает как препятствие), а также (2026-06-04) `palisade_wall` для самих сегментов **или** `palisade_vertex` для угловых столбов — через `@export var is_post: bool` (post.tscn → `is_post=true`). Camp использует `palisade_wall` для поиска стены под Воротами; HandBuildAim снапит первую вершину brush'а к `palisade_vertex` (продолжить чужую стену).
+- `WallGate`: `collision_layer = Layers.WALL_GATE_BLOCK = 2048`, `collision_mask = 0` — стационарный StaticBody, ничего не сканирует. Внутри сцены отдельный `Trigger` Area3D с `collision_mask = ACTORS \| FRIENDLY_UNIT = 260` ловит «своих» (Tower / гномов / Squad-юнитов) для open/close-анимации; на врагов не реагирует. Группы: `skeleton_target` (melee-скелеты ломают как стену), `melee_only_target` (archer-скелеты не тратят стрелы), `wall_gate` (Camp/UI могут перечислять). **НЕ** в `navmesh_source` — гномы и скелеты строят путь сквозь проём.
 - Shatter-фрагменты: `Layers.MASK_TERRAIN_ONLY = 1` — падают на пол, проходят сквозь тела и друг друга.
 - **FAR-LOD Skeleton (динамически):** `collision_layer = 0, collision_mask = 0`, плюс `CollisionShape3D.disabled = true` — полностью вне broad-phase. Slam достаёт через group-fallback (см. §5.2.1).
 
@@ -1651,11 +1655,12 @@ Camp хранит пул ресурсов и API списания. Гном на
 
 - `BUILDING_NEW_TENT` — новая палатка в кольце лагеря. Cost: 20 wood + 10 stone + 5 food. `deployed_only: true` (строится только в `State.DEPLOYED` — дизайнерское правило 2026-05-08, изменено с прежнего «только в свёрнутом»). `repeatable: true`.
 - ~~`BUILDING_WATCH_BELL`~~ — **удалён в этапе 55**. Сторожевой колокол не имел смысла после унификации (некому отзываться без DefenderGnome).
-- `BUILDING_PALISADE` — деревянный частокол через polyline-кисть. Не single-aim, а **brush-mode** (флаг `brush_mode: true`). Стоимость `cost_per_segment: {WOOD: 2}` — total зависит от длины линии. `segment_length: 2.0`. Игрок: ЛКМ ставит vertex'ы ломаной, preview обновляется каждый кадр (committed-сегменты + active от last_vertex к курсору). Цвет preview — единственный сигнал: green = валидно, red = вне build_zone ИЛИ ресурсов не хватает на total, yellow = достигнут BRUSH_MAX_VERTICES. ПКМ — построить, Esc — отмена. См. `HandBuildAim` brush-mode и `Camp.try_build_palisade_line`.
-- `try_build(id) -> {success, reason}` — атомарно: `can_build_reason` (state) → `can_afford` → `try_spend` → `_apply_building`. Эмитит `camp_buildings_changed`. Для **brush-mode** построек идёт через отдельный путь `try_build_palisade_line(vertices)` — see below.
+- `BUILDING_PALISADE` — деревянный частокол через polyline-кисть. Не single-aim, а **brush-mode** (флаг `brush_mode: true`). Стоимость `cost_per_segment: {WOOD: 2}` — total зависит от длины линии. `segment_length: 2.0`. Игрок: ЛКМ ставит vertex'ы ломаной, preview обновляется каждый кадр (committed-сегменты + active от last_vertex к курсору). Цвет preview — единственный сигнал: green = валидно, red = вне build_zone ИЛИ ресурсов не хватает на total, yellow = достигнут BRUSH_MAX_VERTICES. ПКМ — построить (continuous mode: **категория остаётся**, начинай следующую цепочку), Esc — выход. См. `HandBuildAim` brush-mode и `Camp.try_build_palisade_line`.
+- `BUILDING_WALL_GATE` (2026-06-04) — ворота шириной 4м в существующей стене. Стоимость `{WOOD: 15, IRON: 5}`. Флаг `requires_wall_snap: true` переводит `HandBuildAim` в специальный aim-flow: превью BoxMesh (4×1.5×0.3) магнитится к ближайшему сегменту стены, ось ворот = ось стены, цвет green/red по валидности. Параметры `position` + `facing_dir` валидируются в Camp через `_pre_apply_validation` **ДО** списания ресурсов (иначе на «нет 2 сегментов» игрок терял бы 15 wood). См. `Camp._build_wall_gate` ниже.
+- `try_build(id, params) -> {success, reason}` — атомарно: `can_build_reason` (state) → **`_pre_apply_validation(id, params)`** (param-driven проверки, 2026-06-04 — нужны для Ворот) → `can_afford` → `try_spend` → `_apply_building`. Эмитит `camp_buildings_changed`. Для **brush-mode** построек идёт через отдельный путь `try_build_palisade_line(vertices)` — see below.
 - `_build_new_tent`: вызывает извлечённый `_spawn_one_tent()` (общий с инициализацией), ставит палатку на `_deploy_anchor`, дёргает `_rebuild_deployed_targets()` (кольцо пересчитывается на N+1 слотов), спавнит гномов, дёргает `enter_deployed()` на новых.
 
-#### Палисад (brush-mode постройка, 2026-05-13)
+#### Палисад (brush-mode постройка, 2026-05-13; post-sync переработан 2026-06-04)
 
 **`Camp.try_build_palisade_line(vertices: Array)`** — атомарный batch для polyline-кисти:
 1. Между каждой парой соседних vertex'ов: `count = ceil(length / segment_length)` (потолок, не floor — иначе дробные хвосты у vertex'ов).
@@ -1663,12 +1668,77 @@ Camp хранит пул ресурсов и API списания. Гном на
 3. Yaw сегмента = `atan2(-dir.z, dir.x)` — локальная ось +X (длина BoxMesh) совпадает с направлением линии.
 4. Все сегменты должны быть в build_zone (Camp.is_in_build_zone) — иначе fail без списания.
 5. Total cost = N × cost_per_segment, атомарный try_spend.
-6. Spawn `PalisadeSegment` × N + `PalisadePost` × vertices.size() (короткие столбики 0.4×1.5×0.4 на стыках, закрывают треугольные щели на углах + дробные хвосты).
-7. На спавне каждого segment'а: `inst.destroyed.connect(_on_palisade_segment_destroyed)` — при разрушении сегмента скелетами триггерится **debounced re-bake** NavMesh (см. ниже).
+6. Spawn `PalisadeSegment` × N. **Posts не плодим вручную** — после спавна зовём `_sync_palisade_posts(null)`, который ставит столбики ровно на endpoint'ах. См. §Post-sync ниже.
+7. На спавне каждого segment'а: `inst.destroyed.connect(_on_palisade_segment_destroyed.bind(inst))` — при разрушении сегмента триггерится **полный re-sync** постов + **debounced re-bake** NavMesh.
+
+**Post-sync алгоритм (2026-06-04).** Прежняя реализация ставила post'ы на каждой ЛКМ-вершине ломаной и удаляла «orphan'ов» при разрушении сегмента — на сложных топологиях (T-образный стык, разломы посередине, последовательные удары в один кадр) получались «мигрирующие» или «висящие в пустоте» столбики. Заменено идемпотентным `_sync_palisade_posts(exclude)`, который пересчитывает все posts с нуля от текущего состояния стен. Алгоритм:
+1. Для каждой alive-стены берём 2 endpoint'а: `center ± axis × PALISADE_SEGMENT_HALF` (1м, половина длины 2-метрового BoxMesh).
+2. Для каждого endpoint'а считаем сколько endpoint'ов **других** сегментов попадают в радиус `PALISADE_POST_MATCH_EPS_SQ` (0.4²м, с запасом на 0.33м mismatch из-за `ceil`-распределения с overlap'ом).
+3. Решение по endpoint'у:
+   - **0 матчей** → обнажённый конец → нужен post.
+   - **≥1 матч с не-collinear осью** (`|axis_self · axis_other| < 0.97`) → угол / T-стык → нужен post (закрывает щель).
+   - **≥1 матч ТОЛЬКО с collinear осью** → прямой стык внутри ломаной → post не нужен.
+4. Удаляем посты, которые не на target'ах; добавляем посты на target'ах, где их ещё нет. Дедуп по `_pos_close` — одна позиция = один post.
+
+`exclude: PalisadeSegment` параметр — сегмент, который только что умер (`_on_palisade_segment_destroyed`). Он пропускается даже если ещё в `PALISADE_WALL_GROUP`.
+
+> **Критический фикс `a2e9731`:** `queue_free` в Godot отложен до конца кадра — нода ещё в группе. Если slam задевал 3 сегмента одновременно, каждый эмитил `destroyed`, обработчик звал sync, sync видел двух других «живыми» в group → находил fake straight-stitch'и → удалял ПРАВИЛЬНЫЕ posts соседей. Решение: `PalisadeSegment._die()` **синхронно** делает `remove_from_group(PALISADE_WALL_GROUP)` + `remove_from_group(PALISADE_VERTEX_GROUP)` **до** `destroyed.emit()`. Sync в одном кадре уже не видит мёртвых. Паттерн зафиксирован в `[[reference-godot-queue-free-deferred]]`.
+
+`_palisade_sync_debug: bool` — debug-флаг (off по умолчанию), включается при диагностике «пост остался не там»: выводит segs/targets/existing + каждый REMOVE/ADD.
 
 **Re-bake debounce.** Множественные разрушения в одном кадре (волна ломает 5 сегментов одновременно) → один bake через 0.3с после первого destroy. Флаг `_palisade_rebake_pending` блокирует повторные таймеры в окне. Без debounce'а на длинной волне получали бы 5 sync bake'ов = 0.5-1.5с лагов.
 
 **`Camp._move_part_kinematic(part, target_pos)`** — collision-aware движение для палаток (2026-05-13). Палатки — `RigidBody3D` с `freeze=true`, позиционируются прямым присвоением `global_position` (kinematic-стиль). Этот режим игнорирует collision_mask палатки. Чтобы палатка упиралась в палисад (PALISADE_OBSTACLE в её mask=529), используется `PhysicsServer3D.body_test_motion` + `get_collision_safe_fraction()` — палатка двигается только на safe-часть motion'а. Вызывается из `_update_caravan_follow` и `_update_deployed` после `_exp_decay`-смягчения.
+
+#### Ворота в частоколе (`BUILDING_WALL_GATE`, 2026-06-04)
+
+Защитное узкое горло: ворота шириной 4м заменяют ровно 2 сегмента стены, физически пропускают своих юнитов (через слой-маски, не через переключение коллизий) и блокируют скелетов как стена.
+
+**`Camp._pre_apply_validation(id, params)`** — общий механизм param-driven валидации до списания. Возвращает строку-причину failure или `""` если OK. Сейчас используется только Воротами:
+- `params.position` (Vector3, snap-позиция превью) — обязательно, иначе «ошибка прицеливания».
+- `params.facing_dir` (Vector3) — ось стены, считается HandBuildAim'ом из ориентации найденного сегмента.
+- Зовётся `find_palisade_walls_under_gate(position, facing_dir)` — если меньше 2 сегментов → «стена под воротами короче 4м».
+
+**`Camp.find_palisade_walls_under_gate(pos, facing)`** — публичный (вызывается из HandBuildAim для превью):
+- Зона = `pos ± facing × GATE_WALL_MATCH_HALF_WIDTH (2.0)` вдоль оси × `± perp × GATE_WALL_MATCH_PERP (1.0)` поперёк.
+- Перебирает группу `palisade_wall`, собирает кандидатов с `abs(along) ≤ HALF_WIDTH ∧ abs(perp) ≤ PERP`.
+- Возвращает **до 2 ближайших** по `abs(along)`. Если зона захватывает 3+ (ворота посажены в центр сегмента и упёрлись в обоих соседей), 2 ближайших удаляются, остальные остаются — иначе получалась бы дыра шире ворот. HandBuildAim снапит позицию в середину между 2 соседями, поэтому 3-я ситуация — крайний случай race'а.
+
+**`Camp._build_wall_gate(params)`** — после успешной валидации и списания:
+1. Заново `find_palisade_walls_under_gate` (защита от race: стена могла рухнуть между validate'ом и apply'ем).
+2. `queue_free()` найденным 2 сегментам.
+3. `wall_gate_scene.instantiate()` в `current_scene` (как PalisadeSegment / ArcherPost — переживёт свёртку лагеря).
+4. `gate.global_position = (pos.x, _deploy_anchor.y, pos.z)`, `gate.rotation.y = atan2(-facing_h.z, facing_h.x)` (локальный +X гейта вдоль оси стены).
+5. `_rebake_navmesh()` — на месте 2 сегментов появилась дыра в навмеше (gate **не** в `navmesh_source`); гномы получают новый путь через ворота. Re-bake без debounce'а — постройка ворот разовое событие.
+
+`wall_gate_scene` — `@export PackedScene`, задаётся в `camp.tscn` (`scenes/wall_gate.tscn`).
+
+#### HandBuildAim — brush continuous + snap + wall-snap (2026-06-04)
+
+Координатор aim'а построек получил три механики поверх старого single-point + direction flow'а — диспетчер по флагам в `CAMP_BUILDING_CATALOG`:
+
+**Brush — continuous mode.** Раньше после ПКМ-commit'а brush автоматически выходил в normal-категорию, и для следующей цепочки нужно было снова открыть Журнал и кликнуть «Частокол». Теперь `_commit_brush()` идёт через `_reset_brush_for_next_chain()`, который очищает только vertex-state'ы и committed/active-preview, но НЕ трогает `_brush_mode`, `_brush_building`, build-zone indicator и `Hand.Category.BUILD_AIM`. Игрок строит «забор → ПКМ → начал новый кусок → ПКМ → ... → Esc когда закончил». `_finish_brush()` остаётся для Esc-cancel'а.
+
+**Brush — snap к существующим vertex'ам.** `_find_snap_vertex(cursor, include_chain_start)` ищет ближайший snap-кандидат в радиусе `BRUSH_SNAP_RADIUS = 1.5м` (= PICKUP_RADIUS, единый «handler-радиус» руки):
+- Перебирает группу `palisade_vertex` (угловые столбы существующих стен, расставленные `_sync_palisade_posts`) — позволяет «продолжить» от чужого угла без точного попадания пикселем.
+- Если `include_chain_start = true` И в текущей цепочке уже ≥2 vertex'а, добавляет в кандидаты `_brush_vertices[0]` — позволяет замкнуть петлю на свою стартовую точку (без 2-vertex guard'а первый ЛКМ снапил бы на самого себя → zero-length цепочка).
+- Возвращает позицию (Vector3) или `Vector3.INF` если ничего в радиусе. Y клампится к anchor.y (сегменты всегда на земле).
+
+Снап применяется в `_add_brush_vertex` для каждой ЛКМ-точки. Вместе с continuous mode даёт UX «обхожу лагерь по периметру: строю северную стену, ПКМ, начинаю восточную от того же угла (snap), ПКМ, ...» без journal-кликов между.
+
+**Brush — ПКМ ровно по ЛКМ.** Раньше `_commit_brush` авто-добавлял текущую позицию курсора как финальную точку — на любом «случайном» ПКМ это давало «отросток» от last_vertex'а до курсора. Теперь silent no-op если `_brush_vertices.size() < 2` (одна стена = строго пара ЛКМ-кликов).
+
+**Wall-snap aim для ворот** (`requires_wall_snap: true`). Отдельный flow без drag'а, alternativa direction-aim'у:
+1. `start_aim` спавнит `_wall_snap_preview` — BoxMesh 4×1.5×0.3 на месте курсора.
+2. `_process_wall_snap_aim(cursor)` каждый кадр:
+   - `_find_nearest_wall_segment(cursor)` — линейный скан группы `palisade_wall` (обычно ≤30 сегментов), радиус `WALL_SNAP_RADIUS`. Нет → превью у курсора, красное.
+   - `_find_adjacent_wall_segment(nearest, axis, prefer_dir)` — ищет соседа на той же оси (perp ≤ `WALL_SNAP_ADJACENT_PERP = 0.6м`, along ∈ (0.1, 3.5)м, prefer-direction = в сторону курсора). Нет → одиночный сегмент, превью на нём красное.
+   - Есть пара → центр ворот = `(nearest.pos + adjacent.pos) / 2`, ось = +X сегмента. Финальная валидация `Camp.find_palisade_walls_under_gate(snapped, axis).size() >= 2` (защита от edge-case когда геометрия отдала пару, а camp-zone — нет).
+3. Превью green/red, ЛКМ при valid → `Camp.try_build(WALL_GATE, {position, facing_dir})`. После успеха выходит в normal-режим (одноразовая постройка, не continuous).
+
+Прежде Camp.try_build для ворот валидировал position только после списания ресурсов — игрок терял 15 wood + 5 iron на «неудачную попытку». Теперь `_pre_apply_validation` срабатывает до списания (см. §Ворота выше).
+
+**`is_aiming_any()`** — true если активен любой brush или single-point/direction/wall-snap aim. Используется в `start_aim` / `start_brush` чтобы сбросить старый aim перед стартом нового (игрок не носит «две постройки в руке»). До 2026-06-04 проверка делалась через два разных предиката, на стыке brush+single-point ошибка пропадала.
 
 #### Anchor drop zone (бросок ресурса рукой)
 
@@ -2856,6 +2926,7 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 **Группа `navmesh_source`** — источники геометрии. Регистрируются:
 - Ground: через `groups=["navmesh_source"]` в `main.tscn` node-data.
 - CampPart (палатки), WatchBell, PalisadeSegment, PalisadePost, Tower — через `add_to_group(&"navmesh_source")` в их `_ready`.
+- **WallGate НЕ в группе** (2026-06-04): на месте 2 удалённых сегментов палисада появляется «дыра» в навмеше шириной 4м. Гномы (NavAgent3D, mask=TERRAIN) строят путь через проём как через любой пропуск — короткий шорткат вместо обхода. Скелеты тоже идут через проём (NavAgent зовёт их к ближайшей точке), но физически упираются в `WALL_GATE_BLOCK`-слой → атакуют ворота (они в `skeleton_target`). Это и есть «защитное узкое горло»: своим — проход, врагам — стена-цель.
 
 #### Жизненный цикл
 
@@ -2866,6 +2937,7 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 **Триггеры re-bake:**
 - `Camp.try_build_palisade_line` — после спавна всех сегментов (один bake на всю линию, не per-сегмент).
 - `Camp._on_palisade_segment_destroyed` — на разрушении сегмента, через **debounced timer** (0.3с): множественные разрушения в кадре дают один bake.
+- `Camp._build_wall_gate` (2026-06-04) — после удаления 2 сегментов под зоной ворот и спавна `WallGate`. Без debounce'а — постройка ворот разовая операция. На месте 2 сегментов появляется навмеш-проём; гномы получают новый шорткат через ворота.
 
 **Сигнал `EventBus.navmesh_baked`** эмитится из `NavRegionBaker._on_bake_finished` после async/sync завершения. Слушают:
 - `Gnome._on_navmesh_baked` → `_nav_last_target = INF` (на следующем `_resolve_path_step` set_target_position сработает с новой геометрией).
@@ -3900,6 +3972,28 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
     - **`1a71721`** day/night cycle: WaveDirector.DayNight enum, день=180с safe / ночь=120с danger. POI-волны и фон gate'ятся `is_night()`. DayNightOverlay countdown. Targeting alarm (`skeleton_targeting_camp` за 10м до удара). Gnome.FLEEING state — мирный гном убегает к лагерю.
     - **`36a3bc5`** chore-balance: Skeleton 2.7→2.0, SkeletonArcher 2.4→1.8; Gnome 1.6→2.4, carry_amount 1→3; ArcherPost inaccuracy 1.2→0.15; wave_schedule sizes увеличены. PerfHud скрыт по умолчанию, toggle F3→L. «Хлоп 1/Щелк 2» виджет удалён. JournalPanel preset «Защита (стены и башни)».
 
+57. **Continuous palisade brush + Wall Gate + post-sync** (2026-06-04). UX-полировка постройки оборонительных сооружений + новая постройка «Ворота». 15 коммитов: continuous brush + snap (`88025e7`, `c03b5fb`), ПКМ строит ровно по ЛКМ (`03e1698`), Wall Gate с серией фиксов (`6b8aa1b`, `332ce87`, `0671735`, `bfec2e6`, `61300ba`, `5d31c9c`, `eba5a0a`), блок equip-клавиш в BUILD_AIM (`9a3bc76`), цикл доработок palisade-постов (`9dbe70b`/`74aada2`/`d12f15c`/`e32cea4`/`d6fe819`/`8d41d1d`/`594314e`/`65886e1`/`a0c0891`/`6f4f477`/`4e177b1`/`aeb7273`), корневой фикс queue_free deferred (`a2e9731`), очистка debug-логов (`6b8a156`).
+
+    **(а) Brush continuous mode + snap (палисад UX).** `HandBuildAim._commit_brush` теперь идёт через `_reset_brush_for_next_chain()` — категория `BUILD_AIM` остаётся, vertex-state сбрасывается, build-zone indicator на месте. Игрок строит «забор → ПКМ → новый кусок → ПКМ → Esc», не открывая Журнал между чанками. `_find_snap_vertex` магнитит каждый ЛКМ-vertex (включая первый) к ближайшему столбу группы `palisade_vertex` в радиусе 1.5м — можно «продолжить» от чужого угла или замкнуть петлю на свою стартовую точку. ПКМ убрали авто-добавление курсора как финальной точки (давало «отростки»): теперь one wall = одна пара ЛКМ-кликов, no-op если vertex'ов < 2. Подробно — §5.7 HandBuildAim.
+
+    **(б) BUILDING_WALL_GATE.** Новая защитная постройка: ворота 4м в существующей стене, стоимость 15 wood + 5 iron. Заменяет ровно 2 сегмента палисада. **Тонкий физический трюк:** ворота на отдельном слое `Layers.WALL_GATE_BLOCK = 1 << 11 = 2048` (layer 12 в project.godot). `MASK_SKELETON` расширен с 39 до **2087** (добавлен бит 11) — скелет упирается в ворота как в стену. Tower mask (575) не включает бит 11 → ворота для своей башни **физически прозрачны всегда**. Гномы (mask=TERRAIN-only) проходят через стены/ворота как обычно (path-following в NavMesh). Анимация дверей (Tween) — чисто визуальный feedback («ворота меня узнали»), коллизия не переключается → нет race'а «дверь анимируется vs collision-shape disabled». Триггер-Area3D внутри `wall_gate.tscn` (mask=ACTORS|FRIENDLY_UNIT=260) ловит «своих» для open/close-анимации, на скелетов не реагирует. WallGate **НЕ** в `navmesh_source` — на месте 2 удалённых сегментов появляется проём в навмеше, гномы строят кратчайший путь через. См. §5.7 «Ворота в частоколе» и §4.1 layer 12.
+
+    **(в) Wall-snap aim flow** для ворот: новый `requires_wall_snap: true` флаг в каталоге, превью BoxMesh 4×1.5×0.3 магнитится к ближайшему сегменту стены через `_find_nearest_wall_segment` + `_find_adjacent_wall_segment`. Центр ворот = середина между двумя соседями (along=0.1..3.5м, perp≤0.6м, prefer-direction в сторону курсора). Цвет green/red, ЛКМ при valid → `Camp.try_build`. Drag-flow для ворот не подходит (ось диктуется стеной, не игроком). См. §5.7 HandBuildAim.
+
+    **(г) `_pre_apply_validation` — param-driven gate перед списанием.** Раньше `try_build` валидировал только статичные condition'ы (state/cost), а position/facing проверял уже в `_apply_building`. Для ворот это значило «нет 2 сегментов под зоной → 15 wood + 5 iron потерял». Теперь общий слой `_pre_apply_validation(id, params)` срабатывает между `can_build_reason` и `can_afford` — возвращает строку-причину failure, ресурсы не трогаются. Сейчас только Ворота заводят запись (`find_palisade_walls_under_gate(pos, facing).size() < 2`); расширяется для будущих параметрических построек. См. §5.7 каталог.
+
+    **(д) Palisade post-sync — идемпотентный re-sync вместо incremental.** Главная серия итераций. Прежняя логика «спавним posts на каждой ЛКМ-вершине + чистим orphan'ов при разрушении» давала «мигрирующие» столбики на T-стыках, разломах посередине, последовательных AoE-уничтожениях. Финальная модель: `Camp._sync_palisade_posts(exclude)` — полный пересчёт от текущих стен, для каждого endpoint'а (`center ± axis × 1м`):
+    - `0` матчей с endpoint'ами других стен (radius `0.4²`) → обнажённый конец → post;
+    - матч с **не-collinear** осью (`|dot| < 0.97`) → угол/T-стык → post;
+    - матч **только с collinear** осью → прямой стык внутри ломаной → no post.
+    Удаляем посты не на target'ах, добавляем где нет. Зовётся на каждом build и destroy → одно правило, одна модель данных, нет «истории» которая бы расходилась. Подробно — §5.7 «Post-sync алгоритм».
+
+    **(е) Queue_free deferred — корневой фикс `a2e9731`.** Слаг по AoE-volley'ю задевал 3 палисада в одном кадре. Каждый умирающий вызывал `_die() → destroyed.emit() → _on_palisade_segment_destroyed → _sync_palisade_posts(dying)`. Sync исключал только `dying`, остальные «умирающие в этом кадре» оставались в `PALISADE_WALL_GROUP` (queue_free отложен до конца кадра!) → sync считал их живыми → находил fake straight-stitch'и → удалял **правильные** posts соседних обрубков. Внешне: «после удара пост остался висеть в пустоте». Решение: `PalisadeSegment._die()` синхронно делает `remove_from_group(PALISADE_WALL_GROUP) + remove_from_group(PALISADE_VERTEX_GROUP)` **до** `destroyed.emit()` — sync-обработчики в этом же кадре уже не видят мёртвых. Паттерн занесён в memory [[reference-godot-queue-free-deferred]] — общий случай для любого обработчика destroyed-сигнала с AoE-цепочкой.
+
+    **(ж) Equip-гейт в BUILD_AIM.** `GameplayHud._equip_slot` теперь silent no-op если `hand.active_category == Hand.Category.BUILD_AIM`. Нажатие 1-7 во время постройки больше не сбрасывает превью на боевую категорию. Симметрия с HandSuper (Space глушится в SUPER). См. §9.3.
+
+    **(з) Cancel-aim при перевыборе постройки.** `start_aim` и `start_brush` теперь используют общий `is_aiming_any()` (true для brush ИЛИ single-point ИЛИ direction-aim ИЛИ wall-snap) и отменяют активный aim перед стартом нового. До правки на стыке brush+single-point ошибка проходила — игрок мог «носить две постройки в руке».
+
 ### 7.3 Решённые ошибки
 
 | # | Ошибка | Причина | Исправление |
@@ -4091,6 +4185,8 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 - **Mode label** — под кнопкой журнала; виден только при ALARM (красный «⚠ тревога [V→C сброс]»). Реактивно через `collection_mode_changed`. Дополняет gatherer-card как «глобальный alert».
 
 **Экспорты:** `camp_path: NodePath`. Цикл: `_process` раз в `UPDATE_INTERVAL=0.25с` обновляет базовые счётчики (гном/лучник/палатки). Squad XP, ресурсы, бэйдж, mode — реактивные сигналы.
+
+**Equip-гейт в BUILD_AIM (2026-06-04).** `_equip_slot(slot_idx)` (раз)решает переключение active_category только если `hand.active_category ≠ Hand.Category.BUILD_AIM`. Нажатие 1-7 во время постройки (частокол brush / ArcherPost direction / WallGate wall-snap) теперь silent no-op вместо «сбрасываем превью на боевую категорию и теряем контекст постройки». Симметрично с уже существующим гейтом в `HandSuper._handle_input` (Space глушится в SUPER). Esc по-прежнему отменяет постройку штатным путём через HandBuildAim.
 
 ### 9.4. JournalPanel — `scripts/journal_panel.gd` (autoload)
 
