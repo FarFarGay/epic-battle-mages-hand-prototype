@@ -207,10 +207,15 @@ var fog_reveal_radius: float = 12.0
 @export_group("")
 
 @export_group("Death (механическая смерть)")
-## Радиус взрыва корпуса (AoeVisual.spawn_explosion).
+## Радиус взрыва корпуса (AoeVisual.spawn_explosion + урон по скелетам).
 @export var death_explosion_radius: float = 6.0
 ## Радиус расходящейся ударной волны (shockwave-кольцо).
 @export var death_shockwave_radius: float = 9.0
+## Урон взрыва корпуса по СКЕЛЕТАМ в радиусе (в гуще боя смерть меха расчищает
+## толпу — награда за победу в дуэли). 0 = без урона. Башню/гномов НЕ задевает.
+@export var death_explosion_damage: float = 120.0
+## Отброс скелетов взрывом корпуса (м/с). 0 = без отброса.
+@export var death_explosion_knockback: float = 12.0
 @export_group("")
 
 @export_group("Telemetry (поведение игрока)")
@@ -231,6 +236,18 @@ const PLAYER_PROJECTILE_GROUP := &"player_projectile"
 ## (ITEMS). Башню (ACTORS) и стены НЕ избегаем — башня цель, через стены и так не
 ## сталкивается по своей маске.
 const AVOID_MASK: int = Layers.CAMP_OBSTACLE | Layers.ITEMS
+
+## AOE-маска атак меха (фаербол/Шквал/ракеты): как у hostile-снаряда
+## (башня/лагерь/стены/гномы) ПЛЮС ENEMIES — взрыв задевает и СКЕЛЕТОВ. В толпе
+## это обогащает бой (мех бьёт «как башня» — её фаербол тоже ловит скелетов через
+## ENEMIES в MASK_HAND_SLAM). Flight-маска (что детонирует снаряд в полёте)
+## остаётся БЕЗ ENEMIES — иначе снаряд рвался бы о первого скелета по пути, не
+## долетая до прицела; AOE на импакте всё равно достаёт ближних скелетов.
+const MECH_AOE_MASK: int = Layers.MASK_HOSTILE_PROJECTILE | Layers.ENEMIES
+
+## Кого задевает урон взрыва корпуса при смерти: только скелетов (ENEMIES + резерв
+## COLD_ENEMY под FAR-LOD). НЕ башню/гномов — это награда за победу, не наказание.
+const DEATH_AOE_MASK: int = Layers.ENEMIES | Layers.COLD_ENEMY
 var _dodge_cd: float = 0.0
 ## Снап-выстрел запрошен (после уворота) — укорачивает следующий windup.
 var _snap_next: bool = false
@@ -575,12 +592,13 @@ func _launch_one_missile(target: Node3D) -> void:
 		missile_turn_rate,
 		missile_damage,
 		missile_radius,
-		Layers.MASK_HOSTILE_PROJECTILE,
+		MECH_AOE_MASK,  # AOE задевает башню/лагерь/стены/гномов И скелетов (ENEMIES)
 		fireball_knockback_force,
 		fireball_knockback_lift,
 		fireball_knockback_duration,
 	)
 	fb.setup_fog_pulse(10.0)
+	# Flight-маска БЕЗ ENEMIES — ракета не рвётся о скелетов по пути, ведёт башню.
 	fb.set_collide_in_flight(true, Layers.MASK_HOSTILE_PROJECTILE)
 	_missiles.append({"m": fb, "t": missile_lifetime})
 
@@ -670,12 +688,13 @@ func _fire_one(aim_point: Vector3, radius: float = -1.0) -> void:
 		ballistics.homing_turn_rate,
 		fireball_damage,
 		use_radius,
-		Layers.MASK_HOSTILE_PROJECTILE,
+		MECH_AOE_MASK,  # AOE задевает башню/лагерь/стены/гномов И скелетов (ENEMIES)
 		fireball_knockback_force,
 		fireball_knockback_lift,
 		fireball_knockback_duration,
 	)
 	fb.setup_fog_pulse(12.0)
+	# Flight-маска БЕЗ ENEMIES — снаряд не рвётся о скелетов, долетает до прицела.
 	fb.set_collide_in_flight(true, Layers.MASK_HOSTILE_PROJECTILE)
 
 
@@ -901,6 +920,20 @@ func _on_destroyed() -> void:
 		return
 	AoeVisual.spawn_explosion(root, global_position + Vector3.UP * 2.0, death_explosion_radius)
 	AoeVisual.spawn_expanding_ring(root, global_position, death_shockwave_radius, 0.6, telegraph_lock_color, 0.3)
+	# Урон по СКЕЛЕТАМ в радиусе: смерть меха детонирует и расчищает толпу вокруг
+	# (награда за дуэль). Башню/гномов не трогает (DEATH_AOE_MASK = только ENEMIES).
+	if death_explosion_damage > 0.0:
+		AoeDamage.apply_uniform(get_tree(), global_position, death_explosion_radius,
+			DEATH_AOE_MASK, death_explosion_damage, death_explosion_knockback, 0.3)
+		# FAR-LOD скелеты вне broad-phase (collision_layer=0) — догоняем group-scan'ом
+		# (тот же паттерн, что в Mine/Fireball._explode).
+		var r_sq: float = death_explosion_radius * death_explosion_radius
+		for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+			var skel := n as Skeleton
+			if skel == null or skel.get_lod_level() != Skeleton.LodLevel.FAR:
+				continue
+			if skel.global_position.distance_squared_to(global_position) <= r_sq:
+				Damageable.try_damage(skel, death_explosion_damage)
 
 
 ## Override SkeletonArcher._ai_step: база стоит на месте в WINDUP/COOLDOWN
