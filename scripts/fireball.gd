@@ -84,6 +84,13 @@ var _burn_duration: float = 3.0
 # (общая скорость с spark-частицами).
 var _fog_pulse_max_radius: float = -1.0
 
+## Взрываться при пересечении объекта по пути (а не только у точки цели).
+## Включается через set_collide_in_flight. Луч по _flight_collision_mask из
+## прошлой позиции в новую каждый кадр → взрыв в точке первого попадания.
+var _collide_in_flight: bool = false
+## Маска «преграды» для столкновения в полёте (см. set_collide_in_flight).
+var _flight_collision_mask: int = 0
+
 
 ## Свойство для FogOfWar.FOG_REVEAL_GROUP — в полёте снаряд светит вокруг,
 ## рассеивая туман. История: 14→26→40→55→32→8м. Концепция эволюционировала:
@@ -172,6 +179,16 @@ func setup_fog_pulse(max_radius: float) -> void:
 	_fog_pulse_max_radius = max_radius
 
 
+## Включает столкновение в полёте: снаряд взрывается на первом объекте по пути,
+## а не только у точки цели. flight_mask — что СЧИТАЕТСЯ преградой (отдельно от
+## _explode_mask = что задевает AOE): для меха — MASK_HOSTILE_PROJECTILE (башня/
+## стены/лагерь), для игрока — MASK_FRIENDLY_PROJECTILE (враги/земля, НЕ свои —
+## иначе рванул бы сразу в гуще своих у башни). flight_mask<0 → берём _explode_mask.
+func set_collide_in_flight(enabled: bool, flight_mask: int = -1) -> void:
+	_collide_in_flight = enabled
+	_flight_collision_mask = flight_mask if flight_mask >= 0 else _explode_mask
+
+
 ## Опциональный конфиг остаточного горения после взрыва. Если scene не
 ## передана (или null) — burn не спавнится. Параметры BurnPatch.setup() —
 ## один-в-один.
@@ -181,6 +198,13 @@ func setup_burn(scene: PackedScene, radius: float, damage_per_tick: float, tick_
 	_burn_damage_per_tick = damage_per_tick
 	_burn_tick_interval = tick_interval
 	_burn_duration = duration
+
+
+## Live-перенацеливание: обновляет точку, к которой тянет homing-фаза. Дефолтный
+## фаербол это НЕ зовёт (летит в зафиксированную точку каста) — нужно для
+## «вдогонку»-ракет меха, которые ведут движущуюся башню каждый кадр.
+func retarget(pos: Vector3) -> void:
+	_target_pos = pos
 
 
 func _physics_process(delta: float) -> void:
@@ -193,6 +217,9 @@ func _physics_process(delta: float) -> void:
 		# исход.
 		queue_free()
 		return
+
+	# Позиция до движения — для сегмент-луча столкновения в полёте.
+	var prev_pos: Vector3 = global_position
 
 	if _phase == Phase.BOOST:
 		# Стартовая дуга: gravity пригибает velocity.y. По истечении
@@ -234,6 +261,12 @@ func _physics_process(delta: float) -> void:
 		_velocity = new_dir * _current_speed
 		global_position += _velocity * delta
 
+	# Столкновение в полёте: луч из прошлой позиции в новую. Первое попадание
+	# по _flight_collision_mask → взрыв в точке контакта. Проверяем ДО proximity/
+	# y-pierce, чтобы преграда на линии огня детонировала снаряд раньше цели.
+	if _collide_in_flight and _check_flight_collision(prev_pos, global_position):
+		return
+
 	# Ориентация: local +X по направлению velocity. Капля (scale.x>1) и
 	# хвост-партиклы спавнятся через `local_coords=false` в world space —
 	# ориентация нужна только для визуала самого ядра.
@@ -265,6 +298,27 @@ func _orient_along_velocity() -> void:
 	tx_basis.y = up
 	tx_basis.z = right
 	global_transform.basis = tx_basis
+
+
+## Луч-сегмент из from в to по _flight_collision_mask. На попадании — взрыв в
+## точке контакта (origin в _explode клампится к hit.y через _target_pos.y).
+## Возвращает true если детонировал.
+func _check_flight_collision(from: Vector3, to: Vector3) -> bool:
+	if from.distance_squared_to(to) < 1e-8:
+		return false
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return false
+	var q := PhysicsRayQueryParameters3D.create(from, to, _flight_collision_mask)
+	q.collide_with_bodies = true
+	q.collide_with_areas = false
+	var hit: Dictionary = space.intersect_ray(q)
+	if hit.is_empty():
+		return false
+	global_position = hit.position
+	_target_pos.y = hit.position.y
+	_explode()
+	return true
 
 
 func _xz_distance_sq(a: Vector3, b: Vector3) -> float:

@@ -207,6 +207,7 @@ func _launch_one() -> void:
 		push_error("[Hand:Spell:Firestorm] fireball_scene не инстанцируется как Fireball")
 		return
 	_effects_root.add_child(fireball)
+	fireball.add_to_group(&"player_projectile")  # EnemyMech уклоняется от снарядов игрока
 	fireball.setup(
 		launch_pos,
 		target_pos,

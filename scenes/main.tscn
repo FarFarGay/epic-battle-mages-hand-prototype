@@ -23,6 +23,7 @@
 [ext_resource type="PackedScene" path="res://scenes/fog_of_war.tscn" id="21_fog"]
 [ext_resource type="PackedScene" path="res://scenes/harvester.tscn" id="22_harvester"]
 [ext_resource type="PackedScene" path="res://scenes/archer_group.tscn" id="23_archer_group"]
+[ext_resource type="PackedScene" path="res://scenes/enemy_mech.tscn" id="24_mech"]
 [ext_resource type="PackedScene" uid="uid://c5tyv5sieeeom" path="res://scenes/blocker_wall.tscn" id="25_og1vs"]
 [ext_resource type="PackedScene" path="res://scenes/dungeon_zone.tscn" id="26_2wyq8"]
 [ext_resource type="Script" uid="uid://s8qcnobw8yjo" path="res://scripts/main_setup.gd" id="27_main_setup"]
@@ -116,6 +117,7 @@ skeleton_scene = ExtResource("7")
 giant_scene = ExtResource("7_giant")
 giant_thrower_scene = ExtResource("7_thrower")
 archer_group_scene = ExtResource("23_archer_group")
+mech_scene = ExtResource("24_mech")
 
 [node name="Modules" type="Node3D" parent="." unique_id=1539843594]
 

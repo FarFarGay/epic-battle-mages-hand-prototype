@@ -98,6 +98,7 @@ func _perform_cast() -> void:
 		return
 	bolt.impact_radius = p_impact_radius
 	_effects_root.add_child(bolt)
+	bolt.add_to_group(&"player_projectile")  # EnemyMech уклоняется от снарядов игрока
 	bolt.setup(launch_pos, target_pos, p_damage, _effects_root)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Spell:Spark] искра @ (%.1f, %.1f) damage=%.0f" % [target_pos.x, target_pos.z, p_damage])

@@ -140,6 +140,7 @@ func _perform_cast() -> void:
 		AoeVisual.spawn_ground_ring(_effects_root, target_pos, p_radius, warning_duration, warning_color)
 
 	_effects_root.add_child(bolt)
+	bolt.add_to_group(&"player_projectile")  # EnemyMech уклоняется от снарядов игрока
 	bolt.setup(
 		launch_pos,
 		target_pos,

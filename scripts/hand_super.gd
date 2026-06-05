@@ -382,6 +382,7 @@ func _spawn_carrier(target_pos: Vector3) -> void:
 	# требует ноду в SceneTree (иначе returns Transform3D() и позиция не ставится,
 	# warning «!is_inside_tree() is true»).
 	_effects_root.add_child(carrier)
+	carrier.add_to_group(&"player_projectile")  # EnemyMech уклоняется от снарядов игрока
 	carrier.setup(
 		launch_pos,
 		burst_pos,
@@ -477,6 +478,7 @@ func _spawn_one_payload(burst_position: Vector3, ground_target: Vector3) -> void
 	if fireball == null:
 		return
 	_effects_root.add_child(fireball)
+	fireball.add_to_group(&"player_projectile")  # EnemyMech уклоняется от снарядов игрока
 	# Per-payload jitter: разные accel/max_speed дают разные времена полёта
 	# и траектории — импакты «вразнобой» даже если delay одинаковый.
 	var jitter_lo: float = 1.0 - payload_speed_jitter

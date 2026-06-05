@@ -1221,7 +1221,7 @@ func _refresh_super_charge(current: float, maximum: float) -> void:
 	_super_bar.max_value = maxf(maximum, 1.0)
 	_super_bar.value = clampf(current, 0.0, maximum)
 	if current >= maximum:
-		_super_label.text = "ГОТОВО (Space)"
+		_super_label.text = "ГОТОВО (E)"
 		_super_label.add_theme_color_override("font_color", Color(1.0, 1.0, 0.4, 1.0))
 	else:
 		_super_label.text = "ВЕЛИКАЯ СИЛА %d/%d" % [int(round(current)), int(round(maximum))]

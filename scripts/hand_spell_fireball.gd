@@ -181,6 +181,9 @@ func _perform_cast() -> void:
 		AoeVisual.spawn_ground_ring(_effects_root, target_pos, p_radius, warning_duration, warning_color)
 
 	_effects_root.add_child(fireball)
+	# Метка «снаряд игрока» — EnemyMech сканит эту группу и уклоняется от
+	# летящего фаербола (реактивный интеллект, скелеты так не умеют).
+	fireball.add_to_group(&"player_projectile")
 	fireball.setup(
 		launch_pos,
 		target_pos,
@@ -209,6 +212,10 @@ func _perform_cast() -> void:
 	# его шоты используют дефолт (_radius × 7 ≈ 10м), серия не сливается в
 	# гигантскую засветку.
 	fireball.setup_fog_pulse(12.0)
+	# Столкновение в полёте: детонирует на первом враге/земле по пути
+	# (MASK_FRIENDLY_PROJECTILE — НЕ на своих, иначе рванул бы в гуще гномов у
+	# башни). AOE по взрыву по-прежнему задевает и своих (explode_mask).
+	fireball.set_collide_in_flight(true, Layers.MASK_FRIENDLY_PROJECTILE)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Spell:Fireball] каст @ target=(%.1f, %.1f, %.1f)" % [target_pos.x, target_pos.y, target_pos.z])
 	spell_cast.emit(&"fireball", target_pos)

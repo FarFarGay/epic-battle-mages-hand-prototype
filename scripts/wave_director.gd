@@ -57,6 +57,11 @@ enum DayNight { DAY, NIGHT }
 ## и другой (счётчики независимы, не блокируют друг друга). 0 = выключено.
 @export var thrower_every_n_waves: int = 4
 
+## Сцена вражеского меха ([EnemyMech]) — естественный враг башни (бой мехов):
+## крупный, быстрый, бьёт тяжёлым прицельным снарядом по Tower с дистанции.
+## Пока спавнится ТОЛЬКО читом cheat_spawn_mech; авто-спавн в волнах — позже.
+@export var mech_scene: PackedScene
+
 @export_group("Day/Night cycle")
 ## Длительность дня в секундах. День = «безопасное окно»: POI-волны выключены
 ## полностью (см. [day_poi_waves_enabled]), фон не растёт. Игрок может
@@ -275,8 +280,12 @@ func _ready() -> void:
 	# Автостарт кампании при «Начать игру» (StartMenu взвёл MatchConfig.
 	# match_started=true перед reload). Без флага молчим — первый запуск
 	# игры остаётся «спокойным» до клика на меню.
+	# call_deferred: _ready ещё в фазе setup'а дерева — синхронный спавн врагов
+	# через add_child тут падает («Parent node is busy setting up children»),
+	# инстансы текут (RID-leak на выходе). Откладываем старт на конец кадра,
+	# когда сцена полностью в дереве.
 	if MatchConfig.match_started:
-		_start_campaign()
+		_start_campaign.call_deferred()
 
 
 ## Лениво собирает POI через группу [QuestActor.POI_GROUP]. Группа содержит
@@ -485,6 +494,16 @@ func cheat_spawn_giant_thrower() -> void:
 		push_warning("[WaveDirector] cheat_spawn_giant_thrower: giant_thrower_scene не задан в инспекторе")
 		return
 	_cheat_spawn_enemy(giant_thrower_scene, "каменщик", true)
+
+
+## Спавн вражеского меха ([EnemyMech]) на лету. Случайная live SpawnZone,
+## forced_target = Tower. Мех сам целит башню (override _resolve_target), но
+## assign_tower_target=true даёт корректный forced_target на всякий случай.
+func cheat_spawn_mech() -> void:
+	if mech_scene == null:
+		push_warning("[WaveDirector] cheat_spawn_mech: mech_scene не задан в инспекторе")
+		return
+	_cheat_spawn_enemy(mech_scene, "мех", true)
 
 
 ## Спавн группы лучников (ArcherGroup, default 4 шт.) в случайной SpawnZone.

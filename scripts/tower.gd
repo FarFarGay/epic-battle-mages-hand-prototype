@@ -49,6 +49,19 @@ signal mana_changed(current: float, maximum: float)
 ## refresh'им knockback каждый физкадр.
 @export var enemy_push_duration: float = 0.2
 
+@export_group("Dash (рывок, Space)")
+## Скорость броска (м/с) — заметно выше move_speed. Рывок перекрывает обычное
+## движение на dash_duration.
+@export var dash_speed: float = 22.0
+## Длительность активной фазы рывка (сек). dash_speed × dash_duration ≈ путь
+## (22 × 0.24 ≈ 5.3м).
+@export var dash_duration: float = 0.24
+## Кулдаун между рывками (сек).
+@export var dash_cooldown: float = 0.8
+## Трейл: спавнить after-image-призраки во время рывка. Сам визуал рывка (наклон/
+## стретч/призраки) — общий с врагом-мехом, см. [DashFx] (тюнинг там).
+@export var dash_trail_enabled: bool = true
+
 @export_group("")
 ## Высота, ниже которой считаем что башня провалилась под карту.
 @export var fall_threshold: float = -10.0
@@ -57,6 +70,19 @@ signal mana_changed(current: float, maximum: float)
 var _was_on_floor: bool = true
 var _last_input_dir: Vector2 = Vector2.ZERO
 var _was_stuck: bool = false
+## Рывок (Space): остаток активной фазы, кулдаун, зафиксированное направление.
+var _dash_timer: float = 0.0
+var _dash_cd: float = 0.0
+var _dash_dir: Vector2 = Vector2.ZERO
+## Сглаженная интенсивность dash-визуала (наклон/стретч): плавно 0↔1 — нет рывка
+## в самом эффекте при старте/конце рывка. Таймер спавна призраков трейла.
+var _dash_fx: float = 0.0
+var _dash_ghost_t: float = 0.0
+## Замедление от вражеского темпорального поля (SlowField): фактор скорости (1 =
+## норма, <1 = медленнее) и время действия (мс). Сильнейшее перекрывает, пока
+## активно; рефрешится полем каждый тик, пока башня внутри.
+var _slow_factor: float = 1.0
+var _slow_until_msec: int = 0
 # Item -> "push" | "block": набор Item'ов, с которыми сейчас контакт.
 # Используется для логов фронт-перехода (старт/смена/конец контакта).
 var _contacts_last: Dictionary = {}
@@ -106,7 +132,9 @@ func _ready() -> void:
 		# (1.5 Гц) даёт «медленный шаг» здания.
 		_motion_fx.bob_amplitude = 0.04
 		_motion_fx.bob_frequency = 1.5
-		_motion_fx.stretch_factor = 0.04
+		# Заметнее вытягивается при движении (запрос на «импакт»); dash добавляет
+		# сверху свой сильный стретч/наклон (см. _process).
+		_motion_fx.stretch_factor = 0.09
 		_motion_fx.ss_response = 4.5
 		_motion_fx.speed_reference = move_speed
 		_motion_fx.reset(global_position)
@@ -153,12 +181,42 @@ func try_consume_mana(amount: float) -> bool:
 	return true
 
 
+## Замедление от вражеского темпорального поля (SlowField зовёт каждый тик, пока
+## башня внутри). factor: 1 = норма, 0.45 ≈ «вдвое медленнее». Сильнейшее (меньший
+## factor) перекрывает, пока активно; until продлевается. Скейлит ходьбу И рывок
+## (см. _physics_process). На мёртвой башне — no-op.
+func apply_movement_slow(factor: float, duration: float) -> void:
+	if _dying:
+		return
+	var now: int = Time.get_ticks_msec()
+	var f: float = clampf(factor, 0.05, 1.0)
+	if now < _slow_until_msec:
+		_slow_factor = minf(_slow_factor, f)
+	else:
+		_slow_factor = f
+	_slow_until_msec = maxi(_slow_until_msec, now + int(duration * 1000.0))
+
+
 func _process(delta: float) -> void:
 	if _motion_fx == null or _visual_root == null:
 		return
 	var fx: Dictionary = _motion_fx.tick(global_position, delta)
+	var vbasis: Basis = _visual_base_basis * (fx["basis"] as Basis)
+	# Dash-juice (общий с врагом-мехом, см. DashFx): наклон вперёд + вытягивание
+	# вдоль рывка поверх motion_fx. _dash_fx плавно 0↔1 (нет щелчка). World-space
+	# (башня не вращается) — домножаем слева.
+	var target_fx: float = 1.0 if _dash_timer > 0.0 else 0.0
+	_dash_fx = lerpf(_dash_fx, target_fx, 1.0 - exp(-DashFx.FX_RATE * delta))
+	var dir: Vector3 = Vector3(_dash_dir.x, 0.0, _dash_dir.y)
+	vbasis = DashFx.dash_basis(dir, _dash_fx) * vbasis
 	_visual_root.position.y = _visual_base_y + (fx["bob_y"] as float)
-	_visual_root.basis = _visual_base_basis * (fx["basis"] as Basis)
+	_visual_root.basis = vbasis
+	# Трейл: призраки с интервалом, пока идёт рывок.
+	if _dash_fx > 0.005 and dash_trail_enabled:
+		_dash_ghost_t -= delta
+		if _dash_ghost_t <= 0.0:
+			_dash_ghost_t = DashFx.GHOST_INTERVAL
+			DashFx.spawn_ghost(get_tree().current_scene, _mesh, dir)
 
 
 func _physics_process(delta: float) -> void:
@@ -179,9 +237,36 @@ func _physics_process(delta: float) -> void:
 	input_dir.x = Input.get_axis("move_left", "move_right")
 	input_dir.y = Input.get_axis("move_forward", "move_back")
 	input_dir = input_dir.normalized()
+	# Запоминаем последнее направление движения — для рывка «стоя».
+	if input_dir != Vector2.ZERO:
+		_last_input_dir = input_dir
 
-	velocity.x = input_dir.x * move_speed
-	velocity.z = input_dir.y * move_speed
+	# Рывок (Space): короткий бросок с кулдауном в направлении движения (или в
+	# последнее, если стоим). Перекрывает обычную скорость на dash_duration.
+	_dash_cd = maxf(_dash_cd - delta, 0.0)
+	if _dash_timer <= 0.0 and _dash_cd <= 0.0 and not _dying and Input.is_action_just_pressed("dash"):
+		var ddir := input_dir if input_dir != Vector2.ZERO else _last_input_dir
+		if ddir != Vector2.ZERO:
+			_dash_dir = ddir
+			_dash_timer = dash_duration
+			_dash_cd = dash_cooldown
+			_dash_ghost_t = 0.0  # первый призрак трейла — сразу
+
+	# Замедление от вражеского темпорального поля (SlowField): скейлит И ходьбу,
+	# И рывок (рывок «ослаблен» — короче, но не выключен). Истёкло → factor=1.
+	var slow: float = 1.0
+	if Time.get_ticks_msec() < _slow_until_msec:
+		slow = _slow_factor
+	else:
+		_slow_factor = 1.0
+
+	if _dash_timer > 0.0:
+		_dash_timer -= delta
+		velocity.x = _dash_dir.x * dash_speed * slow
+		velocity.z = _dash_dir.y * dash_speed * slow
+	else:
+		velocity.x = input_dir.x * move_speed * slow
+		velocity.z = input_dir.y * move_speed * slow
 
 	# Сохраняем скорость до слайда — после move_and_slide компонент в сторону
 	# препятствия обнулится, и факт "шли в предмет" будет потерян.

@@ -176,6 +176,7 @@ func _launch_one_projectile(landing: Vector3) -> void:
 		push_error("[Hand:Spell:MineScatter] projectile_scene не инстанцируется как Fireball")
 		return
 	_effects_root.add_child(fireball)
+	fireball.add_to_group(&"player_projectile")  # летящий carrier — EnemyMech уклоняется (саму Mine не тегаем)
 	fireball.setup(
 		launch_pos,
 		landing,

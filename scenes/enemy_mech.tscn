@@ -1,0 +1,52 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy_mech.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/aoe_arrow.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/fireball.tscn" id="3"]
+
+[sub_resource type="BoxShape3D" id="BoxShape_mech"]
+size = Vector3(2.2, 4.2, 2.2)
+
+[sub_resource type="BoxMesh" id="BoxMesh_mech"]
+size = Vector3(2.2, 4.2, 2.2)
+
+[node name="EnemyMech" type="CharacterBody3D"]
+collision_layer = 16
+collision_mask = 2087
+script = ExtResource("1")
+hp = 400.0
+move_speed = 7.0
+knockback_resistance = 0.5
+attack_range = 24.0
+attack_damage = 0.0
+attack_cooldown = 2.0
+attack_windup = 1.0
+attack_windup_point_blank = 1.0
+attack_radius_max = 24.0
+attack_radius_min = 14.0
+vision_radius = 60.0
+arrow_damage_min = 60.0
+arrow_damage_max = 85.0
+arrow_speed = 26.0
+arrow_spawn_offset = Vector3(0, 2.4, 0)
+arrow_inaccuracy_radius = 0.6
+shatter_fragment_count = 16
+shatter_lifetime = 3.0
+shatter_color = Color(0.32, 0.34, 0.4, 1)
+debug_log = true
+arrow_scene = ExtResource("2")
+fireball_scene = ExtResource("3")
+fireball_damage = 100.0
+fireball_radius = 5.5
+has_telegraph = false
+telegraph_radius = 3.0
+telegraph_color = Color(0.35, 0.7, 1.0, 0.9)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.1, 0)
+shape = SubResource("BoxShape_mech")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.1, 0)
+mesh = SubResource("BoxMesh_mech")
+cast_shadow = 0
