@@ -83,6 +83,11 @@ var _dash_ghost_t: float = 0.0
 ## активно; рефрешится полем каждый тик, пока башня внутри.
 var _slow_factor: float = 1.0
 var _slow_until_msec: int = 0
+## Knockback от тарана врага-меха: вектор отброса (XZ) и время действия (мс). Пока
+## активен — перебивает ввод и рывок (башню отбрасывает, управление возвращается
+## по затуханию). Зеркало Enemy-knockback, но на игрока.
+var _kb_vel: Vector3 = Vector3.ZERO
+var _kb_until_msec: int = 0
 # Item -> "push" | "block": набор Item'ов, с которыми сейчас контакт.
 # Используется для логов фронт-перехода (старт/смена/конец контакта).
 var _contacts_last: Dictionary = {}
@@ -197,6 +202,21 @@ func apply_movement_slow(factor: float, duration: float) -> void:
 	_slow_until_msec = maxi(_slow_until_msec, now + int(duration * 1000.0))
 
 
+## Отброс от тарана врага-меха. vel — горизонтальная скорость отброса (м/с),
+## duration — сколько перебивать управление (сек). На мёртвой башне — no-op.
+func apply_knockback(vel: Vector3, duration: float) -> void:
+	if _dying:
+		return
+	_kb_vel = Vector3(vel.x, 0.0, vel.z)
+	_kb_until_msec = Time.get_ticks_msec() + int(duration * 1000.0)
+
+
+## Сейчас ли башня под замедлением темпорального поля (для меха: «окно наказания»
+## — пока поймана, стреляем бодрее).
+func is_movement_slowed() -> bool:
+	return Time.get_ticks_msec() < _slow_until_msec
+
+
 func _process(delta: float) -> void:
 	if _motion_fx == null or _visual_root == null:
 		return
@@ -252,21 +272,29 @@ func _physics_process(delta: float) -> void:
 			_dash_cd = dash_cooldown
 			_dash_ghost_t = 0.0  # первый призрак трейла — сразу
 
-	# Замедление от вражеского темпорального поля (SlowField): скейлит И ходьбу,
-	# И рывок (рывок «ослаблен» — короче, но не выключен). Истёкло → factor=1.
-	var slow: float = 1.0
-	if Time.get_ticks_msec() < _slow_until_msec:
-		slow = _slow_factor
+	# Knockback от тарана меха перебивает всё: пока активен — башню отбрасывает
+	# (ввод/рывок игнорируются), сила затухает, потом управление возвращается.
+	if Time.get_ticks_msec() < _kb_until_msec:
+		velocity.x = _kb_vel.x
+		velocity.z = _kb_vel.z
+		_dash_timer = maxf(_dash_timer - delta, 0.0)  # не копим рывок под отбросом
+		_kb_vel = _kb_vel.lerp(Vector3.ZERO, 1.0 - exp(-8.0 * delta))
 	else:
-		_slow_factor = 1.0
+		# Замедление от вражеского темпорального поля (SlowField): скейлит И ходьбу,
+		# И рывок (рывок «ослаблен» — короче, но не выключен). Истёкло → factor=1.
+		var slow: float = 1.0
+		if Time.get_ticks_msec() < _slow_until_msec:
+			slow = _slow_factor
+		else:
+			_slow_factor = 1.0
 
-	if _dash_timer > 0.0:
-		_dash_timer -= delta
-		velocity.x = _dash_dir.x * dash_speed * slow
-		velocity.z = _dash_dir.y * dash_speed * slow
-	else:
-		velocity.x = input_dir.x * move_speed * slow
-		velocity.z = input_dir.y * move_speed * slow
+		if _dash_timer > 0.0:
+			_dash_timer -= delta
+			velocity.x = _dash_dir.x * dash_speed * slow
+			velocity.z = _dash_dir.y * dash_speed * slow
+		else:
+			velocity.x = input_dir.x * move_speed * slow
+			velocity.z = input_dir.y * move_speed * slow
 
 	# Сохраняем скорость до слайда — после move_and_slide компонент в сторону
 	# препятствия обнулится, и факт "шли в предмет" будет потерян.

@@ -53,9 +53,9 @@ var fog_reveal_radius: float = 12.0
 ## Сила отруливания от препятствий (× move_speed). Подбирается: мало — задевает,
 ## много — нервно шарахается.
 @export var avoid_strength: float = 1.0
-## Спринт-преследование: множитель скорости, когда башня ДАЛЬШЕ missile_max_range.
-## Закрывает «бублик» — безопасную парковку за капом ракет (мех не шлёт туда
-## артиллерию, но и не даёт спокойно стоять — догоняет). 1.0 = без спринта.
+## Спринт-преследование: множитель скорости, когда башня ДАЛЬШЕ kite_max_range.
+## Закрывает «бублик» — безопасную парковку за зоной связки (мех не шлёт туда
+## ничего, но и не даёт спокойно стоять — догоняет). 1.0 = без спринта.
 @export var pursuit_speed_mult: float = 1.7
 @export_group("")
 
@@ -99,7 +99,22 @@ var fog_reveal_radius: float = 12.0
 @export_group("")
 
 @export_group("Attacks (паттерн)")
-## Веса выбора атаки (взвешенный рандом каждый цикл). 0 = приём не используется.
+## Глобальный «бит»-дирижёр: после ЛЮБОЙ атаки (ближняя/залп/поле) — общая пауза
+## (сек), пока которой НИКТО не атакует. Сериализует три подсистемы в один
+## читаемый ритм «телеграф → атака → вдох». Главный рычаг плотности боя.
+@export var global_attack_cooldown: float = 3.0
+## Хореография по дистанции: ближе kite_min_range — ближняя фаза (чередование
+## AIMED↔Шквал); в [kite_min..kite_max] — связка Поле→Ракеты («поймал→добил»);
+## дальше kite_max — спринт-преследование (мех сближается).
+@export var kite_min_range: float = 22.0
+@export var kite_max_range: float = 50.0
+## Пауза после полной связки Поле→Ракеты перед следующей (сек).
+@export var kite_combo_cooldown: float = 3.0
+## «Окно наказания»: пока башня поймана замедлением поля — бит умножается на это
+## (бодрее стреляет), и мех долбит ракетами подряд без перезахода в поле. <1 = чаще.
+@export var frenzy_beat_mult: float = 0.45
+## (Ближняя фаза чередует AIMED/Шквал детерминированно; веса оставлены как
+## выключатели приёма — 0 убирает его из чередования.)
 @export var weight_aimed: float = 1.0
 @export var weight_spread: float = 0.6
 ## Веер: число фаерболов и шаг между точками (перпендикулярно линии огня).
@@ -121,15 +136,8 @@ var fog_reveal_radius: float = 12.0
 ## дальности и кайтит, мех пускает залп слабо-самонаводящихся ракет, которые
 ## ведут движущуюся башню. Закрывает дыру «воюю на 40м, где он не достаёт».
 @export var missiles_enabled: bool = true
-## С какой дистанции пускать вдогонку (≈ за attack_radius_max — там, где FSM молчит).
-@export var missile_min_range: float = 24.0
-## ВЕРХНИЙ предел: дальше мех не шлёт ракеты, а СБЛИЖАЕТСЯ (иначе лупит артиллерией
-## через всю карту, не доходя). Окно ракет = [min, max] — это «средняя» зона кайта.
-@export var missile_max_range: float = 45.0
-## Ракет в залпе.
+## Ракет в залпе. Залп вызывается связкой Поле→Ракеты (см. kite-комбо), не сам.
 @export var missile_count: int = 3
-## Кулдаун залпа (сек).
-@export var missile_cooldown: float = 3.0
 ## Телеграф-лок на башне перед залпом (сек).
 @export var missile_warn: float = 0.5
 ## Интервал «пуск-пуск-пуск» внутри залпа (сек).
@@ -152,23 +160,50 @@ var fog_reveal_radius: float = 12.0
 ## достреливают пойманного. Само поле урона НЕ наносит. Главный рычаг баланса —
 ## ловим мобильность дебафом, а не гонкой урона.
 @export var field_enabled: bool = true
-## Кулдаун постановки поля (сек) — редкий «капкан», не спам.
-@export var field_cooldown: float = 6.0
-## Телеграф перед формированием поля (сек) — окно уйти.
-@export var field_warn: float = 0.7
-## Радиус зоны (м).
-@export var field_radius: float = 6.0
+## Заряд-пузырь: летит на игрока с homing'ом (как ракета, но медленнее/слабее), НЕ
+## метит зону на земле. Догнал → лопается зоной; не успел за lifetime — гаснет.
+@export var field_charge_speed: float = 11.0
+## Поворотливость homing'а заряда (низкая — пузырь дугой, уворачиваемый рывком).
+@export var field_charge_turn: float = 2.5
+## Время жизни заряда (сек). Не догнал за это — гаснет без эффекта (увернулся).
+@export var field_charge_lifetime: float = 5.0
+## Радиус «догнал» — на этой дистанции до башни пузырь лопается зоной.
+@export var field_charge_burst_radius: float = 2.5
+## Высота вылета пузыря над мехом (плывёт на этой высоте).
+@export var field_charge_launch_y: float = 1.8
+## Радиус slow-зоны (м), в которую лопается пузырь.
+@export var field_radius: float = 8.0
 ## Сколько живёт поле (сек).
 @export var field_duration: float = 3.0
 ## Фактор замедления внутри (1 = норма, 0.45 ≈ вдвое медленнее — рывок ослаблен).
 @export var field_slow_factor: float = 0.45
 ## Период рефреша замедления (сек).
 @export var field_refresh: float = 0.15
-## Окно дистанции постановки поля (ловит кайтящего на средней/дальней).
-@export var field_min_range: float = 12.0
-@export var field_max_range: float = 50.0
 ## Цвет поля (фиолетово-голубой «застывшее время» — отличен от оранжевых телеграфов).
 @export var field_color: Color = Color(0.55, 0.4, 1.0, 0.85)
+@export_group("")
+
+@export_group("Shockwave (отброс — анти-зажим, МГНОВЕННЫЙ)")
+## Мех — дальнобойный, в ближний бой не лезет. Подполз в УПОР — МГНОВЕННО отброшен
+## (панишинг, без замаха и телеграфа): урон по башне + сильный отброс ПРОЧЬ + глушит
+## управление. Не догоняет — отталкивает. Кулдаун, чтобы не срабатывал каждый кадр.
+@export var shock_enabled: bool = true
+## Дистанция-триггер (горизонтальная, центр-к-центру): игрок ближе — мгновенный
+## отброс. Держим ЗАМЕТНО МЕНЬШЕ attack_radius_min (14м, на котором мех кайтит) —
+## иначе мех бьёт «по краю» со своей же натуральной дистанции (инородно). 10м =
+## «вломился в буфер на ~4м» = реальный зажим.
+@export var shock_trigger_range: float = 10.0
+## Радиус волны (м) — чуть больше триггера, чтобы отброс достал зажавшего.
+@export var shock_radius: float = 11.0
+## Кулдаун между отбросами (сек).
+@export var shock_cooldown: float = 5.0
+## Урон по башне на попадании.
+@export var shock_damage: float = 80.0
+## Отброс башни ПРОЧЬ от меха: скорость (м/с) и длительность (сек) — сильный «пинок».
+@export var shock_knockback_speed: float = 24.0
+@export var shock_knockback_duration: float = 0.45
+## Цвет телеграфа/волны (красно-оранжевый «опасность»).
+@export var shock_color: Color = Color(1.0, 0.3, 0.1, 0.9)
 @export_group("")
 
 @export_group("Death (механическая смерть)")
@@ -228,17 +263,28 @@ var _dash_ghost_t: float = 0.0
 ## Активные ракеты: [{m: Fireball, t: остаток времени ведения}]. Каждый кадр
 ## обновляем их target на текущую позицию башни; по t<=0 перестаём вести.
 var _missiles: Array = []
-var _missile_cd: float = 0.0
 var _missile_warn_timer: float = 0.0
 var _missile_spawn_timer: float = 0.0
 var _missile_salvo_index: int = 0
 var _missile_pending: bool = false
 
-## --- Темпоральное поле (slow-field, анти-мобильность) ---
-var _field_cd: float = 0.0
-var _field_warn_timer: float = 0.0
-var _field_pending: bool = false
-var _field_point: Vector3 = Vector3.ZERO
+## Глобальный бит: общий «вдох» после любой атаки. Пока > 0 — никто не стреляет
+## (ближний windup растягивается до него, kite-комбо ждёт). Сериализует ритм.
+var _global_action_cd: float = 0.0
+## Ближняя фаза: переключатель чередования AIMED↔Шквал (детерминированно).
+var _near_toggle: bool = false
+## Kite-комбо: шаг (0 = следующее Поле, 1 = следующее Ракеты) + пауза после связки.
+var _combo_step: int = 0
+var _combo_cd: float = 0.0
+## Поймана ли башня замедлением прямо сейчас (обновляется в _ai_step) — для frenzy.
+var _target_slowed: bool = false
+
+
+## Текущий «вдох» (бит): короче, пока башня поймана замедлением (frenzy-наказание).
+func _beat() -> float:
+	return global_attack_cooldown * (frenzy_beat_mult if _target_slowed else 1.0)
+## Отброс (анти-зажим, мгновенный): только кулдаун между срабатываниями.
+var _shock_cd: float = 0.0
 
 ## --- Телеметрия боя (поведение игрока) ---
 var _telem_active: bool = false
@@ -257,6 +303,12 @@ var _telem_lateral: int = 0     # боком
 var _telem_cover: int = 0       # LoS до башни перекрыт укрытием
 var _telem_aggro: int = 0       # снаряд игрока рядом с мехом
 var _telem_tower_hp_start: float = -1.0
+## Нагрузка: счётчики атак за бой (ближние AIMED/Шквал, залпы ракет, поля) — для
+## оценки плотности/ритма (атак в минуту, средний промежуток).
+var _telem_atk_near: int = 0
+var _telem_atk_missile: int = 0
+var _telem_atk_field: int = 0
+var _telem_atk_shock: int = 0
 
 ## Shared material всех мехов — один draw-call. Холодный металл с emission'ом
 ## «реактора», отличает от скелетов (beige/фиолет) и гигантов (багряный/камень).
@@ -367,6 +419,11 @@ func _telemetry_report() -> void:
 	print("  укрытие(LoS перекрыт) %.0f%% | напор(снаряд рядом) %.0f%%" % [
 		100.0 * _telem_cover / f, 100.0 * _telem_aggro / f])
 	print("  башня потеряла: %.0f HP" % hp_lost)
+	var atk_total: int = _telem_atk_near + _telem_atk_missile + _telem_atk_field + _telem_atk_shock
+	var per_min: float = 60.0 * float(atk_total) / maxf(_telem_time, 0.01)
+	var gap: float = _telem_time / float(maxi(atk_total, 1))
+	print("  НАГРУЗКА: атак %d (ближние %d / залпы %d / поля %d / отбросы %d) = %.1f/мин, ср.промежуток %.1fс" % [
+		atk_total, _telem_atk_near, _telem_atk_missile, _telem_atk_field, _telem_atk_shock, per_min, gap])
 
 
 ## Целит ТОЛЬКО башню (apex vs apex). В отличие от SkeletonGiantThrower НЕ
@@ -403,6 +460,9 @@ func _on_state_enter(new_state: int) -> void:
 					return
 			if rhythm_jitter > 0.0:
 				_state_timer *= randf_range(1.0 - rhythm_jitter, 1.0 + rhythm_jitter)
+			# Бит-дирижёр: тянем windup минимум до конца общей паузы — ближняя атака
+			# не стартует, пока «вдох» не прошёл (snap-пуниш выше это минует).
+			_state_timer = maxf(_state_timer, _global_action_cd)
 		AttackState.COOLDOWN:
 			if rhythm_jitter > 0.0:
 				_state_timer *= randf_range(1.0 - rhythm_jitter, 1.0 + rhythm_jitter)
@@ -427,15 +487,16 @@ func _perform_strike(target: Node3D) -> void:
 		_:
 			_fire_one(center)
 	_telegraphed_aim = Vector3.INF
+	_global_action_cd = _beat()  # общий «вдох» (короче, если башня поймана замедлением)
+	_telem_atk_near += 1
 	if debug_log and LogConfig.master_enabled:
 		print("[EnemyMech:%s] атака %s" % [name, MechAttack.keys()[_current_attack]])
 
 
 # --- Ракеты «вдогонку» (анти-кайт): дальнобойная подсистема ---
 
-## Каждый кадр: ведём живые ракеты к башне (live-homing) и тикаем кадэнс залпа.
-## Залп стартует, только пока башня дальше missile_min_range (где обычный FSM
-## молчит) — это и наказывает кайт на 40м. Работает параллельно ближнему циклу.
+## Каждый кадр: ведём живые ракеты к башне (live-homing) и крутим ripple текущего
+## залпа. САМ залп стартует не здесь, а из kite-комбо (шаг «добивание»).
 func _tick_missiles(delta: float, target: Node3D) -> void:
 	# 1) Ведём активные ракеты к текущей позиции башни, истёкшие — отпускаем.
 	var i: int = _missiles.size() - 1
@@ -470,16 +531,11 @@ func _tick_missiles(delta: float, target: Node3D) -> void:
 				if _missile_salvo_index >= missile_count:
 					_missile_pending = false
 		return
-	# 3) Кадэнс: новый залп, если башня кайтит за пределом обычной дальности.
-	_missile_cd -= delta
-	var dist: float = global_position.distance_to(target.global_position)
-	if dist >= missile_min_range and dist <= missile_max_range and _missile_cd <= 0.0:
-		_start_missile_salvo(target)
+	# Сам залп НЕ триггерим здесь — его вызывает kite-комбо (Поле→Ракеты).
 
 
 ## Старт залпа: ставим телеграф-лок на башне (warn), дальше ripple-пуск в _tick.
 func _start_missile_salvo(target: Node3D) -> void:
-	_missile_cd = missile_cooldown
 	_missile_pending = true
 	_missile_warn_timer = missile_warn
 	_missile_spawn_timer = 0.0
@@ -529,40 +585,63 @@ func _launch_one_missile(target: Node3D) -> void:
 	_missiles.append({"m": fb, "t": missile_lifetime})
 
 
-# --- Темпоральное поле (slow-field): сетап под добивание ракетами ---
+# --- Kite-комбо: связка Поле→Ракеты (хореография дальней дистанции) ---
 
-## На кулдауне ставит зону в упреждённую точку игрока (с телеграфом-окном уйти).
-## Пойманная башня замедляется → конкурентно летящие ракеты/Шквал достреливают.
-func _tick_field(delta: float, target: Node3D) -> void:
+## На кайт-дистанции [kite_min..kite_max] мех ведёт связку из двух битов:
+##   шаг 0 — Поле (пузырь-капкан),  шаг 1 — залп Ракет по пойманному (добивание).
+## Каждый шаг проходит через общий бит (вдох). После связки — пауза kite_combo_cooldown.
+## Вблизи (dist < kite_min) — ближняя фаза (AIMED↔Шквал) рулит, комбо сброшено.
+func _tick_kite_combo(delta: float, target: Node3D) -> void:
+	_combo_cd = maxf(_combo_cd - delta, 0.0)
 	if not field_enabled or target == null:
 		return
-	if _field_pending:
-		_field_warn_timer -= delta
-		if _field_warn_timer <= 0.0:
-			_spawn_slow_field(_field_point)
-			_field_pending = false
+	if _global_action_cd > 0.0:
+		return  # общий «вдох» между битами
+	# ОКНО НАКАЗАНИЯ: башня уже поймана замедлением → не перезаходим в поле, а
+	# ДОЛБИМ ракетами подряд на коротком (frenzy) бите — вот это «достреливание».
+	if _target_slowed:
+		_global_action_cd = _beat()  # короткий бит, пока поймана
+		_telem_atk_missile += 1
+		_start_missile_salvo(target)
+		_combo_step = 0
+		_combo_cd = 0.0  # пауза связки не мешает добиванию
 		return
-	_field_cd -= delta
+	if _combo_step == 1:
+		# Шаг 2 — добивание: залп ракет. КОММИТ — на следующем бите независимо от
+		# дистанции (иначе при заходе игрока в ближний бой добивание терялось —
+		# поля без залпов). Ракеты самонаводящиеся, долетят откуда угодно.
+		_global_action_cd = _beat()
+		_telem_atk_missile += 1
+		_start_missile_salvo(target)
+		_combo_step = 0
+		_combo_cd = kite_combo_cooldown
+		return
+	# Шаг 1 — старт связки (капкан-поле): только на кайт-дистанции и после паузы.
+	if _combo_cd > 0.0:
+		return
 	var dist: float = global_position.distance_to(target.global_position)
-	if dist >= field_min_range and dist <= field_max_range and _field_cd <= 0.0:
-		_field_cd = field_cooldown
-		_field_point = _predicted_aim(target)  # упреждение — поле туда, куда едешь
-		_field_warn_timer = field_warn
-		_field_pending = true
-		var root: Node = get_tree().current_scene
-		if root != null:
-			AoeVisual.spawn_ground_ring(root, _field_point, field_radius, field_warn, field_color)
-		if debug_log and LogConfig.master_enabled:
-			print("[EnemyMech:%s] темпоральное поле @ (%.0f, %.0f)" % [name, _field_point.x, _field_point.z])
+	if dist < kite_min_range or dist > kite_max_range:
+		return  # вблизи — рулит ближняя фаза; слишком далеко — спринт догоняет
+	_global_action_cd = _beat()
+	_telem_atk_field += 1
+	_launch_temporal_charge(target)
+	_combo_step = 1
 
 
-func _spawn_slow_field(point: Vector3) -> void:
+func _launch_temporal_charge(target: Node3D) -> void:
 	var root: Node = get_tree().current_scene
 	if root == null:
 		return
-	var f := SlowField.new()
-	root.add_child(f)
-	f.setup(point, field_radius, field_duration, field_slow_factor, field_refresh, field_color)
+	var charge := TemporalCharge.new()
+	root.add_child(charge)
+	var start: Vector3 = global_position + Vector3.UP * field_charge_launch_y
+	charge.setup(
+		start, target.global_position,
+		field_charge_speed, field_charge_turn, field_charge_lifetime, field_charge_burst_radius,
+		field_radius, field_duration, field_slow_factor, field_refresh, field_color,
+	)
+	if debug_log and LogConfig.master_enabled:
+		print("[EnemyMech:%s] темпоральный заряд пущен" % name)
 
 
 ## Спавнит один фаербол меха в точку aim_point (тот же fireball.tscn, что и у
@@ -600,15 +679,60 @@ func _fire_one(aim_point: Vector3, radius: float = -1.0) -> void:
 	fb.set_collide_in_flight(true, Layers.MASK_HOSTILE_PROJECTILE)
 
 
-## Взвешенный выбор атаки на цикл (расширяемо — добавятся новые приёмы/веса).
+# --- Отброс/Шоквейв (анти-зажим): МГНОВЕННЫЙ панишинг, мех остаётся дальнобойным ---
+
+## Подполз в упор (dist <= shock_trigger_range) и кулдаун готов → МГНОВЕННО бьёт
+## волной: урон по башне + сильный отброс ПРОЧЬ + глушит управление. Без замаха и
+## телеграфа — это наказание за зажим, а не игра в уворот. Движение меха не трогает
+## (мех продолжает свой цикл) — отброс мгновенный.
+func _tick_shock(delta: float, target: Node3D) -> void:
+	_shock_cd = maxf(_shock_cd - delta, 0.0)
+	if not shock_enabled or target == null:
+		return
+	if _shock_cd > 0.0:
+		return
+	# Горизонтальная дистанция (без Y) центр-к-центру.
+	var dx: float = target.global_position.x - global_position.x
+	var dz: float = target.global_position.z - global_position.z
+	if dx * dx + dz * dz > shock_trigger_range * shock_trigger_range:
+		return
+	_shock_cd = shock_cooldown
+	_telem_atk_shock += 1
+	# Лёгкий «вдох» после отброса, чтобы ближняя атака не прилетела в тот же миг.
+	_global_action_cd = maxf(_global_action_cd, global_attack_cooldown * 0.5)
+	_burst_shock(target)
+
+
+## Сама волна: VFX-кольцо + урон/отброс башни. Отброс направлен ПРОЧЬ от меха
+## (от центра к башне) — отталкивает, а не притягивает.
+func _burst_shock(target: Node3D) -> void:
+	var root: Node = get_tree().current_scene
+	if root != null:
+		AoeVisual.spawn_expanding_ring(root, global_position, shock_radius, 0.4, shock_color, 0.4)
+	var dir: Vector3 = target.global_position - global_position
+	dir.y = 0.0
+	if dir.length() > shock_radius:
+		return
+	if Damageable.is_damageable(target):
+		Damageable.try_damage(target, shock_damage)
+	if target.has_method("apply_knockback"):
+		dir = dir.normalized() if dir.length_squared() > 0.0001 else Vector3.FORWARD
+		target.apply_knockback(dir * shock_knockback_speed, shock_knockback_duration)
+
+
+## Ближняя фаза: детерминированное чередование AIMED↔Шквал (читаемый «джеб-ритм»,
+## не рандом). Вес 0 выключает приём — тогда чередования нет, идёт только включённый.
 func _pick_attack() -> int:
-	var total: float = weight_aimed + weight_spread
-	if total <= 0.0:
+	var use_aimed: bool = weight_aimed > 0.0
+	var use_spread: bool = weight_spread > 0.0
+	if use_aimed and not use_spread:
 		return MechAttack.AIMED
-	var r: float = randf() * total
-	if r < weight_aimed:
+	if use_spread and not use_aimed:
+		return MechAttack.SPREAD
+	if not use_aimed and not use_spread:
 		return MechAttack.AIMED
-	return MechAttack.SPREAD
+	_near_toggle = not _near_toggle
+	return MechAttack.AIMED if _near_toggle else MechAttack.SPREAD
 
 
 ## Запуск развёртки (Шквал): сохраняем точки веера и тикаем последовательность
@@ -788,19 +912,22 @@ func _ai_step(delta: float) -> void:
 	super._ai_step(delta)
 	var target: Node3D = _resolve_target()
 	_telemetry_sample(target, delta)  # дев-лог поведения игрока (для дизайна 3-го приёма)
-	# Ракеты «вдогонку» (анти-кайт): дальнобойная подсистема, тикает всегда,
-	# параллельно ближнему циклу. Залп — только когда башня за missile_min_range.
+	_target_slowed = target != null and target.has_method("is_movement_slowed") and target.is_movement_slowed()
+	_global_action_cd = maxf(_global_action_cd - delta, 0.0)  # бит-дирижёр (вдох между атаками)
+	# Ракеты в полёте: live-наведение + ripple текущего залпа (сам залп — из комбо).
 	_tick_missiles(delta, target)
-	# Спринт-преследование: дальше missile_max_range мех прибавляет в скорости
-	# (масштабируем APPROACH-velocity базы) — нет «безопасной парковки» за капом
-	# ракет. Близко (strafe/evade) — d мал, условие ложно; в evade — перетрётся ниже.
+	# Отброс в упор: мгновенный панишинг (подполз — откинуло). Движение не трогает.
+	_tick_shock(delta, target)
+	# Спринт-преследование: дальше kite_max_range мех прибавляет в скорости
+	# (масштабируем APPROACH-velocity базы) — нет «безопасной парковки» за зоной
+	# связки. Близко (strafe/evade) — d мал, условие ложно; в evade — перетрётся ниже.
 	if target != null and pursuit_speed_mult > 1.0:
 		var d_pursuit: float = global_position.distance_to(target.global_position)
-		if d_pursuit > missile_max_range:
+		if d_pursuit > kite_max_range:
 			velocity.x *= pursuit_speed_mult
 			velocity.z *= pursuit_speed_mult
-	# Темпоральное поле (сетап): ловит мобильность → ракеты достреливают.
-	_tick_field(delta, target)
+	# Kite-комбо (хореография дали): связка Поле→Ракеты «поймал→добил».
+	_tick_kite_combo(delta, target)
 	# Развёртка Шквала (если активна) — выпускает снаряды/маркеры по очереди.
 	# Идёт параллельно движению (мех продолжает стрейфить/уклоняться во время неё).
 	if _spread_active:
