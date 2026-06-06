@@ -34,9 +34,10 @@ signal mana_changed(current: float, maximum: float)
 ## Максимум маны. Магические действия (Fireball и т.п.) тратят её через
 ## try_consume_mana. Физика руки (Slam/Flick/grab) маны не требует.
 @export var max_mana: float = 100.0
-## Скорость регенерации маны, единиц в секунду. 10 даёт ~10с до полного
-## реcтора после 4 кастов фаербола (cost=25 каждый).
-@export var mana_regen_rate: float = 10.0
+## Скорость регенерации маны, единиц в секунду. 1.5 даёт ~67с до полного рестора
+## после 4 кастов фаербола (cost=25 каждый) — выстрелы очень дорогие, каждый каст
+## на счету.
+@export var mana_regen_rate: float = 1.5
 
 @export_group("Push Items")
 @export var push_strength: float = 1.0
@@ -61,6 +62,10 @@ signal mana_changed(current: float, maximum: float)
 ## Трейл: спавнить after-image-призраки во время рывка. Сам визуал рывка (наклон/
 ## стретч/призраки) — общий с врагом-мехом, см. [DashFx] (тюнинг там).
 @export var dash_trail_enabled: bool = true
+## Урон по СКЕЛЕТАМ при таране рывком (врезался — задавил). Только скелеты, мех
+## исключён (как у щита). 100 убивает обычных (hp=30) сразу; гигантов лишь дробит.
+## Каждого скелета бьём раз за рывок (без мультихита). 0 = дэш урона не наносит.
+@export var dash_damage: float = 100.0
 
 @export_group("Parry (парирование, Q)")
 ## Тайминг-парирование: короткое окно, в которое любой вражеский снаряд
@@ -78,6 +83,10 @@ signal mana_changed(current: float, maximum: float)
 ## Цвет щита/волны отражения (ледяной — отличен от оранжевых вражеских телеграфов
 ## и голубого recall'а).
 @export var parry_color: Color = Color(0.5, 0.9, 1.0, 0.95)
+## Урон щита по СКЕЛЕТАМ в зоне при подъёме (только скелеты, НЕ мех/башня/гномы).
+## 100 убивает обычных (hp=30) и лучников наповал; гиганты (высокий hp) лишь
+## получают урон. Разовый импульс на активацию — не тикает каждый кадр. 0 = выкл.
+@export var parry_skeleton_damage: float = 100.0
 
 @export_group("")
 ## Высота, ниже которой считаем что башня провалилась под карту.
@@ -91,6 +100,9 @@ var _was_stuck: bool = false
 var _dash_timer: float = 0.0
 var _dash_cd: float = 0.0
 var _dash_dir: Vector2 = Vector2.ZERO
+## Скелеты, уже задетые текущим рывком — чтобы один таран не бил одного скелета
+## каждый физкадр контакта (иначе и гиганты бы складывались). Чистится на старте рывка.
+var _dash_hit_set: Array = []
 ## Сглаженная интенсивность dash-визуала (наклон/стретч): плавно 0↔1 — нет рывка
 ## в самом эффекте при старте/конце рывка. Таймер спавна призраков трейла.
 var _dash_fx: float = 0.0
@@ -209,6 +221,17 @@ func try_consume_mana(amount: float) -> bool:
 	return true
 
 
+## Пополнить ману (сбор XP-орба со скелета и т.п.). Капится на max_mana, эмитит
+## mana_changed только при реальном изменении. На мёртвой башне — no-op.
+func restore_mana(amount: float) -> void:
+	if _dying or amount <= 0.0:
+		return
+	var prev: float = mana
+	mana = minf(mana + amount, max_mana)
+	if mana != prev:
+		mana_changed.emit(mana, max_mana)
+
+
 ## Замедление от вражеского темпорального поля (SlowField зовёт каждый тик, пока
 ## башня внутри). factor: 1 = норма, 0.45 ≈ «вдвое медленнее». Сильнейшее (меньший
 ## factor) перекрывает, пока активно; until продлевается. Скейлит ходьбу И рывок
@@ -260,6 +283,8 @@ func _try_start_parry() -> void:
 	var shield := ParryShield.new()
 	get_tree().current_scene.add_child(shield)
 	shield.setup(global_position, parry_radius, parry_color, parry_window + 0.25)
+	# Щит дробит скелетов в зоне (разовый импульс, только скелеты — НЕ мех/гномы).
+	_shield_zap_skeletons()
 	if debug_log and LogConfig.master_enabled:
 		print("[Tower] парирование: окно открыто (r=%.1f)" % parry_radius)
 
@@ -285,6 +310,27 @@ func _tick_parry() -> void:
 				node.global_position, 2.0, 0.25, parry_color, 0.12)
 			if debug_log and LogConfig.master_enabled:
 				print("[Tower] отбит снаряд %s" % node.name)
+
+
+## Разовый импульс урона по СКЕЛЕТАМ в зоне щита при его подъёме. Только скелеты
+## (SKELETON_GROUP), мех исключён (он — через парирование/отражение). Обычные
+## скелеты (hp=30) гибнут сразу; гиганты лишь получают урон. Разово на активацию
+## (не каждый кадр) — иначе за окно щита накопилось бы много тиков и легло бы всё.
+func _shield_zap_skeletons() -> void:
+	if parry_skeleton_damage <= 0.0:
+		return
+	var r_sq: float = parry_radius * parry_radius
+	for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if not is_instance_valid(n):
+			continue
+		if (n as Node).is_in_group(EnemyMech.MECH_GROUP):
+			continue  # мех зоной щита не трогаем — только парированием/отражением
+		var node := n as Node3D
+		if node == null:
+			continue
+		if node.global_position.distance_squared_to(_parry_center) > r_sq:
+			continue
+		Damageable.try_damage(node, parry_skeleton_damage)
 
 
 func _process(delta: float) -> void:
@@ -341,6 +387,7 @@ func _physics_process(delta: float) -> void:
 			_dash_timer = dash_duration
 			_dash_cd = dash_cooldown
 			_dash_ghost_t = 0.0  # первый призрак трейла — сразу
+			_dash_hit_set.clear()  # новый рывок — заново можно задеть скелетов
 
 	# Парирование (Q): открыть окно отражения по нажатию + отражать снаряды, пока
 	# окно активно. Независимо от движения/рывка/knockback — парируем на ходу.
@@ -396,6 +443,8 @@ func _resolve_contacts(intended_velocity: Vector3) -> void:
 			_push_item(collider as Item, col, intended_velocity, contacts_now)
 		elif Pushable.is_pushable(collider) and collider is CharacterBody3D:
 			_push_kinematic(collider as Node, col, intended_velocity)
+			if _dash_timer > 0.0:
+				_dash_damage_enemy(collider as Node)
 			# В contacts_now kinematic'ов не записываем — для 50+ скелетов получится спам логов.
 
 	if debug_log and LogConfig.master_enabled:
@@ -425,6 +474,21 @@ func _push_item(item: Item, col: KinematicCollision3D, intended_velocity: Vector
 		return
 	var ratio: float = clampf((mass - item.mass) / mass, 0.0, 1.0)
 	item.apply_central_impulse(push_dir * v_diff * item.mass * ratio * push_strength)
+
+
+## Таран рывком: урон скелету при контакте во время дэша. Только скелеты (мех
+## исключён, как у щита); каждого бьём раз за рывок (_dash_hit_set). Обычные гибнут.
+func _dash_damage_enemy(collider: Node) -> void:
+	if dash_damage <= 0.0 or collider == null:
+		return
+	if not collider.is_in_group(Skeleton.SKELETON_GROUP):
+		return  # таран бьёт только скелетов
+	if collider.is_in_group(EnemyMech.MECH_GROUP):
+		return  # меха рывком не давим
+	if collider in _dash_hit_set:
+		return  # уже задели этим рывком
+	_dash_hit_set.append(collider)
+	Damageable.try_damage(collider, dash_damage)
 
 
 func _push_kinematic(target: Node, col: KinematicCollision3D, intended_velocity: Vector3) -> void:

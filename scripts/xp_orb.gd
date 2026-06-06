@@ -1,8 +1,10 @@
 class_name XpOrb
 extends Node3D
-## Орб опыта отряда, дроп со смерти скелета. Лежит на земле, на касании
-## союзника (Tower / CampPart / гном-собиратель) активируется магнит — летит
-## к `Camp.deploy_anchor`, на arrival пополняет `_squad_xp` и исчезает.
+## Орб со смерти скелета. Лежит на земле, на касании союзника (Tower / CampPart /
+## гном-собиратель) активируется магнит — летит к `Camp.deploy_anchor`, на arrival
+## пополняет МАНУ башни (`Tower.restore_mana`, топливо для кастов) и исчезает.
+## XP отряда орб БОЛЬШЕ НЕ даёт — оно начисляется напрямую за убийство в
+## `Camp._on_enemy_killed`, независимо от сбора орбов. (Имя класса/группы — легаси.)
 ##
 ## Архитектура «один путь»:
 ##   - Все скелеты дропают орб через `XpOrbSpawner` (autoload, слушает
@@ -25,6 +27,9 @@ const GROUP := &"xp_orb"
 ## Сколько XP добавится в `Camp._squad_xp` на arrival. Дефолт 10 совпадает с
 ## прежним `Camp.squad_xp_per_kill`.
 @export var amount: int = 10
+## Сколько маны вернётся башне на arrival (сбор орба = топливо для кастов). При
+## дорогой мане (медленный реген) убийство скелетов «кормит» выстрелы. 0 = выкл.
+@export var mana_amount: float = 5.0
 ## Сколько секунд орб лежит, прежде чем самоуничтожиться. Без таймаута дальние
 ## неподобранные орбы накапливались бы — на 200 скелетов / волну = 200 нодов.
 @export var lifetime: float = 60.0
@@ -166,7 +171,9 @@ func _tick_magnetized(delta: float) -> void:
 				name, global_position.x, global_position.y, global_position.z,
 				_magnet_target_node.name, attract.x, attract.y, attract.z, amount,
 			])
-		_camp_target.add_squad_xp(amount, global_position)
+		# XP отряда теперь начисляется напрямую за убийство (Camp._on_enemy_killed),
+		# НЕ через сбор орба. Орб даёт только ману — топливо для кастов.
+		_grant_mana()
 		collected.emit(amount, global_position)
 		queue_free()
 		return
@@ -176,6 +183,17 @@ func _tick_magnetized(delta: float) -> void:
 		global_position = target_pos
 		return
 	global_position += to_target / dist * step
+
+
+## Пополняет ману башни на сбор орба (топливо для кастов при дорогой мане).
+## Башню берём через Camp-получателя; орб мог лететь к Harvester'у, но мана —
+## всегда игроку (башне). Наличие метода проверяем (duck-typing, без связки).
+func _grant_mana() -> void:
+	if mana_amount <= 0.0 or _camp_target == null or not is_instance_valid(_camp_target):
+		return
+	var tower: Node = _camp_target.get_tower()
+	if tower != null and is_instance_valid(tower) and tower.has_method("restore_mana"):
+		tower.restore_mana(mana_amount)
 
 
 ## Polling-сканер автомагнита: проверяет, попадает ли орб в чью-то «область

@@ -38,14 +38,6 @@ const SQUAD_CARD_SWATCH_SIZE := Vector2(14, 14)
 ##
 ## Super не в этой таблице — он не draggable, особняком (см. ACTION_BAR_FIXED_SUPER).
 const ABILITY_META: Dictionary = {
-	&"slam": {
-		"name": "Хлоп", "color": Color(0.85, 0.85, 0.9),
-		"category_str": "PHYSICAL", "type": 0,
-	},
-	&"flick": {
-		"name": "Щелб", "color": Color(0.7, 0.8, 0.85),
-		"category_str": "PHYSICAL", "type": 1,
-	},
 	&"fireball": {
 		"name": "Огонь", "color": Color(1.0, 0.45, 0.1),
 		"category_str": "MAGIC", "type": 0,
@@ -72,19 +64,17 @@ const ABILITY_META: Dictionary = {
 ## для центрального диспатча в HUD (раньше каждая способность слушала свой
 ## action; теперь HUD слушает все и резолвит через slot-assignments).
 const SLOT_EQUIP_ACTIONS: Array[StringName] = [
-	&"equip_slam",          # клавиша 1
-	&"equip_flick",         # клавиша 2
-	&"equip_fireball",      # клавиша 3
-	&"equip_firestorm",     # клавиша 4
-	&"equip_mine_scatter",  # клавиша 5
-	&"equip_frost",         # клавиша 6
-	&"equip_spark",         # клавиша 7
+	&"equip_fireball",      # клавиша 1
+	&"equip_firestorm",     # клавиша 2
+	&"equip_mine_scatter",  # клавиша 3
+	&"equip_frost",         # клавиша 4
+	&"equip_spark",         # клавиша 5
 ]
 
 ## Стартовая раскладка слотов. Игрок может пересобрать через drag-and-drop.
 ## Сохранение в файл — TODO (пока сбрасывается на дефолт при рестарте).
 const ACTION_BAR_DEFAULT_ASSIGNMENT: Array[StringName] = [
-	&"slam", &"flick", &"fireball", &"firestorm", &"mine_scatter", &"frost", &"spark",
+	&"fireball", &"firestorm", &"mine_scatter", &"frost", &"spark",
 ]
 
 ## Super — фиксированный 6-й слот, не draggable. Имеет свою клавишу (Space)

@@ -71,8 +71,10 @@ var _velocity_history: Array[Vector3] = []
 var _previous_pos: Vector3
 var _initialized: bool = false
 var _last_surface_label: String = ""
-## Активная категория ввода. PHYSICAL по умолчанию (Slam-equip).
-var active_category: Category = Category.PHYSICAL
+## Активная категория ввода. MAGIC по умолчанию (старт с фаербола): Хлоп/Щелб
+## убраны из арсенала, PHYSICAL как режим больше не выбирается. Захват предметов
+## работает в любой категории (ЛКМ), поэтому отдельная PHYSICAL-категория не нужна.
+var active_category: Category = Category.MAGIC
 ## Стек предыдущих категорий для [push_category]/[pop_category]. Координаторы
 ## (Super/SquadAim/BuildAim) запоминают, в какой категории была рука перед их
 ## активацией, и возвращают её на завершении. Раньше каждый координатор хранил
@@ -134,7 +136,10 @@ func _process(delta: float) -> void:
 ## достаточно `add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)` и метода
 ## `set_highlighted(bool)`.
 func _update_pickup_highlight() -> void:
-	var allow: bool = active_category == Category.PHYSICAL and not is_holding()
+	# Захват — в любой боевой категории (ЛКМ), кроме aim-takeover (super/squad/build)
+	# и пока что-то держим. Раньше гейтилось по PHYSICAL — теперь PHYSICAL не
+	# выбирается, а pickup'ы (рычаг/ящик/колокол) должны подсвечиваться и в MAGIC.
+	var allow: bool = not is_in_aim_mode() and not is_holding()
 	if allow and build_aim != null and build_aim.is_aiming_any():
 		allow = false
 	if not allow:

@@ -329,6 +329,9 @@ const CAMP_BUILDING_CATALOG: Dictionary = CampBuildings.CATALOG
 @export_group("")
 
 @export_group("Squad XP / upgrades")
+## XP отряда за КАЖДОЕ убийство врага — начисляется напрямую (EventBus.enemy_destroyed),
+## НЕЗАВИСИМО от сбора орбов. Орбы теперь дают только ману (см. XpOrb). 0 = выкл.
+@export var squad_xp_per_kill: int = 10
 ## Кривая порогов уровней. squad_level_xp_curve[N] = XP, нужный для уровня N+1.
 ## Дойдя до индекса >= size — больше уровней не дают (всё, апгрейды кончились).
 ## Дефолт «5×geometric» — 50, 120, 250, 500, 1000: к концу 1900 XP = 190 убийств
@@ -346,8 +349,9 @@ const CAMP_BUILDING_CATALOG: Dictionary = CampBuildings.CATALOG
 @export_group("Super charge (великая сила)")
 ## Полная шкала «великой силы». Накопление 1:1 от нанесённого damage'у врагам
 ## (HandSpell, HandPhysical, defender'ы, башня — всё подаёт через
-## EventBus.enemy_damaged). 100 = ~3-4 убитых скелета (hp=30 ea).
-@export var super_charge_max: float = 100.0
+## EventBus.enemy_damaged). 3000 = ~100 убитых скелетов (hp=30 ea) по урону —
+## супер ультра-редкий, приберегаемый на критический момент приём.
+@export var super_charge_max: float = 3000.0
 ## Доля шкалы, списываемой при провале QTE. 0.5 = «потерял половину» —
 ## промежуточная цена за неудачу (полный каст списывает 100%).
 @export_range(0.0, 1.0) var super_charge_fail_penalty: float = 0.5
@@ -535,6 +539,10 @@ func _ready() -> void:
 	# 1 hp damage = 1 charge; full bar (super_charge_max) разрешает супер-каст.
 	EventBus.enemy_damaged.connect(_on_enemy_damaged)
 	EventBus.super_charge_changed.emit(_super_charge, super_charge_max)
+
+	# XP отряда — напрямую за каждое убийство (независимо от сбора орбов; орбы
+	# теперь только мана). Попап «+N» появляется над трупом.
+	EventBus.enemy_destroyed.connect(_on_enemy_killed)
 
 	# Static-режим: сразу стартуем в DEPLOYED. Anchor = собственная позиция
 	# Camp (не башни, которой нет). Палатки переедут с линии (где их поставил
@@ -1494,6 +1502,15 @@ func _on_enemy_damaged(_enemy: Node3D, amount: float) -> void:
 	if amount <= 0.0:
 		return
 	add_super_charge(amount)
+
+
+## Хендлер EventBus.enemy_destroyed: XP отряда за убийство, напрямую (не через
+## сбор орбов). Попап «+N» над трупом. Орбы при этом дают только ману.
+func _on_enemy_killed(enemy: Node3D) -> void:
+	if squad_xp_per_kill <= 0:
+		return
+	var pos: Vector3 = enemy.global_position if (enemy != null and is_instance_valid(enemy)) else global_position
+	add_squad_xp(squad_xp_per_kill, pos)
 
 
 ## Прирастает к шкале силы. Внешний путь — для случаев когда нужно начислить
