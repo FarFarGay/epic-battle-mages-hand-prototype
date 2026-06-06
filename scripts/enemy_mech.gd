@@ -154,6 +154,28 @@ var fog_reveal_radius: float = 12.0
 @export var missile_drift_deg: float = 25.0
 @export_group("")
 
+@export_group("Missile Super (парируемый супер-залп)")
+## Редкий читаемый супер: мех заряжает рой ракет В ОДНУ ТОЧКУ (под башню). Длинный
+## телеграф + длинный кулдаун = драматично и нечасто. Ракеты Reflectable — поймал
+## окном парирования (Q) → весь рой летит обратно в меха (жирный урон). Риск/награда:
+## не отбил — съел весь залп.
+@export var missile_super_enabled: bool = true
+## Ракет в супер-залпе (5-6 — заметно больше обычных 3).
+@export var missile_super_count: int = 6
+## Длинный кулдаун (сек) — супер редкий, не спамится.
+@export var missile_super_cooldown: float = 14.0
+## Длинный телеграф-лок перед роем (сек) — игрок успевает прочитать и приготовить Q.
+@export var missile_super_warn: float = 1.3
+## Интервал пуска внутри роя (сек) — МАЛЕНЬКИЙ: ракеты летят кучно, прилетают
+## плотным роем, одно окно парирования ловит весь залп.
+@export var missile_super_interval: float = 0.05
+## Урон одной ракеты супера (× count = суммарный отражённый урон в меха).
+@export var missile_super_damage: float = 40.0
+## Высота над мехом, где собирается сгусток-заряд и ОТКУДА вылетают ракеты супера
+## (над корпусом, выше обычного дула fireball_launch_offset_y).
+@export var missile_super_launch_y: float = 4.6
+@export_group("")
+
 @export_group("Slow-field (темпоральное поле — анти-мобильность)")
 ## Сетап-инструмент (НЕ в _pick_attack): мех ставит наземную зону в упреждённую
 ## точку игрока; внутри башня замедляется (ходьба И рывок) → ракеты/Шквал
@@ -284,6 +306,14 @@ var _missile_warn_timer: float = 0.0
 var _missile_spawn_timer: float = 0.0
 var _missile_salvo_index: int = 0
 var _missile_pending: bool = false
+## Параметры текущего залпа (обычный или супер) — задаёт _start_missile_salvo.
+var _missile_active_count: int = 0
+var _missile_active_interval: float = 0.0
+var _missile_active_damage: float = 0.0
+## Высота старта ракет текущего залпа (супер — из сгустка над корпусом, обычный — дуло).
+var _missile_active_launch_y: float = 0.0
+## Кулдаун редкого парируемого супер-залпа (рой ракет в одну точку).
+var _missile_super_cd: float = 0.0
 
 ## Глобальный бит: общий «вдох» после любой атаки. Пока > 0 — никто не стреляет
 ## (ближний windup растягивается до него, kite-комбо ждёт). Сериализует ритм.
@@ -544,24 +574,47 @@ func _tick_missiles(delta: float, target: Node3D) -> void:
 			if _missile_spawn_timer <= 0.0:
 				_launch_one_missile(target)
 				_missile_salvo_index += 1
-				_missile_spawn_timer = missile_spawn_interval
-				if _missile_salvo_index >= missile_count:
+				_missile_spawn_timer = _missile_active_interval
+				if _missile_salvo_index >= _missile_active_count:
 					_missile_pending = false
 		return
-	# Сам залп НЕ триггерим здесь — его вызывает kite-комбо (Поле→Ракеты).
+	# Сам залп НЕ триггерим здесь — его вызывает kite-комбо (Поле→Ракеты) или
+	# редкий супер (_tick_missile_super).
 
 
 ## Старт залпа: ставим телеграф-лок на башне (warn), дальше ripple-пуск в _tick.
-func _start_missile_salvo(target: Node3D) -> void:
+## Параметры опциональны (<0 = взять обычные missile_*) — супер-залп передаёт свои:
+## больше ракет, кучнее пуск, свой урон и крупнее/тревожнее телеграф.
+func _start_missile_salvo(target: Node3D, count: int = -1, warn: float = -1.0, interval: float = -1.0, damage: float = -1.0, is_super: bool = false) -> void:
 	_missile_pending = true
-	_missile_warn_timer = missile_warn
+	_missile_warn_timer = warn if warn >= 0.0 else missile_warn
 	_missile_spawn_timer = 0.0
 	_missile_salvo_index = 0
+	_missile_active_count = count if count > 0 else missile_count
+	_missile_active_interval = interval if interval >= 0.0 else missile_spawn_interval
+	_missile_active_damage = damage if damage > 0.0 else missile_damage
+	# Супер пускает ракеты из сгустка над корпусом, обычный залп — из дула.
+	_missile_active_launch_y = missile_super_launch_y if is_super else fireball_launch_offset_y
 	var root: Node = get_tree().current_scene
 	if root != null:
-		AoeVisual.spawn_ground_ring(root, target.global_position, 2.5, missile_warn, telegraph_lock_color)
+		# Супер — крупнее/тревожнее телеграф (читаемый «сейчас рой в одну точку»),
+		# обычный залп — компактное кольцо-лок.
+		if is_super:
+			AoeVisual.spawn_ground_ring(root, target.global_position, 4.5, _missile_warn_timer, shock_color)
+			# Телеграф НА МЕХЕ: сгустки энергии сходятся в один шар НАД КОРПУСОМ за
+			# время зарядки, держатся, пока из них вылетают ракеты (ребёнок меха —
+			# следует за ним). Точка совпадает со стартом ракет супера.
+			var charge := MechChargeFx.new()
+			add_child(charge)
+			charge.position = Vector3.UP * missile_super_launch_y
+			var emit_time: float = missile_super_interval * float(missile_super_count) + 0.2
+			charge.setup(_missile_warn_timer, shock_color, 3.0, emit_time)
+		else:
+			AoeVisual.spawn_ground_ring(root, target.global_position, 2.5, _missile_warn_timer, telegraph_lock_color)
 	if debug_log and LogConfig.master_enabled:
-		print("[EnemyMech:%s] залп ракет (дист %.0f)" % [name, global_position.distance_to(target.global_position)])
+		print("[EnemyMech:%s] %s (ракет %d, дист %.0f)" % [
+			name, "СУПЕР-ЗАЛП" if is_super else "залп ракет", _missile_active_count,
+			global_position.distance_to(target.global_position)])
 
 
 ## Один пуск: тот же fireball.tscn, но со слабым homing'ом (turn_rate/скорость
@@ -574,7 +627,7 @@ func _launch_one_missile(target: Node3D) -> void:
 		return
 	var root: Node = _projectiles_root if is_instance_valid(_projectiles_root) else get_tree().current_scene
 	root.add_child(fb)
-	var launch_pos: Vector3 = global_position + Vector3.UP * fireball_launch_offset_y
+	var launch_pos: Vector3 = global_position + Vector3.UP * _missile_active_launch_y
 	var aim_ground: Vector3 = target.global_position
 	aim_ground.y = 0.0  # земля под башней (см. _tick_missiles: иначе y-pierce рвёт у меха)
 	fb.setup(
@@ -590,7 +643,7 @@ func _launch_one_missile(target: Node3D) -> void:
 		missile_max_speed,
 		missile_drift_deg,
 		missile_turn_rate,
-		missile_damage,
+		_missile_active_damage,  # урон текущего залпа (обычный или супер)
 		missile_radius,
 		MECH_AOE_MASK,  # AOE задевает башню/лагерь/стены/гномов И скелетов (ENEMIES)
 		fireball_knockback_force,
@@ -602,6 +655,28 @@ func _launch_one_missile(target: Node3D) -> void:
 	fb.set_collide_in_flight(true, Layers.MASK_HOSTILE_PROJECTILE)
 	Reflectable.register(fb)  # башня может отбить ракету тайминг-парированием
 	_missiles.append({"m": fb, "t": missile_lifetime})
+
+
+# --- Супер-залп (редкий парируемый рой ракет в одну точку) ---
+
+## Редкий читаемый супер на боевой дистанции: длинный телеграф → плотный рой ракет
+## в башню. Своя длинная перезарядка. Ракеты кучные → ловятся одним окном парирования
+## (Q) и отлетают в меха = награда за риск. Не перекрывается с обычным залпом (общий
+## _missile_pending) и общим битом (_global_action_cd).
+func _tick_missile_super(delta: float, target: Node3D) -> void:
+	_missile_super_cd = maxf(_missile_super_cd - delta, 0.0)
+	if not missile_super_enabled or not missiles_enabled or target == null:
+		return
+	if _missile_super_cd > 0.0 or _missile_pending or _global_action_cd > 0.0:
+		return
+	var dist: float = global_position.distance_to(target.global_position)
+	if dist < kite_min_range or dist > kite_max_range:
+		return  # супер — на боевой дистанции (вблизи рулит ближняя фаза, далеко спринт)
+	_missile_super_cd = missile_super_cooldown
+	_global_action_cd = _beat()
+	_telem_atk_missile += 1
+	_start_missile_salvo(target, missile_super_count, missile_super_warn,
+		missile_super_interval, missile_super_damage, true)
 
 
 # --- Kite-комбо: связка Поле→Ракеты (хореография дальней дистанции) ---
@@ -961,6 +1036,9 @@ func _ai_step(delta: float) -> void:
 		if d_pursuit > kite_max_range:
 			velocity.x *= pursuit_speed_mult
 			velocity.z *= pursuit_speed_mult
+	# Редкий парируемый супер-залп (рой ракет в одну точку) — приоритет над комбо
+	# (ставит общий бит, комбо в этот кадр ждёт). Гейт по своему длинному кулдауну.
+	_tick_missile_super(delta, target)
 	# Kite-комбо (хореография дали): связка Поле→Ракеты «поймал→добил».
 	_tick_kite_combo(delta, target)
 	# Развёртка Шквала (если активна) — выпускает снаряды/маркеры по очереди.
