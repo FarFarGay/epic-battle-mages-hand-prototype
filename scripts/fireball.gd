@@ -91,6 +91,12 @@ var _collide_in_flight: bool = false
 ## Маска «преграды» для столкновения в полёте (см. set_collide_in_flight).
 var _flight_collision_mask: int = 0
 
+## Отражён ли снаряд тайминг-парированием башни (см. reflect). После отражения
+## он дружественный: homing ведёт ЖИВОГО врага _reflect_target, маски бьют ENEMIES,
+## а retarget() от меха игнорируется (мех больше им не управляет).
+var _reflected: bool = false
+var _reflect_target: Node3D = null
+
 
 ## Свойство для FogOfWar.FOG_REVEAL_GROUP — в полёте снаряд светит вокруг,
 ## рассеивая туман. История: 14→26→40→55→32→8м. Концепция эволюционировала:
@@ -202,9 +208,44 @@ func setup_burn(scene: PackedScene, radius: float, damage_per_tick: float, tick_
 
 ## Live-перенацеливание: обновляет точку, к которой тянет homing-фаза. Дефолтный
 ## фаербол это НЕ зовёт (летит в зафиксированную точку каста) — нужно для
-## «вдогонку»-ракет меха, которые ведут движущуюся башню каждый кадр.
+## «вдогонку»-ракет меха, которые ведут движущуюся башню каждый кадр. После
+## отражения игнорируется — снарядом управляет reflect-homing, не мех.
 func retarget(pos: Vector3) -> void:
+	if _reflected:
+		return
 	_target_pos = pos
+
+
+## Отражение тайминг-парированием башни: разворачиваем снаряд в ближайшего врага
+## и делаем его дружественным (AOE бьёт ENEMIES, в полёте детонирует о врага).
+## homing после этого ведёт ЖИВОГО врага (_reflect_target) — «обратно в стрелка».
+## Возвращает true, если отражён (нашёлся враг для самонаведения).
+func reflect(_reflector_pos: Vector3) -> bool:
+	if _exploded or _reflected:
+		return false
+	var enemy: Node3D = Reflectable.nearest_enemy(get_tree(), global_position)
+	if enemy == null:
+		return false
+	_reflected = true
+	_reflect_target = enemy
+	_explode_mask = Layers.MASK_HAND_SLAM            # AOE теперь бьёт врагов
+	_flight_collision_mask = Layers.MASK_FRIENDLY_PROJECTILE  # детонирует о врага в полёте
+	_collide_in_flight = true
+	# Если ещё в boost-дуге — сразу в homing, чтобы развернуться немедленно.
+	if _phase == Phase.BOOST:
+		_phase = Phase.HOMING
+		_current_speed = maxf(_homing_initial_speed, _velocity.length())
+	var to: Vector3 = enemy.global_position - global_position
+	to.y = 0.0
+	if to.length_squared() > 0.001:
+		_velocity = to.normalized() * maxf(_current_speed, _homing_initial_speed)
+	_target_pos = Vector3(enemy.global_position.x, 0.0, enemy.global_position.z)
+	# Снимаемся с «отражаемых» (нельзя дважды) и встаём в снаряды игрока — мех
+	# теперь уворачивается от собственного отражённого фаербола.
+	if is_in_group(Reflectable.GROUP):
+		remove_from_group(Reflectable.GROUP)
+	add_to_group(&"player_projectile")
+	return true
 
 
 func _physics_process(delta: float) -> void:
@@ -249,6 +290,10 @@ func _physics_process(delta: float) -> void:
 		# independent смягчение. Малый rate (~5) — длинный drift; большой
 		# (~20) — быстрый коррекшен и почти прямой полёт.
 		_current_speed = minf(_current_speed + _homing_acceleration * delta, _homing_max_speed)
+		# Отражённый снаряд ведёт ЖИВОГО врага (точка на земле под ним) — «обратно
+		# в стрелка», даже если тот движется. Враг исчез — летим в последнюю точку.
+		if _reflected and is_instance_valid(_reflect_target):
+			_target_pos = Vector3(_reflect_target.global_position.x, 0.0, _reflect_target.global_position.z)
 		var to_target: Vector3 = _target_pos - global_position
 		var distance: float = to_target.length()
 		if distance < 0.001:

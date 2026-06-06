@@ -62,6 +62,23 @@ signal mana_changed(current: float, maximum: float)
 ## стретч/призраки) — общий с врагом-мехом, см. [DashFx] (тюнинг там).
 @export var dash_trail_enabled: bool = true
 
+@export_group("Parry (парирование, F)")
+## Тайминг-парирование: короткое окно, в которое любой вражеский снаряд
+## (Reflectable.GROUP) в радиусе разворачивается обратно в стрелка и становится
+## дружественным. Чистый скилл — гейт только по кулдауну, маны не требует.
+@export var parry_enabled: bool = true
+## Длительность активного окна отражения (сек). Короткое — награждает реакцию на
+## телеграф/подлёт снаряда, а не зажатие.
+@export var parry_window: float = 0.25
+## Кулдаун между парированиями (сек) — нельзя спамить, надо ловить момент.
+@export var parry_cooldown: float = 1.5
+## Радиус ловли снарядов (м, 360° вокруг башни). Достаточно большой, чтобы отбить
+## на подлёте, но не вся карта.
+@export var parry_radius: float = 6.0
+## Цвет щита/волны отражения (ледяной — отличен от оранжевых вражеских телеграфов
+## и голубого recall'а).
+@export var parry_color: Color = Color(0.5, 0.9, 1.0, 0.95)
+
 @export_group("")
 ## Высота, ниже которой считаем что башня провалилась под карту.
 @export var fall_threshold: float = -10.0
@@ -88,6 +105,12 @@ var _slow_until_msec: int = 0
 ## по затуханию). Зеркало Enemy-knockback, но на игрока.
 var _kb_vel: Vector3 = Vector3.ZERO
 var _kb_until_msec: int = 0
+## Парирование: до какого msec активно окно отражения и когда снова готово.
+var _parry_active_until_msec: int = 0
+var _parry_cd_until_msec: int = 0
+## Центр зоны ловли — фиксируется в точке каста (не едет за башней). Совпадает с
+## куполом-визуалом: «развернул барьер здесь», снаряды в этом круге отлетают.
+var _parry_center: Vector3 = Vector3.ZERO
 # Item -> "push" | "block": набор Item'ов, с которыми сейчас контакт.
 # Используется для логов фронт-перехода (старт/смена/конец контакта).
 var _contacts_last: Dictionary = {}
@@ -217,6 +240,53 @@ func is_movement_slowed() -> bool:
 	return Time.get_ticks_msec() < _slow_until_msec
 
 
+# --- Парирование (тайминг-блок, отражает снаряды обратно в стрелка) ---
+
+## По нажатию F (если готово) открываем короткое окно отражения + ставим кулдаун
+## и спавним щит-волну. Сам разворот снарядов — в _tick_parry, пока окно активно.
+func _try_start_parry() -> void:
+	if not parry_enabled or _dying:
+		return
+	var now: int = Time.get_ticks_msec()
+	if now < _parry_cd_until_msec:
+		return
+	if not Input.is_action_just_pressed("parry"):
+		return
+	_parry_active_until_msec = now + int(parry_window * 1000.0)
+	_parry_cd_until_msec = now + int(parry_cooldown * 1000.0)
+	_parry_center = global_position  # фиксируем зону ловли в точке каста (= купол)
+	# Щит-пузырь: купол на весь радиус ловли мгновенно вспыхивает и гаснет (см.
+	# ParryShield). Визуал держится чуть дольше окна, чтобы прочитался.
+	var shield := ParryShield.new()
+	get_tree().current_scene.add_child(shield)
+	shield.setup(global_position, parry_radius, parry_color, parry_window + 0.25)
+	if debug_log and LogConfig.master_enabled:
+		print("[Tower] парирование: окно открыто (r=%.1f)" % parry_radius)
+
+
+## Пока окно активно — отражаем каждый вражеский снаряд (Reflectable.GROUP) в
+## радиусе обратно в стрелка. Отражённый снимается с группы → дважды не словим.
+func _tick_parry() -> void:
+	if Time.get_ticks_msec() >= _parry_active_until_msec:
+		return
+	var r_sq: float = parry_radius * parry_radius
+	for n in get_tree().get_nodes_in_group(Reflectable.GROUP):
+		if not is_instance_valid(n):
+			continue
+		var node := n as Node3D
+		if node == null:
+			continue
+		# Меряем от ЗАФИКСИРОВАННОГО центра каста (= купол), не от текущей башни.
+		if node.global_position.distance_squared_to(_parry_center) > r_sq:
+			continue
+		if Reflectable.try_reflect(node, _parry_center):
+			# Вспышка в точке отбитого снаряда — читаемый «дзынь».
+			AoeVisual.spawn_expanding_ring(get_tree().current_scene,
+				node.global_position, 2.0, 0.25, parry_color, 0.12)
+			if debug_log and LogConfig.master_enabled:
+				print("[Tower] отбит снаряд %s" % node.name)
+
+
 func _process(delta: float) -> void:
 	if _motion_fx == null or _visual_root == null:
 		return
@@ -271,6 +341,11 @@ func _physics_process(delta: float) -> void:
 			_dash_timer = dash_duration
 			_dash_cd = dash_cooldown
 			_dash_ghost_t = 0.0  # первый призрак трейла — сразу
+
+	# Парирование (F): открыть окно отражения по нажатию + отражать снаряды, пока
+	# окно активно. Независимо от движения/рывка/knockback — парируем на ходу.
+	_try_start_parry()
+	_tick_parry()
 
 	# Knockback от тарана меха перебивает всё: пока активен — башню отбрасывает
 	# (ввод/рывок игнорируются), сила затухает, потом управление возвращается.

@@ -600,6 +600,7 @@ func _launch_one_missile(target: Node3D) -> void:
 	fb.setup_fog_pulse(10.0)
 	# Flight-маска БЕЗ ENEMIES — ракета не рвётся о скелетов по пути, ведёт башню.
 	fb.set_collide_in_flight(true, Layers.MASK_HOSTILE_PROJECTILE)
+	Reflectable.register(fb)  # башня может отбить ракету тайминг-парированием
 	_missiles.append({"m": fb, "t": missile_lifetime})
 
 
@@ -696,6 +697,7 @@ func _fire_one(aim_point: Vector3, radius: float = -1.0) -> void:
 	fb.setup_fog_pulse(12.0)
 	# Flight-маска БЕЗ ENEMIES — снаряд не рвётся о скелетов, долетает до прицела.
 	fb.set_collide_in_flight(true, Layers.MASK_HOSTILE_PROJECTILE)
+	Reflectable.register(fb)  # башня может отбить фаербол тайминг-парированием
 
 
 # --- Отброс/Шоквейв (анти-зажим): МГНОВЕННЫЙ панишинг, мех остаётся дальнобойным ---

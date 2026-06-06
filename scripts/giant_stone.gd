@@ -78,6 +78,10 @@ var _target_pos: Vector3 = Vector3.ZERO
 func _ready() -> void:
 	_hit_area.body_entered.connect(_on_body_entered)
 	add_to_group(FogOfWar.FOG_REVEAL_GROUP)
+	# Отражаемый снаряд: тайминг-парирование башни может развернуть камень/стрелу
+	# обратно в стрелка (см. Reflectable / Tower._tick_parry). GiantStone — только
+	# вражеский снаряд (камень гиганта, AoeArrow лучника), игрок его не кастует.
+	Reflectable.register(self)
 
 
 ## Вызывается caller'ом сразу после instantiate + add_child. source — точка
@@ -177,3 +181,24 @@ func _explode(pos: Vector3) -> void:
 func _apply_aoe(center: Vector3) -> void:
 	AoeDamage.apply_uniform(get_tree(), center, aoe_radius, aoe_mask, damage,
 		knockback_speed, knockback_duration)
+
+
+## Отражение тайминг-парированием башни: перекидываем баллистику в ближайшего
+## врага и делаем AOE дружественным (бьёт ENEMIES, как снаряд игрока). Камень
+## падает врагу под ноги (y-check) → взрыв накрывает стрелка. true если отражён.
+func reflect(_reflector_pos: Vector3) -> bool:
+	if _consumed:
+		return false
+	var enemy: Node3D = Reflectable.nearest_enemy(get_tree(), global_position)
+	if enemy == null:
+		return false
+	var dest: Vector3 = Vector3(enemy.global_position.x, 0.0, enemy.global_position.z)
+	_target_pos = dest
+	_velocity = BallisticUtil.compute_launch_velocity(global_position, dest, speed, gravity)
+	aoe_mask = Layers.MASK_HAND_SLAM                 # AOE теперь бьёт врагов
+	explosion_ring_color = Color(0.5, 0.9, 1.0, 0.9)  # дружественный (отражён)
+	if is_in_group(Reflectable.GROUP):
+		remove_from_group(Reflectable.GROUP)
+	add_to_group(&"player_projectile")
+	_orient_along_velocity()
+	return true
