@@ -287,6 +287,7 @@ func _perform_strike(target: Node3D) -> void:
 	if not is_instance_valid(_projectiles_root):
 		_projectiles_root = get_tree().current_scene
 	_projectiles_root.add_child(arrow)
+	arrow.set_shooter(self)  # отражённая стрела летит обратно в этого лучника
 	arrow.damage = randf_range(arrow_damage_min, arrow_damage_max)
 	arrow.speed = arrow_speed
 	arrow.debug_log = debug_log

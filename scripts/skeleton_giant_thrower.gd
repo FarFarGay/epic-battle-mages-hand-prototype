@@ -125,6 +125,7 @@ func _perform_strike(target: Node3D) -> void:
 	if not is_instance_valid(_projectiles_root):
 		_projectiles_root = get_tree().current_scene
 	_projectiles_root.add_child(stone)
+	stone.set_shooter(self)  # отражённый камень летит обратно в этого каменщика
 	stone.damage = randf_range(arrow_damage_min, arrow_damage_max)
 	stone.speed = arrow_speed
 	var spawn: Vector3 = global_position + arrow_spawn_offset

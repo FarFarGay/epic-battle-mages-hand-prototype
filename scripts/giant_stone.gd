@@ -71,6 +71,15 @@ var _velocity: Vector3 = Vector3.ZERO
 var _life: float = 0.0
 var _consumed: bool = false
 var _target_pos: Vector3 = Vector3.ZERO
+## Отбит ли снаряд парированием башни (для телеметрии отражённого урона по врагу).
+var _reflected: bool = false
+## Кто выпустил снаряд — при отражении летит ОБРАТНО в него (а не в ближайшего).
+var _shooter: Node3D = null
+
+
+## Запомнить стрелка (для отражения «обратно в стрелка»). Зовёт спавнер снаряда.
+func set_shooter(n: Node3D) -> void:
+	_shooter = n
 
 @onready var _hit_area: Area3D = $HitArea
 
@@ -179,8 +188,14 @@ func _explode(pos: Vector3) -> void:
 ## в радиусе. Раньше эта логика жила локально (sphere-query + radius²-filter
 ## + damage/push цикл) — вынесена в shared util после code review.
 func _apply_aoe(center: Vector3) -> void:
-	AoeDamage.apply_uniform(get_tree(), center, aoe_radius, aoe_mask, damage,
-		knockback_speed, knockback_duration)
+	var hits: Array[Node] = AoeDamage.apply_uniform(get_tree(), center, aoe_radius,
+		aoe_mask, damage, knockback_speed, knockback_duration)
+	# Телеметрия отражения: отбитый камень/стрела — сообщаем урон поражённым врагам
+	# (мех ведёт счёт отражённого). apply_uniform бьёт равномерно (damage каждому).
+	if _reflected:
+		for h in hits:
+			if h.has_method("note_reflected_damage"):
+				h.note_reflected_damage(damage)
 
 
 ## Отражение тайминг-парированием башни: перекидываем баллистику в ближайшего
@@ -189,12 +204,14 @@ func _apply_aoe(center: Vector3) -> void:
 func reflect(_reflector_pos: Vector3) -> bool:
 	if _consumed:
 		return false
-	var enemy: Node3D = Reflectable.nearest_enemy(get_tree(), global_position)
+	# Обратно в стрелка (если жив), иначе в ближайшего врага.
+	var enemy: Node3D = Reflectable.resolve_reflect_target(get_tree(), global_position, _shooter)
 	if enemy == null:
 		return false
 	var dest: Vector3 = Vector3(enemy.global_position.x, 0.0, enemy.global_position.z)
 	_target_pos = dest
 	_velocity = BallisticUtil.compute_launch_velocity(global_position, dest, speed, gravity)
+	_reflected = true
 	aoe_mask = Layers.MASK_HAND_SLAM                 # AOE теперь бьёт врагов
 	explosion_ring_color = Color(0.5, 0.9, 1.0, 0.9)  # дружественный (отражён)
 	if is_in_group(Reflectable.GROUP):

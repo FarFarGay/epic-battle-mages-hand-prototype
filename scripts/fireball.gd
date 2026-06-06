@@ -96,6 +96,14 @@ var _flight_collision_mask: int = 0
 ## а retarget() от меха игнорируется (мех больше им не управляет).
 var _reflected: bool = false
 var _reflect_target: Node3D = null
+## Кто выпустил снаряд (мех/скелет). При отражении летит ОБРАТНО в него (а не в
+## ближайшего врага). Ставит стрелок при спавне через set_shooter.
+var _shooter: Node3D = null
+
+
+## Запомнить стрелка (для отражения «обратно в стрелка»). Зовёт спавнер снаряда.
+func set_shooter(n: Node3D) -> void:
+	_shooter = n
 
 
 ## Свойство для FogOfWar.FOG_REVEAL_GROUP — в полёте снаряд светит вокруг,
@@ -223,7 +231,8 @@ func retarget(pos: Vector3) -> void:
 func reflect(_reflector_pos: Vector3) -> bool:
 	if _exploded or _reflected:
 		return false
-	var enemy: Node3D = Reflectable.nearest_enemy(get_tree(), global_position)
+	# Обратно в стрелка (если жив), иначе в ближайшего врага.
+	var enemy: Node3D = Reflectable.resolve_reflect_target(get_tree(), global_position, _shooter)
 	if enemy == null:
 		return false
 	_reflected = true
@@ -528,4 +537,9 @@ func _apply_aoe(target: Node, origin: Vector3) -> void:
 		horizontal_dir = horizontal_dir.normalized()
 	var velocity_change: Vector3 = horizontal_dir * _knockback_force * falloff
 	Pushable.try_push(target, velocity_change, _knockback_duration)
-	Damageable.try_damage(target, _damage * falloff)
+	var dealt: float = _damage * falloff
+	Damageable.try_damage(target, dealt)
+	# Телеметрия отражения: если этот снаряд отбит парированием — сообщаем цели
+	# (мех ведёт счёт отражённого урона). Duck-typing, без связки с EnemyMech.
+	if _reflected and dealt > 0.0 and target.has_method("note_reflected_damage"):
+		target.note_reflected_damage(dealt)

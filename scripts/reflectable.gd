@@ -36,7 +36,17 @@ static func try_reflect(target: Object, by_pos: Vector3) -> bool:
 	return (target as Node).reflect(by_pos)
 
 
-## Ближайший враг к точке (для самонаведения отражённого снаряда «обратно в стрелка»).
+## Куда отражать снаряд: предпочтительно — В СТРЕЛКА (летит «обратно», как и
+## задумано), если он ещё жив и враг; иначе ближайший враг (стрелок погиб). Так
+## отражённый шот меха не уходит в случайного скелета, что ближе. null если врагов нет.
+static func resolve_reflect_target(tree: SceneTree, from_pos: Vector3, shooter: Node) -> Node3D:
+	if shooter != null and is_instance_valid(shooter) and shooter is Node3D \
+			and shooter.is_in_group(Enemy.ENEMY_GROUP) and Damageable.is_damageable(shooter):
+		return shooter as Node3D
+	return nearest_enemy(tree, from_pos)
+
+
+## Ближайший враг к точке (fallback самонаведения, если стрелок погиб).
 ## Сканирует Enemy.ENEMY_GROUP (скелеты/мех/гиганты). null если врагов нет.
 static func nearest_enemy(tree: SceneTree, from_pos: Vector3, max_dist: float = 300.0) -> Node3D:
 	if tree == null:

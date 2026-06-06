@@ -356,6 +356,11 @@ var _telem_atk_near: int = 0
 var _telem_atk_missile: int = 0
 var _telem_atk_field: int = 0
 var _telem_atk_shock: int = 0
+## Урон по самому меху: суммарный (все источники) и отдельно отражённый игроком
+## (парирование) — оценить, окупается ли парирование как инструмент урона.
+var _telem_self_dmg_total: float = 0.0
+var _telem_reflect_hits: int = 0
+var _telem_reflect_damage: float = 0.0
 
 ## Shared material всех мехов — один draw-call. Холодный металл с emission'ом
 ## «реактора», отличает от скелетов (beige/фиолет) и гигантов (багряный/камень).
@@ -471,6 +476,9 @@ func _telemetry_report() -> void:
 	var gap: float = _telem_time / float(maxi(atk_total, 1))
 	print("  НАГРУЗКА: атак %d (ближние %d / залпы %d / поля %d / отбросы %d) = %.1f/мин, ср.промежуток %.1fс" % [
 		atk_total, _telem_atk_near, _telem_atk_missile, _telem_atk_field, _telem_atk_shock, per_min, gap])
+	var reflect_share: float = 100.0 * _telem_reflect_damage / maxf(_telem_self_dmg_total, 1.0)
+	print("  МЕХ ПОЛУЧИЛ: %.0f урона всего | отражением (парирование) %d попаданий, %.0f урона (%.0f%%)" % [
+		_telem_self_dmg_total, _telem_reflect_hits, _telem_reflect_damage, reflect_share])
 
 
 ## Целит ТОЛЬКО башню (apex vs apex). В отличие от SkeletonGiantThrower НЕ
@@ -653,6 +661,7 @@ func _launch_one_missile(target: Node3D) -> void:
 	fb.setup_fog_pulse(10.0)
 	# Flight-маска БЕЗ ENEMIES — ракета не рвётся о скелетов по пути, ведёт башню.
 	fb.set_collide_in_flight(true, Layers.MASK_HOSTILE_PROJECTILE)
+	fb.set_shooter(self)  # отражённая ракета летит обратно в меха, не в скелета
 	Reflectable.register(fb)  # башня может отбить ракету тайминг-парированием
 	_missiles.append({"m": fb, "t": missile_lifetime})
 
@@ -772,6 +781,7 @@ func _fire_one(aim_point: Vector3, radius: float = -1.0) -> void:
 	fb.setup_fog_pulse(12.0)
 	# Flight-маска БЕЗ ENEMIES — снаряд не рвётся о скелетов, долетает до прицела.
 	fb.set_collide_in_flight(true, Layers.MASK_HOSTILE_PROJECTILE)
+	fb.set_shooter(self)  # отражённый фаербол летит обратно в меха, не в скелета
 	Reflectable.register(fb)  # башня может отбить фаербол тайминг-парированием
 
 
@@ -982,9 +992,18 @@ func _process(delta: float) -> void:
 ## Металлический «лязг» при попадании: короткий flash эмиссии (HitFlash подменяет
 ## material_override и возвращает обратно). ТОЛЬКО on-hit, никакого постоянного
 ## мигания.
-func _on_self_damaged(_amount: float) -> void:
+func _on_self_damaged(amount: float) -> void:
+	_telem_self_dmg_total += amount
 	if is_instance_valid(_mesh):
 		HitFlash.flash(_mesh)
+
+
+## Телеметрия: реальный урон, прилетевший в меха ОТРАЖЁННЫМ снарядом (через
+## парирование игрока). Зовёт сам отражённый снаряд при попадании по меху
+## (duck-typing, без жёсткой связки). amount — уже применённый урон (с falloff).
+func note_reflected_damage(amount: float) -> void:
+	_telem_reflect_hits += 1
+	_telem_reflect_damage += amount
 
 
 ## Механическая смерть: к осколкам (super) добавляем взрыв корпуса + ударную
