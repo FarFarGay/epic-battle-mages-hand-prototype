@@ -42,10 +42,10 @@ const SPELL_CATALOG: Dictionary = {
 		# одновременно ослаблен на симметричные −20%). Radius/cooldown/mana
 		# не трогаем — только урон.
 		"levels": [
-			{"damage": 47.0, "radius": 3.5, "cooldown": 0.4, "mana_cost": 12.0, "burn_damage_per_tick": 18.0, "burn_radius": 2.8, "burn_duration": 2.5, "burn_tick_interval": 0.5},
-			{"damage": 58.0, "radius": 3.8, "cooldown": 0.36, "mana_cost": 11.0, "burn_damage_per_tick": 24.0, "burn_radius": 3.0, "burn_duration": 2.5, "burn_tick_interval": 0.5},
-			{"damage": 77.0, "radius": 4.2, "cooldown": 0.32, "mana_cost": 10.0, "burn_damage_per_tick": 29.0, "burn_radius": 3.3, "burn_duration": 3.0, "burn_tick_interval": 0.45},
-			{"damage": 101.0, "radius": 4.5, "cooldown": 0.28, "mana_cost": 9.0, "burn_damage_per_tick": 37.0, "burn_radius": 3.5, "burn_duration": 3.5, "burn_tick_interval": 0.4},
+			{"damage": 47.0, "radius": 3.5, "cooldown": 0.4, "mana_cost": 16.0, "burn_damage_per_tick": 18.0, "burn_radius": 2.8, "burn_duration": 2.5, "burn_tick_interval": 0.5},
+			{"damage": 58.0, "radius": 3.8, "cooldown": 0.36, "mana_cost": 15.0, "burn_damage_per_tick": 24.0, "burn_radius": 3.0, "burn_duration": 2.5, "burn_tick_interval": 0.5},
+			{"damage": 77.0, "radius": 4.2, "cooldown": 0.32, "mana_cost": 14.0, "burn_damage_per_tick": 29.0, "burn_radius": 3.3, "burn_duration": 3.0, "burn_tick_interval": 0.45},
+			{"damage": 101.0, "radius": 4.5, "cooldown": 0.28, "mana_cost": 13.0, "burn_damage_per_tick": 37.0, "burn_radius": 3.5, "burn_duration": 3.5, "burn_tick_interval": 0.4},
 		],
 		"upgrade_costs": [
 			{ResourcePile.ResourceType.PAGE: 3},
