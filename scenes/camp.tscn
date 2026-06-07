@@ -24,6 +24,5 @@ construction_site_scene = ExtResource("13_construction")
 
 [node name="CenterMountSlot" type="Node3D" parent="."]
 script = ExtResource("4")
-module_offset = Vector3(0, 0.35, 0)
 snap_radius = 2.5
 enabled = false

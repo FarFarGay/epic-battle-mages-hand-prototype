@@ -11,6 +11,7 @@
 [ext_resource type="PackedScene" path="res://scenes/skeleton_giant_thrower.tscn" id="7_thrower"]
 [ext_resource type="PackedScene" path="res://scenes/camp.tscn" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/octagon_turret.tscn" id="10"]
+[ext_resource type="PackedScene" path="res://scenes/build_block.tscn" id="29_buildblock"]
 [ext_resource type="PackedScene" path="res://scenes/perf_hud.tscn" id="11"]
 [ext_resource type="PackedScene" path="res://scenes/poi_marker.tscn" id="12"]
 [ext_resource type="Script" uid="uid://b8arph4ob7p8l" path="res://scripts/wave_director.gd" id="13"]
@@ -125,6 +126,24 @@ mech_scene = ExtResource("24_mech")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.46884, 0.35, 4)
 attack_radius = 22.0
 arrow_speed = 30.5
+
+[node name="BuildBlock1" parent="Modules" instance=ExtResource("29_buildblock")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0.9, 3)
+
+[node name="BuildBlock2" parent="Modules" instance=ExtResource("29_buildblock")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 0.9, -3)
+
+[node name="BuildBlock3" parent="Modules" instance=ExtResource("29_buildblock")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 0.9, -7)
+
+[node name="BuildBlock4" parent="Modules" instance=ExtResource("29_buildblock")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 0.9, 9)
+
+[node name="BuildBlock5" parent="Modules" instance=ExtResource("29_buildblock")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0.9, 11)
+
+[node name="BuildBlock6" parent="Modules" instance=ExtResource("29_buildblock")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11, 0.9, 7)
 
 [node name="SpawnZones" type="Node3D" parent="." unique_id=1926494768]
 

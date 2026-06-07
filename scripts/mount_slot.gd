@@ -25,6 +25,11 @@ signal module_detached(module: Node)
 ## релиз засчитывается как монтаж. Чем больше — тем «прилипчивее» слот,
 ## но риск перехвата чужих модулей.
 @export var snap_radius: float = 1.5
+## Выравнивать поворот модуля по слоту (модуль наследует global_rotation слота).
+## Октагон-кольцо включает это, чтобы блоки-сегменты вставали гранью наружу и
+## смыкались в кольцо построек. По умолчанию выкл — центральный слот не вращает
+## модуль (турель радиально-симметрична, поворот ей не нужен).
+@export var align_rotation: bool = false
 ## Слот активен. Camp'у нужно отключать слот в фазе CARAVAN_FOLLOWING — там
 ## нет «центра» лагеря. Если слот выключают с занятым модулем — модуль
 ## принудительно сбрасывается на землю (freeze=false, гравитация).
@@ -92,7 +97,9 @@ func _mount(module: CampModule) -> void:
 	if not module.unmounted.is_connected(_on_module_force_detached):
 		module.unmounted.connect(_on_module_force_detached, CONNECT_ONE_SHOT)
 	module.attach_to_slot(self)
-	module.global_position = global_position + module_offset
+	module.global_position = global_position + module_offset + Vector3(0.0, module.mount_lift, 0.0)
+	if align_rotation:
+		module.global_rotation = global_rotation
 	module_attached.emit(module)
 	if debug_log and LogConfig.master_enabled:
 		print("[MountSlot:%s] монтаж: %s" % [name, module.name])
@@ -153,7 +160,9 @@ func _physics_process(_delta: float) -> void:
 	# Жёстко прибиваем модуль к слоту. Слот может двигаться (Tower едет, Camp
 	# обновляет deploy_anchor) — модуль следует синхронно. RigidBody с freeze=true
 	# позволяет писать в global_position без интегратора.
-	_mounted.global_position = global_position + module_offset
+	_mounted.global_position = global_position + module_offset + Vector3(0.0, _mounted.mount_lift, 0.0)
+	if align_rotation:
+		_mounted.global_rotation = global_rotation
 
 
 func _horizontal_distance(pos: Vector3) -> float:

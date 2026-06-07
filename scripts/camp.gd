@@ -434,6 +434,10 @@ var _active_upgrades: Array[StringName] = []
 ## переезжает в anchor и активируется; на свёртке — выключается, что
 ## размонтирует всё что на нём стояло (модуль остаётся лежать на земле).
 @onready var _center_slot: MountSlot = get_node_or_null("CenterMountSlot") as MountSlot
+## Октагон-кольцо mount-слотов вокруг харвестера (ядра). Создаётся программно в
+## _ready (как _anchor_drop_zone). На развёртке раскрывается вокруг anchor'а, на
+## свёртке выключается. Сама механика установки блоков рукой — в RingBase/MountSlot.
+var _ring_base: RingBase = null
 ## Area3D в центре развёрнутого лагеря, ловит брошенные рукой ResourcePile.
 ## Создаётся в _ready, monitoring=false. На _start_deploy ставится на anchor
 ## и включается; на _start_pack — выключается. Polling каждый кадр через
@@ -514,6 +518,7 @@ func _ready() -> void:
 	_spawn_harvester()
 	_spawn_gnomes()
 	_build_anchor_drop_zone()
+	_build_ring_base()
 	# Seed snake-trail синтетической линейкой за tower'ом, чтобы первый
 	# кадр _update_caravan_follow не сдвигал палатки рывком к (0,0,0).
 	_seed_tower_trail()
@@ -2346,6 +2351,14 @@ func _build_anchor_drop_zone() -> void:
 	add_child(_anchor_drop_zone)
 
 
+## Создаёт октагон-кольцо mount-слотов вокруг харвестера. Слоты стартуют
+## выключенными (кольца нет в каравне), раскрываются на _start_deploy в anchor.
+func _build_ring_base() -> void:
+	_ring_base = RingBase.new()
+	_ring_base.name = "RingBase"
+	add_child(_ring_base)
+
+
 ## --- Collection orders (план + alarm/work) ---
 
 ## Инициализирует _collection_priority из @export'ов через set_collection_priority
@@ -3080,12 +3093,10 @@ func _start_deploy() -> void:
 	# Tower уходит из аггро-цели — скелеты переключаются на палатки/гномов.
 	# Если игрок свернёт лагерь, _finalize_pack вернёт tower в группу.
 	_set_tower_aggro(false)
-	# Idle-«жизнь лагеря»: спавним костры у палаток и переводим лагерь в FREE.
-	# Гномы выходят НЕ работать, а жить (часть садится у костров, часть бродит).
-	# Добыча — по кнопке «Работа» (set_collection_mode(WORK)). setup() в
-	# _spawn_one_gnome привязал гнома к палатке — учитывается при раздаче «своего»
-	# костра. Harvester для гномов — не дом, просто объект в центре кольца.
-	_spawn_campfires_for_deploy()
+	# Idle-«жизнь лагеря»: переводим лагерь в FREE. ПОКА без костров — гномы не
+	# выходят жить/бродить, а отдыхают по палаткам (см. _assign_idle_life: костров
+	# нет → request_return), чтобы не мельтешили. Добыча — по кнопке «Работа»
+	# (set_collection_mode(WORK)). Костры/бродяги отключены до отдельного решения.
 	_collection_mode = CollectionMode.FREE
 	EventBus.collection_mode_changed.emit(CollectionMode.FREE)
 	_assign_idle_life()
@@ -3110,6 +3121,13 @@ func _start_deploy() -> void:
 		if not _parts.is_empty():
 			harv_ground_y = _ground_y_at(_parts[0], _deploy_anchor)
 		_harvester.deploy_on(Vector3(_deploy_anchor.x, harv_ground_y, _deploy_anchor.z))
+	# Октагон-кольцо слотов раскрывается вокруг ядра (харвестера) на той же
+	# земле — игрок ставит блок-модули рукой в подсвеченные слоты.
+	if _ring_base != null:
+		var ring_ground_y: float = 0.0
+		if not _parts.is_empty():
+			ring_ground_y = _ground_y_at(_parts[0], _deploy_anchor)
+		_ring_base.deploy(Vector3(_deploy_anchor.x, ring_ground_y, _deploy_anchor.z))
 
 
 # --- Idle-«жизнь лагеря» (режим FREE): костры + распределение гномов ---
@@ -3192,8 +3210,11 @@ func _assign_idle_life() -> void:
 			fires.append(f)
 
 	if fires.is_empty():
+		# Костров нет (ПОКА отключены на деплое) → гномы не бродят, а отдыхают по
+		# палаткам (IN_TENT), чтобы не мельтешить. Вернуть костры/бродяг — снова
+		# спавнить _spawn_campfires_for_deploy в _start_deploy.
 		for g in gatherers:
-			g.enter_idle_life(Gnome.IdleRole.WANDERER, null, Vector3.INF, false)
+			g.request_return()
 		return
 
 	# Параллельные массивы состояния по кострам (слоты / курсор слота / зажжён ли
@@ -3248,7 +3269,8 @@ func _apply_mode_to_one(g) -> void:
 		return
 	match _collection_mode:
 		CollectionMode.FREE:
-			g.enter_idle_life(Gnome.IdleRole.WANDERER, null, Vector3.INF, false)
+			# ПОКА: FREE = отдых по палаткам (без бродяг/костров), чтобы не мельтешили.
+			g.request_return()
 		CollectionMode.WORK:
 			g.enter_deployed()
 		CollectionMode.ALARM:
@@ -3303,6 +3325,10 @@ func _finalize_pack() -> void:
 	# где был лагерь — игрок может подобрать рукой и поставить заново).
 	if _center_slot:
 		_center_slot.enabled = false
+	# Октагон-кольцо сворачивается: слоты выключаются, стоявшие блоки падают на
+	# землю (база с собой целиком не едет — забираем палатки/ресурсы отдельно).
+	if _ring_base != null:
+		_ring_base.pack()
 	# Tower снова цель скелетов в каравне — фоновые wander'ы могут увидеть
 	# караван и накинуться. Симметрично _start_deploy, который убирает.
 	_set_tower_aggro(true)
