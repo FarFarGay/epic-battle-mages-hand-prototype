@@ -80,6 +80,18 @@ func is_deployed() -> bool:
 	return _state == State.DEPLOYED
 
 
+## Camp включает/выключает добычу по числу установленных генераторов (нужно 4).
+## Пока выключен — харвестер развёрнут, но не качает золото и не крутит бур.
+var _running: bool = false
+
+func set_running(value: bool) -> void:
+	if _running == value:
+		return
+	_running = value
+	if _harvest_particles != null:
+		_harvest_particles.emitting = _running and _state == State.DEPLOYED
+
+
 ## Camp зовёт при развёртке. Anchor — позиция POI (= центр кольца палаток).
 ## Harvester телепортируется на anchor (внутри ring'а палаток он визуально
 ## по центру). Идемпотентно.
@@ -125,6 +137,10 @@ func _process(delta: float) -> void:
 		_visual_root.basis = _visual_base_basis * (fx["basis"] as Basis)
 	if _state != State.DEPLOYED:
 		return
+	# Харвестер запускается только когда установлены все генераторы (Camp дёргает
+	# set_running по числу генераторов в гриде). Без них — стоит, золото не качает.
+	if not _running:
+		return
 	if _drill != null:
 		_drill.rotate_y(delta * TAU * drill_rps)
 	if gold_per_second <= 0.0:
@@ -141,4 +157,4 @@ func _process(delta: float) -> void:
 
 func _apply_visual_state() -> void:
 	if _harvest_particles != null:
-		_harvest_particles.emitting = (_state == State.DEPLOYED)
+		_harvest_particles.emitting = (_state == State.DEPLOYED) and _running

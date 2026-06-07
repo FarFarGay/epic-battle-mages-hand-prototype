@@ -21,7 +21,70 @@ const PALISADE := &"palisade"
 const ARCHER_POST := &"archer_post"
 const WALL_GATE := &"wall_gate"
 
+# Новые здания грид-базы (ставятся рукой в ячейку BuildGrid соответствующего
+# кольца, см. ring_tier). grid_building=true → Журнал не зовёт try_build/aim,
+# а спавнит здание в руку (Camp.spawn_building_into_hand).
+const GENERATOR := &"generator"
+const ARCHER_BARRACKS := &"archer_barracks"
+const SPEAR_BARRACKS := &"spear_barracks"
+const GNOME_PORTAL := &"gnome_portal"
+const WALL := &"wall"
+
 const CATALOG: Dictionary = {
+	GENERATOR: {
+		"name": "Генератор",
+		"description": "Большой блок (внутреннее кольцо). Питает харвестер: нужно 4 генератора, чтобы он начал качать золото.",
+		"cost": {ResourcePile.ResourceType.WOOD: 8, ResourcePile.ResourceType.STONE: 6},
+		"deployed_only": true,
+		"repeatable": true,
+		"grid_building": true,
+		"ring_tier": 0,
+		"color": Color(1.0, 0.8, 0.2, 1.0),
+	},
+	ARCHER_BARRACKS: {
+		"name": "Казарма лучников",
+		"description": "Среднее здание (2 мелкие ячейки). Позволяет набирать отряды лучников. Ставится в любой не-генераторной зоне.",
+		"cost": {ResourcePile.ResourceType.WOOD: 12, ResourcePile.ResourceType.IRON: 4},
+		"deployed_only": true,
+		"repeatable": true,
+		"grid_building": true,
+		"ring_tier": 1,
+		"footprint": 2,
+		"color": Color(0.4, 0.6, 0.32, 1.0),
+	},
+	SPEAR_BARRACKS: {
+		"name": "Казарма копейщиков",
+		"description": "Среднее здание (2 мелкие ячейки). Позволяет набирать отряды копейщиков. Ставится в любой не-генераторной зоне.",
+		"cost": {ResourcePile.ResourceType.WOOD: 12, ResourcePile.ResourceType.IRON: 8},
+		"deployed_only": true,
+		"repeatable": true,
+		"grid_building": true,
+		"ring_tier": 1,
+		"footprint": 2,
+		"color": Color(0.6, 0.35, 0.3, 1.0),
+	},
+	GNOME_PORTAL: {
+		"name": "Гномий портал",
+		"description": "Среднее здание (2 мелкие ячейки). Позволяет за золото нанимать гномов группами по 3. Ставится в любой не-генераторной зоне.",
+		"cost": {ResourcePile.ResourceType.STONE: 12, ResourcePile.ResourceType.IRON: 6},
+		"deployed_only": true,
+		"repeatable": true,
+		"grid_building": true,
+		"ring_tier": 1,
+		"footprint": 2,
+		"color": Color(0.5, 0.3, 0.7, 1.0),
+	},
+	WALL: {
+		"name": "Стена",
+		"description": "Тонкая стена в 1 мелкую ячейку. Ставится по одной на любой не-генераторной зоне — стыкуются в линию (кирпичики).",
+		"cost": {ResourcePile.ResourceType.STONE: 3},
+		"deployed_only": true,
+		"repeatable": true,
+		"grid_building": true,
+		"ring_tier": 1,
+		"color": Color(0.55, 0.55, 0.58, 1.0),
+		"thin": true,
+	},
 	NEW_TENT: {
 		"name": "Новая палатка",
 		"description": "Добавляет ещё одну палатку в кольцо лагеря — +жителей-собирателей.",

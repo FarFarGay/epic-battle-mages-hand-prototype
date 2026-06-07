@@ -343,6 +343,14 @@ func _find_closest_grabbable(bodies: Array[Node3D]) -> RigidBody3D:
 	return closest
 
 
+## Публичная «вложить в руку» — программный захват (меню постройки спавнит
+## здание прямо в руку). Если уже что-то держим — игнорируем.
+func hold(body: RigidBody3D) -> void:
+	if _held != null or body == null:
+		return
+	_attach(body)
+
+
 func _attach(body: RigidBody3D) -> void:
 	_held = body
 	_held.linear_velocity = Vector3.ZERO

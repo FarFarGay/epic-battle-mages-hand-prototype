@@ -601,6 +601,12 @@ func _on_build_pressed(id: StringName) -> void:
 	if camp == null:
 		return
 	var data: Dictionary = Camp.CAMP_BUILDING_CATALOG.get(id, {})
+	# grid_building — новые здания грид-базы: закрываем журнал и спавним здание
+	# в руку, игрок прихлопывает его в ячейку грида (Camp.spawn_building_into_hand).
+	if data.get("grid_building", false):
+		close()
+		camp.spawn_building_into_hand(id)
+		return
 	# brush_mode — polyline-кисть (частокол). Журнал закрываем, игрок рисует
 	# ломаную ЛКМ, ПКМ — построить, Esc — отмена. См. HandBuildAim.start_brush.
 	if data.get("brush_mode", false):

@@ -127,24 +127,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.46884, 0.35, 4)
 attack_radius = 22.0
 arrow_speed = 30.5
 
-[node name="BuildBlock1" parent="Modules" instance=ExtResource("29_buildblock")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0.9, 3)
-
-[node name="BuildBlock2" parent="Modules" instance=ExtResource("29_buildblock")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 0.9, -3)
-
-[node name="BuildBlock3" parent="Modules" instance=ExtResource("29_buildblock")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 0.9, -7)
-
-[node name="BuildBlock4" parent="Modules" instance=ExtResource("29_buildblock")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 0.9, 9)
-
-[node name="BuildBlock5" parent="Modules" instance=ExtResource("29_buildblock")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0.9, 11)
-
-[node name="BuildBlock6" parent="Modules" instance=ExtResource("29_buildblock")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11, 0.9, 7)
-
 [node name="SpawnZones" type="Node3D" parent="." unique_id=1926494768]
 
 [node name="SpawnZone1" parent="SpawnZones" unique_id=2016128478 instance=ExtResource("17")]
@@ -165,6 +147,7 @@ wave_schedule = ExtResource("18_schedule_default")
 target_path = NodePath("../Tower")
 tent_count = 3
 harvester_scene = ExtResource("22_harvester")
+build_block_scene = ExtResource("29_buildblock")
 
 [node name="PerfHud" parent="." unique_id=2138312601 instance=ExtResource("11")]
 

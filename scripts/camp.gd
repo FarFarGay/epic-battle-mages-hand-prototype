@@ -230,9 +230,17 @@ const CAMP_BUILDING_CATALOG: Dictionary = CampBuildings.CATALOG
 @export var stationary_threshold: float = 0.01
 
 @export_group("Gnomes")
-## Сцена обычного гнома-собирателя. Спавнится gnomes_per_tent раз на каждую
-## палатку — «жители-собиратели», ищут ResourcePile и носят к anchor лагеря.
+## Сцена обычного гнома-собирателя. Палаток больше нет — спавнится
+## initial_gnome_count раз с домом = башня (живут в башне до установки харвестера).
 @export var gnome_scene: PackedScene
+## Сколько гномов-собирателей создать на старте (живут в башне). Раньше было
+## tent_count × gnomes_per_tent; теперь явное число.
+@export var initial_gnome_count: int = 8
+## Сцена блока-здания (BuildBlock). Меню постройки спавнит её в руку и
+## конфигурит под выбранное здание (Camp.spawn_building_into_hand).
+@export var build_block_scene: PackedScene
+## Сколько генераторов нужно установить в гриде, чтобы запустить харвестер.
+@export var generators_required: int = 4
 ## Сцена сегмента деревянного частокола. Спавнится множественно через
 ## BUILDING_PALISADE / try_build_palisade_line. Если null — постройка молча
 ## провалится.
@@ -434,10 +442,10 @@ var _active_upgrades: Array[StringName] = []
 ## переезжает в anchor и активируется; на свёртке — выключается, что
 ## размонтирует всё что на нём стояло (модуль остаётся лежать на земле).
 @onready var _center_slot: MountSlot = get_node_or_null("CenterMountSlot") as MountSlot
-## Октагон-кольцо mount-слотов вокруг харвестера (ядра). Создаётся программно в
-## _ready (как _anchor_drop_zone). На развёртке раскрывается вокруг anchor'а, на
-## свёртке выключается. Сама механика установки блоков рукой — в RingBase/MountSlot.
-var _ring_base: RingBase = null
+## Полярный грид строительства вокруг харвестера (ядра). Создаётся программно в
+## _ready (как _anchor_drop_zone). На развёртке встаёт в anchor и показывает
+## ячейки, на свёртке гасит и роняет блоки. Механика установки/связности — в BuildGrid.
+var _build_grid: BuildGrid = null
 ## Area3D в центре развёрнутого лагеря, ловит брошенные рукой ResourcePile.
 ## Создаётся в _ready, monitoring=false. На _start_deploy ставится на anchor
 ## и включается; на _start_pack — выключается. Polling каждый кадр через
@@ -514,11 +522,11 @@ func _ready() -> void:
 	if not _tower and not start_deployed:
 		push_warning("Camp: target_path не разрешился, башня не задана")
 
-	_spawn_tents()
+	# Палаток больше нет — гномы живут в башне (_spawn_gnomes привязывает дом к _tower).
 	_spawn_harvester()
 	_spawn_gnomes()
 	_build_anchor_drop_zone()
-	_build_ring_base()
+	_build_build_grid()
 	# Seed snake-trail синтетической линейкой за tower'ом, чтобы первый
 	# кадр _update_caravan_follow не сдвигал палатки рывком к (0,0,0).
 	_seed_tower_trail()
@@ -650,15 +658,12 @@ func _spawn_gnomes() -> void:
 		if debug_log and LogConfig.master_enabled:
 			print("[Camp] gnome_scene не задана — никого не спавним")
 		return
-	for tent in _parts:
-		if not (tent is CampPart):
-			continue
-		var part := tent as CampPart
-		# Каждая палатка спавнит gnomes_per_tent собирателей. Лучники как
-		# боевые юниты теперь призываются как Squad через recruit_squad
-		# (см. SoldierSystem.&"archer_squad").
-		for i in range(part.gnomes_per_tent):
-			_spawn_one_gnome(gnome_scene, tent, "gatherer")
+	# Палаток нет — гномы живут В БАШНЕ. Дом каждого гнома = _tower: IN_TENT
+	# прячет его у башни (невидим, неуязвим), request_return (тревога) возвращает
+	# туда же. До первой установки харвестера сидят в башне; на deploy выходят.
+	var home: Node3D = _tower if _tower != null else self
+	for i in range(initial_gnome_count):
+		_spawn_one_gnome(gnome_scene, home, "gatherer")
 
 
 ## Инстанцирует одну сцену гнома, привязывает к палатке.
@@ -1001,28 +1006,22 @@ func current_center() -> Vector3:
 ## Возвращает null если все палатки разрушены — лагерь больше не валидная
 ## цель, и вся волна идёт мимо. Оторванные (torn_off) палатки не считаются
 ## легитимной целью каравана — волна идёт на стационарные палатки лагеря.
-func nearest_part_to(pos: Vector3) -> Node3D:
-	var nearest: Node3D = null
-	var nearest_dist_sq := INF
-	for part in _parts:
-		if not is_instance_valid(part):
-			continue
-		if part is CampPart and (part as CampPart).is_torn_off():
-			continue
-		var d_sq: float = (part.global_position - pos).length_squared()
-		if d_sq < nearest_dist_sq:
-			nearest_dist_sq = d_sq
-			nearest = part
-	return nearest
+## Палаток больше нет — структурная цель волны это ядро базы: харвестер (если
+## жив), иначе башня. WaveDirector назначает forced_target на неё; гномы снаружи
+## и так в SKELETON_TARGET_GROUP и берутся broad-phase'ом.
+func nearest_part_to(_pos: Vector3) -> Node3D:
+	if _harvester != null and is_instance_valid(_harvester):
+		return _harvester
+	if _tower != null and is_instance_valid(_tower):
+		return _tower
+	return null
 
 
-## True если у лагеря есть хотя бы одна живая палатка — иначе он больше не
-## валидная цель (все палатки разрушены).
+## True пока жива база — харвестер или башня (палаток больше нет).
 func has_alive_parts() -> bool:
-	for part in _parts:
-		if is_instance_valid(part):
-			return true
-	return false
+	if _harvester != null and is_instance_valid(_harvester):
+		return true
+	return _tower != null and is_instance_valid(_tower)
 
 
 ## --- Squad XP / upgrades ---
@@ -2351,12 +2350,54 @@ func _build_anchor_drop_zone() -> void:
 	add_child(_anchor_drop_zone)
 
 
-## Создаёт октагон-кольцо mount-слотов вокруг харвестера. Слоты стартуют
-## выключенными (кольца нет в каравне), раскрываются на _start_deploy в anchor.
-func _build_ring_base() -> void:
-	_ring_base = RingBase.new()
-	_ring_base.name = "RingBase"
-	add_child(_ring_base)
+## Создаёт полярный грид строительства вокруг харвестера. В каравне неактивен,
+## раскрывается на _start_deploy в anchor.
+func _build_build_grid() -> void:
+	_build_grid = BuildGrid.new()
+	_build_grid.name = "BuildGrid"
+	add_child(_build_grid)
+	_build_grid.bind_camp(self)
+	# Изменился набор построек → пересчитать генераторы и гейтить харвестер.
+	_build_grid.buildings_changed.connect(_on_grid_buildings_changed)
+
+
+## Меню постройки выбрало здание — спавним его в руку игрока. Дальше он сам
+## прихлопывает его в ячейку грида (BuildGrid). Требует развёрнутого лагеря.
+func spawn_building_into_hand(id: StringName) -> bool:
+	if build_block_scene == null:
+		push_warning("Camp: build_block_scene не задана")
+		return false
+	if _state != State.DEPLOYED:
+		return false
+	var hand := get_tree().get_first_node_in_group(Hand.HAND_GROUP) as Hand
+	if hand == null:
+		return false
+	var block := build_block_scene.instantiate() as BuildBlock
+	if block == null:
+		push_warning("Camp: build_block_scene не инстанцируется как BuildBlock")
+		return false
+	var root: Node = get_tree().current_scene
+	if root == null:
+		root = self
+	root.add_child(block)
+	block.configure(id)
+	# Сразу придаём зданию размер его ячейки (по кольцу-tier) — в руке оно уже
+	# нужного размера, а не компактная болванка. На установке conform повторится
+	# с теми же размерами (то же кольцо).
+	if _build_grid != null:
+		var dims: Dictionary = _build_grid.tier_cell_dims(block.ring_tier, block.footprint)
+		block.conform_to_cell(dims["inner"], dims["outer"], dims["seg_deg"])
+	block.global_position = hand.global_position
+	hand.hold_item(block)
+	return true
+
+
+## Пересчёт генераторов: харвестер качает золото только когда их установлено
+## generators_required (по умолчанию 4).
+func _on_grid_buildings_changed() -> void:
+	if _harvester == null or _build_grid == null:
+		return
+	_harvester.set_running(_build_grid.generator_count() >= generators_required)
 
 
 ## --- Collection orders (план + alarm/work) ---
@@ -2974,19 +3015,11 @@ func _handle_input(delta: float) -> void:
 				_deploy_hold = 0.0
 				_was_holding_stationary = false
 		State.DEPLOYED:
-			# Pack-gate: башня должна быть в recall-зоне лагеря. Иначе игрок
-			# увёл её далеко и хочет «оставить лагерь» — pack не должен
-			# срабатывать (палатки не понесутся за башней через всю карту).
-			if not is_tower_in_camp_recall_zone():
-				if _pack_hold > 0.0 and debug_log and LogConfig.master_enabled:
-					print("[Camp] отсчёт свёртки прерван (башня вне зоны вызова — лагерь остаётся)")
-				_pack_hold = 0.0
-				return
-			_pack_hold += delta
-			if _pack_hold >= pack_duration:
-				_start_pack()
+			# Харвестер установлен НАВСЕГДА — свернуть нельзя (pack удалён). Чтобы
+			# уйти: собрать гномов в башню (тревога) и уехать башней; харвестер и
+			# постройки остаются. R в развёрнутом состоянии ничего не делает.
+			pass
 		State.PACKING_RETURNING:
-			# Во время сбора отсчёт не накапливается — гномам нужно дойти.
 			pass
 
 
@@ -3069,65 +3102,37 @@ func _start_deploy() -> void:
 		_deploy_anchor = _tower.global_position
 	else:
 		_deploy_anchor = global_position
+	# Палаток нет — кольца целей не строим.
 	_deployed_targets.clear()
-	var count := _parts.size()
-	for i in range(count):
-		var angle := float(i) * TAU / float(maxi(count, 1))
-		var part_y: float = _parts[i].global_position.y
-		var target := Vector3(
-			_deploy_anchor.x + cos(angle) * deploy_radius,
-			part_y,
-			_deploy_anchor.z + sin(angle) * deploy_radius,
-		)
-		_deployed_targets.append(target)
 	_deploy_hold = 0.0
 	_pack_hold = 0.0
 	_was_holding_stationary = false
 	if debug_log and LogConfig.master_enabled:
-		print("[Camp] лагерь развёрнут @ (%.1f, %.1f, %.1f)" % [_deploy_anchor.x, _deploy_anchor.y, _deploy_anchor.z])
+		print("[Camp] харвестер установлен @ (%.1f, %.1f, %.1f)" % [_deploy_anchor.x, _deploy_anchor.y, _deploy_anchor.z])
 	deployed.emit(_deploy_anchor)
-	# Палатки уязвимы (как и в каравне сейчас — см. _ready/_finalize_pack).
-	# В DEPLOYED это идентично, в каравне они тоже atакуемы скелетами,
-	# единственное исключение — PACKING_RETURNING (бронь см. _start_pack).
-	_set_parts_vulnerable(true)
-	# Tower уходит из аггро-цели — скелеты переключаются на палатки/гномов.
-	# Если игрок свернёт лагерь, _finalize_pack вернёт tower в группу.
+	# Tower уходит из аггро-цели — скелеты переключаются на гномов/ядро.
 	_set_tower_aggro(false)
-	# Idle-«жизнь лагеря»: переводим лагерь в FREE. ПОКА без костров — гномы не
-	# выходят жить/бродить, а отдыхают по палаткам (см. _assign_idle_life: костров
-	# нет → request_return), чтобы не мельтешили. Добыча — по кнопке «Работа»
-	# (set_collection_mode(WORK)). Костры/бродяги отключены до отдельного решения.
+	# Гномы ВЫХОДЯТ из башни на установке харвестера в состоянии СВОБОДНЫХ —
+	# бродят вокруг ядра. «Работа» (C) → добыча, «Тревога» (V) → обратно в башню.
 	_collection_mode = CollectionMode.FREE
 	EventBus.collection_mode_changed.emit(CollectionMode.FREE)
 	_assign_idle_life()
+	# Уровень земли под anchor — через башню (палаток-референса больше нет).
+	var ground_y: float = _ground_y_at(_tower, _deploy_anchor) if _tower != null else 0.0
 	# Центральный слот для модулей переезжает в anchor и активируется.
-	# Y берём с пола, а не с anchor'а: anchor — позиция башни (y≈3, центр меша),
-	# а модуль должен стоять на земле, а не висеть в воздухе.
 	if _center_slot:
-		var ground_y: float = 0.0
-		if not _parts.is_empty():
-			ground_y = _ground_y_at(_parts[0], _deploy_anchor)
 		_center_slot.global_position = Vector3(_deploy_anchor.x, ground_y, _deploy_anchor.z)
 		_center_slot.enabled = true
 	# Anchor drop zone: переехала на anchor, начинает пожирать брошенные кучи.
 	if _anchor_drop_zone != null:
 		_anchor_drop_zone.global_position = Vector3(_deploy_anchor.x, _deploy_anchor.y + 0.5, _deploy_anchor.z)
 		_anchor_drop_zone.monitoring = true
-	# Harvester встаёт ровно на anchor (= центр POI, между палатками кольца) и
-	# начинает качать золото. Y берём с пола, как у _center_slot — иначе он
-	# повиснет на высоте башни (anchor.y ≈ 3, центр Tower-меша).
+	# Харвестер врастает НАВСЕГДА (одноразовая установка — pack удалён) и качает золото.
 	if _harvester != null:
-		var harv_ground_y: float = 0.0
-		if not _parts.is_empty():
-			harv_ground_y = _ground_y_at(_parts[0], _deploy_anchor)
-		_harvester.deploy_on(Vector3(_deploy_anchor.x, harv_ground_y, _deploy_anchor.z))
-	# Октагон-кольцо слотов раскрывается вокруг ядра (харвестера) на той же
-	# земле — игрок ставит блок-модули рукой в подсвеченные слоты.
-	if _ring_base != null:
-		var ring_ground_y: float = 0.0
-		if not _parts.is_empty():
-			ring_ground_y = _ground_y_at(_parts[0], _deploy_anchor)
-		_ring_base.deploy(Vector3(_deploy_anchor.x, ring_ground_y, _deploy_anchor.z))
+		_harvester.deploy_on(Vector3(_deploy_anchor.x, ground_y, _deploy_anchor.z))
+	# Полярный грид строительства раскрывается вокруг ядра (харвестера).
+	if _build_grid != null:
+		_build_grid.deploy(Vector3(_deploy_anchor.x, ground_y, _deploy_anchor.z))
 
 
 # --- Idle-«жизнь лагеря» (режим FREE): костры + распределение гномов ---
@@ -3210,11 +3215,10 @@ func _assign_idle_life() -> void:
 			fires.append(f)
 
 	if fires.is_empty():
-		# Костров нет (ПОКА отключены на деплое) → гномы не бродят, а отдыхают по
-		# палаткам (IN_TENT), чтобы не мельтешить. Вернуть костры/бродяг — снова
-		# спавнить _spawn_campfires_for_deploy в _start_deploy.
+		# Костров нет → свободные гномы бродят вокруг харвестера-ядра (это и есть
+		# нормальное состояние «свободного»). «Работа» → добыча, «Тревога» → башня.
 		for g in gatherers:
-			g.request_return()
+			g.enter_idle_life(Gnome.IdleRole.WANDERER, null, Vector3.INF, false)
 		return
 
 	# Параллельные массивы состояния по кострам (слоты / курсор слота / зажжён ли
@@ -3269,8 +3273,7 @@ func _apply_mode_to_one(g) -> void:
 		return
 	match _collection_mode:
 		CollectionMode.FREE:
-			# ПОКА: FREE = отдых по палаткам (без бродяг/костров), чтобы не мельтешили.
-			g.request_return()
+			g.enter_idle_life(Gnome.IdleRole.WANDERER, null, Vector3.INF, false)
 		CollectionMode.WORK:
 			g.enter_deployed()
 		CollectionMode.ALARM:
@@ -3325,10 +3328,10 @@ func _finalize_pack() -> void:
 	# где был лагерь — игрок может подобрать рукой и поставить заново).
 	if _center_slot:
 		_center_slot.enabled = false
-	# Октагон-кольцо сворачивается: слоты выключаются, стоявшие блоки падают на
-	# землю (база с собой целиком не едет — забираем палатки/ресурсы отдельно).
-	if _ring_base != null:
-		_ring_base.pack()
+	# Грид сворачивается: ячейки гаснут, стоявшие блоки падают на землю (база с
+	# собой целиком не едет — забираем палатки/ресурсы отдельно).
+	if _build_grid != null:
+		_build_grid.pack()
 	# Tower снова цель скелетов в каравне — фоновые wander'ы могут увидеть
 	# караван и накинуться. Симметрично _start_deploy, который убирает.
 	_set_tower_aggro(true)

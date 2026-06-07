@@ -183,6 +183,12 @@ func is_holding() -> bool:
 	return physical_actions != null and physical_actions.is_holding()
 
 
+## Программно вложить тело в руку (меню постройки спавнит здание прямо в руку).
+func hold_item(body: RigidBody3D) -> void:
+	if physical_actions != null:
+		physical_actions.hold(body)
+
+
 ## True если рука сейчас в одной из «aim-takeover» категорий, где
 ## input принадлежит специальному координатору (Super QTE, SquadAim,
 ## BuildAim). Используется hand_physical/hand_spell для гейта своего

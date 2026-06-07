@@ -699,7 +699,7 @@ func _physics_process(delta: float) -> void:
 		return
 
 	if _state == State.IN_TENT:
-		# Приклеены к палатке — позиция ведомая, физикой не трогаем.
+		# Приклеены к башне (дом) — позиция ведомая, физикой не трогаем.
 		if is_instance_valid(_home_tent):
 			global_position = _home_tent.global_position
 		return
