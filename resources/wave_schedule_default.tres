@@ -67,8 +67,8 @@ script = ExtResource("2_stage")
 duration = 999999.0
 wave_interval = 25.0
 groups = Array[ExtResource("3_group")]([SubResource("Group_skel_10"), SubResource("Group_skel_8"), SubResource("Group_mixed_10")])
-random_groups = true
 simultaneous_groups = 2
+random_groups = true
 metadata/_custom_type_script = "uid://dyuckha78cek"
 
 [resource]

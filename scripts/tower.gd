@@ -88,6 +88,23 @@ signal mana_changed(current: float, maximum: float)
 ## получают урон. Разовый импульс на активацию — не тикает каждый кадр. 0 = выкл.
 @export var parry_skeleton_damage: float = 100.0
 
+@export_group("Death explosion (детонация при смерти)")
+## Башня детонирует при гибели — урон по площади (враги + постройки + палисад +
+## ядро). 0 = радиус выкл. Единый язык с death-взрывом меха/ядра.
+@export var death_explosion_radius: float = 7.0
+## Урон детонации всем damageable в радиусе (без falloff).
+@export var death_explosion_damage: float = 220.0
+## Импульс отбрасывания pushable-целей (скелетов) от центра (м/с). 0 = без push.
+@export var death_explosion_knockback: float = 9.0
+## Цвет ударной волны детонации.
+@export var death_explosion_color: Color = Color(1.0, 0.55, 0.15, 0.95)
+## Сколько осколков-кубиков разлетается при гибели (башня крупная — много).
+@export var death_shatter_fragments: int = 22
+## Время жизни осколков (сек).
+@export var death_shatter_lifetime: float = 2.5
+## Цвет осколков башни (камень).
+@export var death_shatter_color: Color = Color(0.55, 0.55, 0.6, 1.0)
+
 @export_group("")
 ## Высота, ниже которой считаем что башня провалилась под карту.
 @export var fall_threshold: float = -10.0
@@ -152,9 +169,11 @@ var mana: float = 0.0
 ## Per-instance материал жил (дубль общего .tres) — меняем его emission по мане,
 ## не трогая ресурс на диске. Заполняется в _ready.
 var _glow_mat: StandardMaterial3D = null
-## Свечение жил при пустой / полной мане (emission_energy_multiplier).
-const REACTOR_GLOW_MIN := 0.2
-const REACTOR_GLOW_MAX := 4.0
+## Свечение жил при пустой / полной мане (emission_energy_multiplier). MAX держим
+## чуть выше HDR-порога блума (~1.3 в Environment) — ядро светится, но без жирного
+## ореола. Поднимешь MAX — сильнее блум.
+const REACTOR_GLOW_MIN := 0.15
+const REACTOR_GLOW_MAX := 1.7
 
 ## Motion-feedback в caravan-mode. Tower — большое тяжёлое здание, эффекты
 ## мелкие (амплитуды ≈половина палаточных), но дают «вес» при езде. На
@@ -223,13 +242,48 @@ func take_damage(amount: float) -> void:
 		# no-op'ом через ранний return по _dying в начале функции.
 		set_physics_process(false)
 		velocity = Vector3.ZERO
-		# Снимаем флаг damageable: AOE-эффекты (Slam, будущие spells) больше
-		# не считают мёртвую башню целью. Сама стенка-коллизия остаётся.
+		# Снимаем флаг damageable ДО детонации: взрыв (MASK_DEATH_BLAST включает
+		# ACTORS) не должен задеть саму мёртвую башню. Сама стенка-коллизия остаётся.
 		remove_from_group(Damageable.GROUP)
+		_spawn_death_explosion()
+		# Башня детонировала — рассыпаем визуал на осколки, прячем меш и убираем
+		# коллизию-стену: тело исчезает, а не висит болванкой. Сама нода остаётся
+		# жива (камера держит её как _default_target; смерть башни ≠ game-over).
+		_shatter_and_vanish()
 		destroyed.emit()
 		if debug_log and LogConfig.master_enabled:
 			print("[Tower] DEAD")
-		# Не queue_free — game-over UI будет в следующих итерациях.
+
+
+## Детонация при гибели: визуал взрыва + ударная волна + урон по площади всем
+## damageable в радиусе (враги, постройки, палисад, ядро). Единый паттерн с
+## death-взрывом меха (EnemyMech._on_destroyed). Себя не задевает — вышли из
+## Damageable-группы выше. Гномы (FRIENDLY_UNIT) намеренно не в MASK_DEATH_BLAST.
+func _spawn_death_explosion() -> void:
+	var root: Node = get_tree().current_scene
+	if root != null and death_explosion_radius > 0.0:
+		AoeVisual.spawn_explosion(root, global_position + Vector3.UP * 1.5, death_explosion_radius)
+		AoeVisual.spawn_expanding_ring(root, global_position, death_explosion_radius, 0.6, death_explosion_color, 0.3)
+	if death_explosion_radius > 0.0 and death_explosion_damage > 0.0:
+		AoeDamage.apply_uniform(get_tree(), global_position, death_explosion_radius,
+			Layers.MASK_DEATH_BLAST, death_explosion_damage, death_explosion_knockback, 0.3)
+
+
+## Рассыпать визуал на осколки (на current_scene — переживают возможный freeze
+## ноды), спрятать меш и снять коллизию: башня визуально исчезает. Ноду не
+## освобождаем — её держит камера (_default_target) и кэши Camp/HandSpell;
+## они обнуляются по tower_destroyed, но сам узел оставляем живым во избежание
+## freed-ссылок. Стена-коллизия убирается (collision_layer=0) — нет «невидимого
+## препятствия» там, где башни уже нет.
+func _shatter_and_vanish() -> void:
+	var root: Node = get_tree().current_scene
+	if root != null:
+		ShatterEffect.spawn(root, global_position + Vector3.UP * 1.5, death_shatter_color,
+			death_shatter_fragments, death_shatter_lifetime)
+	var vis := get_node_or_null("VisualRoot") as Node3D
+	if vis != null:
+		vis.visible = false
+	collision_layer = 0
 
 
 ## Пытается списать ману. Возвращает true если хватило (и mana уменьшилась

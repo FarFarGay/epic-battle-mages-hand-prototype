@@ -11,7 +11,6 @@
 [ext_resource type="PackedScene" path="res://scenes/skeleton_giant_thrower.tscn" id="7_thrower"]
 [ext_resource type="PackedScene" path="res://scenes/camp.tscn" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/octagon_turret.tscn" id="10"]
-[ext_resource type="PackedScene" path="res://scenes/build_block.tscn" id="29_buildblock"]
 [ext_resource type="PackedScene" path="res://scenes/perf_hud.tscn" id="11"]
 [ext_resource type="PackedScene" path="res://scenes/poi_marker.tscn" id="12"]
 [ext_resource type="Script" uid="uid://b8arph4ob7p8l" path="res://scripts/wave_director.gd" id="13"]
@@ -29,19 +28,69 @@
 [ext_resource type="PackedScene" path="res://scenes/dungeon_zone.tscn" id="26_2wyq8"]
 [ext_resource type="Script" uid="uid://s8qcnobw8yjo" path="res://scripts/main_setup.gd" id="27_main_setup"]
 [ext_resource type="PackedScene" uid="uid://startmenu001" path="res://scenes/start_menu.tscn" id="28_start_menu"]
+[ext_resource type="PackedScene" path="res://scenes/build_block.tscn" id="29_buildblock"]
 [ext_resource type="Script" uid="uid://bdmyhgso4vop7" path="res://scripts/match_goal.gd" id="29_match_goal"]
 [ext_resource type="PackedScene" path="res://scenes/win_overlay.tscn" id="30_win_overlay"]
+[ext_resource type="PackedScene" path="res://scenes/defeat_overlay.tscn" id="43_defeat_overlay"]
 [ext_resource type="PackedScene" path="res://scenes/key_item.tscn" id="31_key_item"]
 [ext_resource type="PackedScene" path="res://scenes/gate.tscn" id="32_gate"]
 [ext_resource type="PackedScene" path="res://scenes/boss_warning_overlay.tscn" id="33_boss_warning"]
 [ext_resource type="PackedScene" path="res://scenes/day_night_overlay.tscn" id="34_day_night"]
+[ext_resource type="Shader" uid="uid://ca6silla7wl60" path="res://resources/oklch_posterize.gdshader" id="35_posterize"]
+[ext_resource type="Shader" uid="uid://cpo2ysnx8vuk6" path="res://resources/soft_focus.gdshader" id="36_softfocus"]
+[ext_resource type="Texture2D" path="res://textures/ground_05/ground_05_1k/ground_05_baseColor_1k.png" id="38_gbase"]
+[ext_resource type="Texture2D" path="res://textures/ground_05/ground_05_1k/ground_05_normal_gl_1k.png" id="39_gnorm"]
+[ext_resource type="Texture2D" path="res://textures/ground_05/ground_05_1k/ground_05_roughness_1k.png" id="40_grough"]
+[ext_resource type="Texture2D" path="res://textures/ground_05/ground_05_1k/ground_05_ambientOcclusion_1k.png" id="41_gao"]
+[ext_resource type="Texture2D" path="res://textures/sky_121/sky_121_2k.png" id="42_skypano"]
+
+[sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
+panorama = ExtResource("42_skypano")
+
+[sub_resource type="Sky" id="Sky_res"]
+sky_material = SubResource("Sky_mat")
 
 [sub_resource type="Environment" id="Environment_atmo"]
-background_mode = 1
+background_mode = 2
 background_color = Color(0.02, 0.02, 0.04, 1)
-ambient_light_source = 2
+sky = SubResource("Sky_res")
+ambient_light_source = 3
 ambient_light_color = Color(0.15, 0.16, 0.22, 1)
-ambient_light_energy = 0.5
+ambient_light_energy = 0.15
+tonemap_mode = 4
+tonemap_exposure = 0.75
+tonemap_white = 6.0
+ssao_enabled = true
+ssao_intensity = 0.7
+sdfgi_enabled = true
+sdfgi_use_occlusion = true
+sdfgi_energy = 0.55
+glow_enabled = true
+glow_levels/3 = 1.0
+glow_levels/4 = 1.0
+glow_levels/5 = 0.5
+glow_intensity = 0.22
+glow_bloom = 0.03
+glow_hdr_threshold = 1.6
+adjustment_enabled = true
+adjustment_contrast = 1.18
+adjustment_saturation = 1.18
+
+[sub_resource type="ShaderMaterial" id="Material_posterize"]
+shader = ExtResource("35_posterize")
+shader_parameter/strength = 0.3
+shader_parameter/steps_l = 12.0
+shader_parameter/steps_h = 16.0
+shader_parameter/steps_c = 5.0
+shader_parameter/use_l = true
+shader_parameter/use_h = true
+shader_parameter/use_c = false
+shader_parameter/chroma_boost = 1.05
+
+[sub_resource type="ShaderMaterial" id="Material_softfocus"]
+shader = ExtResource("36_softfocus")
+shader_parameter/softness = 0.08
+shader_parameter/blur_size = 2.5
 
 [sub_resource type="NavigationMesh" id="NavMesh_main"]
 geometry_collision_mask = 33
@@ -54,15 +103,17 @@ agent_max_climb = 0.5
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
 size = Vector3(300, 1, 300)
 
-[sub_resource type="ShaderMaterial" id="Material_ground"]
-render_priority = 0
-shader = ExtResource("5")
-shader_parameter/base_color = Color(0.3, 0.5, 0.25, 1)
-shader_parameter/noise_texture = ExtResource("5_noise")
-shader_parameter/noise_strength = 0.35
-shader_parameter/noise_scale = 0.02
-shader_parameter/grass_color_dark = Color(0.18, 0.32, 0.12, 1)
-shader_parameter/grass_color_light = Color(0.45, 0.62, 0.28, 1)
+[sub_resource type="StandardMaterial3D" id="Material_ground"]
+albedo_texture = ExtResource("38_gbase")
+normal_enabled = true
+normal_texture = ExtResource("39_gnorm")
+roughness = 1.0
+roughness_texture = ExtResource("40_grough")
+ao_enabled = true
+ao_texture = ExtResource("41_gao")
+uv1_triplanar = true
+uv1_world_triplanar = true
+uv1_scale = Vector3(0.2, 0.2, 0.2)
 
 [sub_resource type="BoxMesh" id="BoxMesh_ground"]
 size = Vector3(300, 1, 300)
@@ -73,9 +124,29 @@ script = ExtResource("27_main_setup")
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1638326598]
 environment = SubResource("Environment_atmo")
 
+[node name="Posterize" type="CanvasLayer" parent="." unique_id=1468600938]
+layer = 0
+
+[node name="Rect" type="ColorRect" parent="Posterize" unique_id=220903759]
+material = SubResource("Material_posterize")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="SoftFocus" type="CanvasLayer" parent="." unique_id=1729270903]
+layer = 0
+
+[node name="Rect" type="ColorRect" parent="SoftFocus" unique_id=360431343]
+material = SubResource("Material_softfocus")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1155419915]
-transform = Transform3D(1, 0, 0, 0, 0.707, 0.707, 0, -0.707, 0.707, 0, 20, 0)
-light_energy = 0.6
+transform = Transform3D(1, 0, 0, 0, 0.707, 0.707, 0, -0.707, 0.707, 0, 160.69301, -242.50099)
+light_energy = 0.85
 shadow_enabled = true
 
 [node name="NavigationRegion3D" type="NavigationRegion3D" parent="." unique_id=918273456 groups=["nav_region"]]
@@ -117,8 +188,8 @@ camp_paths = Array[NodePath]([NodePath("../Camp")])
 skeleton_scene = ExtResource("7")
 giant_scene = ExtResource("7_giant")
 giant_thrower_scene = ExtResource("7_thrower")
-archer_group_scene = ExtResource("23_archer_group")
 mech_scene = ExtResource("24_mech")
+archer_group_scene = ExtResource("23_archer_group")
 
 [node name="Modules" type="Node3D" parent="." unique_id=1539843594]
 
@@ -146,8 +217,8 @@ wave_schedule = ExtResource("18_schedule_default")
 [node name="Camp" parent="." unique_id=745402752 instance=ExtResource("8")]
 target_path = NodePath("../Tower")
 tent_count = 3
-harvester_scene = ExtResource("22_harvester")
 build_block_scene = ExtResource("29_buildblock")
+harvester_scene = ExtResource("22_harvester")
 
 [node name="PerfHud" parent="." unique_id=2138312601 instance=ExtResource("11")]
 
@@ -197,7 +268,9 @@ script = ExtResource("29_match_goal")
 
 [node name="WinOverlay" parent="." unique_id=1844001133 instance=ExtResource("30_win_overlay")]
 
-[node name="BossWarningOverlay" parent="." unique_id=1844001144 instance=ExtResource("33_boss_warning")]
+[node name="DefeatOverlay" parent="." instance=ExtResource("43_defeat_overlay")]
+
+[node name="BossWarningOverlay" parent="." unique_id=2065930471 instance=ExtResource("33_boss_warning")]
 
 [node name="DayNightOverlay" parent="." unique_id=1844001166 instance=ExtResource("34_day_night")]
 

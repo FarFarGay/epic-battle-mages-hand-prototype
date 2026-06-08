@@ -33,7 +33,7 @@ const WALL := &"wall"
 const CATALOG: Dictionary = {
 	GENERATOR: {
 		"name": "Генератор",
-		"description": "Большой блок (внутреннее кольцо). Питает харвестер: нужно 4 генератора, чтобы он начал качать золото.",
+		"description": "Большой блок (внутреннее кольцо). Питает харвестер: 1 генератор — добыча золота идёт медленно, каждый следующий ускоряет её; на 4 генераторах — полная скорость.",
 		"cost": {ResourcePile.ResourceType.WOOD: 8, ResourcePile.ResourceType.STONE: 6},
 		"deployed_only": true,
 		"repeatable": true,

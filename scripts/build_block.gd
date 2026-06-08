@@ -76,6 +76,12 @@ var _building: bool = false
 var _build_t: float = 0.0
 var _build_dur: float = 0.0
 
+## Оплачено ли здание. Стоимость списывается ОДИН раз при первой установке;
+## после этого здание можно поднять рукой и переставить в другую ячейку грида
+## БЕСПЛАТНО (BuildGrid._charge_building пропускает оплату для purchased). Также
+## защищает от удаления при неудачном релизе (см. BuildGrid._on_hand_released).
+var purchased: bool = false
+
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 @onready var _collision: CollisionShape3D = $CollisionShape3D
 
@@ -156,6 +162,9 @@ func _process(delta: float) -> void:
 		# Готовое здание становится разрушаемой целью и физическим препятствием —
 		# скелеты атакуют его как палатку/пост, упираются как в палисад.
 		_activate_combat()
+		# Готовое здание снова можно схватить рукой и переставить (во время
+		# стройки оно было вне Grabbable — см. BuildGrid._place_run).
+		Grabbable.register(self)
 		built.emit()
 
 
@@ -179,6 +188,19 @@ func _activate_combat() -> void:
 	if wall_thin:
 		add_to_group(Enemy.MELEE_ONLY_TARGET_GROUP)
 		add_to_group(&"navmesh_source")
+
+
+## Здание поднято рукой для переноса (BuildGrid зовёт на захвате). Снимаем боевое
+## состояние: пока здание в руке/в полёте, скелеты не должны его бить, и оно не
+## препятствие. Combat вернётся сам при завершении переустановки (_activate_combat
+## в конце стройки). Идемпотентно (повторный захват loose-блока безопасен).
+## collision_layer уже сброшен на ITEMS в CampModule.detach_from_slot.
+func on_picked_up() -> void:
+	is_built = false
+	remove_from_group(Enemy.TARGET_GROUP)
+	remove_from_group(Enemy.MELEE_ONLY_TARGET_GROUP)
+	remove_from_group(&"navmesh_source")
+	remove_from_group(Damageable.GROUP)
 
 
 ## На время стройки силуэт приподнят над землёй на BUILD_LIFT, чтобы НЕ врезаться

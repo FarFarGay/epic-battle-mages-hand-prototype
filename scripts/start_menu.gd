@@ -51,6 +51,9 @@ const MAX_PLACEMENT_ATTEMPTS: int = 30
 
 func _ready() -> void:
 	add_to_group(GROUP)
+	# Меню паузы работает НА ПАУЗЕ: открытие ставит get_tree().paused, поэтому
+	# само меню должно продолжать ловить Esc/клики (иначе не закроешь).
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	# По умолчанию меню скрыто — игрок видит игровое поле, открывает Esc'ом.
 	_panel.visible = false
 	# Сами кнопки забирают input (mouse_filter STOP), и только при visible.
@@ -62,14 +65,18 @@ func is_open() -> bool:
 	return _panel != null and _panel.visible
 
 
+## Открыть меню = поставить игру на паузу (Esc). Игра замирает за оверлеем.
 func open() -> void:
 	_panel.visible = true
+	get_tree().paused = true
 	# Фокус на «Начать игру» — позволяет Enter подтвердить без клика.
 	_btn_start.grab_focus()
 
 
+## Закрыть меню = снять паузу и продолжить игру.
 func close() -> void:
 	_panel.visible = false
+	get_tree().paused = false
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -79,6 +86,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		close()
 		get_viewport().set_input_as_handled()
 		return
+	# Матч окончен (победа/поражение) — Esc не открывает меню паузы поверх
+	# финального оверлея (у того своя кнопка «Новая партия»).
+	if _match_over():
+		return
 	# Когда aim активен — пропускаем Esc дальше, hand_squad_aim/hand_build_aim
 	# сами поллят ui_cancel в _process и отменят aim. Меню НЕ открываем —
 	# иначе игрок ожидал отмены aim'а, а получил оверлей поверх отменённого.
@@ -87,6 +98,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	open()
 	get_viewport().set_input_as_handled()
+
+
+## True если показан финальный оверлей (победа/поражение) — тогда Esc-меню паузы
+## не нужно. Проверяем оба по группам (узлы CanvasLayer с .visible-полем Root).
+func _match_over() -> bool:
+	for group in [&"win_overlay", &"defeat_overlay"]:
+		var node := get_tree().get_first_node_in_group(group)
+		if node != null and node.has_method("is_showing") and node.is_showing():
+			return true
+	return false
 
 
 func _on_start_pressed() -> void:

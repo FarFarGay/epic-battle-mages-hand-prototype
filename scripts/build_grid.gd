@@ -240,14 +240,24 @@ func pack() -> void:
 func _on_hand_grabbed(item: Node3D) -> void:
 	if not _active:
 		return
-	# Схватили наш установленный блок — освобождаем ячейку.
+	# Схватили наш установленный блок — освобождаем ВСЕ его ячейки (здание может
+	# занимать footprint>1: стена ×2). detach_from_slot один раз после.
+	var was_placed := false
 	for cell in _cells:
 		if cell["block"] == item:
 			cell["block"] = null
-			(item as CampModule).detach_from_slot()
-			break
+			cell["pad"].visible = false
+			was_placed = true
+	if was_placed:
+		(item as CampModule).detach_from_slot()
 	if item is BuildBlock:
+		# Снимаем боевое состояние на время переноса (скелеты не бьют в руке, не
+		# препятствие). Вернётся при завершении переустановки.
+		(item as BuildBlock).on_picked_up()
 		_placing = item
+		# Освободили ячейки (возможно генераторные) → пересчёт добычи харвестера.
+		if was_placed:
+			buildings_changed.emit()
 	# Видимость сетки и пульс строящихся ячеек ведёт _process.
 
 
@@ -256,10 +266,14 @@ func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 		return
 	_placing = null
 	var placed := _try_place(item as CampModule)
-	# Здание из меню (building_id задан), которое не встало (нет ячейки / не
-	# хватило ресурсов) — отменяем: убираем болванку, чтобы не валялась в поле.
-	if not placed and item is BuildBlock and (item as BuildBlock).building_id != &"":
-		item.queue_free()
+	if not placed and item is BuildBlock:
+		var bb := item as BuildBlock
+		# Свежее здание из меню (building_id задан, ещё НЕ оплачено), не вставшее
+		# в ячейку — отменяем: убираем болванку, чтобы не валялась в поле.
+		# Уже оплаченное (перенос существующего здания) НЕ удаляем — падает
+		# свободным блоком, игрок подберёт и поставит заново.
+		if bb.building_id != &"" and not bb.purchased:
+			item.queue_free()
 	_refresh_pads()
 
 
@@ -315,18 +329,25 @@ func _try_place(block: CampModule) -> bool:
 
 
 ## Списать стоимость здания из экономики. true если оплачено (или цена не нужна).
+## Перенос уже стоявшего здания (purchased) — бесплатно: оплата только за первую
+## установку. На успешной оплате помечаем purchased, чтобы дальше двигать даром.
 func _charge_building(block: CampModule) -> bool:
 	if not (block is BuildBlock):
 		return true
-	var id: StringName = (block as BuildBlock).building_id
+	var bb := block as BuildBlock
+	if bb.purchased:
+		return true
+	var id: StringName = bb.building_id
 	if id == &"":
 		return true
 	var cost: Dictionary = CampBuildings.get_data(id).get("cost", {})
-	if cost.is_empty():
+	if cost.is_empty() or _camp == null or _camp.economy == null:
+		bb.purchased = true
 		return true
-	if _camp == null or _camp.economy == null:
+	if _camp.economy.try_spend(cost):
+		bb.purchased = true
 		return true
-	return _camp.economy.try_spend(cost)
+	return false
 
 
 func _place_run(block: CampModule, r: int, s: int, fp: int) -> void:
@@ -339,7 +360,9 @@ func _place_run(block: CampModule, r: int, s: int, fp: int) -> void:
 	# Лицом к ядру (горизонтально, без наклона — цель на высоте блока).
 	var face := Vector3(global_position.x, block.global_position.y, global_position.z)
 	block.look_at(face, Vector3.UP)
-	# Здания неснимаемые — после установки блок нельзя схватить рукой обратно.
+	# На время стройки блок вне Grabbable — нельзя схватить силуэт. По завершении
+	# BuildBlock сам возвращает себя в Grabbable (built), и здание можно поднять
+	# и переставить в другую ячейку.
 	block.remove_from_group(Grabbable.GROUP)
 	for seg in _run_segments(r, s, fp):
 		_rings[r][seg]["block"] = block

@@ -239,8 +239,15 @@ const CAMP_BUILDING_CATALOG: Dictionary = CampBuildings.CATALOG
 ## Сцена блока-здания (BuildBlock). Меню постройки спавнит её в руку и
 ## конфигурит под выбранное здание (Camp.spawn_building_into_hand).
 @export var build_block_scene: PackedScene
-## Сколько генераторов нужно установить в гриде, чтобы запустить харвестер.
+## Сколько генераторов даёт ОПТИМАЛЬНУЮ (полную) скорость добычи золота.
+## Меньше — добыча идёт, но медленнее (линейно от min_generators_to_mine);
+## больше — прироста нет (потолок на полной скорости харвестера).
 @export var generators_required: int = 4
+## Минимум генераторов, чтобы добыча вообще началась (0 → стоит).
+@export var min_generators_to_mine: int = 1
+## Доля полной скорости добычи на минимуме генераторов. От неё скорость линейно
+## растёт до 1.0 на generators_required. 0.4 → 1-й генератор качает на 40% темпа.
+@export_range(0.0, 1.0) var min_generator_yield_frac: float = 0.4
 ## Сцена сегмента деревянного частокола. Спавнится множественно через
 ## BUILDING_PALISADE / try_build_palisade_line. Если null — постройка молча
 ## провалится.
@@ -546,6 +553,10 @@ func _ready() -> void:
 	# (но всё ещё существующий статикой) Tower-меш. _update_caravan_follow и
 	# stationary-чек уже null-safe, ничего больше делать не нужно.
 	EventBus.tower_destroyed.connect(_on_tower_destroyed)
+
+	# Ядро (харвестер) может погибнуть — обнуляем ссылку, чтобы пересчёт добычи
+	# не дёргал freed-ноду. Поражение матча эмитит MatchGoal (слушает тот же сигнал).
+	EventBus.harvester_destroyed.connect(_on_harvester_destroyed)
 
 	# Шкала «великой силы»: накапливается по нанесённому damage'у врагам.
 	# enemy_damaged эмитится re-emit'ом из Enemy.damaged → Skeleton наследует.
@@ -2392,12 +2403,26 @@ func spawn_building_into_hand(id: StringName) -> bool:
 	return true
 
 
-## Пересчёт генераторов: харвестер качает золото только когда их установлено
-## generators_required (по умолчанию 4).
+## Пересчёт генераторов: скорость добычи харвестера масштабируется их числом.
+## 0 → стоит; min_generators_to_mine → стартует на min_generator_yield_frac;
+## линейно до полной скорости на generators_required; больше — потолок (1.0).
 func _on_grid_buildings_changed() -> void:
 	if _harvester == null or _build_grid == null:
 		return
-	_harvester.set_running(_build_grid.generator_count() >= generators_required)
+	_harvester.set_production_scale(_generator_production_scale(_build_grid.generator_count()))
+
+
+## Доля [0..1] полной скорости добычи по числу установленных генераторов.
+func _generator_production_scale(gens: int) -> float:
+	if gens < min_generators_to_mine:
+		return 0.0
+	if gens >= generators_required:
+		return 1.0
+	var span: int = generators_required - min_generators_to_mine
+	if span <= 0:
+		return 1.0
+	var t: float = float(gens - min_generators_to_mine) / float(span)
+	return lerpf(min_generator_yield_frac, 1.0, t)
 
 
 ## --- Collection orders (план + alarm/work) ---
@@ -2671,6 +2696,14 @@ func _on_gnome_destroyed(gnome: Gnome) -> void:
 	_gnomes.erase(gnome)
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] гном %s убит (осталось: %d)" % [gnome.name, _gnomes.size()])
+
+
+## Ядро уничтожено — обнуляем ссылку (пересчёт добычи в _on_grid_buildings_changed
+## null-safe станет no-op). Поражение матча ведёт MatchGoal через тот же сигнал.
+func _on_harvester_destroyed() -> void:
+	if debug_log and LogConfig.master_enabled:
+		print("[Camp] ядро (харвестер) уничтожено")
+	_harvester = null
 
 
 func _on_tower_destroyed() -> void:

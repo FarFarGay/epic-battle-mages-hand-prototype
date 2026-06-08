@@ -116,6 +116,22 @@ var _journal_badge: Label
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
 var _resource_labels: Dictionary = {}
+## Баннер «Золото для победы» — главный прогресс-индикатор матча, сверху по
+## центру. Полоса к цели (MatchGoal.target_gold), текущее/цель, скорость добычи
+## и ETA. Обновляется реактивно (gold) + на таймере (скорость/ETA).
+var _gold_goal_panel: PanelContainer
+var _gold_goal_bar: ProgressBar
+var _gold_goal_count_label: Label
+var _gold_goal_rate_label: Label
+var _gold_goal_hint_label: Label
+var _gold_goal_icon: ColorRect
+## Ссылки для баннера: цель матча и харвестер (для скорости добычи). Lookup по
+## группам в _ready (могут ready'ться раньше/позже HUD).
+var _match_goal: MatchGoal
+var _harvester: Harvester
+## Кэш последнего показанного золота — чтобы pop-анимацию играть только на
+## реальном приросте (не на каждом sync'е).
+var _last_gold_shown: int = -1
 ## Индикатор режима сбора (WORK/ALARM) — отдельный Label под кнопкой журнала,
 ## меняет цвет реактивно на EventBus.collection_mode_changed.
 var _mode_label: Label
@@ -170,6 +186,9 @@ const RESOURCE_DISPLAY: Array = [
 func _ready() -> void:
 	if not camp_path.is_empty():
 		_camp = get_node_or_null(camp_path) as Camp
+	_match_goal = get_tree().get_first_node_in_group(MatchGoal.GROUP) as MatchGoal
+	_harvester = get_tree().get_first_node_in_group(Harvester.HARVESTER_GROUP) as Harvester
+	_build_gold_goal()
 	_build_tower_stats()
 	_build_resources_rows()
 	_build_journal_button()
@@ -182,6 +201,10 @@ func _ready() -> void:
 		_refresh_squad_bar(_camp.get_squad_xp(), _camp.get_squad_level())
 		_refresh_journal_badge(_camp.get_pending_upgrade_choices())
 		_sync_all_resources()
+	_refresh_gold_goal()
+	# match_won → баннер фиксируется на «победа» (на случай если игрок остаётся
+	# в сцене). Подписка идемпотентна с _disconnect_eventbus.
+	EventBus.match_won.connect(_on_match_won)
 	EventBus.squad_xp_changed.connect(_refresh_squad_bar)
 	EventBus.squad_leveled_up.connect(_on_level_up)
 	EventBus.pending_upgrade_choices_changed.connect(_refresh_journal_badge)
@@ -237,6 +260,7 @@ func _disconnect_eventbus() -> void:
 	EventBus.squad_disbanded.disconnect(_on_squad_disbanded)
 	EventBus.squad_recall_ignored.disconnect(_on_squad_recall_ignored)
 	EventBus.recall_zone_pulsed.disconnect(_on_recall_zone_pulsed)
+	EventBus.match_won.disconnect(_on_match_won)
 
 
 ## Строит SquadRow программно и докидывает в существующий VBox правой панели.
@@ -935,6 +959,9 @@ func _update_counts() -> void:
 		return
 	_tent_count_label.text = "%d" % _camp.tent_count_alive()
 	_refresh_gatherer_card()
+	# Скорость добычи / ETA меняются медленно (генераторы) — обновляем на таймере,
+	# а не на каждом начислении золота.
+	_refresh_gold_rate()
 
 
 ## Обновление squad-бара. Вызывается на каждом инкременте XP (через
@@ -1104,6 +1131,9 @@ func _sync_all_resources() -> void:
 
 func _on_resource_changed(type: int, amount: int) -> void:
 	_refresh_resource_label(type, amount)
+	# Золото — главный ресурс победы: обновляем баннер прогресса + pop на приросте.
+	if type == int(ResourcePile.ResourceType.GOLD):
+		_refresh_gold_goal()
 
 
 ## Цвет цифры: серый при 0 (склад пуст), белый при >0. Лёгкий feedback что
@@ -1119,6 +1149,204 @@ func _refresh_resource_label(type: int, amount: int) -> void:
 		label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1))
 
 
+# --- Баннер «Золото для победы» (главный прогресс матча) ---
+
+## Цвет золота — единый для иконки/полосы/цифр баннера.
+const GOLD_COLOR := Color(1.0, 0.82, 0.22, 1.0)
+
+## Строит выделенный баннер прогресса золота сверху по центру: иконка + заголовок
+## + «текущее / цель», полоса к target_gold, строка скорости добычи и ETA.
+## Главный «адиктивный» индикатор — крупный, отдельный от общего списка ресурсов.
+func _build_gold_goal() -> void:
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	var w: int = 320
+	panel.offset_left = -w / 2.0
+	panel.offset_top = 8
+	panel.offset_right = w / 2.0
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(0.06, 0.05, 0.02, 0.82)
+	box.border_color = Color(GOLD_COLOR.r, GOLD_COLOR.g, GOLD_COLOR.b, 0.65)
+	box.set_border_width_all(2)
+	box.set_corner_radius_all(5)
+	box.content_margin_left = 10
+	box.content_margin_right = 10
+	box.content_margin_top = 6
+	box.content_margin_bottom = 6
+	panel.add_theme_stylebox_override("panel", box)
+	add_child(panel)
+	_gold_goal_panel = panel
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 3)
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(vbox)
+
+	# Шапка: иконка-монета + заголовок + крупное «текущее / цель».
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 7)
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(header)
+
+	_gold_goal_icon = ColorRect.new()
+	_gold_goal_icon.custom_minimum_size = Vector2(18, 18)
+	_gold_goal_icon.color = GOLD_COLOR
+	_gold_goal_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header.add_child(_gold_goal_icon)
+
+	var title := Label.new()
+	title.text = "ЗОЛОТО ДЛЯ ПОБЕДЫ"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_color_override("font_color", Color(0.85, 0.8, 0.65, 1.0))
+	title.add_theme_font_size_override("font_size", 12)
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	header.add_child(title)
+
+	_gold_goal_count_label = Label.new()
+	_gold_goal_count_label.text = "0 / 0"
+	_gold_goal_count_label.add_theme_color_override("font_color", GOLD_COLOR)
+	_gold_goal_count_label.add_theme_font_size_override("font_size", 18)
+	_gold_goal_count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_gold_goal_count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	header.add_child(_gold_goal_count_label)
+
+	# Полоса прогресса к цели.
+	_gold_goal_bar = ProgressBar.new()
+	_gold_goal_bar.custom_minimum_size = Vector2(w - 20, 14)
+	_gold_goal_bar.show_percentage = false
+	_gold_goal_bar.min_value = 0.0
+	_gold_goal_bar.max_value = 1.0
+	_gold_goal_bar.value = 0.0
+	_gold_goal_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = GOLD_COLOR
+	fill.set_corner_radius_all(3)
+	_gold_goal_bar.add_theme_stylebox_override("fill", fill)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.0, 0.0, 0.0, 0.5)
+	bg.set_corner_radius_all(3)
+	_gold_goal_bar.add_theme_stylebox_override("background", bg)
+	vbox.add_child(_gold_goal_bar)
+
+	# Подвал: слева скорость добычи, справа ETA до цели.
+	var footer := HBoxContainer.new()
+	footer.add_theme_constant_override("separation", 7)
+	footer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(footer)
+
+	_gold_goal_rate_label = Label.new()
+	_gold_goal_rate_label.text = "добыча стоит"
+	_gold_goal_rate_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_gold_goal_rate_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.72, 1.0))
+	_gold_goal_rate_label.add_theme_font_size_override("font_size", 11)
+	footer.add_child(_gold_goal_rate_label)
+
+	# Подсказка-цель (видна когда золото набрано): ведёт игрока к финалу.
+	# Лежит поверх подвала, занимает то же место — переключаем видимость.
+	_gold_goal_hint_label = Label.new()
+	_gold_goal_hint_label.text = ""
+	_gold_goal_hint_label.add_theme_color_override("font_color", Color(0.45, 1.0, 0.5, 1.0))
+	_gold_goal_hint_label.add_theme_font_size_override("font_size", 11)
+	_gold_goal_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_gold_goal_hint_label.visible = false
+	vbox.add_child(_gold_goal_hint_label)
+
+
+## Полное обновление баннера золота (количество, полоса, состояние). Реактивно
+## на EventBus.resources_changed(GOLD) + начальный sync.
+func _refresh_gold_goal() -> void:
+	if _gold_goal_bar == null:
+		return
+	var target: int = 1000
+	if is_instance_valid(_match_goal):
+		target = _match_goal.get_target_gold()
+	target = maxi(target, 1)
+	var current: int = 0
+	if is_instance_valid(_camp) and _camp.economy != null:
+		current = _camp.economy.get_resource(ResourcePile.ResourceType.GOLD)
+	elif is_instance_valid(_match_goal):
+		current = _match_goal.get_current_gold()
+	_gold_goal_bar.max_value = float(target)
+	_gold_goal_bar.value = float(mini(current, target))
+	_gold_goal_count_label.text = "%d / %d" % [current, target]
+	# Pop только на реальном приросте золота (не на первом sync'е).
+	if _last_gold_shown >= 0 and current > _last_gold_shown:
+		_gold_pop()
+	_last_gold_shown = current
+	# Состояние: цель набрана → подсказка «к вратам», иначе скорость/ETA.
+	var met: bool = current >= target
+	_gold_goal_hint_label.visible = met
+	_gold_goal_rate_label.visible = not met
+	if met and not (is_instance_valid(_match_goal) and _match_goal.is_gate_passed()):
+		_gold_goal_hint_label.text = "✓ Золото набрано — веди башню к вратам!"
+	_refresh_gold_rate()
+
+
+## Обновляет строку скорости добычи и ETA до цели. Скорость берём у харвестера
+## (учитывает число генераторов). На таймере — меняется медленно.
+func _refresh_gold_rate() -> void:
+	if _gold_goal_rate_label == null:
+		return
+	var rate: float = 0.0
+	if is_instance_valid(_harvester):
+		rate = _harvester.get_current_gold_rate()
+	if rate <= 0.0:
+		_gold_goal_rate_label.text = "добыча стоит — нужен генератор"
+		_gold_goal_rate_label.add_theme_color_override("font_color", Color(0.85, 0.5, 0.4, 1.0))
+		return
+	var per_min: float = rate * 60.0
+	var target: int = _match_goal.get_target_gold() if is_instance_valid(_match_goal) else 1000
+	var current: int = 0
+	if is_instance_valid(_camp) and _camp.economy != null:
+		current = _camp.economy.get_resource(ResourcePile.ResourceType.GOLD)
+	var remaining: int = maxi(target - current, 0)
+	var eta_sec: float = float(remaining) / rate
+	_gold_goal_rate_label.text = "+%s золота/мин   ~%s до цели" % [_fmt_rate(per_min), _fmt_eta(eta_sec)]
+	_gold_goal_rate_label.add_theme_color_override("font_color", Color(0.55, 0.9, 0.6, 1.0))
+
+
+## Формат скорости в минуту: «30» или «4.5» (одна цифра после точки для дробных).
+func _fmt_rate(per_min: float) -> String:
+	if per_min >= 10.0 or is_equal_approx(per_min, round(per_min)):
+		return "%d" % int(round(per_min))
+	return "%.1f" % per_min
+
+
+## Формат ETA: «45с», «3 мин», «1ч 05м».
+func _fmt_eta(sec: float) -> String:
+	if sec < 60.0:
+		return "%dс" % int(ceil(sec))
+	var total_min: int = int(ceil(sec / 60.0))
+	if total_min < 60:
+		return "%d мин" % total_min
+	return "%dч %02dм" % [total_min / 60, total_min % 60]
+
+
+## Адиктивный pop при начислении золота: цифра «подпрыгивает» (scale-punch) и
+## полоса коротко вспыхивает ярче.
+func _gold_pop() -> void:
+	if _gold_goal_count_label != null:
+		_gold_goal_count_label.pivot_offset = _gold_goal_count_label.size * 0.5
+		var t1 := create_tween()
+		t1.tween_property(_gold_goal_count_label, "scale", Vector2(1.22, 1.22), 0.07)
+		t1.tween_property(_gold_goal_count_label, "scale", Vector2.ONE, 0.13)
+	if _gold_goal_bar != null:
+		var t2 := create_tween()
+		t2.tween_property(_gold_goal_bar, "modulate", Color(1.5, 1.5, 1.5, 1.0), 0.07)
+		t2.tween_property(_gold_goal_bar, "modulate", Color.WHITE, 0.18)
+
+
+## Победа: баннер фиксируется на триумфальном состоянии.
+func _on_match_won() -> void:
+	if _gold_goal_hint_label == null:
+		return
+	_gold_goal_rate_label.visible = false
+	_gold_goal_hint_label.visible = true
+	_gold_goal_hint_label.text = "★ ПОБЕДА! ★"
+	_gold_goal_hint_label.add_theme_color_override("font_color", GOLD_COLOR)
+
+
 ## Tower HP/Mana панель сверху по центру. Две полоски с overlay-Label'ами:
 ## красный HP сверху, синяя Mana снизу. Обновления через EventBus.
 func _build_tower_stats() -> void:
@@ -1127,9 +1355,10 @@ func _build_tower_stats() -> void:
 	# Centered: anchor_top=0, anchor_left=anchor_right=0.5; offset для ширины.
 	var bar_width: int = 240
 	panel.offset_left = -bar_width / 2.0
-	panel.offset_top = 10
+	# Опущена ниже золотого баннера победы (тот сидит вверху по центру).
+	panel.offset_top = 78
 	panel.offset_right = bar_width / 2.0
-	panel.offset_bottom = 56
+	panel.offset_bottom = 124
 	panel.add_theme_constant_override("separation", 4)
 	add_child(panel)
 

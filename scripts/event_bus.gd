@@ -23,6 +23,11 @@ signal enemy_destroyed(enemy: Node3D)
 
 # --- Tower ---
 signal tower_destroyed
+
+# --- Harvester ---
+## Харвестер (ядро лагеря, источник золота) уничтожен. Camp гасит добычу и
+## обнуляет ссылку; MatchGoal слушает → эмитит match_lost (поражение).
+signal harvester_destroyed
 ## Текущий HP башни изменился. HUD рисует hp-bar.
 signal tower_health_changed(current: float, maximum: float)
 ## Текущая мана башни изменилась — потрачена касто́м или восстановлена реген'ом.
@@ -112,6 +117,12 @@ signal squad_xp_gained_at(amount: int, world_position: Vector3)
 ## [MatchGoal] когда выполнены ВСЕ условия (gold ≥ target И tower прошёл
 ## через gate с ключом). WinOverlay слушает — показывает панель «Победа».
 signal match_won
+
+## Условие поражения матча. Эмитится один раз за партию из [MatchGoal] когда
+## разрушено ядро лагеря (харвестер) ИЛИ уничтожена башня. `reason` — причина
+## для текста оверлея. DefeatOverlay слушает — показывает панель «Поражение» и
+## ставит игру на паузу. Зеркало match_won.
+signal match_lost(reason: String)
 
 ## Squad подобрал ключ в подземелье (KeyItem перешёл из IDLE в CARRIED).
 ## HUD/звук слушает; MatchGoal обновляет внутренний прогресс.

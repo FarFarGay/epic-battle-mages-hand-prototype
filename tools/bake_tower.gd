@@ -141,14 +141,25 @@ func _stone_mat() -> StandardMaterial3D:
 	var path := MAT_DIR + "/tower_stone.tres"
 	if FileAccess.file_exists(path):
 		return load(path)
+	var tex := "res://textures/bricks_wall_07/bricks_wall_07_1k/"
 	var m := StandardMaterial3D.new()
-	m.albedo_color = Color(0.56, 0.52, 0.46)
-	m.roughness = 0.92
+	m.albedo_color = Color(1.0, 1.0, 1.0)
+	m.albedo_texture = load(tex + "bricks_wall_07_baseColor_1k.png")
+	m.normal_enabled = true
+	m.normal_texture = load(tex + "bricks_wall_07_normal_gl_1k.png")  # Godot = OpenGL-нормали
+	m.roughness = 1.0
+	m.roughness_texture = load(tex + "bricks_wall_07_roughness_1k.png")
 	m.metallic = 0.0
-	# Лёгкое собственное свечение — чтобы не была угольно-чёрной ночью.
+	m.ao_enabled = true
+	m.ao_texture = load(tex + "bricks_wall_07_ambientOcclusion_1k.png")
+	# Меши процедурные, БЕЗ UV — кладём текстуру триплонаром (проекция по локальным
+	# осям меша). uv1_scale = тайлинг (больше = мельче кирпич).
+	m.uv1_triplanar = true
+	m.uv1_scale = Vector3(0.7, 0.7, 0.7)
+	# Лёгкое самосвечение — чтобы не была угольно-чёрной ночью (поверх текстуры).
 	m.emission_enabled = true
-	m.emission = Color(0.56, 0.52, 0.46)
-	m.emission_energy_multiplier = 0.22
+	m.emission = Color(0.08, 0.07, 0.06)
+	m.emission_energy_multiplier = 0.12
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED
 	ResourceSaver.save(m, path)
 	return load(path)

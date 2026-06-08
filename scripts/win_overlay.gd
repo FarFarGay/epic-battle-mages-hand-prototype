@@ -17,6 +17,9 @@ const GROUP := &"win_overlay"
 
 func _ready() -> void:
 	add_to_group(GROUP)
+	# Если игра поставлена на паузу (Esc-меню), победный оверлей и его кнопка
+	# должны оставаться интерактивными.
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	_root.visible = false
 	_btn_restart.pressed.connect(_on_restart_pressed)
 	EventBus.match_won.connect(_on_match_won)
@@ -29,6 +32,11 @@ func _on_match_won() -> void:
 func _show() -> void:
 	_root.visible = true
 	_btn_restart.grab_focus()
+
+
+## Показан ли оверлей (для StartMenu — не открывать паузу-меню поверх финала).
+func is_showing() -> bool:
+	return _root != null and _root.visible
 
 
 ## Reuse логики StartMenu — найти его в группе и дёрнуть restart. Так нет

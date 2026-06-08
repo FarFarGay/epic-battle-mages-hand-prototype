@@ -1,9 +1,20 @@
 [gd_resource type="StandardMaterial3D" format=3]
 
+[ext_resource type="Texture2D" path="res://textures/bricks_wall_07/bricks_wall_07_1k/bricks_wall_07_baseColor_1k.png" id="1_aqf1f"]
+[ext_resource type="Texture2D" path="res://textures/bricks_wall_07/bricks_wall_07_1k/bricks_wall_07_ambientOcclusion_1k.png" id="2_gnddf"]
+[ext_resource type="Texture2D" path="res://textures/bricks_wall_07/bricks_wall_07_1k/bricks_wall_07_normal_gl_1k.png" id="3_yna0g"]
+[ext_resource type="Texture2D" path="res://textures/bricks_wall_07/bricks_wall_07_1k/bricks_wall_07_roughness_1k.png" id="4_3sunp"]
+
 [resource]
 cull_mode = 2
-albedo_color = Color(0.56, 0.52, 0.46, 1)
-roughness = 0.92
+albedo_texture = ExtResource("1_aqf1f")
+roughness_texture = ExtResource("4_3sunp")
 emission_enabled = true
-emission = Color(0.56, 0.52, 0.46, 1)
-emission_energy_multiplier = 0.22
+emission = Color(0.08, 0.07, 0.06, 1)
+emission_energy_multiplier = 0.12
+normal_enabled = true
+normal_texture = ExtResource("3_yna0g")
+ao_enabled = true
+ao_texture = ExtResource("2_gnddf")
+uv1_scale = Vector3(0.7, 0.7, 0.7)
+uv1_triplanar = true

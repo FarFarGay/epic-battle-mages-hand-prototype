@@ -110,6 +110,14 @@ const MASK_HAND_SLAM := ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE | COLD_ENEMY | 
 ## «Всё обычное» (без палаток лагеря). Tower / Item / Ground / shatter.
 const MASK_ALL_GAMEPLAY := TERRAIN | ITEMS | ACTORS | PROJECTILES | ENEMIES   # 31
 
+## Детонация при смерти крупного объекта (башня, харвестер-ядро): бьёт по
+## площади врагов (ENEMIES), постройки лагеря и ядро (CAMP_OBSTACLE), палисад/
+## стены (PALISADE_OBSTACLE) и башню (ACTORS — чтобы детонация ядра могла задеть
+## башню и наоборот). FRIENDLY_UNIT (гномы) НАМЕРЕННО исключён — как и Slam,
+## взрыв не должен массово выкашивать своих гномов. Источник сам выходит из
+## Damageable-группы до взрыва, так что себя не задевает.
+const MASK_DEATH_BLAST := ENEMIES | CAMP_OBSTACLE | PALISADE_OBSTACLE | ACTORS   # 596
+
 ## Skeleton scan: пол, предметы, башня, палатки. **Без `ENEMIES`** —
 ## намеренно: скелеты не сталкиваются друг с другом физически, проходят
 ## сквозь. На 400+ скелетах в плотном кластере вокруг башни skel-skel

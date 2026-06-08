@@ -19,6 +19,7 @@ extends Node
 const GROUP := &"match_goal"
 
 var _already_won: bool = false
+var _already_lost: bool = false
 var _gate_passed: bool = false
 ## Кэш последнего известного золота — на случай если tower_passed_gate
 ## пришёл первым (а в resources_changed gold ещё не дошёл из-за порядка
@@ -30,6 +31,9 @@ func _ready() -> void:
 	add_to_group(GROUP)
 	EventBus.resources_changed.connect(_on_resources_changed)
 	EventBus.tower_passed_gate.connect(_on_tower_passed_gate)
+	# Поражение: разрушено ядро (харвестер) ИЛИ уничтожена башня. Edge-trigger, раз.
+	EventBus.harvester_destroyed.connect(_on_harvester_destroyed)
+	EventBus.tower_destroyed.connect(_on_tower_destroyed_loss)
 
 
 func get_target_gold() -> int:
@@ -57,6 +61,27 @@ func _on_resources_changed(type: int, amount: int) -> void:
 func _on_tower_passed_gate() -> void:
 	_gate_passed = true
 	_check_win()
+
+
+## Ядро уничтожено → поражение.
+func _on_harvester_destroyed() -> void:
+	_trigger_loss("Ядро лагеря разрушено")
+
+
+## Башня уничтожена → поражение.
+func _on_tower_destroyed_loss() -> void:
+	_trigger_loss("Башня уничтожена")
+
+
+## Единая точка поражения. Не гейтим на _already_won: если игрок уже победил,
+## повторно ничего не шлём (оба edge-trigger'а once). reason → текст оверлея.
+func _trigger_loss(reason: String) -> void:
+	if _already_lost or _already_won:
+		return
+	_already_lost = true
+	if LogConfig.master_enabled:
+		print("[MatchGoal] поражение: %s" % reason)
+	EventBus.match_lost.emit(reason)
 
 
 ## Проверка обоих условий. На gold читаем актуальное из Camp (не кэш) —
