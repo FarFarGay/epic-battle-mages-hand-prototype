@@ -39,9 +39,11 @@ extends CampModule
 @export var wall_thin: bool = false
 ## Радиальная толщина стены (если wall_thin).
 @export var wall_thickness: float = 0.45
-## Число зубцов-делений по дуге стены (крепостной верх). Нечётное → по краям
-## мерлоны (углы сплошные). Поднятых мерлонов = ceil(teeth/2).
-@export var wall_teeth: int = 5
+## Арк-длина периода «мерлон+проём» (м) крепостного верха. Шаг зубцов задаётся
+## метрически (а не числом) → одинаковая ширина мерлонов в разных кольцах, и
+## центры мерлонов ложатся на КРАЯ сегмента: крайние мерлоны — половинки, у двух
+## соседних стен складываются в цельный зубец на стыке (ровный гребень без шва).
+@export var wall_merlon_arc: float = 1.0
 ## Высота зубца как доля от height (на сколько мерлон выше проёма-крене́ля).
 @export var wall_tooth_frac: float = 0.35
 @export_group("")
@@ -84,6 +86,12 @@ var purchased: bool = false
 
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 @onready var _collision: CollisionShape3D = $CollisionShape3D
+## Доп. CollisionShape3D под-клинья для широких дуг (стена на много ячеек):
+## один convex на всю дугу «замостил» бы внутренность сектора. Пересобираются
+## в _rebuild_collision при каждой смене формы.
+var _collision_extra: Array[CollisionShape3D] = []
+## Макс. угол одного под-клина коллизии (град). Дугу шире режем на части.
+const MAX_WEDGE_DEG := 45.0
 
 ## Модель-ТЕЛО здания (из каталога "model", напр. паровая машина генератора в
 ## форме грид-клина). null если у здания своей модели нет (тогда тело = сектор-
@@ -240,6 +248,13 @@ func _process(delta: float) -> void:
 ##   - collision_layer = CAMP_OBSTACLE|PALISADE_OBSTACLE: скелет (MASK_SKELETON)
 ##     и башня упираются как в стену. Смонтированный слой (MOUNTED_MODULE) при
 ##     этом перекрываем — здание стоит на земле, ложных контактов с башней нет.
+## Это ворота? База — нет; GateBlock переопределяет на true. Грид различает
+## ворота (другой слой, навмеш-проём, замена сегмента стены) через этот метод,
+## не ссылаясь на класс GateBlock по имени (избегаем class-cache при типизации).
+func is_gate() -> bool:
+	return false
+
+
 func _activate_combat() -> void:
 	if _destroyed:
 		return
@@ -247,9 +262,12 @@ func _activate_combat() -> void:
 	Damageable.register(self)
 	add_to_group(Enemy.TARGET_GROUP)
 	collision_layer = Layers.CAMP_OBSTACLE | Layers.PALISADE_OBSTACLE
+	# Любое готовое здание — препятствие навмеша: гномы/скелеты огибают его,
+	# между зданиями остаются проходы-«улицы» (BuildGrid дёргает ребейк через
+	# Camp.buildings_changed). Слой CAMP_OBSTACLE уже в маске навмеша (mask=33).
+	add_to_group(&"navmesh_source")
 	if wall_thin:
 		add_to_group(Enemy.MELEE_ONLY_TARGET_GROUP)
-		add_to_group(&"navmesh_source")
 
 
 ## Здание поднято рукой для переноса (BuildGrid зовёт на захвате). Снимаем боевое
@@ -294,15 +312,55 @@ func _make_blueprint_material() -> StandardMaterial3D:
 func _build_geometry() -> void:
 	if _mesh != null:
 		_mesh.mesh = _build_wall_mesh() if wall_thin else _build_sector_mesh()
-	if _collision != null:
-		# Грубый bounding-box под grab/rest свободного блока (точная форма для
-		# монтажа не нужна — смонтированный блок заморожен и на слое MOUNTED_MODULE).
-		var box := BoxShape3D.new()
-		var depth := outer_radius - inner_radius
-		var width := 2.0 * outer_radius * sin(deg_to_rad(sector_deg) * 0.5)
-		box.size = Vector3(maxf(width, 0.2), height, maxf(depth, 0.2))
-		_collision.shape = box
-		_collision.position = Vector3.ZERO
+	_rebuild_collision()
+
+
+## Коллизия ПО ФОРМЕ СЕКТОРА из под-клиньев (convex). Один convex на всю дугу
+## «замостил» бы внутренность (тонкая стена на пол-кольца → заполненный сектор/
+## диск), поэтому дугу режем на куски ≤ MAX_WEDGE_DEG — каждый узкий клин
+## повторяет форму. Радиальные торцы совпадают с гранями ячейки → в «улицы» не
+## лезет; внутр. дуга мостится хордой (лёгкий бугор внутрь), внешняя — сэмплится.
+func _rebuild_collision() -> void:
+	for ex in _collision_extra:
+		if is_instance_valid(ex):
+			ex.queue_free()
+	_collision_extra.clear()
+	if _collision == null:
+		return
+	var c := Vector3(0.0, 0.0, -(inner_radius + outer_radius) * 0.5)
+	var half := deg_to_rad(sector_deg) * 0.5
+	var n_sub: int = maxi(1, int(ceil(sector_deg / MAX_WEDGE_DEG)))
+	for i in range(n_sub):
+		var a0: float = -half + (float(i) / float(n_sub)) * (2.0 * half)
+		var a1: float = -half + (float(i + 1) / float(n_sub)) * (2.0 * half)
+		var cs: CollisionShape3D
+		if i == 0:
+			cs = _collision
+		else:
+			cs = CollisionShape3D.new()
+			add_child(cs)
+			_collision_extra.append(cs)
+		cs.shape = _build_wedge_convex(c, a0, a1)
+		cs.position = Vector3.ZERO
+
+
+## Convex-клин одной угловой под-дуги [a0,a1] (тот же локальный фрейм, что и меш).
+func _build_wedge_convex(c: Vector3, a0: float, a1: float) -> ConvexPolygonShape3D:
+	var hy := height * 0.5
+	var pts := PackedVector3Array()
+	for ea in [a0, a1]:
+		var p_in: Vector3 = c + Vector3(sin(ea), 0.0, cos(ea)) * inner_radius
+		pts.append(Vector3(p_in.x, hy, p_in.z))
+		pts.append(Vector3(p_in.x, -hy, p_in.z))
+	var osegs := 4
+	for i in range(osegs + 1):
+		var a: float = a0 + (float(i) / float(osegs)) * (a1 - a0)
+		var p_out: Vector3 = c + Vector3(sin(a), 0.0, cos(a)) * outer_radius
+		pts.append(Vector3(p_out.x, hy, p_out.z))
+		pts.append(Vector3(p_out.x, -hy, p_out.z))
+	var cv := ConvexPolygonShape3D.new()
+	cv.points = pts
+	return cv
 
 
 ## Кольцевой сектор, экструдированный по высоте. Центр кольца — в локале (0,0,-mid),
@@ -354,16 +412,25 @@ func _build_wall_mesh() -> ArrayMesh:
 	var y_bottom := -height * 0.5
 	var y_top := height * 0.5
 	var crenel_top := y_top - height * clampf(wall_tooth_frac, 0.05, 0.9)
-	# Сплошное тело стены до уровня проёмов.
+	# Сплошное тело стены до уровня проёмов (на всю дугу — соседние тела смыкаются).
 	_add_arc_box(st, c, -half, half, y_bottom, crenel_top)
-	# Зубцы-мерлоны: чётные деления поднимаются до полной высоты.
-	var teeth: int = maxi(1, wall_teeth)
-	var step := (2.0 * half) / float(teeth)
-	for i in range(teeth):
-		if i % 2 == 0:
-			var a0 := -half + float(i) * step
+	# Мерлоны с метрически-выровненным шагом: центры на -half + k·T (k=0..m),
+	# где T подобран так, что период ≈ wall_merlon_arc по арк-длине. Крайние
+	# мерлоны (k=0, k=m) обрезаны краем сегмента → ПОЛОВИНКИ: у двух соседних
+	# стен они складываются в цельный зубец на стыке. Мерлон = ±T/4 вокруг центра
+	# (половина периода — зубец, половина — проём).
+	var mid_r := (inner_radius + outer_radius) * 0.5
+	var arc_len := 2.0 * half * mid_r
+	var m := maxi(1, int(round(arc_len / maxf(wall_merlon_arc, 0.2))))
+	var t_step := (2.0 * half) / float(m)
+	var hw := t_step * 0.25
+	for k in range(m + 1):
+		var center := -half + float(k) * t_step
+		var a0 := maxf(center - hw, -half)
+		var a1 := minf(center + hw, half)
+		if a1 - a0 > 0.0001:
 			# Лёгкое перекрытие с телом, чтобы не было копланарных граней.
-			_add_arc_box(st, c, a0, a0 + step, crenel_top - 0.03, y_top)
+			_add_arc_box(st, c, a0, a1, crenel_top - 0.03, y_top)
 	return st.commit()
 
 
@@ -457,6 +524,12 @@ func set_highlighted(value: bool) -> void:
 	if _material == null:
 		return
 	_material.emission_energy_multiplier = HIGHLIGHT_EMISSION if value else BASE_EMISSION
+
+
+## Красный блик «нельзя» — для отказа (например, не хватает ресурсов на следующую
+## ячейку стены при прокрутке). Переиспользует damage-flash (тот же красный пульс).
+func flash_reject() -> void:
+	_flash_damage()
 
 
 # --- Damageable (готовое здание) ---

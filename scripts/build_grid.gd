@@ -31,10 +31,12 @@ const GridGeo = preload("res://scripts/grid_geometry.gd")
 @export var segment_counts: PackedInt32Array = PackedInt32Array([GridGeo.SEGMENTS_RING0, 12, 16])
 ## Радиус дворика-ядра (внутренний радиус кольца 0, дыра под харвестер).
 @export var core_radius: float = GridGeo.CORE_RADIUS
-## Радиальная толщина одного кольца.
+## Радиальная толщина одного кольца (глубина здания).
 @export var ring_band: float = GridGeo.RING_BAND
-## Угловой зазор между ячейками (градусы) — швы, чтобы ячейки читались раздельно.
-@export var cell_gap_deg: float = GridGeo.CELL_GAP_DEG
+## Радиальный проход-«улица» между кольцами (м) — юниты ходят между рядами.
+@export var ring_gap: float = GridGeo.RING_GAP
+## Угловой проход между ячейками, МЕТРИЧЕСКИЙ (м, на внутреннем радиусе кольца).
+@export var cell_gap_m: float = GridGeo.CELL_GAP_M
 ## Макс. расстояние от блока до центра ячейки, при котором релиз = установка.
 @export var snap_distance: float = 2.6
 ## Время стройки здания (секунды): форма поднимается по гриду, на финише — пуфф.
@@ -58,6 +60,10 @@ var _cells: Array = []      # плоский список всех ячеек
 var _line_grid: MeshInstance3D = null   # чёткие линии сетки (статичны)
 var _active: bool = false
 var _placing: CampModule = null   # блок, который сейчас держит рука (подсветка)
+## Сколько ячеек кольца занимает СТЕНА в руке (1..cnt). Колесо мыши при зажатой
+## ЛКМ тянет стену по дуге — за одно нажатие можно замкнуть весь круг. Только для
+## wall_thin; обычные здания держат свой footprint.
+var _wall_span: int = 1
 var _pulse_t: float = 0.0         # фаза пульса строящихся ячеек
 
 ## Скорость пульса строящихся ячеек (рад/с).
@@ -77,14 +83,34 @@ func _ready() -> void:
 	EventBus.hand_released.connect(_on_hand_released)
 
 
+# --- Геометрия колец (единая формула с «улицами» между зданиями) ---
+
+## Внутренний радиус кольца r. Радиальная «улица» ring_gap между кольцами:
+## кольцо r начинается на core_radius + r·(ring_band + ring_gap).
+func _ring_inner(r: int) -> float:
+	return core_radius + float(r) * (ring_band + ring_gap)
+
+
+## Угловой размер ячейки (град) для footprint fp в кольце на cnt сегментов.
+## cell_gap_m — МЕТРИЧЕСКИЙ зазор-«улица»; переводим в угол по ВНУТРЕННЕМУ радиусу
+## кольца (там проход у́же всего), чтобы минимальная ширина улицы = cell_gap_m.
+## gapless=true (СТЕНЫ) — полный угол сегмента, без зазора: соседние стены
+## смыкаются край-в-край в сплошной барьер (иначе враг пройдёт в щель).
+func _seg_deg(inner: float, cnt: int, footprint: int = 1, gapless: bool = false) -> float:
+	if gapless:
+		return float(footprint) * 360.0 / float(cnt)
+	var gap_deg: float = rad_to_deg(cell_gap_m / maxf(inner, 0.01))
+	return float(footprint) * 360.0 / float(cnt) - gap_deg
+
+
 # --- Построение ячеек + пад-маркеров ---
 
 func _build_cells() -> void:
 	for r in range(segment_counts.size()):
 		var cnt: int = maxi(segment_counts[r], 1)
-		var inner: float = core_radius + float(r) * ring_band
+		var inner: float = _ring_inner(r)
 		var outer: float = inner + ring_band
-		var seg_deg: float = 360.0 / float(cnt) - cell_gap_deg
+		var seg_deg: float = _seg_deg(inner, cnt, 1)
 		var mid: float = (inner + outer) * 0.5
 		var ring_cells: Array = []
 		for s in range(cnt):
@@ -142,24 +168,25 @@ func _build_pad_mesh(inner: float, outer: float, ac: float, ah: float) -> ArrayM
 	return st.commit()
 
 
-## Чёткая сетка линиями: окружности на границах колец + радиальные разделители
-## (по counts[r] в своём кольце — наружу делений больше). Плоские ленты по земле.
+## Чёткая сетка линиями: КОНТУР каждой ячейки (две дуги + два радиальных торца)
+## на её инсет-размерах. Между ячейками — пустые «улицы» (ring_gap/cell_gap_m),
+## сетка совпадает с зелёными пад-маркерами и читается как отдельные участки,
+## а не сплошная «мишень». Плоские ленты по земле.
 func _build_line_grid() -> void:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var y := pad_y + 0.01
 	var hw := line_width * 0.5
-	var n := segment_counts.size()
-	# Концентрические окружности на каждой границе кольца (включая внешнюю).
-	for r in range(n + 1):
-		_add_ring_band(st, core_radius + float(r) * ring_band, hw, y)
-	# Радиальные разделители — в каждом кольце своё число (4/8/16).
-	for r in range(n):
-		var cnt: int = maxi(segment_counts[r], 1)
-		var r0: float = core_radius + float(r) * ring_band
-		var r1: float = r0 + ring_band
-		for s in range(cnt):
-			_add_spoke(st, float(s) * TAU / float(cnt), r0, r1, hw, y)
+	for cell in _cells:
+		var inner: float = cell["inner"]
+		var outer: float = cell["outer"]
+		var c: Vector3 = cell["center"]
+		var ang: float = atan2(c.z, c.x)
+		var ah: float = deg_to_rad(float(cell["seg_deg"])) * 0.5
+		_add_arc(st, inner, ang - ah, ang + ah, hw, y)        # внутренняя дуга
+		_add_arc(st, outer, ang - ah, ang + ah, hw, y)        # внешняя дуга
+		_add_spoke(st, ang - ah, inner, outer, hw, y)         # торец A
+		_add_spoke(st, ang + ah, inner, outer, hw, y)         # торец B
 	st.generate_normals()
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
@@ -176,15 +203,15 @@ func _build_line_grid() -> void:
 	_line_grid = mi
 
 
-## Плоское кольцо-лента (окружность ширины 2*hw) на радиусе radius.
-func _add_ring_band(st: SurfaceTool, radius: float, hw: float, y: float) -> void:
+## Дуговая лента на радиусе radius от угла a0 до a1, ширины 2*hw (контур ячейки).
+func _add_arc(st: SurfaceTool, radius: float, a0: float, a1: float, hw: float, y: float) -> void:
 	var yo := Vector3(0.0, y, 0.0)
 	var ri: float = maxf(radius - hw, 0.0)
 	var ro: float = radius + hw
-	var segs := 64
+	var segs: int = maxi(2, int(ceil((a1 - a0) / deg_to_rad(6.0))))
 	for i in range(segs):
-		var t0 := float(i) / float(segs) * TAU
-		var t1 := float(i + 1) / float(segs) * TAU
+		var t0 := lerpf(a0, a1, float(i) / float(segs))
+		var t1 := lerpf(a0, a1, float(i + 1) / float(segs))
 		var d0 := Vector3(cos(t0), 0.0, sin(t0))
 		var d1 := Vector3(cos(t1), 0.0, sin(t1))
 		st.add_vertex(d0 * ri + yo)
@@ -271,10 +298,76 @@ func _on_hand_grabbed(item: Node3D) -> void:
 		# препятствие). Вернётся при завершении переустановки.
 		(item as BuildBlock).on_picked_up()
 		_placing = item
+		# Стена: span стартует с её текущего footprint (1 у свежей, N у переносимой).
+		_wall_span = maxi(1, (item as BuildBlock).footprint)
 		# Освободили ячейки (возможно генераторные) → пересчёт добычи харвестера.
 		if was_placed:
 			buildings_changed.emit()
 	# Видимость сетки и пульс строящихся ячеек ведёт _process.
+
+
+## Колесо мыши при ЗАЖАТОЙ ЛКМ и стене в руке тянет её по дуге кольца: span
+## растёт/убывает (1..cnt), за раз можно замкнуть весь круг. Перехватываем в
+## _input (раньше камеры) и гасим событие, чтобы не зумило. Для обычных зданий
+## (не wall_thin) колесо не трогаем — пусть зумит камера.
+func _input(event: InputEvent) -> void:
+	if not _active or _placing == null or not (_placing is BuildBlock):
+		return
+	var bb := _placing as BuildBlock
+	if not bb.wall_thin or bb.is_gate():  # ворота — всегда 1 ячейка, span не тянем
+		return
+	if not (event is InputEventMouseButton):
+		return
+	var mb := event as InputEventMouseButton
+	if not mb.pressed:
+		return
+	if not Input.is_action_pressed(&"hand_grab"):  # «зажать ЛКМ»
+		return
+	var dir := 0
+	if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+		dir = 1
+	elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		dir = -1
+	else:
+		return
+	var t: int = clampi(bb.ring_tier, 0, segment_counts.size() - 1)
+	var max_span: int = maxi(segment_counts[t], 1)
+	var new_span: int = clampi(_wall_span + dir, 1, max_span)
+	get_viewport().set_input_as_handled()  # не зумить камеру
+	if new_span == _wall_span:
+		return
+	# Прокрутка ВВЕРХ упирается в ресурсный лимит: дальше, чем можешь оплатить,
+	# не тянем — стена мигает красным «не хватает». Вниз — всегда свободно.
+	if new_span > _wall_span and not _can_afford_span(bb, new_span):
+		bb.flash_reject()
+		return
+	_wall_span = new_span
+	_apply_wall_span()
+
+
+## Хватит ли ресурсов на стену из span ячеек (цена ×span). Перенос уже купленной
+## стены (purchased) — бесплатно. Без экономики/цены — всегда true.
+func _can_afford_span(bb: BuildBlock, span: int) -> bool:
+	if bb.purchased or _camp == null or _camp.economy == null:
+		return true
+	var cost: Dictionary = CampBuildings.get_data(bb.building_id).get("cost", {})
+	if cost.is_empty():
+		return true
+	var scaled: Dictionary = {}
+	for k in cost:
+		scaled[k] = int(cost[k]) * span
+	return _camp.economy.can_afford(scaled)
+
+
+## Перестроить стену в руке под текущий _wall_span: меш на span ячеек (без зазора)
+## + footprint, чтобы установка заняла столько же ячеек подряд.
+func _apply_wall_span() -> void:
+	if _placing == null or not (_placing is BuildBlock):
+		return
+	var bb := _placing as BuildBlock
+	var dims: Dictionary = tier_cell_dims(bb.ring_tier, _wall_span, true)
+	bb.conform_to_cell(dims["inner"], dims["outer"], dims["seg_deg"])
+	bb.footprint = _wall_span
 
 
 func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
@@ -298,6 +391,9 @@ func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 func _try_place(block: CampModule) -> bool:
 	if block == null:
 		return false
+	# Ворота — особый путь: 1 ячейка, ставятся в пустую ИЛИ заменяют сегмент стены.
+	if block is BuildBlock and (block as BuildBlock).is_gate():
+		return _try_place_gate(block as BuildBlock)
 	# Здание встаёт только в своё кольцо (ring_tier) и занимает footprint сегментов
 	# подряд (1 = обычное, 2 = двойная стена).
 	var tier := 0
@@ -336,12 +432,115 @@ func _try_place(block: CampModule) -> bool:
 		if debug_log and LogConfig.master_enabled:
 			print("[BuildGrid] нет места под здание ×%d (зона tier %d)" % [fp, tier])
 		return false
+	# Стена: per-cell — span отдельных 1-клеточных стен (рушатся по одной, можно
+	# заменить сегмент воротами). Оплата span×цена разом, остальные — purchased.
+	if block is BuildBlock and (block as BuildBlock).wall_thin:
+		if not _charge_wall_span(block as BuildBlock, fp):
+			if debug_log and LogConfig.master_enabled:
+				print("[BuildGrid] не хватает ресурсов на стену ×%d" % fp)
+			return false
+		_place_wall_run(block as BuildBlock, best_r, best_s, fp)
+		return true
 	if not _charge_building(block):
 		if debug_log and LogConfig.master_enabled:
 			print("[BuildGrid] не хватает ресурсов на здание")
 		return false
 	_place_run(block, best_r, best_s, fp)
 	return true
+
+
+## Установка стены пролётом span: held-блок в 1-ю ячейку (footprint 1), остальные
+## span−1 — отдельными 1-клеточными стенами (спавн через build_block_scene Camp'а).
+## Каждая — самостоятельный блок: рушится по одной, заменяется воротами.
+func _place_wall_run(held: BuildBlock, r: int, s: int, span: int) -> void:
+	var cnt: int = segment_counts[r]
+	_place_run(held, r, s, 1)
+	for k in range(1, span):
+		var w := _spawn_wall_block(held.building_id)
+		if w == null:
+			break
+		w.purchased = true  # оплачено через _charge_wall_span
+		_place_run(w, r, (s + k) % cnt, 1)
+
+
+## Спавн ещё одной стены того же типа (build_block_scene Camp'а), configure под id.
+func _spawn_wall_block(id: StringName) -> BuildBlock:
+	if _camp == null or _camp.build_block_scene == null:
+		return null
+	var w := (_camp.build_block_scene as PackedScene).instantiate() as BuildBlock
+	if w == null:
+		return null
+	var root: Node = get_tree().current_scene
+	if root == null:
+		root = self
+	root.add_child(w)
+	w.configure(id)
+	return w
+
+
+## Оплата стены-пролёта: span×цена разом. Перенос (purchased) — бесплатно.
+func _charge_wall_span(block: BuildBlock, span: int) -> bool:
+	if block.purchased or _camp == null or _camp.economy == null:
+		return true
+	var cost: Dictionary = CampBuildings.get_data(block.building_id).get("cost", {})
+	if cost.is_empty():
+		block.purchased = true
+		return true
+	var scaled: Dictionary = {}
+	for k in cost:
+		scaled[k] = int(cost[k]) * span
+	if _camp.economy.try_spend(scaled):
+		block.purchased = true
+		return true
+	return false
+
+
+## Ворота: ставятся в ближайшую пустую+связную ячейку (standalone) ИЛИ заменяют
+## готовую стену в ближайшей занятой ячейке (сегмент стены → проход с дверьми).
+func _try_place_gate(gate: BuildBlock) -> bool:
+	var best_r := -1
+	var best_s := -1
+	var best_d := snap_distance
+	var best_replace := false
+	for r in range(1, _rings.size()):
+		var cnt: int = segment_counts[r]
+		for s in range(cnt):
+			var occ = _rings[r][s]["block"]
+			var is_wall: bool = occ != null and is_instance_valid(occ) and occ is BuildBlock \
+				and (occ as BuildBlock).wall_thin and not (occ as BuildBlock).is_gate() \
+				and (occ as BuildBlock).is_built
+			var free_ok: bool = occ == null and _run_placeable(r, [s])
+			if not (is_wall or free_ok):
+				continue
+			var d := _horizontal_dist(gate.global_position, to_global(_run_center_local(r, s, 1)))
+			if d < best_d:
+				best_d = d
+				best_r = r
+				best_s = s
+				best_replace = is_wall
+	if best_r < 0:
+		if debug_log and LogConfig.master_enabled:
+			print("[BuildGrid] нет места под ворота")
+		return false
+	if not _charge_building(gate):
+		if debug_log and LogConfig.master_enabled:
+			print("[BuildGrid] не хватает ресурсов на ворота")
+		return false
+	if best_replace:
+		_remove_wall_cell(_rings[best_r][best_s]["block"], best_r, best_s)
+	_place_run(gate, best_r, best_s, 1)
+	return true
+
+
+## Снять стену из ячейки (под замену воротами): без death-FX — чистим ячейку,
+## снимаем боевое состояние (группы/навмеш) и удаляем блок.
+func _remove_wall_cell(w, r: int, s: int) -> void:
+	_rings[r][s]["block"] = null
+	_rings[r][s]["pad"].visible = false
+	if w is BuildBlock:
+		(w as BuildBlock).on_picked_up()
+	if w != null and is_instance_valid(w):
+		w.queue_free()
 
 
 ## Списать стоимость здания из экономики. true если оплачено (или цена не нужна).
@@ -367,7 +566,9 @@ func _charge_building(block: CampModule) -> bool:
 
 
 func _place_run(block: CampModule, r: int, s: int, fp: int) -> void:
-	var dims: Dictionary = tier_cell_dims(r, fp)
+	# Стены (wall_thin) — без зазора, на всю ячейку: смыкаются в сплошной барьер.
+	var gapless: bool = block is BuildBlock and (block as BuildBlock).wall_thin
+	var dims: Dictionary = tier_cell_dims(r, fp, gapless)
 	if block is BuildBlock:
 		(block as BuildBlock).conform_to_cell(dims["inner"], dims["outer"], dims["seg_deg"])
 	block.attach_to_slot(self)
@@ -376,6 +577,14 @@ func _place_run(block: CampModule, r: int, s: int, fp: int) -> void:
 	# Лицом к ядру (горизонтально, без наклона — цель на высоте блока).
 	var face := Vector3(global_position.x, block.global_position.y, global_position.z)
 	block.look_at(face, Vector3.UP)
+	# Вспышка-блик на месте установки в момент клика — фидбек «здание встало сюда».
+	# Радиус ≈ под размер ячейки (по большей из сторон: глубина / хорда дуги).
+	var f_depth: float = dims["outer"] - dims["inner"]
+	var f_mid: float = (dims["inner"] + dims["outer"]) * 0.5
+	var f_chord: float = 2.0 * f_mid * sin(deg_to_rad(float(dims["seg_deg"])) * 0.5)
+	var root: Node = get_tree().current_scene
+	if root != null:
+		AoeVisual.spawn_flash(root, world_center, maxf(f_depth, f_chord) * 0.6)
 	# На время стройки блок вне Grabbable — нельзя схватить силуэт. По завершении
 	# BuildBlock сам возвращает себя в Grabbable (built), и здание можно поднять
 	# и переставить в другую ячейку.
@@ -435,7 +644,7 @@ func _run_free(r: int, segs: Array) -> bool:
 
 func _run_center_local(r: int, s: int, fp: int) -> Vector3:
 	var cnt: int = segment_counts[r]
-	var mid: float = core_radius + (float(r) + 0.5) * ring_band
+	var mid: float = _ring_inner(r) + ring_band * 0.5
 	var ang: float = (float(s) + float(fp) * 0.5) * TAU / float(cnt)
 	return Vector3(cos(ang) * mid, 0.0, sin(ang) * mid)
 
@@ -456,15 +665,15 @@ func _run_placeable(r: int, segs: Array) -> bool:
 
 ## Размеры ячейки кольца tier (inner/outer/seg_deg) — чтобы здание в руке сразу
 ## было нужного размера (Camp конформит блок под это при спавне в руку).
-func tier_cell_dims(tier: int, footprint: int = 1) -> Dictionary:
+func tier_cell_dims(tier: int, footprint: int = 1, gapless: bool = false) -> Dictionary:
 	var t: int = clampi(tier, 0, segment_counts.size() - 1)
 	var cnt: int = maxi(segment_counts[t], 1)
-	var inner: float = core_radius + float(t) * ring_band
+	var inner: float = _ring_inner(t)
 	var fp: int = maxi(1, footprint)
 	return {
 		"inner": inner,
 		"outer": inner + ring_band,
-		"seg_deg": float(fp) * 360.0 / float(cnt) - cell_gap_deg,
+		"seg_deg": _seg_deg(inner, cnt, fp, gapless),
 	}
 
 
@@ -533,6 +742,22 @@ func _process(delta: float) -> void:
 		return
 	_pulse_t += delta
 	_update_grid_visuals()
+	_orient_held_block()
+
+
+## Пока здание в руке — каждый кадр разворачиваем его ЛИЦОМ К ЯДРУ (как оно
+## встанет в ячейку), а не висит в повороте спавна. Рука рулит только позицией
+## (_update_held_position поворот не трогает), так что конфликта нет. Та же
+## ориентация, что в _place_run: look_at ядра горизонтально (-Z к ядру → сектор
+## раскрыт наружу, как ячейки кольца).
+func _orient_held_block() -> void:
+	if _placing == null or not is_instance_valid(_placing):
+		return
+	var b: Node3D = _placing
+	var face := Vector3(global_position.x, b.global_position.y, global_position.z)
+	if b.global_position.distance_squared_to(face) < 0.0001:
+		return  # блок ровно над ядром — look_at вырожден, пропускаем кадр
+	b.look_at(face, Vector3.UP)
 
 
 ## Per-frame: сетка видна пока в руке здание ИЛИ что-то строится; пады —

@@ -32,9 +32,10 @@ const SCENE_PATH := "res://models/generator_visual.tscn"
 const R_IN := GridGeo.CORE_RADIUS
 const R_OUT := GridGeo.CORE_RADIUS + GridGeo.RING_BAND
 const MID := (R_IN + R_OUT) * 0.5          # центр кольца на -Z
-# Половина угла ячейки (рад): (360/seg − зазор)/2. PI/180 вместо deg_to_rad —
-# const-выражение должно сворачиваться на парсе.
-const HALF := (360.0 / float(GridGeo.SEGMENTS_RING0) - GridGeo.CELL_GAP_DEG) * 0.5 * PI / 180.0
+# Половина угла ячейки кольца 0 (рад). Зазор cell_gap_m метрический, на ВНУТРЕННЕМ
+# радиусе (= R_IN = CORE_RADIUS): half-cell угол = π/n минус половина угла-зазора
+# (CELL_GAP_M / R_IN)/2. Закрытая форма — const-выражение сворачивается на парсе.
+const HALF := PI / float(GridGeo.SEGMENTS_RING0) - GridGeo.CELL_GAP_M / (2.0 * GridGeo.CORE_RADIUS)
 const Y_BOT := -0.8       # низ блока (±height/2, height=1.6)
 const Y_TOP := 0.8
 

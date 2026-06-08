@@ -403,6 +403,49 @@ static func spawn_ground_disc(
 	return mesh
 
 
+## Быстрая ВСПЫШКА-блик на земле: яркий залитый диск, scale-punch → fade.
+## «Моргнуло и пропало» — для момента события (установка здания и т.п.).
+## Авто-освобождение по завершении tween'а (WeakRef-safe).
+static func spawn_flash(
+	root: Node,
+	pos: Vector3,
+	radius: float,
+	color: Color = Color(1.0, 0.95, 0.6, 0.9),
+	duration: float = 0.28,
+) -> void:
+	if root == null or radius <= 0.0:
+		return
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = radius
+	cyl.bottom_radius = radius
+	cyl.height = 0.02
+	cyl.radial_segments = 48
+	cyl.rings = 0
+	cyl.cap_top = true
+	cyl.cap_bottom = false
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.emission_enabled = true
+	mat.emission = Color(color.r, color.g, color.b, 1.0)
+	mat.emission_energy_multiplier = 4.0
+	mat.render_priority = GROUND_MARKER_PRIORITY  # поверх тумана войны
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = cyl
+	mesh.material_override = mat
+	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(mesh)
+	mesh.global_position = pos + Vector3.UP * 0.06
+	# Punch: быстро вспыхивает (scale 0.5→1.1 за 0.06с), затем гаснет alpha→0.
+	mesh.scale = Vector3(0.5, 1.0, 0.5)
+	var tween := mesh.create_tween()
+	tween.tween_property(mesh, "scale", Vector3(1.1, 1.0, 1.1), 0.06).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(mat, "albedo_color:a", 0.0, maxf(duration, 0.08)).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	_queue_free_on_tween_callback(tween, mesh)
+
+
 ## Расширяющееся плоское кольцо ПОСТОЯННОЙ толщины: outer_radius растёт
 ## линейно от 0 до `max_radius` за `duration`, inner_radius всегда =
 ## outer − thickness. Без скейла меша — иначе фронт расплывался бы вширь

@@ -14,7 +14,7 @@ extends CanvasLayer
 
 const CAMP_GROUP := &"camp"
 
-enum Tab { UNITS, CAMP, PLAN, SPELLS, ARMY, QUESTS, DEBUG }
+enum Tab { UNITS, CAMP, LEGACY, PLAN, SPELLS, ARMY, QUESTS, DEBUG }
 
 ## Preset'ы плана сбора. Главное число — приоритет «фокусного» типа (55), у
 ## остальных 15 — нормализация в Camp.set_collection_priority даст 0.55/0.15/0.15/0.15.
@@ -100,6 +100,7 @@ var _backdrop: ColorRect
 var _panel: PanelContainer
 var _tab_units_btn: Button
 var _tab_camp_btn: Button
+var _tab_legacy_btn: Button
 var _tab_plan_btn: Button
 var _tab_spells_btn: Button
 var _tab_army_btn: Button
@@ -246,6 +247,10 @@ func _build_tabs(parent: VBoxContainer) -> void:
 	_tab_camp_btn.pressed.connect(_select_tab.bind(Tab.CAMP))
 	row.add_child(_tab_camp_btn)
 
+	_tab_legacy_btn = _make_tab_button("Старая стройка")
+	_tab_legacy_btn.pressed.connect(_select_tab.bind(Tab.LEGACY))
+	row.add_child(_tab_legacy_btn)
+
 	_tab_plan_btn = _make_tab_button("План")
 	_tab_plan_btn.pressed.connect(_select_tab.bind(Tab.PLAN))
 	row.add_child(_tab_plan_btn)
@@ -293,6 +298,7 @@ func _refresh() -> void:
 	var camp := _resolve_camp()
 	_tab_units_btn.button_pressed = (_current_tab == Tab.UNITS)
 	_tab_camp_btn.button_pressed = (_current_tab == Tab.CAMP)
+	_tab_legacy_btn.button_pressed = (_current_tab == Tab.LEGACY)
 	_tab_plan_btn.button_pressed = (_current_tab == Tab.PLAN)
 	_tab_spells_btn.button_pressed = (_current_tab == Tab.SPELLS)
 	_tab_army_btn.button_pressed = (_current_tab == Tab.ARMY)
@@ -314,6 +320,8 @@ func _refresh() -> void:
 			_build_units_tab(camp)
 		Tab.CAMP:
 			_build_camp_tab(camp)
+		Tab.LEGACY:
+			_build_legacy_tab(camp)
 		Tab.PLAN:
 			_build_plan_tab(camp)
 		Tab.SPELLS:
@@ -484,8 +492,22 @@ const RESOURCE_DISPLAY: Dictionary = {
 }
 
 
+## Вкладка «Лагерь» — НОВЫЕ кольцевые здания (ставятся в ячейку BuildGrid).
 func _build_camp_tab(camp: Node) -> void:
-	_header_label.text = "постройки лагеря"
+	_build_building_list(camp, true, "постройки лагеря (кольцевые)")
+
+
+## Вкладка «Старая стройка» — постройки ДО кольцевой системы: палатки, частокол,
+## стрелковый пост, ворота (свободная установка рукой / brush / aim).
+func _build_legacy_tab(camp: Node) -> void:
+	_build_building_list(camp, false, "старое строительство (до кольцевой системы)")
+
+
+## Общий рендер списка построек, отфильтрованный по типу: grid=true → кольцевые
+## (grid_building), grid=false → старые. Каталог один (Camp.CAMP_BUILDING_CATALOG),
+## делим data-driven по флагу — без хардкод-списка id.
+func _build_building_list(camp: Node, grid: bool, header: String) -> void:
+	_header_label.text = header
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -498,6 +520,9 @@ func _build_camp_tab(camp: Node) -> void:
 	scroll.add_child(list)
 
 	for id in Camp.CAMP_BUILDING_CATALOG.keys():
+		var data: Dictionary = Camp.CAMP_BUILDING_CATALOG.get(id, {})
+		if bool(data.get("grid_building", false)) != grid:
+			continue
 		list.add_child(_build_building_card(camp, id))
 
 
@@ -658,7 +683,7 @@ func _on_upgrade_granted(_id: StringName) -> void:
 func _on_resources_changed(_type: int, _amount: int) -> void:
 	# Юнит-вкладка от ресурсов не зависит — рефрешим только активную.
 	# Армия зависит (cost-row + can_recruit disabled-state).
-	if _current_tab == Tab.CAMP or _current_tab == Tab.ARMY:
+	if _current_tab == Tab.CAMP or _current_tab == Tab.LEGACY or _current_tab == Tab.ARMY:
 		_refresh()
 
 
@@ -668,7 +693,7 @@ func _on_camp_state_changed_anchor(_anchor: Vector3) -> void:
 
 
 func _on_camp_state_changed() -> void:
-	if _current_tab == Tab.CAMP:
+	if _current_tab == Tab.CAMP or _current_tab == Tab.LEGACY:
 		_refresh()
 
 

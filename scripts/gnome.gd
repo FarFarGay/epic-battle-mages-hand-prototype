@@ -142,6 +142,11 @@ enum IdlePhase { GOING_TO_FIRE, LIGHTING, AT_FIRE, WANDERING, LOOKING_AROUND }
 @export var vision_radius: float = 10.0
 ## Радиус «ошивания» возле anchor'а, когда на карте не осталось куч.
 @export var idle_radius: float = 4.0
+## Внутренний клиренс idle-шатания вокруг центра базы (= ядро-харвестер). Точки
+## «постоять» выбираются в КОЛЬЦЕ [clearance, idle_radius], а не в круге — иначе
+## гном целится в само ядро (его коллизия ~1.7м) и топчется внутри. ~ радиус
+## харвистера + запас. 0 → старое поведение (круг).
+@export var idle_core_clearance: float = 2.2
 ## Дистанция до кучи, на которой считаем «дошёл — можно брать».
 @export var pickup_distance: float = 0.8
 ## Дистанция до anchor'а лагеря для сдачи ресурса.
@@ -1090,7 +1095,7 @@ func _tick_idle_near_base() -> void:
 
 	var anchor := _camp.deploy_anchor
 	if _wander_target == Vector3.INF or _horizontal_distance(_wander_target) < wander_arrival:
-		_wander_target = _random_point_around(anchor, idle_radius)
+		_wander_target = _random_point_around(anchor, idle_radius, idle_core_clearance)
 	_move_toward_xz(_wander_target)
 
 
@@ -1151,7 +1156,7 @@ func _tick_idle_life() -> void:
 			velocity.x = 0.0
 			velocity.z = 0.0
 			if now >= _idle_phase_until_msec:
-				_wander_target = _random_point_around(_camp.deploy_anchor, idle_radius)
+				_wander_target = _random_point_around(_camp.deploy_anchor, idle_radius, idle_core_clearance)
 				_idle_phase = IdlePhase.WANDERING
 
 
@@ -1388,9 +1393,12 @@ func _find_nearest_pile_weighted() -> ResourcePile:
 	return nearest
 
 
-func _random_point_around(center: Vector3, radius: float) -> Vector3:
+func _random_point_around(center: Vector3, radius: float, inner: float = 0.0) -> Vector3:
 	var angle := randf() * TAU
-	var dist := radius * sqrt(randf())  # uniform в круге, не в кольце
+	# Равномерно по площади: в круге (inner=0) или в кольце [inner, radius].
+	# dist = sqrt(lerp(inner², radius², u)) даёт uniform-плотность в кольце.
+	var inner_c: float = clampf(inner, 0.0, radius)
+	var dist := sqrt(lerpf(inner_c * inner_c, radius * radius, randf()))
 	var p := Vector3(
 		center.x + cos(angle) * dist,
 		center.y,

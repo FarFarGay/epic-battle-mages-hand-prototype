@@ -178,6 +178,10 @@ func deploy_on(anchor: Vector3) -> void:
 	_state = State.DEPLOYED
 	_reset_motion_visuals()
 	_apply_visual_state()
+	# Развёрнутое ядро — статичное навсегда — становится препятствием навмеша:
+	# гномы/скелеты огибают его, а не идут сквозь (Camp ребейкает после деплоя).
+	# Слой CAMP_OBSTACLE уже в маске навмеша (main.tscn mask=33); нужна группа.
+	add_to_group(&"navmesh_source")
 
 
 ## Camp зовёт при свёртке. Harvester возвращается в IN_CARAVAN — двигаться

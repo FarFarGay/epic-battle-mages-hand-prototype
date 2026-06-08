@@ -29,6 +29,7 @@ const ARCHER_BARRACKS := &"archer_barracks"
 const SPEAR_BARRACKS := &"spear_barracks"
 const GNOME_PORTAL := &"gnome_portal"
 const WALL := &"wall"
+const GATE := &"gate"
 
 const CATALOG: Dictionary = {
 	GENERATOR: {
@@ -97,6 +98,21 @@ const CATALOG: Dictionary = {
 		# Каменная стена покрепче деревянного частокола (hp=30), но всё ещё
 		# расходник — мели-скелеты её прогрызают.
 		"hp": 60.0,
+	},
+	GATE: {
+		"name": "Ворота",
+		"description": "Арка с дверьми в 1 ячейку (кольцо стен). Открываются гномам и башне, закрыты врагам — скелеты упираются и бьют. Ставятся в пустую ячейку (соединяя здания) ИЛИ на сегмент стены, заменяя его проходом.",
+		"cost": {ResourcePile.ResourceType.WOOD: 8, ResourcePile.ResourceType.IRON: 3},
+		"deployed_only": true,
+		"repeatable": true,
+		"grid_building": true,
+		"ring_tier": 1,
+		"thin": true,
+		"color": Color(0.55, 0.5, 0.55, 1.0),
+		# Крепче стены (это узкое горло обороны), но всё ещё разрушаемо.
+		"hp": 90.0,
+		# Своя сцена — GateBlock (арка+двери+open/close), не обычный BuildBlock.
+		"scene": "res://scenes/gate_block.tscn",
 	},
 	NEW_TENT: {
 		"name": "Новая палатка",

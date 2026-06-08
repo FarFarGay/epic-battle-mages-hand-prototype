@@ -2383,9 +2383,16 @@ func spawn_building_into_hand(id: StringName) -> bool:
 	var hand := get_tree().get_first_node_in_group(Hand.HAND_GROUP) as Hand
 	if hand == null:
 		return false
-	var block := build_block_scene.instantiate() as BuildBlock
+	# Некоторые здания (ворота) — своя сцена-наследник BuildBlock (поле "scene"
+	# в каталоге). Иначе обычный build_block_scene.
+	var scene_path: String = CampBuildings.get_data(id).get("scene", "")
+	var scene: PackedScene = (load(scene_path) as PackedScene) if scene_path != "" else build_block_scene
+	if scene == null:
+		push_warning("Camp: сцена здания не загрузилась (%s)" % id)
+		return false
+	var block := scene.instantiate() as BuildBlock
 	if block == null:
-		push_warning("Camp: build_block_scene не инстанцируется как BuildBlock")
+		push_warning("Camp: сцена здания не инстанцируется как BuildBlock")
 		return false
 	var root: Node = get_tree().current_scene
 	if root == null:
@@ -2396,7 +2403,8 @@ func spawn_building_into_hand(id: StringName) -> bool:
 	# нужного размера, а не компактная болванка. На установке conform повторится
 	# с теми же размерами (то же кольцо).
 	if _build_grid != null:
-		var dims: Dictionary = _build_grid.tier_cell_dims(block.ring_tier, block.footprint)
+		# Стена (wall_thin) сразу в руке полноширинная (без зазора-улицы) — как встанет.
+		var dims: Dictionary = _build_grid.tier_cell_dims(block.ring_tier, block.footprint, block.wall_thin)
 		block.conform_to_cell(dims["inner"], dims["outer"], dims["seg_deg"])
 	block.global_position = hand.global_position
 	hand.hold_item(block)
@@ -2407,6 +2415,10 @@ func spawn_building_into_hand(id: StringName) -> bool:
 ## 0 → стоит; min_generators_to_mine → стартует на min_generator_yield_frac;
 ## линейно до полной скорости на generators_required; больше — потолок (1.0).
 func _on_grid_buildings_changed() -> void:
+	# Набор зданий изменился (постройка/слом/перенос) → пересобрать навмеш, чтобы
+	# гномы/скелеты огибали новые здания (и не огибали снесённые). Debounce —
+	# волна построек/сломов в одном кадре даёт один bake.
+	_request_debounced_rebake()
 	if _harvester == null or _build_grid == null:
 		return
 	_harvester.set_production_scale(_generator_production_scale(_build_grid.generator_count()))
@@ -3166,6 +3178,9 @@ func _start_deploy() -> void:
 	# Полярный грид строительства раскрывается вокруг ядра (харвестера).
 	if _build_grid != null:
 		_build_grid.deploy(Vector3(_deploy_anchor.x, ground_y, _deploy_anchor.z))
+	# Ядро встало на финальную позицию и теперь препятствие навмеша — ребейк,
+	# чтобы гномы/скелеты огибали его (а не первичный bake у caravan-позиции).
+	_request_debounced_rebake()
 
 
 # --- Idle-«жизнь лагеря» (режим FREE): костры + распределение гномов ---
