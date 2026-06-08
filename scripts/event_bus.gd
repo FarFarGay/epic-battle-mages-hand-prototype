@@ -124,9 +124,6 @@ signal match_won
 ## ставит игру на паузу. Зеркало match_won.
 signal match_lost(reason: String)
 
-## Squad подобрал ключ в подземелье (KeyItem перешёл из IDLE в CARRIED).
-## HUD/звук слушает; MatchGoal обновляет внутренний прогресс.
-signal key_picked_up_by_squad
 ## Ключ занесён в башню (KeyItem перешёл в AT_TOWER). Разблокирует Gate.
 signal key_delivered_to_tower
 ## Tower прошёл через Gate. Эмитится один раз за жизнь сцены. Условие

@@ -19,17 +19,22 @@ extends Node3D
 ## Геометрия ячеек локальна относительно ядра; на deploy грид встаёт global_position
 ## = центр лагеря (= харвестер), на pack — гасит пады и роняет стоявшие блоки.
 
+# Дефолты формы ячейки — из общего GridGeometry (его же читает офлайн-бейк
+# генератора, чтобы тело-модель не разъехалась с реальной ячейкой). preload-
+# const, а не global class — не зависим от регистрации class_name.
+const GridGeo = preload("res://scripts/grid_geometry.gd")
+
 ## Сегментов на кольцо, изнутри наружу. Кольцо 0 — генераторное (4 больших
 ## ячейки). Остальные кольца — единый мелкий грид (много ячеек ≈ длины мелкого
 ## блока), на них здания занимают N ячеек по размеру. Связь по углу (соседи
 ## считаются перекрытием углов — кратность колец не обязана быть удвоением).
-@export var segment_counts: PackedInt32Array = PackedInt32Array([4, 12, 16])
+@export var segment_counts: PackedInt32Array = PackedInt32Array([GridGeo.SEGMENTS_RING0, 12, 16])
 ## Радиус дворика-ядра (внутренний радиус кольца 0, дыра под харвестер).
-@export var core_radius: float = 2.5
+@export var core_radius: float = GridGeo.CORE_RADIUS
 ## Радиальная толщина одного кольца.
-@export var ring_band: float = 1.8
+@export var ring_band: float = GridGeo.RING_BAND
 ## Угловой зазор между ячейками (градусы) — швы, чтобы ячейки читались раздельно.
-@export var cell_gap_deg: float = 2.0
+@export var cell_gap_deg: float = GridGeo.CELL_GAP_DEG
 ## Макс. расстояние от блока до центра ячейки, при котором релиз = установка.
 @export var snap_distance: float = 2.6
 ## Время стройки здания (секунды): форма поднимается по гриду, на финише — пуфф.
@@ -226,13 +231,24 @@ func pack() -> void:
 	_placing = null
 	if _line_grid != null:
 		_line_grid.visible = false
+	var had_blocks := false
 	for cell in _cells:
 		var b = cell["block"]
 		if b != null and is_instance_valid(b):
 			cell["block"] = null
+			# Падающий блок снимаем с боевого состояния (как при захвате рукой):
+			# иначе скелеты бьют упавший на землю генератор, и он остаётся
+			# препятствием/целью. Combat вернётся при переустановке.
+			if b is BuildBlock:
+				(b as BuildBlock).on_picked_up()
 			(b as CampModule).detach_from_slot()
 			b.freeze = false
+			had_blocks = true
 		cell["pad"].visible = false
+	# Генераторы исчезли из грида → харвестер должен пересчитать темп добычи
+	# (иначе держит старый scale при нуле генераторов).
+	if had_blocks:
+		buildings_changed.emit()
 
 
 # --- Рука: захват / отпускание ---

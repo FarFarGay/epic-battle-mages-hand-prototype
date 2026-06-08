@@ -52,6 +52,9 @@ func _on_restart_pressed() -> void:
 		menu.restart_match()
 		return
 	# Fallback если StartMenu не найден — просто reload без рандомизации.
+	# paused живёт на SceneTree и переживает reload — иначе новый матч стартует
+	# замёрзшим (поражение ставит paused=true).
+	get_tree().paused = false
 	MatchConfig.match_started = true
 	QuestProgress.current_index = 0
 	get_tree().reload_current_scene()

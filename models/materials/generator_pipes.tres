@@ -1,0 +1,18 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[ext_resource type="Texture2D" path="res://textures/bricks_wall_15/bricks_wall_15_1k/bricks_wall_15_basecolor_1k.png" id="1_f7ie8"]
+[ext_resource type="Texture2D" path="res://textures/bricks_wall_15/bricks_wall_15_1k/bricks_wall_15_ambientocclusion_1k.png" id="2_0ouy5"]
+[ext_resource type="Texture2D" path="res://textures/bricks_wall_15/bricks_wall_15_1k/bricks_wall_15_normal_gl_1k.png" id="3_wxeks"]
+[ext_resource type="Texture2D" path="res://textures/bricks_wall_15/bricks_wall_15_1k/bricks_wall_15_roughness_1k.png" id="4_7t3w5"]
+
+[resource]
+cull_mode = 2
+albedo_color = Color(1.6, 1.6, 1.6, 1)
+albedo_texture = ExtResource("1_f7ie8")
+roughness_texture = ExtResource("4_7t3w5")
+normal_enabled = true
+normal_texture = ExtResource("3_wxeks")
+ao_enabled = true
+ao_texture = ExtResource("2_0ouy5")
+uv1_scale = Vector3(1.8, 1.8, 1.8)
+uv1_triplanar = true

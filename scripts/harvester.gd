@@ -10,11 +10,7 @@ extends StaticBody3D
 ## - DEPLOYED — стоит на _deploy_anchor (= центр POI). Добывает gold-per-second.
 ##
 ## Привязка экономики: Camp устанавливает _economy через bind_economy() в _ready.
-## Через сигнал gold_produced(amount, at_position) Camp может слушать для UI/FX.
-
-signal deployed
-signal packed
-signal gold_produced(amount: int, at_position: Vector3)
+## Золото зачисляется напрямую через _economy.add_resource.
 
 ## Damageable-контракт: эмитятся при уроне / разрушении ядра. MatchGoal/Camp
 ## слушают через EventBus.harvester_destroyed (re-emit в _die).
@@ -33,6 +29,12 @@ enum State { IN_CARAVAN, DEPLOYED }
 ## (Damageable + skeleton_target). Ядро — самое прочное в лагере; его
 ## уничтожение = поражение матча. Тюнится под баланс осады.
 @export var max_hp: float = 600.0
+## Бонус досягаемости атаки (м) для атакующих по ядру. Ядро широкое (коллизия
+## ~1.7м радиус) — скелет упирается в стенку далеко от центра, и обычный
+## attack_range/strike-радиус до ЦЕНТРА не срабатывает. Этот бонус прибавляется
+## к их дальности (см. Enemy.target_reach_bonus), чтобы ядро били с края. ~ радиус
+## коллизии; меньше → бьют ближе к поверхности, больше → замахиваются дальше.
+@export var attack_reach_bonus: float = 1.0
 
 @export_group("Death explosion (детонация ядра)")
 ## Ядро детонирует при гибели — урон по площади, уничтожая стоящие рядом
@@ -132,6 +134,11 @@ func is_deployed() -> bool:
 	return _state == State.DEPLOYED
 
 
+## Reach-бонус для атакующих (Enemy.target_reach_bonus): ядро широкое, бьём с края.
+func get_attack_reach_bonus() -> float:
+	return attack_reach_bonus
+
+
 ## Текущая фактическая скорость добычи золота (единиц/сек) с учётом числа
 ## генераторов. 0 если харвестер не развёрнут или генераторов нет. Для HUD —
 ## показывает игроку реальный темп прихода золота.
@@ -171,7 +178,6 @@ func deploy_on(anchor: Vector3) -> void:
 	_state = State.DEPLOYED
 	_reset_motion_visuals()
 	_apply_visual_state()
-	deployed.emit()
 
 
 ## Camp зовёт при свёртке. Harvester возвращается в IN_CARAVAN — двигаться
@@ -183,7 +189,6 @@ func pack_to_caravan() -> void:
 	_gold_accumulator = 0.0
 	_reset_motion_visuals()
 	_apply_visual_state()
-	packed.emit()
 
 
 ## Сбрасывает motion-fx state и нейтрализует VisualRoot — нужно после
@@ -222,7 +227,6 @@ func _process(delta: float) -> void:
 	_gold_accumulator -= float(whole)
 	if _economy != null:
 		_economy.add_resource(ResourcePile.ResourceType.GOLD, whole)
-	gold_produced.emit(whole, global_position)
 
 
 func _apply_visual_state() -> void:

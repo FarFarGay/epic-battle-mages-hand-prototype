@@ -116,7 +116,7 @@ const MASK_ALL_GAMEPLAY := TERRAIN | ITEMS | ACTORS | PROJECTILES | ENEMIES   # 
 ## башню и наоборот). FRIENDLY_UNIT (гномы) НАМЕРЕННО исключён — как и Slam,
 ## взрыв не должен массово выкашивать своих гномов. Источник сам выходит из
 ## Damageable-группы до взрыва, так что себя не задевает.
-const MASK_DEATH_BLAST := ENEMIES | CAMP_OBSTACLE | PALISADE_OBSTACLE | ACTORS   # 596
+const MASK_DEATH_BLAST := ENEMIES | CAMP_OBSTACLE | PALISADE_OBSTACLE | ACTORS   # 564
 
 ## Skeleton scan: пол, предметы, башня, палатки. **Без `ENEMIES`** —
 ## намеренно: скелеты не сталкиваются друг с другом физически, проходят

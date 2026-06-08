@@ -121,6 +121,8 @@ func _build_visual() -> void:
 	_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_material.emission_enabled = true
+	# Поверх тумана войны — маркер заряда должен читаться, даже когда отряд в дыму.
+	_material.render_priority = AoeVisual.GROUND_MARKER_PRIORITY
 	_mesh = MeshInstance3D.new()
 	_mesh.mesh = _torus
 	_mesh.material_override = _material

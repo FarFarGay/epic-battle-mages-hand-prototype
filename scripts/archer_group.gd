@@ -135,7 +135,7 @@ func _coordinate_volley() -> void:
 			Enemy.AttackState.WINDUP:
 				any_windup = true
 				if target == null:
-					target = a._cached_target if is_instance_valid(a._cached_target) else a._forced_target
+					target = a._cached_target if is_instance_valid(a._cached_target) else (a._forced_target if is_instance_valid(a._forced_target) else null)
 			Enemy.AttackState.STRIKE, Enemy.AttackState.COOLDOWN:
 				any_strike_or_cd = true
 
@@ -158,6 +158,8 @@ func _coordinate_volley() -> void:
 ## Aim каждого = центр_зоны + случайная точка в радиусе group_ring_radius.
 ## Длительность ring'а = первый_archer.attack_windup + полётное время (запас).
 func _begin_group_volley(target: Node3D) -> void:
+	if not is_instance_valid(target):
+		return
 	var first_archer: SkeletonArcher = null
 	for a in _archers:
 		if is_instance_valid(a):

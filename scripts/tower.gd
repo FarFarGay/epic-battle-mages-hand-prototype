@@ -29,6 +29,11 @@ signal mana_changed(current: float, maximum: float)
 ## Максимум HP. Текущее значение в `hp`, сетится в _ready = max_hp. Урон —
 ## через take_damage(amount). Смерть при hp ≤ 0.
 @export var max_hp: float = 1000.0
+## Reach-бонус для расчётов «бьём с края» (Enemy.target_reach_bonus + AOE-фильтр
+## AoeDamage). Башня широкая (коллизия 2×2) — её центр дальше малого radius'а
+## взрыва/strike'а, хотя коллайдер задет. ≈ полу-размер по XZ (1.0). Без него
+## мины/мелкие AOE рвались бы у борта башни вхолостую.
+@export var attack_reach_bonus: float = 1.0
 
 @export_group("Mana")
 ## Максимум маны. Магические действия (Fireball и т.п.) тратят её через
@@ -224,6 +229,12 @@ func _ready() -> void:
 
 
 # --- Публичный API ---
+
+## Reach-бонус для «бьём с края» (Enemy.target_reach_bonus + AoeDamage-фильтр):
+## башня широкая, её центр дальше малого radius'а, хотя коллайдер задет.
+func get_attack_reach_bonus() -> float:
+	return attack_reach_bonus
+
 
 func take_damage(amount: float) -> void:
 	if _dying or amount <= 0.0:

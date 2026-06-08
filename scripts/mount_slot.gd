@@ -15,9 +15,6 @@ extends Node3D
 ## за один и тот же модуль нет (на release модуль монтируется в первый слот,
 ## который успел его засчитать).
 
-signal module_attached(module: Node)
-signal module_detached(module: Node)
-
 ## Где сидит модуль относительно слота. Y > 0 — стоит «над» слотом, чтобы
 ## база не просвечивалась мешем модуля.
 @export var module_offset: Vector3 = Vector3(0, 0.0, 0)
@@ -100,7 +97,6 @@ func _mount(module: CampModule) -> void:
 	module.global_position = global_position + module_offset + Vector3(0.0, module.mount_lift, 0.0)
 	if align_rotation:
 		module.global_rotation = global_rotation
-	module_attached.emit(module)
 	if debug_log and LogConfig.master_enabled:
 		print("[MountSlot:%s] монтаж: %s" % [name, module.name])
 
@@ -120,7 +116,6 @@ func _on_module_force_detached(_old_slot: Node) -> void:
 	if _mounted.get_slot() != self:
 		var old := _mounted
 		_mounted = null
-		module_detached.emit(old)
 		if debug_log and LogConfig.master_enabled:
 			print("[MountSlot:%s] зомби-detach: модуль перехвачен другим слотом" % name)
 
@@ -133,7 +128,6 @@ func _release_to_hand() -> void:
 	var old := _mounted
 	_mounted = null
 	old.detach_from_slot()
-	module_detached.emit(old)
 	if debug_log and LogConfig.master_enabled:
 		print("[MountSlot:%s] размонтаж (хват): %s" % [name, old.name])
 
@@ -147,7 +141,6 @@ func _drop_mounted() -> void:
 	_mounted = null
 	old.detach_from_slot()
 	old.freeze = false
-	module_detached.emit(old)
 	if debug_log and LogConfig.master_enabled:
 		print("[MountSlot:%s] размонтаж (drop): %s" % [name, old.name])
 

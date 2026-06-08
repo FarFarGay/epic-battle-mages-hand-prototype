@@ -20,8 +20,6 @@ enum AbilityType { NONE = -1, SLAM, FLICK }
 
 const ACTION_GRAB := &"hand_grab"
 const ACTION_ACTION := &"hand_action"
-const ACTION_EQUIP_SLAM := &"equip_slam"
-const ACTION_EQUIP_FLICK := &"equip_flick"
 
 
 @export_group("Balance")

@@ -96,6 +96,10 @@ var fog_reveal_radius: float = 12.0
 @export var telegraph_lock_time: float = 0.35
 ## Цвет точки в фазе lock (коммит) — тревожнее основного, чтобы момент читался.
 @export var telegraph_lock_color: Color = Color(1.0, 0.35, 0.15, 0.95)
+## Радиус ground-ring телеграфа залпа (м): супер крупнее (читаемая «рой в точку»),
+## обычный залп компактнее.
+@export var salvo_warn_ring_radius: float = 2.5
+@export var super_warn_ring_radius: float = 4.5
 @export_group("")
 
 @export_group("Attacks (паттерн)")
@@ -608,7 +612,7 @@ func _start_missile_salvo(target: Node3D, count: int = -1, warn: float = -1.0, i
 		# Супер — крупнее/тревожнее телеграф (читаемый «сейчас рой в одну точку»),
 		# обычный залп — компактное кольцо-лок.
 		if is_super:
-			AoeVisual.spawn_ground_ring(root, target.global_position, 4.5, _missile_warn_timer, shock_color)
+			AoeVisual.spawn_ground_ring(root, target.global_position, super_warn_ring_radius, _missile_warn_timer, shock_color)
 			# Телеграф НА МЕХЕ: сгустки энергии сходятся в один шар НАД КОРПУСОМ за
 			# время зарядки, держатся, пока из них вылетают ракеты (ребёнок меха —
 			# следует за ним). Точка совпадает со стартом ракет супера.
@@ -618,7 +622,7 @@ func _start_missile_salvo(target: Node3D, count: int = -1, warn: float = -1.0, i
 			var emit_time: float = missile_super_interval * float(missile_super_count) + 0.2
 			charge.setup(_missile_warn_timer, shock_color, 3.0, emit_time)
 		else:
-			AoeVisual.spawn_ground_ring(root, target.global_position, 2.5, _missile_warn_timer, telegraph_lock_color)
+			AoeVisual.spawn_ground_ring(root, target.global_position, salvo_warn_ring_radius, _missile_warn_timer, telegraph_lock_color)
 	if debug_log and LogConfig.master_enabled:
 		print("[EnemyMech:%s] %s (ракет %d, дист %.0f)" % [
 			name, "СУПЕР-ЗАЛП" if is_super else "залп ракет", _missile_active_count,

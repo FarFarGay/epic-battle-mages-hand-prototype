@@ -287,6 +287,11 @@ func _on_pattern_finished(success: bool) -> void:
 	# Возврат к нормальному времени до любых других переходов — UI и логика
 	# дальше работают в обычном масштабе.
 	Engine.time_scale = 1.0
+	# Рука/камп могли исчезнуть за время slow-mo QTE (reload сцены, свёртка) —
+	# валидируем перед деревом, иначе дереф freed-ноды.
+	if not is_instance_valid(_hand):
+		_finish_super(false)
+		return
 	if success:
 		# Запоминаем точку прицела в момент завершения QTE — игрок может ещё
 		# подвигать курсор в AIMING_TARGET, но мы и без этого имеем валидный fallback.
@@ -298,7 +303,8 @@ func _on_pattern_finished(success: bool) -> void:
 			print("[Hand:Super] QTE OK — прицел, ПКМ для каста")
 	else:
 		# Провал — половина шкалы списывается, возвращаем категорию, всё.
-		_camp.consume_super_charge(_camp.get_super_charge_max() * _camp.super_charge_fail_penalty)
+		if is_instance_valid(_camp):
+			_camp.consume_super_charge(_camp.get_super_charge_max() * _camp.super_charge_fail_penalty)
 		_finish_super(false)
 
 
@@ -325,12 +331,16 @@ func _clear_aim_indicator() -> void:
 func _commit_rain() -> void:
 	# Игрок нажал ПКМ — ставит каст в текущую точку курсора (НЕ заранее
 	# зафиксированную: куда смотрит сейчас, туда и сыпется).
+	if not is_instance_valid(_hand):
+		_finish_super(false)
+		return
 	var target: Vector3 = _hand.cursor_world_position()
 	target.y -= _hand.hand_height
 	_aim_target = target
 	_clear_aim_indicator()
 	# Полное списание шкалы — один каст = один полный ресурс.
-	_camp.consume_super_charge(_camp.get_super_charge_max())
+	if is_instance_valid(_camp):
+		_camp.consume_super_charge(_camp.get_super_charge_max())
 	_state = State.CASTING
 	super_cast.emit(target)
 	if debug_log and LogConfig.master_enabled:
@@ -358,7 +368,7 @@ func _finish_super(_success: bool) -> void:
 	# _commit_rain и _cancel_aim уже зовут _clear_aim_indicator явно, тут
 	# подстраховка для путей, которые могли бы пропустить.
 	_clear_aim_indicator()
-	if _hand.active_category == Hand.Category.SUPER:
+	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.SUPER:
 		_hand.pop_category()
 	if _state != State.CASTING:
 		_state = State.READY
@@ -372,6 +382,8 @@ func _spawn_carrier(target_pos: Vector3) -> void:
 		return
 	# Tower-launch helper живёт в HandSpell (там tower-cache); используем тот
 	# же контракт — single source of truth для «откуда летят снаряды».
+	if not is_instance_valid(_hand) or _hand.spell_actions == null:
+		return
 	var launch_pos: Vector3 = _hand.spell_actions.tower_launch_position(carrier_launch_offset_y, _hand)
 	var burst_pos: Vector3 = target_pos + Vector3.UP * carrier_burst_height
 	var carrier := carrier_scene.instantiate() as SuperCarrier

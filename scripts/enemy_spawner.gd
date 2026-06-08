@@ -227,7 +227,7 @@ func spawn_ring(scene: PackedScene, count: int, center: Vector3, radius: float, 
 ## (визуальный эффект тут не нужен — это «обнуление», не смерть).
 func kill_all_skeletons() -> int:
 	var killed := 0
-	for n in get_tree().get_nodes_in_group(&"skeleton"):
+	for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		if is_instance_valid(n):
 			n.queue_free()
 			killed += 1

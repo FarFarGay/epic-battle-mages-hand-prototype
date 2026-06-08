@@ -77,10 +77,11 @@ const ACTION_BAR_DEFAULT_ASSIGNMENT: Array[StringName] = [
 	&"fireball", &"firestorm", &"mine_scatter", &"frost", &"spark",
 ]
 
-## Super — фиксированный 6-й слот, не draggable. Имеет свою клавишу (Space)
-## и свою семантику (QTE, charge-bar), бессмысленно ремапить.
+## Super — фиксированный 6-й слот, не draggable. Имеет свою клавишу (E,
+## project.godot `cast_super`) и свою семантику (QTE, charge-bar), бессмысленно
+## ремапить. (Space = `dash`, не супер — не путать.)
 const ACTION_BAR_FIXED_SUPER: Dictionary = {
-	"key": "␣", "name": "Удар",
+	"key": "E", "name": "Удар",
 	"color": Color(1.0, 0.55, 0.15),
 	"category_str": "SUPER", "type": -1,
 }

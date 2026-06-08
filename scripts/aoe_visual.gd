@@ -14,6 +14,14 @@ extends RefCounted
 const DUST_MATERIAL_PATH := "res://resources/slam_dust_material.tres"
 const DUST_PROCESS_PATH := "res://resources/slam_dust_process.tres"
 
+## render_priority плоских наземных маркеров (кольцо зоны каста, диск стройки,
+## impact-кольцо). Туман войны — прозрачные плоскости (render_priority 0,
+## depth_draw_never) на y=0.05/0.4; без приоритета верхняя плоскость тумана
+## сортируется ПОВЕРХ маркера на земле (y≈0.05) и прячет «зону поражения» в
+## задымлённых местах, а в раскрытых (alpha→0) она видна — отсюда «где-то есть,
+## где-то нет». Приоритет > 0 кладёт маркер поверх дымки везде.
+const GROUND_MARKER_PRIORITY := 2
+
 const DUST_AMOUNT := 72
 const DUST_LIFETIME := 0.9
 const DUST_QUAD_SIZE := 0.22
@@ -336,6 +344,7 @@ static func spawn_ground_ring(
 	mat.emission_enabled = true
 	mat.emission = Color(color.r, color.g, color.b, 1.0)
 	mat.emission_energy_multiplier = 2.0
+	mat.render_priority = GROUND_MARKER_PRIORITY  # поверх тумана войны (см. const)
 	var mesh := MeshInstance3D.new()
 	mesh.mesh = torus
 	mesh.material_override = mat
@@ -382,6 +391,8 @@ static func spawn_ground_disc(
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# Над туманом (>0), но на 1 ниже контурного кольца — заливка остаётся под ним.
+	mat.render_priority = GROUND_MARKER_PRIORITY - 1
 	var mesh := MeshInstance3D.new()
 	mesh.mesh = cyl
 	mesh.material_override = mat
@@ -422,6 +433,7 @@ static func spawn_expanding_ring(
 	mat.emission_enabled = true
 	mat.emission = Color(color.r, color.g, color.b, 1.0)
 	mat.emission_energy_multiplier = 2.5
+	mat.render_priority = GROUND_MARKER_PRIORITY  # поверх тумана войны (см. const)
 	var mesh := MeshInstance3D.new()
 	mesh.mesh = torus
 	mesh.material_override = mat

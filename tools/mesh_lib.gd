@@ -38,11 +38,6 @@ static func quad_n(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, d: Vecto
 	st.add_vertex(d)
 
 
-## Прямоугольный параллелепипед: центр + размер. 6 граней, нормали наружу.
-static func add_box(st: SurfaceTool, center: Vector3, size: Vector3) -> void:
-	add_box_rot(st, center, size, 0.0)
-
-
 ## Бокс, повёрнутый вокруг вертикали (Y) на yaw радиан вокруг своего центра.
 ## Нужен для зубцов короны, расставленных по окружности «лицом» к центру.
 static func add_box_rot(st: SurfaceTool, center: Vector3, size: Vector3, yaw: float) -> void:
@@ -115,6 +110,37 @@ static func add_prism(st: SurfaceTool, r0: float, r1: float, y0: float, y1: floa
 			st.add_vertex(pts0[j])
 
 
-## Завершить SurfaceTool в ArrayMesh. opt_path — если задан, ещё и сохранить .res.
-static func commit(st: SurfaceTool) -> ArrayMesh:
-	return st.commit()
+## Изогнутая плита-сегмент (кольцевой сектор, экструдированный по Y) — тело
+## зданий, повторяющих форму грид-ячейки. Центр кольца (cx,cz), радиусы r_in..r_out,
+## углы a0..a1 (рад, d(t)=(sin t,0,cos t) — t=0 → +Z, как в build_block), высота
+## y0..y1. Грани с плоскими нормалями наружу: верх, низ, внешняя/внутренняя стенки,
+## торцы по краям дуги. segs — тесселяция дуги.
+static func add_arc_slab(st: SurfaceTool, cx: float, cz: float, r_in: float, r_out: float, a0: float, a1: float, y0: float, y1: float, segs: int = 12) -> void:
+	var c := Vector3(cx, 0.0, cz)
+	var yb := Vector3(0.0, y0, 0.0)
+	var yt := Vector3(0.0, y1, 0.0)
+	var n: int = maxi(1, segs)
+	for i in range(n):
+		var t0: float = lerp(a0, a1, float(i) / float(n))
+		var t1: float = lerp(a0, a1, float(i + 1) / float(n))
+		var d0 := Vector3(sin(t0), 0.0, cos(t0))
+		var d1 := Vector3(sin(t1), 0.0, cos(t1))
+		var pi0 := c + d0 * r_in
+		var po0 := c + d0 * r_out
+		var pi1 := c + d1 * r_in
+		var po1 := c + d1 * r_out
+		var n_out := (d0 + d1).normalized()
+		quad(st, pi0 + yt, po0 + yt, po1 + yt, pi1 + yt, Vector3.UP)
+		quad(st, pi1 + yb, po1 + yb, po0 + yb, pi0 + yb, Vector3.DOWN)
+		quad(st, po0 + yb, po1 + yb, po1 + yt, po0 + yt, n_out)
+		quad(st, pi1 + yb, pi0 + yb, pi0 + yt, pi1 + yt, -n_out)
+	var dA := Vector3(sin(a0), 0.0, cos(a0))
+	var dB := Vector3(sin(a1), 0.0, cos(a1))
+	var piA := c + dA * r_in
+	var poA := c + dA * r_out
+	var piB := c + dB * r_in
+	var poB := c + dB * r_out
+	var nA := Vector3(-cos(a0), 0.0, sin(a0))
+	var nB := Vector3(cos(a1), 0.0, -sin(a1))
+	quad(st, piA + yb, poA + yb, poA + yt, piA + yt, nA)
+	quad(st, poB + yb, piB + yb, piB + yt, poB + yt, nB)

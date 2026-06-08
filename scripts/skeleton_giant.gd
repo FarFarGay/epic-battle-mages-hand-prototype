@@ -19,8 +19,8 @@ const GIANT_GROUP := &"skeleton_giant"
 ## Радиус рассеивания тумана вокруг гиганта. Дизайнерское решение 2026-05-19:
 ## гигант — это видимая, наводящая страх угроза, его надо видеть издалека.
 ## Стандартные скелеты прячутся в туман, гигант — выжигает его собой и
-## всегда виден через `_update_enemy_visibility` (visibility у его позиции
-## всегда выше threshold'а из-за самостоятельного fog-stamp'а).
+## всегда виден: туман теперь чисто визуальный (врагов не скрывает), а гигант
+## ещё и выжигает дымку вокруг себя fog-stamp'ом — силуэт читается издалека.
 ## Радиус 9м чуть больше радиуса коллизии (1.5м) — пятно вокруг него видно
 ## издалека как «он рядом, готовься».
 var fog_reveal_radius: float = 9.0
@@ -45,8 +45,7 @@ func _ready() -> void:
 	add_to_group(GIANT_GROUP)
 	# FOG_REVEAL_GROUP: гигант рассеивает туман собой (см. fog_reveal_radius
 	# выше). Двойной эффект: (1) игрок видит силуэт гиганта в тумане
-	# издалека, (2) сам гигант не скрывается _update_enemy_visibility'ом,
-	# т.к. visibility у его позиции всегда >threshold от собственного stamp'а.
+	# издалека, (2) дымка вокруг него разрежена собственным stamp'ом.
 	add_to_group(FogOfWar.FOG_REVEAL_GROUP)
 	# Override material — super._ready() переключил mesh на shared skeleton material.
 	# Для гиганта используем свой shared, отличающийся цветом/эмиссией.
@@ -149,7 +148,6 @@ func _perform_strike(target: Node3D) -> void:
 	# Дополнительный удар по Tower'ам в радиусе. Использовать тот же STRIKE_RADIUS_FACTOR
 	# как в Skeleton._perform_strike (через attack_range * 1.3).
 	var strike_radius: float = attack_range * STRIKE_RADIUS_FACTOR
-	var strike_radius_sq: float = strike_radius * strike_radius
 	for t in get_tree().get_nodes_in_group(Tower.GROUP):
 		if not is_instance_valid(t):
 			continue
@@ -157,7 +155,11 @@ func _perform_strike(target: Node3D) -> void:
 		if node == null:
 			continue
 		var d_sq: float = (node.global_position - global_position).length_squared()
-		if d_sq <= strike_radius_sq:
+		# Крупная цель шире — её центр дальше strike-радиуса, хотя гигант вплотную
+		# к коллизии. Расширяем на reach-бонус, как базовый _perform_strike (иначе
+		# гигант мог бы махать у крупной башни мимо центра). Симметрично Skeleton.
+		var eff: float = strike_radius + target_reach_bonus(node)
+		if d_sq <= eff * eff:
 			Damageable.try_damage(node, attack_damage)
 	# Передаём управление базе — обработка палаток/гномов в AoE + self-lunge.
 	super._perform_strike(target)

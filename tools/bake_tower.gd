@@ -143,7 +143,9 @@ func _stone_mat() -> StandardMaterial3D:
 		return load(path)
 	var tex := "res://textures/bricks_wall_07/bricks_wall_07_1k/"
 	var m := StandardMaterial3D.new()
-	m.albedo_color = Color(1.0, 1.0, 1.0)
+	# Подъём albedo ×1.6: матовый тёмный кирпич иначе проваливается под слабую
+	# sky-ambient/SDFGI (то же, что у генератора).
+	m.albedo_color = Color(1.6, 1.6, 1.6)
 	m.albedo_texture = load(tex + "bricks_wall_07_baseColor_1k.png")
 	m.normal_enabled = true
 	m.normal_texture = load(tex + "bricks_wall_07_normal_gl_1k.png")  # Godot = OpenGL-нормали

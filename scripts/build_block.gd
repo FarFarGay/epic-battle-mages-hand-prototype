@@ -85,6 +85,21 @@ var purchased: bool = false
 @onready var _mesh: MeshInstance3D = $MeshInstance3D
 @onready var _collision: CollisionShape3D = $CollisionShape3D
 
+## Модель-ТЕЛО здания (из каталога "model", напр. паровая машина генератора в
+## форме грид-клина). null если у здания своей модели нет (тогда тело = сектор-
+## меш). Когда модель есть — она ЗАМЕНЯЕТ сектор как тело: сектор-меш виден только
+## синим силуэтом во время стройки, а на готовом здании прячется. _gear —
+## крутящийся узел внутри; _model_mats — per-instance дубли материалов для
+## hit-flash / подсветки (общие .tres не мутируем).
+var _machine: Node3D = null
+var _gear: Node3D = null
+var _model_mats: Array[StandardMaterial3D] = []
+## Оригинальные emission-параметры дублей (по индексу с _model_mats): {enabled,
+## emission, mult} — чтобы flash/подсветка восстанавливали базу (венты светятся).
+var _model_mat_orig: Array = []
+## Скорость вращения шестерни-маховика (рад/с) когда здание построено.
+const GEAR_SPEED := 1.6
+
 
 ## Настроить блок под здание из каталога: класс размера, цвет, тонкая-стена.
 ## Вызывает Camp при спавне здания в руку. Геометрия под ячейку придёт позже,
@@ -98,6 +113,41 @@ func configure(id: StringName) -> void:
 	footprint = maxi(1, int(d.get("footprint", 1)))
 	hp_max = float(d.get("hp", hp_max))
 	_apply_visual()
+	# Опциональная модель-тело здания (паровая машина генератора и т.п.). Если
+	# задана — заменяет сектор как тело блока: прячем сектор-меш (он останется
+	# только силуэтом стройки), показываем модель.
+	var model_path: String = d.get("model", "")
+	if model_path != "":
+		_spawn_machine(model_path)
+		if _mesh != null:
+			_mesh.visible = false
+
+
+## Инстансит модель-тело здания в начало координат блока (модель построена в той
+## же системе, что и сектор: центрирована по Y, изогнута под клин). Кэширует узел
+## "Gear" для вращения и дублирует материалы дочерних мешей под hit-flash/подсветку.
+func _spawn_machine(path: String) -> void:
+	var scene := load(path) as PackedScene
+	if scene == null:
+		return
+	_machine = scene.instantiate() as Node3D
+	if _machine == null:
+		return
+	add_child(_machine)
+	_machine.position = Vector3.ZERO
+	_gear = _machine.get_node_or_null("Gear") as Node3D
+	# Per-instance дубли материалов — чтобы flash/подсветка не мутировали общие .tres.
+	for mi in _machine.find_children("*", "MeshInstance3D", true, false):
+		var src := (mi as MeshInstance3D).material_override
+		if src is StandardMaterial3D:
+			var dup: StandardMaterial3D = (src as StandardMaterial3D).duplicate()
+			(mi as MeshInstance3D).material_override = dup
+			_model_mats.append(dup)
+			_model_mat_orig.append({
+				"enabled": dup.emission_enabled,
+				"emission": dup.emission,
+				"mult": dup.emission_energy_multiplier,
+			})
 
 
 func _ready() -> void:
@@ -137,12 +187,19 @@ func start_construction(dur: float) -> void:
 	_build_t = 0.0
 	_building = true
 	is_built = false
+	# Во время стройки тело = синий силуэт сектора (растёт), модель скрыта.
+	if _machine != null:
+		_machine.visible = false
 	if _mesh != null:
+		_mesh.visible = true
 		_mesh.material_override = _make_blueprint_material()
 		_set_build_progress(0.02)
 
 
 func _process(delta: float) -> void:
+	# Шестерня машины крутится на готовом здании (генератор «работает»).
+	if _gear != null and is_built and not _building:
+		_gear.rotate_object_local(Vector3.UP, GEAR_SPEED * delta)
 	if not _building:
 		return
 	_build_t += delta
@@ -156,6 +213,11 @@ func _process(delta: float) -> void:
 			_mesh.scale.y = 1.0
 			_mesh.position.y = 0.0
 			_mesh.material_override = _material
+		# Готово: если у здания есть модель-тело — она заменяет сектор (силуэт
+		# прячем, показываем модель). Иначе тело остаётся сектором.
+		if _machine != null:
+			_mesh.visible = false
+			_machine.visible = true
 		var root: Node = get_tree().current_scene
 		if root != null:
 			AoeVisual.spawn_dust(root, global_position)
@@ -377,6 +439,21 @@ func _apply_visual() -> void:
 ## Подсветка при наведении руки: не гасим базовое свечение (иначе на un-highlight
 ## здание потемнело бы), а лишь усиливаем энергию emission.
 func set_highlighted(value: bool) -> void:
+	# Модель-тело: подсвечиваем дубли её материалов (восстанавливаем базу с учётом
+	# светящихся вентов через сохранённые оригиналы).
+	if not _model_mats.is_empty():
+		for i in _model_mats.size():
+			var m: StandardMaterial3D = _model_mats[i]
+			if value:
+				m.emission_enabled = true
+				m.emission = highlight_color
+				m.emission_energy_multiplier = HIGHLIGHT_INTENSITY
+			else:
+				var o: Dictionary = _model_mat_orig[i]
+				m.emission_enabled = o["enabled"]
+				m.emission = o["emission"]
+				m.emission_energy_multiplier = o["mult"]
+		return
 	if _material == null:
 		return
 	_material.emission_energy_multiplier = HIGHLIGHT_EMISSION if value else BASE_EMISSION
@@ -418,6 +495,19 @@ func _die() -> void:
 ## Красный flash при ударе — по образцу PalisadeSegment/ArcherPost. Модифицирует
 ## per-instance _material (создан в _apply_visual), tween возвращает к базе.
 func _flash_damage() -> void:
+	# Модель-тело: красный flash по дублям её материалов, возврат к базе (венты
+	# возвращаются к своему свечению через сохранённые оригиналы).
+	if not _model_mats.is_empty():
+		for i in _model_mats.size():
+			var m: StandardMaterial3D = _model_mats[i]
+			var o: Dictionary = _model_mat_orig[i]
+			m.emission_enabled = true
+			m.emission = Color(1.0, 0.2, 0.2, 1.0)
+			m.emission_energy_multiplier = 2.5
+			var tw := create_tween()
+			tw.tween_property(m, "emission", o["emission"], 0.18)
+			tw.parallel().tween_property(m, "emission_energy_multiplier", float(o["mult"]), 0.18)
+		return
 	if _material == null:
 		return
 	if not _material.emission_enabled:

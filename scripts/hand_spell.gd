@@ -22,11 +22,6 @@ signal spell_cast(spell_name: StringName, position: Vector3)
 enum SpellType { FIREBALL, FIRESTORM, MINE_SCATTER, FROST, SPARK }
 
 const ACTION_ACTION := &"hand_action"
-const ACTION_EQUIP_FIREBALL := &"equip_fireball"
-const ACTION_EQUIP_FIRESTORM := &"equip_firestorm"
-const ACTION_EQUIP_MINE_SCATTER := &"equip_mine_scatter"
-const ACTION_EQUIP_FROST := &"equip_frost"
-const ACTION_EQUIP_SPARK := &"equip_spark"
 
 @export var equipped: SpellType = SpellType.FIREBALL:
 	set(value):

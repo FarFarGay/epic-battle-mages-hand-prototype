@@ -223,7 +223,11 @@ func _rescan_target() -> void:
 ## с default-TARGET_GROUP) — наследники (SkeletonGiantThrower → Tower) могут
 ## разрешить дополнительные группы, не override'я весь _resolve_target.
 func _resolve_target() -> Node3D:
-	if is_instance_valid(_cached_target):
+	# Ре-валидируем не только «жива ли нода», но и «всё ещё ли это цель»
+	# (_target_still_valid): здание подняли рукой / гном вошёл в палатку — цель
+	# вышла из группы, но жива. Без этого лучник лупит по ней до следующего
+	# скана (раз в SCAN_INTERVAL). Симметрично stale-чеку Skeleton.
+	if is_instance_valid(_cached_target) and _target_still_valid(_cached_target):
 		return _cached_target
 	if is_instance_valid(_forced_target) and _target_still_valid(_forced_target):
 		return _forced_target

@@ -32,11 +32,10 @@ const DECAY_PER_TICK: float = 0.995
 ## между «никогда не был» и «был давно».
 const DECAY_FLOOR: float = 0.0
 
-## Порог visibility, ниже которого враги невидимы. 0.3 = «надо хоть слегка
-## осветить точку чтобы враг появился». Hysteresis: невидимый показывается
-## при visibility ≥ 0.4 (выше threshold), видимый прячется при ≤ 0.2 (ниже).
+## Порог visibility, при котором точка считается «освещённой» (is_visible_at).
+## Враги туманом больше не скрываются (см. 2026-05-22) — порог используется
+## внешними системами для запроса «видно ли тут».
 const ENEMY_VISIBLE_THRESHOLD_ON: float = 0.4
-const ENEMY_VISIBLE_THRESHOLD_OFF: float = 0.2
 
 ## Tower — мобильный маяк зрения. Шаги 45→200→160→130→120→45→20м.
 ## После 2026-05-18 (hard-core + soft-edge falloff в _paint_soft_circle) круги
@@ -114,10 +113,7 @@ var _pulses: Array = []
 var _camp_deploy_times: Dictionary = {}
 const CAMP_GROW_SECONDS: float = 1.2
 ## Sin-пульс «дыхания» убран (2026-05-17) — ±5% радиуса 2Hz читались как
-## помаргивание, а не атмосфера. Костёр теперь даёт ровный стационарный
-## свет после разгорания. Оставлены константы на случай возврата эффекта.
-const CAMP_PULSE_AMPLITUDE: float = 0.0
-const CAMP_PULSE_FREQ: float = 0.0
+## помаргивание, а не атмосфера. Костёр даёт ровный стационарный свет.
 
 ## Сцена частиц «пламени, рассеивающего туман» вокруг лагеря. Спавнится на
 ## camp_deployed, queue_free'ится на camp_packed. Per-camp instance, привязан
@@ -187,8 +183,7 @@ func _exit_tree() -> void:
 
 
 ## True если visibility в точке ≥ ENEMY_VISIBLE_THRESHOLD_ON. Без hysteresis —
-## простой бинарный чек. Для враг-visibility hysteresis применяется внутри
-## _update_enemy_visibility (там есть previous state).
+## простой бинарный чек.
 static func is_visible_at(pos: Vector3) -> bool:
 	if _instance == null or not is_instance_valid(_instance):
 		return true
@@ -229,8 +224,7 @@ static func pulse_reveal(pos: Vector3, radius: float, ticks: int = 5, grow_ticks
 
 
 ## Возвращает visibility в точке 0..1 — сэмплирует кэш CPU-image без round-trip
-## через GPU. Используется в _update_enemy_visibility и публично через
-## is_visible_at.
+## через GPU. Используется публично через is_visible_at.
 func _sample_visibility(pos: Vector3) -> float:
 	var u: float = (pos.x + MAP_HALF) / (MAP_HALF * 2.0)
 	var v: float = (pos.z + MAP_HALF) / (MAP_HALF * 2.0)
@@ -250,7 +244,6 @@ func _process(delta: float) -> void:
 		_decay_visibility()
 		_paint_vision_points()
 		_upload_texture()
-		_update_enemy_visibility()
 
 
 ## Чит: отключить туман целиком. Скрывает meshes-плейн + показывает всех
@@ -313,19 +306,16 @@ func _paint_vision_points() -> void:
 		if camp == null or not camp.is_deployed():
 			continue
 		# Анимация «разгорания»: радиус растёт от 0 до VISION_RADIUS_CAMP за
-		# CAMP_GROW_SECONDS. Плюс лёгкий sin-пульс — костёр «дышит», туман
-		# отползает рывками. Если запись deploy_time отсутствует (например,
+		# CAMP_GROW_SECONDS. Если запись deploy_time отсутствует (например,
 		# start_deployed=true и сигнала не было) — fallback на полный радиус.
 		var id := camp.get_instance_id()
 		var radius_factor: float = 1.0
-		var pulse: float = 1.0
 		if _camp_deploy_times.has(id):
 			var elapsed_ms: int = Time.get_ticks_msec() - int(_camp_deploy_times[id])
 			var elapsed: float = float(elapsed_ms) / 1000.0
 			radius_factor = clampf(elapsed / CAMP_GROW_SECONDS, 0.0, 1.0)
 			# Smoothstep ease-out — старт медленный, к концу замедление.
 			radius_factor = radius_factor * radius_factor * (3.0 - 2.0 * radius_factor)
-			pulse = 1.0 + sin(elapsed * CAMP_PULSE_FREQ * TAU) * CAMP_PULSE_AMPLITUDE
 			# После полного разгорания гасим частицы — искры летят только
 			# во время «вспышки», дальше тихое свечение без эффектов.
 			if elapsed >= CAMP_GROW_SECONDS and _camp_particles.has(id):
@@ -336,7 +326,7 @@ func _paint_vision_points() -> void:
 		# по зоне строительства). Если build_radius невалиден — fallback на
 		# константу VISION_RADIUS_CAMP.
 		var camp_vision_max: float = camp.build_radius if camp.build_radius > 0.1 else VISION_RADIUS_CAMP
-		var animated_radius: float = camp_vision_max * radius_factor * pulse
+		var animated_radius: float = camp_vision_max * radius_factor
 		if animated_radius > 0.5:
 			_paint_soft_circle(camp.deploy_anchor, animated_radius)
 	for g in get_tree().get_nodes_in_group(Gnome.GNOME_GROUP):
@@ -547,9 +537,6 @@ func _upload_texture() -> void:
 	_vision_texture.update(_vision_image)
 
 
-## Раньше скрывал врагов вне видимости. С 2026-05-22 (дизайнерское решение)
-## враги всегда видны — fog теперь только визуальная дымка низко над землёй
-## (fog_top_height=2.5м, ниже Tower), скелеты-капсулы силуэтами читаются
-## сквозь неё. Если захочется вернуть hiding — раскомментировать тело.
-func _update_enemy_visibility() -> void:
-	pass
+## Враги всегда видны (дизайн 2026-05-22): fog — только визуальная дымка низко
+## над землёй (fog_top_height=2.5м, ниже Tower), скелеты-капсулы читаются
+## силуэтами сквозь неё. Скрытие врагов туманом удалено за ненадобностью.

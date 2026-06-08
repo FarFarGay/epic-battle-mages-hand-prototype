@@ -164,6 +164,11 @@ enum DayNight { DAY, NIGHT }
 ## Минимальная дистанция от точки спавна волны до ближайшего лагеря. Меньше —
 ## волна появляется в зоне видимости защитников, ломает идею «ниоткуда».
 @export var wave_safe_radius: float = 32.0
+## Буфер за wave_safe_radius для точки спавна волны (м): враги появляются чуть
+## за безопасным радиусом, не на самой кромке. Общий для одиночных групп и осад.
+const WAVE_SPAWN_BUFFER := 8.0
+## Порог² совпадения POI с лагерем при поиске камеры (м²); 5м → 25.
+const POI_CAMP_MATCH_DIST_SQ := 25.0
 ## Fallback safe-радиус POI, если QuestActor не предоставил собственный
 ## (через свойство safe_radius). Используется в [_safe_score] для фонового
 ## размещения. POI с QuestActor-скриптом дают свой safe_radius напрямую —
@@ -1004,7 +1009,7 @@ func _spawn_boss_wave() -> void:
 		push_warning("[WaveDirector] boss-wave: giant_scene или giant_thrower_scene не заданы")
 		return
 	var center: Vector3 = _active_camp.current_center()
-	var spawn_dist: float = wave_safe_radius + 8.0
+	var spawn_dist: float = wave_safe_radius + WAVE_SPAWN_BUFFER
 	var tower: Node3D = _active_camp.get_tower()
 	# Boss-wave всего N+1 фронт: Giant + boss_wave_thrower_count Throwers.
 	# Распределяем по равным углам на окружности, base_angle случайный для
@@ -1206,7 +1211,7 @@ func _spawn_single_group_at_angle(group: CombatGroup, angle: float) -> bool:
 	# Дистанция спавна: чуть дальше safe-радиуса (volume имеет смысл «вне
 	# зоны защитников»). +8м буфера — комфортная свобода для гнома
 	# заметить пачку и среагировать.
-	var spawn_dist: float = wave_safe_radius + 8.0
+	var spawn_dist: float = wave_safe_radius + WAVE_SPAWN_BUFFER
 	var origin := Vector3(
 		center.x + cos(angle) * spawn_dist,
 		_spawner.spawn_y,
@@ -1416,7 +1421,7 @@ func _find_poi_at(anchor: Vector3) -> Node3D:
 			nearest = poi
 	# Sanity-чек: если ближайший POI всё равно дальше 5м — это уже не «тот POI»,
 	# на котором стоит лагерь, а просто соседний. Возвращаем null — не привязываемся.
-	if nearest_dist_sq > 25.0:
+	if nearest_dist_sq > POI_CAMP_MATCH_DIST_SQ:
 		return null
 	return nearest
 

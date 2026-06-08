@@ -14,8 +14,7 @@ extends Node3D
 ##    спец-команды «подобрать» не нужно, ключ сам цепляется.
 ## 2. **CARRIED** — следует за carrier (member squad'а). Визуально парит
 ##    над его головой. Каждый кадр проверяет дистанцию до Tower: если
-##    ≤ [tower_pickup_radius] — переходит в AT_TOWER. Эмитит
-##    [signal EventBus.key_picked_up_by_squad].
+##    ≤ [tower_pickup_radius] — переходит в AT_TOWER.
 ## 3. **AT_TOWER** — парит над башней. Сигнал
 ##    [signal EventBus.key_delivered_to_tower]. Gate теперь слушает
 ##    Tower-positions для перехода в OPENED.
@@ -120,7 +119,6 @@ func _tick_idle(delta: float) -> void:
 	_state = State.CARRIED
 	if LogConfig.master_enabled:
 		print("[KeyItem] подобран солдатом %s" % soldier.name)
-	EventBus.key_picked_up_by_squad.emit()
 
 
 ## CARRIED: парим над carrier'ом, проверяем дистанцию до Tower'а. Если

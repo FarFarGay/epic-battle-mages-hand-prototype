@@ -29,8 +29,6 @@ extends StaticBody3D
 ## физически проходят сквозь мины, триггер срабатывает только через Area3D
 ## (или AOE shape-query от огневых сил).
 
-signal exploded(world_position: Vector3)
-
 enum Phase { FALLING, ARMING, ARMED }
 
 @export var damage: float = 30.0
@@ -49,9 +47,12 @@ enum Phase { FALLING, ARMING, ARMED }
 ## для «коснулась земли»). Без этого мины с малой y-velocity вечно
 ## дрейфуют над y=0.
 @export var ground_y: float = 0.05
-## Маска для триггера (что вызывает детонацию). По умолчанию люди — скелеты
-## и гномы. Tower/палатки/палисад на земле обычно не стоят прямо на мине.
-@export_flags_3d_physics var trigger_mask: int = Layers.ENEMIES | Layers.COLD_ENEMY | Layers.FRIENDLY_UNIT
+## Маска для триггера (что вызывает детонацию, войдя в proximity-Area). Скелеты,
+## гномы И башня/постройки/палисад: башня ездит и может наехать на мину, а
+## scatter-мины падают где угодно (в т.ч. на здание) — всё физическое реагирует
+## на мину, без хардкод-исключений (принцип симметрии взаимодействий). Урон от
+## взрыва эти же цели и так получают (см. aoe_damage_mask). = 948.
+@export_flags_3d_physics var trigger_mask: int = Layers.ENEMIES | Layers.COLD_ENEMY | Layers.FRIENDLY_UNIT | Layers.ACTORS | Layers.CAMP_OBSTACLE | Layers.PALISADE_OBSTACLE
 ## Маска для AoE damage в момент взрыва. Шире чем trigger — мина бьёт всё
 ## что рядом, не только то что её активировало. Включает Tower и постройки —
 ## friendly fire by design (дизайнерское решение 2026-05-13). С 2026-05-15
@@ -265,5 +266,4 @@ func _explode() -> void:
 	# совпадает с фронтом тумана — оба фронта движутся синхронно.
 	if fx_root != null:
 		AoeVisual.spawn_pulse_sparks(fx_root, global_position, aoe_radius, speed)
-	exploded.emit(global_position)
 	queue_free()

@@ -21,8 +21,9 @@ extends Node3D
 ## Тип ресурса. ResourcePile.ResourceType — enum; здесь дублируем как int,
 ## потому что @export'у enum нужен прямой type-reference, а cyclic-import
 ## между ResourceZone↔ResourcePile создаёт проблему. Маппинг:
-## 0=GENERIC, 1=WOOD, 2=STONE, 3=IRON, 4=FOOD.
-@export_enum("Generic", "Wood", "Stone", "Iron", "Food") var resource_type: int = 1:
+## 0=GENERIC, 1=WOOD, 2=STONE, 3=IRON, 4=FOOD, 5=PAGE, 6=GOLD. Полный набор
+## ResourcePile.ResourceType — иначе зоны страниц/золота не задать в редакторе.
+@export_enum("Generic", "Wood", "Stone", "Iron", "Food", "Page", "Gold") var resource_type: int = 1:
 	set(value):
 		resource_type = value
 		_refresh_visual()
@@ -56,6 +57,8 @@ const _TYPE_COLORS: Array = [
 	Color(0.55, 0.55, 0.55, 0.45), # STONE — серый
 	Color(0.35, 0.38, 0.42, 0.45), # IRON — стальной
 	Color(0.85, 0.35, 0.25, 0.45), # FOOD — оранжево-красный
+	Color(0.95, 0.92, 0.75, 0.45), # PAGE — пергаментный
+	Color(0.95, 0.78, 0.25, 0.5),  # GOLD — золотой
 ]
 
 

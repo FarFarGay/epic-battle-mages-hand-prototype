@@ -804,6 +804,17 @@ func _ai_step(delta: float) -> void:
 		velocity.z *= mult
 
 
+## MID-LOD компенсация FSM-таймеров: super._physics_process (где тикают
+## WINDUP/COOLDOWN таймеры) вызывается раз в lod_mid_tick_divisor кадров с сырым
+## delta — без масштаба замах/кулдаун шли бы в divisor× раз дольше по wall-clock,
+## чем у NEAR-скелетов. Множим, как движение компенсируется velocity*divisor.
+## NEAR → 1.0; FAR этим путём не идёт (_far_step тикает таймеры на work_delta сам).
+func _fsm_time_scale() -> float:
+	if _lod_level == LodLevel.MID and lod_mid_tick_divisor > 1:
+		return float(lod_mid_tick_divisor)
+	return 1.0
+
+
 ## Медленное движение к цели во время WINDUP. Перетирает velocity=0 от
 ## базового Enemy._ai_step (его WINDUP-ветка зануляет XZ). Скелет «вползает»
 ## в цель за 0.32-0.48с замаха ≈ 0.5-0.7м, отслеживая её перемещение —
@@ -833,11 +844,15 @@ func _approach_target(target: Node3D) -> void:
 		target_pos.z - global_position.z,
 	)
 	var dist_sq: float = to_target.x * to_target.x + to_target.z * to_target.z
-	var attack_range_sq: float = attack_range * attack_range
+	# Крупная цель (ядро) — порог и кольцо атаки расширяем на её reach-бонус,
+	# иначе скелет упирается в широкую коллизию вне attack_range и не замахивается.
+	var reach: float = attack_range + target_reach_bonus(target)
+	var attack_range_sq: float = reach * reach
 	if dist_sq > attack_range_sq:
 		# Идём в свой сектор кольца, а не в саму цель. ring_radius чуть
-		# меньше attack_range → когда добежали — точно в зоне удара.
-		var ring_radius: float = attack_range * APPROACH_RING_FACTOR
+		# меньше reach → когда добежали — точно в зоне удара (для ядра кольцо
+		# ложится сразу за его коллизией).
+		var ring_radius: float = reach * APPROACH_RING_FACTOR
 		var goal_x: float = target_pos.x + cos(_approach_angle) * ring_radius
 		var goal_z: float = target_pos.z + sin(_approach_angle) * ring_radius
 		var goal: Vector3 = Vector3(goal_x, target_pos.y, goal_z)
@@ -863,9 +878,9 @@ func _approach_target(target: Node3D) -> void:
 		velocity.x = 0.0
 		velocity.z = 0.0
 		_enter_state(AttackState.WINDUP)
-		# Point-blank: цель глубоко в attack_range — сокращённый windup.
+		# Point-blank: цель глубоко в зоне атаки — сокращённый windup.
 		var dist: float = sqrt(dist_sq)
-		if dist <= attack_range * point_blank_distance_factor:
+		if dist <= reach * point_blank_distance_factor:
 			_state_timer = attack_windup_point_blank
 
 
@@ -1668,7 +1683,6 @@ func _perform_strike(_target: Node3D) -> void:
 	var locked: Node3D = _windup_target
 	_windup_target = null
 	var strike_radius: float = attack_range * STRIKE_RADIUS_FACTOR
-	var strike_radius_sq: float = strike_radius * strike_radius
 	var hits: int = 0
 	var alarm_victim: Node3D = null  # первая палатка/мирный гном среди жертв
 	# AOE-strike через spatial grid (Enemy._target_grid) вместо полного
@@ -1691,7 +1705,10 @@ func _perform_strike(_target: Node3D) -> void:
 				if node == null:
 					continue
 				var d_sq: float = (node.global_position - global_position).length_squared()
-				if d_sq > strike_radius_sq:
+				# Крупная цель (ядро) шире — её центр дальше strike-радиуса, хотя
+				# скелет вплотную к коллизии. Расширяем радиус на её reach-бонус.
+				var eff: float = strike_radius + target_reach_bonus(node)
+				if d_sq > eff * eff:
 					continue
 				if Damageable.try_damage(node, attack_damage):
 					hits += 1

@@ -36,10 +36,11 @@ extends Node3D
 ## защитники.
 @export var aoe_radius: float = 4.0
 ## Маска объектов, по которым проходит AOE. Default = MASK_HOSTILE_PROJECTILE
-## (869) без TERRAIN: ACTORS (Tower) + CAMP_OBSTACLE (палатки) +
+## без TERRAIN (= 868): ACTORS (Tower) + CAMP_OBSTACLE (палатки) +
 ## MOUNTED_MODULE (турель) + FRIENDLY_UNIT (гномы/защитники) +
 ## PALISADE_OBSTACLE (стены). Терраин в маске не нужен — пол не damageable.
-@export_flags_3d_physics var aoe_mask: int = 868
+## Выражение вместо литерала — не дрейфует при переборке битов в Layers.
+@export_flags_3d_physics var aoe_mask: int = Layers.MASK_HOSTILE_PROJECTILE & ~Layers.TERRAIN
 ## Скорость knockback'а в м/с. Радиальное направление от центра удара.
 ## 4.0 — заметный, но не катапультирует. Гномы получают это как push,
 ## защитник немного отлетит от Tower.

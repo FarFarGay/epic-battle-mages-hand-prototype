@@ -69,9 +69,18 @@ static func apply_uniform(
 		# Godot 4.6 PhysicsShapeQuery подмешивает AABB-broadphase результаты
 		# вне sphere — explicit radius² filter обязателен (паттерн из
 		# DefenderGnome/OctagonTurret/Skeleton AoE).
+		# КРУПНЫЕ цели (башня, харвистер-ядро): фильтр по дистанции до ЦЕНТРА
+		# отсекал бы их — взрыв рвётся у их края, центр дальше radius, хотя
+		# коллайдер реально перекрывает сферу (потому query их и нашёл). Цель
+		# объявляет reach (`get_attack_reach_bonus` ≈ её радиус) — прибавляем к
+		# radius, как Skeleton/Enemy.target_reach_bonus. 0 для обычных целей.
 		if collider is Node3D:
+			var reach: float = 0.0
+			if collider.has_method(&"get_attack_reach_bonus"):
+				reach = collider.get_attack_reach_bonus()
+			var eff: float = r_sq if reach <= 0.0 else (radius + reach) * (radius + reach)
 			var d_sq: float = (collider.global_position - center).length_squared()
-			if d_sq > r_sq:
+			if d_sq > eff:
 				continue
 		var damaged := false
 		if damage > 0.0 and Damageable.is_damageable(collider):

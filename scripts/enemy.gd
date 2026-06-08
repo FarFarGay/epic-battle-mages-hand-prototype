@@ -325,7 +325,7 @@ func _physics_process(delta: float) -> void:
 	# Кулдаун-таймер (после удара) тикает всегда, даже в knockback'е, иначе
 	# самонанесённый lunge-knockback искусственно удлинял бы атак-цикл.
 	if _state == AttackState.COOLDOWN and _state_timer > 0.0:
-		_state_timer = maxf(_state_timer - delta, 0.0)
+		_state_timer = maxf(_state_timer - delta * _fsm_time_scale(), 0.0)
 
 	_knockback.tick(delta)
 	if _knockback.is_active():
@@ -366,7 +366,7 @@ func _ai_step(delta: float) -> void:
 
 	# Кулдаун тикается выше (даже в knockback'е); WINDUP — только тут.
 	if _state == AttackState.WINDUP and _state_timer > 0.0:
-		_state_timer = maxf(_state_timer - delta, 0.0)
+		_state_timer = maxf(_state_timer - delta * _fsm_time_scale(), 0.0)
 
 	match _state:
 		AttackState.APPROACH:
@@ -389,11 +389,25 @@ func _ai_step(delta: float) -> void:
 				_enter_state(AttackState.APPROACH)
 
 
+## Доп. дистанция атаки для КРУПНЫХ целей. Обычные цели (гном/палатка/стена)
+## компактны — центр близко к поверхности, attack_range достаёт. Крупная цель
+## (харвестер-ядро) широкая: атакующий упирается в её коллизию далеко от центра,
+## и порог `dist ≤ attack_range` (как и strike-радиус) до ЦЕНТРА не срабатывает.
+## Цель может объявить `get_attack_reach_bonus() -> float` (≈ её радиус) — он
+## прибавляется к attack_range/strike, чтобы её били с края. 0 для обычных целей.
+func target_reach_bonus(t: Node) -> float:
+	if t != null and t.has_method(&"get_attack_reach_bonus"):
+		return t.get_attack_reach_bonus()
+	return 0.0
+
+
 func _approach_target(target: Node3D) -> void:
 	var to_target: Vector3 = target.global_position - global_position
 	to_target.y = 0.0
 	var dist := to_target.length()
-	if dist > attack_range:
+	# Крупная цель (ядро) — бьём с её края: прибавляем reach-бонус к attack_range.
+	var reach: float = attack_range + target_reach_bonus(target)
+	if dist > reach:
 		var dir := to_target.normalized()
 		velocity.x = dir.x * move_speed
 		velocity.z = dir.z * move_speed
@@ -404,7 +418,7 @@ func _approach_target(target: Node3D) -> void:
 		# Point-blank trigger: цель оказалась глубоко в attack_range (не на
 		# границе) → сокращаем windup. _enter_state уже выставил _state_timer
 		# в attack_windup; переписываем после факта.
-		if dist <= attack_range * point_blank_distance_factor:
+		if dist <= reach * point_blank_distance_factor:
 			_state_timer = attack_windup_point_blank
 
 
@@ -419,6 +433,15 @@ func _enter_state(new_state: int) -> void:
 		_:
 			_state_timer = 0.0
 	_on_state_enter(new_state)
+
+
+# Масштаб времени FSM-таймеров (WINDUP/COOLDOWN). По умолчанию 1.0 — реальное
+# время. LOD-подклассы переопределяют: когда super._physics_process тикает раз
+# в N кадров (tick-divisor), таймеры с сырым delta тянулись бы в N раз дольше
+# по wall-clock — возвращают N, чтобы замах/кулдаун шли в реальном темпе (так же,
+# как движение компенсируется velocity*divisor). См. Skeleton._fsm_time_scale.
+func _fsm_time_scale() -> float:
+	return 1.0
 
 
 # Виртуальный: конкретный удар. Урон цели + любые физические выпады.
