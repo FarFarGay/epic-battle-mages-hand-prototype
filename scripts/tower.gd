@@ -142,10 +142,19 @@ var hp: float = 0.0
 var mana: float = 0.0
 
 @onready var _floor_normal_threshold: float = cos(get_floor_max_angle())
-# Каменная масса башни (тело+парапет+зубцы) из выпеченной модели tower_visual.tscn.
+# Каменная масса башни (тело+корона+зубцы) из выпеченной модели tower_visual.tscn.
 # По ней идут HitFlash (вспышка урона) и DashFx-призрак — это основной силуэт.
 @onready var _mesh: MeshInstance3D = $VisualRoot/TowerVisual/Body
+# Светящиеся жилы-каналы реактора: их яркость гоним от количества маны.
+@onready var _glow_mesh: MeshInstance3D = $VisualRoot/TowerVisual/Glow
 @onready var _visual_root: Node3D = $VisualRoot
+
+## Per-instance материал жил (дубль общего .tres) — меняем его emission по мане,
+## не трогая ресурс на диске. Заполняется в _ready.
+var _glow_mat: StandardMaterial3D = null
+## Свечение жил при пустой / полной мане (emission_energy_multiplier).
+const REACTOR_GLOW_MIN := 0.2
+const REACTOR_GLOW_MAX := 4.0
 
 ## Motion-feedback в caravan-mode. Tower — большое тяжёлое здание, эффекты
 ## мелкие (амплитуды ≈половина палаточных), но дают «вес» при езде. На
@@ -172,6 +181,12 @@ func _ready() -> void:
 	# раньше Tower'а, сначала возьмёт snapshot через get_first_node_in_group.
 	health_changed.emit(hp, max_hp)
 	mana_changed.emit(mana, max_mana)
+	# Жилы реактора: свой материал на инстанс (чтобы не мутировать .tres), яркость
+	# далее ведём по мане. Стартовое значение — под текущую ману.
+	if _glow_mesh != null and _glow_mesh.material_override is StandardMaterial3D:
+		_glow_mat = (_glow_mesh.material_override as StandardMaterial3D).duplicate()
+		_glow_mesh.material_override = _glow_mat
+		_update_reactor_glow()
 	# Motion-fx: bobbing/tilt/squash-stretch на VisualRoot.
 	if _visual_root != null:
 		_visual_base_y = _visual_root.position.y
@@ -364,6 +379,14 @@ func _process(delta: float) -> void:
 			DashFx.spawn_ghost(get_tree().current_scene, _mesh, dir)
 
 
+## Яркость жил реактора = доля маны. Пусто → тлеет (MIN), полный бак → ярко (MAX).
+func _update_reactor_glow() -> void:
+	if _glow_mat == null:
+		return
+	var frac: float = clampf(mana / max_mana, 0.0, 1.0) if max_mana > 0.0 else 0.0
+	_glow_mat.emission_energy_multiplier = lerpf(REACTOR_GLOW_MIN, REACTOR_GLOW_MAX, frac)
+
+
 ## Basis камеры-рига (чистый yaw) для камера-относительного движения. Риг
 ## находим лениво по группе и кэшируем. Нет рига → Basis() (мировое управление).
 func _camera_yaw_basis() -> Basis:
@@ -387,6 +410,8 @@ func _physics_process(delta: float) -> void:
 		mana = minf(mana + mana_regen_rate * delta, max_mana)
 		if mana != prev:
 			mana_changed.emit(mana, max_mana)
+	# Свечение жил всегда под текущую ману (учитывает и трату, и реген).
+	_update_reactor_glow()
 
 	var input_dir := Vector2.ZERO
 	input_dir.x = Input.get_axis("move_left", "move_right")
