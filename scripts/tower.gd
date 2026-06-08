@@ -94,7 +94,14 @@ signal mana_changed(current: float, maximum: float)
 @export var debug_log: bool = true
 
 var _was_on_floor: bool = true
+## Только для _debug_log (детект смены направления ввода). Хранит сырой input.
 var _last_input_dir: Vector2 = Vector2.ZERO
+## Последнее НАПРАВЛЕНИЕ движения в мировых XZ (уже камера-относительное) — для
+## рывка «стоя». Отдельно от _last_input_dir, чтобы дебаг-лог не путал.
+var _last_move_dir: Vector2 = Vector2.ZERO
+## Кэш камеры-рига: камера-относительное движение. Орбита камеры (MMB) крутит
+## риг только по Y, поэтому его basis — чистый yaw, которым и поворачиваем ввод.
+var _camera_rig: Node3D = null
 var _was_stuck: bool = false
 ## Рывок (Space): остаток активной фазы, кулдаун, зафиксированное направление.
 var _dash_timer: float = 0.0
@@ -135,7 +142,9 @@ var hp: float = 0.0
 var mana: float = 0.0
 
 @onready var _floor_normal_threshold: float = cos(get_floor_max_angle())
-@onready var _mesh: MeshInstance3D = $VisualRoot/MeshInstance3D
+# Каменная масса башни (тело+парапет+зубцы) из выпеченной модели tower_visual.tscn.
+# По ней идут HitFlash (вспышка урона) и DashFx-призрак — это основной силуэт.
+@onready var _mesh: MeshInstance3D = $VisualRoot/TowerVisual/Body
 @onready var _visual_root: Node3D = $VisualRoot
 
 ## Motion-feedback в caravan-mode. Tower — большое тяжёлое здание, эффекты
@@ -355,6 +364,16 @@ func _process(delta: float) -> void:
 			DashFx.spawn_ghost(get_tree().current_scene, _mesh, dir)
 
 
+## Basis камеры-рига (чистый yaw) для камера-относительного движения. Риг
+## находим лениво по группе и кэшируем. Нет рига → Basis() (мировое управление).
+func _camera_yaw_basis() -> Basis:
+	if not is_instance_valid(_camera_rig):
+		_camera_rig = get_tree().get_first_node_in_group(CameraRig.CAMERA_RIG_GROUP) as Node3D
+	if is_instance_valid(_camera_rig):
+		return _camera_rig.global_transform.basis
+	return Basis()
+
+
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
 		velocity.y -= gravity * delta
@@ -373,15 +392,21 @@ func _physics_process(delta: float) -> void:
 	input_dir.x = Input.get_axis("move_left", "move_right")
 	input_dir.y = Input.get_axis("move_forward", "move_back")
 	input_dir = input_dir.normalized()
-	# Запоминаем последнее направление движения — для рывка «стоя».
-	if input_dir != Vector2.ZERO:
-		_last_input_dir = input_dir
+	# Камера-относительное движение: поворот орбиты камеры (MMB) разворачивает и
+	# систему координат управления — «вперёд» всегда «вглубь экрана». Риг крутится
+	# только по Y, поэтому его basis поворачивает ввод вокруг вертикали (длина
+	# сохраняется). При yaw=0 даёт ровно прежнее мировое управление.
+	var move_world: Vector3 = _camera_yaw_basis() * Vector3(input_dir.x, 0.0, input_dir.y)
+	var move_dir := Vector2(move_world.x, move_world.z)
+	# Запоминаем последнее направление движения (в мире) — для рывка «стоя».
+	if move_dir != Vector2.ZERO:
+		_last_move_dir = move_dir
 
 	# Рывок (Space): короткий бросок с кулдауном в направлении движения (или в
 	# последнее, если стоим). Перекрывает обычную скорость на dash_duration.
 	_dash_cd = maxf(_dash_cd - delta, 0.0)
 	if _dash_timer <= 0.0 and _dash_cd <= 0.0 and not _dying and Input.is_action_just_pressed("dash"):
-		var ddir := input_dir if input_dir != Vector2.ZERO else _last_input_dir
+		var ddir := move_dir if move_dir != Vector2.ZERO else _last_move_dir
 		if ddir != Vector2.ZERO:
 			_dash_dir = ddir
 			_dash_timer = dash_duration
@@ -415,8 +440,8 @@ func _physics_process(delta: float) -> void:
 			velocity.x = _dash_dir.x * dash_speed * slow
 			velocity.z = _dash_dir.y * dash_speed * slow
 		else:
-			velocity.x = input_dir.x * move_speed * slow
-			velocity.z = input_dir.y * move_speed * slow
+			velocity.x = move_dir.x * move_speed * slow
+			velocity.z = move_dir.y * move_speed * slow
 
 	# Сохраняем скорость до слайда — после move_and_slide компонент в сторону
 	# препятствия обнулится, и факт "шли в предмет" будет потерян.

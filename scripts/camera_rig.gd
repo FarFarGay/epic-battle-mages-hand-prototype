@@ -31,7 +31,19 @@ const CAMERA_RIG_GROUP := &"camera_rig"
 ## Скорость экспоненциального доезда к целевому зуму (1/c). Большое = резко.
 @export var zoom_speed: float = 10.0
 
+@export_group("Orbit")
+## Поворот камеры вокруг оси Y при зажатом колесе (MMB) + движении мыши.
+## Rig — Node3D, камера сидит дочкой на оффсете; вращая rotation.y rig'а,
+## камера орбитит вокруг точки-цели. Чувствительность — радиан на пиксель
+## движения мыши. 0.005 ≈ 0.28°/px (полный оборот за ~1280px драга).
+@export var orbit_sensitivity: float = 0.005
+## Инвертировать направление поворота (драг вправо → по/против часовой).
+@export var orbit_invert: bool = false
+
 @onready var _camera: Camera3D = $Camera3D
+
+## Идёт ли сейчас орбита (зажат MMB). Драг мыши в этом состоянии крутит rig.
+var _orbiting: bool = false
 
 var _default_target: Node3D
 ## Временная подмена цели через [method set_focus_override]. Если задан и
@@ -79,12 +91,19 @@ func clear_focus_override() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed:
+	if event is InputEventMouseButton:
 		var b := event as InputEventMouseButton
-		if b.button_index == MOUSE_BUTTON_WHEEL_UP:
+		if b.button_index == MOUSE_BUTTON_WHEEL_UP and b.pressed:
 			_zoom_target = clampf(_zoom_target * zoom_step, zoom_min, zoom_max)
-		elif b.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		elif b.button_index == MOUSE_BUTTON_WHEEL_DOWN and b.pressed:
 			_zoom_target = clampf(_zoom_target / zoom_step, zoom_min, zoom_max)
+		elif b.button_index == MOUSE_BUTTON_MIDDLE:
+			# Зажатие колеса включает орбиту; отпускание — выключает.
+			_orbiting = b.pressed
+	elif event is InputEventMouseMotion and _orbiting:
+		# Драг при зажатом MMB крутит rig вокруг Y → орбита камеры вокруг цели.
+		var dir := -1.0 if orbit_invert else 1.0
+		rotation.y -= (event as InputEventMouseMotion).relative.x * orbit_sensitivity * dir
 
 
 func _process(delta: float) -> void:

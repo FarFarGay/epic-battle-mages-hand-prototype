@@ -57,6 +57,18 @@ var footprint: int = 1
 ## стартует только по ГОТОВЫМ генераторам).
 signal built
 
+## Damageable-контракт: эмитятся при уроне / разрушении. Грид слушает destroyed,
+## чтобы освободить ячейку и пересчитать генераторы.
+signal damaged(amount: float)
+signal destroyed
+
+## Прочность готового здания (HP). Берётся из каталога в configure(). Скелеты
+## бьют здание как палатку/пост (Damageable + skeleton_target-группа). Урон
+## считается только ПОСЛЕ постройки (во время подъёма-силуэта здание неуязвимо).
+@export var hp_max: float = 100.0
+var _hp: float = 0.0
+var _destroyed: bool = false
+
 ## Готово ли здание (false пока идёт стройка-подъём). Генератор считается только
 ## когда built.
 var is_built: bool = true
@@ -78,6 +90,7 @@ func configure(id: StringName) -> void:
 	module_color = d.get("color", module_color)
 	wall_thin = bool(d.get("thin", false))
 	footprint = maxi(1, int(d.get("footprint", 1)))
+	hp_max = float(d.get("hp", hp_max))
 	_apply_visual()
 
 
@@ -140,16 +153,47 @@ func _process(delta: float) -> void:
 		var root: Node = get_tree().current_scene
 		if root != null:
 			AoeVisual.spawn_dust(root, global_position)
+		# Готовое здание становится разрушаемой целью и физическим препятствием —
+		# скелеты атакуют его как палатку/пост, упираются как в палисад.
+		_activate_combat()
 		built.emit()
 
 
+## Сделать построенное здание боевым объектом: разрушаемая цель скелетов +
+## физическое препятствие. Зовётся ОДИН раз на завершении стройки (силуэт-фаза
+## неуязвима). По образцу PalisadeSegment/ArcherPost:
+##   - Damageable.register + skeleton_target → скелеты агрятся и бьют.
+##   - Стена (wall_thin) → ещё melee_only_target (ranged её игнорят — стрелять
+##     в стену бесполезно) + navmesh_source (юниты огибают). Здания-комнаты —
+##     обычная цель (лучники тоже могут обстреливать).
+##   - collision_layer = CAMP_OBSTACLE|PALISADE_OBSTACLE: скелет (MASK_SKELETON)
+##     и башня упираются как в стену. Смонтированный слой (MOUNTED_MODULE) при
+##     этом перекрываем — здание стоит на земле, ложных контактов с башней нет.
+func _activate_combat() -> void:
+	if _destroyed:
+		return
+	_hp = hp_max
+	Damageable.register(self)
+	add_to_group(Enemy.TARGET_GROUP)
+	collision_layer = Layers.CAMP_OBSTACLE | Layers.PALISADE_OBSTACLE
+	if wall_thin:
+		add_to_group(Enemy.MELEE_ONLY_TARGET_GROUP)
+		add_to_group(&"navmesh_source")
+
+
+## На время стройки силуэт приподнят над землёй на BUILD_LIFT, чтобы НЕ врезаться
+## в пульсирующий пад ячейки (тот лежит на pad_y≈0.06). Пад читается как
+## светящаяся площадка-основание, из которой растёт силуэт. На финише
+## (_process, f>=1) блок садится на землю (position.y=0), пад уже гасится гридом.
+const BUILD_LIFT := 0.12
+
 ## Высота силуэта = доля f, растёт от земли вверх (меш центрирован по Y, потому
-## компенсируем позицию, чтобы низ оставался на земле).
+## компенсируем позицию, чтобы низ оставался на земле + BUILD_LIFT над падом).
 func _set_build_progress(f: float) -> void:
 	if _mesh == null:
 		return
 	_mesh.scale.y = f
-	_mesh.position.y = (f - 1.0) * height * 0.5
+	_mesh.position.y = (f - 1.0) * height * 0.5 + BUILD_LIFT
 
 
 func _make_blueprint_material() -> StandardMaterial3D:
@@ -314,3 +358,52 @@ func set_highlighted(value: bool) -> void:
 	if _material == null:
 		return
 	_material.emission_energy_multiplier = HIGHLIGHT_EMISSION if value else BASE_EMISSION
+
+
+# --- Damageable (готовое здание) ---
+
+## Damageable-контракт. Урон проходит только по ГОТОВОМУ зданию (во время
+## стройки-силуэта _hp=0, но take_damage гейтит на is_built — силуэт неуязвим).
+func take_damage(amount: float) -> void:
+	if _destroyed or not is_built or amount <= 0.0:
+		return
+	_hp -= amount
+	damaged.emit(amount)
+	_flash_damage()
+	if LogConfig.master_enabled:
+		print("[BuildBlock:%s] урон %.1f, hp=%.1f/%.1f" % [str(building_id), amount, maxf(_hp, 0.0), hp_max])
+	if _hp <= 0.0:
+		_die()
+
+
+## Разрушение. Из групп-целей выходим СРАЗУ до emit (queue_free отложен на конец
+## кадра — см. [[reference_godot_queue_free_deferred]]), чтобы AoE-цепочки и скан
+## скелетов не били труп. Грид слушает destroyed → освобождает ячейку.
+func _die() -> void:
+	if _destroyed:
+		return
+	_destroyed = true
+	remove_from_group(Enemy.TARGET_GROUP)
+	remove_from_group(Enemy.MELEE_ONLY_TARGET_GROUP)
+	remove_from_group(&"navmesh_source")
+	var root: Node = get_tree().current_scene
+	if root != null:
+		AoeVisual.spawn_dust(root, global_position)
+	destroyed.emit()
+	queue_free()
+
+
+## Красный flash при ударе — по образцу PalisadeSegment/ArcherPost. Модифицирует
+## per-instance _material (создан в _apply_visual), tween возвращает к базе.
+func _flash_damage() -> void:
+	if _material == null:
+		return
+	if not _material.emission_enabled:
+		_material.emission_enabled = true
+	var orig_emission: Color = _material.emission
+	var orig_mult: float = _material.emission_energy_multiplier
+	_material.emission = Color(1.0, 0.2, 0.2, 1.0)
+	_material.emission_energy_multiplier = 2.5
+	var tween := create_tween()
+	tween.tween_property(_material, "emission", orig_emission, 0.18)
+	tween.parallel().tween_property(_material, "emission_energy_multiplier", orig_mult, 0.18)

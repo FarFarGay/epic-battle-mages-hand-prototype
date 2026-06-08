@@ -351,12 +351,30 @@ func _place_run(block: CampModule, r: int, s: int, fp: int) -> void:
 		bb.start_construction(build_time)
 		if not bb.built.is_connected(_on_block_built):
 			bb.built.connect(_on_block_built)
+		# Разрушение скелетами — освобождаем ячейку и пересчитываем генераторы.
+		if not bb.destroyed.is_connected(_on_block_destroyed):
+			bb.destroyed.connect(_on_block_destroyed.bind(bb))
 	if debug_log and LogConfig.master_enabled:
 		print("[BuildGrid] стройка ×%d начата: кольцо %d сегмент %d (%s)" % [fp, r, s, str((block as BuildBlock).building_id) if block is BuildBlock else "?"])
 	buildings_changed.emit()
 
 
 func _on_block_built() -> void:
+	buildings_changed.emit()
+
+
+## Здание разрушено скелетами — освобождаем все его ячейки (нода уже уходит в
+## queue_free сама). Пересчёт генераторов — через buildings_changed (если пал
+## генератор, харвестер встаёт). Ячейка снова доступна под застройку.
+func _on_block_destroyed(block) -> void:
+	var freed := false
+	for cell in _cells:
+		if cell["block"] == block:
+			cell["block"] = null
+			cell["pad"].visible = false
+			freed = true
+	if freed and debug_log and LogConfig.master_enabled:
+		print("[BuildGrid] здание разрушено — ячейки освобождены")
 	buildings_changed.emit()
 
 

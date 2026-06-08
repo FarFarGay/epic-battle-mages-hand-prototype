@@ -40,6 +40,9 @@ const CATALOG: Dictionary = {
 		"grid_building": true,
 		"ring_tier": 0,
 		"color": Color(1.0, 0.8, 0.2, 1.0),
+		# Прочность здания (HP). Скелеты бьют его как палатку/пост. Генератор —
+		# крупный, самый прочный из построек.
+		"hp": 220.0,
 	},
 	ARCHER_BARRACKS: {
 		"name": "Казарма лучников",
@@ -51,6 +54,7 @@ const CATALOG: Dictionary = {
 		"ring_tier": 1,
 		"footprint": 2,
 		"color": Color(0.4, 0.6, 0.32, 1.0),
+		"hp": 150.0,
 	},
 	SPEAR_BARRACKS: {
 		"name": "Казарма копейщиков",
@@ -62,6 +66,7 @@ const CATALOG: Dictionary = {
 		"ring_tier": 1,
 		"footprint": 2,
 		"color": Color(0.6, 0.35, 0.3, 1.0),
+		"hp": 150.0,
 	},
 	GNOME_PORTAL: {
 		"name": "Гномий портал",
@@ -73,6 +78,7 @@ const CATALOG: Dictionary = {
 		"ring_tier": 1,
 		"footprint": 2,
 		"color": Color(0.5, 0.3, 0.7, 1.0),
+		"hp": 130.0,
 	},
 	WALL: {
 		"name": "Стена",
@@ -84,6 +90,9 @@ const CATALOG: Dictionary = {
 		"ring_tier": 1,
 		"color": Color(0.55, 0.55, 0.58, 1.0),
 		"thin": true,
+		# Каменная стена покрепче деревянного частокола (hp=30), но всё ещё
+		# расходник — мели-скелеты её прогрызают.
+		"hp": 60.0,
 	},
 	NEW_TENT: {
 		"name": "Новая палатка",

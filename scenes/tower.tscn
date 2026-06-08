@@ -1,16 +1,11 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scripts/tower.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/mount_slot.gd" id="2"]
+[ext_resource type="PackedScene" path="res://models/tower_visual.tscn" id="3"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_tower"]
 size = Vector3(2, 6, 2)
-
-[sub_resource type="BoxMesh" id="BoxMesh_tower"]
-size = Vector3(2, 6, 2)
-
-[sub_resource type="StandardMaterial3D" id="Material_tower"]
-albedo_color = Color(0.5, 0.4, 0.35, 1)
 
 [node name="Tower" type="CharacterBody3D"]
 collision_layer = 4
@@ -22,9 +17,7 @@ shape = SubResource("BoxShape3D_tower")
 
 [node name="VisualRoot" type="Node3D" parent="."]
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="VisualRoot"]
-mesh = SubResource("BoxMesh_tower")
-material_override = SubResource("Material_tower")
+[node name="TowerVisual" parent="VisualRoot" instance=ExtResource("3")]
 
 [node name="MountSlot" type="Node3D" parent="VisualRoot"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
