@@ -2383,6 +2383,11 @@ func spawn_building_into_hand(id: StringName) -> bool:
 	var hand := get_tree().get_first_node_in_group(Hand.HAND_GROUP) as Hand
 	if hand == null:
 		return false
+	# Уже держим кисть/здание — выбор нового ЗАМЕНЯЕТ кисть: убираем текущее из
+	# руки (неоплаченную болванку удаляем) перед спавном/хватом нового. Иначе
+	# hold_item упёрся бы в занятую руку (orphan новой болванки).
+	if _build_grid != null and _build_grid.has_method(&"is_build_active") and _build_grid.is_build_active():
+		_build_grid.cancel_build()
 	# Некоторые здания (ворота) — своя сцена-наследник BuildBlock (поле "scene"
 	# в каталоге). Иначе обычный build_block_scene.
 	var scene_path: String = CampBuildings.get_data(id).get("scene", "")
@@ -2403,8 +2408,9 @@ func spawn_building_into_hand(id: StringName) -> bool:
 	# нужного размера, а не компактная болванка. На установке conform повторится
 	# с теми же размерами (то же кольцо).
 	if _build_grid != null:
-		# Стена (wall_thin) сразу в руке полноширинная (без зазора-улицы) — как встанет.
-		var dims: Dictionary = _build_grid.tier_cell_dims(block.ring_tier, block.footprint, block.wall_thin)
+		# gapless-здание (стена/ворота/блиндаж) сразу в руке полноширинное (без
+		# зазора-улицы) — как встанет; inset (генератор/казарма/портал) — с зазором.
+		var dims: Dictionary = _build_grid.tier_cell_dims(block.ring_tier, block.footprint, block.is_gapless())
 		block.conform_to_cell(dims["inner"], dims["outer"], dims["seg_deg"])
 	block.global_position = hand.global_position
 	hand.hold_item(block)

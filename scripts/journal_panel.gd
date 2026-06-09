@@ -158,7 +158,14 @@ func _disconnect_eventbus() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_journal"):
-		toggle()
+		# j контекстная: в режиме стройки (несём здание / кисть-стена) — ТОЛЬКО
+		# выход из него (роняем держимое, журнал не открываем); иначе —
+		# открыть/закрыть журнал. (duck-typing на build_grid-группе.)
+		var bg := get_tree().get_first_node_in_group(&"build_grid")
+		if bg != null and bg.has_method(&"is_build_active") and bg.is_build_active():
+			bg.cancel_build()
+		else:
+			toggle()
 		get_viewport().set_input_as_handled()
 
 

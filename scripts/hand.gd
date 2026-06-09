@@ -189,6 +189,13 @@ func hold_item(body: RigidBody3D) -> void:
 		physical_actions.hold(body)
 
 
+## Снять держимое из руки БЕЗ установки (выход из стройки по j) — без impulse и
+## без `released`-сигнала. См. HandPhysicalActions.clear_held.
+func clear_held() -> void:
+	if physical_actions != null:
+		physical_actions.clear_held()
+
+
 ## True если рука сейчас в одной из «aim-takeover» категорий, где
 ## input принадлежит специальному координатору (Super QTE, SquadAim,
 ## BuildAim). Используется hand_physical/hand_spell для гейта своего

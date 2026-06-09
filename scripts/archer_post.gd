@@ -134,15 +134,29 @@ var _alarm_target: Node3D = null
 ## После — alarm сбрасывается, возвращаемся к cone-scan'у.
 var _alarm_until_msec: int = 0
 
+## ТУРЕЛЬ-режим: пост встроен в другое здание (Защитный блиндаж, BunkerBlock).
+## Тогда таргет/урон/коллизию/жизненный цикл держит ХОЗЯИН-здание, а пост — лишь
+## лучник: НЕ регистрируется как Damageable/skeleton_target и отключает свою
+## коллизию (иначе двойная цель + двойной коллайдер в одной ячейке). Скан/стрельба/
+## fog/конус работают как обычно. Ставить ДО add_child (читается в _ready).
+@export var embedded: bool = false
+
 @onready var _head: Node3D = $Head
 @onready var _arrow_spawn: Node3D = $Head/ArrowSpawn
 
 
 func _ready() -> void:
 	add_to_group(GROUP)
-	add_to_group(SKELETON_TARGET_GROUP)
 	add_to_group(FogOfWar.FOG_REVEAL_GROUP)
-	Damageable.register(self)
+	# Standalone-пост — самостоятельная цель/коллайдер. Турель (embedded) — нет:
+	# хозяин-блиндаж сам Damageable/препятствие, пост лишь стреляет.
+	if not embedded:
+		add_to_group(SKELETON_TARGET_GROUP)
+		Damageable.register(self)
+	else:
+		var body_shape := get_node_or_null("BodyShape") as CollisionShape3D
+		if body_shape != null:
+			body_shape.disabled = true
 	_hp = hp_max
 	fog_reveal_radius = vision_circle_radius
 	fog_reveal_cone_half_angle = deg_to_rad(vision_cone_half_angle_deg)

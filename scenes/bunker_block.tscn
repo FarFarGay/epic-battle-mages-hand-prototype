@@ -1,0 +1,18 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/bunker_block.gd" id="1"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_placeholder"]
+size = Vector3(1, 1, 1)
+
+[node name="BunkerBlock" type="RigidBody3D"]
+collision_layer = 2
+collision_mask = 31
+mass = 6.0
+script = ExtResource("1")
+module_color = Color(0.42, 0.45, 0.38, 1)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_placeholder")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]

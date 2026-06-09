@@ -76,11 +76,171 @@ func bind_camp(camp) -> void:
 	_camp = camp
 
 
+## Группа для поиска грида извне (HandPhysical гейтит grab во время кисти-стены,
+## JournalPanel роутит j → cancel_build).
+const BUILD_GRID_GROUP := &"build_grid"
+## Последняя проштампованная при зажатой ЛКМ ячейка (кисть-здание) — чтобы за
+## один проход по ячейке не плодить дубли. (-1,-1) = можно штамповать.
+var _stamp_last := Vector2i(-1, -1)
+
+
 func _ready() -> void:
+	add_to_group(BUILD_GRID_GROUP)
 	_build_cells()
 	_build_line_grid()
 	EventBus.hand_grabbed.connect(_on_hand_grabbed)
 	EventBus.hand_released.connect(_on_hand_released)
+
+
+func _get_hand() -> Hand:
+	return get_tree().get_first_node_in_group(Hand.HAND_GROUP) as Hand
+
+
+## В руке КИСТЬ-здание — свежее здание из журнала (building_id задан, ещё НЕ
+## оплачено). Тогда ЛКМ ШТАМПУЕТ копии в ячейки (клик / зажал+веди), а grab
+## гейтится (HandPhysical), чтобы отпускание ЛКМ не роняло держимую кисть.
+## Держимое = превью-кисть, само не ставится — выход по j. ПЕРЕНОС уже стоящего
+## (оплаченного) здания рукой — НЕ кисть: обычный неси-отпустил-поставил.
+func is_brush() -> bool:
+	return _placing != null and is_instance_valid(_placing) and _placing is BuildBlock \
+		and not (_placing as BuildBlock).purchased
+
+
+## Активен ли режим стройки (несём что-то в руке). JournalPanel роутит j сюда.
+func is_build_active() -> bool:
+	return _placing != null and is_instance_valid(_placing)
+
+
+## j — выход из стройки: снимаем держимое из руки БЕЗ установки, неоплаченную
+## болванку-кисть удаляем.
+func cancel_build() -> void:
+	if _placing == null or not is_instance_valid(_placing):
+		return
+	var hand := _get_hand()
+	if hand != null:
+		hand.clear_held()  # снять из руки без установки (без released-сигнала)
+	var b: Node = _placing
+	_placing = null
+	_stamp_last = Vector2i(-1, -1)
+	if b is BuildBlock and (b as BuildBlock).building_id != &"" and not (b as BuildBlock).purchased:
+		b.queue_free()
+	_refresh_pads()
+
+
+## Каждый кадр, пока в руке кисть-здание: при зажатой ЛКМ штампует КОПИЮ здания
+## в ячейку под кистью. Клик = одна (last сбрасывается на отпускании); зажал+веди
+## = по копии в каждой НОВОЙ ячейке. Кисть остаётся в руке — выход по j.
+func _tick_brush_stamp() -> void:
+	if _placing == null or not is_instance_valid(_placing):
+		return
+	var cell := _cell_under_point(_placing.global_position)
+	if Input.is_action_pressed(&"hand_grab"):
+		if cell.x >= 0 and cell != _stamp_last:
+			if _stamp_under_cursor():
+				_stamp_last = cell
+	else:
+		_stamp_last = Vector2i(-1, -1)
+
+
+## Поставить КОПИЮ здания-кисти под курсором: спавним новый блок того же типа,
+## ставим в позицию кисти и прогоняем штатный _try_place (он находит валидный
+## ряд по кольцу/footprint, оплачивает и ставит — стена/здание/ворота). Кисть-
+## превью не трогаем.
+func _stamp_under_cursor() -> bool:
+	if not (_placing is BuildBlock):
+		return false
+	var w := _spawn_block((_placing as BuildBlock).building_id)
+	if w == null:
+		return false
+	w.global_position = _placing.global_position  # позиция кисти = под курсором
+	if _try_place(w):
+		return true
+	w.queue_free()
+	return false
+
+
+## Спавн нового блока здания по id (своя сцена из каталога «scene», иначе
+## build_block_scene Camp'а) + configure. Конформ под ячейку делает _place_run.
+func _spawn_block(id: StringName) -> BuildBlock:
+	if _camp == null:
+		return null
+	var scene_path: String = CampBuildings.get_data(id).get("scene", "")
+	var scene: PackedScene = (load(scene_path) as PackedScene) if scene_path != "" else _camp.build_block_scene
+	if scene == null:
+		return null
+	var w := scene.instantiate() as BuildBlock
+	if w == null:
+		return null
+	var root: Node = get_tree().current_scene
+	if root == null:
+		root = self
+	root.add_child(w)
+	w.configure(id)
+	return w
+
+
+## Ближайшая к точке p ячейка ЛЮБОГО кольца (0..) — для dedup штампа (чтобы за
+## проход по ячейке не плодить дубли). (-1,-1) если дальше snap_distance.
+func _cell_under_point(p: Vector3) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_d: float = snap_distance
+	for r in range(_rings.size()):
+		var cnt: int = segment_counts[r]
+		for s in range(cnt):
+			var c := to_global(_run_center_local(r, s, 1))
+			var d := _horizontal_dist(p, c)
+			if d < best_d:
+				best_d = d
+				best = Vector2i(r, s)
+	return best
+
+
+## ПКМ в режиме стройки: снести здание под курсором и ВЕРНУТЬ его стоимость
+## (undo-постройки). Без death-FX — это снос игроком, не боевая смерть.
+func _destroy_under_cursor() -> void:
+	var block := _building_under_cursor()
+	if block == null:
+		return
+	_refund_building(block)
+	if block is BuildBlock:
+		(block as BuildBlock).on_picked_up()  # снять боевое состояние/навмеш до удаления
+	_on_block_destroyed(block)  # освободить ВСЕ ячейки блока + reconform стен + buildings_changed
+	block.queue_free()
+	if debug_log and LogConfig.master_enabled:
+		print("[BuildGrid] снос (ПКМ) + рефанд: %s" % (block.name if is_instance_valid(block) else "?"))
+
+
+## Ближайшее к курсору ЗАНЯТОЕ здание (любое кольцо) в пределах snap_distance.
+func _building_under_cursor() -> CampModule:
+	var hand := _get_hand()
+	if hand == null:
+		return null
+	var p: Vector3 = hand.cursor_world_position()
+	var best: CampModule = null
+	var best_d: float = snap_distance
+	for cell in _cells:
+		var b = cell["block"]
+		if b == null or not is_instance_valid(b) or not (b is CampModule):
+			continue
+		var c := to_global(_run_center_local(int(cell["r"]), int(cell["s"]), 1))
+		var d := _horizontal_dist(p, c)
+		if d < best_d:
+			best_d = d
+			best = b
+	return best
+
+
+## Вернуть стоимость здания в экономику (полный рефанд оплаченного). Стена — её
+## per-cell цена; здание footprint>1 — полная цена (списывалась разом).
+func _refund_building(block) -> void:
+	if not (block is BuildBlock):
+		return
+	var bb := block as BuildBlock
+	if not bb.purchased or _camp == null or _camp.economy == null:
+		return
+	var cost: Dictionary = CampBuildings.get_data(bb.building_id).get("cost", {})
+	for k in cost:
+		_camp.economy.add_resource(k, int(cost[k]))
 
 
 # --- Геометрия колец (единая формула с «улицами» между зданиями) ---
@@ -566,19 +726,20 @@ func _charge_building(block: CampModule) -> bool:
 
 
 func _place_run(block: CampModule, r: int, s: int, fp: int) -> void:
-	# Стены (wall_thin) — без зазора, на всю ячейку: смыкаются в сплошной барьер.
-	# Ворота тоже thin, но НЕ расширяются к зданиям (это проход) — gapless для них
-	# только для смыкания со стенами.
+	# gapless-здания (стена/ворота/блиндаж) — без зазора, на всю ячейку: соседние
+	# gapless смыкаются край-в-край в сплошной барьер. Inset-здания (генератор/
+	# казарма/портал) отступают на улицу-зазор для прохода юнитов между ними.
+	# is_wall = «тянется к соседним inset-зданиям» (стены и ворота — оба wall_thin).
 	var is_wall: bool = block is BuildBlock and (block as BuildBlock).wall_thin
-	var gapless: bool = is_wall
+	var gapless: bool = block is BuildBlock and (block as BuildBlock).is_gapless()
 	var dims: Dictionary = tier_cell_dims(r, fp, gapless)
 	var seg_deg: float = float(dims["seg_deg"])
 	var ang_offset_rad: float = 0.0
-	# Прилегание стены к зданию: если угловой сосед (s±1) — готовое НЕ-стенное
-	# здание, стена удлиняет дугу на gap/2 в ту сторону, закрывая щель-«улицу»
-	# (и физическую дыру в периметре, и карман навмеша). К соседям-стенам стена
-	# уже смыкается (gapless), к пустым/воротам не тянется.
-	if is_wall and not (block as BuildBlock).is_gate() and fp == 1:
+	# Прилегание стены/ворот к зданию: если угловой сосед (s±1) — готовое inset-
+	# здание (не gapless), дуга удлиняется на gap/2 в ту сторону, закрывая щель-
+	# «улицу» (и дыру в периметре, и карман навмеша). К соседям-gapless (стена/
+	# ворота/блиндаж) уже смыкается. Блиндаж сам не тянется (gapless, но не thin).
+	if is_wall and fp == 1:
 		var e: Vector2 = _wall_ext_deg(r, s)  # (ext к s-1, ext к s+1) в градусах
 		seg_deg += e.x + e.y
 		ang_offset_rad = deg_to_rad((e.y - e.x) * 0.5)  # сдвиг центра к стороне расширения
@@ -620,10 +781,10 @@ func _place_run(block: CampModule, r: int, s: int, fp: int) -> void:
 			bb.destroyed.connect(_on_block_destroyed.bind(bb))
 	if debug_log and LogConfig.master_enabled:
 		print("[BuildGrid] стройка ×%d начата: кольцо %d сегмент %d (%s)" % [fp, r, s, str((block as BuildBlock).building_id) if block is BuildBlock else "?"])
-	# Поставили НЕ-стену (здание) → подтянуть к нему соседние стены (прилегание
-	# независимо от порядка: стена могла стоять до здания). Для стен не нужно —
-	# они сами учли соседей при установке.
-	if not is_wall:
+	# Поставили inset-здание (не gapless) → подтянуть к нему соседние стены/ворота
+	# (прилегание независимо от порядка: стена могла стоять до здания). gapless
+	# (стена/ворота/блиндаж) не нужно — соседи смыкаются к ним и так.
+	if not gapless:
 		_reconform_all_walls()
 	buildings_changed.emit()
 
@@ -644,8 +805,9 @@ func _on_block_destroyed(block) -> void:
 			freed = true
 	if freed and debug_log and LogConfig.master_enabled:
 		print("[BuildGrid] здание разрушено — ячейки освобождены")
-	# Здание снесли → соседние стены отлипают обратно (убираем расширение к нему).
-	if block is BuildBlock and not (block as BuildBlock).wall_thin:
+	# Inset-здание снесли → соседние стены/ворота отлипают (убираем расширение к
+	# нему). gapless снесли — к нему никто не тянулся, пересчёт не нужен.
+	if block is BuildBlock and not (block as BuildBlock).is_gapless():
 		_reconform_all_walls()
 	buildings_changed.emit()
 
@@ -687,22 +849,22 @@ func _run_placeable(r: int, segs: Array) -> bool:
 	return false
 
 
-## True если ячейка (r,s) занята готовым/строящимся НЕ-стенным зданием
-## (генератор/казарма/портал — wall_thin=false). К таким стена прилегает
-## (расширяет дугу, см. _place_run). Стены/ворота (thin) и пустые ячейки — нет
-## (к стене стена уже смыкается gapless, ворота — проход).
+## True если ячейка (r,s) занята готовым/строящимся INSET-зданием (генератор/
+## казарма/портал — не gapless). К таким стена/ворота прилегают (расширяют дугу,
+## см. _place_run). gapless-соседи (стена/ворота/блиндаж) и пустые ячейки — нет
+## (к ним смыкается край-в-край и так).
 func _cell_has_building(r: int, s: int) -> bool:
 	var c = _cell_at(r, s)
 	if c == null:
 		return false
 	var b = c["block"]
 	return b != null and is_instance_valid(b) and b is BuildBlock \
-		and not (b as BuildBlock).wall_thin
+		and not (b as BuildBlock).is_gapless()
 
 
-## Угловое расширение дуги стены (град) к каждому соседу: (к s-1, к s+1).
-## gap_deg/2 в сторону, где стоит НЕ-стенное здание — стена дотянется до него,
-## закрыв щель-«улицу». Общий расчёт для установки (_place_run) и пересчёта
+## Угловое расширение дуги стены/ворот (град) к каждому соседу: (к s-1, к s+1).
+## gap_deg/2 в сторону, где стоит inset-здание — дуга дотянется до него, закрыв
+## щель-«улицу». Общий расчёт для установки (_place_run) и пересчёта
 ## (_reconform_wall).
 func _wall_ext_deg(r: int, s: int) -> Vector2:
 	var cnt: int = maxi(segment_counts[r], 1)
@@ -713,11 +875,11 @@ func _wall_ext_deg(r: int, s: int) -> Vector2:
 	return Vector2(m, p)
 
 
-## Пересчитать геометрию уже стоящей стены под ТЕКУЩИХ соседей: здание могло
-## появиться/исчезнуть рядом ПОСЛЕ установки стены. Тянет дугу к зданию-соседу
-## (или убирает расширение, если здание снесли). Зовётся из _reconform_all_walls.
+## Пересчитать геометрию уже стоящей стены/ворот под ТЕКУЩИХ соседей: inset-
+## здание могло появиться/исчезнуть рядом ПОСЛЕ установки. Тянет дугу к зданию-
+## соседу (или убирает расширение, если снесли). Зовётся из _reconform_all_walls.
 func _reconform_wall(wall: BuildBlock, r: int, s: int) -> void:
-	if wall == null or not is_instance_valid(wall) or not wall.wall_thin or wall.is_gate():
+	if wall == null or not is_instance_valid(wall) or not wall.wall_thin:
 		return
 	var dims: Dictionary = tier_cell_dims(r, 1, true)
 	var e: Vector2 = _wall_ext_deg(r, s)
@@ -732,15 +894,15 @@ func _reconform_wall(wall: BuildBlock, r: int, s: int) -> void:
 	wall.look_at(face, Vector3.UP)
 
 
-## Пересчитать прилегание ВСЕХ стен — зовётся при изменении набора зданий
-## (здание поставлено/снесено), чтобы стены подтянулись/отлипли независимо от
-## порядка постройки. Стен немного, пересчёт дешёвый.
+## Пересчитать прилегание ВСЕХ стен/ворот — зовётся при изменении набора зданий
+## (здание поставлено/снесено), чтобы стены/ворота подтянулись/отлипли независимо
+## от порядка постройки. Их немного, пересчёт дешёвый.
 func _reconform_all_walls() -> void:
 	for r in range(_rings.size()):
 		var cnt: int = segment_counts[r]
 		for s in range(cnt):
 			var b = _rings[r][s]["block"]
-			if b is BuildBlock and (b as BuildBlock).wall_thin and not (b as BuildBlock).is_gate():
+			if b is BuildBlock and (b as BuildBlock).wall_thin:
 				_reconform_wall(b as BuildBlock, r, s)
 
 
@@ -822,6 +984,12 @@ func _process(delta: float) -> void:
 	if not _active:
 		return
 	_pulse_t += delta
+	if is_brush():
+		_tick_brush_stamp()
+	# ПКМ в режиме стройки (несём здание / кисть-стена) — снести здание под
+	# курсором и вернуть ресурсы. Slam/cast в это время гейтятся (is_holding).
+	if is_build_active() and Input.is_action_just_pressed(&"hand_action"):
+		_destroy_under_cursor()
 	_update_grid_visuals()
 	_orient_held_block()
 

@@ -626,15 +626,15 @@ func _recompute_path_decision() -> void:
 	_should_path_around = path_length <= direct * DETOUR_THRESHOLD
 
 
-## Override базы Enemy: обычный melee-скелет не считает стены/палисад валидной
-## целью. MELEE_ONLY_TARGET_GROUP — подмаркер «только тяжёлая пехота бьёт это»,
-## раньше базовый Skeleton туда и относился. По переработке (2026-05-22) пехота
-## стены НЕ атакует — упирается и переходит в [_enter_local_wander] вокруг них.
-## SkeletonGiant (override отдельно) продолжает их бить.
+## Валидность ТЕКУЩЕЙ цели. Стены/здания (MELEE_ONLY) валидны — скелет, упёршийся
+## в постройку по пути к гному, ломает её (осада). Само переключение НА стену —
+## только когда застрял (см. [_tick_stuck_detection] → [_find_nearest_obstacle]);
+## обычный vision-скан стены НЕ выбирает (фильтр в [_scan_target]), поэтому скелет
+## нормально гонится за гномами, а постройку бьёт лишь когда она реально блокирует.
+## (2026-06-09: вернули «ломают» из задуманного melee-гибрида; до этого пехота
+## уходила в local-wander и только тыкалась.)
 func _target_still_valid(target: Node3D) -> bool:
-	if not super._target_still_valid(target):
-		return false
-	return not target.is_in_group(MELEE_ONLY_TARGET_GROUP)
+	return super._target_still_valid(target)
 
 
 ## на меше; если скелет умрёт сразу после, mesh queue_free'нется вместе с
@@ -1239,7 +1239,14 @@ func _physics_process(delta: float) -> void:
 			_last_known_target_pos = Vector3.INF
 			_cached_target = null
 	if _vision_scan_timer <= 0.0 or stale:
-		_set_cached_target(_scan_target())
+		var scanned := _scan_target()
+		# Не сдёргивать с ломки постройки: если скан ничего ВИДИМОГО не дал
+		# (реальная цель за стеной — нет LOS), но текущая цель — живая постройка
+		# (BuildBlock: стена/здание/ворота), которую ломаем по пути → держим её,
+		# пока не пробьём. Иначе throttled-скан каждые ~0.4с ронял бы цель в null
+		# и скелет уходил в wander вместо осады. Видимую реальную цель — берём.
+		if scanned != null or not (is_instance_valid(_cached_target) and _cached_target is BuildBlock):
+			_set_cached_target(scanned)
 		_vision_scan_timer = vision_scan_interval * _lod_vision_multiplier()
 
 	# Запоминаем knockback-состояние ДО физ-шага. Тик knockback'а живёт внутри
@@ -1295,19 +1302,18 @@ func _tick_stuck_detection(work_delta: float) -> void:
 	_stuck_timer += work_delta
 	if _stuck_timer < STUCK_DURATION:
 		return
-	# Превышение — ищем ближайшее препятствие. Используем существующий
-	# spatial-grid целей (Enemy._target_grid) — 3×3 cell'а вокруг скелета,
-	# среди них любая нода skeleton_target в радиусе (стены исключены
-	# фильтром в [_find_nearest_obstacle] — иначе зациклились бы).
+	# Превышение — ищем ближайшее препятствие (Enemy._target_grid, 3×3 cell'а).
+	# Стены/здания ТЕПЕРЬ включены (2026-06-09) — упёрся в постройку → берём её
+	# целью и ломаем (осада). _target_still_valid её принимает, LOS-стена не даёт
+	# скану сдёрнуть на гнома за ней до пробоя.
 	var obstacle: Node3D = _find_nearest_obstacle(STUCK_OBSTACLE_RADIUS)
 	if obstacle != null and obstacle != _cached_target:
 		_set_cached_target(obstacle)
 		if LogConfig.master_enabled:
-			print("[Skeleton] упёрся → переключаюсь на %s" % obstacle.name)
+			print("[Skeleton] упёрся → ломаю %s" % obstacle.name)
 	elif obstacle == null:
-		# Нет валидных целей рядом — упёрся именно в стену. Переход в local
-		# wander: бродим вдоль точки столкновения, пока vision не подберёт
-		# цель (или скелет случайно не нашёл обход).
+		# Рядом вообще ничего (упёрся в terrain/край без построек) — local wander,
+		# пока vision не подберёт цель или slide не вынесет на обход.
 		_enter_local_wander()
 	_stuck_timer = 0.0
 
@@ -1431,11 +1437,11 @@ func _find_nearest_obstacle(radius: float) -> Node3D:
 					continue
 				if not node.is_in_group(TARGET_GROUP):
 					continue
-				# Стены не считаем как obstacle-цель: иначе stuck-handler
-				# вернёт палисад, _set_cached_target его примет и скелет
-				# зациклится «нашёл стену → отвергнул в valid → нашёл снова».
-				if node.is_in_group(MELEE_ONLY_TARGET_GROUP):
-					continue
+				# Стены/здания (MELEE_ONLY) ВКЛЮЧАЕМ: упёрся → это и есть та
+				# постройка, что блокирует путь к гному; берём её целью и ломаем.
+				# Цикла нет — _target_still_valid теперь её принимает, а LOS-стена
+				# не даёт скану сдёрнуть нас на гнома за ней (он не виден), пока
+				# не пробьём. (2026-06-09: было `if MELEE_ONLY: continue` → wander.)
 				var d_sq: float = Vector2(
 					node.global_position.x - pos.x,
 					node.global_position.z - pos.z,

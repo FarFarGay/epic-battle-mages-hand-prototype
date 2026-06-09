@@ -223,13 +223,17 @@ func _handle_input() -> void:
 	# действия (hold-state Flick, удерживаемый предмет) гейтом не трогаются —
 	# их завершение через release должно проходить.
 	var pointer_over_ui: bool = _hand.is_pointer_over_ui()
+	# Журнал открыт ИЛИ в руке СТЕНА-кисть (там ЛКМ штампует стены) → вне UI рука
+	# не хватает/не бьёт. (НЕ блокируем «несём обычное здание» — там клик ЛКМ
+	# СТАВИТ здание, глушить нельзя; другой grab при ношении и так невозможен.)
+	var build_or_menu: bool = _is_build_or_menu_active()
 
 	# Триггер активной способности (ПКМ) — только в PHYSICAL и только если
 	# рука свободна. Держишь ящик — не slam'ишь и не flick'аешь. В MAGIC
 	# ПКМ слушает HandSpell, у него тоже есть own guard на is_holding.
 	if _hand.active_category == Hand.Category.PHYSICAL and not _hand.is_holding():
 		if not _any_ability_active():
-			if Input.is_action_just_pressed(ACTION_ACTION) and not pointer_over_ui:
+			if Input.is_action_just_pressed(ACTION_ACTION) and not pointer_over_ui and not build_or_menu:
 				_dispatch_action_press()
 		else:
 			if Input.is_action_just_released(ACTION_ACTION):
@@ -243,7 +247,7 @@ func _handle_input() -> void:
 	# должно сработать (иначе предмет «зависнет» в руке вечно). Поэтому
 	# сначала смотрим: новое нажатие (was_grabbing=false) И курсор над UI →
 	# глушим press, чтобы не подхватить ящик под кнопкой.
-	if pointer_over_ui and not _is_grabbing:
+	if (pointer_over_ui or build_or_menu) and not _is_grabbing:
 		grab_pressed = false
 	var was_grabbing := _is_grabbing
 	_is_grabbing = grab_pressed
@@ -382,6 +386,25 @@ func _release() -> void:
 		print("[Hand:Physical] отпущен %s, v=(%.2f, %.2f, %.2f), |v|=%.2f" % [item_name, v.x, v.y, v.z, v.length()])
 	released.emit(_held, v)
 	_held = null
+
+
+## Снять держимое из руки БЕЗ установки (выход из стройки по j). В отличие от
+## _release НЕ эмитит `released` — грид не ставит; разморозка + сброс ссылки.
+## Судьбу тела решает вызвавший (грид удаляет неоплаченную болванку).
+func clear_held() -> void:
+	if _held != null and is_instance_valid(_held):
+		_held.freeze = false
+	_held = null
+
+
+## Блокировать ли grab/слэм вне UI: открыт журнал ИЛИ в руке КИСТЬ-здание (ЛКМ
+## штампует копии). НЕ включает ПЕРЕНОС оплаченного здания — там клик ЛКМ ставит
+## его на отпускании. duck-typing на build_grid-группе, чтобы не тащить тип сюда.
+func _is_build_or_menu_active() -> bool:
+	if JournalPanel.visible:
+		return true
+	var bg: Node = get_tree().get_first_node_in_group(&"build_grid")
+	return bg != null and bg.has_method(&"is_brush") and bg.is_brush()
 
 
 func _update_held_position() -> void:

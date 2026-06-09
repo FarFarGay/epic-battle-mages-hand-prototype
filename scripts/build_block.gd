@@ -127,6 +127,7 @@ func configure(id: StringName) -> void:
 	ring_tier = int(d.get("ring_tier", ring_tier))
 	module_color = d.get("color", module_color)
 	wall_thin = bool(d.get("thin", false))
+	_gapless_catalog = bool(d.get("gapless", false))
 	footprint = maxi(1, int(d.get("footprint", 1)))
 	hp_max = float(d.get("hp", hp_max))
 	_apply_visual()
@@ -262,6 +263,18 @@ func _process(delta: float) -> void:
 ## не ссылаясь на класс GateBlock по имени (избегаем class-cache при типизации).
 func is_gate() -> bool:
 	return false
+
+
+## Каталожный флаг "gapless" (заполнять ячейку целиком, без улицы-зазора). Стены/
+## ворота gapless через wall_thin; блиндаж — через этот флаг каталога.
+var _gapless_catalog: bool = false
+
+## Здание заполняет ячейку ЦЕЛИКОМ по углу (без inset-улицы)? Тогда соседние
+## gapless-здания смыкаются край-в-край. wall_thin (стена/ворота) и каталожный
+## "gapless" (блиндаж) — оба gapless. Inset-здания (генератор/казармы/портал) —
+## нет: между ними остаётся улица для прохода юнитов.
+func is_gapless() -> bool:
+	return wall_thin or _gapless_catalog
 
 
 func _activate_combat() -> void:

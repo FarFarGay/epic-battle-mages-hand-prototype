@@ -30,6 +30,7 @@ const SPEAR_BARRACKS := &"spear_barracks"
 const GNOME_PORTAL := &"gnome_portal"
 const WALL := &"wall"
 const GATE := &"gate"
+const BUNKER := &"bunker"
 
 const CATALOG: Dictionary = {
 	GENERATOR: {
@@ -113,6 +114,23 @@ const CATALOG: Dictionary = {
 		"hp": 90.0,
 		# Своя сцена — GateBlock (арка+двери+open/close), не обычный BuildBlock.
 		"scene": "res://scenes/gate_block.tscn",
+	},
+	BUNKER: {
+		"name": "Защитный блиндаж",
+		"description": "Здание в 1 ячейку со встроенным лучником. Стреляет конусом НАРУЖУ от лагеря, конус медленно сканирует сектор — простреливает подходы. Характеристики лучника как у стрелкового поста (дальнобойный). Ставится в любой не-генераторной зоне.",
+		"cost": {ResourcePile.ResourceType.WOOD: 10, ResourcePile.ResourceType.IRON: 6},
+		"deployed_only": true,
+		"repeatable": true,
+		"grid_building": true,
+		"ring_tier": 1,
+		"color": Color(0.42, 0.45, 0.38, 1.0),
+		# Заполняет ячейку целиком (как стена, но полной глубины) → соседние
+		# блиндажи смыкаются без щелей, образуя сплошную линию обороны.
+		"gapless": true,
+		# Прочнее стены/ворот — это боевая точка, должна держать осаду.
+		"hp": 140.0,
+		# Своя сцена — BunkerBlock (BuildBlock + встроенная турель-лучник).
+		"scene": "res://scenes/bunker_block.tscn",
 	},
 	NEW_TENT: {
 		"name": "Новая палатка",
