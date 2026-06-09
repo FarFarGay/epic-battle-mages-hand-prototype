@@ -9,25 +9,35 @@ extends BuildBlock
 ##     скелеты тоже пытаются, но упираются физически (узкое защитное горло).
 ##   - Двери — чисто визуальный feedback: триггер-Area ловит своих → распахивает.
 ##
-## Меш процедурный: два боковых пилона по краям ячейки + перемычка-арка сверху,
-## по центру дверной проём с двумя створками на петлях. Коллизия — сплошной
-## клин (наследуется от BuildBlock._rebuild_collision): врага держит вся ячейка,
+## Меш процедурный: два боковых пилона по краям ячейки + перемычка-арка над
+## проёмом + ТОТ ЖЕ крепостной гребень-мерлоны, что и у стены (BuildBlock.
+## _add_merlon_crest) — верх ворот продолжает верх соседних стен без шва. По
+## центру дверной проём с двумя створками на петлях. Коллизия — сплошной клин
+## (наследуется от BuildBlock._rebuild_collision): врага держит вся ячейка,
 ## «открытые двери» гейтят только визуально.
+##
+## Тюнинг-параметры арки/дверей/триггера — @export (крутить по плейтесту).
 
-const MeshLib = preload("res://tools/mesh_lib.gd")
-
+@export_group("Gate shape")
 ## Доля половины дуги, отданная под дверной проём (центр). Остальное — пилоны.
-const DOORWAY_HALF_FRAC := 0.45
-## Высота перемычки-арки как доля height (верхняя часть над проёмом).
-const LINTEL_FRAC := 0.28
+@export_range(0.2, 0.8) var doorway_half_frac: float = 0.45
+## Высота перемычки-арки как доля height (отсчёт ВНИЗ от уровня зубцов).
+@export_range(0.1, 0.6) var lintel_frac: float = 0.28
 ## Толщина створки двери (м).
-const DOOR_THICKNESS := 0.12
-## Угол распахнутой створки (рад).
-const OPEN_ANGLE := PI / 2.0
-## Время анимации дверей (с).
-const ANIMATE_TIME := 0.35
-## Радиус триггер-зоны «свой рядом» (м).
-const TRIGGER_RADIUS := 2.6
+@export var door_thickness: float = 0.12
+@export_group("Gate doors")
+## Угол распахнутой створки (град).
+@export_range(30.0, 120.0) var door_open_angle_deg: float = 90.0
+## Время анимации открытия/закрытия (с).
+@export var door_animate_time: float = 0.35
+## Сторона распахивания: -1 = ВНУТРЬ лагеря (к ядру; оборонительно — враг
+## напирая прижимает створки, и визуально они уходят в безопасный двор),
+## +1 = наружу. Крутить по плейтесту, если смотрится не туда.
+@export var door_swing_sign: float = -1.0
+@export_group("Gate trigger")
+## Радиус зоны «свой рядом»: гном/башня в ней распахивают ворота (м).
+@export var trigger_radius: float = 2.6
+@export_group("")
 
 var _door_left: Node3D = null
 var _door_right: Node3D = null
@@ -60,21 +70,44 @@ func _build_geometry() -> void:
 	_position_doors()
 
 
-## Арка: 2 пилона (на всю высоту) по краям ячейки + перемычка над проёмом.
+## Уровень верха «тела» (низ зубцов) — выровнен со стеной по wall_tooth_frac,
+## чтобы крепостной гребень ворот продолжал гребень соседних стен без ступеньки.
+func _crenel_top() -> float:
+	return height * 0.5 - height * clampf(wall_tooth_frac, 0.05, 0.9)
+
+
+## Низ перемычки-арки = верх дверного проёма. Доля lintel_frac отсчитывается
+## ВНИЗ от уровня зубцов (а не от макушки), чтобы перемычка не залезала в зубцы.
+func _lintel_bottom() -> float:
+	return _crenel_top() - height * lintel_frac
+
+
+## Угол распахивания правой створки (рад, со знаком стороны). Левая — зеркально.
+func _open_rad() -> float:
+	return deg_to_rad(door_open_angle_deg) * door_swing_sign
+
+
+## Ворота как крепостная стена с пробитым проёмом: боковые пилоны + перемычка над
+## проёмом до уровня зубцов + ТОТ ЖЕ мерлонный гребень, что и у стены (смыкается
+## с соседями). В проёме — две створки на петлях (создаются отдельно).
 func _build_gate_mesh() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var mid := (inner_radius + outer_radius) * 0.5
+	var c := Vector3(0.0, 0.0, -(inner_radius + outer_radius) * 0.5)
 	var half := deg_to_rad(sector_deg) * 0.5
-	var door_half := half * DOORWAY_HALF_FRAC
+	var door_half := half * doorway_half_frac
 	var y_bot := -height * 0.5
 	var y_top := height * 0.5
-	var lintel_y0 := y_top - height * LINTEL_FRAC
-	# Боковые пилоны (на всю высоту).
-	MeshLib.add_arc_slab(st, 0.0, -mid, inner_radius, outer_radius, -half, -door_half, y_bot, y_top, 4)
-	MeshLib.add_arc_slab(st, 0.0, -mid, inner_radius, outer_radius, door_half, half, y_bot, y_top, 4)
-	# Перемычка-арка над проёмом.
-	MeshLib.add_arc_slab(st, 0.0, -mid, inner_radius, outer_radius, -door_half, door_half, lintel_y0, y_top, 6)
+	var crenel_top := _crenel_top()
+	var lintel_y0 := _lintel_bottom()
+	# Боковые пилоны (тело до уровня зубцов) по краям ячейки.
+	_add_arc_box(st, c, -half, -door_half, y_bot, crenel_top)
+	_add_arc_box(st, c, door_half, half, y_bot, crenel_top)
+	# Перемычка-арка над проёмом (низ проёма открыт под двери).
+	_add_arc_box(st, c, -door_half, door_half, lintel_y0, crenel_top)
+	# Крепостной гребень на ВСЮ дугу — общий с стеной (мерлоны-половинки на краях
+	# складываются с соседними стенами в цельный зубец).
+	_add_merlon_crest(st, c, half, crenel_top, y_top)
 	return st.commit()
 
 
@@ -103,7 +136,7 @@ func _create_doors_and_trigger() -> void:
 	add_child(_trigger)
 	var ts := CollisionShape3D.new()
 	var sph := SphereShape3D.new()
-	sph.radius = TRIGGER_RADIUS
+	sph.radius = trigger_radius
 	ts.shape = sph
 	_trigger.add_child(ts)
 	_trigger.body_entered.connect(_on_friendly_entered)
@@ -111,16 +144,16 @@ func _create_doors_and_trigger() -> void:
 
 
 ## Створки: петли на внутренних краях пилонов, панель тянется к центру проёма
-## (= origin блока). pivot.rotation.y = 0 — закрыто; ±OPEN_ANGLE — распахнуто.
+## (= origin блока). pivot.rotation.y = 0 — закрыто; ±_open_rad() — распахнуто.
 func _position_doors() -> void:
 	if _door_left == null or _door_right == null:
 		return
 	var mid := (inner_radius + outer_radius) * 0.5
 	var c := Vector3(0.0, 0.0, -mid)
 	var half := deg_to_rad(sector_deg) * 0.5
-	var door_half := half * DOORWAY_HALF_FRAC
+	var door_half := half * doorway_half_frac
 	var y_bot := -height * 0.5
-	var lintel_y0 := height * 0.5 - height * LINTEL_FRAC
+	var lintel_y0 := _lintel_bottom()
 	var door_h := lintel_y0 - y_bot
 	var door_cy := (lintel_y0 + y_bot) * 0.5
 	var rh := c + Vector3(sin(door_half), 0.0, cos(door_half)) * mid
@@ -140,7 +173,7 @@ func _setup_door(pivot: Node3D, panel: MeshInstance3D, hinge: Vector3, dlen: flo
 		dir = Vector3(0.0, 0.0, 1.0)
 	dir = dir.normalized()
 	var box := BoxMesh.new()
-	box.size = Vector3(DOOR_THICKNESS, dh, dlen)  # длинная ось — Z
+	box.size = Vector3(door_thickness, dh, dlen)  # длинная ось — Z
 	panel.mesh = box
 	# Панель центрируется на полпути к центру, длинной осью вдоль dir.
 	panel.position = Vector3(dir.x * dlen * 0.5, cy, dir.z * dlen * 0.5)
@@ -148,11 +181,13 @@ func _setup_door(pivot: Node3D, panel: MeshInstance3D, hinge: Vector3, dlen: flo
 
 
 func _apply_door_angles(t: float) -> void:
-	# t = 0 закрыто, 1 распахнуто. Створки расходятся в разные стороны.
+	# t = 0 закрыто, 1 распахнуто. Створки расходятся в разные стороны
+	# (правая +угол, левая зеркально); знак стороны — в _open_rad.
+	var a := _open_rad()
 	if _door_right != null:
-		_door_right.rotation.y = OPEN_ANGLE * t
+		_door_right.rotation.y = a * t
 	if _door_left != null:
-		_door_left.rotation.y = -OPEN_ANGLE * t
+		_door_left.rotation.y = -a * t
 
 
 # --- Боевое состояние: gate-слой, НЕ препятствие навмеша ---
@@ -204,9 +239,10 @@ func _set_open(open: bool) -> void:
 	if _tw_right != null and _tw_right.is_valid():
 		_tw_right.kill()
 	# Анимируем общий параметр через двери: tween по rotation.y каждой створки.
+	var a := _open_rad()
 	_tw_right = create_tween()
-	_tw_right.tween_property(_door_right, "rotation:y", OPEN_ANGLE * target, ANIMATE_TIME) \
+	_tw_right.tween_property(_door_right, "rotation:y", a * target, door_animate_time) \
 		.set_trans(Tween.TRANS_QUART).set_ease(Tween.EASE_OUT)
 	_tw_left = create_tween()
-	_tw_left.tween_property(_door_left, "rotation:y", -OPEN_ANGLE * target, ANIMATE_TIME) \
+	_tw_left.tween_property(_door_left, "rotation:y", -a * target, door_animate_time) \
 		.set_trans(Tween.TRANS_QUART).set_ease(Tween.EASE_OUT)

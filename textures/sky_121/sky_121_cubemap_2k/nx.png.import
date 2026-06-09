@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://m2kgod7ruihn"
-path="res://.godot/imported/nx.png-b26f545ffefffff58f80bd856d89fda5.ctex"
+path="res://.godot/imported/nx.png-4b699d59277878504e1c67a1cf5fd3c6.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://Textures/sky_121/sky_121_cubemap_2k/nx.png"
-dest_files=["res://.godot/imported/nx.png-b26f545ffefffff58f80bd856d89fda5.ctex"]
+source_file="res://textures/sky_121/sky_121_cubemap_2k/nx.png"
+dest_files=["res://.godot/imported/nx.png-4b699d59277878504e1c67a1cf5fd3c6.ctex"]
 
 [params]
 

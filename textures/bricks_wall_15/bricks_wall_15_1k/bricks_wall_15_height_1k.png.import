@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cyo8v621uec1s"
-path="res://.godot/imported/bricks_wall_15_height_1k.png-c7943bde036efda72595c11b39541ff6.ctex"
+path="res://.godot/imported/bricks_wall_15_height_1k.png-1bfeb7f5e6fec963932dad29ad101fe9.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://Textures/bricks_wall_15/bricks_wall_15_1k/bricks_wall_15_height_1k.png"
-dest_files=["res://.godot/imported/bricks_wall_15_height_1k.png-c7943bde036efda72595c11b39541ff6.ctex"]
+source_file="res://textures/bricks_wall_15/bricks_wall_15_1k/bricks_wall_15_height_1k.png"
+dest_files=["res://.godot/imported/bricks_wall_15_height_1k.png-1bfeb7f5e6fec963932dad29ad101fe9.ctex"]
 
 [params]
 

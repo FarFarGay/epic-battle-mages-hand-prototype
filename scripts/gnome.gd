@@ -149,8 +149,11 @@ enum IdlePhase { GOING_TO_FIRE, LIGHTING, AT_FIRE, WANDERING, LOOKING_AROUND }
 @export var idle_core_clearance: float = 2.2
 ## Дистанция до кучи, на которой считаем «дошёл — можно брать».
 @export var pickup_distance: float = 0.8
-## Дистанция до anchor'а лагеря для сдачи ресурса.
-@export var deposit_distance: float = 1.2
+## Дистанция до anchor'а (центр харвестера) для сдачи ресурса. Харвестер
+## выгрызен из навмеша (дыра radius ~1.35м = collision 0.95 + agent 0.4), и гном
+## по навмешу доходит только до КРАЯ дыры — не до центра. deposit_distance ≥
+## радиуса дыры, чтобы сдача срабатывала у края (гном не лезет внутрь ядра).
+@export var deposit_distance: float = 1.8
 ## Дистанция до палатки, на которой гном «дома».
 @export var home_distance: float = 0.8
 ## Дистанция до wander-точки, чтобы выбрать новую (или после прибытия).
@@ -1257,24 +1260,19 @@ func _resolve_path_step(goal: Vector3) -> Vector3:
 	var goal_xz := Vector2(goal.x - global_position.x, goal.z - global_position.z)
 	if goal_xz.length_squared() <= NAV_DIRECT_RADIUS * NAV_DIRECT_RADIUS:
 		return goal
-	# Set target каждый кадр без throttle'а: NavAgent сам кэширует и не
-	# пересчитывает path если goal не сильно изменился. Старый throttle
-	# с `get_physics_process_delta_time()` ломался когда метод вызывался
-	# не из _physics_process (delta=0 → throttle никогда не истекал).
+	# Цель ставим как есть: NavAgent сам клампит off-navmesh target (депозит у
+	# харвестера — точка ВНУТРИ выгрызенной дыры) к ближайшей точке навмеша при
+	# расчёте пути. Путь огибает выгрызенные здания/стены/харвестер.
 	_nav_agent.target_position = goal
 	_nav_last_target = goal
-	# Safety: если NavAgent ещё не успел построить path или цель недостижима,
-	# is_navigation_finished()=true → next_path_position часто возвращает
-	# текущую позицию агента. Тогда _move_toward_xz вычислит velocity=0 и
-	# гном застывает. Fallback на прямой goal — пусть упрётся в стену, чем
-	# стоит столбом.
+	# Safety: NavAgent ещё не построил path или цель недостижима →
+	# is_navigation_finished()=true. Fallback на прямой goal — лучше упереться,
+	# чем стоять столбом. На достижимой цели срабатывает только по прибытии.
 	if _nav_agent.is_navigation_finished():
 		return goal
 	var next_pos: Vector3 = _nav_agent.get_next_path_position()
-	# Дополнительный safety: waypoint слишком близко к текущей позиции
-	# (< 0.2м по горизонтали) → агент считает что мы «дошли» до waypoint'а,
-	# но дальше path ещё не advance'ил. Идём прямо к goal как fallback,
-	# physics-slide вытолкнет нас по стене если стоит на пути.
+	# Waypoint впритык к текущей позиции (< 0.2м) → агент «на» waypoint'е, но
+	# path ещё не advance'ил. Прямой goal как fallback.
 	var to_next := Vector2(next_pos.x - global_position.x, next_pos.z - global_position.z)
 	if to_next.length_squared() < 0.04:
 		return goal

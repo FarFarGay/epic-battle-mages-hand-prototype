@@ -122,11 +122,12 @@ var _mesh_base_basis: Basis = Basis()
 func _ready() -> void:
 	Damageable.register(self)
 	Pushable.register(self)
-	Grabbable.register(self)
-	# Источник геометрии для NavMesh — палатки вырезают участки навмеша,
-	# гномы и скелеты обходят. При перемещении палатки (drag рукой) navmesh
-	# не пересчитывается до следующего try_build / явного rebake — это OK,
-	# палатки в каравне обычно стабильны, а гномы используют slide-collisions.
+	# В navmesh_source номинально, но НЕ выгрызается: палатка — RigidBody3D, а
+	# навмеш (STATIC_COLLIDERS) парсит коллайдеры только у StaticBody3D. Это и
+	# нужно: палатка — дом гнома (он в ней спавнится/живёт/выходит), выгрызать
+	# нельзя. Физически палатка остаётся препятствием (коллайдер). Стены и
+	# здания (BuildBlock, тоже RigidBody) выгрызаются через carve-proxy на
+	# слое NAV_CARVE — см. BuildBlock._prepare_nav_carve.
 	add_to_group(&"navmesh_source")
 	## Soft-release: рука не применяет impulse при тихом release; CampPart
 	## считает release с velocity > 0 «броском», а с velocity == 0 — «поставил».

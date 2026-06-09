@@ -93,6 +93,15 @@ var _collision_extra: Array[CollisionShape3D] = []
 ## Макс. угол одного под-клина коллизии (град). Дугу шире режем на части.
 const MAX_WEDGE_DEG := 45.0
 
+## Carve-proxy для навмеша: дочерний StaticBody3D на слое NAV_CARVE с копией
+## формы здания. Здание — RigidBody3D, а навмеш (STATIC_COLLIDERS) парсит
+## коллайдеры только у StaticBody3D → без этой проксти RigidBody-здание НЕ
+## выгрызается и юниты идут сквозь. Слой NAV_CARVE физически никто не маскирует
+## → проксти инертна, влияет ТОЛЬКО на запекание навмеша. Пересобирается вместе
+## с коллизией в _rebuild_collision. Ворота (is_gate) проксти НЕ получают — они
+## проход. См. [Layers.NAV_CARVE].
+var _nav_carve: StaticBody3D = null
+
 ## Модель-ТЕЛО здания (из каталога "model", напр. паровая машина генератора в
 ## форме грид-клина). null если у здания своей модели нет (тогда тело = сектор-
 ## меш). Когда модель есть — она ЗАМЕНЯЕТ сектор как тело: сектор-меш виден только
@@ -264,7 +273,11 @@ func _activate_combat() -> void:
 	collision_layer = Layers.CAMP_OBSTACLE | Layers.PALISADE_OBSTACLE
 	# Любое готовое здание — препятствие навмеша: гномы/скелеты огибают его,
 	# между зданиями остаются проходы-«улицы» (BuildGrid дёргает ребейк через
-	# Camp.buildings_changed). Слой CAMP_OBSTACLE уже в маске навмеша (mask=33).
+	# Camp.buildings_changed). Здание — RigidBody3D, поэтому навмеш видит его НЕ
+	# по коллайдеру (STATIC_COLLIDERS парсит только StaticBody3D), а по МЕШУ:
+	# main.tscn parsed_geometry_type=BOTH парсит и меши группы. Процедурный меш
+	# здания на CPU — без GPU-readback. Занятые структуры (башня/харвестер/
+	# палатка) в группе НЕ состоят — их не выгрызаем (юниты в них живут).
 	add_to_group(&"navmesh_source")
 	if wall_thin:
 		add_to_group(Enemy.MELEE_ONLY_TARGET_GROUP)
@@ -330,9 +343,11 @@ func _rebuild_collision() -> void:
 	var c := Vector3(0.0, 0.0, -(inner_radius + outer_radius) * 0.5)
 	var half := deg_to_rad(sector_deg) * 0.5
 	var n_sub: int = maxi(1, int(ceil(sector_deg / MAX_WEDGE_DEG)))
+	var carve := _prepare_nav_carve()  # StaticBody-проксти для навмеша (или null у ворот)
 	for i in range(n_sub):
 		var a0: float = -half + (float(i) / float(n_sub)) * (2.0 * half)
 		var a1: float = -half + (float(i + 1) / float(n_sub)) * (2.0 * half)
+		var wedge := _build_wedge_convex(c, a0, a1)
 		var cs: CollisionShape3D
 		if i == 0:
 			cs = _collision
@@ -340,8 +355,31 @@ func _rebuild_collision() -> void:
 			cs = CollisionShape3D.new()
 			add_child(cs)
 			_collision_extra.append(cs)
-		cs.shape = _build_wedge_convex(c, a0, a1)
+		cs.shape = wedge
 		cs.position = Vector3.ZERO
+		# Та же форма — на carve-проксти (навмеш выгрызает здание по ней).
+		if carve != null:
+			var ncs := CollisionShape3D.new()
+			ncs.shape = wedge
+			carve.add_child(ncs)
+
+
+## Готовит/очищает carve-proxy для навмеша и возвращает его (null для ворот —
+## они проход, не выгрызаются). Шейпы добавляет вызывающий _rebuild_collision.
+func _prepare_nav_carve() -> StaticBody3D:
+	if is_gate():
+		return null
+	if _nav_carve == null:
+		_nav_carve = StaticBody3D.new()
+		# Слой NAV_CARVE: навмеш его парсит (в маске сцены), физически никто не
+		# маскирует → проксти инертна. mask=0 — сама ни с кем не сталкивается.
+		_nav_carve.collision_layer = Layers.NAV_CARVE
+		_nav_carve.collision_mask = 0
+		add_child(_nav_carve)
+	else:
+		for ch in _nav_carve.get_children():
+			ch.queue_free()
+	return _nav_carve
 
 
 ## Convex-клин одной угловой под-дуги [a0,a1] (тот же локальный фрейм, что и меш).
@@ -414,11 +452,20 @@ func _build_wall_mesh() -> ArrayMesh:
 	var crenel_top := y_top - height * clampf(wall_tooth_frac, 0.05, 0.9)
 	# Сплошное тело стены до уровня проёмов (на всю дугу — соседние тела смыкаются).
 	_add_arc_box(st, c, -half, half, y_bottom, crenel_top)
-	# Мерлоны с метрически-выровненным шагом: центры на -half + k·T (k=0..m),
-	# где T подобран так, что период ≈ wall_merlon_arc по арк-длине. Крайние
-	# мерлоны (k=0, k=m) обрезаны краем сегмента → ПОЛОВИНКИ: у двух соседних
-	# стен они складываются в цельный зубец на стыке. Мерлон = ±T/4 вокруг центра
-	# (половина периода — зубец, половина — проём).
+	# Крепостной верх — мерлоны. Вынесено в _add_merlon_crest: тот же гребень
+	# переиспользуют ворота (GateBlock), чтобы их верх продолжал верх стены.
+	_add_merlon_crest(st, c, half, crenel_top, y_top)
+	return st.commit()
+
+
+## Крепостной верх — мерлоны с метрически-выровненным шагом: центры на
+## -half + k·T (k=0..m), где T подобран так, что период ≈ wall_merlon_arc по
+## арк-длине. Крайние мерлоны (k=0, k=m) обрезаны краем сегмента → ПОЛОВИНКИ:
+## у двух соседних блоков они складываются в цельный зубец на стыке (ровный
+## гребень без шва). Мерлон = ±T/4 вокруг центра (половина периода — зубец,
+## половина — проём). Используют и стена (_build_wall_mesh), и ворота
+## (GateBlock._build_gate_mesh) — единый крепостной гребень.
+func _add_merlon_crest(st: SurfaceTool, c: Vector3, half: float, crenel_top: float, y_top: float) -> void:
 	var mid_r := (inner_radius + outer_radius) * 0.5
 	var arc_len := 2.0 * half * mid_r
 	var m := maxi(1, int(round(arc_len / maxf(wall_merlon_arc, 0.2))))
@@ -431,7 +478,6 @@ func _build_wall_mesh() -> ArrayMesh:
 		if a1 - a0 > 0.0001:
 			# Лёгкое перекрытие с телом, чтобы не было копланарных граней.
 			_add_arc_box(st, c, a0, a1, crenel_top - 0.03, y_top)
-	return st.commit()
 
 
 ## Тонкая дуговая коробка (кольцевой сектор-слэб) inner..outer × [a0,a1] × [y0,y1]

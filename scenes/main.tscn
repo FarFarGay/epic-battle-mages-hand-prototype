@@ -3,8 +3,6 @@
 [ext_resource type="PackedScene" path="res://scenes/tower.tscn" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/hand.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/camera_rig.tscn" id="3"]
-[ext_resource type="Shader" uid="uid://ufuibij83crl" path="res://resources/grid.gdshader" id="5"]
-[ext_resource type="Texture2D" uid="uid://cway2bqfxljaa" path="res://resources/ground_noise.tres" id="5_noise"]
 [ext_resource type="Script" uid="uid://g47nmagw0cfh" path="res://scripts/enemy_spawner.gd" id="6"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="7"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton_giant.tscn" id="7_giant"]
@@ -31,18 +29,18 @@
 [ext_resource type="PackedScene" path="res://scenes/build_block.tscn" id="29_buildblock"]
 [ext_resource type="Script" uid="uid://bdmyhgso4vop7" path="res://scripts/match_goal.gd" id="29_match_goal"]
 [ext_resource type="PackedScene" path="res://scenes/win_overlay.tscn" id="30_win_overlay"]
-[ext_resource type="PackedScene" path="res://scenes/defeat_overlay.tscn" id="43_defeat_overlay"]
 [ext_resource type="PackedScene" path="res://scenes/key_item.tscn" id="31_key_item"]
 [ext_resource type="PackedScene" path="res://scenes/gate.tscn" id="32_gate"]
 [ext_resource type="PackedScene" path="res://scenes/boss_warning_overlay.tscn" id="33_boss_warning"]
 [ext_resource type="PackedScene" path="res://scenes/day_night_overlay.tscn" id="34_day_night"]
 [ext_resource type="Shader" uid="uid://ca6silla7wl60" path="res://resources/oklch_posterize.gdshader" id="35_posterize"]
 [ext_resource type="Shader" uid="uid://cpo2ysnx8vuk6" path="res://resources/soft_focus.gdshader" id="36_softfocus"]
-[ext_resource type="Texture2D" path="res://textures/ground_05/ground_05_1k/ground_05_baseColor_1k.png" id="38_gbase"]
-[ext_resource type="Texture2D" path="res://textures/ground_05/ground_05_1k/ground_05_normal_gl_1k.png" id="39_gnorm"]
-[ext_resource type="Texture2D" path="res://textures/ground_05/ground_05_1k/ground_05_roughness_1k.png" id="40_grough"]
-[ext_resource type="Texture2D" path="res://textures/ground_05/ground_05_1k/ground_05_ambientOcclusion_1k.png" id="41_gao"]
-[ext_resource type="Texture2D" path="res://textures/sky_121/sky_121_2k.png" id="42_skypano"]
+[ext_resource type="Texture2D" uid="uid://cgyb0oifaq4m8" path="res://textures/ground_05/ground_05_1k/ground_05_baseColor_1k.png" id="38_gbase"]
+[ext_resource type="Texture2D" uid="uid://di8gddh0u0l5" path="res://textures/ground_05/ground_05_1k/ground_05_normal_gl_1k.png" id="39_gnorm"]
+[ext_resource type="Texture2D" uid="uid://cimemni2dnnkn" path="res://textures/ground_05/ground_05_1k/ground_05_roughness_1k.png" id="40_grough"]
+[ext_resource type="Texture2D" uid="uid://4c6g0nlssgah" path="res://textures/ground_05/ground_05_1k/ground_05_ambientOcclusion_1k.png" id="41_gao"]
+[ext_resource type="Texture2D" uid="uid://n70qvixmgm0p" path="res://textures/sky_121/sky_121_2k.png" id="42_skypano"]
+[ext_resource type="PackedScene" path="res://scenes/defeat_overlay.tscn" id="43_defeat_overlay"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("42_skypano")
@@ -94,7 +92,7 @@ shader_parameter/blur_size = 2.5
 
 [sub_resource type="NavigationMesh" id="NavMesh_main"]
 geometry_parsed_geometry_type = 1
-geometry_collision_mask = 33
+geometry_collision_mask = 4129
 geometry_source_geometry_mode = 1
 geometry_source_group_name = &"navmesh_source"
 cell_size = 0.5
@@ -106,15 +104,14 @@ size = Vector3(300, 1, 300)
 
 [sub_resource type="StandardMaterial3D" id="Material_ground"]
 albedo_texture = ExtResource("38_gbase")
+roughness_texture = ExtResource("40_grough")
 normal_enabled = true
 normal_texture = ExtResource("39_gnorm")
-roughness = 1.0
-roughness_texture = ExtResource("40_grough")
 ao_enabled = true
 ao_texture = ExtResource("41_gao")
+uv1_scale = Vector3(0.2, 0.2, 0.2)
 uv1_triplanar = true
 uv1_world_triplanar = true
-uv1_scale = Vector3(0.2, 0.2, 0.2)
 
 [sub_resource type="BoxMesh" id="BoxMesh_ground"]
 size = Vector3(300, 1, 300)
@@ -269,7 +266,7 @@ script = ExtResource("29_match_goal")
 
 [node name="WinOverlay" parent="." unique_id=1844001133 instance=ExtResource("30_win_overlay")]
 
-[node name="DefeatOverlay" parent="." instance=ExtResource("43_defeat_overlay")]
+[node name="DefeatOverlay" parent="." unique_id=2083106562 instance=ExtResource("43_defeat_overlay")]
 
 [node name="BossWarningOverlay" parent="." unique_id=2065930471 instance=ExtResource("33_boss_warning")]
 

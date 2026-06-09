@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bh5j6k1xurm6s"
-path="res://.godot/imported/metal_pattern_01_height_1k.png-b764185f61c02354b62c77bde2783bd0.ctex"
+path="res://.godot/imported/metal_pattern_01_height_1k.png-fdab9eb74cecde6e32c8a4ff8b1c5c22.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://Textures/metal_pattern_01/metal_pattern_01_1k/metal_pattern_01_height_1k.png"
-dest_files=["res://.godot/imported/metal_pattern_01_height_1k.png-b764185f61c02354b62c77bde2783bd0.ctex"]
+source_file="res://textures/metal_pattern_01/metal_pattern_01_1k/metal_pattern_01_height_1k.png"
+dest_files=["res://.godot/imported/metal_pattern_01_height_1k.png-fdab9eb74cecde6e32c8a4ff8b1c5c22.ctex"]
 
 [params]
 

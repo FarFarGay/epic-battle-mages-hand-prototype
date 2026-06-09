@@ -191,7 +191,10 @@ var _visual_base_basis: Basis = Basis()
 func _ready() -> void:
 	add_to_group(GROUP)
 	Damageable.register(self)
-	# Источник геометрии для NavMesh — башня препятствие, гномы её обходят.
+	# В navmesh_source номинально, но НЕ выгрызается: башня — CharacterBody3D, а
+	# навмеш (STATIC_COLLIDERS) парсит коллайдеры только у StaticBody3D. Это и
+	# нужно: башня — дом гномов, выгрызать её нельзя (дом стал бы недостижим).
+	# Физически башня всё равно препятствие (коллайдер), юниты упираются.
 	add_to_group(&"navmesh_source")
 	hp = max_hp
 	mana = max_mana
