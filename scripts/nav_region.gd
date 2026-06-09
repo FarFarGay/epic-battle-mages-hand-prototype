@@ -38,13 +38,16 @@ func _on_bake_finished() -> void:
 	EventBus.navmesh_baked.emit()
 
 
-## Re-bake. Вызывать после спавна/удаления статической геометрии
-## (палисад-line, новая палатка). Sync bake (on_thread=false) — async вариант
-## в `--headless` режиме давал polygons=0 из NavigationServer thread'а;
-## sync blocking 100-200мс на main thread'е терпимо, и navmesh гарантированно
-## готов к моменту возврата.
+## Re-bake. Вызывать после спавна/удаления статической геометрии.
+## В ИГРЕ — async (on_thread=true): bake идёт в фоновом потоке, главный поток НЕ
+## блокируется (карта 300×300 при cell_size=0.3 = ~1M ячеек, sync давал «адские
+## пролаги» на каждой постройке). Пока bake идёт, агенты используют старый navmesh;
+## по готовности bake_finished → EventBus.navmesh_baked → агенты пересчитают путь.
+## В `--headless` async даёт polygons=0 (баг bake'а из server-thread'а) → там sync,
+## чтобы verify-прогоны видели реальную геометрию.
 func rebake() -> void:
 	if navigation_mesh == null:
 		push_warning("[NavRegion] navigation_mesh не задан — bake пропущен")
 		return
-	bake_navigation_mesh(false)
+	var on_thread: bool = not OS.has_feature("headless")
+	bake_navigation_mesh(on_thread)

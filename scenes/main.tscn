@@ -95,8 +95,8 @@ geometry_parsed_geometry_type = 1
 geometry_collision_mask = 4129
 geometry_source_geometry_mode = 1
 geometry_source_group_name = &"navmesh_source"
-cell_size = 0.5
-agent_radius = 0.4
+cell_size = 0.3
+agent_radius = 0.3
 agent_max_climb = 0.5
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ground"]

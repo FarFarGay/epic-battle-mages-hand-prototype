@@ -567,12 +567,28 @@ func _charge_building(block: CampModule) -> bool:
 
 func _place_run(block: CampModule, r: int, s: int, fp: int) -> void:
 	# Стены (wall_thin) — без зазора, на всю ячейку: смыкаются в сплошной барьер.
-	var gapless: bool = block is BuildBlock and (block as BuildBlock).wall_thin
+	# Ворота тоже thin, но НЕ расширяются к зданиям (это проход) — gapless для них
+	# только для смыкания со стенами.
+	var is_wall: bool = block is BuildBlock and (block as BuildBlock).wall_thin
+	var gapless: bool = is_wall
 	var dims: Dictionary = tier_cell_dims(r, fp, gapless)
+	var seg_deg: float = float(dims["seg_deg"])
+	var ang_offset_rad: float = 0.0
+	# Прилегание стены к зданию: если угловой сосед (s±1) — готовое НЕ-стенное
+	# здание, стена удлиняет дугу на gap/2 в ту сторону, закрывая щель-«улицу»
+	# (и физическую дыру в периметре, и карман навмеша). К соседям-стенам стена
+	# уже смыкается (gapless), к пустым/воротам не тянется.
+	if is_wall and not (block as BuildBlock).is_gate() and fp == 1:
+		var e: Vector2 = _wall_ext_deg(r, s)  # (ext к s-1, ext к s+1) в градусах
+		seg_deg += e.x + e.y
+		ang_offset_rad = deg_to_rad((e.y - e.x) * 0.5)  # сдвиг центра к стороне расширения
 	if block is BuildBlock:
-		(block as BuildBlock).conform_to_cell(dims["inner"], dims["outer"], dims["seg_deg"])
+		(block as BuildBlock).conform_to_cell(dims["inner"], dims["outer"], seg_deg)
 	block.attach_to_slot(self)
-	var world_center := to_global(_run_center_local(r, s, fp))
+	# Позиция = центр ячейки (+ угловой сдвиг при асимметричном расширении стены).
+	var mid: float = _ring_inner(r) + ring_band * 0.5
+	var place_ang: float = (float(s) + float(fp) * 0.5) * TAU / float(maxi(segment_counts[r], 1)) + ang_offset_rad
+	var world_center := to_global(Vector3(cos(place_ang) * mid, 0.0, sin(place_ang) * mid))
 	block.global_position = world_center + Vector3(0.0, block.mount_lift, 0.0)
 	# Лицом к ядру (горизонтально, без наклона — цель на высоте блока).
 	var face := Vector3(global_position.x, block.global_position.y, global_position.z)
@@ -604,6 +620,11 @@ func _place_run(block: CampModule, r: int, s: int, fp: int) -> void:
 			bb.destroyed.connect(_on_block_destroyed.bind(bb))
 	if debug_log and LogConfig.master_enabled:
 		print("[BuildGrid] стройка ×%d начата: кольцо %d сегмент %d (%s)" % [fp, r, s, str((block as BuildBlock).building_id) if block is BuildBlock else "?"])
+	# Поставили НЕ-стену (здание) → подтянуть к нему соседние стены (прилегание
+	# независимо от порядка: стена могла стоять до здания). Для стен не нужно —
+	# они сами учли соседей при установке.
+	if not is_wall:
+		_reconform_all_walls()
 	buildings_changed.emit()
 
 
@@ -623,6 +644,9 @@ func _on_block_destroyed(block) -> void:
 			freed = true
 	if freed and debug_log and LogConfig.master_enabled:
 		print("[BuildGrid] здание разрушено — ячейки освобождены")
+	# Здание снесли → соседние стены отлипают обратно (убираем расширение к нему).
+	if block is BuildBlock and not (block as BuildBlock).wall_thin:
+		_reconform_all_walls()
 	buildings_changed.emit()
 
 
@@ -661,6 +685,63 @@ func _run_placeable(r: int, segs: Array) -> bool:
 			if nc != null and nc["block"] != null:
 				return true
 	return false
+
+
+## True если ячейка (r,s) занята готовым/строящимся НЕ-стенным зданием
+## (генератор/казарма/портал — wall_thin=false). К таким стена прилегает
+## (расширяет дугу, см. _place_run). Стены/ворота (thin) и пустые ячейки — нет
+## (к стене стена уже смыкается gapless, ворота — проход).
+func _cell_has_building(r: int, s: int) -> bool:
+	var c = _cell_at(r, s)
+	if c == null:
+		return false
+	var b = c["block"]
+	return b != null and is_instance_valid(b) and b is BuildBlock \
+		and not (b as BuildBlock).wall_thin
+
+
+## Угловое расширение дуги стены (град) к каждому соседу: (к s-1, к s+1).
+## gap_deg/2 в сторону, где стоит НЕ-стенное здание — стена дотянется до него,
+## закрыв щель-«улицу». Общий расчёт для установки (_place_run) и пересчёта
+## (_reconform_wall).
+func _wall_ext_deg(r: int, s: int) -> Vector2:
+	var cnt: int = maxi(segment_counts[r], 1)
+	var inner: float = _ring_inner(r)
+	var ext: float = rad_to_deg(cell_gap_m / maxf(inner, 0.01)) * 0.5  # gap_deg/2
+	var m: float = ext if _cell_has_building(r, (s - 1 + cnt) % cnt) else 0.0
+	var p: float = ext if _cell_has_building(r, (s + 1) % cnt) else 0.0
+	return Vector2(m, p)
+
+
+## Пересчитать геометрию уже стоящей стены под ТЕКУЩИХ соседей: здание могло
+## появиться/исчезнуть рядом ПОСЛЕ установки стены. Тянет дугу к зданию-соседу
+## (или убирает расширение, если здание снесли). Зовётся из _reconform_all_walls.
+func _reconform_wall(wall: BuildBlock, r: int, s: int) -> void:
+	if wall == null or not is_instance_valid(wall) or not wall.wall_thin or wall.is_gate():
+		return
+	var dims: Dictionary = tier_cell_dims(r, 1, true)
+	var e: Vector2 = _wall_ext_deg(r, s)
+	var seg_deg: float = float(dims["seg_deg"]) + e.x + e.y
+	var ang_offset_rad: float = deg_to_rad((e.y - e.x) * 0.5)
+	wall.conform_to_cell(dims["inner"], dims["outer"], seg_deg)
+	var mid: float = _ring_inner(r) + ring_band * 0.5
+	var place_ang: float = (float(s) + 0.5) * TAU / float(maxi(segment_counts[r], 1)) + ang_offset_rad
+	var wc := to_global(Vector3(cos(place_ang) * mid, 0.0, sin(place_ang) * mid))
+	wall.global_position = wc + Vector3(0.0, wall.mount_lift, 0.0)
+	var face := Vector3(global_position.x, wall.global_position.y, global_position.z)
+	wall.look_at(face, Vector3.UP)
+
+
+## Пересчитать прилегание ВСЕХ стен — зовётся при изменении набора зданий
+## (здание поставлено/снесено), чтобы стены подтянулись/отлипли независимо от
+## порядка постройки. Стен немного, пересчёт дешёвый.
+func _reconform_all_walls() -> void:
+	for r in range(_rings.size()):
+		var cnt: int = segment_counts[r]
+		for s in range(cnt):
+			var b = _rings[r][s]["block"]
+			if b is BuildBlock and (b as BuildBlock).wall_thin and not (b as BuildBlock).is_gate():
+				_reconform_wall(b as BuildBlock, r, s)
 
 
 ## Размеры ячейки кольца tier (inner/outer/seg_deg) — чтобы здание в руке сразу

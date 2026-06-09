@@ -332,6 +332,24 @@ const NAV_SET_INTERVAL: float = 0.2
 ## позволяло проходить сквозь тонкую стенку если goal был за ней в 1.4м.
 const NAV_DIRECT_RADIUS: float = 0.5
 
+## --- DEBUG: диагностика патфайндинга (временно, выключить после разбора) ---
+## true → ОДИН гном (первый занявший слот) раз в NAV_DBG_INTERVAL печатает
+## разбор _resolve_path_step: какая ветка сработала, размер пути навмеша,
+## is_navigation_finished, off-navmesh дистанции себя и цели. Цель — понять,
+## ВЫГРЫЗАЕТ ли навмеш здания (pathPts=2 на дальней цели = нет дыр) или гном не
+## следует пути (pathPts>2, а ветка = FINISHED→goal). Также включает отрисовку
+## пути у ВСЕХ агентов (видна при Debug→Visible Navigation в редакторе).
+static var nav_debug: bool = true
+static var _nav_dbg_owner_id: int = 0
+const NAV_DBG_INTERVAL: float = 0.5
+var _nav_dbg_next: float = 0.0
+## Дистанция (м) до ближайшей точки навмеша, дальше которой гном считается «вне
+## навмеша» (вытолкнут в навмеш-less карман — напр. стык стена↔здание) и сперва
+## возвращается на навмеш, а не идёт по вырожденному пути. 0.3 ловит и мелкие
+## карманы; гнома, прижатого коллизией к стене (~0.05-0.15 за край навмеша),
+## ложно НЕ триггерит.
+const OFF_NAVMESH_RECOVER: float = 0.3
+
 ## Размер cell'а в spatial-grid'е куч ресурсов. Сейчас grid используется
 ## глобальным поиском _find_nearest_pile (полный обход keys), но cell-структура
 ## оставлена под будущий spiral-search и под старый код _pile_cell.
@@ -389,6 +407,17 @@ func setup(camp: Camp, home_tent: Node3D) -> void:
 func _ready() -> void:
 	# До setup просто стоим. Без камп-ссылки FSM не имеет смысла.
 	visible = false
+	# Физ-коллизия со стенами/зданиями/харвестером — backstop к навмешу. Слой
+	# PALISADE_OBSTACLE есть у BuildBlock/палисада/харвестера (544), но НЕ у палаток
+	# (32, CAMP_OBSTACLE-only) и НЕ у ворот (WALL_GATE_BLOCK). Без коллизии гном
+	# (mask=TERRAIN) ЗАХОДИЛ в выгрызенную дыру здания → оказывался off-navmesh →
+	# путь вырождался (pathPts=2) → залипал. Теперь навмеш ведёт в обход, а стена
+	# твёрдая не пускает внутрь. Палатки (дом), ворота (для своих), других гномов
+	# и скелетов (FRIENDLY_UNIT/ENEMIES вне маски) — по-прежнему проходит насквозь.
+	collision_mask = Layers.TERRAIN | Layers.PALISADE_OBSTACLE
+	# DEBUG: отрисовка пути агента (видна при Debug→Visible Navigation в редакторе).
+	if nav_debug and _nav_agent != null:
+		_nav_agent.debug_enabled = true
 	Damageable.register(self)
 	Pushable.register(self)
 	add_to_group(GNOME_GROUP)
@@ -1255,28 +1284,88 @@ func _sprint_speed_for(dist: float) -> float:
 ## `_move_toward_xz` автоматически.
 func _resolve_path_step(goal: Vector3) -> Vector3:
 	if _nav_agent == null:
+		_nav_log("NULL_AGENT→goal", goal, Vector3.INF)
 		return goal
 	# На близких целях path-расчёт даёт «дрожащий» next_position — идём прямо.
 	var goal_xz := Vector2(goal.x - global_position.x, goal.z - global_position.z)
 	if goal_xz.length_squared() <= NAV_DIRECT_RADIUS * NAV_DIRECT_RADIUS:
+		_nav_log("DIRECT_NEAR→goal", goal, goal)
 		return goal
-	# Цель ставим как есть: NavAgent сам клампит off-navmesh target (депозит у
-	# харвестера — точка ВНУТРИ выгрызенной дыры) к ближайшей точке навмеша при
-	# расчёте пути. Путь огибает выгрызенные здания/стены/харвестер.
-	_nav_agent.target_position = goal
-	_nav_last_target = goal
-	# Safety: NavAgent ещё не построил path или цель недостижима →
-	# is_navigation_finished()=true. Fallback на прямой goal — лучше упереться,
-	# чем стоять столбом. На достижимой цели срабатывает только по прибытии.
+	var map: RID = _nav_agent.get_navigation_map()
+	if not map.is_valid():
+		_nav_log("NO_MAP→goal", goal, goal)
+		return goal
+	# Off-navmesh recovery: гном вне навмеша (вытолкнут сепарацией/ребейком в
+	# навмеш-less карман между зданиями — щель ýже agent_radius) → сперва ведём его
+	# к ближайшей точке навмеша. Иначе путь со off-mesh старта вырождается (pathPts=2)
+	# и гном залипает. Навмеш корректен (здания выгрызены) → вернувшись, строит
+	# обходной путь и не лезет обратно. Guard от ZERO (незапечённая карта).
+	var self_snap: Vector3 = NavigationServer3D.map_get_closest_point(map, global_position)
+	var self_off: float = Vector2(self_snap.x - global_position.x, self_snap.z - global_position.z).length()
+	var self_zero_bug: bool = self_snap.length_squared() < VecUtil.EPSILON_SQ and global_position.length_squared() > 1.0
+	if self_off > OFF_NAVMESH_RECOVER and not self_zero_bug:
+		_nav_log("OFF_MESH→back", goal, self_snap)
+		return self_snap
+	# Снап цели к ближайшей точке навмеша. Цель часто лежит ВНУТРИ выгрызенной
+	# дыры (idle-точка в здании, депозит у харвестера) — а гном к недостижимой
+	# in-hole цели шёл бы по прямой и КЛИПАЛ сквозь. Снап = достижимая точка на
+	# краю навмеша → путь огибает здания, на терминале гном встаёт у стены.
+	var safe_goal: Vector3 = goal
+	var snapped: Vector3 = NavigationServer3D.map_get_closest_point(map, goal)
+	if not (snapped.length_squared() < VecUtil.EPSILON_SQ and goal.length_squared() > 1.0):
+		safe_goal = snapped
+	_nav_agent.target_position = safe_goal
+	_nav_last_target = safe_goal
+	# Путь исчерпан (дошли до достижимого края у цели) → возвращаем safe_goal, НЕ
+	# сырой goal: гном останавливается на навмеше, не клипает в дыру.
 	if _nav_agent.is_navigation_finished():
-		return goal
+		_nav_log("FINISHED→safe", goal, safe_goal)
+		return safe_goal
 	var next_pos: Vector3 = _nav_agent.get_next_path_position()
 	# Waypoint впритык к текущей позиции (< 0.2м) → агент «на» waypoint'е, но
-	# path ещё не advance'ил. Прямой goal как fallback.
+	# path ещё не advance'ил. safe_goal как fallback (достижимая точка, не сквозь стену).
 	var to_next := Vector2(next_pos.x - global_position.x, next_pos.z - global_position.z)
 	if to_next.length_squared() < 0.04:
-		return goal
+		_nav_log("WP_TOO_CLOSE→safe", goal, safe_goal)
+		return safe_goal
+	_nav_log("WAYPOINT", goal, next_pos)
 	return next_pos
+
+
+## DEBUG: разбор одного шага патфайндинга (см. [nav_debug]). Логирует ТОЛЬКО
+## один гном-владелец слота (первый позвавший), throttle NAV_DBG_INTERVAL.
+## Ключевые поля: pathPts (точек в пути навмеша — 2 на дальней цели = НЕТ дыр,
+## навмеш не выгрызает здания), branch (какая ветка), fin (is_navigation_finished),
+## selfOff/goalOff (насколько гном/цель вне навмеша — большой selfOff = гном в дыре).
+func _nav_log(branch: String, goal: Vector3, _step: Vector3) -> void:
+	if not nav_debug:
+		return
+	if _nav_dbg_owner_id == 0:
+		_nav_dbg_owner_id = get_instance_id()
+	if get_instance_id() != _nav_dbg_owner_id:
+		return
+	var now: float = float(Time.get_ticks_msec()) / 1000.0
+	if now < _nav_dbg_next:
+		return
+	_nav_dbg_next = now + NAV_DBG_INTERVAL
+	var map_ok := false
+	var path_size := -1
+	var finished := false
+	var self_off := -1.0
+	var goal_off := -1.0
+	if _nav_agent != null:
+		var map: RID = _nav_agent.get_navigation_map()
+		map_ok = map.is_valid()
+		path_size = _nav_agent.get_current_navigation_path().size()
+		finished = _nav_agent.is_navigation_finished()
+		if map_ok:
+			var sp: Vector3 = NavigationServer3D.map_get_closest_point(map, global_position)
+			self_off = Vector2(sp.x - global_position.x, sp.z - global_position.z).length()
+			var gp: Vector3 = NavigationServer3D.map_get_closest_point(map, goal)
+			goal_off = Vector2(gp.x - goal.x, gp.z - goal.z).length()
+	print("[NavDbg:%s] %-18s st=%s d→goal=%.1f map=%s pathPts=%d fin=%s selfOff=%.2f goalOff=%.2f" % [
+		name, branch, State.keys()[_state], _horizontal_distance(goal), str(map_ok),
+		path_size, str(finished), self_off, goal_off])
 
 
 func _horizontal_distance(target: Vector3) -> float:
@@ -1406,7 +1495,26 @@ func _random_point_around(center: Vector3, radius: float, inner: float = 0.0) ->
 	# близко к краю и idle_radius уводит за пределы пола.
 	p.x = clampf(p.x, -wander_map_half_extent, wander_map_half_extent)
 	p.z = clampf(p.z, -wander_map_half_extent, wander_map_half_extent)
-	return p
+	# Снап к навмешу: idle-кольцо вокруг харвестера перекрыто дырами зданий —
+	# случайная точка часто падает ВНУТРЬ дыры (недостижима, гном залипает у края
+	# и вдавливается в неё). Проецируем на ближайшую точку навмеша → idle-цель
+	# всегда достижима, arrival срабатывает, гном нормально бродит по проходам.
+	return _snap_to_navmesh(p)
+
+
+## Проекция точки на ближайшую точку навмеша (для idle-целей, чтобы не падали в
+## выгрызенные дыры зданий). Если nav/карта недоступны или карта пуста (снап в
+## ZERO далеко от исходной точки) — возвращаем исходную (без снапа).
+func _snap_to_navmesh(p: Vector3) -> Vector3:
+	if _nav_agent == null:
+		return p
+	var map: RID = _nav_agent.get_navigation_map()
+	if not map.is_valid():
+		return p
+	var snapped: Vector3 = NavigationServer3D.map_get_closest_point(map, p)
+	if snapped.length_squared() < VecUtil.EPSILON_SQ and p.length_squared() > 1.0:
+		return p  # карта не запечена (ZERO) — не снапим
+	return snapped
 
 
 func _pickup_carry() -> void:

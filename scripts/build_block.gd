@@ -273,14 +273,20 @@ func _activate_combat() -> void:
 	collision_layer = Layers.CAMP_OBSTACLE | Layers.PALISADE_OBSTACLE
 	# Любое готовое здание — препятствие навмеша: гномы/скелеты огибают его,
 	# между зданиями остаются проходы-«улицы» (BuildGrid дёргает ребейк через
-	# Camp.buildings_changed). Здание — RigidBody3D, поэтому навмеш видит его НЕ
-	# по коллайдеру (STATIC_COLLIDERS парсит только StaticBody3D), а по МЕШУ:
-	# main.tscn parsed_geometry_type=BOTH парсит и меши группы. Процедурный меш
-	# здания на CPU — без GPU-readback. Занятые структуры (башня/харвестер/
-	# палатка) в группе НЕ состоят — их не выгрызаем (юниты в них живут).
+	# Camp.buildings_changed). Здание — RigidBody3D, навмеш (STATIC_COLLIDERS)
+	# его коллайдер не парсит → выгрызается через carve-proxy (дочерний StaticBody
+	# на NAV_CARVE, см. _prepare_nav_carve). В группе navmesh_source состоит само
+	# здание; парсер GROUPS_WITH_CHILDREN рекурсивно доходит до proxy-ребёнка.
 	add_to_group(&"navmesh_source")
 	if wall_thin:
 		add_to_group(Enemy.MELEE_ONLY_TARGET_GROUP)
+	# DEBUG (Gnome.nav_debug): подтверждаем, что carve-proxy создан и со шейпами —
+	# если их 0 или proxy==null, навмеш здание НЕ выгрызет (гномы пойдут сквозь).
+	if Gnome.nav_debug:
+		var shapes := _nav_carve.get_child_count() if _nav_carve != null else -1
+		print("[CarveDbg:%s] id=%s navmesh_source=%s proxy=%s proxyShapes=%d layer=%d" % [
+			name, str(building_id), str(is_in_group(&"navmesh_source")),
+			str(_nav_carve != null), shapes, (_nav_carve.collision_layer if _nav_carve != null else -1)])
 
 
 ## Здание поднято рукой для переноса (BuildGrid зовёт на захвате). Снимаем боевое
