@@ -2926,49 +2926,53 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 
 ### 5.13 NavMesh и Pathfinding — `scripts/nav_region.gd`
 
-Добавлен 2026-05-13 для палисадной системы — гномы должны обходить стены, скелеты решать «обходить или ломать». Реализован через Godot `NavigationServer3D` + `NavigationRegion3D` + `NavigationAgent3D` на каждом подвижном агенте.
+Добавлен 2026-05-13 для палисадной системы; **переработан 2026-06-09** под грид-строительство (здания/стены/ворота — реальные препятствия, гномы ходят по «улицам» между ними). Реализован через Godot `NavigationServer3D` + `NavigationRegion3D` + `NavigationAgent3D` на каждом подвижном агенте.
 
 #### Архитектура
 
-**NavigationRegion3D** в `main.tscn` с `class_name`-less скриптом `nav_region.gd`. Параметры NavMesh (sub_resource):
-- `geometry_source_geometry_mode = 1` (`SOURCE_GEOMETRY_GROUPS_WITH_CHILDREN`) — **критично**. Default mode (`ROOT_NODE_CHILDREN`) сканирует только детей NavRegion'а — Ground/Tower/палатки/палисады на одном уровне с ним → bake возвращал 0 polygons. Group-based позволяет источникам быть где угодно в сцене.
+**NavigationRegion3D** в `main.tscn` с `class_name`-less скриптом `nav_region.gd`. Параметры NavMesh (sub_resource), актуальные значения:
+- `geometry_parsed_geometry_type = 1` (`PARSED_GEOMETRY_STATIC_COLLIDERS`) — парсит **коллайдеры**, но **ТОЛЬКО у `StaticBody3D`** (RigidBody/CharacterBody игнорирует — см. carve-proxy ниже).
+- `geometry_source_geometry_mode = 1` (`SOURCE_GEOMETRY_GROUPS_WITH_CHILDREN`) — источники = группа + их дети (рекурсивно). Default `ROOT_NODE_CHILDREN` давал 0 polygons (источники не дети NavRegion'а).
 - `geometry_source_group_name = "navmesh_source"`.
-- `geometry_collision_mask = 33` (TERRAIN | CAMP_OBSTACLE). Палисад на dual-layer `CAMP_OBSTACLE | PALISADE_OBSTACLE` (544) — бит CAMP_OBSTACLE покрывает.
-- `agent_height = 1.5`, `agent_radius = 0.4`, `agent_max_climb = 0.5`, `cell_size = 0.5`, `cell_height = 0.5`.
+- `geometry_collision_mask = 4129` = `TERRAIN | CAMP_OBSTACLE | NAV_CARVE` (1 | 32 | 4096).
+- `agent_radius = 0.3`, `cell_size = 0.3`, `agent_max_climb = 0.5`.
 
-**Группа `navmesh_source`** — источники геометрии. Регистрируются:
-- Ground: через `groups=["navmesh_source"]` в `main.tscn` node-data.
-- CampPart (палатки), WatchBell, PalisadeSegment, PalisadePost, Tower — через `add_to_group(&"navmesh_source")` в их `_ready`.
-- **WallGate НЕ в группе** (2026-06-04): на месте 2 удалённых сегментов палисада появляется «дыра» в навмеше шириной 4м. Гномы (NavAgent3D, mask=TERRAIN) строят путь через проём как через любой пропуск — короткий шорткат вместо обхода. Скелеты тоже идут через проём (NavAgent зовёт их к ближайшей точке), но физически упираются в `WALL_GATE_BLOCK`-слой → атакуют ворота (они в `skeleton_target`). Это и есть «защитное узкое горло»: своим — проход, врагам — стена-цель.
+**Почему 0.3, а не 0.4 (2026-06-09):** навмеш ОБЩИЙ для гномов (капсула 0.2) и скелетов (0.4); по «улицам» грида (`RING_GAP`/`CELL_GAP_M` ≈ 1.4м, см. §5.17.2) ходят оба. Навмеш «ужимает» ходимую зону на `agent_radius` вокруг препятствий → при 0.4 улица 1.4м давала полосу `1.4−0.8=0.6м`, которую `cell_size=0.5` не вокселизировал → **карманы без навмеша**, куда гном (меньше) проваливался и залипал off-navmesh. `agent_radius 0.3 + cell_size 0.3` оставляет полосу 0.8м и резолвит её. Скелет (0.4) на такой полосе добирает недостающее коллизией.
+
+**Группа `navmesh_source` + carve-proxy.** Источники регистрируются `add_to_group(&"navmesh_source")`:
+- **Ground** (StaticBody, TERRAIN) — ходимая поверхность.
+- **Harvester** (StaticBody, CAMP_OBSTACLE), **PalisadeSegment/Post, Blocker** (StaticBody) — выгрызаются коллайдером (CAMP_OBSTACLE в маске).
+- **Tower** (CharacterBody) — в группе, но `STATIC_COLLIDERS` её НЕ парсит → **не выгрызается**. Это нужно: башня — дом гномов, дыра под ней сделала бы его недостижимым. Физически башня всё равно препятствие.
+- **BuildBlock (генераторы/казармы/портал/стены) — `RigidBody3D` → коллайдер не парсится.** Чтобы их всё-таки выгрызать — **carve-proxy** (`BuildBlock._prepare_nav_carve`): дочерний `StaticBody3D` на слое `NAV_CARVE` (1<<12=4096) с КОПИЕЙ под-клиньев коллизии. `NAV_CARVE` физически **никто не маскирует** → проксти инертна, влияет ТОЛЬКО на запекание навмеша. Парсер `GROUPS_WITH_CHILDREN` рекурсивно доходит до proxy-ребёнка RigidBody. (Альтернатива `parsed_geometry_type=BOTH` отвергнута — парсила бы импорт-меши башни/генератора с GPU-readback → возвращались «адские пролаги».)
+- **GateBlock (грид-ворота) — НЕ в `navmesh_source` и НЕ получает carve-proxy** (`_prepare_nav_carve` → null при `is_gate()`): навмеш видит проём → гномы строят путь СКВОЗЬ; физически гном проходит (его маска без `WALL_GATE_BLOCK`), скелет упирается. Защитное горло. См. §5.18.
 
 #### Жизненный цикл
 
-**Первичный bake** (на загрузке сцены): `NavRegionBaker._ready` → `call_deferred("rebake")` — defer до конца кадра, чтобы Camp успел спавнить палатки. Без defer'а первичный bake мог пройти до спавна палаток и не учесть их как препятствия.
+**Первичный bake**: `nav_region._ready` → `call_deferred("rebake")` (defer, чтобы дети сцены успели зарегистрироваться).
 
-**`rebake()`**: вызывает `bake_navigation_mesh(false)` (**sync**, on_thread=false). Async bake в `--headless` стабильно давал `polygons=0`; sync блокирует main thread 100-300мс, что приемлемо для одноразовой операции.
+**`rebake()`**: в ИГРЕ — `bake_navigation_mesh(true)` (**async**, фоновый поток) — карта 300×300 при `cell_size=0.3` это ~1M ячеек, sync давал фриз на каждой постройке. Пока bake идёт, агенты используют старый навмеш; `bake_finished` → `EventBus.navmesh_baked`. В `--headless` — sync (`OS.has_feature("headless")`), т.к. async там даёт `polygons=0` (а verify-прогонам нужна геометрия).
 
-**Триггеры re-bake:**
-- `Camp.try_build_palisade_line` — после спавна всех сегментов (один bake на всю линию, не per-сегмент).
-- `Camp._on_palisade_segment_destroyed` — на разрушении сегмента, через **debounced timer** (0.3с): множественные разрушения в кадре дают один bake.
-- `Camp._build_wall_gate` (2026-06-04) — после удаления 2 сегментов под зоной ворот и спавна `WallGate`. Без debounce'а — постройка ворот разовая операция. На месте 2 сегментов появляется навмеш-проём; гномы получают новый шорткат через ворота.
+**Триггеры re-bake** (через `Camp._request_debounced_rebake`, debounce 0.3с): `BuildGrid.buildings_changed` (постройка/завершение/снос здания), деплой харвестера, палисад build/destroy.
 
-**Сигнал `EventBus.navmesh_baked`** эмитится из `NavRegionBaker._on_bake_finished` после async/sync завершения. Слушают:
-- `Gnome._on_navmesh_baked` → `_nav_last_target = INF` (на следующем `_resolve_path_step` set_target_position сработает с новой геометрией).
-- `Skeleton._on_navmesh_baked` → `_recompute_path_decision()` синхронно по текущей цели (пересчёт hybrid-decision сразу, без ожидания vision_scan).
+**Сигнал `EventBus.navmesh_baked`**: `Gnome._on_navmesh_baked` → `_nav_last_target=INF`; `Skeleton._on_navmesh_baked` → `_recompute_path_decision()`.
 
 #### Агенты
 
-**Gnome / DefenderGnome / SoldierGnome:** `NavigationAgent3D` как child node, `avoidance_enabled=false`. Гномы используют ТОЛЬКО path-following (waypoint-based), не local avoidance (на сценах 100+ гномов avoidance давал бы перф-cost без значимой пользы). См. §5.8.
+**Gnome / SoldierGnome:** `NavigationAgent3D` (child, `avoidance_enabled=false`), path-following без local avoidance (перф на 100+ гномах). Ключевое (2026-06-09):
+- **`collision_mask = TERRAIN | PALISADE_OBSTACLE` (513)** — стены/здания/палисад/харвестер ТВЁРДЫЕ (бит `PALISADE_OBSTACLE` есть у них, но НЕ у ворот=`WALL_GATE_BLOCK` и НЕ у занятых-структур, которые на CAMP_OBSTACLE-only). Backstop к навмешу: без коллизии гном (раньше mask=TERRAIN) ЗАХОДИЛ в выгрызенную дыру → off-navmesh → залипал. Ворота/других гномов/скелетов (FRIENDLY_UNIT/ENEMIES вне маски) проходит насквозь.
+- **Физ-капсула 0.2** (визуальная 0.25) — навмеш держит центр гнома в 0.3м от стены (`agent_radius`), тело 0.2 → зазор 0.1м, не цепляет кромку проёма ворот.
+- **`_resolve_path_step`** (`gnome.gd`): снап цели к навмешу (`NavigationServer3D.map_get_closest_point` — цель типа депозита часто в дыре); **off-navmesh recovery** — если сам гном дальше `OFF_NAVMESH_RECOVER=0.3` от навмеша (вытолкнут в карман), сперва ведём к ближайшей точке навмеша (иначе путь со off-mesh старта вырождается, `pathPts=2`); `NAV_DIRECT_RADIUS=0.5` (близкая цель — прямо); guard от `Vector3.ZERO` (незапечённая карта).
+- **idle-точки** (`_random_point_around`) снапятся к навмешу (`_snap_to_navmesh`) — idle-кольцо вокруг ядра перекрыто дырами зданий, случайная точка падала в дыру.
+- **Диагностика:** `Gnome.nav_debug` (static) → `_nav_log` печатает разбор шага (ветка/pathPts/selfOff/goalOff) одного гнома; `BuildBlock` печатает `CarveDbg`. Выключить после отладки.
 
-**Skeleton:** `NavigationAgent3D` тоже как child, но используется **только в гибрид-режиме** (`_should_path_around=true`). Когда false (стена закрыта / обход > 2× прямого) — идёт прямо. См. §5.5.
+**Skeleton:** `NavigationAgent3D` в **гибрид-режиме** (`_should_path_around`); false (стена закрыта / обход > 2×) — прямо. См. §5.5.
 
-**Перф:** на 200+ скелетах с throttled `_set_cached_target` (~раз в 0.4с/LOD-multiplier на скелет) `NavigationServer3D.map_get_path` вызывается ~50-100 раз/сек. Godot NavServer обрабатывает sync без видимых лагов. На 100+ гномах `set_target_position` каждый кадр без throttle (NavAgent сам кэширует path при том же target).
+**Перф:** скелеты — throttled `_set_cached_target`; гномы — `set_target_position` каждый кадр (NavAgent кэширует path).
 
 #### Известные ограничения
 
-- **Перемещение палаток рукой** (release в build-zone) — NavMesh не пересчитывается. Гномы продолжают использовать старый path вокруг бывшей позиции палатки. На практике редкий кейс; если станет проблемой — добавить `_rebake_navmesh()` в `CampPart._on_hand_released` хук.
-- **WatchBell relocate** (pickup-relocate через build_aim) — также без re-bake'а. Тот же подход.
-- **Гномы не блокируются физически палисадом** (mask=TERRAIN only). Если pathfinding провалился (близкая цель в 0.5м dead-zone) — гном пройдёт сквозь стену. Это by-design (гномы лёгкие, физика не должна тормозить толпы).
+- **Депозит гномов заблокирован харвестером:** точка сдачи = `deploy_anchor` (центр ядра) выгрызена + гном в неё упирается → сдать нельзя. **НЕ чинится костылём** — планируется здание-СКЛАД (достижимая точка, расширяет кап ресурсов). См. §10 / memory.
+- **Прилегание стен к зданию** считается при изменении набора зданий (`_reconform_all_walls`); навмеш под изменённую стену перепекается общим debounced-rebake'ом.
 
 ---
 
@@ -3323,7 +3327,7 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 
 Заменил промежуточный `RingBase` (октагон фикс-слотов; **удалён**). Создаётся программно в `Camp._build_build_grid` (как `_anchor_drop_zone`), `bind_camp(self)` даёт доступ к `economy`.
 
-- **Геометрия:** `segment_counts=[4,12,16]` — кольцо 0 **генераторное** (4 больших ячейки), кольца 1..N — единый **мелкий грид**. `core_radius=2.5`, `ring_band=1.8`, `cell_gap_deg=2`. Ячейка = `{r,s,inner,outer,seg_deg,center,block,pad,mat}`.
+- **Геометрия** (дефолты вынесены в `scripts/grid_geometry.gd` — `class_name GridGeometry`, БЕЗ зависимостей, чтобы headless-бейк генератора preload'ил без autoload-графа): `segment_counts=[4,12,16]` (кольцо 0 — **генераторное**, 4 больших ячейки; кольца 1..N — мелкий грид). `core_radius=3.1` (дворик-дыра под харвестер; зазор ядро↔кольцо ≈1.4м), `ring_band=1.8`. **Улицы-проходы** (2026-06-09): `ring_gap=1.4` (радиальный проход МЕЖДУ кольцами) + `cell_gap_m=1.4` — угловой проход, заданный **МЕТРИЧЕСКИ** (м, на внутреннем радиусе кольца), а не в градусах (фикс-угол на внешних кольцах сжимал бы проход в метрах). Кольцо r начинается на `core_radius + r·(ring_band + ring_gap)`. Ячейка = `{r,s,inner,outer,seg_deg,center,block,pad,mat}`. Размеры должны давать навмеш-полосу для agent_radius 0.3 (см. §5.13).
 - **Установка:** слушает `EventBus.hand_grabbed/released`. Здание встаёт в ряд из `footprint` соседних пустых+связных ячеек (`_try_place` → `_place_run`): генератор (`ring_tier=0`) — только в кольцо 0; остальные (`ring_tier=1`) — в любое мелкое кольцо. Блок конформится под ячейку (`conform_to_cell`), ставится лицом к ядру, выходит из `Grabbable.GROUP` (неснимаем).
 - **Связность** (от центра наружу): ячейка ставится, если кольцо 0 (примыкает к харвестеру) ИЛИ занят сосед. Соседи (`_neighbors`) — ±1 по кольцу + радиальные по **перекрытию углов** (`_radial_neighbors`), работает при любых counts (кольца не обязаны быть кратны).
 - **Оплата:** `_charge_building` списывает `cost` здания из `_camp.economy.try_spend`; не хватило/нет ячейки → здание из меню отменяется (queue_free).
@@ -3336,7 +3340,8 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 
 - `configure(id)` — настраивает под здание из каталога: `ring_tier`, `module_color`, `wall_thin`, `footprint`, `building_id`.
 - `conform_to_cell(inner,outer,seg_deg)` — перестраивает сектор под ячейку; `mount_lift=height/2` (низ на земле); для `wall_thin` — тонкая лента у внешнего края.
-- **Стена** (`wall_thin`) — отдельный меш `_build_wall_mesh`: сплошное тело + **зубцы-мерлоны** сверху (крепостной верх; `wall_teeth=5`, `wall_tooth_frac=0.35`, `wall_thickness=0.45`).
+- **Стена** (`wall_thin`) — отдельный меш `_build_wall_mesh`: сплошное тело + крепостной гребень-**мерлоны** сверху. Шаг мерлонов **метрический** (`wall_merlon_arc=1.0` м арк-длины, не фикс-число `wall_teeth`) → одинаковая ширина зубца на разных кольцах; крайние мерлоны = ПОЛОВИНКИ, у двух соседних стен складываются в цельный зубец (ровный гребень без шва). Вынесено в `_add_merlon_crest` — **тот же гребень переиспользуют грид-ворота** (§5.18). `wall_tooth_frac=0.35`, `wall_thickness=0.45`.
+- **Коллизия сектора** (`_rebuild_collision`) — из под-клиньев `ConvexPolygonShape3D` ≤`MAX_WEDGE_DEG=45°` (один convex на широкую дугу «замостил» бы внутренность диска). Для RigidBody-зданий рядом строится **carve-proxy** на NAV_CARVE с теми же клиньями (§5.13).
 - **Визуал:** лёгкое собственное свечение цветом (`BASE_EMISSION=0.45`) — читается ночью; на наведении руки усиливается (`HIGHLIGHT_EMISSION=1.2`, override `set_highlighted`).
 - **Стройка (не мгновенная):** `start_construction(dur)` → меш красится в синий полупрозрачный силуэт (`BLUEPRINT_COLOR`) и растёт снизу вверх за `dur` (`_process` → `_set_build_progress`); на финише — `AoeVisual.spawn_dust` (пуфф, тот же что у старых построек), возврат настоящего материала, `is_built=true`, сигнал `built`.
 
@@ -3350,7 +3355,12 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 | `archer_barracks` | средний / 1 | 2 | wood 12, iron 4 | (Этап 2) набор лучников |
 | `spear_barracks` | средний / 1 | 2 | wood 12, iron 8 | (Этап 2) набор копейщиков |
 | `gnome_portal` | средний / 1 | 2 | stone 12, iron 6 | (Этап 2) найм гномов ×3 за золото |
-| `wall` | мелкий / 1 | 1 | stone 3 | тонкая, зубцы; по одной в линию |
+| `wall` | мелкий / 1 | 1 | stone 3 | тонкая, мерлоны; gapless, **span колесом** мыши; hp 60 |
+| `gate` | мелкий / 1 (thin) | 1 | wood 8, iron 3 | арка с дверьми; проход своим, стена врагам; своя сцена `gate_block.tscn`; hp 90 |
+
+Стена и ворота — `thin`. **Стена**: при зажатой ЛКМ колесо мыши тянет длину пролёта (span N ячеек), на релизе спавнится N отдельных 1-клеточных стен (рушатся по одной). **Ворота** (`gate`) — отдельный класс `GateBlock`, ставятся в пустую ячейку ИЛИ заменяют сегмент стены. См. §5.18.
+
+**Легаси:** палисадные ворота `WALL_GATE` (brush-система частокола) переименованы в **«Ворота частокола»** (вкладка «Старая стройка») — чтобы не путать с грид-`gate`.
 
 **Этап 2 (ещё НЕ реализовано):** функционал казарм (рекрут отрядов через `recruit_squad`) и портала (найм гномов за золото). Сейчас эти здания только ставятся и выглядят, действий не выполняют.
 
@@ -3361,6 +3371,33 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 #### 5.17.6 mount_lift (CampModule)
 
 Слоты (`MountSlot`/грид) стали чистыми позициями; весь вертикальный подъём держит сам модуль через `CampModule.mount_lift` (обычно полувысота меша) — magic-числа высоты из слотов убраны, турель ведёт себя как раньше (`mount_lift=0.35`).
+
+---
+
+### 5.18 Грид-ворота, по-ячеечные стены, прилегание (2026-06-09)
+
+Достройка грид-системы (§5.17) до играбельного периметра: стены ставятся пролётом, замыкаются в кольцо, ворота дают проход своим. Навмеш-часть — §5.13.
+
+#### 5.18.1 По-ячеечные стены + scroll-span (`build_grid.gd`)
+- Стена (`wall`) — `wall_thin`, **gapless** (полный угол ячейки, `_seg_deg(gapless=true)`) → соседние стены смыкаются в сплошной барьер, мерлоны-половинки складываются (§5.17.3).
+- **Span колесом:** при зажатой ЛКМ со стеной в руке `_input` ловит wheel + `hand_grab` → `_wall_span` растёт/падает (1..cnt кольца), превью — цельная дуга на span ячеек. На релизе `_place_wall_run` ставит **N отдельных 1-клеточных стен** (`_spawn_wall_block` из `Camp.build_block_scene`), оплата `_charge_wall_span` (span×цена). Бонус: стены рушатся по одной (каждая — свой HP), не весь пролёт.
+- Прокрутка останавливается при пересечении (полный круг) и при нехватке ресурса (`_can_afford_span` → `flash_reject`).
+
+#### 5.18.2 Прилегание стен к зданиям
+Стена `gapless` смыкается с соседями-СТЕНАМИ, но к НЕ-стенному зданию (генератор/казарма/портал инсетят на `gap/2`) оставалась щель → дыра в периметре + карман навмеша. Фикс:
+- `_wall_ext_deg(r,s)` — для каждого углового соседа (s±1): если там НЕ-стенное здание (`_cell_has_building`), стена расширяет дугу на `gap/2` в ту сторону (асимметрично: рост `seg_deg` + сдвиг центра). К стенам/воротам/пустым — не тянется.
+- `_reconform_all_walls()` — пересчёт ВСЕХ стен на `_place_run` здания / `_on_block_destroyed` → прилегание работает в **ЛЮБОМ порядке постройки** (стена до здания / здание до стены / снос).
+
+#### 5.18.3 Грид-ворота — `GateBlock` (`scripts/gate_block.gd`, `scenes/gate_block.tscn`)
+`class_name GateBlock extends BuildBlock`. Арка с дверьми в 1 ячейке, ведёт себя как gapless-стена, но это ПРОХОД для своих и СТЕНА для врагов.
+- **Меш** (`_build_gate_mesh`): боковые пилоны + перемычка-арка над проёмом + **тот же крепостной гребень-мерлоны, что у стены** (`BuildBlock._add_merlon_crest`) — верх ворот продолжает верх соседних стен без шва. В проёме — две створки на петлях (`_door_left/_door_right`, box-панели).
+- **Слой/проход** (`_activate_combat` override): `collision_layer = WALL_GATE_BLOCK` (НЕ CAMP_OBSTACLE/PALISADE), НЕ в `navmesh_source`, без carve-proxy. → навмеш видит проём (гномы строят путь сквозь); гном (маска 513 без `WALL_GATE_BLOCK`) проходит физически; скелет (`MASK_SKELETON` включает `WALL_GATE_BLOCK`) упирается и бьёт. Группы `TARGET_GROUP` + `MELEE_ONLY_TARGET_GROUP` (лучники не тратят стрелы).
+- **Двери** — чисто визуальный feedback: триггер-`Area3D` (radius `trigger_radius=2.6`, маска `FRIENDLY_UNIT|ACTORS`) ловит своих → tween створок. Тюнинг в `@export`: `door_open_angle_deg=90`, `door_animate_time=0.35`, `door_swing_sign=-1` (по умолчанию распашка ВНУТРЬ лагеря), `doorway_half_frac`, `lintel_frac`, `door_thickness`.
+- **Установка** (`BuildGrid._try_place_gate`): ближайшая пустая+связная ячейка (standalone, соединяет здания) ИЛИ ближайшая занятая ГОТОВОЙ стеной (`_remove_wall_cell` → ставим ворота на её место — сегмент стены становится проходом).
+- **Каталог:** запись `gate` с полем `"scene": "res://scenes/gate_block.tscn"` — `Camp.spawn_building_into_hand` инстансит её вместо обычного `build_block_scene`.
+
+#### 5.18.4 Документация боя меха
+`docs/mech_battle.md` — концепция дуэли с мехом, паттерн (бит-дирижёр, дистанционная хореография), атаки (AIMED/Шквал/Поле/Ракеты/Супер/Отброс), телеграфы, дэш (меха и башни), парирование, потактовый разбор связки, сводка параметров. Сам мех — §5.16 / `scripts/enemy_mech.gd`.
 
 ---
 
@@ -4119,6 +4156,8 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 
     **(з) Cancel-aim при перевыборе постройки.** `start_aim` и `start_brush` теперь используют общий `is_aiming_any()` (true для brush ИЛИ single-point ИЛИ direction-aim ИЛИ wall-snap) и отменяют активный aim перед стартом нового. До правки на стыке brush+single-point ошибка проходила — игрок мог «носить две постройки в руке».
 
+- **2026-06-09 — грид-ворота, span-стены, прилегание, переработка навмеша под грид.** Грид-ворота `GateBlock` (арка+двери+open/close, проход своим/стена врагам, установка standalone/замена сегмента — §5.18.3). По-ячеечные стены со scroll-span (§5.18.1) + прилегание к зданиям в любом порядке (§5.18.2). Доработка визуала ворот (общий мерлонный гребень со стеной) + тюнинг в @export. Док боя меха `docs/mech_battle.md`. **Навмеш (§5.13) переработан** — диагностика по логам показала: `STATIC_COLLIDERS` парсит коллайдеры только StaticBody3D, а здания/стены — RigidBody → не выгрызались (гном шёл сквозь); харвестер (StaticBody) выгрызался → гном застревал. Итог: carve-proxy на слое `NAV_CARVE` (RigidBody-здания выгрызаются без GPU-readback), `agent_radius`/`cell_size` 0.4/0.5→0.3/0.3 (полоса навмеша в улицах), гном `collision_mask=513` (стены твёрдые) + капсула 0.2 (зазор у ворот), off-mesh recovery + снап цели/idle, async bake (убрал «адские пролаги» постройки). Депозит у POI заблокирован харвестером → отложен под здание-СКЛАД (§10). Решения, отвергнутые по пути: `parsed_geometry_type=BOTH` (импорт-меши с readback → пролаги), рейкаст-обход у гнома (дублировал бы навмеш и дрался с ним).
+
 ### 7.3 Решённые ошибки
 
 | # | Ошибка | Причина | Исправление |
@@ -4378,6 +4417,8 @@ API: `pulse(world_position: Vector3, color: Color)`. Программно соз
 
 Не реализовано в текущей итерации (на будущее):
 
+- **Склад + депозит гномов.** Сейчас гном-сборщик сдаёт ресурс в `deploy_anchor` (центр харвестера), но точка выгрызена из навмеша + гном в ядро упирается → **сдать нельзя** (loop разорван). План: здание-**СКЛАД** (достижимая точка на навмеше, гном сдаёт у его края) которое **расширяет кап ресурсов** лагеря; `Gnome._tick_commuting_to_base` целит ближайший склад вместо `deploy_anchor`. См. §5.13 «Известные ограничения», §5.18.
+- **Функционал казарм/портала** (§5.17.4, Этап 2): казармы → `recruit_squad`, портал → найм гномов ×3 за золото. Сейчас здания только ставятся.
 - **Магия.** Реализована (Fireball/Firestorm/Super), осталась прокачка через страницы и баланс.
 - **Поворот башни** (мышью или клавишами).
 - **Препятствия / стены.** Сейчас только плоский пол.
