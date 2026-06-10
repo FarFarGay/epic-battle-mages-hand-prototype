@@ -690,7 +690,11 @@ func _spawn_one_gnome(scene: PackedScene, tent: Node3D, role: String) -> Gnome:
 		push_warning("Camp: сцена для роли '%s' не инстанцируется как Gnome" % role)
 		return null
 	add_child(gnome)
-	gnome.global_position = tent.global_position
+	# tent может быть null (нет живых палаток — напр. dismiss отряда при разрушенных
+	# тентах): позицию берём от палатки, иначе от лагеря. Caller часто переопределяет
+	# её после (dismiss ставит гнома на позицию солдата). setup сам гасит null
+	# home_tent (gnome._enter_in_tent проверяет is_instance_valid) → гном бездомный.
+	gnome.global_position = tent.global_position if (tent != null and is_instance_valid(tent)) else global_position
 	gnome.setup(self, tent)
 	# Скелет может убить гнома — выкидываем из _gnomes, иначе claim-чек
 	# и _all_gnomes_home будут спотыкаться об invalid-инстансы.
