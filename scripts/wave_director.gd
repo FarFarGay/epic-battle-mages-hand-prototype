@@ -131,6 +131,40 @@ enum DayNight { DAY, NIGHT }
 @export var background_replenish_interval: float = 1.0
 @export_group("")
 
+@export_group("Warband siege (день/ночь, бродячие банды)")
+## Мастер-тумблер: ON → старый непрерывный фоновый прилив ВЫКЛ, вместо него
+## бродячие банды днём + штурм-банда с 1 фронта ночью (осмысленная осада).
+@export var warband_siege_enabled: bool = true
+## День: сколько бродячих банд держим на карте (роумят, нападают опортунистично).
+@export var day_warband_count: int = 3
+## День: размер бродячей банды — «файт-энкаунтер», не осада.
+@export var day_warband_size: int = 25
+## День: интервал досспавна банды, если их меньше day_warband_count.
+@export var day_warband_spawn_interval: float = 12.0
+## Ночь: размер штурм-банды (осада с 1 фронта).
+@export var night_assault_size: int = 120
+## Телеграф штурма: ТОНКАЯ мигающая дуга по КРАЮ зоны строительства (radius =
+## Camp.build_radius), со стороны фронта. Появляется в момент штурма и мигает
+## ВСЁ ВРЕМЯ, пока волна не войдёт в зону строительства (иначе можно пропустить).
+## telegraph_thickness — радиальная толщина дуги, half_angle — её угловая ширина.
+@export var telegraph_thickness: float = 0.6
+@export var telegraph_half_angle_deg: float = 26.0
+@export var telegraph_color: Color = Color(1.0, 0.12, 0.08, 0.75)
+@export_group("")
+
+## Активные банды (прунятся когда queue_free сами по гибели всех членов).
+var _warbands: Array[SkeletonWarband] = []
+var _warband_spawn_cd: float = 0.0
+## Штурм-банда спавнится ОДИН раз за ночь. Сбрасывается на день.
+var _night_assault_done: bool = false
+## Наземная дуга-телеграф штурма (caller-owned MeshInstance3D из AoeVisual) + её
+## материал для мигания + фаза мигания. Мигает, пока _assault_warband не войдёт
+## в зону строительства (или не будет выбита) — тогда _clear_assault_telegraph.
+var _assault_telegraph: MeshInstance3D = null
+var _assault_telegraph_mat: StandardMaterial3D = null
+var _telegraph_pulse_t: float = 0.0
+var _assault_warband: SkeletonWarband = null
+
 @export_group("Caravan waves (атаки на караван в дороге)")
 ## Период между caravan-волнами в секундах. Каждая волна спавнит группу
 ## скелетов в случайной точке вокруг каравана. Тикает пока есть живой
@@ -315,7 +349,12 @@ func _collect_pois_deferred() -> void:
 func _process(delta: float) -> void:
 	if _phase == Phase.RUNNING:
 		_tick_day_night(delta)
-		_tick_background(delta)
+		# Warband-осада ВМЕСТО непрерывного фонового прилива: день=бродячие банды,
+		# ночь=штурм с 1 фронта. Тумблер warband_siege_enabled.
+		if warband_siege_enabled:
+			_tick_warbands(delta)
+		else:
+			_tick_background(delta)
 		if _active_camp != null and _active_schedule != null:
 			_tick_active_poi(delta)
 		# Caravan-волны идут параллельно фону пока есть Camp в пути к POI.
@@ -474,22 +513,195 @@ func cheat_spawn_100() -> void:
 ## когезивно по карте и нападает на лагерь только если увидит (опортунистично).
 ## Шаг 1 «осмысленной осады» — день/ночь-каденс придёт следом.
 func cheat_spawn_warband() -> void:
-	if _spawner == null or skeleton_scene == null:
-		push_warning("[WaveDirector] cheat_spawn_warband: spawner/skeleton_scene не заданы")
-		return
-	var zone: SpawnZone = _pick_random_live_zone()
-	if zone == null:
-		push_warning("[WaveDirector] cheat_spawn_warband: нет живых SpawnZone")
-		return
-	# Проверенный путь как у _cheat_spawn_enemy: точка в живой зоне у КРАЯ карты —
-	# банда появляется далеко от лагеря и роумит к нему, а не на харвестере.
-	var origin := _pick_safe_point_in_zone(zone)
-	origin.y = _spawner.spawn_y
+	var wb := _spawn_warband(100, SkeletonWarband.Mode.ROAM, null)
+	if wb != null and debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] cheat: бродячая банда (100)")
+
+
+## Спавн банды у случайной живой зоны (точка у КРАЯ карты, как _cheat_spawn_enemy).
+## mode — ROAM (бродит) или ASSAULT (штурм assault_target). Возвращает банду/null.
+## Точка спавна банды у случайной живой зоны (safe-точка у края карты).
+## INF — нет живой зоны/спавнера. Вынесено отдельно: ночной штурм спавнит банду
+## из этой точки и от неё же строит дугу-телеграф.
+func _roll_warband_origin() -> Vector3:
+	if _spawner == null:
+		return Vector3.INF
+	# Несколько попыток с РАЗНЫМИ зонами. _safe_score уже отвергает точки в
+	# подземелье (нет навмеш-выхода — банда застрянет), но если выбранная зона
+	# целиком в данже — перевыбираем зону, чтоб не уронить сотню скелетов в яму.
+	for _attempt in range(4):
+		var zone: SpawnZone = _pick_random_live_zone()
+		if zone == null:
+			return Vector3.INF
+		var origin := _pick_safe_point_in_zone(zone)
+		if not _point_in_dungeon(origin):
+			origin.y = _spawner.spawn_y
+			return origin
+	return Vector3.INF
+
+
+func _spawn_warband(size: int, mode: int, assault_target: Node3D) -> SkeletonWarband:
+	var origin := _roll_warband_origin()
+	if origin == Vector3.INF:
+		return null
+	return _spawn_warband_at(origin, size, mode, assault_target)
+
+
+## Спавн банды в КОНКРЕТНОЙ точке (ночной штурм из пре-ролленного origin'а).
+func _spawn_warband_at(origin: Vector3, size: int, mode: int, assault_target: Node3D) -> SkeletonWarband:
+	if skeleton_scene == null:
+		return null
 	var wb := SkeletonWarband.new()
 	add_child(wb)
-	wb.setup(skeleton_scene, origin, 100)
+	wb.setup(skeleton_scene, origin, size, mode, assault_target)
+	wb.set_dungeon_avoid(_get_dungeon_aabb())  # роум не лезет в подземелье
+	_warbands.append(wb)
+	return wb
+
+
+## День/ночь каденс банд (вместо непрерывного прилива). ДЕНЬ: 0 направленного
+## давления — держим day_warband_count бродячих банд (нападают лишь опортунистично
+## по зрению). НОЧЬ: один раз спавним штурм-банду с 1 фронта (forced_target =
+## башня) → осада. Бродячие банды дня остаются как ambient-угроза.
+func _tick_warbands(delta: float) -> void:
+	var alive: Array[SkeletonWarband] = []
+	for w in _warbands:
+		if is_instance_valid(w):
+			alive.append(w)
+	_warbands = alive
+	_tick_assault_telegraph(delta)  # окно показа дуги при штурме; no-op когда дуги нет
+	if is_night():
+		if not _night_assault_done:
+			_night_assault_done = true
+			_launch_night_assault()
+		return
+	# ДЕНЬ — 0 направленного давления: поддерживаем пул бродячих банд.
+	_night_assault_done = false
+	_warband_spawn_cd = maxf(_warband_spawn_cd - delta, 0.0)
+	if _warbands.size() < day_warband_count and _warband_spawn_cd <= 0.0:
+		_warband_spawn_cd = day_warband_spawn_interval
+		_spawn_warband(day_warband_size, SkeletonWarband.Mode.ROAM, null)
+
+
+func _launch_night_assault() -> void:
+	_do_assault(night_assault_size, "НОЧЬ")
+
+
+## Ядро штурма (общее для ночи и чита): роллим точку спавна (вне подземелья),
+## спавним банду и В ЭТОТ МОМЕНТ со стороны фронта зажигаем тонкую дугу-телеграф
+## по краю зоны строительства. Дуга мигает, ПОКА волна не войдёт в зону (см.
+## _tick_assault_telegraph) — её нельзя пропустить.
+func _do_assault(size: int, label: String) -> void:
+	var target := _resolve_assault_target()
+	if target == null:
+		return
+	var origin := _roll_warband_origin()
+	if origin == Vector3.INF:
+		return
+	var wb := _spawn_warband_at(origin, size, SkeletonWarband.Mode.ASSAULT, target)
+	_assault_warband = wb
+	if wb != null and debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] %s: штурм-банда (%d) с 1 фронта" % [label, size])
+	var camp := get_tree().get_first_node_in_group(&"camp") as Camp
+	if camp != null:
+		var center: Vector3 = camp.build_zone_center()
+		if center != Vector3.INF:
+			_spawn_assault_telegraph(center, camp.build_radius, origin)
+			_telegraph_pulse_t = 0.0
+
+
+## Поднять ТОНКУЮ дугу-телеграф по краю зоны строительства (radius): сектор
+## ±half_angle вокруг направления от центра зоны к точке спавна банды.
+func _spawn_assault_telegraph(center: Vector3, radius: float, origin: Vector3) -> void:
+	_clear_assault_telegraph()
+	var root: Node = get_tree().current_scene
+	if root == null:
+		root = get_tree().root
+	var dir := Vector3(origin.x - center.x, 0.0, origin.z - center.z)
+	if dir.length_squared() < 0.001:
+		return
+	var bearing := atan2(dir.x, dir.z)  # как build_block: d(t)=(sin,0,cos), 0=+Z
+	var half_t: float = maxf(telegraph_thickness, 0.05) * 0.5
+	_assault_telegraph = AoeVisual.spawn_ground_arc(
+		root, center, bearing, deg_to_rad(telegraph_half_angle_deg),
+		radius - half_t, radius + half_t, telegraph_color, 0.0,
+	)
+	if _assault_telegraph != null:
+		_assault_telegraph_mat = _assault_telegraph.material_override as StandardMaterial3D
+
+
+## Дуга жёстко МИГАЕТ (≈2Гц) и держится, ПОКА волна не вошла в зону строительства
+## (иначе можно пропустить). Снимаем когда: лагеря/зоны нет, банда выбита по пути,
+## или хоть один член штурма пересёк край зоны.
+func _tick_assault_telegraph(delta: float) -> void:
+	if _assault_telegraph_mat == null:
+		return
+	var camp := get_tree().get_first_node_in_group(&"camp") as Camp
+	var center: Vector3 = camp.build_zone_center() if camp != null else Vector3.INF
+	if center == Vector3.INF \
+			or not is_instance_valid(_assault_warband) \
+			or _assault_warband.has_member_within(center, camp.build_radius):
+		_clear_assault_telegraph()
+		return
+	_telegraph_pulse_t += delta
+	var blink: float = 0.5 + 0.5 * sin(_telegraph_pulse_t * TAU * 2.0)
+	_assault_telegraph_mat.emission_energy_multiplier = lerpf(2.0, 6.0, blink)
+	_assault_telegraph_mat.albedo_color.a = lerpf(0.15, 0.9, blink)
+
+
+func _clear_assault_telegraph() -> void:
+	if is_instance_valid(_assault_telegraph):
+		_assault_telegraph.queue_free()
+	_assault_telegraph = null
+	_assault_telegraph_mat = null
+
+
+## Чит: мгновенно переключить фазу день↔ночь (тест ночной осады без ожидания дня).
+func cheat_toggle_phase() -> void:
+	if _day_night == DayNight.DAY:
+		_day_night = DayNight.NIGHT
+		_day_night_remaining = night_duration_seconds
+	else:
+		_day_night = DayNight.DAY
+		_day_night_remaining = day_duration_seconds
+	EventBus.day_phase_changed.emit(is_night(), _phase_duration())
 	if debug_log and LogConfig.master_enabled:
-		print("[WaveDirector] cheat: бродячая банда (100) @ зона (%.0f, %.0f)" % [origin.x, origin.z])
+		print("[WaveDirector] cheat: фаза → %s" % ("НОЧЬ" if is_night() else "ДЕНЬ"))
+
+
+## Цель штурма: ближайшая к центру лагеря СТРУКТУРА из группы skeleton_target
+## (ядро/палатка/здание). ВАЖНО: forced_target скелета обязан быть в этой группе
+## (Skeleton._scan_target отвергает иначе) — поэтому башня (НЕ в группе) не годится,
+## и её используем лишь как точку «центра». Гномов пропускаем (двигаются). К цели
+## штурм марширует когезивно, стены по пути грызёт сам через vision-аггро.
+func _resolve_assault_target() -> Node3D:
+	var camp := get_tree().get_first_node_in_group(&"camp") as Camp
+	if camp == null:
+		return null
+	var tower: Node3D = camp.get_tower()
+	var center: Vector3 = tower.global_position if (tower != null and is_instance_valid(tower)) else Vector3.ZERO
+	var best: Node3D = null
+	var best_d: float = INF
+	for n in get_tree().get_nodes_in_group(Enemy.TARGET_GROUP):
+		if not (n is Node3D) or not is_instance_valid(n):
+			continue
+		var node := n as Node3D
+		if node.is_in_group(Gnome.GNOME_GROUP):
+			continue  # гном-якорь штурма не нужен (двигается); грызём структуры
+		var d: float = (node.global_position - center).length_squared()
+		if d < best_d:
+			best_d = d
+			best = node
+	return best
+
+
+## Чит: штурм-банда (100) с 1 фронта НА ЛАГЕРЬ прямо сейчас (тест атаки + дуги-
+## телеграфа без ожидания ночи). Идёт через общее ядро — мигающая дуга вспыхнёт.
+func cheat_spawn_assault() -> void:
+	if _resolve_assault_target() == null:
+		push_warning("[WaveDirector] cheat_spawn_assault: нет лагеря/башни для штурма")
+		return
+	_do_assault(100, "cheat")
 
 
 ## Stress-test: 2000 скелетов uniform по всему квадрату карты, async-батчем.
@@ -635,6 +847,10 @@ func _start_campaign() -> void:
 	_day_night = DayNight.DAY
 	_day_night_remaining = day_duration_seconds
 	EventBus.day_phase_changed.emit(false, day_duration_seconds)
+	# Сброс телеграфа осады.
+	_clear_assault_telegraph()
+	_assault_warband = null
+	_night_assault_done = false
 	_phase = Phase.RUNNING
 
 
@@ -1379,11 +1595,62 @@ func is_safe_pos(pos: Vector3) -> bool:
 	return _safe_score(pos) >= 0.0
 
 
+## Точки в подземелье отвергаются ВСЕМИ spawn-пикерами (банда, штурм, фоновый
+## прилив, ResourceZone): дотуда нет навмеш-прохода наружу — заспавненные скелеты
+## застревают. Источник границ — DungeonZone (группа &"dungeon_zone"), как в
+## [StartMenu]; AABB (+margin) кэшируется на матч.
+const DUNGEON_REJECT_SCORE: float = -1.0e6
+const DUNGEON_SPAWN_MARGIN: float = 8.0
+var _dungeon_aabb: AABB = AABB()
+var _dungeon_aabb_ready: bool = false
+
+
+func _get_dungeon_aabb() -> AABB:
+	if _dungeon_aabb_ready:
+		return _dungeon_aabb
+	_dungeon_aabb_ready = true
+	for d in get_tree().get_nodes_in_group(&"dungeon_zone"):
+		if d is DungeonZone:
+			var zone := d as DungeonZone
+			# DungeonZone.size локальный; внешний transform может scale'ить — берём
+			# итоговые полу-габариты по XZ через basis (как StartMenu._aabb_from_dungeon).
+			var half_x: float = absf(zone.global_transform.basis.x.x * zone.size.x * 0.5) \
+					+ absf(zone.global_transform.basis.z.x * zone.size.z * 0.5)
+			var half_z: float = absf(zone.global_transform.basis.x.z * zone.size.x * 0.5) \
+					+ absf(zone.global_transform.basis.z.z * zone.size.z * 0.5)
+			var c: Vector3 = zone.global_position
+			var m: float = DUNGEON_SPAWN_MARGIN
+			_dungeon_aabb = AABB(
+				Vector3(c.x - half_x - m, 0.0, c.z - half_z - m),
+				Vector3((half_x + m) * 2.0, 1.0, (half_z + m) * 2.0),
+			)
+			if debug_log and LogConfig.master_enabled:
+				print("[WaveDirector] подземелье найдено: спавн исключён в X[%.0f..%.0f] Z[%.0f..%.0f]" % [
+					_dungeon_aabb.position.x, _dungeon_aabb.position.x + _dungeon_aabb.size.x,
+					_dungeon_aabb.position.z, _dungeon_aabb.position.z + _dungeon_aabb.size.z,
+				])
+			return _dungeon_aabb
+	_dungeon_aabb = AABB()  # данжа нет — size==0 → _point_in_dungeon всегда false
+	if debug_log and LogConfig.master_enabled:
+		push_warning("[WaveDirector] DungeonZone не найдена в группе &\"dungeon_zone\" — спавн в данже НЕ исключается")
+	return _dungeon_aabb
+
+
+func _point_in_dungeon(p: Vector3) -> bool:
+	var a := _get_dungeon_aabb()
+	if a.size.x <= 0.0:
+		return false
+	return p.x >= a.position.x and p.x <= a.position.x + a.size.x \
+			and p.z >= a.position.z and p.z <= a.position.z + a.size.z
+
+
 ## Score точки = минимальный «избыток» (distance − safe_radius) до ближайшей
 ## запретной зоны: живой Camp (radius=wave_safe_radius) или POI (radius из
 ## QuestActor.safe_radius, fallback на poi_safe_radius_fallback). Если ни
-## лагерей, ни POI нет — возвращает 0.
+## лагерей, ни POI нет — возвращает 0. Точки в подземелье — мгновенный reject.
 func _safe_score(pos: Vector3) -> float:
+	if _point_in_dungeon(pos):
+		return DUNGEON_REJECT_SCORE
 	var min_excess := INF
 	for camp in _camps:
 		if not is_instance_valid(camp) or not camp.has_alive_parts():

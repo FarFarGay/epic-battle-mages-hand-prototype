@@ -363,6 +363,70 @@ static func spawn_ground_ring(
 	return mesh
 
 
+## Плоский СЕКТОР-дуга на земле — НАПРАВЛЕННЫЙ индикатор «откуда придёт угроза»
+## (в отличие от кругового [spawn_ground_ring]): полоса кольца r_in..r_out,
+## раскрытая на ±half_angle вокруг bearing. Угол как в build_block —
+## d(t)=(sin t,0,cos t), t=0 → +Z; bearing=atan2(dir.x,dir.z) направляет дугу
+## НА источник. duration<=0 → постоянная (caller владеет: пульсирует через
+## material_override, освобождает queue_free). cull_disabled + unshaded →
+## winding/нормали неважны. Возвращает MeshInstance3D.
+static func spawn_ground_arc(
+	root: Node,
+	center: Vector3,
+	bearing: float,
+	half_angle: float,
+	r_in: float,
+	r_out: float,
+	color: Color = Color(0.95, 0.16, 0.12, 0.6),
+	duration: float = 0.0,
+	segs: int = 24,
+) -> MeshInstance3D:
+	if root == null or r_out <= r_in or half_angle <= 0.0:
+		return null
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var a0: float = bearing - half_angle
+	var a1: float = bearing + half_angle
+	var n: int = maxi(2, segs)
+	for i in range(n):
+		var t0: float = lerpf(a0, a1, float(i) / float(n))
+		var t1: float = lerpf(a0, a1, float(i + 1) / float(n))
+		var d0 := Vector3(sin(t0), 0.0, cos(t0))
+		var d1 := Vector3(sin(t1), 0.0, cos(t1))
+		var pi0 := d0 * r_in
+		var po0 := d0 * r_out
+		var pi1 := d1 * r_in
+		var po1 := d1 * r_out
+		st.set_normal(Vector3.UP)
+		st.add_vertex(pi0)
+		st.add_vertex(po0)
+		st.add_vertex(po1)
+		st.set_normal(Vector3.UP)
+		st.add_vertex(pi0)
+		st.add_vertex(po1)
+		st.add_vertex(pi1)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.emission_enabled = true
+	mat.emission = Color(color.r, color.g, color.b, 1.0)
+	mat.emission_energy_multiplier = 2.0
+	mat.render_priority = GROUND_MARKER_PRIORITY  # поверх тумана войны
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = st.commit()
+	mesh.material_override = mat
+	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(mesh)
+	mesh.global_position = center + Vector3.UP * 0.06  # чуть над землёй / ground_ring
+	if duration > 0.0:
+		var tween := mesh.create_tween()
+		tween.tween_property(mat, "albedo_color:a", 0.0, duration).set_trans(Tween.TRANS_LINEAR)
+		_queue_free_on_tween_callback(tween, mesh)
+	return mesh
+
+
 ## Плоский ЗАЛИТЫЙ диск на земле радиуса `radius` — заливка области (в отличие
 ## от контурного [spawn_ground_ring]). Используется для подсветки зоны
 ## строительства: игрок видит не только границу-кольцо, но и саму площадь

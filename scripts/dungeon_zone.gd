@@ -48,6 +48,11 @@ func _ready() -> void:
 	# Editor-mode (@tool): только визуал, никакой рантайм-логики.
 	if Engine.is_editor_hint():
 		return
+	# Само-регистрация в группу — контракт потребителей границ данжа: WaveDirector
+	# (не спавнить скелетов в данже — нет навмеш-выхода, бьются о стены) и StartMenu
+	# (не ставить Tower/POI/Gate в нём). Раньше группа НИГДЕ не выставлялась → все
+	# get_nodes_in_group(&"dungeon_zone") возвращали пусто, а avoidance был мёртв.
+	add_to_group(&"dungeon_zone")
 	var area := get_node_or_null("Area3D") as Area3D
 	if area == null:
 		push_error("[DungeonZone] нет Area3D-ребёнка — проверьте структуру сцены")
