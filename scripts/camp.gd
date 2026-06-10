@@ -1165,10 +1165,20 @@ func can_recruit_squad(soldier_type: StringName) -> bool:
 	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
 	if data.is_empty():
 		return false
+	# Гейт здания-производителя: казарма нужного типа должна быть построена.
+	var req: StringName = data.get("requires_building", &"")
+	if req != &"" and not has_built_building(req):
+		return false
 	if not economy.can_afford(data.get("cost", {})):
 		return false
 	var squad_size: int = SoldierSystem.get_squad_size(soldier_type)
 	return gatherer_count() >= squad_size + get_recruit_reserve()
+
+
+## True если в гриде есть хотя бы одно ПОСТРОЕННОЕ здание заданного типа.
+## Гейт найма: казарма-производитель должна стоять, чтобы призвать её отряд.
+func has_built_building(id: StringName) -> bool:
+	return _build_grid != null and _build_grid.count_built(id) > 0
 
 
 ## Призвать отряд заданного типа. Создаёт Squad-объект и заполняет его
@@ -1184,6 +1194,10 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
 	if data.is_empty():
 		push_warning("Camp.recruit_squad: неизвестный тип %s" % soldier_type)
+		return null
+	# Гейт здания-производителя (дублируем can_recruit_squad на случай обхода UI).
+	var req: StringName = data.get("requires_building", &"")
+	if req != &"" and not has_built_building(req):
 		return null
 	var cost: Dictionary = data.get("cost", {})
 	if not economy.can_afford(cost):
@@ -1205,15 +1219,15 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 	if not economy.try_spend(cost):
 		return null
 
-	# Дефолтная команда: HOLDING_POSITION на центре gatherers'ов — там, где
-	# их позвали. Игрок получает «5 копейщиков стоят», без сюрпризов.
-	var center: Vector3 = Vector3.ZERO
-	for g in gatherers:
-		center += g.global_position
-	center /= float(gatherers.size())
+	# Отряд ПРОИЗВОДИТСЯ У КАЗАРМЫ-производителя (req-здание): спавним кольцом
+	# вокруг неё, дефолтная команда — HOLD в её центре. Гном-сборщики при этом
+	# «расходуются» (replacement_gatherers), но солдаты появляются у казармы.
+	var center: Vector3 = _recruit_origin(req, gatherers)
 	var spawn_positions: Array[Vector3] = []
-	for g in gatherers:
-		spawn_positions.append(g.global_position)
+	for i in range(gatherers.size()):
+		var ang: float = TAU * float(i) / float(gatherers.size())
+		spawn_positions.append(center + Vector3(
+			cos(ang) * RECRUIT_SPAWN_RADIUS, 0.0, sin(ang) * RECRUIT_SPAWN_RADIUS))
 	var squad := _build_and_register_squad(soldier_type, data, spawn_positions, center, gatherers)
 	if squad == null:
 		# Полный провал спавна — возвращаем cost (gatherer'ы НЕ конвертированы,
@@ -1225,6 +1239,24 @@ func recruit_squad(soldier_type: StringName) -> Squad:
 	if debug_log and LogConfig.master_enabled:
 		print("[Camp] призван %s, gatherer'ов: %d, солдат: %d" % [str(squad), gatherer_count(), soldier_count()])
 	return squad
+
+
+## Радиус кольца спавна солдат вокруг точки производства (у казармы).
+const RECRUIT_SPAWN_RADIUS := 1.6
+
+## Точка производства отряда: центр (X/Z) построенной казармы-производителя на
+## уровне земли лагеря. Фоллбэк (req пуст / казармы вдруг нет) — центр сборщиков.
+func _recruit_origin(req: StringName, gatherers: Array[Gnome]) -> Vector3:
+	if req != &"" and _build_grid != null:
+		var b: BuildBlock = _build_grid.find_built(req)
+		if b != null and is_instance_valid(b):
+			return Vector3(b.global_position.x, global_position.y, b.global_position.z)
+	var c: Vector3 = Vector3.ZERO
+	if gatherers.size() > 0:
+		for g in gatherers:
+			c += g.global_position
+		c /= float(gatherers.size())
+	return c
 
 
 ## Сколько юнитов указанного типа сейчас в лагере. Геттер для UI журнала.
@@ -2425,6 +2457,9 @@ func _on_grid_buildings_changed() -> void:
 	# гномы/скелеты огибали новые здания (и не огибали снесённые). Debounce —
 	# волна построек/сломов в одном кадре даёт один bake.
 	_request_debounced_rebake()
+	# UI журнала реагирует на набор зданий: вкладка «Армия» гейтит найм по
+	# построенным казармам (can_recruit_squad), «Лагерь» — счётчики.
+	EventBus.camp_buildings_changed.emit()
 	if _harvester == null or _build_grid == null:
 		return
 	_harvester.set_production_scale(_generator_production_scale(_build_grid.generator_count()))

@@ -1073,8 +1073,11 @@ func _build_soldier_card(camp: Node, id: StringName) -> Control:
 		var available: int = camp.gatherer_count()
 		var has_resources: bool = camp.economy.can_afford(cost)
 		var reserve: int = camp.get_recruit_reserve()
+		var req: StringName = data.get("requires_building", &"")
 		if not camp.is_deployed():
 			btn.text = "только в развёрнутом лагере"
+		elif req != &"" and not camp.has_built_building(req):
+			btn.text = "постройте: %s" % str(CampBuildings.get_data(req).get("name", "казарму"))
 		elif available < squad_size:
 			btn.text = "гномов: %d / %d" % [available, squad_size]
 		elif available < squad_size + reserve:

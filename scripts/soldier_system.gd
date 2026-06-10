@@ -40,6 +40,10 @@ const SOLDIER_CATALOG: Dictionary = {
 		# SoldierGnome-flow (нет диспатча по gnome_class). Управляется как pikeman:
 		# squad-команды Hold/Escort/Defend/Dismiss, sticky-aim ЛКМ.
 		"squad_size": 3,
+		# Найм гейтится зданием: производить лучников можно ТОЛЬКО при построенной
+		# Казарме лучников (Camp.can_recruit_squad / recruit_squad). Отряд спавнится
+		# у этой казармы.
+		"requires_building": &"archer_barracks",
 		# Cost дешевле pikeman'а — лёгкий ranged-юнит без брони.
 		"cost": {ResourcePile.ResourceType.WOOD: 3, ResourcePile.ResourceType.IRON: 2},
 		"scene": ARCHER_SCENE,
@@ -68,6 +72,9 @@ const SOLDIER_CATALOG: Dictionary = {
 		# в N солдат. Если в лагере свободных гномов < squad_size — призыв
 		# невозможен (UI расшифровывает «нужно ≥ N свободных гномов»).
 		"squad_size": 5,
+		# Найм гейтится зданием: копейщиков можно производить ТОЛЬКО при построенной
+		# Казарме копейщиков. Отряд спавнится у неё.
+		"requires_building": &"spear_barracks",
 		# Cost — за весь отряд, не per-soldier. Дерево + железо (на копья).
 		"cost": {ResourcePile.ResourceType.WOOD: 8, ResourcePile.ResourceType.IRON: 5},
 		"scene": PIKEMAN_SCENE,

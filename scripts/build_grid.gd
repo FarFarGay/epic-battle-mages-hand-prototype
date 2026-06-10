@@ -940,14 +940,30 @@ func tier_cell_dims(tier: int, footprint: int = 1, gapless: bool = false) -> Dic
 	}
 
 
-## Сколько генераторов установлено в гриде (для гейта харвестера).
-func generator_count() -> int:
+## Сколько ПОСТРОЕННЫХ зданий заданного типа в гриде (building_id + is_built).
+## Общий счётчик: гейт харвестера (генераторы), гейт найма (казармы) и т.п.
+func count_built(id: StringName) -> int:
 	var n := 0
 	for cell in _cells:
 		var b = cell["block"]
-		if b != null and is_instance_valid(b) and b is BuildBlock and (b as BuildBlock).building_id == CampBuildings.GENERATOR and (b as BuildBlock).is_built:
+		if b != null and is_instance_valid(b) and b is BuildBlock and (b as BuildBlock).building_id == id and (b as BuildBlock).is_built:
 			n += 1
 	return n
+
+
+## Сколько генераторов установлено в гриде (для гейта харвестера).
+func generator_count() -> int:
+	return count_built(CampBuildings.GENERATOR)
+
+
+## Первое ПОСТРОЕННОЕ здание заданного типа (для спавна отряда у казармы и т.п.),
+## либо null если такого нет.
+func find_built(id: StringName) -> BuildBlock:
+	for cell in _cells:
+		var b = cell["block"]
+		if b != null and is_instance_valid(b) and b is BuildBlock and (b as BuildBlock).building_id == id and (b as BuildBlock).is_built:
+			return b as BuildBlock
+	return null
 
 
 # --- Связность ---
