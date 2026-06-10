@@ -292,8 +292,19 @@ func _make_tab_button(label: String) -> Button:
 	return btn
 
 
+## Активный ScrollContainer списка — для сохранения позиции скролла через rebuild.
+var _scroll: ScrollContainer = null
+## Сохранённая позиция скролла на время реактивного rebuild (-1 = нет). Гасит
+## «прыжок наверх» при тике золота харвестера и прочих сигналах под пальцем.
+var _scroll_keep: int = -1
+var _scroll_busy: bool = false
+## Текущий _refresh вызван сменой вкладки (тогда скролл — сверху, не переносим).
+var _tab_switching: bool = false
+
+
 func _select_tab(tab: Tab) -> void:
 	_current_tab = tab
+	_tab_switching = true  # новая вкладка — скролл сверху, позицию не переносим
 	_refresh()
 
 
@@ -302,6 +313,15 @@ func _select_tab(tab: Tab) -> void:
 func _refresh() -> void:
 	if not visible:
 		return
+	# Сохраняем позицию скролла, чтобы реактивный rebuild (тик золота харвестера и
+	# т.п.) не сбрасывал список наверх под пальцем. На переключении вкладок — сверху.
+	# Пока restore в полёте (_scroll_keep≥0) — не перезахватываем (новый scroll ещё 0).
+	if _tab_switching:
+		_scroll_keep = -1
+	elif _scroll_keep < 0 and is_instance_valid(_scroll):
+		_scroll_keep = _scroll.scroll_vertical
+	_tab_switching = false
+	_scroll = null
 	var camp := _resolve_camp()
 	_tab_units_btn.button_pressed = (_current_tab == Tab.UNITS)
 	_tab_camp_btn.button_pressed = (_current_tab == Tab.CAMP)
@@ -321,6 +341,7 @@ func _refresh() -> void:
 		var warn := Label.new()
 		warn.text = "Лагерь не найден."
 		_content.add_child(warn)
+		_scroll_keep = -1
 		return
 	match _current_tab:
 		Tab.UNITS:
@@ -339,6 +360,30 @@ func _refresh() -> void:
 			_build_quests_tab()
 		Tab.DEBUG:
 			_build_debug_tab(camp)
+	# Вернуть позицию скролла после раскладки нового списка (max_scroll валиден
+	# только после layout — потому через кадр). Один restore за раз (_scroll_busy).
+	if _scroll_keep > 0 and not _scroll_busy:
+		_scroll_busy = true
+		_restore_scroll_after_layout()
+
+
+## Восстановить позицию скролла на НОВОМ ScrollContainer после раскладки контента
+## (до неё max_scroll=0 → scroll_vertical клампится в 0). См. _scroll_keep.
+func _restore_scroll_after_layout() -> void:
+	var target: int = _scroll_keep
+	# Ждём раскладку нового ScrollContainer: scroll_vertical клампится в 0, пока
+	# scrollbar.max ещё не посчитан. Поллим до нескольких кадров, потом сдаёмся.
+	for _i in range(8):
+		await get_tree().process_frame
+		if not is_instance_valid(_scroll):
+			break
+		var vbar := _scroll.get_v_scroll_bar()
+		if vbar != null and vbar.max_value > 0.0:
+			break
+	if is_instance_valid(_scroll) and target > 0:
+		_scroll.scroll_vertical = target
+	_scroll_keep = -1
+	_scroll_busy = false
 
 
 func _clear_content() -> void:
@@ -355,6 +400,7 @@ func _build_units_tab(camp: Node) -> void:
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_content.add_child(scroll)
+	_scroll = scroll  # сохранение позиции скролла через реактивный rebuild
 
 	var list := VBoxContainer.new()
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -520,6 +566,7 @@ func _build_building_list(camp: Node, grid: bool, header: String) -> void:
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_content.add_child(scroll)
+	_scroll = scroll  # сохранение позиции скролла через реактивный rebuild
 
 	var list := VBoxContainer.new()
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -688,9 +735,12 @@ func _on_upgrade_granted(_id: StringName) -> void:
 
 
 func _on_resources_changed(_type: int, _amount: int) -> void:
-	# Юнит-вкладка от ресурсов не зависит — рефрешим только активную.
-	# Армия зависит (cost-row + can_recruit disabled-state).
-	if _current_tab == Tab.CAMP or _current_tab == Tab.LEGACY or _current_tab == Tab.ARMY:
+	# ТОЛЬКО армия рефрешится от ресурсов (cost-row + can_recruit disabled-state;
+	# список короткий, скролл не страдает). CAMP/LEGACY (постройки) НЕ рефрешим на
+	# каждый тик сбора/золота — иначе длинный список пересобирается под пальцем и
+	# сбрасывает скролл. Их affordability обновляется на открытии вкладки и на
+	# camp_buildings_changed (постройка/снос/готово), чего достаточно.
+	if _current_tab == Tab.ARMY:
 		_refresh()
 
 
@@ -847,6 +897,7 @@ func _build_spells_tab(camp: Node) -> void:
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_content.add_child(scroll)
+	_scroll = scroll  # сохранение позиции скролла через реактивный rebuild
 
 	var list := VBoxContainer.new()
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1004,6 +1055,7 @@ func _build_army_tab(camp: Node) -> void:
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_content.add_child(scroll)
+	_scroll = scroll  # сохранение позиции скролла через реактивный rebuild
 
 	var list := VBoxContainer.new()
 	list.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1131,6 +1183,7 @@ func _build_quests_tab() -> void:
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_content.add_child(scroll)
+	_scroll = scroll  # сохранение позиции скролла через реактивный rebuild
 
 	var list := VBoxContainer.new()
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1229,6 +1282,7 @@ func _build_debug_tab(camp: Node) -> void:
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_content.add_child(scroll)
+	_scroll = scroll  # сохранение позиции скролла через реактивный rebuild
 
 	var list := VBoxContainer.new()
 	list.add_theme_constant_override("separation", 8)
