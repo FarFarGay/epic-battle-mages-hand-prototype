@@ -122,6 +122,10 @@ var _mesh_base_basis: Basis = Basis()
 func _ready() -> void:
 	Damageable.register(self)
 	Pushable.register(self)
+	# Палатку можно схватить рукой и переставить (drag), как и прочие постройки —
+	# grab-обработка ниже (_on_hand_grabbed/_on_hand_released + placement-зона).
+	# (Регрессия 4a7fd81: register снесло при переписывании навмеш-комментария.)
+	Grabbable.register(self)
 	# В navmesh_source номинально, но НЕ выгрызается: палатка — RigidBody3D, а
 	# навмеш (STATIC_COLLIDERS) парсит коллайдеры только у StaticBody3D. Это и
 	# нужно: палатка — дом гнома (он в ней спавнится/живёт/выходит), выгрызать

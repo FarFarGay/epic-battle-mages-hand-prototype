@@ -150,7 +150,7 @@ enum IdlePhase { GOING_TO_FIRE, LIGHTING, AT_FIRE, WANDERING, LOOKING_AROUND }
 ## Дистанция до кучи, на которой считаем «дошёл — можно брать».
 @export var pickup_distance: float = 0.8
 ## Дистанция до anchor'а (центр харвестера) для сдачи ресурса. Харвестер
-## выгрызен из навмеша (дыра radius ~1.35м = collision 0.95 + agent 0.4), и гном
+## выгрызен из навмеша (дыра radius ~1.25м = collision 0.95 + agent 0.3), и гном
 ## по навмешу доходит только до КРАЯ дыры — не до центра. deposit_distance ≥
 ## радиуса дыры, чтобы сдача срабатывала у края (гном не лезет внутрь ядра).
 @export var deposit_distance: float = 1.8
@@ -339,7 +339,9 @@ const NAV_DIRECT_RADIUS: float = 0.5
 ## ВЫГРЫЗАЕТ ли навмеш здания (pathPts=2 на дальней цели = нет дыр) или гном не
 ## следует пути (pathPts>2, а ветка = FINISHED→goal). Также включает отрисовку
 ## пути у ВСЕХ агентов (видна при Debug→Visible Navigation в редакторе).
-static var nav_debug: bool = true
+## ВЫКЛ в релизе: спам [NavDbg]/[CarveDbg] + лишние map_get_closest_point в
+## _nav_log. Верни true при отладке навмеша (гномы сквозь здания и т.п.).
+static var nav_debug: bool = false
 static var _nav_dbg_owner_id: int = 0
 const NAV_DBG_INTERVAL: float = 0.5
 var _nav_dbg_next: float = 0.0

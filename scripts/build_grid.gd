@@ -890,6 +890,10 @@ func _wall_ext_deg(r: int, s: int) -> Vector2:
 	var cnt: int = maxi(segment_counts[r], 1)
 	var inner: float = _ring_inner(r)
 	var ext: float = rad_to_deg(cell_gap_m / maxf(inner, 0.01)) * 0.5  # gap_deg/2
+	# Клампим: на малых inner-кольцах gap_deg раздувается; расширение не должно
+	# перекрывать соседний сегмент (≤ ~половины угла ячейки). Для стен (кольцо 1)
+	# не срабатывает (ext≈6° ≪ полуячейки) — страховка под возможные inner-кольца.
+	ext = minf(ext, (360.0 / float(cnt)) * 0.45)
 	var m: float = ext if _cell_has_building(r, (s - 1 + cnt) % cnt) else 0.0
 	var p: float = ext if _cell_has_building(r, (s + 1) % cnt) else 0.0
 	return Vector2(m, p)
