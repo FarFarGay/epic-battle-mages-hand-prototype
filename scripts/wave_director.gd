@@ -470,6 +470,28 @@ func cheat_spawn_100() -> void:
 		print("[WaveDirector] cheat: спавн 100 скелетов (живых после: %d)" % _live_skeleton_count())
 
 
+## Спавн БРОДЯЧЕЙ БАНДЫ (SkeletonWarband) у случайной живой зоны: банда роумит
+## когезивно по карте и нападает на лагерь только если увидит (опортунистично).
+## Шаг 1 «осмысленной осады» — день/ночь-каденс придёт следом.
+func cheat_spawn_warband() -> void:
+	if _spawner == null or skeleton_scene == null:
+		push_warning("[WaveDirector] cheat_spawn_warband: spawner/skeleton_scene не заданы")
+		return
+	var zone: SpawnZone = _pick_random_live_zone()
+	if zone == null:
+		push_warning("[WaveDirector] cheat_spawn_warband: нет живых SpawnZone")
+		return
+	# Проверенный путь как у _cheat_spawn_enemy: точка в живой зоне у КРАЯ карты —
+	# банда появляется далеко от лагеря и роумит к нему, а не на харвестере.
+	var origin := _pick_safe_point_in_zone(zone)
+	origin.y = _spawner.spawn_y
+	var wb := SkeletonWarband.new()
+	add_child(wb)
+	wb.setup(skeleton_scene, origin, 100)
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] cheat: бродячая банда (100) @ зона (%.0f, %.0f)" % [origin.x, origin.z])
+
+
 ## Stress-test: 2000 скелетов uniform по всему квадрату карты, async-батчем.
 ## Без safe-фильтра, без SpawnZone-фильтра. Для замеров перфоманса в PerfHud.
 func cheat_stress_2000() -> void:

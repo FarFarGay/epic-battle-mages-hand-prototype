@@ -576,6 +576,15 @@ const STUCK_OBSTACLE_RADIUS: float = 2.0
 var _stuck_last_pos: Vector3 = Vector3.INF
 var _stuck_timer: float = 0.0
 
+## Якорь роуминга банды (SkeletonWarband): задан → когда нет боевой vision-цели,
+## скелет идёт к нему вместо случайного wander'а (когезивный роум группы). Vision-
+## scan перебивает → аггро по зрению (опортунистичная атака при подходе к лагерю).
+## INF = не в банде (обычный wander). Координатор зовёт set_roam_anchor.
+var _roam_anchor: Vector3 = Vector3.INF
+## Внутри этого радиуса от ЛИЧНОЙ точки в блобе скелет стоит (банда держит строй
+## не сбиваясь в одного). Маленький — иначе члены наезжают на точки соседей.
+const ROAM_ARRIVAL_RADIUS: float = 1.0
+
 ## Local-wander режим: упёрся в стену (stuck-handler не нашёл реальной цели
 ## вокруг), теперь бродим небольшими шагами вокруг точки столкновения, пока
 ## не получим валидную цель из vision-scan. Сбрасывается в [_set_cached_target]
@@ -1136,7 +1145,31 @@ func _persist_toward_last_known(_delta: float) -> void:
 	velocity.z = dir.z * move_speed
 
 
+## Координатор банды ставит/двигает якорь роуминга. INF = снять (обычный wander).
+func set_roam_anchor(pos: Vector3) -> void:
+	_roam_anchor = pos
+
+
+## Роум-шаг банды: марш к якорю группы (move_speed), у якоря — стоп (толпимся).
+## Заменяет случайный wander для членов SkeletonWarband. Боевая аггро-цель из
+## vision-scan перебивает (при _cached_target скелет вообще не в _wander_tick).
+func _roam_tick(_delta: float) -> void:
+	var to_anchor := Vector3(_roam_anchor.x - global_position.x, 0.0, _roam_anchor.z - global_position.z)
+	var d: float = to_anchor.length()
+	if d <= ROAM_ARRIVAL_RADIUS:
+		velocity.x = 0.0
+		velocity.z = 0.0
+		return
+	var dir := to_anchor / d
+	velocity.x = dir.x * move_speed
+	velocity.z = dir.z * move_speed
+
+
 func _wander_tick(delta: float) -> void:
+	# Член бродячей банды (SkeletonWarband): идём к общему якорю, не случайно.
+	if _roam_anchor != Vector3.INF:
+		_roam_tick(delta)
+		return
 	match _wander_phase:
 		WanderPhase.RESTING:
 			velocity.x = 0.0
