@@ -75,7 +75,10 @@ enum State {
 }
 
 ## Под-роль гнома в IDLE_LIFE (см. State.IDLE_LIFE). Назначается Camp'ом.
-enum IdleRole { WANDERER, FIRE_TENDER }
+## WORKER — гном-добытчик: идёт к складу на жиле (slot_pos) и стоит работает.
+## Использует те же фазы GOING_TO_FIRE→AT_FIRE, что и FIRE_TENDER (slot=склад,
+## fire=блок склада; при сносе склада _idle_fire невалиден → гном в бродяги).
+enum IdleRole { WANDERER, FIRE_TENDER, WORKER }
 ## Под-фаза IDLE_LIFE. Держится отдельно от _state, чтобы не плодить
 ## комбинаторику переходов основного FSM.
 enum IdlePhase { GOING_TO_FIRE, LIGHTING, AT_FIRE, WANDERING, LOOKING_AROUND }
@@ -174,6 +177,9 @@ enum IdlePhase { GOING_TO_FIRE, LIGHTING, AT_FIRE, WANDERING, LOOKING_AROUND }
 @export var idle_look_around_duration: float = 1.5
 ## Дистанция до слота/точки костра, на которой считаем «дошёл».
 @export var idle_fire_arrival: float = 0.5
+## Дистанция до центра склада, на которой гном-работник «заходит внутрь» (тело
+## склада не пускает к самому центру — ловим у края и прячем гнома внутрь).
+@export var work_arrival: float = 1.7
 
 @export_group("Caravan follow (для бездомных гномов)")
 ## Sprint-cap для FOLLOWING_CARAVAN: чем дальше гном от своего слота в
@@ -522,8 +528,14 @@ func enter_idle_life(role: int, fire: Node3D, slot_pos: Vector3, should_light: b
 	_idle_slot_pos = slot_pos
 	_idle_should_light = should_light
 	add_to_group(SKELETON_TARGET_GROUP)
-	_idle_phase = IdlePhase.GOING_TO_FIRE if role == IdleRole.FIRE_TENDER else IdlePhase.WANDERING
+	_idle_phase = IdlePhase.GOING_TO_FIRE if (role == IdleRole.FIRE_TENDER or role == IdleRole.WORKER) else IdlePhase.WANDERING
 	_state = State.IDLE_LIFE
+
+
+## Гном-работник ДОШЁЛ до склада и работает (фаза AT_FIRE на slot складе). Camp
+## гейтит по этому добычу материала жилы (производит только пока работник на месте).
+func is_work_arrived() -> bool:
+	return _state == State.IDLE_LIFE and _idle_role == IdleRole.WORKER and _idle_phase == IdlePhase.AT_FIRE
 
 
 ## Палатка-дом получила удар (отрыв от каравана, удар о землю, разрушение).
@@ -634,6 +646,7 @@ func _claim_tent_as_home(tent: CampPart) -> void:
 func request_return() -> void:
 	if _state == State.IN_TENT:
 		return
+	_show_worker()  # был скрыт в складе → «выходим», бежим в башню/палатку
 	_drop_carry()
 	_assigned_pile = null
 	if is_instance_valid(_home_tent):
@@ -1145,14 +1158,20 @@ func _tick_idle_life() -> void:
 	var now: int = Time.get_ticks_msec()
 	match _idle_phase:
 		IdlePhase.GOING_TO_FIRE:
-			# Костёр исчез (палатка разрушена) до перерасчёта Camp'ом — в бродяги.
+			# Костёр/склад исчез (снесён) до перерасчёта Camp'ом — в бродяги.
 			if not is_instance_valid(_idle_fire):
+				_show_worker()
 				_idle_role = IdleRole.WANDERER
 				_idle_phase = IdlePhase.WANDERING
 				return
-			if _horizontal_distance(_idle_slot_pos) <= idle_fire_arrival:
+			var arrival: float = work_arrival if _idle_role == IdleRole.WORKER else idle_fire_arrival
+			if _horizontal_distance(_idle_slot_pos) <= arrival:
 				velocity.x = 0.0
 				velocity.z = 0.0
+				if _idle_role == IdleRole.WORKER:
+					_enter_building()  # «зашёл» в склад — прячемся, работаем внутри
+					_idle_phase = IdlePhase.AT_FIRE
+					return
 				var fire := _idle_fire as Campfire
 				if _idle_should_light and fire != null and not fire.is_lit():
 					_idle_phase = IdlePhase.LIGHTING
@@ -1173,9 +1192,9 @@ func _tick_idle_life() -> void:
 		IdlePhase.AT_FIRE:
 			velocity.x = 0.0
 			velocity.z = 0.0
-			# Костёр снесли — становимся бродягой (Camp перераспределит при
-			# следующем _assign_idle_life, но не зависаем до того).
+			# Костёр/склад снесли — «выходим» наружу и в бродяги (Camp перераздаст).
 			if not is_instance_valid(_idle_fire):
+				_show_worker()
 				_idle_role = IdleRole.WANDERER
 				_idle_phase = IdlePhase.WANDERING
 		IdlePhase.WANDERING:
@@ -1374,6 +1393,19 @@ func _horizontal_distance(target: Vector3) -> float:
 	var d := target - global_position
 	d.y = 0.0
 	return d.length()
+
+
+## Гном-работник «заходит» в склад: прячем (работает внутри) и снимаем с таргета
+## скелетов (как в палатке). _show_worker — обратный «выход».
+func _enter_building() -> void:
+	visible = false
+	remove_from_group(SKELETON_TARGET_GROUP)
+
+
+func _show_worker() -> void:
+	visible = true
+	if not is_in_group(SKELETON_TARGET_GROUP):
+		add_to_group(SKELETON_TARGET_GROUP)
 
 
 ## Находит лучший pile с учётом collection_priority лагеря: weighted_dist =

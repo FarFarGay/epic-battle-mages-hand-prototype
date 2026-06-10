@@ -31,11 +31,12 @@ const GNOME_PORTAL := &"gnome_portal"
 const WALL := &"wall"
 const GATE := &"gate"
 const BUNKER := &"bunker"
+const WAREHOUSE := &"warehouse"
 
 const CATALOG: Dictionary = {
 	GENERATOR: {
 		"name": "Генератор",
-		"description": "Большой блок (внутреннее кольцо). Питает харвестер: 1 генератор — добыча золота идёт медленно, каждый следующий ускоряет её; на 4 генераторах — полная скорость.",
+		"description": "Питает харвестер: 1 генератор — добыча золота идёт медленно, каждый следующий ускоряет её; на 4 генераторах — полная скорость.",
 		"cost": {ResourcePile.ResourceType.WOOD: 8, ResourcePile.ResourceType.STONE: 6},
 		"deployed_only": true,
 		"repeatable": true,
@@ -50,6 +51,24 @@ const CATALOG: Dictionary = {
 		# у других зданий пока нет своих моделей (остаются сектор-блоком).
 		"model": "res://models/generator_visual.tscn",
 	},
+	WAREHOUSE: {
+		"name": "Склад (добытчик)",
+		"description": "Добытчик. Ставится ТОЛЬКО на ЖИЛУ (залежь с кристаллами). Поднимает ПОТОЛОК запаса материалов — больше складов = больше можно накопить.",
+		"cost": {ResourcePile.ResourceType.WOOD: 10, ResourcePile.ResourceType.STONE: 8},
+		# Добытчик: только на жилу. Прочие здания на жилу не встают (см. build_grid).
+		"requires_vein": true,
+		"deployed_only": true,
+		"repeatable": true,
+		"grid_building": true,
+		"ring_tier": 1,
+		"color": Color(0.6, 0.45, 0.28, 1.0),
+		# Прочное хозяйственное здание — держит запас, не боевая точка.
+		"hp": 120.0,
+		# Грейбокс-ДЕКОР (крыша/ворота/ящики) ПОВЕРХ изогнутого сектора-тела —
+		# сектор сам fit в ячейку, модель его не прячет (model_decor).
+		"model": "res://models/warehouse_visual.tscn",
+		"model_decor": true,
+	},
 	ARCHER_BARRACKS: {
 		"name": "Казарма лучников",
 		"description": "Среднее здание (2 мелкие ячейки). Позволяет набирать отряды лучников. Ставится в любой не-генераторной зоне.",
@@ -61,6 +80,9 @@ const CATALOG: Dictionary = {
 		"footprint": 2,
 		"color": Color(0.4, 0.6, 0.32, 1.0),
 		"hp": 150.0,
+		# Грейбокс-ДЕКОР (зелёная крыша + мишени) поверх сектора-тела (model_decor).
+		"model": "res://models/archer_barracks_visual.tscn",
+		"model_decor": true,
 	},
 	SPEAR_BARRACKS: {
 		"name": "Казарма копейщиков",
@@ -73,6 +95,9 @@ const CATALOG: Dictionary = {
 		"footprint": 2,
 		"color": Color(0.6, 0.35, 0.3, 1.0),
 		"hp": 150.0,
+		# Грейбокс-ДЕКОР (красно-бурая крыша + копья) поверх сектора-тела (model_decor).
+		"model": "res://models/spear_barracks_visual.tscn",
+		"model_decor": true,
 	},
 	GNOME_PORTAL: {
 		"name": "Гномий портал",
@@ -131,6 +156,10 @@ const CATALOG: Dictionary = {
 		"hp": 140.0,
 		# Своя сцена — BunkerBlock (BuildBlock + встроенная турель-лучник).
 		"scene": "res://scenes/bunker_block.tscn",
+		# Грейбокс-ДЕКОР (низкий парапет) поверх сектора; лучник садится сверху и
+		# стреляет поверх парапета. model_decor → сектор-тело виден (FIT + gapless-линия).
+		"model": "res://models/bunker_visual.tscn",
+		"model_decor": true,
 	},
 	NEW_TENT: {
 		"name": "Новая палатка",
@@ -138,7 +167,6 @@ const CATALOG: Dictionary = {
 		"cost": {
 			ResourcePile.ResourceType.WOOD: 20,
 			ResourcePile.ResourceType.STONE: 10,
-			ResourcePile.ResourceType.FOOD: 5,
 		},
 		"deployed_only": true,
 		"repeatable": true,

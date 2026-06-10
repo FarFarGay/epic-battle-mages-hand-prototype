@@ -179,8 +179,6 @@ const RESOURCE_DISPLAY: Array = [
 	{"type": ResourcePile.ResourceType.WOOD, "label": "дерево", "color": Color(0.45, 0.28, 0.15)},
 	{"type": ResourcePile.ResourceType.STONE, "label": "камень", "color": Color(0.55, 0.55, 0.55)},
 	{"type": ResourcePile.ResourceType.IRON, "label": "железо", "color": Color(0.45, 0.48, 0.55)},
-	{"type": ResourcePile.ResourceType.FOOD, "label": "еда", "color": Color(0.85, 0.35, 0.25)},
-	{"type": ResourcePile.ResourceType.PAGE, "label": "страницы", "color": Color(0.55, 0.35, 0.85)},
 ]
 
 
@@ -210,6 +208,8 @@ func _ready() -> void:
 	EventBus.squad_leveled_up.connect(_on_level_up)
 	EventBus.pending_upgrade_choices_changed.connect(_refresh_journal_badge)
 	EventBus.resources_changed.connect(_on_resource_changed)
+	# Набор зданий изменился → мог измениться потолок склада: перечитать X/cap.
+	EventBus.camp_buildings_changed.connect(_sync_all_resources)
 	EventBus.collection_mode_changed.connect(_refresh_mode_label)
 	EventBus.collection_mode_changed.connect(_refresh_gatherer_mode_buttons)
 	# EventBus — autoload (жив всю сессию). Подписки в _ready без disconnect'а
@@ -251,6 +251,7 @@ func _disconnect_eventbus() -> void:
 	EventBus.squad_leveled_up.disconnect(_on_level_up)
 	EventBus.pending_upgrade_choices_changed.disconnect(_refresh_journal_badge)
 	EventBus.resources_changed.disconnect(_on_resource_changed)
+	EventBus.camp_buildings_changed.disconnect(_sync_all_resources)
 	EventBus.collection_mode_changed.disconnect(_refresh_mode_label)
 	EventBus.collection_mode_changed.disconnect(_refresh_gatherer_mode_buttons)
 	EventBus.tower_health_changed.disconnect(_refresh_tower_health)
@@ -337,7 +338,7 @@ func _build_gatherer_card() -> void:
 		vbox, Color(0.7, 0.45, 0.25, 1.0), "Собиратели — —"
 	)
 
-	# Ряд кнопок: «Работа [C]» / «Тревога [V]». Активный режим подсвечен.
+	# Ряд кнопок: «Свободны» / «Тревога [V]» (сбор/WORK убран). Активный подсвечен.
 	var btn_row := HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", 4)
 	btn_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -350,14 +351,6 @@ func _build_gatherer_card() -> void:
 	_gatherer_free_btn.add_theme_font_size_override("font_size", 11)
 	_gatherer_free_btn.pressed.connect(_on_gatherer_free_pressed)
 	btn_row.add_child(_gatherer_free_btn)
-
-	_gatherer_work_btn = Button.new()
-	_gatherer_work_btn.text = "Работа [C]"
-	_gatherer_work_btn.focus_mode = Control.FOCUS_NONE
-	_gatherer_work_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_gatherer_work_btn.add_theme_font_size_override("font_size", 11)
-	_gatherer_work_btn.pressed.connect(_on_gatherer_work_pressed)
-	btn_row.add_child(_gatherer_work_btn)
 
 	_gatherer_alarm_btn = Button.new()
 	_gatherer_alarm_btn.text = "Тревога [V]"
@@ -415,13 +408,11 @@ func _refresh_gatherer_card() -> void:
 ## было бы менять, но через theme override font_color проще и работает
 ## кроссплатформенно.
 func _refresh_gatherer_mode_buttons(mode: int) -> void:
-	if _gatherer_free_btn == null or _gatherer_work_btn == null or _gatherer_alarm_btn == null:
+	if _gatherer_free_btn == null or _gatherer_alarm_btn == null:
 		return
 	var free_c: Color = COLOR_MODE_FONT_ACTIVE if mode == Camp.CollectionMode.FREE else COLOR_MODE_FONT_INACTIVE
-	var work_c: Color = COLOR_MODE_FONT_ACTIVE if mode == Camp.CollectionMode.WORK else COLOR_MODE_FONT_INACTIVE
 	var alarm_c: Color = COLOR_MODE_FONT_ACTIVE if mode == Camp.CollectionMode.ALARM else COLOR_MODE_FONT_INACTIVE
 	_gatherer_free_btn.add_theme_color_override("font_color", free_c)
-	_gatherer_work_btn.add_theme_color_override("font_color", work_c)
 	_gatherer_alarm_btn.add_theme_color_override("font_color", alarm_c)
 
 
@@ -1137,14 +1128,22 @@ func _on_resource_changed(type: int, amount: int) -> void:
 		_refresh_gold_goal()
 
 
-## Цвет цифры: серый при 0 (склад пуст), белый при >0. Лёгкий feedback что
-## хоть что-то накопилось — без отдельного бэйджа/иконки «есть запас».
+## Показ «X / cap»: cap — потолок склада (CampEconomy.cap_for). Цвет: серый при 0,
+## белый при запасе, ЯНТАРНЫЙ когда упёрлись в потолок (склад полон → строй склады).
 func _refresh_resource_label(type: int, amount: int) -> void:
 	var label: Label = _resource_labels.get(type, null)
 	if label == null:
 		return
-	label.text = "%d" % amount
-	if amount > 0:
+	# Золото — без капа (валюта победы): просто число, без «/cap».
+	if type == int(ResourcePile.ResourceType.GOLD):
+		label.text = "%d" % amount
+		label.add_theme_color_override("font_color", Color.WHITE if amount > 0 else Color(0.6, 0.6, 0.6, 1))
+		return
+	var cap: int = _camp.economy.cap_for(type) if is_instance_valid(_camp) else 0
+	label.text = "%d/%d" % [amount, cap]
+	if cap > 0 and amount >= cap:
+		label.add_theme_color_override("font_color", Color(1.0, 0.7, 0.2, 1))  # полно
+	elif amount > 0:
 		label.add_theme_color_override("font_color", Color.WHITE)
 	else:
 		label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1))

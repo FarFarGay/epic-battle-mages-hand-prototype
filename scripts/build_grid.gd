@@ -45,6 +45,12 @@ const GridGeo = preload("res://scripts/grid_geometry.gd")
 @export var pad_y: float = 0.06
 ## Цвет ячейки, валидной для установки (зелёная заливка при удержании блока).
 @export var valid_color: Color = Color(0.4, 1.0, 0.5, 0.5)
+## Жилы: случайные ячейки сетки (кольца 1+, НЕ у центра-сердца), на которых можно
+## ставить ТОЛЬКО добычу (генератор), а на не-жилах добычу нельзя. vein_count — всего.
+@export var vein_count: int = 8
+@export var vein_color: Color = Color(1.0, 0.7, 0.2, 1.0)
+## Цвет ячейки-жилы, когда держишь НЕ добытчика (красный = «сюда нельзя»).
+@export var invalid_color: Color = Color(1.0, 0.3, 0.25, 0.55)
 ## Цвет линий сетки (границы колец + радиальные разделители).
 @export var line_color: Color = Color(0.6, 0.85, 1.0, 0.85)
 ## Толщина линий сетки (метры, рисуются плоскими лентами по земле).
@@ -285,12 +291,134 @@ func _build_cells() -> void:
 				"block": null,
 				"pad": pad,
 				"mat": pad.material_override,
+				"vein": false,  # жила: добыча только сюда, прочее — нельзя (см. _assign_veins)
 			}
 			ring_cells.append(cell)
 			_cells.append(cell)
 		_rings.append(ring_cells)
+	_assign_veins()
 	if debug_log and LogConfig.master_enabled:
 		print("[BuildGrid] построен: %d колец, %d ячеек" % [_rings.size(), _cells.size()])
+
+
+## Назначает жилы: гарантированный минимум в кольце 0 (старт добычи у сердца),
+## остальное — случайно по всем ячейкам. На каждой жиле — маркер-кристаллы.
+func _assign_veins() -> void:
+	if _cells.is_empty() or vein_count <= 0:
+		return
+	# Жилы НЕ в кольце 0 (центр-сердце/«точка генератора» остаётся чистым) — только
+	# в наружных кольцах 1+, куда растёт город. Случайно по ним.
+	var pool: Array = []
+	for cell in _cells:
+		if int(cell["r"]) == 0:
+			continue
+		pool.append(cell)
+	pool.shuffle()
+	var n: int = mini(vein_count, pool.size())
+	for i in range(n):
+		_mark_vein(pool[i])
+	if debug_log and LogConfig.master_enabled:
+		print("[BuildGrid] жил размечено: %d (кольца 1+)" % n)
+
+
+func _mark_vein(cell: Dictionary) -> void:
+	cell["vein"] = true
+	# Тип материала жилы: дерево / камень / железо. Визуал залежи и продукт склада — по типу.
+	var types := [ResourcePile.ResourceType.WOOD, ResourcePile.ResourceType.STONE, ResourcePile.ResourceType.IRON]
+	cell["vein_type"] = types[randi() % types.size()]
+	_spawn_vein_marker(cell)
+
+
+## Маркер жилы — ЗАЛЕЖЬ по типу материала: ДЕРЕВО → лесок, КАМЕНЬ → серые валуны
+## с кристаллами, ЖЕЛЕЗО → тёмная порода с рыжими кристаллами. Всегда видно; под
+## построенным складом-добытчиком прячется его телом.
+func _spawn_vein_marker(cell: Dictionary) -> void:
+	var root := Node3D.new()
+	add_child(root)
+	var c: Vector3 = cell["center"]
+	root.position = Vector3(c.x, 0.0, c.z)
+	var t: int = int(cell.get("vein_type", ResourcePile.ResourceType.STONE))
+	if t == ResourcePile.ResourceType.WOOD:
+		_build_grove(root)
+	elif t == ResourcePile.ResourceType.IRON:
+		_build_ore_pile(root, Color(0.36, 0.31, 0.3), Color(1.0, 0.55, 0.18))
+	else:
+		_build_ore_pile(root, Color(0.5, 0.5, 0.52), Color(0.62, 0.72, 0.92))
+	cell["marker"] = root
+
+
+## Залежь руды: 4 валуна (rock_col) + 3 кристалла (crystal_col, эмиссивные).
+func _build_ore_pile(root: Node3D, rock_col: Color, crystal_col: Color) -> void:
+	var stone_mat := StandardMaterial3D.new()
+	stone_mat.albedo_color = rock_col
+	stone_mat.roughness = 1.0
+	var crystal_mat := StandardMaterial3D.new()
+	crystal_mat.albedo_color = crystal_col
+	crystal_mat.emission_enabled = true
+	crystal_mat.emission = crystal_col
+	crystal_mat.emission_energy_multiplier = 1.5
+	var rock_pos := [Vector3(0.0, 0.0, 0.0), Vector3(0.33, 0.0, 0.12), Vector3(-0.26, 0.0, -0.2), Vector3(0.06, 0.0, -0.33)]
+	var rock_sz := [Vector3(0.52, 0.36, 0.48), Vector3(0.38, 0.28, 0.42), Vector3(0.42, 0.3, 0.36), Vector3(0.3, 0.22, 0.32)]
+	var rock_yaw := [0.3, -0.5, 0.8, -0.2]
+	for i in range(4):
+		var box := BoxMesh.new()
+		box.size = rock_sz[i]
+		var mi := MeshInstance3D.new()
+		mi.mesh = box
+		mi.material_override = stone_mat
+		mi.position = rock_pos[i] + Vector3(0.0, rock_sz[i].y * 0.5, 0.0)
+		mi.rotation = Vector3(0.0, rock_yaw[i], 0.0)
+		root.add_child(mi)
+	var cr_pos := [Vector3(0.0, 0.0, 0.0), Vector3(0.2, 0.0, -0.05), Vector3(-0.12, 0.0, 0.16)]
+	var cr_h := [0.62, 0.44, 0.52]
+	var cr_tilt := [Vector3(0.1, 0.0, 0.05), Vector3(-0.12, 0.4, 0.08), Vector3(0.08, -0.3, -0.1)]
+	for i in range(3):
+		var cyl := CylinderMesh.new()
+		cyl.top_radius = 0.0
+		cyl.bottom_radius = 0.09
+		cyl.height = cr_h[i]
+		cyl.radial_segments = 5
+		cyl.rings = 1
+		var mi := MeshInstance3D.new()
+		mi.mesh = cyl
+		mi.material_override = crystal_mat
+		mi.position = cr_pos[i] + Vector3(0.0, 0.2 + cr_h[i] * 0.5, 0.0)
+		mi.rotation = cr_tilt[i]
+		root.add_child(mi)
+
+
+## Лесок (жила дерева): 3 деревца — ствол (коричневый цилиндр) + крона (зелёный конус).
+func _build_grove(root: Node3D) -> void:
+	var trunk_mat := StandardMaterial3D.new()
+	trunk_mat.albedo_color = Color(0.4, 0.28, 0.16)
+	trunk_mat.roughness = 1.0
+	var leaf_mat := StandardMaterial3D.new()
+	leaf_mat.albedo_color = Color(0.24, 0.5, 0.22)
+	leaf_mat.roughness = 1.0
+	var tree_pos := [Vector3(0.0, 0.0, 0.1), Vector3(0.4, 0.0, -0.22), Vector3(-0.36, 0.0, -0.04)]
+	var tree_h := [0.95, 0.72, 0.84]
+	for i in range(3):
+		var th: float = tree_h[i]
+		var trunk := CylinderMesh.new()
+		trunk.top_radius = 0.06
+		trunk.bottom_radius = 0.08
+		trunk.height = th * 0.45
+		trunk.radial_segments = 5
+		var tm := MeshInstance3D.new()
+		tm.mesh = trunk
+		tm.material_override = trunk_mat
+		tm.position = tree_pos[i] + Vector3(0.0, trunk.height * 0.5, 0.0)
+		root.add_child(tm)
+		var leaf := CylinderMesh.new()
+		leaf.top_radius = 0.0
+		leaf.bottom_radius = 0.3
+		leaf.height = th * 0.72
+		leaf.radial_segments = 6
+		var lm := MeshInstance3D.new()
+		lm.mesh = leaf
+		lm.material_override = leaf_mat
+		lm.position = tree_pos[i] + Vector3(0.0, trunk.height + leaf.height * 0.45, 0.0)
+		root.add_child(lm)
 
 
 func _make_pad(inner: float, outer: float, ang: float, ang_half: float) -> MeshInstance3D:
@@ -580,12 +708,16 @@ func _try_place(block: CampModule) -> bool:
 		return _try_place_gate(block as BuildBlock)
 	# Здание встаёт только в своё кольцо (ring_tier) и занимает footprint сегментов
 	# подряд (1 = обычное, 2 = двойная стена).
-	var tier := 0
 	var fp := 1
+	var tier := 0
+	var needs_vein := false
 	if block is BuildBlock:
-		tier = (block as BuildBlock).ring_tier
 		fp = maxi(1, (block as BuildBlock).footprint)
-	# tier 0 → только генераторное кольцо (0); иначе → любое мелкое кольцо (1..).
+		tier = (block as BuildBlock).ring_tier
+		needs_vein = bool(CampBuildings.get_data((block as BuildBlock).building_id).get("requires_vein", false))
+	# Кольца по tier: генератор (tier 0) — ТОЛЬКО кольцо 0 («точка генератора» у
+	# харвестера); прочее (tier 1) — наружные кольца 1+. Плюс жильное правило (ниже):
+	# добытчик (requires_vein) ТОЛЬКО на жилу, прочее — ТОЛЬКО не на жилу.
 	var rings_to_search: Array = []
 	if tier == 0:
 		rings_to_search = [0]
@@ -607,6 +739,8 @@ func _try_place(block: CampModule) -> bool:
 				continue
 			if not _run_placeable(r, segs):
 				continue
+			if not _run_vein_ok(r, segs, needs_vein):
+				continue
 			var d := _horizontal_dist(block.global_position, to_global(_run_center_local(r, s, fp)))
 			if d < best_d:
 				best_d = d
@@ -614,7 +748,7 @@ func _try_place(block: CampModule) -> bool:
 				best_s = s
 	if best_r < 0:
 		if debug_log and LogConfig.master_enabled:
-			print("[BuildGrid] нет места под здание ×%d (зона tier %d)" % [fp, tier])
+			print("[BuildGrid] нет места под здание ×%d (жила=%s)" % [fp, str(needs_vein)])
 		return false
 	# Стена: per-cell — span отдельных 1-клеточных стен (рушатся по одной, можно
 	# заменить сегмент воротами). Оплата span×цена разом, остальные — purchased.
@@ -848,6 +982,15 @@ func _run_free(r: int, segs: Array) -> bool:
 	return true
 
 
+## Жильное правило ряда: добытчик (needs_vein) требует, чтобы ВСЕ ячейки ряда были
+## жилами; прочее — чтобы НИ одной жилы. На жилу нельзя оборону, на не-жилу — добычу.
+func _run_vein_ok(r: int, segs: Array, needs_vein: bool) -> bool:
+	for seg in segs:
+		if bool(_rings[r][seg]["vein"]) != needs_vein:
+			return false
+	return true
+
+
 func _run_center_local(r: int, s: int, fp: int) -> Vector3:
 	var cnt: int = segment_counts[r]
 	var mid: float = _ring_inner(r) + ring_band * 0.5
@@ -955,6 +1098,23 @@ func count_built(id: StringName) -> int:
 	return n
 
 
+## Рабочие места добычи: по одному на ПОСТРОЕННЫЙ склад-добытчик на жиле.
+## {block, pos (мир — точка работы у склада), type (материал жилы)}. Camp шлёт сюда
+## гнома-работника и качает материал, только пока работник на месте (_tick_vein_production).
+func get_vein_jobs() -> Array:
+	var out: Array = []
+	for cell in _cells:
+		if not bool(cell["vein"]):
+			continue
+		var b = cell["block"]
+		if b == null or not is_instance_valid(b) or not (b is BuildBlock) or not (b as BuildBlock).is_built:
+			continue
+		# Точка работы — ЦЕНТР склада: гном идёт В здание (навмеш доведёт до края,
+		# дальше «заходит внутрь» — прячется, работает; см. Gnome WORKER-arrival).
+		out.append({"block": b, "pos": to_global(cell["center"]), "type": int(cell["vein_type"])})
+	return out
+
+
 ## Сколько генераторов установлено в гриде (для гейта харвестера).
 func generator_count() -> int:
 	return count_built(CampBuildings.GENERATOR)
@@ -974,10 +1134,30 @@ func find_built(id: StringName) -> BuildBlock:
 
 ## Ячейку можно занять: кольцо 0 (примыкает к ядру-харвестеру) ИЛИ занят сосед.
 ## Существующий набор по индукции уже связан с ядром, потому полной BFS не нужно.
+## Нужна ли держимому блоку жила (requires_vein из каталога). Для пад-фидбэка.
+func _placing_needs_vein() -> bool:
+	if _placing == null or not (_placing is BuildBlock):
+		return false
+	return bool(CampBuildings.get_data((_placing as BuildBlock).building_id).get("requires_vein", false))
+
+
+func _placing_tier() -> int:
+	if _placing is BuildBlock:
+		return (_placing as BuildBlock).ring_tier
+	return 0
+
+
 func _is_placeable(cell: Dictionary) -> bool:
-	if int(cell["r"]) == 0:
-		return true
-	for n in _neighbors(int(cell["r"]), int(cell["s"])):
+	# Жила: добытчик только на жилу, прочее только не на жилу (зелёный пад = валидно).
+	if _placing_needs_vein() != bool(cell["vein"]):
+		return false
+	var r := int(cell["r"])
+	# Кольцо по tier: генератор (tier 0) — только кольцо 0; прочее — только кольца 1+.
+	if _placing_tier() == 0:
+		return r == 0
+	if r == 0:
+		return false
+	for n in _neighbors(r, int(cell["s"])):
 		var nc = _cell_at(n[0], n[1])
 		if nc != null and nc["block"] != null:
 			return true
@@ -1069,6 +1249,12 @@ func _update_grid_visuals() -> void:
 			mat.emission_energy_multiplier = lerpf(0.25, 1.0, pulse)
 		elif b != null:
 			pad.visible = false
+		elif _placing != null and bool(cell["vein"]) and not _placing_needs_vein():
+			# Жила + держишь НЕ добытчика → КРАСНЫЙ: сюда нельзя (только добыча).
+			pad.visible = true
+			mat.albedo_color = invalid_color
+			mat.emission = Color(invalid_color.r, invalid_color.g, invalid_color.b)
+			mat.emission_energy_multiplier = 0.7
 		elif _placing != null and _is_placeable(cell):
 			pad.visible = true
 			mat.albedo_color = valid_color

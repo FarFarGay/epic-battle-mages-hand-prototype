@@ -109,6 +109,9 @@ var _nav_carve: StaticBody3D = null
 ## крутящийся узел внутри; _model_mats — per-instance дубли материалов для
 ## hit-flash / подсветки (общие .tres не мутируем).
 var _machine: Node3D = null
+## true → модель — ДЕКОР поверх сектора (сектор остаётся видим телом, fit в ячейку);
+## false → модель ЗАМЕНЯЕТ сектор (генератор). Ставится из каталога "model_decor".
+var _model_decor: bool = false
 var _gear: Node3D = null
 var _model_mats: Array[StandardMaterial3D] = []
 ## Оригинальные emission-параметры дублей (по индексу с _model_mats): {enabled,
@@ -131,13 +134,17 @@ func configure(id: StringName) -> void:
 	footprint = maxi(1, int(d.get("footprint", 1)))
 	hp_max = float(d.get("hp", hp_max))
 	_apply_visual()
-	# Опциональная модель-тело здания (паровая машина генератора и т.п.). Если
-	# задана — заменяет сектор как тело блока: прячем сектор-меш (он останется
-	# только силуэтом стройки), показываем модель.
+	# Опциональная модель здания. Два режима:
+	#  - обычная "model" (паровая машина генератора): ЗАМЕНЯЕТ сектор как тело —
+	#    прячем сектор-меш (остаётся силуэтом стройки), модель = тело.
+	#  - "model_decor"=true (склад/казармы/блиндаж): модель — ДЕКОР ПОВЕРХ сектора.
+	#    Сектор виден и остаётся телом — он точная форма ячейки (идеальный FIT в
+	#    изогнутую ячейку), а декор (крыша/дверь/пропы) садится сверху.
+	_model_decor = bool(d.get("model_decor", false))
 	var model_path: String = d.get("model", "")
 	if model_path != "":
 		_spawn_machine(model_path)
-		if _mesh != null:
+		if _mesh != null and not _model_decor:
 			_mesh.visible = false
 
 
@@ -234,8 +241,11 @@ func _process(delta: float) -> void:
 		# Готово: если у здания есть модель-тело — она заменяет сектор (силуэт
 		# прячем, показываем модель). Иначе тело остаётся сектором.
 		if _machine != null:
-			_mesh.visible = false
 			_machine.visible = true
+			# Декор (model_decor) НЕ прячет сектор: сектор = тело, fit в ячейку.
+			# Обычная модель-тело (генератор) заменяет сектор → прячем силуэт.
+			if not _model_decor:
+				_mesh.visible = false
 		var root: Node = get_tree().current_scene
 		if root != null:
 			AoeVisual.spawn_dust(root, global_position)

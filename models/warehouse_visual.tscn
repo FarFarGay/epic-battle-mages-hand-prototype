@@ -1,0 +1,50 @@
+[gd_scene load_steps=7 format=3]
+
+; Грейбокс склада — ДЕКОР поверх изогнутого сектора-ячейки (model_decor=true).
+; Сектор сам = тело (точная форма ячейки → идеальный FIT), тинтуется каталогом.
+; Здесь только верх: двускатная крыша на верхней грани сектора + ворота на фронте
+; + пара ящиков. Локальный фрейм: земля y=-0.8, верх сектора y=+0.8 (height=1.6).
+; material_override на каждом меше — BuildBlock дублирует под hit-flash.
+
+[sub_resource type="PrismMesh" id="mesh_roof"]
+size = Vector3(3.2, 0.45, 1.8)
+
+[sub_resource type="BoxMesh" id="mesh_door"]
+size = Vector3(1.0, 0.85, 0.1)
+
+[sub_resource type="BoxMesh" id="mesh_crate"]
+size = Vector3(0.45, 0.45, 0.45)
+
+[sub_resource type="StandardMaterial3D" id="mat_roof"]
+albedo_color = Color(0.48, 0.38, 0.3, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="mat_dark"]
+albedo_color = Color(0.28, 0.25, 0.22, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="mat_crate"]
+albedo_color = Color(0.55, 0.45, 0.3, 1)
+roughness = 0.9
+
+[node name="WarehouseVisual" type="Node3D"]
+
+[node name="Roof" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.025, 0)
+mesh = SubResource("mesh_roof")
+material_override = SubResource("mat_roof")
+
+[node name="Door" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.375, 0.92)
+mesh = SubResource("mesh_door")
+material_override = SubResource("mat_dark")
+
+[node name="Crate1" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.55, -0.575, 1.02)
+mesh = SubResource("mesh_crate")
+material_override = SubResource("mat_crate")
+
+[node name="Crate2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.5, -0.575, 1.06)
+mesh = SubResource("mesh_crate")
+material_override = SubResource("mat_crate")

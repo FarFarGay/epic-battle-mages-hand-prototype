@@ -28,6 +28,9 @@ extends Node3D
 		resource_type = value
 		_refresh_visual()
 
+## Полевой сбор заменён ЖИЛАМИ (склад-добытчик на жиле). По умолчанию зоны ВЫКЛ —
+## пайлы не спавнятся, гномы не собирают (Camp: режим WORK убран). true — вернуть.
+@export var enabled: bool = false
 ## Сколько pile'ов спавнить в зоне на _ready. Случайное равномерное
 ## распределение в прямоугольнике, Y берётся с зоны.
 @export_range(1, 1000) var count: int = 8
@@ -118,6 +121,8 @@ func _refresh_visual() -> void:
 ## дизайнер сам решает на каком расстоянии от лагеря разместить ресурсы,
 ## кроме самой плотной зоны костра.
 func _spawn_instances() -> void:
+	if not enabled:
+		return  # полевой сбор отключён (материал теперь с жил через склад-добытчик)
 	if pile_scene == null:
 		push_warning("ResourceZone (%s): pile_scene не задан — пропускаю спавн" % name)
 		return

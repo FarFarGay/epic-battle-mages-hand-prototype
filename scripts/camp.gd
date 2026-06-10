@@ -248,6 +248,16 @@ const CAMP_BUILDING_CATALOG: Dictionary = CampBuildings.CATALOG
 ## Доля полной скорости добычи на минимуме генераторов. От неё скорость линейно
 ## растёт до 1.0 на generators_required. 0.4 → 1-й генератор качает на 40% темпа.
 @export_range(0.0, 1.0) var min_generator_yield_frac: float = 0.4
+## Прибавка к ПОТОЛКУ запаса материалов за каждый построенный склад (WAREHOUSE).
+## Базовый потолок — CampEconomy.base_cap. Пересчёт в _on_grid_buildings_changed.
+@export var warehouse_cap_bonus: int = 40
+## Сколько материала/сек качает один склад-добытчик с жилы (тип материала — по жиле).
+@export var vein_yield_per_sec: float = 0.4
+## Дробный аккумулятор добычи по типу материала (целые единицы уходят в economy).
+var _vein_accum: Dictionary = {}
+## Назначенные гномы-работники на склады: [{gnome, type}]. Пересобирается в
+## _assign_idle_life. Добыча идёт только пока работник ДОШЁЛ (gnome.is_work_arrived()).
+var _vein_workers: Array = []
 ## Сцена сегмента деревянного частокола. Спавнится множественно через
 ## BUILDING_PALISADE / try_build_palisade_line. Если null — постройка молча
 ## провалится.
@@ -2464,9 +2474,16 @@ func _on_grid_buildings_changed() -> void:
 	# UI журнала реагирует на набор зданий: вкладка «Армия» гейтит найм по
 	# построенным казармам (can_recruit_squad), «Лагерь» — счётчики.
 	EventBus.camp_buildings_changed.emit()
-	if _harvester == null or _build_grid == null:
+	if _build_grid == null:
 		return
-	_harvester.set_production_scale(_generator_production_scale(_build_grid.generator_count()))
+	# Склады поднимают потолок запаса материалов (независимо от харвестера).
+	economy.set_cap_bonus(_build_grid.count_built(CampBuildings.WAREHOUSE) * warehouse_cap_bonus)
+	if _harvester != null:
+		_harvester.set_production_scale(_generator_production_scale(_build_grid.generator_count()))
+	# Набор складов-добытчиков изменился → пере-раздаём гномов-работников (новый
+	# склад получит работника, со снесённого — гном освободится).
+	if is_deployed() and _collection_mode == CollectionMode.FREE:
+		_assign_idle_life()
 
 
 ## Доля [0..1] полной скорости добычи по числу установленных генераторов.
@@ -2480,6 +2497,25 @@ func _generator_production_scale(gens: int) -> float:
 		return 1.0
 	var t: float = float(gens - min_generators_to_mine) / float(span)
 	return lerpf(min_generator_yield_frac, 1.0, t)
+
+
+## Пассивная добыча материала складами-добытчиками на жилах: каждый качает материал
+## СВОЕЙ жилы (vein_yield_per_sec). Дробное копим, целые единицы — в economy (с капом).
+func _tick_vein_production(delta: float) -> void:
+	if _vein_workers.is_empty():
+		return
+	# Качаем только те склады, чей работник ДОШЁЛ и жив (нет гнома — нет добычи).
+	for w in _vein_workers:
+		var g = w["gnome"]
+		if not is_instance_valid(g) or not g.is_work_arrived():
+			continue
+		var t: int = int(w["type"])
+		_vein_accum[t] = float(_vein_accum.get(t, 0.0)) + vein_yield_per_sec * delta
+	for t in _vein_accum.keys():
+		var whole: int = int(_vein_accum[t])
+		if whole >= 1:
+			economy.add_resource(t, whole)
+			_vein_accum[t] = float(_vein_accum[t]) - float(whole)
 
 
 ## --- Collection orders (план + alarm/work) ---
@@ -2804,6 +2840,7 @@ func _process(delta: float) -> void:
 			_update_caravan_follow(delta)
 		State.DEPLOYED:
 			_update_deployed(delta)
+			_tick_vein_production(delta)
 		State.PACKING_RETURNING:
 			# Палатки стоят на местах развёртки, гномы возвращаются.
 			# Когда все дома — финализируем pack. Если кто-то завис (схвачен
@@ -2879,8 +2916,10 @@ func is_pile_claimed(pile: ResourcePile, exclude_gnome: Gnome = null) -> bool:
 ## (который про camp_toggle и start_deployed-gate'ом блокируется для
 ## статичных POI-лагерей) — команды гномам нужны и в статичных лагерях.
 func _handle_collection_input() -> void:
+	# Сбор (WORK) убран — материал теперь с жил через склад-добытчик, гномы не
+	# собирают. C → вернуть в idle (FREE, из тревоги), V → «собрать в башню» (ALARM).
 	if Input.is_action_just_pressed("gnome_collect"):
-		set_collection_mode(CollectionMode.WORK)
+		set_collection_mode(CollectionMode.FREE)
 	elif Input.is_action_just_pressed("gnome_alarm"):
 		set_collection_mode(CollectionMode.ALARM)
 
@@ -3301,6 +3340,21 @@ func _assign_idle_life() -> void:
 		if g.is_following_caravan():
 			continue
 		gatherers.append(g)
+
+	# ВОРКЕРЫ на склады-добытчики (приоритет): гном физически идёт в склад на жиле
+	# и стоит работает. Добыча материала идёт только пока работник ДОШЁЛ (см.
+	# _tick_vein_production). Остальные гномы дальше — у костров / бродяги.
+	_vein_workers.clear()
+	var jobs: Array = _build_grid.get_vein_jobs() if _build_grid != null else []
+	var wi: int = 0
+	for job in jobs:
+		if wi >= gatherers.size():
+			break
+		var gw = gatherers[wi]
+		wi += 1
+		gw.enter_idle_life(Gnome.IdleRole.WORKER, job["block"], job["pos"], false)
+		_vein_workers.append({"gnome": gw, "type": int(job["type"])})
+	gatherers = gatherers.slice(wi)
 
 	var fires: Array = []
 	for f in _campfires:
