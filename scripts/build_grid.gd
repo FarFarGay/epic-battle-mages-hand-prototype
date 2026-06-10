@@ -328,6 +328,30 @@ func _build_pad_mesh(inner: float, outer: float, ac: float, ah: float) -> ArrayM
 	return st.commit()
 
 
+## Вспышка-блик ПО ФОРМЕ ЯЧЕЙКИ в момент установки (вместо круга). Плоский сектор
+## ровно той ячейки/пролёта, куда встало здание — те же inner/outer/seg_deg, что у
+## блока (с учётом gapless/прилегания). Здание растёт из земли за build_time, так
+## что сектор виден в момент клика; ярко вспыхивает белым и гаснет за flash_time.
+func _spawn_cell_flash(local_ang: float, inner: float, outer: float, ang_half: float) -> void:
+	var mi := MeshInstance3D.new()
+	mi.mesh = _build_pad_mesh(inner, outer, local_ang, ang_half)
+	mi.position.y = 0.03  # над падами/линиями грида, без z-fight
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 1.0, 1.0, 0.9)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 1.0, 1.0)
+	mat.emission_energy_multiplier = 4.0
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mi.material_override = mat
+	add_child(mi)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(mat, "emission_energy_multiplier", 0.0, 0.45)
+	tw.tween_property(mat, "albedo_color:a", 0.0, 0.45)
+	tw.finished.connect(mi.queue_free)
+
+
 ## Чёткая сетка линиями: КОНТУР каждой ячейки (две дуги + два радиальных торца)
 ## на её инсет-размерах. Между ячейками — пустые «улицы» (ring_gap/cell_gap_m),
 ## сетка совпадает с зелёными пад-маркерами и читается как отдельные участки,
@@ -754,14 +778,10 @@ func _place_run(block: CampModule, r: int, s: int, fp: int) -> void:
 	# Лицом к ядру (горизонтально, без наклона — цель на высоте блока).
 	var face := Vector3(global_position.x, block.global_position.y, global_position.z)
 	block.look_at(face, Vector3.UP)
-	# Вспышка-блик на месте установки в момент клика — фидбек «здание встало сюда».
-	# Радиус ≈ под размер ячейки (по большей из сторон: глубина / хорда дуги).
-	var f_depth: float = dims["outer"] - dims["inner"]
-	var f_mid: float = (dims["inner"] + dims["outer"]) * 0.5
-	var f_chord: float = 2.0 * f_mid * sin(deg_to_rad(float(dims["seg_deg"])) * 0.5)
-	var root: Node = get_tree().current_scene
-	if root != null:
-		AoeVisual.spawn_flash(root, world_center, maxf(f_depth, f_chord) * 0.6)
+	# Вспышка-блик ПО ФОРМЕ ЯЧЕЙКИ в момент клика — фидбек «здание встало сюда».
+	# Сектор ровно той ячейки/пролёта (place_ang + seg_deg/inner/outer как у блока,
+	# с учётом gapless/прилегания), а не круг.
+	_spawn_cell_flash(place_ang, dims["inner"], dims["outer"], deg_to_rad(seg_deg) * 0.5)
 	# На время стройки блок вне Grabbable — нельзя схватить силуэт. По завершении
 	# BuildBlock сам возвращает себя в Grabbable (built), и здание можно поднять
 	# и переставить в другую ячейку.

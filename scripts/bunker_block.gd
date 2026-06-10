@@ -20,11 +20,22 @@ func _activate_combat() -> void:
 	_spawn_turret()
 
 
+## Блиндаж подняли рукой (перенос) — снимаем боевое состояние И глушим турель:
+## иначе встроенный лучник продолжал бы сканировать и стрелять «из руки» / в полёте
+## (его _physics_process гейтится только на _destroyed). Турель оживёт на
+## переустановке — _spawn_turret из _activate_combat по завершении стройки.
+func on_picked_up() -> void:
+	super.on_picked_up()
+	if _turret != null and is_instance_valid(_turret):
+		_turret.set_physics_process(false)
+
+
 ## Встроить лучника-турель: ArcherPost (embedded) у центра блиндажа, лицом НАРУЖУ
 ## от ядра. look_at(ядро) уже применён на установке → +Z (basis.z) смотрит ПРОЧЬ
 ## от ядра = направление огня. Тело-меш блиндажа скрываем — визуал = турель.
 func _spawn_turret() -> void:
 	if _turret != null and is_instance_valid(_turret):
+		_turret.set_physics_process(true)  # переустановка готового блиндажа — оживляем турель
 		return
 	var post := ARCHER_POST_SCENE.instantiate() as ArcherPost
 	if post == null:
