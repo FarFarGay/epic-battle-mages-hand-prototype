@@ -157,13 +157,11 @@ var _warbands: Array[SkeletonWarband] = []
 var _warband_spawn_cd: float = 0.0
 ## Штурм-банда спавнится ОДИН раз за ночь. Сбрасывается на день.
 var _night_assault_done: bool = false
-## Наземная дуга-телеграф штурма (caller-owned MeshInstance3D из AoeVisual) + её
-## материал для мигания + фаза мигания. Мигает, пока _assault_warband не войдёт
-## в зону строительства (или не будет выбита) — тогда _clear_assault_telegraph.
-var _assault_telegraph: MeshInstance3D = null
-var _assault_telegraph_mat: StandardMaterial3D = null
+## Дуги-телеграфы штурма: ПО ОДНОЙ на каждую штурм-банду (несколько фронтов →
+## несколько дуг). Элемент — Dictionary {warband, mesh, mat}. Каждая мигает, пока
+## ЕЁ банда не войдёт в зону строительства (или не будет выбита). Фаза мигания общая.
+var _telegraphs: Array[Dictionary] = []
 var _telegraph_pulse_t: float = 0.0
-var _assault_warband: SkeletonWarband = null
 
 @export_group("Caravan waves (атаки на караван в дороге)")
 ## Период между caravan-волнами в секундах. Каждая волна спавнит группу
@@ -599,61 +597,84 @@ func _do_assault(size: int, label: String) -> void:
 	if origin == Vector3.INF:
 		return
 	var wb := _spawn_warband_at(origin, size, SkeletonWarband.Mode.ASSAULT, target)
-	_assault_warband = wb
-	if wb != null and debug_log and LogConfig.master_enabled:
-		print("[WaveDirector] %s: штурм-банда (%d) с 1 фронта" % [label, size])
+	if wb == null:
+		return
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] %s: штурм-банда (%d) с фронта" % [label, size])
 	var camp := get_tree().get_first_node_in_group(&"camp") as Camp
-	if camp != null:
-		var center: Vector3 = camp.build_zone_center()
-		if center != Vector3.INF:
-			_spawn_assault_telegraph(center, camp.build_radius, origin)
-			_telegraph_pulse_t = 0.0
+	if camp == null:
+		return
+	var center: Vector3 = camp.build_zone_center()
+	if center == Vector3.INF:
+		return
+	# Своя дуга на ЭТУ банду — не трогаем дуги других фронтов.
+	var mesh := _spawn_assault_telegraph(center, camp.build_radius, origin)
+	if mesh != null:
+		_telegraphs.append({
+			"warband": wb,
+			"mesh": mesh,
+			"mat": mesh.material_override as StandardMaterial3D,
+		})
 
 
 ## Поднять ТОНКУЮ дугу-телеграф по краю зоны строительства (radius): сектор
-## ±half_angle вокруг направления от центра зоны к точке спавна банды.
-func _spawn_assault_telegraph(center: Vector3, radius: float, origin: Vector3) -> void:
-	_clear_assault_telegraph()
+## ±half_angle вокруг направления от центра зоны к точке спавна банды. Возвращает
+## MeshInstance3D (caller кладёт в _telegraphs) или null.
+func _spawn_assault_telegraph(center: Vector3, radius: float, origin: Vector3) -> MeshInstance3D:
 	var root: Node = get_tree().current_scene
 	if root == null:
 		root = get_tree().root
 	var dir := Vector3(origin.x - center.x, 0.0, origin.z - center.z)
 	if dir.length_squared() < 0.001:
-		return
+		return null
 	var bearing := atan2(dir.x, dir.z)  # как build_block: d(t)=(sin,0,cos), 0=+Z
 	var half_t: float = maxf(telegraph_thickness, 0.05) * 0.5
-	_assault_telegraph = AoeVisual.spawn_ground_arc(
+	return AoeVisual.spawn_ground_arc(
 		root, center, bearing, deg_to_rad(telegraph_half_angle_deg),
 		radius - half_t, radius + half_t, telegraph_color, 0.0,
 	)
-	if _assault_telegraph != null:
-		_assault_telegraph_mat = _assault_telegraph.material_override as StandardMaterial3D
 
 
-## Дуга жёстко МИГАЕТ (≈2Гц) и держится, ПОКА волна не вошла в зону строительства
-## (иначе можно пропустить). Снимаем когда: лагеря/зоны нет, банда выбита по пути,
-## или хоть один член штурма пересёк край зоны.
+## Каждая дуга жёстко МИГАЕТ (≈2Гц) и держится, ПОКА ЕЁ волна не вошла в зону
+## строительства. Снимаем дугу когда: лагеря/зоны нет, ЕЁ банда выбита по пути,
+## или хоть один её член пересёк край зоны. Несколько фронтов → несколько дуг.
 func _tick_assault_telegraph(delta: float) -> void:
-	if _assault_telegraph_mat == null:
+	if _telegraphs.is_empty():
 		return
 	var camp := get_tree().get_first_node_in_group(&"camp") as Camp
 	var center: Vector3 = camp.build_zone_center() if camp != null else Vector3.INF
-	if center == Vector3.INF \
-			or not is_instance_valid(_assault_warband) \
-			or _assault_warband.has_member_within(center, camp.build_radius):
-		_clear_assault_telegraph()
-		return
+	var radius: float = camp.build_radius if camp != null else 0.0
 	_telegraph_pulse_t += delta
 	var blink: float = 0.5 + 0.5 * sin(_telegraph_pulse_t * TAU * 2.0)
-	_assault_telegraph_mat.emission_energy_multiplier = lerpf(2.0, 6.0, blink)
-	_assault_telegraph_mat.albedo_color.a = lerpf(0.15, 0.9, blink)
+	var emission: float = lerpf(2.0, 6.0, blink)
+	var alpha: float = lerpf(0.15, 0.9, blink)
+	var kept: Array[Dictionary] = []
+	for t in _telegraphs:
+		# Variant + is_instance_valid ДО любого использования (банда/меш могли
+		# быть freed — typed-assign на freed вылетел бы).
+		var wb = t["warband"]
+		var mesh_raw = t["mesh"]
+		var arrived: bool = center == Vector3.INF \
+				or not is_instance_valid(wb) \
+				or wb.has_member_within(center, radius)
+		if arrived:
+			if is_instance_valid(mesh_raw):
+				mesh_raw.queue_free()
+			continue
+		var mat = t["mat"]
+		if mat != null and is_instance_valid(mesh_raw):
+			mat.emission_energy_multiplier = emission
+			mat.albedo_color.a = alpha
+		kept.append(t)
+	_telegraphs = kept
 
 
 func _clear_assault_telegraph() -> void:
-	if is_instance_valid(_assault_telegraph):
-		_assault_telegraph.queue_free()
-	_assault_telegraph = null
-	_assault_telegraph_mat = null
+	for t in _telegraphs:
+		var mesh_raw = t["mesh"]
+		if is_instance_valid(mesh_raw):
+			mesh_raw.queue_free()
+	_telegraphs.clear()
 
 
 ## Чит: мгновенно переключить фазу день↔ночь (тест ночной осады без ожидания дня).
@@ -847,9 +868,8 @@ func _start_campaign() -> void:
 	_day_night = DayNight.DAY
 	_day_night_remaining = day_duration_seconds
 	EventBus.day_phase_changed.emit(false, day_duration_seconds)
-	# Сброс телеграфа осады.
+	# Сброс телеграфов осады.
 	_clear_assault_telegraph()
-	_assault_warband = null
 	_night_assault_done = false
 	_phase = Phase.RUNNING
 
