@@ -520,49 +520,41 @@ func _reset_combat_state() -> void:
 	_tween_pose_to(POSE_NEUTRAL, POSE_RESTORE_TIME)
 
 
-## Патрульный шаг для DEFENDING_CAMP: каждый юнит самостоятельно выбирает
-## случайную точку на окружности `defend_patrol_radius` вокруг центра лагеря,
-## идёт туда patrol_speed'ом, по прибытии выбирает следующую. На бой
-## переключается из основного `_active_tick` (combat-проверка стоит ВЫШЕ
-## этого блока). Без adaptive-speed `_move_toward` — патруль это walk,
-## а не догон строя.
+## Патрульный шаг для DEFENDING_CAMP: юнит выбирает точку на навмеше в зоне лагеря
+## и идёт к ней ЧЕРЕЗ навмеш (`_resolve_path_step` огибает стены/здания по улицам,
+## не упирается в них), по прибытии выбирает следующую. Скорость — ровный walk
+## `defend_patrol_speed` (не adaptive-sprint `_move_toward`: патруль это прогулка
+## по улицам, а не догон строя). На бой переключается из `_active_tick` (combat-
+## проверка ВЫШЕ этого блока).
 func _tick_defend_patrol() -> void:
 	var center: Vector3 = _resolve_squad_center()
 	if _defend_patrol_target == Vector3.INF:
 		_defend_patrol_target = _pick_defend_patrol_point(center)
 	var to_target := Vector3(
-		_defend_patrol_target.x - global_position.x,
-		0.0,
-		_defend_patrol_target.z - global_position.z,
-	)
-	var dist: float = to_target.length()
-	if dist < defend_patrol_arrival:
+		_defend_patrol_target.x - global_position.x, 0.0,
+		_defend_patrol_target.z - global_position.z)
+	if to_target.length() < defend_patrol_arrival:
 		_defend_patrol_target = _pick_defend_patrol_point(center)
-		to_target = Vector3(
-			_defend_patrol_target.x - global_position.x,
-			0.0,
-			_defend_patrol_target.z - global_position.z,
-		)
-		dist = to_target.length()
-	if dist < 0.001:
+	# Шаг по навмешу к патрульной точке — обход зданий по «улицам», а не в стену.
+	var step_target: Vector3 = _resolve_path_step(_defend_patrol_target)
+	var step_dir := Vector3(step_target.x - global_position.x, 0.0, step_target.z - global_position.z)
+	if step_dir.length_squared() < VecUtil.EPSILON_SQ:
 		velocity = Vector3.ZERO
 		return
-	var dir: Vector3 = to_target / dist
-	look_at(global_position + dir, Vector3.UP)
-	velocity = dir * defend_patrol_speed
+	step_dir = step_dir.normalized()
+	look_at(global_position + step_dir, Vector3.UP)
+	velocity = step_dir * defend_patrol_speed
 
 
-## Случайная точка на окружности `defend_patrol_radius` вокруг center'а.
-## Угол uniform [0, TAU). Y центра — палатки/anchor лежат на полу, патруль
-## той же высоты (CharacterBody3D + гравитация прижмут к terrain'у при
-## расхождении).
+## Патрульная точка: случайный угол + случайный радиус в кольце [0.3R..R] вокруг
+## центра лагеря (роум по РАЗНЫМ кольцам-улицам, а не одной окружности), затем
+## проекция на ближайшую точку навмеша (`_snap_to_navmesh`) → точка ВСЕГДА на
+## улице между зданиями и достижима. R = `defend_patrol_radius`.
 func _pick_defend_patrol_point(center: Vector3) -> Vector3:
 	var angle: float = randf() * TAU
-	return Vector3(
-		center.x + cos(angle) * defend_patrol_radius,
-		center.y,
-		center.z + sin(angle) * defend_patrol_radius,
-	)
+	var radius: float = lerpf(defend_patrol_radius * 0.3, defend_patrol_radius, randf())
+	var p := Vector3(center.x + cos(angle) * radius, center.y, center.z + sin(angle) * radius)
+	return _snap_to_navmesh(p)
 
 
 ## Резолв центра кольца отряда исходя из squad.state. Squad — RefCounted

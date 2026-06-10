@@ -40,6 +40,6 @@ cast_shadow = 0
 [node name="NavigationAgent3D" type="NavigationAgent3D" parent="."]
 path_desired_distance = 0.5
 target_desired_distance = 0.5
-radius = 0.4
+radius = 0.3
 height = 1.5
 avoidance_enabled = false
