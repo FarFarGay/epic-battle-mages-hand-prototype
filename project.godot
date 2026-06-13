@@ -26,6 +26,7 @@ SoldierSystem="*res://scripts/soldier_system.gd"
 SquadXpFx="*res://scripts/squad_xp_fx.gd"
 XpOrbSpawner="*res://scripts/xp_orb_spawner.gd"
 ResourceFx="*res://scripts/resource_fx.gd"
+HitStop="*res://scripts/hit_stop.gd"
 
 [display]
 

@@ -206,6 +206,10 @@ func _perform_cast() -> void:
 		knockback_lift,
 		knockback_duration,
 	)
+	# Одиночный фаербол — крупный единичный бабах: ощутимый хитстоп. Firestorm/super
+	# не зовут set_hitstop (оставляют 0), их серии детонаций иначе дёргали бы слоу-мо.
+	fireball.set_hitstop(HitStop.HEAVY)
+	fireball.shake_amount = 0.2  # одиночный фаербол — заметный impact-шейк (по дистанции)
 	if burn_patch_scene != null:
 		fireball.setup_burn(burn_patch_scene, p_burn_radius, p_burn_dmg, p_burn_tick_interval, p_burn_duration)
 	# Большой одиночный файрбол: фиксированный 12м-pulse. Длительность
@@ -221,5 +225,6 @@ func _perform_cast() -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Spell:Fireball] каст @ target=(%.1f, %.1f, %.1f)" % [target_pos.x, target_pos.y, target_pos.z])
 	spell_cast.emit(&"fireball", target_pos)
+	EventBus.tower_fired.emit(target_pos)  # отдача башни (одиночный выстрел)
 
 

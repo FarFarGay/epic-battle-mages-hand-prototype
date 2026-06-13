@@ -185,7 +185,19 @@ const REACTOR_GLOW_MAX := 1.7
 ## stationary tower (стоит, lend не двигается) speed_norm ≈ 0 → fx гаснет.
 var _motion_fx: SegmentMotionFx = null
 var _visual_base_y: float = 0.0
+var _visual_base_pos: Vector3 = Vector3.ZERO  # база позиции VisualRoot (для лурча отдачи по xz)
 var _visual_base_basis: Basis = Basis()
+# Отдача при выстреле: башня кренится + лурчит НАЗАД (противоположно касту), с
+# whip-перехлёстом (HitTilt.envelope по _recoil_age). _recoil_dir — направление
+# (мир = локаль, башня не вращается).
+var _recoil_dir: Vector3 = Vector3.ZERO
+var _recoil_age: float = 0.0
+var _recoil_active: bool = false
+const _RECOIL_TILT_FRAC := 0.33  # доля HitTilt.MAX_TILT_DEG (~7° на пике)
+const _RECOIL_KICK := 0.22       # м — позиционный рывок назад на пике
+# Шейк камеры только на СИЛЬНЫЙ удар по башне (≥ порога) — отсекает чип рядовых
+# скелетов, ловит гиганта (28) / меха (40-80). Амплитуда ∝ урону.
+const _SHAKE_HIT_THRESHOLD := 20.0
 
 
 func _ready() -> void:
@@ -203,6 +215,7 @@ func _ready() -> void:
 	destroyed.connect(func() -> void: EventBus.tower_destroyed.emit())
 	health_changed.connect(func(current: float, maximum: float) -> void: EventBus.tower_health_changed.emit(current, maximum))
 	mana_changed.connect(func(current: float, maximum: float) -> void: EventBus.tower_mana_changed.emit(current, maximum))
+	EventBus.tower_fired.connect(_on_tower_fired)  # отдача-тильт на каждый выстрел
 	# Стартовый sync HUD'у: emit'им текущие значения после connect'а — HUD
 	# подписывается на EventBus в своём _ready, поэтому даже если он ready'ится
 	# раньше Tower'а, сначала возьмёт snapshot через get_first_node_in_group.
@@ -217,6 +230,7 @@ func _ready() -> void:
 	# Motion-fx: bobbing/tilt/squash-stretch на VisualRoot.
 	if _visual_root != null:
 		_visual_base_y = _visual_root.position.y
+		_visual_base_pos = _visual_root.position
 		_visual_base_basis = _visual_root.basis
 		_motion_fx = SegmentMotionFx.new()
 		# Мелкие амплитуды — башня тяжёлая, не картон. Низкая частота bob'а
@@ -246,6 +260,8 @@ func take_damage(amount: float) -> void:
 	damaged.emit(amount)
 	health_changed.emit(maxf(hp, 0.0), max_hp)
 	HitFlash.flash(_mesh)
+	if amount >= _SHAKE_HIT_THRESHOLD:
+		EventBus.camera_shake.emit(clampf(amount / 100.0, 0.2, 0.7), global_position)
 	if debug_log and LogConfig.master_enabled:
 		print("[Tower] получил %.1f урона, hp=%.1f" % [amount, hp])
 	if hp <= 0.0:
@@ -422,7 +438,7 @@ func _shield_zap_skeletons() -> void:
 			continue
 		if node.global_position.distance_squared_to(_parry_center) > r_sq:
 			continue
-		Damageable.try_damage(node, parry_skeleton_damage)
+		Damageable.try_damage(node, parry_skeleton_damage, HitStop.MEDIUM)
 
 
 func _process(delta: float) -> void:
@@ -437,7 +453,18 @@ func _process(delta: float) -> void:
 	_dash_fx = lerpf(_dash_fx, target_fx, 1.0 - exp(-DashFx.FX_RATE * delta))
 	var dir: Vector3 = Vector3(_dash_dir.x, 0.0, _dash_dir.y)
 	vbasis = DashFx.dash_basis(dir, _dash_fx) * vbasis
-	_visual_root.position.y = _visual_base_y + (fx["bob_y"] as float)
+	# Отдача выстрела: whip-наклон+squash (impact_basis) + позиционный лурч назад.
+	# env с перехлёстом (<0) даёт кратко обратный клевок/толчок вперёд = «пружинит».
+	var env: float = 0.0
+	if _recoil_active:
+		_recoil_age += delta
+		env = HitTilt.envelope(_recoil_age)
+		if _recoil_age >= HitTilt.RECOVER_DUR:
+			_recoil_active = false
+	if env != 0.0:
+		vbasis = HitTilt.impact_basis(_recoil_dir, env * _RECOIL_TILT_FRAC) * vbasis
+	var kick: Vector3 = _recoil_dir * (env * _RECOIL_KICK)  # _recoil_dir = назад от цели
+	_visual_root.position = _visual_base_pos + Vector3(kick.x, fx["bob_y"] as float, kick.z)
 	_visual_root.basis = vbasis
 	# Трейл: призраки с интервалом, пока идёт рывок.
 	if _dash_fx > 0.005 and dash_trail_enabled:
@@ -445,6 +472,18 @@ func _process(delta: float) -> void:
 		if _dash_ghost_t <= 0.0:
 			_dash_ghost_t = DashFx.GHOST_INTERVAL
 			DashFx.spawn_ghost(get_tree().current_scene, _mesh, dir)
+
+
+## Отдача на каждый выстрел (EventBus.tower_fired): крен НАЗАД, противоположно
+## выстрелу. d = башня→цель (отдача в эту сторону = назад от выстрела). Башня не
+## вращается → мир = локаль. Знак направления подобрать по ощущению (инвертить d).
+func _on_tower_fired(target: Vector3) -> void:
+	var d: Vector3 = global_position - target
+	d.y = 0.0
+	if d.length_squared() > 0.0001:
+		_recoil_dir = d.normalized()
+		_recoil_age = 0.0
+		_recoil_active = true
 
 
 ## Яркость жил реактора = доля маны. Пусто → тлеет (MIN), полный бак → ярко (MAX).
@@ -606,7 +645,7 @@ func _dash_damage_enemy(collider: Node) -> void:
 	if collider in _dash_hit_set:
 		return  # уже задели этим рывком
 	_dash_hit_set.append(collider)
-	Damageable.try_damage(collider, dash_damage)
+	Damageable.try_damage(collider, dash_damage, HitStop.HEAVY)
 
 
 func _push_kinematic(target: Node, col: KinematicCollision3D, intended_velocity: Vector3) -> void:

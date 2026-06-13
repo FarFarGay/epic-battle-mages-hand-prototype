@@ -299,6 +299,9 @@ var _dash_vec: Vector3 = Vector3.ZERO
 ## Dash-визуал (общий с башней, см. DashFx): база меша + сглаженная интенсивность
 ## наклона/стретча + таймер призраков трейла.
 var _mesh_base_basis: Basis = Basis.IDENTITY
+# База позиции меша (он смещён вверх от начала body=ноги). Тильт вращает и
+# position вокруг начала → меш кренится ОТ НОГ (верх ведёт, основание стоит).
+var _mesh_base_position: Vector3 = Vector3.ZERO
 var _dash_fx: float = 0.0
 var _dash_ghost_t: float = 0.0
 
@@ -379,6 +382,7 @@ func _ready() -> void:
 	if _mesh:
 		_mesh.material_override = _shared_mech_material
 		_mesh_base_basis = _mesh.basis  # база для dash-наклона/стретча (DashFx)
+		_mesh_base_position = _mesh.position  # база для тильт-крена от ног
 	# Hit-feedback: короткая вспышка эмиссии ТОЛЬКО в момент попадания (как у всех
 	# врагов проекта). Никакого постоянного мигания.
 	damaged.connect(_on_self_damaged)
@@ -983,7 +987,13 @@ func _process(delta: float) -> void:
 		return
 	var target_fx: float = 1.0 if _dash_remaining > 0.0 else 0.0
 	_dash_fx = lerpf(_dash_fx, target_fx, 1.0 - exp(-DashFx.FX_RATE * delta))
-	_mesh.basis = DashFx.dash_basis(_dash_vec, _dash_fx) * _mesh_base_basis
+	# Тильт пивотит вокруг начала body (ноги): крутим и basis, и position. Squash
+	# (impact_basis) масштабирует МЕШ вокруг его центра — только в basis; в пивот
+	# позиции идёт чистый наклон (rot_b), иначе squash «ехал» бы в смещение.
+	var rot_b: Basis = _hitstop_tilt_basis()
+	var imp_b: Basis = HitTilt.impact_basis(_hit_tilt_dir_local, _hit_tilt)
+	_mesh.basis = imp_b * DashFx.dash_basis(_dash_vec, _dash_fx) * _mesh_base_basis
+	_mesh.position = rot_b * _mesh_base_position
 	if _dash_fx > 0.005:
 		_dash_ghost_t -= delta
 		if _dash_ghost_t <= 0.0:

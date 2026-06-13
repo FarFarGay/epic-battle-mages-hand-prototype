@@ -31,6 +31,18 @@ const CAMERA_RIG_GROUP := &"camera_rig"
 ## Скорость экспоненциального доезда к целевому зуму (1/c). Большое = резко.
 @export var zoom_speed: float = 10.0
 
+@export_group("Shake")
+## Trauma-based тряска: травма копится через add_trauma / EventBus.camera_shake,
+## спадает со временем, смещение/крен ∝ травма² (резкий falloff — бьёт и быстро
+## гаснет). Звать ТОЛЬКО на сильных событиях, не на каждый выстрел.
+@export var shake_decay: float = 1.4          # 1/сек — спад травмы
+@export var shake_max_offset: float = 0.3     # макс смещение камеры (м) при травме=1
+@export var shake_max_roll_deg: float = 1.6   # макс крен (°) при травме=1
+## Затухание по дистанции от центра обзора: ближе full_radius — полная сила,
+## дальше zero_radius — ноль, между — smoothstep. Дальние взрывы не трясут.
+@export var shake_full_radius: float = 18.0
+@export var shake_zero_radius: float = 65.0
+
 @export_group("Orbit")
 ## Поворот камеры вокруг оси Y при зажатом колесе (MMB) + движении мыши.
 ## Rig — Node3D, камера сидит дочкой на оффсете; вращая rotation.y rig'а,
@@ -55,6 +67,9 @@ var _focus_override: Node3D = null
 var _base_offset: Vector3 = Vector3.ZERO
 var _zoom: float = 1.0
 var _zoom_target: float = 1.0
+## Тряска: текущая травма 0..1 и базовый поворот камеры (крен накладываем поверх).
+var _trauma: float = 0.0
+var _base_cam_rotation: Vector3 = Vector3.ZERO
 
 
 func _ready() -> void:
@@ -65,6 +80,8 @@ func _ready() -> void:
 		global_position = _default_target.global_position
 	if _camera:
 		_base_offset = _camera.position
+		_base_cam_rotation = _camera.rotation
+	EventBus.camera_shake.connect(_on_camera_shake)
 
 
 ## Эффективная цель этого кадра. Override — если задан и жив; иначе дефолт.
@@ -111,11 +128,12 @@ func _process(delta: float) -> void:
 	if t:
 		global_position = global_position.lerp(t.global_position, follow_speed * delta)
 	_update_zoom(delta)
+	_apply_shake(delta)
 
 
 func _update_zoom(delta: float) -> void:
-	if _camera == null:
-		return
+	# Только ведём _zoom к цели; саму позицию камеры пишет _apply_shake каждый кадр
+	# (зум + тряска вместе), иначе тряска и зум дрались бы за _camera.position.
 	if is_equal_approx(_zoom, _zoom_target):
 		return
 	_zoom = lerpf(_zoom, _zoom_target, clampf(zoom_speed * delta, 0.0, 1.0))
@@ -123,4 +141,36 @@ func _update_zoom(delta: float) -> void:
 	# тотически приближается, и is_equal_approx долго не срабатывает.
 	if absf(_zoom - _zoom_target) < 0.001:
 		_zoom = _zoom_target
-	_camera.position = _base_offset * _zoom
+
+
+## Добавить травму камере (через EventBus.camera_shake). Амплитуда ослабляется по
+## расстоянию от центра обзора (global_position rig'а ≈ точка, на которую смотрим):
+## ближе full_radius — полно, дальше zero_radius — ноль. Дальние события не трясут.
+func _on_camera_shake(amount: float, position: Vector3) -> void:
+	var dist: float = global_position.distance_to(position)
+	var falloff: float = 1.0 - smoothstep(shake_full_radius, shake_zero_radius, dist)
+	if falloff <= 0.0:
+		return
+	_trauma = clampf(_trauma + amount * falloff, 0.0, 1.0)
+
+
+## Каждый кадр: позиция камеры = базовый оффсет×зум + экранное смещение, поворот =
+## базовый + крен. Смещение/крен ∝ травма² (резкий спад — бьёт и быстро гаснет).
+## Травма=0 → ровно зум-позиция, без эффекта (нет регрессии статичной камеры).
+func _apply_shake(delta: float) -> void:
+	if _camera == null:
+		return
+	if _trauma > 0.0:
+		_trauma = maxf(_trauma - shake_decay * delta, 0.0)
+	var s: float = _trauma * _trauma
+	var pos: Vector3 = _base_offset * _zoom
+	var rot: Vector3 = _base_cam_rotation
+	if s > 0.0:
+		# Смещение масштабируем на _zoom: при отзуме Camera3D физически дальше от
+		# сцены (base_offset×zoom), и фикс. сдвиг давал бы микроскопическую тряску
+		# на экране. ×_zoom держит экранную амплитуду одинаковой на любом зуме.
+		# Крен (rot.z) — угловой, зум-инвариантен, его не трогаем.
+		pos += Vector3(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0), 0.0) * (shake_max_offset * s * _zoom)
+		rot.z += randf_range(-1.0, 1.0) * deg_to_rad(shake_max_roll_deg) * s
+	_camera.position = pos
+	_camera.rotation = rot

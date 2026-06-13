@@ -170,6 +170,7 @@ func _cast() -> void:
 func _launch_one_projectile(landing: Vector3) -> void:
 	if not is_instance_valid(_effects_root):
 		return
+	EventBus.tower_fired.emit(landing)  # отдача башни НА КАЖДУЮ выпущенную мину (честно)
 	var launch_pos: Vector3 = _coord.tower_launch_position(launch_offset_y, _hand)
 	var fireball := projectile_scene.instantiate() as Fireball
 	if fireball == null:

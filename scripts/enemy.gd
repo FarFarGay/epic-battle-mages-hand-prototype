@@ -172,6 +172,16 @@ var _effects_root: Node = null
 ## Длительность всегда продлевается до max(существующий, новый).
 var _freeze_until_msec: int = 0
 var _freeze_slow_factor: float = 1.0
+# Хитстоп: до этого msec AI/действия заморожены, но физика (гравитация + нокбэк-
+# скольжение) продолжает работать — «оглушён, но летит». Ставит HitStop.
+var _hitstop_until_msec: int = 0
+# Тильт-реакция на хитстоп: меш кренится от удара (визуал стопа для врагов без
+# анимации). _hit_tilt 1→0 затухает, _hit_tilt_dir_local — направление крена в
+# локальном пространстве меша. Применяет подкласс (см. _hitstop_tilt_basis).
+var _hit_tilt: float = 0.0            # текущая амплитуда крена (1 в стопе, потом envelope)
+var _hit_tilt_dir_local: Vector3 = Vector3.ZERO
+var _hit_tilt_age: float = 0.0        # время с момента окончания хитстопа (для whip-возврата)
+var _hit_tilt_active: bool = false
 
 
 func _ready() -> void:
@@ -298,6 +308,36 @@ func is_frozen() -> bool:
 	return _freeze_until_msec > Time.get_ticks_msec()
 
 
+## Хитстоп (зовёт HitStop на удачном попадании «весомого» удара): оглушение на
+## `duration` сек — AI/действия замирают, но физика (гравитация + нокбэк) идёт.
+## Продлеваем до max, чтобы перекрывающиеся удары не укорачивали окно.
+func apply_hitstop(duration: float, hit_dir: Vector3 = Vector3.ZERO) -> void:
+	if duration <= 0.0:
+		return
+	_hitstop_until_msec = maxi(_hitstop_until_msec, Time.get_ticks_msec() + int(duration * 1000.0))
+	# Направление крена «со стороны удара»: приоритет — явное направление удара
+	# (travel снаряда, башня→цель), иначе откат от нокбэка (velocity). Прямой хит
+	# фаербола детонирует НА цели, его radial-нокбэк там вырождается в вертикаль,
+	# поэтому источник и передаёт travel-направление. Переводим в локаль меша.
+	var src: Vector3 = hit_dir if hit_dir.length_squared() > 0.0001 else velocity
+	var wdir := Vector3(src.x, 0.0, src.z)
+	if wdir.length_squared() > 0.0001:
+		_hit_tilt_dir_local = global_transform.basis.inverse() * wdir.normalized()
+		_hit_tilt = 1.0
+		_hit_tilt_age = 0.0
+		_hit_tilt_active = true
+
+
+## Basis тильт-реакции для меша (подкласс домножает на свою базу в _process).
+func _hitstop_tilt_basis() -> Basis:
+	return HitTilt.tilt_basis(_hit_tilt_dir_local, _hit_tilt)
+
+
+## True пока активно окно хитстопа (см. _physics_process — гейтит _ai_step).
+func _in_hitstop() -> bool:
+	return _hitstop_until_msec > Time.get_ticks_msec()
+
+
 ## Множитель XZ-скорости из-за freeze (1.0 если эффекта нет). Используется
 ## в `_physics_process` для масштабирования velocity перед `move_and_slide`.
 func _freeze_velocity_factor() -> float:
@@ -322,14 +362,30 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.y = 0.0
 
+	# Тильт: держим позу на полной амплитуде пока заморожен («тильтанул → замер в
+	# позе»), а после конца хитстопа — whip-возврат с перехлёстом (HitTilt.envelope).
+	if _hit_tilt_active:
+		if _in_hitstop():
+			_hit_tilt = 1.0
+			_hit_tilt_age = 0.0
+		else:
+			_hit_tilt_age += delta
+			_hit_tilt = HitTilt.envelope(_hit_tilt_age)
+			if _hit_tilt_age >= HitTilt.RECOVER_DUR:
+				_hit_tilt_active = false
+				_hit_tilt = 0.0
+
 	# Кулдаун-таймер (после удара) тикает всегда, даже в knockback'е, иначе
 	# самонанесённый lunge-knockback искусственно удлинял бы атак-цикл.
 	if _state == AttackState.COOLDOWN and _state_timer > 0.0:
 		_state_timer = maxf(_state_timer - delta * _fsm_time_scale(), 0.0)
 
 	_knockback.tick(delta)
-	if _knockback.is_active():
-		# AI заглушен; horizon decays к нулю — knockback затухает.
+	if _knockback.is_active() or _in_hitstop():
+		# AI заглушён (нокбэк ИЛИ хитстоп); velocity (в т.ч. активный нокбэк)
+		# затухает через friction, а move_and_slide ниже двигает тело. Поэтому
+		# в хитстопе враг продолжает отлетать от удара — «оглушён, но летит»,
+		# а не «замер и потом прыгнул».
 		velocity = _knockback.apply_friction(velocity, delta)
 	else:
 		_ai_step(delta)

@@ -346,6 +346,8 @@ func _commit_rain() -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Super] carrier @ burst-target=(%.1f, %.1f, %.1f)" % [target.x, target.y, target.z])
 	_spawn_carrier(target)
+	EventBus.tower_fired.emit(target)  # отдача: carrier выходит из башни (1 раз; payload'ы — из неба)
+	EventBus.camera_shake.emit(0.6, target)  # супер — сильное событие; трясём по дистанции до точки удара
 	# Категорию возвращаем СРАЗУ — игрок может управлять рукой пока carrier
 	# летит и payload'ы падают. CASTING-state держится через _on_carrier_burst
 	# (закроется обратно в READY после burst'а).
@@ -519,3 +521,7 @@ func _spawn_one_payload(burst_position: Vector3, ground_target: Vector3) -> void
 		payload_knockback_lift,
 		payload_knockback_duration,
 	)
+	# Хитстоп: атаки башни морозят весомых целей; per-enemy рефрактор не даёт
+	# рою payload'ов застан-локать босса (см. HitStop).
+	fireball.set_hitstop(HitStop.HEAVY)
+	fireball.shake_amount = 0.1  # payload-серия: мелкий шейк на снаряд, копится в кучу

@@ -40,6 +40,14 @@ signal tower_mana_changed(current: float, maximum: float)
 signal spell_unlocked(id: StringName)
 ## Заклинание прокачано на новый уровень. level — уже актуальный (после апгрейда).
 signal spell_upgraded(id: StringName, level: int)
+## Из башни вылетел снаряд — на КАЖДЫЙ выстрел, не на каст: шквал/мины эмитят
+## per-shot (по снаряду), одиночные — раз. target — точка цели снаряда. Башня
+## использует для отдачи-тильта (направление = башня→target). Честная серия отдач.
+signal tower_fired(target: Vector3)
+## Тряска камеры (trauma-based). amount 0..1, position — МИРОВАЯ точка события:
+## камера ослабляет травму по расстоянию от центра обзора (близко=полно, далеко=0).
+## Звать ТОЛЬКО на сильных/редких событиях (супер, взрыв, смерть босса) — не на каждый выстрел.
+signal camera_shake(amount: float, position: Vector3)
 
 # --- Hand: захват / бросок / способности ---
 signal hand_grabbed(item: Node3D)

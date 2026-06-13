@@ -66,6 +66,13 @@ var _knockback_lift: float
 var _knockback_duration: float
 var _exploded: bool = false
 var _age: float = 0.0
+# Сила хитстопа на попадании взрыва (сек, см. HitStop). 0 = без него. Ставит
+# только ОДИНОЧНЫЙ фаербол; град firestorm'а и payload'ы супера оставляют 0,
+# иначе серия детонаций дёргала бы слоу-мо непрерывно.
+var _hitstop: float = 0.0
+# Тряска камеры на детонацию (trauma 0..1, затухает по дистанции от башни). 0 =
+# без шейка. Ставят спавнеры: одиночный фаербол — заметно, серии — мелко.
+var shake_amount: float = 0.0
 
 # Параметры остаточного горения. Передаются HandSpellFireball'ом через
 # setup_burn — отдельным сеттером, чтобы основной setup() не разрастался
@@ -206,6 +213,11 @@ func set_collide_in_flight(enabled: bool, flight_mask: int = -1) -> void:
 ## Опциональный конфиг остаточного горения после взрыва. Если scene не
 ## передана (или null) — burn не спавнится. Параметры BurnPatch.setup() —
 ## один-в-один.
+## Сила хитстопа на детонации (сек заморозки времени). См. _hitstop.
+func set_hitstop(strength: float) -> void:
+	_hitstop = strength
+
+
 func setup_burn(scene: PackedScene, radius: float, damage_per_tick: float, tick_interval: float, duration: float) -> void:
 	_burn_patch_scene = scene
 	_burn_radius = radius
@@ -237,6 +249,7 @@ func reflect(_reflector_pos: Vector3) -> bool:
 		return false
 	_reflected = true
 	_reflect_target = enemy
+	_hitstop = HitStop.HEAVY  # отражёнка — контр-удар башни, впечатывает (атаки башни → хитстоп)
 	_explode_mask = Layers.MASK_HAND_SLAM            # AOE теперь бьёт врагов
 	_flight_collision_mask = Layers.MASK_FRIENDLY_PROJECTILE  # детонирует о врага в полёте
 	_collide_in_flight = true
@@ -393,6 +406,8 @@ func _explode() -> void:
 	# Y центра взрыва клампим к target.y — чтобы AOE применялся на земле,
 	# а не в воздухе если шар по proximity сработал чуть раньше.
 	origin.y = _target_pos.y
+	if shake_amount > 0.0:
+		EventBus.camera_shake.emit(shake_amount, origin)  # impact-шейк, затухает по дистанции
 
 	var space := get_world_3d().direct_space_state
 	var shape := SphereShape3D.new()
@@ -538,7 +553,9 @@ func _apply_aoe(target: Node, origin: Vector3) -> void:
 	var velocity_change: Vector3 = horizontal_dir * _knockback_force * falloff
 	Pushable.try_push(target, velocity_change, _knockback_duration)
 	var dealt: float = _damage * falloff
-	Damageable.try_damage(target, dealt)
+	# _velocity = направление полёта (башня→цель) → тильт «со стороны удара»,
+	# в отличие от radial-нокбэка, который на прямом хите вырождается.
+	Damageable.try_damage(target, dealt, _hitstop, _velocity)
 	# Телеметрия отражения: если этот снаряд отбит парированием — сообщаем цели
 	# (мех ведёт счёт отражённого урона). Duck-typing, без связки с EnemyMech.
 	if _reflected and dealt > 0.0 and target.has_method("note_reflected_damage"):

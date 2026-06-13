@@ -222,11 +222,14 @@ func _explode() -> void:
 	if _exploded:
 		return
 	_exploded = true
+	# Шейк: одна мина — умеренно; кластер детонирует почти разом → травма копится
+	# (клампится в 1) → большой залп трясёт сильнее одиночной. Само масштабируется.
+	EventBus.camera_shake.emit(0.3, global_position)
 	# Основной AOE через shared util (sphere-query + radius²-filter +
 	# Damageable.try_damage). Раньше логика жила локально без radius²-filter'а —
 	# теперь AOE строго в радиусе, AABB-broadphase подмешивание отсекается.
 	var hits: Array[Node] = AoeDamage.apply_uniform(get_tree(), global_position,
-		aoe_radius, aoe_damage_mask, damage, 0.0, 0.0, 32)
+		aoe_radius, aoe_damage_mask, damage, 0.0, 0.0, 32, HitStop.HEAVY)
 	var hit_count: int = hits.size()
 	# FAR-LOD скелеты вне broad-phase, shape-query их не находит. Группа +
 	# distance²-фильтр — тот же паттерн, что в HandPhysicalSlam.FAR-fallback.
@@ -241,7 +244,7 @@ func _explode() -> void:
 		var d_sq: float = (skel.global_position - global_position).length_squared()
 		if d_sq > aoe_radius_sq:
 			continue
-		Damageable.try_damage(skel, damage)
+		Damageable.try_damage(skel, damage, HitStop.HEAVY)
 		hit_count += 1
 		far_hits += 1
 	if debug_log and LogConfig.master_enabled:

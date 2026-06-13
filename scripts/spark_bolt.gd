@@ -95,6 +95,7 @@ func _explode() -> void:
 	var victim: Node3D = _find_nearest_enemy_in_radius()
 	if victim != null and victim.has_method(&"take_damage"):
 		victim.call(&"take_damage", damage)
+		HitStop.fire_for(victim, HitStop.LIGHT)  # быстрый зап; стоп только на «весомых», не на фоддере
 	queue_free()
 
 

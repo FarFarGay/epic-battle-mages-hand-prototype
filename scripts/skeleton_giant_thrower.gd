@@ -127,6 +127,7 @@ func _perform_strike(target: Node3D) -> void:
 	_projectiles_root.add_child(stone)
 	stone.set_shooter(self)  # отражённый камень летит обратно в этого каменщика
 	stone.damage = randf_range(arrow_damage_min, arrow_damage_max)
+	stone.shake_amount = 0.5  # тяжёлый камень метателя трясёт камеру на прилёт (по дистанции)
 	stone.speed = arrow_speed
 	var spawn: Vector3 = global_position + arrow_spawn_offset
 	# Если телеграф зафиксировал aim в WINDUP — используем его. Fallback на

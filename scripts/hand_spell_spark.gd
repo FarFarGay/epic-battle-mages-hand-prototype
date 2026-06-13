@@ -103,3 +103,4 @@ func _perform_cast() -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Spell:Spark] искра @ (%.1f, %.1f) damage=%.0f" % [target_pos.x, target_pos.z, p_damage])
 	spell_cast.emit(&"spark", target_pos)
+	EventBus.tower_fired.emit(target_pos)  # отдача башни (одиночный выстрел)

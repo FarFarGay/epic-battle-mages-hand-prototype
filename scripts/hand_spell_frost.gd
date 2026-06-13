@@ -169,3 +169,4 @@ func _perform_cast() -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Spell:Frost] каст @ target=(%.1f, %.1f, %.1f)" % [target_pos.x, target_pos.y, target_pos.z])
 	spell_cast.emit(&"frost", target_pos)
+	EventBus.tower_fired.emit(target_pos)  # отдача башни (одиночный выстрел)

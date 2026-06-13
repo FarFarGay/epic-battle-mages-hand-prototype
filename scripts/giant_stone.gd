@@ -57,6 +57,9 @@ extends Node3D
 ## ядра/огня/дыма. AoeArrow: лёгкий puff на земле при попадании стрелы.
 ## Игнорируется если show_explosion_visual=false.
 @export var impact_ring_only: bool = false
+## Тряска камеры на прилёт (trauma 0..1, затухает по дистанции). 0 = без шейка —
+## дефолт для лёгких стрел фоддера. Гигант-метатель ставит >0 (тяжёлый камень).
+@export var shake_amount: float = 0.0
 @export var debug_log: bool = false
 
 ## Damage задаётся caller'ом перед setup() — у разных гигантов может быть
@@ -165,6 +168,8 @@ func _explode(pos: Vector3) -> void:
 		return
 	_consumed = true
 	global_position = pos
+	if shake_amount > 0.0:
+		EventBus.camera_shake.emit(shake_amount, pos)  # тяжёлый камень метателя; затухает по дистанции
 	var root: Node = get_tree().current_scene
 	if not is_instance_valid(root):
 		queue_free()

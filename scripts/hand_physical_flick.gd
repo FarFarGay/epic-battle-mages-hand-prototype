@@ -88,7 +88,7 @@ func on_release() -> void:
 	var velocity: Vector3 = dir * flick_force
 	var damage := randf_range(flick_damage_min, flick_damage_max)
 	Pushable.try_push(_flick_target, velocity, flick_knockback_duration)
-	Damageable.try_damage(_flick_target, damage)
+	Damageable.try_damage(_flick_target, damage, HitStop.LIGHT)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Physical:Flick] щелбан: %s полетел в (%.2f, %.2f), |v|=%.2f, dmg=%.1f" % [_flick_target.name, dir.x, dir.z, velocity.length(), damage])
 	flicked.emit(_flick_target, velocity)

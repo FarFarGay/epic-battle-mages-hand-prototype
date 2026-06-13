@@ -195,6 +195,7 @@ func _launch_one() -> void:
 	var angle: float = randf() * TAU
 	var dist: float = sqrt(randf()) * _series_scatter_radius  # uniform по площади
 	var target_pos: Vector3 = _volley_target + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+	EventBus.tower_fired.emit(target_pos)  # отдача башни НА КАЖДЫЙ снаряд серии (честно)
 
 	# Telegraph: ground-warning под точкой удара одного шота. Размер = AOE
 	# радиус взрыва шота. Ring живёт warning_duration (~ flight + buffer),
@@ -228,6 +229,10 @@ func _launch_one() -> void:
 		knockback_lift,
 		knockback_duration,
 	)
+	# Хитстоп: атаки башни морозят весомых целей. Серия безопасна — per-enemy
+	# рефрактор не даёт залпу застан-локать босса (см. HitStop).
+	fireball.set_hitstop(HitStop.MEDIUM)
+	fireball.shake_amount = 0.18  # серия: каждый снаряд — ощутимый блип, «под ноги» рокочет (по дистанции)
 	if burn_patch_scene != null:
 		fireball.setup_burn(burn_patch_scene, _series_burn_radius, _series_burn_damage_per_tick, _series_burn_tick_interval, _series_burn_duration)
 

@@ -40,6 +40,7 @@ static func apply_uniform(
 	push_speed: float = 0.0,
 	push_duration: float = 0.0,
 	max_results: int = 64,
+	hitstop: float = 0.0,
 ) -> Array[Node]:
 	var hits: Array[Node] = []
 	if tree == null:
@@ -84,7 +85,7 @@ static func apply_uniform(
 				continue
 		var damaged := false
 		if damage > 0.0 and Damageable.is_damageable(collider):
-			Damageable.try_damage(collider, damage)
+			Damageable.try_damage(collider, damage, hitstop)
 			damaged = true
 		if push_speed > 0.0 and Pushable.is_pushable(collider):
 			var dir := Vector3.ZERO

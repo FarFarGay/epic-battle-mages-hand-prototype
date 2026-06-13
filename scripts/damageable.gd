@@ -32,10 +32,16 @@ static func is_damageable(target: Object) -> bool:
 
 ## Универсальный нанос урона. Возвращает true, если удар прошёл.
 ## Гейтит amount > 0 (на случай dt-производных значений) и проверяет группу.
-static func try_damage(target: Object, amount: float) -> bool:
+## `hitstop` — длительность заморозки времени (сек) на удачном попадании; 0 =
+## без хитстопа. Передавать только с ИМПАКТ-сайтов игрока (см. HitStop), DoT и
+## NPC-автоатаки оставляют 0, иначе слоу-мо тикает непрерывно.
+static func try_damage(target: Object, amount: float, hitstop: float = 0.0, hit_dir: Vector3 = Vector3.ZERO) -> bool:
 	if amount <= 0.0:
 		return false
 	if not is_damageable(target):
 		return false
 	(target as Node).take_damage(amount)
+	if hitstop > 0.0:
+		# стоп только на «весомых» целях; hit_dir (travel снаряда) задаёт сторону тильта
+		HitStop.fire_for(target, hitstop, hit_dir)
 	return true
