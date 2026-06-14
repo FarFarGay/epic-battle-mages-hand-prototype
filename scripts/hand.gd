@@ -24,7 +24,7 @@ extends Node3D
 ## SQUAD_AIM — режим прицеливания команды «Идти сюда» для отряда. HandSquadAim
 ## координатор перехватывает ПКМ для подтверждения цели. Все остальные
 ## категории также гасятся.
-enum Category { PHYSICAL, MAGIC, SUPER, SQUAD_AIM, BUILD_AIM }
+enum Category { PHYSICAL, MAGIC, SUPER, SQUAD_AIM, BUILD_AIM, DASH_AIM }
 
 const HAND_GROUP := &"hand"
 ## Группа Node3D-объектов с публичным `set_highlighted(bool)`, которые
@@ -206,7 +206,8 @@ func clear_held() -> void:
 func is_in_aim_mode() -> bool:
 	return active_category == Category.SUPER \
 			or active_category == Category.SQUAD_AIM \
-			or active_category == Category.BUILD_AIM
+			or active_category == Category.BUILD_AIM \
+			or active_category == Category.DASH_AIM
 
 
 ## Переключает активную категорию ввода. Идемпотентно. Эмитит category_changed,

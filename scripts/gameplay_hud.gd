@@ -106,6 +106,9 @@ var _hp_bar: ProgressBar
 var _hp_label: Label
 var _mana_bar: ProgressBar
 var _mana_label: Label
+## Кеш текущей маны башни (из _refresh_tower_mana). Нужен в _update_action_bar:
+## если маны < mana_cost спелла → ячейка трея рендерится ЧБ (см. там).
+var _current_mana: float = 0.0
 ## Шкала «великой силы» — золотая полоска под маной. Когда full —
 ## заголовок мигает «ГОТОВО (Space)».
 var _super_bar: ProgressBar
@@ -431,7 +434,11 @@ func _refresh_gatherer_mode_buttons(mode: int) -> void:
 ## active highlight (золотая рамка вокруг текущей equipped способности),
 ## cooldown-dim (~0.35× если can_trigger=false).
 func _build_action_bar() -> void:
-	_slot_assignments = ACTION_BAR_DEFAULT_ASSIGNMENT.duplicate()
+	# Трей показывает только разблокированные заклинания (single source of truth —
+	# SpellSystem). Сейчас открыта только Искра → один слот; великий удар locked →
+	# фиксированный super-слот не строится. По мере разблокировки трей дорастёт.
+	_slot_assignments = ACTION_BAR_DEFAULT_ASSIGNMENT.filter(
+		func(id: StringName) -> bool: return SpellSystem.is_unlocked(id))
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
@@ -465,11 +472,12 @@ func _build_action_bar() -> void:
 	bar_panel.add_child(_action_bar)
 
 	_action_slots.clear()
-	# Draggable слоты 0..4 — ability_id из _slot_assignments.
+	# Draggable слоты — ability_id из _slot_assignments (только разблокированные).
 	for i in range(_slot_assignments.size()):
 		_action_slots.append(_build_action_slot(i, true))
-	# Фиксированный Super-слот (индекс 5).
-	_action_slots.append(_build_action_slot(_slot_assignments.size(), false))
+	# Фиксированный Super-слот — только если великий удар разблокирован.
+	if SpellSystem.is_unlocked(&"super"):
+		_action_slots.append(_build_action_slot(_slot_assignments.size(), false))
 
 
 ## Один слот action bar'а. slot_idx — место в _action_slots; draggable=true
@@ -578,7 +586,9 @@ func _update_action_bar() -> void:
 
 		var icon: ColorRect = slot.icon
 		var base_color: Color = meta.get("color", Color.WHITE)
-		if is_ready:
+		# Полный цвет только если готов И хватает маны. Нехватка маны = тот же
+		# затемнённый вид, что и кулдаун (не отдельный ЧБ-стейт).
+		if is_ready and _meta_has_mana(slot, meta):
 			icon.color = base_color
 		else:
 			icon.color = Color(base_color.r * 0.35, base_color.g * 0.35, base_color.b * 0.35, 1.0)
@@ -928,6 +938,17 @@ func _meta_is_ready(hand: Hand, meta: Dictionary) -> bool:
 				return _camp.is_super_ready()
 			return true
 	return true
+
+
+## True если на каст хватает маны. Ману тратят только MAGIC-заклинания; физика
+## (slam/flick) маны не требует, super идёт от charge-шкалы — для них всегда true.
+## mana_cost — из SpellSystem (single source of truth, тот же что списывает каст).
+func _meta_has_mana(slot: Dictionary, meta: Dictionary) -> bool:
+	if meta.get("category_str", "") != "MAGIC" or not slot.draggable:
+		return true
+	var ability_id: StringName = _slot_assignments[slot.slot_idx]
+	var lvl: Dictionary = SpellSystem.get_current_level_data(ability_id)
+	return _current_mana >= float(lvl.get("mana_cost", 0.0))
 
 
 func _process(delta: float) -> void:
@@ -1370,10 +1391,13 @@ func _build_tower_stats() -> void:
 
 	# Великая сила — золотой бар третьим. Высота меньше — это «накопление»,
 	# не run-time ресурс как HP/MP, ему не нужен такой же визуальный вес.
-	_super_bar = _make_stat_bar(panel, Color(1.0, 0.78, 0.18, 1.0), bar_width)
-	_super_bar.custom_minimum_size = Vector2(bar_width, 12)
-	_super_label = _make_stat_overlay(_super_bar, "ВЕЛИКАЯ СИЛА")
-	_super_label.add_theme_font_size_override("font_size", 10)
+	# Строится только если великий удар разблокирован (иначе бар-заглушка, который
+	# никогда не наполнится, вводит в заблуждение). _refresh_super_charge guard'ит null.
+	if SpellSystem.is_unlocked(&"super"):
+		_super_bar = _make_stat_bar(panel, Color(1.0, 0.78, 0.18, 1.0), bar_width)
+		_super_bar.custom_minimum_size = Vector2(bar_width, 12)
+		_super_label = _make_stat_overlay(_super_bar, "ВЕЛИКАЯ СИЛА")
+		_super_label.add_theme_font_size_override("font_size", 10)
 
 
 func _make_stat_bar(parent: Control, fill_color: Color, width: int) -> ProgressBar:
@@ -1425,6 +1449,7 @@ func _refresh_tower_health(current: float, maximum: float) -> void:
 
 
 func _refresh_tower_mana(current: float, maximum: float) -> void:
+	_current_mana = current  # кеш до null-guard'а: нужен трею даже если бар не построен
 	if _mana_bar == null:
 		return
 	_mana_bar.max_value = maxf(maximum, 1.0)

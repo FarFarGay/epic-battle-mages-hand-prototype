@@ -96,7 +96,24 @@ func _explode() -> void:
 	if victim != null and victim.has_method(&"take_damage"):
 		victim.call(&"take_damage", damage)
 		HitStop.fire_for(victim, HitStop.LIGHT)  # быстрый зап; стоп только на «весомых», не на фоддере
+	_notify_spark_targets()
 	queue_free()
+
+
+## Оповещает «электро-активируемые» объекты (диоды, рубильники) в impact_radius:
+## Искра — электрическое заклинание, попадание в spark_target дёргает on_spark().
+## Отдельно от урона врагам: один снаряд может и врага ударить, и механизм зажечь.
+func _notify_spark_targets() -> void:
+	for n in get_tree().get_nodes_in_group(&"spark_target"):
+		if not is_instance_valid(n):
+			continue
+		var node := n as Node3D
+		if node == null:
+			continue
+		var dx: float = node.global_position.x - global_position.x
+		var dz: float = node.global_position.z - global_position.z
+		if dx * dx + dz * dz <= impact_radius * impact_radius and node.has_method(&"on_spark"):
+			node.call(&"on_spark")
 
 
 func _find_nearest_enemy_in_radius() -> Node3D:

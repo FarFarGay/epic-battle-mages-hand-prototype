@@ -1,0 +1,388 @@
+[gd_scene format=3 uid="uid://dn2nfnt6ifaii"]
+
+[ext_resource type="PackedScene" path="res://scenes/tower.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/hand.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/camera_rig.tscn" id="3"]
+[ext_resource type="Script" uid="uid://ca4r3f6w4pm3w" path="res://scripts/nav_region.gd" id="4_nav"]
+[ext_resource type="PackedScene" uid="uid://grassfield01" path="res://scenes/grass_field.tscn" id="5_grass"]
+[ext_resource type="PackedScene" uid="uid://c5tyv5sieeeom" path="res://scenes/blocker_wall.tscn" id="6_wall"]
+[ext_resource type="Shader" uid="uid://ca6silla7wl60" path="res://resources/oklch_posterize.gdshader" id="7_posterize"]
+[ext_resource type="Shader" uid="uid://cpo2ysnx8vuk6" path="res://resources/soft_focus.gdshader" id="8_softfocus"]
+[ext_resource type="Texture2D" uid="uid://cgyb0oifaq4m8" path="res://textures/ground_05/ground_05_1k/ground_05_baseColor_1k.png" id="9_gbase"]
+[ext_resource type="Texture2D" uid="uid://di8gddh0u0l5" path="res://textures/ground_05/ground_05_1k/ground_05_normal_gl_1k.png" id="10_gnorm"]
+[ext_resource type="Texture2D" uid="uid://cimemni2dnnkn" path="res://textures/ground_05/ground_05_1k/ground_05_roughness_1k.png" id="11_grough"]
+[ext_resource type="Texture2D" uid="uid://4c6g0nlssgah" path="res://textures/ground_05/ground_05_1k/ground_05_ambientOcclusion_1k.png" id="12_gao"]
+[ext_resource type="Texture2D" uid="uid://n70qvixmgm0p" path="res://textures/sky_121/sky_121_2k.png" id="13_skypano"]
+[ext_resource type="PackedScene" path="res://scenes/perf_hud.tscn" id="14_perf"]
+[ext_resource type="PackedScene" path="res://scenes/gameplay_hud.tscn" id="15_hud"]
+[ext_resource type="PackedScene" path="res://scenes/win_overlay.tscn" id="16_win"]
+[ext_resource type="PackedScene" path="res://scenes/defeat_overlay.tscn" id="17_defeat"]
+[ext_resource type="PackedScene" path="res://scenes/boss_warning_overlay.tscn" id="18_boss"]
+[ext_resource type="PackedScene" path="res://scenes/day_night_overlay.tscn" id="19_daynight"]
+[ext_resource type="PackedScene" uid="uid://startmenu001" path="res://scenes/start_menu.tscn" id="20_startmenu"]
+[ext_resource type="Script" path="res://scripts/room_door.gd" id="21_door"]
+[ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="22_skel"]
+[ext_resource type="Script" uid="uid://dndck7ob5edsp" path="res://scripts/room_skeleton_filler.gd" id="23_filler"]
+[ext_resource type="Script" uid="uid://clsrl4kk1d31f" path="res://scripts/metal_door.gd" id="24_metaldoor"]
+[ext_resource type="Script" uid="uid://dt8q0721ofwcu" path="res://scripts/spark_diode.gd" id="25_diode"]
+[ext_resource type="Script" path="res://scripts/red_diode.gd" id="26_reddiode"]
+[ext_resource type="Script" uid="uid://r0vjcokb5o2g" path="res://scripts/lever.gd" id="27_lever"]
+[ext_resource type="PackedScene" path="res://scenes/gnome_house.tscn" id="28_gnomehouse"]
+
+[sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
+panorama = ExtResource("13_skypano")
+
+[sub_resource type="Sky" id="Sky_res"]
+sky_material = SubResource("Sky_mat")
+
+[sub_resource type="Environment" id="Environment_atmo"]
+background_mode = 2
+background_color = Color(0.02, 0.02, 0.04, 1)
+sky = SubResource("Sky_res")
+ambient_light_source = 3
+ambient_light_color = Color(0.15, 0.16, 0.22, 1)
+ambient_light_energy = 0.35
+tonemap_mode = 4
+tonemap_exposure = 0.75
+tonemap_white = 6.0
+ssao_enabled = true
+ssao_intensity = 0.7
+sdfgi_enabled = true
+sdfgi_use_occlusion = true
+sdfgi_energy = 0.55
+glow_enabled = true
+glow_levels/3 = 1.0
+glow_levels/4 = 1.0
+glow_levels/5 = 0.5
+glow_intensity = 0.22
+glow_bloom = 0.03
+glow_hdr_threshold = 1.6
+adjustment_enabled = true
+adjustment_contrast = 1.18
+adjustment_saturation = 1.18
+
+[sub_resource type="ShaderMaterial" id="Material_posterize"]
+shader = ExtResource("7_posterize")
+shader_parameter/strength = 0.3
+shader_parameter/steps_l = 12.0
+shader_parameter/steps_h = 16.0
+shader_parameter/steps_c = 5.0
+shader_parameter/use_l = true
+shader_parameter/use_h = true
+shader_parameter/use_c = false
+shader_parameter/chroma_boost = 1.05
+
+[sub_resource type="ShaderMaterial" id="Material_softfocus"]
+shader = ExtResource("8_softfocus")
+shader_parameter/softness = 0.08
+shader_parameter/blur_size = 2.5
+
+[sub_resource type="NavigationMesh" id="NavMesh_main"]
+geometry_parsed_geometry_type = 1
+geometry_collision_mask = 4129
+geometry_source_geometry_mode = 1
+geometry_source_group_name = &"navmesh_source"
+cell_size = 0.3
+agent_radius = 0.3
+agent_max_climb = 0.5
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_ground"]
+size = Vector3(300, 1, 300)
+
+[sub_resource type="StandardMaterial3D" id="Material_ground"]
+albedo_texture = ExtResource("9_gbase")
+roughness_texture = ExtResource("11_grough")
+normal_enabled = true
+normal_texture = ExtResource("10_gnorm")
+ao_enabled = true
+ao_texture = ExtResource("12_gao")
+uv1_scale = Vector3(0.2, 0.2, 0.2)
+uv1_triplanar = true
+uv1_world_triplanar = true
+
+[sub_resource type="BoxMesh" id="BoxMesh_ground"]
+size = Vector3(300, 1, 300)
+
+[sub_resource type="StandardMaterial3D" id="Material_door"]
+albedo_color = Color(0.46, 0.2, 0.13, 1)
+roughness = 0.65
+emission_enabled = true
+emission = Color(0.3, 0.08, 0.04, 1)
+emission_energy_multiplier = 0.4
+
+[sub_resource type="BoxMesh" id="BoxMesh_door"]
+size = Vector3(8, 3, 0.6)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_door"]
+size = Vector3(8, 3, 0.6)
+
+[sub_resource type="StandardMaterial3D" id="Material_metal"]
+albedo_color = Color(0.36, 0.39, 0.45, 1)
+metallic = 0.9
+metallic_specular = 0.7
+roughness = 0.32
+
+[node name="LevelRooms" type="Node3D" unique_id=169599323]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=411368344]
+environment = SubResource("Environment_atmo")
+
+[node name="Posterize" type="CanvasLayer" parent="." unique_id=1726121641]
+layer = 0
+
+[node name="Rect" type="ColorRect" parent="Posterize" unique_id=1576241657]
+material = SubResource("Material_posterize")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="SoftFocus" type="CanvasLayer" parent="." unique_id=1644308565]
+layer = 0
+
+[node name="Rect" type="ColorRect" parent="SoftFocus" unique_id=1640086047]
+material = SubResource("Material_softfocus")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1267922059]
+transform = Transform3D(1, 0, 0, 0, 0.707, 0.707, 0, -0.707, 0.707, 0, 160.69301, -242.50099)
+light_energy = 0.85
+shadow_enabled = true
+
+[node name="NavigationRegion3D" type="NavigationRegion3D" parent="." unique_id=1330787805 groups=["nav_region"]]
+navigation_mesh = SubResource("NavMesh_main")
+script = ExtResource("4_nav")
+
+[node name="Ground" type="StaticBody3D" parent="." unique_id=453572263 groups=["navmesh_source"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+collision_mask = 31
+
+[node name="GroundCollision" type="CollisionShape3D" parent="Ground" unique_id=1814993927]
+shape = SubResource("BoxShape3D_ground")
+
+[node name="GroundMesh" type="MeshInstance3D" parent="Ground" unique_id=636233428]
+material_override = SubResource("Material_ground")
+mesh = SubResource("BoxMesh_ground")
+
+[node name="GrassField" parent="." unique_id=1955080870 instance=ExtResource("5_grass")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.28, 0)
+coverage_target_path = NodePath("../Ground/GroundMesh")
+
+[node name="Room1" type="Node3D" parent="." unique_id=1436589507]
+
+[node name="WallNorth" parent="Room1" unique_id=1700252984 instance=ExtResource("6_wall")]
+transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -14)
+
+[node name="WallEast" parent="Room1" unique_id=1661610944 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, 18, 0, 0)
+
+[node name="WallWest" parent="Room1" unique_id=489123191 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, -18, 0, 0)
+
+[node name="WallSouthLeft" parent="Room1" unique_id=38677418 instance=ExtResource("6_wall")]
+transform = Transform3D(3.625, 0, 0, 0, 1, 0, 0, 0, 1, -11.25, 0, 14)
+
+[node name="WallSouthRight" parent="Room1" unique_id=826992472 instance=ExtResource("6_wall")]
+transform = Transform3D(3.625, 0, 0, 0, 1, 0, 0, 0, 1, 11.25, 0, 14)
+
+[node name="Door" type="StaticBody3D" parent="Room1" unique_id=513863723 groups=["hand_immune", "navmesh_source", "room_door", "slam_damage_immune"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 14)
+collision_layer = 544
+collision_mask = 0
+script = ExtResource("21_door")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Room1/Door" unique_id=1659825254]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+material_override = SubResource("Material_door")
+mesh = SubResource("BoxMesh_door")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room1/Door" unique_id=1939014101]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("BoxShape3D_door")
+
+[node name="Room2" type="Node3D" parent="." unique_id=489139874]
+
+[node name="WallEast" parent="Room2" unique_id=1304910471 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, 18, 0, 28)
+
+[node name="WallWest" parent="Room2" unique_id=2126545282 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, -18, 0, 28)
+
+[node name="WallSouthLeft" parent="Room2" unique_id=1785490701 instance=ExtResource("6_wall")]
+transform = Transform3D(3.625, 0, 0, 0, 1, 0, 0, 0, 1, -11.25, 0, 42)
+
+[node name="WallSouthRight" parent="Room2" unique_id=1085104140 instance=ExtResource("6_wall")]
+transform = Transform3D(3.625, 0, 0, 0, 1, 0, 0, 0, 1, 11.25, 0, 42)
+
+[node name="MetalDoor" type="StaticBody3D" parent="Room2" unique_id=1870050926 groups=["hand_immune", "navmesh_source", "slam_damage_immune"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 42)
+collision_layer = 544
+collision_mask = 0
+script = ExtResource("24_metaldoor")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Room2/MetalDoor" unique_id=101644919]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+material_override = SubResource("Material_metal")
+mesh = SubResource("BoxMesh_door")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room2/MetalDoor" unique_id=1053620525]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("BoxShape3D_door")
+
+[node name="SparkDiode" type="Node3D" parent="Room2" unique_id=1470959870]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 38)
+script = ExtResource("25_diode")
+target_path = NodePath("../MetalDoor")
+
+[node name="Room3" type="Node3D" parent="." unique_id=455955113]
+
+[node name="WallEast" parent="Room3" unique_id=696024864 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, 18, 0, 56)
+
+[node name="WallWest" parent="Room3" unique_id=95407931 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, -18, 0, 56)
+
+[node name="WallSouthLeft" parent="Room3" unique_id=1151669042 instance=ExtResource("6_wall")]
+transform = Transform3D(3.625, 0, 0, 0, 1, 0, 0, 0, 1, -11.25, 0, 70)
+
+[node name="WallSouthRight" parent="Room3" unique_id=232886945 instance=ExtResource("6_wall")]
+transform = Transform3D(3.625, 0, 0, 0, 1, 0, 0, 0, 1, 11.25, 0, 70)
+
+[node name="MetalDoor2" type="StaticBody3D" parent="Room3" unique_id=118417242 groups=["hand_immune", "navmesh_source", "slam_damage_immune"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 70)
+collision_layer = 544
+collision_mask = 0
+script = ExtResource("24_metaldoor")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Room3/MetalDoor2" unique_id=60321009]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+material_override = SubResource("Material_metal")
+mesh = SubResource("BoxMesh_door")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room3/MetalDoor2" unique_id=788450239]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("BoxShape3D_door")
+
+[node name="BlueDiode" type="Node3D" parent="Room3" unique_id=2002395934]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, 67)
+script = ExtResource("25_diode")
+target_path = NodePath("../RedDiode")
+
+[node name="RedDiode" type="Node3D" parent="Room3" unique_id=30280239]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 67)
+script = ExtResource("26_reddiode")
+wire_from_path = NodePath("../BlueDiode")
+lever_path = NodePath("../Lever")
+
+[node name="Lever" type="Node3D" parent="Room3" unique_id=1688271218]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 0, 65)
+script = ExtResource("27_lever")
+target_path = NodePath("../MetalDoor2")
+
+[node name="Room4" type="Node3D" parent="." unique_id=2136795382]
+
+[node name="WallEast" parent="Room4" unique_id=672750050 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, 18, 0, 84)
+
+[node name="WallWestNorth" parent="Room4" unique_id=2144166755 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 27.4, -18, 0, 76.35)
+
+[node name="WallWestSouth" parent="Room4" unique_id=1323306915 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 27.4, -18, 0, 91.35)
+
+[node name="WallSouthLeft" parent="Room4" unique_id=2011231030 instance=ExtResource("6_wall")]
+transform = Transform3D(3.625, 0, 0, 0, 1, 0, 0, 0, 1, -11.25, 0, 98)
+
+[node name="WallSouthRight" parent="Room4" unique_id=2139418087 instance=ExtResource("6_wall")]
+transform = Transform3D(3.625, 0, 0, 0, 1, 0, 0, 0, 1, 11.25, 0, 98)
+
+[node name="MetalDoor3" type="StaticBody3D" parent="Room4" unique_id=181196759 groups=["hand_immune", "navmesh_source", "slam_damage_immune"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 98)
+collision_layer = 544
+collision_mask = 0
+script = ExtResource("24_metaldoor")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Room4/MetalDoor3" unique_id=1295666576]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+material_override = SubResource("Material_metal")
+mesh = SubResource("BoxMesh_door")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room4/MetalDoor3" unique_id=998736406]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("BoxShape3D_door")
+
+[node name="House2" parent="Room4" unique_id=18591689 instance=ExtResource("28_gnomehouse")]
+transform = Transform3D(2.9802322e-08, 0, -1, 0, 1, 0, 1, 0, 2.9802322e-08, 10.844004, 0, 83.612976)
+
+[node name="House3" parent="Room4" unique_id=2140052716 instance=ExtResource("28_gnomehouse")]
+transform = Transform3D(-0.34202015, 0, -0.9396926, 0, 1, 0, 0.9396926, 0, -0.34202015, 11.847768, 0, 87.32517)
+
+[node name="House4" parent="Room4" unique_id=169079150 instance=ExtResource("28_gnomehouse")]
+transform = Transform3D(-0.57357645, 0, -0.81915206, 0, 1, 0, 0.81915206, 0, -0.57357645, 10.395116, 0, 90.92354)
+
+[node name="RoomWest" type="Node3D" parent="." unique_id=937540607]
+
+[node name="WallWest" parent="RoomWest" unique_id=851177750 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 30, -32, 0, 84)
+
+[node name="WallNorth" parent="RoomWest" unique_id=903915797 instance=ExtResource("6_wall")]
+transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, -25, 0, 77)
+
+[node name="WallSouth" parent="RoomWest" unique_id=1118697678 instance=ExtResource("6_wall")]
+transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, -25, 0, 91)
+
+[node name="Tower" parent="." unique_id=1617488261 instance=ExtResource("1")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
+
+[node name="CameraRig" parent="." unique_id=1454102563 instance=ExtResource("3")]
+target_path = NodePath("../Tower")
+
+[node name="Hand" parent="." unique_id=605995941 instance=ExtResource("2")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.34867, 2.5, 0)
+
+[node name="PerfHud" parent="." unique_id=1616709182 instance=ExtResource("14_perf")]
+
+[node name="GameplayHud" parent="." unique_id=1198196145 instance=ExtResource("15_hud")]
+
+[node name="WinOverlay" parent="." unique_id=306202586 instance=ExtResource("16_win")]
+
+[node name="DefeatOverlay" parent="." unique_id=2074978692 instance=ExtResource("17_defeat")]
+
+[node name="BossWarningOverlay" parent="." unique_id=320482772 instance=ExtResource("18_boss")]
+
+[node name="DayNightOverlay" parent="." unique_id=1923067689 instance=ExtResource("19_daynight")]
+
+[node name="SkeletonFiller" type="Node3D" parent="." unique_id=1193258852]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+
+[node name="SkeletonFiller2" type="Node3D" parent="." unique_id=1607814103]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 20
+area_center = Vector3(0, 0, 28)
+
+[node name="SkeletonFiller3" type="Node3D" parent="."]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 20
+area_center = Vector3(0, 0, 56)
+
+[node name="SkeletonFiller4" type="Node3D" parent="."]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 20
+area_center = Vector3(0, 0, 84)
+
+[node name="SkeletonFiller5" type="Node3D" parent="."]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 20
+area_center = Vector3(-25, 0, 84)
+area_half_x = 5.0
+area_half_z = 5.0
+
+[node name="StartMenu" parent="." unique_id=606901594 instance=ExtResource("20_startmenu")]

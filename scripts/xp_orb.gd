@@ -47,6 +47,10 @@ const GROUP := &"xp_orb"
 ## tower-зона ([_try_auto_magnetize_in_gather_zone]). Дефолт 3м —
 ## ширина типичной формации копейщиков ~5-7м с буфером.
 @export var soldier_pickup_radius: float = 3.0
+## Радиус «вакуума» вокруг башни, когда в сцене НЕТ развёрнутого лагеря (room-режим:
+## башня сама собирает орбы — топливо для кастов). С лагерем орбы маршрутизирует он,
+## этот фоллбэк молчит. 0 = выкл.
+@export var tower_gather_radius: float = 6.0
 
 @export_group("Idle visual")
 ## Амплитуда вертикального покачивания в IDLE — даёт орбу «жизнь», глаз
@@ -75,8 +79,12 @@ var _bob_phase: float = 0.0
 ## Также используется как Y магнитного полёта: target_y = _base_y, чтобы орб
 ## летел строго горизонтально и не нырял в anchor-точку (которая на полу).
 var _base_y: float = 0.0
-## Camp-получатель кредита XP на arrival. None = ещё в IDLE.
+## Camp-получатель кредита XP на arrival. None = ещё в IDLE или орб собирается
+## напрямую башней (room-режим без лагеря).
 var _camp_target: Camp = null
+## Башня-получатель маны на arrival. Резолвится из Camp (camp.get_tower()) или
+## напрямую (tower-фоллбэк). Mana всегда идёт сюда. None = ещё в IDLE.
+var _tower: Node = null
 ## Что физически преследовать в MAGNETIZED-фазе. Harvester внутри build_radius
 ## лагеря, Tower вне (она движется, орб догоняет). Решается в _activate_magnet
 ## по позиции орба и не пересчитывается каждый тик — иначе при пересечении
@@ -148,10 +156,6 @@ func _physics_process(delta: float) -> void:
 
 
 func _tick_magnetized(delta: float) -> void:
-	if _camp_target == null or not is_instance_valid(_camp_target):
-		# Camp умер до прибытия — орб не имеет получателя, просто исчезает.
-		queue_free()
-		return
 	if _magnet_target_node == null or not is_instance_valid(_magnet_target_node):
 		# Цель полёта (Harvester или Tower) исчезла — орб теряет ориентир.
 		# Кредит без полёта не выдаём, чтобы XP визуально совпадал с прибытием.
@@ -189,11 +193,10 @@ func _tick_magnetized(delta: float) -> void:
 ## Башню берём через Camp-получателя; орб мог лететь к Harvester'у, но мана —
 ## всегда игроку (башне). Наличие метода проверяем (duck-typing, без связки).
 func _grant_mana() -> void:
-	if mana_amount <= 0.0 or _camp_target == null or not is_instance_valid(_camp_target):
+	if mana_amount <= 0.0:
 		return
-	var tower: Node = _camp_target.get_tower()
-	if tower != null and is_instance_valid(tower) and tower.has_method("restore_mana"):
-		tower.restore_mana(mana_amount)
+	if _tower != null and is_instance_valid(_tower) and _tower.has_method("restore_mana"):
+		_tower.restore_mana(mana_amount)
 
 
 ## Polling-сканер автомагнита: проверяет, попадает ли орб в чью-то «область
@@ -241,6 +244,15 @@ func _try_auto_magnetize_in_gather_zone() -> void:
 			continue
 		_activate_magnet(camp)
 		return
+	# Фоллбэк без развёрнутого лагеря: башня сама «вакуумит» орбы в своём радиусе.
+	# С лагерем не срабатывает — он владеет маршрутизацией (см. ранние ветки).
+	if tower_gather_radius > 0.0 and not _any_deployed_camp():
+		var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
+		if tower != null:
+			var dxt: float = global_position.x - tower.global_position.x
+			var dzt: float = global_position.z - tower.global_position.z
+			if dxt * dxt + dzt * dzt <= tower_gather_radius * tower_gather_radius:
+				_activate_magnet_to_tower(tower)
 
 
 ## Касание союзника — активируем магнит. Идемпотентно: повторное касание в
@@ -249,9 +261,12 @@ func _on_body_entered(body: Node) -> void:
 	if _state != State.IDLE:
 		return
 	var camp := _resolve_camp_from(body)
-	if camp == null:
+	if camp != null:
+		_activate_magnet(camp)
 		return
-	_activate_magnet(camp)
+	# Нет лагеря, но коснулась башня — магнитимся прямо к ней (room-режим).
+	if body.is_in_group(Tower.GROUP):
+		_activate_magnet_to_tower(body)
 
 
 ## Найти Camp-владельца коснувшегося тела. Tower/CampPart/Gnome — три
@@ -274,8 +289,31 @@ func _resolve_camp_from(body: Node) -> Camp:
 	return null
 
 
+## Магнит прямо к башне (без лагеря, room-режим): летим к башне, на arrival — мана.
+func _activate_magnet_to_tower(tower: Node) -> void:
+	var t := tower as Node3D
+	if t == null:
+		return
+	_camp_target = null
+	_tower = tower
+	_magnet_target_node = t
+	_state = State.MAGNETIZED
+	_magnet_area.set_deferred("monitoring", false)
+
+
+## True если в сцене есть хоть один развёрнутый лагерь — тогда он владеет орбами,
+## а tower-фоллбэк молчит (чтобы не дублировать маршрутизацию).
+func _any_deployed_camp() -> bool:
+	for c in get_tree().get_nodes_in_group(Camp.CAMP_GROUP):
+		var camp := c as Camp
+		if camp != null and is_instance_valid(camp) and camp.is_deployed():
+			return true
+	return false
+
+
 func _activate_magnet(camp: Camp) -> void:
 	_camp_target = camp
+	_tower = camp.get_tower()
 	_magnet_target_node = camp.get_xp_magnet_target(global_position)
 	if _magnet_target_node == null:
 		# Ни Harvester, ни Tower не доступны как цель — орб некуда лететь.

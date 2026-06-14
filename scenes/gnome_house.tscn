@@ -1,0 +1,29 @@
+[gd_scene format=3 uid="uid://gnomehouse01"]
+
+[ext_resource type="PackedScene" path="res://models/warehouse_visual.tscn" id="1_roof"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_body"]
+size = Vector3(2.6, 1.4, 1.8)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_body"]
+size = Vector3(2.6, 1.4, 1.8)
+
+[sub_resource type="StandardMaterial3D" id="Material_body"]
+albedo_color = Color(0.45, 0.4, 0.34, 1)
+roughness = 0.9
+
+[node name="GnomeHouse" type="StaticBody3D" groups=["navmesh_source", "hand_immune", "slam_damage_immune"]]
+collision_layer = 544
+collision_mask = 0
+
+[node name="Body" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 0)
+mesh = SubResource("BoxMesh_body")
+material_override = SubResource("Material_body")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 0)
+shape = SubResource("BoxShape3D_body")
+
+[node name="Roof" parent="." instance=ExtResource("1_roof")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)

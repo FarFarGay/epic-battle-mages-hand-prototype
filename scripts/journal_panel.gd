@@ -641,9 +641,13 @@ func _build_cost_row(camp: Node, cost: Dictionary, suffix: String = "") -> HBoxC
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 
+	# Camp может отсутствовать (вкладка SPELLS открыта без развёрнутого лагеря —
+	# см. camp_optional в _refresh). Тогда «есть» = 0: кнопки уже disable'нутся
+	# через can_afford в билдере карточки, а строка стоимости просто покажет 0/N.
+	var has_economy: bool = camp != null and camp.economy != null
 	for type in cost:
 		var amount_required: int = int(cost[type])
-		var amount_have: int = camp.economy.get_resource(type)
+		var amount_have: int = camp.economy.get_resource(type) if has_economy else 0
 		# С suffix'ом «/сегмент» (brush-mode) количество — это per-unit стоимость,
 		# а не total. Поэтому НЕ сравниваем «have/required» — игрок видит
 		# «2/сегмент» как формат «X wood за каждый» без enough-проверки.

@@ -225,6 +225,9 @@ func _handle_input() -> void:
 
 
 func _try_start_cast() -> void:
+	# Великий удар временно недоступен (single source of truth — SpellSystem).
+	if SpellSystem != null and not SpellSystem.is_unlocked(&"super"):
+		return
 	if not is_instance_valid(_camp):
 		_camp = get_tree().get_first_node_in_group(Camp.CAMP_GROUP) as Camp
 	if not is_instance_valid(_camp):

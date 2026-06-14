@@ -39,10 +39,10 @@ signal mana_changed(current: float, maximum: float)
 ## Максимум маны. Магические действия (Fireball и т.п.) тратят её через
 ## try_consume_mana. Физика руки (Slam/Flick/grab) маны не требует.
 @export var max_mana: float = 100.0
-## Скорость регенерации маны, единиц в секунду. 1.5 даёт ~67с до полного рестора
+## Скорость регенерации маны, единиц в секунду. 0.8 даёт ~125с до полного рестора
 ## после 4 кастов фаербола (cost=25 каждый) — выстрелы очень дорогие, каждый каст
 ## на счету.
-@export var mana_regen_rate: float = 1.5
+@export var mana_regen_rate: float = 0.8
 
 @export_group("Push Items")
 @export var push_strength: float = 1.0
@@ -71,6 +71,29 @@ signal mana_changed(current: float, maximum: float)
 ## исключён (как у щита). 100 убивает обычных (hp=30) сразу; гигантов лишь дробит.
 ## Каждого скелета бьём раз за рывок (без мультихита). 0 = дэш урона не наносит.
 @export var dash_damage: float = 100.0
+
+@export_group("Super Dash (зажать Space → прицел → ПКМ)")
+## Сколько секунд держать Space, чтобы из обычного рывка перейти в прицел супер-
+## рывка. Короткий тап (< порога) = обычный рывок. Чем меньше — тем «острее» тап,
+## но легче случайно войти в прицел.
+@export var super_dash_hold_threshold: float = 0.16
+## Скорость супер-рывка (м/с). Выше обычного — длиннее бросок при той же фазе.
+@export var super_dash_speed: float = 34.0
+## Длительность фазы супер-рывка. 34 × 0.34 ≈ 11.5м — заметно дальше обычного (5.3м).
+@export var super_dash_duration: float = 0.34
+## Урон по скелетам при таране супер-рывком. Выше обычного (100) — давит и крупных.
+@export var super_dash_damage: float = 250.0
+## Стоимость супер-рывка в мане. Списывается на коммите (ПКМ).
+@export var super_dash_mana_cost: float = 50.0
+## Engine.time_scale во время прицеливания (как у Super-QTE). 0.15 = 6.7× слоумо.
+@export var super_dash_time_scale: float = 0.15
+## Радиус синего кольца-прицела на земле (в точке руки).
+@export var super_dash_marker_radius: float = 2.2
+## Цвет кольца-прицела. Синий с блумом (emission бустится при спавне).
+@export var super_dash_marker_color: Color = Color(0.3, 0.62, 1.0, 0.95)
+## Цвет/прозрачность затемнения экрана на время прицеливания. Лёгкое (alpha ~0.3),
+## синевато-тёмное — фокус на прицеле, тот же язык что у Super-QTE, но мягче.
+@export var super_dash_dim_color: Color = Color(0.02, 0.03, 0.06, 0.32)
 
 @export_group("Parry (парирование, Q)")
 ## Тайминг-парирование: короткое окно, в которое любой вражеский снаряд
@@ -136,6 +159,20 @@ var _dash_hit_set: Array = []
 ## в самом эффекте при старте/конце рывка. Таймер спавна призраков трейла.
 var _dash_fx: float = 0.0
 var _dash_ghost_t: float = 0.0
+## True пока активный рывок — супер (другая скорость/урон). Ставится на старте.
+var _dash_is_super: bool = false
+## Супер-дэш FSM (ввод обрабатывается в _process — отзывчив под слоумо;
+## исполнение рывка — в _physics_process через флаги ниже).
+enum SDash { IDLE, HOLDING, AIMING }
+var _sdash_state: int = SDash.IDLE
+var _sdash_hold_t: float = 0.0
+var _sdash_marker: MeshInstance3D = null
+var _sdash_dim: CanvasLayer = null  # лёгкое затемнение экрана на время прицела
+var _sdash_hand: Node = null
+## Флаги-мост _process → _physics_process (исполнение рывка в физкадре).
+var _normal_dash_requested: bool = false
+var _sdash_commit: bool = false
+var _sdash_commit_target: Vector3 = Vector3.ZERO
 ## Замедление от вражеского темпорального поля (SlowField): фактор скорости (1 =
 ## норма, <1 = медленнее) и время действия (мс). Сильнейшее перекрывает, пока
 ## активно; рефрешится полем каждый тик, пока башня внутри.
@@ -209,7 +246,7 @@ func _ready() -> void:
 	# Физически башня всё равно препятствие (коллайдер), юниты упираются.
 	add_to_group(&"navmesh_source")
 	hp = max_hp
-	mana = max_mana
+	mana = 0.0  # старт с пустой маной — копится регеном / XP-орбами
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
 	destroyed.connect(func() -> void: EventBus.tower_destroyed.emit())
@@ -442,6 +479,8 @@ func _shield_zap_skeletons() -> void:
 
 
 func _process(delta: float) -> void:
+	# Ввод дэша — до visual-guard'а: должен работать даже если _motion_fx ещё null.
+	_update_super_dash_input(delta)
 	if _motion_fx == null or _visual_root == null:
 		return
 	var fx: Dictionary = _motion_fx.tick(global_position, delta)
@@ -472,6 +511,111 @@ func _process(delta: float) -> void:
 		if _dash_ghost_t <= 0.0:
 			_dash_ghost_t = DashFx.GHOST_INTERVAL
 			DashFx.spawn_ghost(get_tree().current_scene, _mesh, dir)
+
+
+## --- Super Dash: ввод-флоу (зажать Space → слоумо+прицел → ПКМ коммит) ---
+## В _process, не в _physics_process: под слоумо физкадры редки, а Input-поллинг
+## на реальном кадре ловит ПКМ/отпускание мгновенно. Исполнение рывка — в
+## _physics_process через флаги _sdash_commit / _normal_dash_requested.
+func _update_super_dash_input(delta: float) -> void:
+	if _dying:
+		if _sdash_state != SDash.IDLE:
+			_exit_sdash_aim()
+		return
+	match _sdash_state:
+		SDash.IDLE:
+			if Input.is_action_just_pressed("dash"):
+				# Обычный рывок СРАЗУ на нажатии — без паузы. Если игрок продолжит
+				# держать → ниже войдём в прицел супер-рывка (он перебьёт обычный).
+				_normal_dash_requested = true
+				_sdash_state = SDash.HOLDING
+				_sdash_hold_t = 0.0
+		SDash.HOLDING:
+			if not Input.is_action_pressed("dash"):
+				# Отпустил — обычный рывок уже сработал на нажатии, просто выходим.
+				_sdash_state = SDash.IDLE
+			else:
+				_sdash_hold_t += delta
+				if _sdash_hold_t >= super_dash_hold_threshold and _can_super_dash():
+					_enter_sdash_aim()
+		SDash.AIMING:
+			var hand := _resolve_dash_hand()
+			if hand != null and is_instance_valid(_sdash_marker):
+				var p: Vector3 = hand.cursor_world_position()
+				_sdash_marker.global_position = Vector3(p.x, 0.05, p.z)
+			if Input.is_action_just_pressed("hand_action"):
+				# ПКМ — коммит супер-рывка в точку прицела.
+				if hand != null:
+					_sdash_commit_target = hand.cursor_world_position()
+					_sdash_commit = true
+				_exit_sdash_aim()
+			elif not Input.is_action_pressed("dash"):
+				# Отпустил Space до коммита — отмена.
+				_exit_sdash_aim()
+
+
+## Можно ли войти в супер-рывок: жив + хватает маны. КД/активность обычного рывка
+## не блокируют — на нажатии обычный рывок уже сработал, супер его перебьёт.
+func _can_super_dash() -> bool:
+	return not _dying and mana >= super_dash_mana_cost
+
+
+func _enter_sdash_aim() -> void:
+	_sdash_state = SDash.AIMING
+	Engine.time_scale = super_dash_time_scale
+	var hand := _resolve_dash_hand()
+	if hand != null:
+		hand.push_category(Hand.Category.DASH_AIM)  # подавляет grab/cast на ПКМ
+	var origin: Vector3 = hand.cursor_world_position() if hand != null else global_position
+	# Синее кольцо-прицел — та же «отметка области», с бустнутым emission под блум.
+	_sdash_marker = AoeVisual.spawn_ground_ring(
+		get_tree().current_scene, origin, super_dash_marker_radius, 0.0, super_dash_marker_color)
+	if is_instance_valid(_sdash_marker):
+		var mat := _sdash_marker.material_override as StandardMaterial3D
+		if mat != null:
+			mat.emission_energy_multiplier = 5.0
+	# Лёгкое затемнение экрана (отдельный CanvasLayer, вне слоумо).
+	_sdash_dim = CanvasLayer.new()
+	_sdash_dim.layer = 9  # над gameplay-HUD, под Super-QTE (10)
+	_sdash_dim.process_mode = Node.PROCESS_MODE_ALWAYS
+	var rect := ColorRect.new()
+	rect.color = super_dash_dim_color
+	rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_sdash_dim.add_child(rect)
+	get_tree().current_scene.add_child(_sdash_dim)
+
+
+func _exit_sdash_aim() -> void:
+	Engine.time_scale = 1.0
+	if is_instance_valid(_sdash_marker):
+		_sdash_marker.queue_free()
+	_sdash_marker = null
+	if is_instance_valid(_sdash_dim):
+		_sdash_dim.queue_free()
+	_sdash_dim = null
+	var hand := _resolve_dash_hand()
+	if hand != null and hand.active_category == Hand.Category.DASH_AIM:
+		hand.pop_category()
+	_sdash_state = SDash.IDLE
+	_sdash_hold_t = 0.0
+
+
+## Сейф: если башню удалят (рестарт/перезагрузка сцены) во время прицеливания —
+## вернуть глобальный Engine.time_scale, иначе слоумо «залипнет» на новой сцене.
+func _exit_tree() -> void:
+	if _sdash_state == SDash.AIMING:
+		Engine.time_scale = 1.0
+	if is_instance_valid(_sdash_dim):
+		_sdash_dim.queue_free()
+		_sdash_dim = null
+
+
+func _resolve_dash_hand() -> Hand:
+	if _sdash_hand != null and is_instance_valid(_sdash_hand):
+		return _sdash_hand as Hand
+	_sdash_hand = get_tree().get_first_node_in_group(Hand.HAND_GROUP)
+	return _sdash_hand as Hand
 
 
 ## Отдача на каждый выстрел (EventBus.tower_fired): крен НАЗАД, противоположно
@@ -534,17 +678,36 @@ func _physics_process(delta: float) -> void:
 	if move_dir != Vector2.ZERO:
 		_last_move_dir = move_dir
 
-	# Рывок (Space): короткий бросок с кулдауном в направлении движения (или в
-	# последнее, если стоим). Перекрывает обычную скорость на dash_duration.
+	# Рывок: ввод обрабатывает _update_super_dash_input (в _process), сюда приходит
+	# через флаги. Тап Space → _normal_dash_requested; зажал+ПКМ → _sdash_commit.
+	# Перекрывает обычную скорость на dash_duration (super — на super_dash_duration).
 	_dash_cd = maxf(_dash_cd - delta, 0.0)
-	if _dash_timer <= 0.0 and _dash_cd <= 0.0 and not _dying and Input.is_action_just_pressed("dash"):
-		var ddir := move_dir if move_dir != Vector2.ZERO else _last_move_dir
-		if ddir != Vector2.ZERO:
-			_dash_dir = ddir
-			_dash_timer = dash_duration
-			_dash_cd = dash_cooldown
-			_dash_ghost_t = 0.0  # первый призрак трейла — сразу
-			_dash_hit_set.clear()  # новый рывок — заново можно задеть скелетов
+	if _sdash_commit:
+		# Супер-рывок к точке прицела + 50 маны. Перебивает обычный рывок (если тот
+		# ещё в полёте от нажатия) — гейт только мана, не кд.
+		_sdash_commit = false
+		_normal_dash_requested = false
+		if not _dying and try_consume_mana(super_dash_mana_cost):
+			var sdir := Vector2(_sdash_commit_target.x - global_position.x,
+					_sdash_commit_target.z - global_position.z)
+			if sdir.length() > 0.05:
+				_dash_dir = sdir.normalized()
+				_dash_is_super = true
+				_dash_timer = super_dash_duration
+				_dash_cd = dash_cooldown
+				_dash_ghost_t = 0.0
+				_dash_hit_set.clear()
+	elif _normal_dash_requested:
+		_normal_dash_requested = false
+		if _dash_timer <= 0.0 and _dash_cd <= 0.0 and not _dying:
+			var ddir := move_dir if move_dir != Vector2.ZERO else _last_move_dir
+			if ddir != Vector2.ZERO:
+				_dash_dir = ddir
+				_dash_is_super = false
+				_dash_timer = dash_duration
+				_dash_cd = dash_cooldown
+				_dash_ghost_t = 0.0  # первый призрак трейла — сразу
+				_dash_hit_set.clear()  # новый рывок — заново можно задеть скелетов
 
 	# Парирование (Q): открыть окно отражения по нажатию + отражать снаряды, пока
 	# окно активно. Независимо от движения/рывка/knockback — парируем на ходу.
@@ -569,8 +732,9 @@ func _physics_process(delta: float) -> void:
 
 		if _dash_timer > 0.0:
 			_dash_timer -= delta
-			velocity.x = _dash_dir.x * dash_speed * slow
-			velocity.z = _dash_dir.y * dash_speed * slow
+			var dspeed: float = super_dash_speed if _dash_is_super else dash_speed
+			velocity.x = _dash_dir.x * dspeed * slow
+			velocity.z = _dash_dir.y * dspeed * slow
 		else:
 			velocity.x = move_dir.x * move_speed * slow
 			velocity.z = move_dir.y * move_speed * slow
@@ -603,6 +767,12 @@ func _resolve_contacts(intended_velocity: Vector3) -> void:
 			if _dash_timer > 0.0:
 				_dash_damage_enemy(collider as Node)
 			# В contacts_now kinematic'ов не записываем — для 50+ скелетов получится спам логов.
+		elif _dash_timer > 0.0 and _dash_is_super and collider is Node \
+				and (collider as Node).is_in_group(&"room_door"):
+			# Супер-рывок сносит дверь комнаты: она сама разносится по физике,
+			# открывает проём и удаляется. Только супер-рывок (_dash_is_super).
+			if (collider as Node).has_method(&"shatter"):
+				(collider as Node).call(&"shatter")
 
 	if debug_log and LogConfig.master_enabled:
 		_log_contact_transitions(contacts_now)
@@ -636,7 +806,8 @@ func _push_item(item: Item, col: KinematicCollision3D, intended_velocity: Vector
 ## Таран рывком: урон скелету при контакте во время дэша. Только скелеты (мех
 ## исключён, как у щита); каждого бьём раз за рывок (_dash_hit_set). Обычные гибнут.
 func _dash_damage_enemy(collider: Node) -> void:
-	if dash_damage <= 0.0 or collider == null:
+	var dmg: float = super_dash_damage if _dash_is_super else dash_damage
+	if dmg <= 0.0 or collider == null:
 		return
 	if not collider.is_in_group(Skeleton.SKELETON_GROUP):
 		return  # таран бьёт только скелетов
@@ -645,7 +816,7 @@ func _dash_damage_enemy(collider: Node) -> void:
 	if collider in _dash_hit_set:
 		return  # уже задели этим рывком
 	_dash_hit_set.append(collider)
-	Damageable.try_damage(collider, dash_damage, HitStop.HEAVY)
+	Damageable.try_damage(collider, dmg, HitStop.HEAVY)
 
 
 func _push_kinematic(target: Node, col: KinematicCollision3D, intended_velocity: Vector3) -> void:

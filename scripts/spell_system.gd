@@ -35,7 +35,7 @@ const SPELL_CATALOG: Dictionary = {
 		"name": "Огненный шар",
 		"description": "Магическая ракета: вылетает из башни, наводится на курсор, взрывается с AOE-уроном и оставляет горящую зону.",
 		"icon_color": Color(1.0, 0.45, 0.1, 1.0),
-		"unlocked_by_default": true,
+		"unlocked_by_default": false,  # временно: у игрока только Искра
 		"unlock_cost": {},  # доступен сразу
 		# Баланс 2026-05-10 (v5): +20% damage поверх v4 (итого ×1.82 от
 		# исходного). Магия должна быть эффективнее луков (DefenderGnome
@@ -57,7 +57,7 @@ const SPELL_CATALOG: Dictionary = {
 		"name": "Огненный шквал",
 		"description": "Серия из 4 малых фаерболов. Вылетают по очереди с короткой задержкой, ложатся в небольшую область вокруг прицела — накрывают плотную группу.",
 		"icon_color": Color(0.9, 0.3, 0.05, 1.0),
-		"unlocked_by_default": true,
+		"unlocked_by_default": false,  # временно: у игрока только Искра
 		"unlock_cost": {},
 		# Баланс 2026-05-10 (v5): +20% damage поверх v4.
 		"levels": [
@@ -77,7 +77,7 @@ const SPELL_CATALOG: Dictionary = {
 		"name": "Великий удар",
 		"description": "Носитель из башни вылетает в воздух над целью и разделяется на серию маленьких фаерболов. Требует полную шкалу великой силы и QTE-паттерн.",
 		"icon_color": Color(1.0, 0.55, 0.15, 1.0),
-		"unlocked_by_default": true,
+		"unlocked_by_default": false,  # временно: великий удар недоступен
 		"unlock_cost": {},
 		# Балансовые параметры супер-удара. Прокачка опциональна (пока 1 уровень).
 		# Carrier-параметры (boost/homing/visual_scale) и QTE-параметры
@@ -122,7 +122,7 @@ const SPELL_CATALOG: Dictionary = {
 		"name": "Мороз",
 		"description": "Ледяная ракета: вылетает из башни, наводится на курсор. Прямое попадание полностью замораживает врагов в зоне взрыва. На земле остаётся пятно льда, которое замедляет всех вошедших.",
 		"icon_color": Color(0.45, 0.8, 1.0, 1.0),
-		"unlocked_by_default": true,
+		"unlocked_by_default": false,  # временно: у игрока только Искра
 		"unlock_cost": {},
 		# Frost — control-spell, не damage. damage=0; rebalance делается через
 		# hit_freeze_duration / patch_radius / patch_duration / patch_slow_factor.
@@ -143,7 +143,7 @@ const SPELL_CATALOG: Dictionary = {
 		"name": "Минное рассеивание",
 		"description": "Башня запускает в небо снаряд, тот рассыпает над целью N мин. Мины приземляются, ждут жертв — рвут любого в радиусе (включая своих). Стратегическое оружие зоны контроля.",
 		"icon_color": Color(0.8, 0.3, 0.2, 1.0),
-		"unlocked_by_default": true,
+		"unlocked_by_default": false,  # временно: у игрока только Искра
 		"unlock_cost": {},
 		"levels": [
 			{"mine_count": 11, "scatter_radius": 5.0, "mine_damage": 30.0, "mine_aoe_radius": 1.8, "cooldown": 4.0, "mana_cost": 40.0},

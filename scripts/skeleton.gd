@@ -1192,14 +1192,46 @@ func _wander_tick(delta: float) -> void:
 			velocity.z = dir.z * wander_speed
 
 
+## Сколько направлений пробуем в _pick_wander_target, ища точку с чистым прямым путём.
+const WANDER_REACH_RETRIES := 8
+## На сколько метров путь может «не дойти» до точки и она ещё считается достижимой.
+const WANDER_REACH_TOLERANCE := 1.0
+## Во сколько раз навмеш-путь может быть длиннее прямой дистанции и ещё считаться
+## «прямым выстрелом». Больше = путь огибает стену → wander (прямая линия) упёрся бы.
+const WANDER_STRAIGHT_FACTOR := 1.2
+
+
+## Случайная wander-точка в радиусе — достижимая И с ЧИСТЫМ ПРЯМЫМ путём по навмешу.
+## Wander движется прямой линией к точке (не по навмеш-пути). Поэтому мало, чтобы
+## точка была достижима: если путь к ней огибает стену (через дверь/угол), скелет
+## пошёл бы прямо и упёрся в стену. Берём точку только если навмеш-путь до неё ≈
+## прямой дистанции (path_len ≤ direct × STRAIGHT_FACTOR) — значит между скелетом и
+## точкой стен нет. Несколько попыток в разные стороны; если все упираются — стоим
+## (отдохнём, попробуем снова). «Нет чистого направления → не лезет в стену».
 func _pick_wander_target() -> Vector3:
-	var angle := randf() * TAU
-	var dist := randf_range(wander_distance_min, wander_distance_max)
-	var target := global_position + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
-	target.x = clampf(target.x, -wander_map_half_extent, wander_map_half_extent)
-	target.z = clampf(target.z, -wander_map_half_extent, wander_map_half_extent)
-	target.y = global_position.y
-	return target
+	var map_rid: RID = _nav_agent.get_navigation_map() if _nav_agent != null else RID()
+	for attempt in range(WANDER_REACH_RETRIES):
+		var angle := randf() * TAU
+		var dist := randf_range(wander_distance_min, wander_distance_max)
+		var cand := global_position + Vector3(cos(angle) * dist, 0.0, sin(angle) * dist)
+		cand.x = clampf(cand.x, -wander_map_half_extent, wander_map_half_extent)
+		cand.z = clampf(cand.z, -wander_map_half_extent, wander_map_half_extent)
+		cand.y = global_position.y
+		if map_rid == RID():
+			return cand  # навмеш недоступен — старое поведение (прямой wander)
+		var path: PackedVector3Array = NavigationServer3D.map_get_path(map_rid, global_position, cand, true)
+		if path.size() < 2:
+			continue
+		var endp: Vector3 = path[path.size() - 1]
+		if Vector2(endp.x - cand.x, endp.z - cand.z).length() > WANDER_REACH_TOLERANCE:
+			continue  # путь не дошёл до точки (за стеной) → другой отсек
+		var path_len: float = 0.0
+		for i in range(path.size() - 1):
+			path_len += Vector2(path[i + 1].x - path[i].x, path[i + 1].z - path[i].z).length()
+		var direct: float = Vector2(cand.x - global_position.x, cand.z - global_position.z).length()
+		if path_len <= direct * WANDER_STRAIGHT_FACTOR:
+			return cand  # прямой путь свободен — wander дойдёт по прямой без стен
+	return global_position  # нет чистого направления — стоим (отдохнём, попробуем снова)
 
 
 ## Кэш + throttle сканера. _physics_process тикает таймер и при истечении
