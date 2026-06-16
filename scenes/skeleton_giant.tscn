@@ -3,12 +3,12 @@
 [ext_resource type="Script" path="res://scripts/skeleton_giant.gd" id="1"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_giant"]
-radius = 0.75
-height = 3.4
+radius = 0.5
+height = 4.4
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_giant"]
-radius = 0.75
-height = 3.4
+radius = 0.5
+height = 4.4
 
 [sub_resource type="StandardMaterial3D" id="Material_giant"]
 albedo_color = Color(0.42, 0.38, 0.32, 1)
@@ -22,13 +22,13 @@ collision_layer = 16
 collision_mask = 2087
 script = ExtResource("1")
 hp = 240.0
-move_speed = 1.6
+move_speed = 2.0
 knockback_resistance = 0.2
-attack_range = 2.6
+attack_range = 11.0
 attack_damage = 28.0
 attack_cooldown = 1.6
-attack_windup = 0.55
-vision_radius = 30.0
+attack_windup = 0.7
+vision_radius = 18.0
 lunge_speed = 6.0
 lunge_duration = 0.25
 shatter_fragment_count = 18
@@ -50,6 +50,6 @@ cast_shadow = 0
 [node name="NavigationAgent3D" type="NavigationAgent3D" parent="."]
 path_desired_distance = 0.9
 target_desired_distance = 1.8
-radius = 0.75
-height = 3.4
+radius = 0.5
+height = 4.4
 avoidance_enabled = false

@@ -39,6 +39,34 @@ static var _shared_giant_material: StandardMaterial3D
 const DEBUG_LOG_INTERVAL: float = 0.5
 var _debug_log_timer: float = 0.0
 
+@export_group("Dodge (уворот от снарядов игрока)")
+## Радиус, в котором гигант замечает player_projectile и уходит рывком вбок.
+@export var dodge_detect_radius: float = 8.0
+## Кулдаун уворота (сек).
+@export var dodge_cooldown: float = 0.7
+## Скорость/длительность рывка-уворота. 16×0.18≈2.9м: мажет single-target Искру
+## (impact 1.5м), но AoE-радиус фаербола/мин его перекрывает — это и есть контрплей.
+@export var dodge_dash_speed: float = 16.0
+@export var dodge_dash_duration: float = 0.18
+
+@export_group("Charge (атака супер-рывком)")
+## Скорость/длительность заряд-рывка на башню. 30×0.45=13.5м макс; attack_range
+## (в .tscn) задаёт дистанцию начала заряда (откуда бросается).
+@export var charge_speed: float = 30.0
+@export var charge_duration: float = 0.45
+## Дистанция контакта с башней во время заряда — бьём один раз и гасим рывок.
+@export var charge_hit_range: float = 2.8
+@export_group("")
+
+## Общий dash-механизм для уворота И заряда (reuse): вектор скорости + остаток фазы.
+var _dash_vec: Vector3 = Vector3.ZERO
+var _dash_remaining: float = 0.0
+var _dash_ghost_t: float = 0.0
+var _dodge_cd: float = 0.0
+## True если текущий рывок — заряд-атака (бьёт башню на контакте), не уворот.
+var _charging: bool = false
+var _charge_hit: bool = false
+
 
 func _ready() -> void:
 	super._ready()
@@ -106,24 +134,30 @@ static func _ensure_giant_material() -> void:
 		_shared_giant_material = m
 
 
-## Tower имеет абсолютный приоритет. Если её нет или она мертва — fallback
-## на обычный skeleton-scan (палатки/гномы).
+## Tower — приоритетная цель, НО только в пределах vision_radius: гигант замечает
+## её при ВХОДЕ в комнату, а не «через всю карту». Вне обзора / нет башни —
+## fallback на обычный vision-scan (в level_rooms целей нет → null → wander по комнате).
 func _scan_target() -> Node3D:
-	var tower: Node = get_tree().get_first_node_in_group(Tower.GROUP)
-	if tower != null and is_instance_valid(tower) and _target_still_valid(tower as Node3D):
-		return tower as Node3D
+	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
+	if tower != null and is_instance_valid(tower) and _target_still_valid(tower):
+		var d_sq: float = (tower.global_position - global_position).length_squared()
+		if d_sq <= vision_radius * vision_radius:
+			return tower
 	return super._scan_target()
 
 
-## Override Skeleton._target_still_valid: Tower не в TARGET_GROUP, но для
-## гиганта это валидная цель пока башня damageable. Когда Tower умирает,
-## она снимает себя с Damageable.GROUP (см. tower.gd:116) — фильтр
-## автоматически отшибает мёртвую башню, и stale-check в _physics_process
-## пересканит на палатки/гномов.
+## Override Skeleton._target_still_valid: Tower не в TARGET_GROUP, но валидна как
+## цель пока damageable И в пределах vision_radius×1.5 (гистерезис-поводок). Ушла
+## дальше — гигант теряет её и возвращается к wander по комнате. Мёртвая башня
+## снимает себя с Damageable.GROUP → фильтр её отшибает.
 func _target_still_valid(target: Node3D) -> bool:
 	if target.is_in_group(TARGET_GROUP):
 		return true
-	return target.is_in_group(Tower.GROUP) and Damageable.is_damageable(target)
+	if not (target.is_in_group(Tower.GROUP) and Damageable.is_damageable(target)):
+		return false
+	var d_sq: float = (target.global_position - global_position).length_squared()
+	var leash: float = vision_radius * 1.5
+	return d_sq <= leash * leash
 
 
 ## Override Skeleton._recompute_path_decision: гигант никогда не обходит
@@ -141,25 +175,121 @@ func _recompute_path_decision() -> void:
 ## база сама умножает impulse×resistance в apply_knockback.
 
 
-## Override base _perform_strike: добавляет Tower в AoE-область удара. Базовый
-## метод итерирует только TARGET_GROUP (палатки/гномы), Tower там нет —
-## без этого гигант махал бы рядом с башней без эффекта.
-func _perform_strike(target: Node3D) -> void:
-	# Дополнительный удар по Tower'ам в радиусе. Использовать тот же STRIKE_RADIUS_FACTOR
-	# как в Skeleton._perform_strike (через attack_range * 1.3).
-	var strike_radius: float = attack_range * STRIKE_RADIUS_FACTOR
-	for t in get_tree().get_nodes_in_group(Tower.GROUP):
-		if not is_instance_valid(t):
+## Override: атака гиганта — СУПЕР-РЫВОК на башню, НЕ мгновенный AoE. STRIKE
+## базового FSM (по достижении attack_range + windup-телеграф) запускает заряд:
+## гигант бросается к башне на charge_speed и бьёт её на контакте (см.
+## _check_charge_contact). Обычного melee/AoE-удара у гиганта больше нет.
+func _perform_strike(_target: Node3D) -> void:
+	var tower := _resolve_tower()
+	if tower == null:
+		return
+	var dir := Vector3(tower.global_position.x - global_position.x, 0.0,
+			tower.global_position.z - global_position.z)
+	if dir.length_squared() < 0.0001:
+		return
+	dir = dir.normalized()
+	_charging = true
+	_charge_hit = false
+	_dash_vec = dir * charge_speed
+	_dash_remaining = charge_duration
+	_dash_ghost_t = 0.0
+
+
+## Override Skeleton._ai_step: сверху — общий dash (уворот/заряд) и скан угроз,
+## иначе обычный FSM (approach → windup → strike→заряд через _perform_strike).
+func _ai_step(delta: float) -> void:
+	# Активный рывок (уворот ИЛИ заряд) перекрывает всю обычную AI.
+	if _dash_remaining > 0.0:
+		_dash_remaining -= delta
+		velocity.x = _dash_vec.x
+		velocity.z = _dash_vec.z
+		if _charging:
+			_check_charge_contact()
+			if _dash_remaining <= 0.0:
+				_charging = false
+		return
+	# Уворот от снарядов игрока. Single-target (Искра) промахивается, AoE и
+	# супер-рывок башни ловят (их радиус/скорость перекрывают короткий уворот).
+	_dodge_cd -= delta
+	if _dodge_cd <= 0.0 and dodge_detect_radius > 0.0:
+		var threat := _scan_threat()
+		if threat != null:
+			_start_evade(threat.global_position, _cached_target)
+			_dodge_cd = dodge_cooldown
+			return
+	super._ai_step(delta)
+
+
+## Контакт заряда с башней — один удар, затем гасим рывок.
+func _check_charge_contact() -> void:
+	if _charge_hit:
+		return
+	var tower := _resolve_tower()
+	if tower == null:
+		return
+	var dx: float = tower.global_position.x - global_position.x
+	var dz: float = tower.global_position.z - global_position.z
+	if dx * dx + dz * dz <= charge_hit_range * charge_hit_range:
+		_charge_hit = true
+		Damageable.try_damage(tower, attack_damage, HitStop.HEAVY)
+		_dash_remaining = minf(_dash_remaining, 0.06)
+
+
+## Ближайший player_projectile в dodge_detect_radius (порт из EnemyMech._scan_threat).
+func _scan_threat() -> Node3D:
+	var here: Vector3 = global_position
+	var best: Node3D = null
+	var best_d_sq: float = dodge_detect_radius * dodge_detect_radius
+	for n in get_tree().get_nodes_in_group(&"player_projectile"):
+		if not is_instance_valid(n):
 			continue
-		var node := t as Node3D
+		var node := n as Node3D
 		if node == null:
 			continue
-		var d_sq: float = (node.global_position - global_position).length_squared()
-		# Крупная цель шире — её центр дальше strike-радиуса, хотя гигант вплотную
-		# к коллизии. Расширяем на reach-бонус, как базовый _perform_strike (иначе
-		# гигант мог бы махать у крупной башни мимо центра). Симметрично Skeleton.
-		var eff: float = strike_radius + target_reach_bonus(node)
-		if d_sq <= eff * eff:
-			Damageable.try_damage(node, attack_damage)
-	# Передаём управление базе — обработка палаток/гномов в AoE + self-lunge.
-	super._perform_strike(target)
+		var dx: float = node.global_position.x - here.x
+		var dz: float = node.global_position.z - here.z
+		var d_sq: float = dx * dx + dz * dz
+		if d_sq < best_d_sq:
+			best_d_sq = d_sq
+			best = node
+	return best
+
+
+## Рывок-уворот вбок от снаряда, прочь от башни (порт из EnemyMech._start_evade).
+func _start_evade(threat_pos: Vector3, tower: Node3D) -> void:
+	var away: Vector3 = global_position - threat_pos
+	away.y = 0.0
+	if away.length_squared() < 0.0001:
+		away = Vector3(randf() - 0.5, 0.0, randf() - 0.5)
+	away = away.normalized()
+	var perp: Vector3 = away.cross(Vector3.UP).normalized()
+	if tower != null and is_instance_valid(tower):
+		var to_tower: Vector3 = tower.global_position - global_position
+		to_tower.y = 0.0
+		if perp.dot(to_tower) > 0.0:
+			perp = -perp  # не уклоняться под башню
+	var dir: Vector3 = perp * 0.8 + away * 0.4
+	if dir.length_squared() < 0.0001:
+		dir = perp
+	dir = dir.normalized()
+	_charging = false
+	_dash_vec = dir * dodge_dash_speed
+	_dash_remaining = dodge_dash_duration
+	_dash_ghost_t = 0.0
+
+
+## Башня — постоянная цель гиганта. Из кэша FSM или из группы.
+func _resolve_tower() -> Node3D:
+	if _cached_target != null and is_instance_valid(_cached_target) \
+			and _cached_target.is_in_group(Tower.GROUP):
+		return _cached_target
+	return get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
+
+
+## Dash-визуал (уворот И заряд) — after-image-трейл через общий DashFx (как у башни/меха).
+func _process(delta: float) -> void:
+	if _dash_remaining > 0.0 and _mesh != null:
+		_dash_ghost_t -= delta
+		if _dash_ghost_t <= 0.0:
+			_dash_ghost_t = DashFx.GHOST_INTERVAL
+			DashFx.spawn_ghost(get_tree().current_scene, _mesh, _dash_vec)

@@ -74,9 +74,10 @@ signal mana_changed(current: float, maximum: float)
 
 @export_group("Super Dash (зажать Space → прицел → ПКМ)")
 ## Сколько секунд держать Space, чтобы из обычного рывка перейти в прицел супер-
-## рывка. Короткий тап (< порога) = обычный рывок. Чем меньше — тем «острее» тап,
-## но легче случайно войти в прицел.
-@export var super_dash_hold_threshold: float = 0.16
+## рывка. Короткий тап (< порога) = обычный рывок без слоумо. Чем меньше — тем
+## «острее» тап, но легче случайно войти в прицел при обычном нажатии. 0.3с —
+## обычный тап (≈50-150мс) гарантированно не дотягивает, осознанный зажим — да.
+@export var super_dash_hold_threshold: float = 0.3
 ## Скорость супер-рывка (м/с). Выше обычного — длиннее бросок при той же фазе.
 @export var super_dash_speed: float = 34.0
 ## Длительность фазы супер-рывка. 34 × 0.34 ≈ 11.5м — заметно дальше обычного (5.3м).
@@ -596,7 +597,12 @@ func _exit_sdash_aim() -> void:
 	_sdash_dim = null
 	var hand := _resolve_dash_hand()
 	if hand != null and hand.active_category == Hand.Category.DASH_AIM:
-		hand.pop_category()
+		# DEFERRED: коммит-ПКМ читается и тут (commit), и в hand_spell._handle_input
+		# в ТОМ ЖЕ кадре. Поппнём категорию сразу — hand_spell увидит MAGIC и
+		# кастанёт спелл на тот же ПКМ. Откладываем pop на конец кадра: hand_spell
+		# в этом кадре ещё видит DASH_AIM (каст подавлен), а на следующем ПКМ уже
+		# не just_pressed.
+		hand.call_deferred("pop_category")
 	_sdash_state = SDash.IDLE
 	_sdash_hold_t = 0.0
 
