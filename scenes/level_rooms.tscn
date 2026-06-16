@@ -30,6 +30,7 @@
 [ext_resource type="PackedScene" path="res://scenes/gnome_house.tscn" id="28_gnomehouse"]
 [ext_resource type="Script" path="res://scripts/fx_prewarm.gd" id="29_prewarm"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton_giant.tscn" id="30_giant"]
+[ext_resource type="PackedScene" path="res://scenes/dialog_ui.tscn" id="31_dialog"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -318,9 +319,12 @@ shape = SubResource("BoxShape3D_door")
 
 [node name="TestGiant" parent="Room4" instance=ExtResource("30_giant")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.2, 80)
+room_center = Vector2(0, 84)
+room_size = Vector2(36, 28)
 
 [node name="House2" parent="Room4" unique_id=18591689 instance=ExtResource("28_gnomehouse")]
 transform = Transform3D(2.9802322e-08, 0, -1, 0, 1, 0, 1, 0, 2.9802322e-08, 10.844004, 0, 83.612976)
+dialog_enabled = true
 
 [node name="House3" parent="Room4" unique_id=2140052716 instance=ExtResource("28_gnomehouse")]
 transform = Transform3D(-0.34202015, 0, -0.9396926, 0, 1, 0, 0.9396926, 0, -0.34202015, 11.847768, 0, 87.32517)
@@ -392,5 +396,7 @@ area_half_z = 5.0
 
 [node name="FxPrewarm" type="Node" parent="."]
 script = ExtResource("29_prewarm")
+
+[node name="DialogUI" parent="." instance=ExtResource("31_dialog")]
 
 [node name="StartMenu" parent="." unique_id=606901594 instance=ExtResource("20_startmenu")]

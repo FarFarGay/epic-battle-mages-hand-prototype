@@ -56,6 +56,15 @@ var _debug_log_timer: float = 0.0
 @export var charge_duration: float = 0.45
 ## Дистанция контакта с башней во время заряда — бьём один раз и гасим рывок.
 @export var charge_hit_range: float = 2.8
+
+@export_group("Room-гейт (аггр только когда башня В комнате)")
+## Центр прямоугольника комнаты (XZ). room_size > 0 включает гейт.
+@export var room_center: Vector2 = Vector2.ZERO
+## Размеры комнаты (ширина X, глубина Z). (0,0) = гейт ВЫКЛ — старое поведение
+## (башня видна всегда, для камповых волн в main.tscn).
+@export var room_size: Vector2 = Vector2.ZERO
+## Буфер-гистерезис де-аггра: башня перестаёт быть целью, выйдя за комнату+запас.
+@export var room_leash_margin: float = 4.0
 @export_group("")
 
 ## Общий dash-механизм для уворота И заряда (reuse): вектор скорости + остаток фазы.
@@ -134,30 +143,47 @@ static func _ensure_giant_material() -> void:
 		_shared_giant_material = m
 
 
-## Tower — приоритетная цель, НО только в пределах vision_radius: гигант замечает
-## её при ВХОДЕ в комнату, а не «через всю карту». Вне обзора / нет башни —
-## fallback на обычный vision-scan (в level_rooms целей нет → null → wander по комнате).
+## Tower — приоритетная цель, НО только когда проходит room-гейт (башня внутри
+## прямоугольника комнаты, см. _aggro_ok). Гигант замечает её при ВХОДЕ в комнату,
+## не сквозь стену. Иначе — fallback на vision-scan (в level_rooms целей нет → wander).
 func _scan_target() -> Node3D:
 	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
 	if tower != null and is_instance_valid(tower) and _target_still_valid(tower):
-		var d_sq: float = (tower.global_position - global_position).length_squared()
-		if d_sq <= vision_radius * vision_radius:
+		if _aggro_ok(tower):
 			return tower
 	return super._scan_target()
 
 
+## Можно ли «проснуться» на башню. Room-гейт задан (room_size>0) → ТОЛЬКО когда
+## башня внутри прямоугольника комнаты (по bounds, а не по дистанции — иначе
+## агрился бы сквозь стену на близкую башню в соседней комнате). Без гейта —
+## башня видна всегда (камповые волны).
+func _aggro_ok(tower: Node3D) -> bool:
+	if room_size.x <= 0.0 or room_size.y <= 0.0:
+		return true
+	return _tower_in_room(tower, 0.0)
+
+
+## Башня в прямоугольнике комнаты (room_center/room_size в XZ) c запасом margin.
+func _tower_in_room(tower: Node3D, margin: float) -> bool:
+	var p: Vector3 = tower.global_position
+	return absf(p.x - room_center.x) <= room_size.x * 0.5 + margin \
+			and absf(p.z - room_center.y) <= room_size.y * 0.5 + margin
+
+
 ## Override Skeleton._target_still_valid: Tower не в TARGET_GROUP, но валидна как
-## цель пока damageable И в пределах vision_radius×1.5 (гистерезис-поводок). Ушла
-## дальше — гигант теряет её и возвращается к wander по комнате. Мёртвая башня
-## снимает себя с Damageable.GROUP → фильтр её отшибает.
+## цель пока damageable И (если задан room-гейт) в пределах комнаты+буфер. Мёртвая
+## башня снимает себя с Damageable.GROUP → фильтр её отшибает.
 func _target_still_valid(target: Node3D) -> bool:
 	if target.is_in_group(TARGET_GROUP):
 		return true
 	if not (target.is_in_group(Tower.GROUP) and Damageable.is_damageable(target)):
 		return false
-	var d_sq: float = (target.global_position - global_position).length_squared()
-	var leash: float = vision_radius * 1.5
-	return d_sq <= leash * leash
+	# Room-гейт: держим башню целью пока она в комнате (+буфер-гистерезис). Вышла →
+	# де-аггр → wander по комнате. Без гейта (волны) — всегда валидна пока damageable.
+	if room_size.x <= 0.0 or room_size.y <= 0.0:
+		return true
+	return _tower_in_room(target, room_leash_margin)
 
 
 ## Override Skeleton._recompute_path_decision: гигант никогда не обходит
