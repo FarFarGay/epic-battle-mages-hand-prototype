@@ -30,6 +30,9 @@ const GROUP := &"xp_orb"
 ## Сколько маны вернётся башне на arrival (сбор орба = топливо для кастов). При
 ## дорогой мане (медленный реген) убийство скелетов «кормит» выстрелы. 0 = выкл.
 @export var mana_amount: float = 5.0
+## Сколько ЗОЛОТА даёт орб на arrival (монеты из горшков). 0 = не золотой (обычный
+## мана-орб со скелета). Кладётся в GoldBank (группа gold_bank).
+@export var gold_amount: int = 0
 ## Сколько секунд орб лежит, прежде чем самоуничтожиться. Без таймаута дальние
 ## неподобранные орбы накапливались бы — на 200 скелетов / волну = 200 нодов.
 @export var lifetime: float = 60.0
@@ -178,6 +181,7 @@ func _tick_magnetized(delta: float) -> void:
 		# XP отряда теперь начисляется напрямую за убийство (Camp._on_enemy_killed),
 		# НЕ через сбор орба. Орб даёт только ману — топливо для кастов.
 		_grant_mana()
+		_grant_gold()
 		collected.emit(amount, global_position)
 		queue_free()
 		return
@@ -197,6 +201,15 @@ func _grant_mana() -> void:
 		return
 	if _tower != null and is_instance_valid(_tower) and _tower.has_method("restore_mana"):
 		_tower.restore_mana(mana_amount)
+
+
+## Кладёт золото в GoldBank на arrival (монеты из горшков). 0 = пропуск.
+func _grant_gold() -> void:
+	if gold_amount <= 0:
+		return
+	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	if bank != null and bank.has_method(&"add_gold"):
+		bank.call(&"add_gold", gold_amount)
 
 
 ## Polling-сканер автомагнита: проверяет, попадает ли орб в чью-то «область

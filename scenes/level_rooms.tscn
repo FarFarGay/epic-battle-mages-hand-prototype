@@ -31,6 +31,12 @@
 [ext_resource type="Script" path="res://scripts/fx_prewarm.gd" id="29_prewarm"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton_giant.tscn" id="30_giant"]
 [ext_resource type="PackedScene" path="res://scenes/dialog_ui.tscn" id="31_dialog"]
+[ext_resource type="Script" path="res://scripts/gold_bank.gd" id="32_gold"]
+[ext_resource type="PackedScene" path="res://scenes/pot.tscn" id="33_pot"]
+[ext_resource type="Script" path="res://scripts/player_profile.gd" id="34_profile"]
+[ext_resource type="PackedScene" path="res://scenes/charter_ui.tscn" id="35_charter"]
+[ext_resource type="Script" path="res://scripts/deeds_log.gd" id="36_deeds"]
+[ext_resource type="PackedScene" path="res://scenes/trade_ui.tscn" id="37_trade"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -398,5 +404,50 @@ area_half_z = 5.0
 script = ExtResource("29_prewarm")
 
 [node name="DialogUI" parent="." instance=ExtResource("31_dialog")]
+
+[node name="GoldBank" type="Node" parent="."]
+script = ExtResource("32_gold")
+
+[node name="PlayerProfile" type="Node" parent="."]
+script = ExtResource("34_profile")
+
+[node name="DeedsLog" type="Node" parent="."]
+script = ExtResource("36_deeds")
+
+[node name="CharterUI" parent="." instance=ExtResource("35_charter")]
+
+[node name="TradeUI" parent="." instance=ExtResource("37_trade")]
+
+[node name="Pots" type="Node3D" parent="."]
+
+[node name="Pot1" parent="Pots" instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11, 0, -8)
+
+[node name="Pot2" parent="Pots" instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 0, 7)
+
+[node name="Pot3" parent="Pots" instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11, 0, 22)
+
+[node name="Pot4" parent="Pots" instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 0, 35)
+
+[node name="Pot5" parent="Pots" instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, 50)
+
+[node name="Pot6" parent="Pots" instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, 63)
+
+[node name="Pot7" parent="Pots" instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, 76)
+
+[node name="Pot8" parent="Pots" instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, 90)
+
+[node name="Pot9" parent="Pots" instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -26, 0, 81)
+
+[node name="Pot10" parent="Pots" instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -22, 0, 88)
 
 [node name="StartMenu" parent="." unique_id=606901594 instance=ExtResource("20_startmenu")]

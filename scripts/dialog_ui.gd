@@ -64,7 +64,7 @@ func _show_node(node_id: StringName) -> void:
 	if node.is_empty():
 		close()
 		return
-	_text.text = String(node.get("text", ""))
+	_text.text = _apply_name(String(node.get("text", "")))
 	for c in _choices.get_children():
 		c.queue_free()
 	var choices: Array = node.get("choices", [])
@@ -75,6 +75,17 @@ func _show_node(node_id: StringName) -> void:
 		btn.add_theme_font_size_override("font_size", 16)
 		btn.pressed.connect(_on_choice.bind(choice))
 		_choices.add_child(btn)
+
+
+## Подставляет имя игрока вместо {name} (из PlayerProfile; до подписи Хартии — «чужак»).
+func _apply_name(text: String) -> String:
+	if not text.contains("{name}"):
+		return text
+	var prof := get_tree().get_first_node_in_group(&"player_profile")
+	var nm: String = "чужак"
+	if prof != null and prof.has_method(&"display_name"):
+		nm = prof.call(&"display_name", "чужак")
+	return text.replace("{name}", nm)
 
 
 func _on_choice(choice: Dictionary) -> void:

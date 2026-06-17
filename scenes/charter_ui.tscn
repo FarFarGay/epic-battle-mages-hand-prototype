@@ -1,0 +1,104 @@
+[gd_scene format=3 uid="uid://charterui01"]
+
+[ext_resource type="Script" path="res://scripts/charter_ui.gd" id="1"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_parchment"]
+bg_color = Color(0.93, 0.87, 0.72, 0.99)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.4, 0.28, 0.14, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+
+[node name="CharterUI" type="CanvasLayer"]
+layer = 60
+script = ExtResource("1")
+
+[node name="Root" type="Control" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+
+[node name="Backdrop" type="ColorRect" parent="Root"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="Panel" type="PanelContainer" parent="Root"]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -320.0
+offset_top = -260.0
+offset_right = 320.0
+offset_bottom = 260.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_parchment")
+
+[node name="Margin" type="MarginContainer" parent="Root/Panel"]
+theme_override_constants/margin_left = 28
+theme_override_constants/margin_top = 22
+theme_override_constants/margin_right = 28
+theme_override_constants/margin_bottom = 22
+
+[node name="VBox" type="VBoxContainer" parent="Root/Panel/Margin"]
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="Root/Panel/Margin/VBox"]
+theme_override_colors/font_color = Color(0.3, 0.18, 0.06, 1)
+theme_override_font_sizes/font_size = 24
+text = "ТОРГОВАЯ ХАРТИЯ ГНОМОВ"
+horizontal_alignment = 1
+
+[node name="Body" type="Label" parent="Root/Panel/Margin/VBox"]
+custom_minimum_size = Vector2(0, 280)
+theme_override_colors/font_color = Color(0.22, 0.14, 0.06, 1)
+theme_override_font_sizes/font_size = 16
+text = "Поздравляю, бэйби — ты в деле. Скрепим всё по чести. Правила добросовестной торговли таковы:
+
+§1. Будь честен о качестве товара. Гнилое — зови гнилым, котик.
+§2. Не обвешивай покупателя: рука на весах быстро становится рукой в банке с рассолом.
+§3. Не обсчитывай покупателя — каждая монета на счету, ягодка.
+§4. Всегда плати твёрдой монетой. Никаких расписок, обещаний и поцелуйчиков.
+§5. Всякий, кто нарушит Хартию, будет жестоко отомщён — до седьмого колена. Йе-е.
+
+Подпись скрепляет вечную дружбу и взаимное обогащение, бэйби."
+autowrap_mode = 3
+
+[node name="SignRow" type="HBoxContainer" parent="Root/Panel/Margin/VBox"]
+theme_override_constants/separation = 10
+
+[node name="SignLabel" type="Label" parent="Root/Panel/Margin/VBox/SignRow"]
+theme_override_colors/font_color = Color(0.3, 0.18, 0.06, 1)
+theme_override_font_sizes/font_size = 18
+text = "Подпись:"
+
+[node name="NameEdit" type="LineEdit" parent="Root/Panel/Margin/VBox/SignRow"]
+custom_minimum_size = Vector2(0, 36)
+size_flags_horizontal = 3
+placeholder_text = "впишите своё имя"
+
+[node name="ButtonRow" type="HBoxContainer" parent="Root/Panel/Margin/VBox"]
+alignment = 2
+theme_override_constants/separation = 10
+
+[node name="CancelButton" type="Button" parent="Root/Panel/Margin/VBox/ButtonRow"]
+custom_minimum_size = Vector2(120, 40)
+text = "Позже"
+
+[node name="SignButton" type="Button" parent="Root/Panel/Margin/VBox/ButtonRow"]
+custom_minimum_size = Vector2(160, 40)
+text = "Подписать"
