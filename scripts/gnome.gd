@@ -747,7 +747,9 @@ func apply_push(velocity_change: Vector3, duration: float) -> void:
 # --- Цикл ---
 
 func _physics_process(delta: float) -> void:
-	if _camp == null:
+	# Без camp гном обычно инертен. Виртуал-хук позволяет подклассу (SoldierGnome
+	# с escort-целью) тикать и без лагеря — дальше в теле _camp не дереференсится.
+	if _camp == null and not _ticks_without_camp():
 		return
 
 	if _state == State.IN_TENT:
@@ -793,6 +795,13 @@ func _physics_process(delta: float) -> void:
 		global_position.z += velocity.z * delta
 	else:
 		move_and_slide()
+
+
+## Виртуальный hook: тикать ли _physics_process без ссылки на Camp. База — нет
+## (гатерер без лагеря бессмыслен). SoldierGnome переопределяет на «да, если есть
+## escort-цель» — купленный отряд следует за башней без всякого лагеря.
+func _ticks_without_camp() -> bool:
+	return false
 
 
 ## Виртуальный hook: применять ли friendly-separation в текущем тике.

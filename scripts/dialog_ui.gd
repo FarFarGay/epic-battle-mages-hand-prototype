@@ -69,12 +69,28 @@ func _show_node(node_id: StringName) -> void:
 		c.queue_free()
 	var choices: Array = node.get("choices", [])
 	for choice in choices:
+		if not _req_met(choice.get("req", &"")):
+			continue  # ветка скрыта по условию (signed / unsigned)
 		var btn := Button.new()
 		btn.text = String(choice.get("label", "..."))
 		btn.custom_minimum_size = Vector2(0, 36)
 		btn.add_theme_font_size_override("font_size", 16)
 		btn.pressed.connect(_on_choice.bind(choice))
 		_choices.add_child(btn)
+
+
+## Условие показа ветки: &"signed" — только после подписи Хартии, &"unsigned" — только
+## до, пусто — всегда. Статус берём из PlayerProfile.
+func _req_met(req: StringName) -> bool:
+	if req == &"":
+		return true
+	var prof := get_tree().get_first_node_in_group(&"player_profile")
+	var signed: bool = prof != null and prof.has_method(&"is_signed") and prof.call(&"is_signed")
+	if req == &"signed":
+		return signed
+	if req == &"unsigned":
+		return not signed
+	return true
 
 
 ## Подставляет имя игрока вместо {name} (из PlayerProfile; до подписи Хартии — «чужак»).

@@ -1,4 +1,4 @@
-[gd_scene format=3 uid="uid://tradeui001"]
+[gd_scene load_steps=5 format=3 uid="uid://tradeui001"]
 
 [ext_resource type="Script" path="res://scripts/trade_ui.gd" id="1"]
 
@@ -13,6 +13,30 @@ corner_radius_top_left = 4
 corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_felt"]
+bg_color = Color(0.16, 0.32, 0.2, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.35, 0.55, 0.38, 1)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_purse"]
+bg_color = Color(0.32, 0.24, 0.12, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.7, 0.55, 0.2, 1)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
 
 [node name="TradeUI" type="CanvasLayer"]
 layer = 55
@@ -40,10 +64,10 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -300.0
-offset_top = -230.0
-offset_right = 300.0
-offset_bottom = 230.0
+offset_left = -320.0
+offset_top = -270.0
+offset_right = 320.0
+offset_bottom = 270.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
@@ -60,39 +84,79 @@ theme_override_constants/separation = 12
 [node name="Title" type="Label" parent="Root/Panel/Margin/VBox"]
 theme_override_colors/font_color = Color(0.95, 0.85, 0.4, 1)
 theme_override_font_sizes/font_size = 22
-text = "ТОРГ С ГНОМАМИ — отряд копейщиков"
+text = "СТОЛ ТОРГА — отряд копейщиков"
 horizontal_alignment = 1
+
+[node name="Sep" type="HSeparator" parent="Root/Panel/Margin/VBox"]
 
 [node name="PriceLabel" type="Label" parent="Root/Panel/Margin/VBox"]
 theme_override_colors/font_color = Color(0.95, 0.93, 0.85, 1)
-theme_override_font_sizes/font_size = 18
-text = "Цена: 200   →   платить: 200 золота"
+theme_override_font_sizes/font_size = 19
+text = "Купить за: 200 золота"
 
-[node name="Bar" type="Control" parent="Root/Panel/Margin/VBox"]
-custom_minimum_size = Vector2(0, 30)
+[node name="PayZone" type="Panel" parent="Root/Panel/Margin/VBox"]
+custom_minimum_size = Vector2(0, 130)
+theme_override_styles/panel = SubResource("StyleBoxFlat_felt")
 
-[node name="BarGold" type="ColorRect" parent="Root/Panel/Margin/VBox/Bar"]
+[node name="Margin" type="MarginContainer" parent="Root/Panel/Margin/VBox/PayZone"]
+mouse_filter = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 10
+
+[node name="VBox" type="VBoxContainer" parent="Root/Panel/Margin/VBox/PayZone/Margin"]
+mouse_filter = 2
+theme_override_constants/separation = 8
+
+[node name="ZoneLabel" type="Label" parent="Root/Panel/Margin/VBox/PayZone/Margin/VBox"]
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.8, 0.95, 0.82, 1)
+theme_override_font_sizes/font_size = 15
+text = "На стол положено: 0 / 200   (тащи монеты сюда)"
+
+[node name="PlacedRow" type="GridContainer" parent="Root/Panel/Margin/VBox/PayZone/Margin/VBox"]
+mouse_filter = 2
+columns = 12
+theme_override_constants/h_separation = 6
+theme_override_constants/v_separation = 6
+
+[node name="WalletRow" type="HBoxContainer" parent="Root/Panel/Margin/VBox"]
+theme_override_constants/separation = 14
+
+[node name="CoinStack" type="Panel" parent="Root/Panel/Margin/VBox/WalletRow"]
+custom_minimum_size = Vector2(230, 50)
+tooltip_text = "Тащи монету на стол"
+theme_override_styles/panel = SubResource("StyleBoxFlat_purse")
+
+[node name="HBox" type="HBoxContainer" parent="Root/Panel/Margin/VBox/WalletRow/CoinStack"]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.85, 0.68, 0.18, 1)
+mouse_filter = 2
+alignment = 1
+theme_override_constants/separation = 8
 
-[node name="BarShield" type="ColorRect" parent="Root/Panel/Margin/VBox/Bar"]
-anchor_bottom = 1.0
-offset_right = 0.0
-color = Color(0.3, 0.6, 1.0, 0.6)
+[node name="Label" type="Label" parent="Root/Panel/Margin/VBox/WalletRow/CoinStack/HBox"]
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.98, 0.85, 0.4, 1)
+theme_override_font_sizes/font_size = 16
+text = "тащи монету →"
+vertical_alignment = 1
 
-[node name="GoldLabel" type="Label" parent="Root/Panel/Margin/VBox"]
+[node name="WalletLabel" type="Label" parent="Root/Panel/Margin/VBox/WalletRow"]
+size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.85, 0.78, 0.45, 1)
 theme_override_font_sizes/font_size = 15
-text = "Ваше золото: 0"
+text = "Кошелёк: 0   (монета 25)"
+vertical_alignment = 1
 
 [node name="DeedsTitle" type="Label" parent="Root/Panel/Margin/VBox"]
 theme_override_colors/font_color = Color(0.6, 0.8, 1.0, 1)
 theme_override_font_sizes/font_size = 15
-text = "Добрые дела (скидка отношения):"
+text = "Добрые дела (дают скидку):"
 
 [node name="DeedsList" type="VBoxContainer" parent="Root/Panel/Margin/VBox"]
 theme_override_constants/separation = 6

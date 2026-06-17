@@ -37,6 +37,7 @@
 [ext_resource type="PackedScene" path="res://scenes/charter_ui.tscn" id="35_charter"]
 [ext_resource type="Script" path="res://scripts/deeds_log.gd" id="36_deeds"]
 [ext_resource type="PackedScene" path="res://scenes/trade_ui.tscn" id="37_trade"]
+[ext_resource type="Script" path="res://scripts/gnome_squad_spawner.gd" id="38_squadspawn"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -417,6 +418,9 @@ script = ExtResource("36_deeds")
 [node name="CharterUI" parent="." instance=ExtResource("35_charter")]
 
 [node name="TradeUI" parent="." instance=ExtResource("37_trade")]
+
+[node name="GnomeSquadSpawner" type="Node" parent="."]
+script = ExtResource("38_squadspawn")
 
 [node name="Pots" type="Node3D" parent="."]
 

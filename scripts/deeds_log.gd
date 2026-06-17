@@ -6,11 +6,14 @@ extends Node
 
 const GROUP := &"deeds_log"
 const GIANT_GROUP := &"skeleton_giant"
+## Скидка за убийство гиганта (в золоте). При цене 200 это −150 → платить 50.
+const GIANT_DEED_VALUE := 150
 
 signal deeds_changed()
 
-## Сид-дело для отладки торга без необходимости каждый раз убивать гиганта.
-@export var debug_seed_giant_deed: bool = true
+## Сид-дело для отладки торга без необходимости убивать гиганта. Держать ВЫКЛ в игре,
+## иначе на старте появится фантомный «Убил Гиганта» поверх реальных убийств.
+@export var debug_seed_giant_deed: bool = false
 
 var _deeds: Array = []  # Array[Dictionary]: {id: StringName, label: String, value: int}
 var _counter: int = 0
@@ -20,14 +23,14 @@ func _ready() -> void:
 	add_to_group(GROUP)
 	EventBus.enemy_destroyed.connect(_on_enemy_destroyed)
 	if debug_seed_giant_deed:
-		add_deed("Убил Скелета Гиганта", 150)
+		add_deed("Убил Скелета Гиганта", GIANT_DEED_VALUE)
 
 
 func _on_enemy_destroyed(enemy: Node3D) -> void:
 	if enemy == null or not is_instance_valid(enemy):
 		return
 	if enemy.is_in_group(GIANT_GROUP):
-		add_deed("Убил Скелета Гиганта", 150)
+		add_deed("Убил Скелета Гиганта", GIANT_DEED_VALUE)
 
 
 func add_deed(label: String, value: int) -> void:

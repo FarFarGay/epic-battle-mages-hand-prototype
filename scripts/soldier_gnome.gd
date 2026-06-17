@@ -121,6 +121,9 @@ var soldier_type: StringName = &""
 ## Ссылка на squad. Назначается Squad.add_member(self). RefCounted —
 ## пока хотя бы один член держит ссылку или Camp хранит, объект жив.
 var _squad: Squad = null
+## Цель эскорта при призыве БЕЗ лагеря (setup_free) — обычно башня. Когда задана,
+## заменяет _camp.get_tower_position() как центр ESCORT-строя. null у лагерных солдат.
+var _escort_target: Node3D = null
 var _attack_cd: float = 0.0
 ## Текущая патрульная точка в DEFENDING_CAMP. INF = «нужно выбрать новую»
 ## (старт или дошли до прежней).
@@ -214,6 +217,28 @@ func _can_flee() -> bool:
 ## damage_max / cooldown_min / cooldown_max / move_speed. Отсутствующие ключи —
 ## оставляют @export-дефолты.
 func setup_soldier(p_type: StringName, stats: Dictionary, p_camp: Camp, spawn_pos: Vector3) -> void:
+	_apply_soldier_stats(p_type, stats)
+	global_position = spawn_pos
+	# Базовая Gnome-инициализация. home_tent=null — солдат не привязан.
+	# setup() вызывает _enter_in_tent внутри, поэтому _finish переводит в
+	# outside-режим (visible, в группе skeleton_target, _state свой).
+	setup(p_camp, null)
+	_finish_soldier_setup()
+
+
+## Призыв БЕЗ лагеря: солдат следует за escort_target (башней) напрямую. Camp=null;
+## за тик-разрешение отвечает _ticks_without_camp(), за центр строя — _tower_center().
+## Используется покупкой отряда у гномов (TradeUI.purchased), вне всякого Camp.
+func setup_free(p_type: StringName, stats: Dictionary, spawn_pos: Vector3, escort_target: Node3D) -> void:
+	_escort_target = escort_target
+	_apply_soldier_stats(p_type, stats)
+	global_position = spawn_pos
+	setup(null, null)
+	_finish_soldier_setup()
+
+
+## Применяет статы каталога (общее для setup_soldier / setup_free).
+func _apply_soldier_stats(p_type: StringName, stats: Dictionary) -> void:
 	soldier_type = p_type
 	hp = float(stats.get("hp", hp))
 	enemy_detect_radius = float(stats.get("enemy_detect_radius", enemy_detect_radius))
@@ -224,18 +249,27 @@ func setup_soldier(p_type: StringName, stats: Dictionary, p_camp: Camp, spawn_po
 	attack_cooldown_max = float(stats.get("attack_cooldown_max", attack_cooldown_max))
 	if stats.has("move_speed"):
 		move_speed = float(stats.move_speed)
-	global_position = spawn_pos
-	# Базовая Gnome-инициализация. home_tent=null — солдат не привязан.
-	# setup() вызывает _enter_in_tent внутри, поэтому ниже принудительно
-	# выходим в outside-режим (visible, в группе skeleton_target, _state свой).
-	setup(p_camp, null)
+
+
+## Общий хвост призыва: выход из палатки в боевой outside-режим.
+func _finish_soldier_setup() -> void:
 	_state = State.SEARCHING  # любой outdoor-state, AI в _active_tick переопределён
 	visible = true
 	add_to_group(SKELETON_TARGET_GROUP)
 	# Стартовый cd = 0: первый удар после спавна / arrival должен быть
-	# мгновенным. Залп из 5 копейщиков на charge-attack визуально импактен,
-	# в отличие от стрельбы лучников где залп выглядит синхронным глюком.
+	# мгновенным. Залп копейщиков на charge-attack визуально импактен.
 	_attack_cd = 0.0
+
+
+## SoldierGnome тикает и без Camp, если задана escort-цель (купленный отряд за башней).
+func _ticks_without_camp() -> bool:
+	return _escort_target != null
+
+
+## Есть ли контекст центра строя (лагерь ИЛИ escort-цель). Без него squad-
+## позиционирование стоит на месте.
+func _has_squad_context() -> bool:
+	return _camp != null or (_escort_target != null and is_instance_valid(_escort_target))
 
 
 ## Squad назначает себя на add_member. Двусторонняя ссылка нужна юниту
@@ -277,7 +311,7 @@ func _active_tick(delta: float) -> void:
 	# нормальное поведение: combat-приоритет, возврат в строй когда нет
 	# цели. Иначе lunge выбрасывал бы из слота, strict снова марш back,
 	# и юнит дёргался.
-	if _squad != null and _camp != null \
+	if _squad != null and _has_squad_context() \
 			and _squad.state == Squad.State.HOLDING_POSITION \
 			and _squad.is_strict_move() \
 			and not _strict_arrived_at_slot:
@@ -314,7 +348,7 @@ func _active_tick(delta: float) -> void:
 			_start_charge(target)
 			return
 
-	if _squad == null or _camp == null:
+	if _squad == null or not _has_squad_context():
 		velocity = Vector3.ZERO
 		return
 	if _squad.state == Squad.State.DEFENDING_CAMP:
@@ -574,13 +608,21 @@ func _resolve_squad_center() -> Vector3:
 		Squad.State.HOLDING_POSITION:
 			return _squad.hold_position
 		Squad.State.ESCORTING_TOWER:
-			return _camp.get_tower_position() if _camp != null and _camp.has_method(&"get_tower_position") else global_position
+			return _tower_center()
 		Squad.State.DEFENDING_CAMP:
 			if _camp != null and _camp.is_deployed():
 				return _camp.deploy_anchor
-			if _camp != null and _camp.has_method(&"get_tower_position"):
-				return _camp.get_tower_position()
-			return global_position
+			return _tower_center()
+	return global_position
+
+
+## Позиция башни как центр строя: из лагеря (get_tower_position) или напрямую из
+## escort-цели (призыв без Camp). Fallback — собственная позиция.
+func _tower_center() -> Vector3:
+	if _camp != null and _camp.has_method(&"get_tower_position"):
+		return _camp.get_tower_position()
+	if _escort_target != null and is_instance_valid(_escort_target):
+		return _escort_target.global_position
 	return global_position
 
 
