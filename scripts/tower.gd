@@ -471,6 +471,8 @@ func _shield_zap_skeletons() -> void:
 			continue
 		if (n as Node).is_in_group(EnemyMech.MECH_GROUP):
 			continue  # мех зоной щита не трогаем — только парированием/отражением
+		if (n as Node).is_in_group(&"super_dash_only"):
+			continue  # тяжёлые (гигант) не берутся щитом — только супер-рывок (+AoE/магия)
 		var node := n as Node3D
 		if node == null:
 			continue

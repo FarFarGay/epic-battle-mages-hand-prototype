@@ -20,24 +20,24 @@
 [ext_resource type="PackedScene" path="res://scenes/boss_warning_overlay.tscn" id="18_boss"]
 [ext_resource type="PackedScene" path="res://scenes/day_night_overlay.tscn" id="19_daynight"]
 [ext_resource type="PackedScene" uid="uid://startmenu001" path="res://scenes/start_menu.tscn" id="20_startmenu"]
-[ext_resource type="Script" path="res://scripts/room_door.gd" id="21_door"]
+[ext_resource type="Script" uid="uid://c5yv0cj4x0ued" path="res://scripts/room_door.gd" id="21_door"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="22_skel"]
 [ext_resource type="Script" uid="uid://dndck7ob5edsp" path="res://scripts/room_skeleton_filler.gd" id="23_filler"]
 [ext_resource type="Script" uid="uid://clsrl4kk1d31f" path="res://scripts/metal_door.gd" id="24_metaldoor"]
 [ext_resource type="PackedScene" path="res://scenes/spark_diode.tscn" id="25_diode"]
 [ext_resource type="PackedScene" path="res://scenes/red_diode.tscn" id="26_reddiode"]
 [ext_resource type="PackedScene" path="res://scenes/lever.tscn" id="27_lever"]
-[ext_resource type="PackedScene" path="res://scenes/gnome_house.tscn" id="28_gnomehouse"]
-[ext_resource type="Script" path="res://scripts/fx_prewarm.gd" id="29_prewarm"]
+[ext_resource type="PackedScene" uid="uid://gnomehouse01" path="res://scenes/gnome_house.tscn" id="28_gnomehouse"]
+[ext_resource type="Script" uid="uid://cwe52rrr7heod" path="res://scripts/fx_prewarm.gd" id="29_prewarm"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton_giant.tscn" id="30_giant"]
-[ext_resource type="PackedScene" path="res://scenes/dialog_ui.tscn" id="31_dialog"]
-[ext_resource type="Script" path="res://scripts/gold_bank.gd" id="32_gold"]
-[ext_resource type="PackedScene" path="res://scenes/pot.tscn" id="33_pot"]
-[ext_resource type="Script" path="res://scripts/player_profile.gd" id="34_profile"]
-[ext_resource type="PackedScene" path="res://scenes/charter_ui.tscn" id="35_charter"]
-[ext_resource type="Script" path="res://scripts/deeds_log.gd" id="36_deeds"]
-[ext_resource type="PackedScene" path="res://scenes/trade_ui.tscn" id="37_trade"]
-[ext_resource type="Script" path="res://scripts/gnome_squad_spawner.gd" id="38_squadspawn"]
+[ext_resource type="PackedScene" uid="uid://dialogui001" path="res://scenes/dialog_ui.tscn" id="31_dialog"]
+[ext_resource type="Script" uid="uid://bpw7vx625uhoh" path="res://scripts/gold_bank.gd" id="32_gold"]
+[ext_resource type="PackedScene" uid="uid://pot0001" path="res://scenes/pot.tscn" id="33_pot"]
+[ext_resource type="Script" uid="uid://b1dd5vpq7jr5x" path="res://scripts/player_profile.gd" id="34_profile"]
+[ext_resource type="PackedScene" uid="uid://charterui01" path="res://scenes/charter_ui.tscn" id="35_charter"]
+[ext_resource type="Script" uid="uid://bectdk8n5vo4y" path="res://scripts/deeds_log.gd" id="36_deeds"]
+[ext_resource type="PackedScene" uid="uid://tradeui001" path="res://scenes/trade_ui.tscn" id="37_trade"]
+[ext_resource type="Script" uid="uid://cv0nhq65n6pnb" path="res://scripts/gnome_squad_spawner.gd" id="38_squadspawn"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -242,7 +242,7 @@ mesh = SubResource("BoxMesh_door")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 shape = SubResource("BoxShape3D_door")
 
-[node name="SparkDiode" parent="Room2" instance=ExtResource("25_diode")]
+[node name="SparkDiode" parent="Room2" unique_id=27003064 instance=ExtResource("25_diode")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 38)
 target_path = NodePath("../MetalDoor")
 
@@ -275,16 +275,16 @@ mesh = SubResource("BoxMesh_door")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 shape = SubResource("BoxShape3D_door")
 
-[node name="BlueDiode" parent="Room3" instance=ExtResource("25_diode")]
+[node name="BlueDiode" parent="Room3" unique_id=423228748 instance=ExtResource("25_diode")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, 67)
 target_path = NodePath("../RedDiode")
 
-[node name="RedDiode" parent="Room3" instance=ExtResource("26_reddiode")]
+[node name="RedDiode" parent="Room3" unique_id=1884791915 instance=ExtResource("26_reddiode")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 67)
 wire_from_path = NodePath("../BlueDiode")
 lever_path = NodePath("../Lever")
 
-[node name="Lever" parent="Room3" instance=ExtResource("27_lever")]
+[node name="Lever" parent="Room3" unique_id=905898450 instance=ExtResource("27_lever")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 0, 65)
 target_path = NodePath("../MetalDoor2")
 
@@ -320,7 +320,7 @@ mesh = SubResource("BoxMesh_door")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 shape = SubResource("BoxShape3D_door")
 
-[node name="TestGiant" parent="Room4" instance=ExtResource("30_giant")]
+[node name="TestGiant" parent="Room4" unique_id=1978101524 instance=ExtResource("30_giant")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.2, 80)
 room_center = Vector2(0, 84)
 room_size = Vector2(36, 28)
@@ -335,8 +335,8 @@ transform = Transform3D(-0.34202015, 0, -0.9396926, 0, 1, 0, 0.9396926, 0, -0.34
 [node name="House4" parent="Room4" unique_id=169079150 instance=ExtResource("28_gnomehouse")]
 transform = Transform3D(-0.57357645, 0, -0.81915206, 0, 1, 0, 0.81915206, 0, -0.57357645, 10.395116, 0, 90.92354)
 
-[node name="BlueDiodeWest" parent="Room4" instance=ExtResource("25_diode")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, 82)
+[node name="BlueDiodeWest" parent="Room4" unique_id=1372323523 instance=ExtResource("25_diode")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, 73)
 target_path = NodePath("../../RoomWest/RedDiodeWest")
 
 [node name="RoomWest" type="Node3D" parent="." unique_id=937540607]
@@ -350,14 +350,14 @@ transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, -25, 0, 77)
 [node name="WallSouth" parent="RoomWest" unique_id=1118697678 instance=ExtResource("6_wall")]
 transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, -25, 0, 91)
 
-[node name="GnomeLever" parent="RoomWest" instance=ExtResource("27_lever")]
+[node name="GnomeLever" parent="RoomWest" unique_id=1291689148 instance=ExtResource("27_lever")]
 transform = Transform3D(0.6, 0, 0, 0, 0.6, 0, 0, 0, 0.6, -25, 0, 84)
 target_path = NodePath("../../Room4/MetalDoor3")
 gnome_pullable = true
 gnome_needs_power = true
 
-[node name="RedDiodeWest" parent="RoomWest" instance=ExtResource("26_reddiode")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20, 0, 84)
+[node name="RedDiodeWest" parent="RoomWest" unique_id=786801324 instance=ExtResource("26_reddiode")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -25, 0, 79)
 wire_from_path = NodePath("../../Room4/BlueDiodeWest")
 lever_path = NodePath("../GnomeLever")
 
@@ -412,57 +412,57 @@ area_center = Vector3(-25, 0, 84)
 area_half_x = 5.0
 area_half_z = 5.0
 
-[node name="FxPrewarm" type="Node" parent="."]
+[node name="FxPrewarm" type="Node" parent="." unique_id=1862981382]
 script = ExtResource("29_prewarm")
 
-[node name="DialogUI" parent="." instance=ExtResource("31_dialog")]
+[node name="DialogUI" parent="." unique_id=246240971 instance=ExtResource("31_dialog")]
 
-[node name="GoldBank" type="Node" parent="."]
+[node name="GoldBank" type="Node" parent="." unique_id=1139174719]
 script = ExtResource("32_gold")
 
-[node name="PlayerProfile" type="Node" parent="."]
+[node name="PlayerProfile" type="Node" parent="." unique_id=1908250858]
 script = ExtResource("34_profile")
 
-[node name="DeedsLog" type="Node" parent="."]
+[node name="DeedsLog" type="Node" parent="." unique_id=431961127]
 script = ExtResource("36_deeds")
 
-[node name="CharterUI" parent="." instance=ExtResource("35_charter")]
+[node name="CharterUI" parent="." unique_id=2064390899 instance=ExtResource("35_charter")]
 
-[node name="TradeUI" parent="." instance=ExtResource("37_trade")]
+[node name="TradeUI" parent="." unique_id=884181869 instance=ExtResource("37_trade")]
 
-[node name="GnomeSquadSpawner" type="Node" parent="."]
+[node name="GnomeSquadSpawner" type="Node" parent="." unique_id=1793913173]
 script = ExtResource("38_squadspawn")
 
-[node name="Pots" type="Node3D" parent="."]
+[node name="Pots" type="Node3D" parent="." unique_id=1345822434]
 
-[node name="Pot1" parent="Pots" instance=ExtResource("33_pot")]
+[node name="Pot1" parent="Pots" unique_id=1225329674 instance=ExtResource("33_pot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11, 0, -8)
 
-[node name="Pot2" parent="Pots" instance=ExtResource("33_pot")]
+[node name="Pot2" parent="Pots" unique_id=634965278 instance=ExtResource("33_pot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 0, 7)
 
-[node name="Pot3" parent="Pots" instance=ExtResource("33_pot")]
+[node name="Pot3" parent="Pots" unique_id=1210794507 instance=ExtResource("33_pot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11, 0, 22)
 
-[node name="Pot4" parent="Pots" instance=ExtResource("33_pot")]
+[node name="Pot4" parent="Pots" unique_id=1443803892 instance=ExtResource("33_pot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 0, 35)
 
-[node name="Pot5" parent="Pots" instance=ExtResource("33_pot")]
+[node name="Pot5" parent="Pots" unique_id=114056207 instance=ExtResource("33_pot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, 50)
 
-[node name="Pot6" parent="Pots" instance=ExtResource("33_pot")]
+[node name="Pot6" parent="Pots" unique_id=632040262 instance=ExtResource("33_pot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, 63)
 
-[node name="Pot7" parent="Pots" instance=ExtResource("33_pot")]
+[node name="Pot7" parent="Pots" unique_id=259600375 instance=ExtResource("33_pot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, 76)
 
-[node name="Pot8" parent="Pots" instance=ExtResource("33_pot")]
+[node name="Pot8" parent="Pots" unique_id=1540428096 instance=ExtResource("33_pot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, 90)
 
-[node name="Pot9" parent="Pots" instance=ExtResource("33_pot")]
+[node name="Pot9" parent="Pots" unique_id=1563790801 instance=ExtResource("33_pot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -26, 0, 81)
 
-[node name="Pot10" parent="Pots" instance=ExtResource("33_pot")]
+[node name="Pot10" parent="Pots" unique_id=1245261141 instance=ExtResource("33_pot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -22, 0, 88)
 
 [node name="StartMenu" parent="." unique_id=606901594 instance=ExtResource("20_startmenu")]
