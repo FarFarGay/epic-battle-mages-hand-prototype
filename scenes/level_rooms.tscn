@@ -132,6 +132,16 @@ metallic = 0.9
 metallic_specular = 0.7
 roughness = 0.32
 
+[sub_resource type="BoxMesh" id="BoxMesh_chasm"]
+size = Vector3(34, 0.12, 8)
+
+[sub_resource type="StandardMaterial3D" id="Material_chasm"]
+albedo_color = Color(0.02, 0.02, 0.04, 1)
+roughness = 1.0
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_chasm"]
+size = Vector3(38, 3, 8)
+
 [node name="LevelRooms" type="Node3D" unique_id=169599323]
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=411368344]
@@ -360,6 +370,31 @@ gnome_needs_power = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -25, 0, 79)
 wire_from_path = NodePath("../../Room4/BlueDiodeWest")
 lever_path = NodePath("../GnomeLever")
+
+[node name="Room5" type="Node3D" parent="."]
+
+[node name="WallEast" parent="Room5" instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, 18, 0, 112)
+
+[node name="WallWest" parent="Room5" instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, -18, 0, 112)
+
+[node name="WallNorth" parent="Room5" instance=ExtResource("6_wall")]
+transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 126)
+
+[node name="ChasmVisual" type="MeshInstance3D" parent="Room5"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.05, 112)
+mesh = SubResource("BoxMesh_chasm")
+material_override = SubResource("Material_chasm")
+
+[node name="ChasmBarrier" type="StaticBody3D" parent="Room5" groups=["navmesh_source"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 112)
+collision_layer = 544
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room5/ChasmBarrier"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("BoxShape3D_chasm")
 
 [node name="Tower" parent="." unique_id=1617488261 instance=ExtResource("1")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
