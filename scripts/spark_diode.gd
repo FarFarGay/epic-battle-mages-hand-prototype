@@ -39,3 +39,6 @@ func on_spark() -> void:
 	var target := get_node_or_null(target_path)
 	if target != null and target.has_method(&"activate"):
 		target.call(&"activate")
+	elif not target_path.is_empty():
+		# Путь к двери/диоду не разрешился — пазл молча мёртв, иначе баг невидим.
+		push_warning("[SparkDiode] target_path не разрешён/без activate(): %s (%s)" % [target_path, name])

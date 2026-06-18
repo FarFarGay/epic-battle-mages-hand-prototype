@@ -135,7 +135,8 @@ func _process(_delta: float) -> void:
 func can_gnome_interact(gnome: Node) -> bool:
 	if _thrown or not _enabled:
 		return false
-	return gnome_required_role == &"" or gnome.soldier_type == gnome_required_role
+	# Роль через get() (не прямой .soldier_type) — контракт duck-typed на Node.
+	return gnome_required_role == &"" or gnome.get(&"soldier_type") == gnome_required_role
 
 
 ## Контракт strike-цели: гном ударил по рычагу → перекидываем (как gnome_hit горшка).

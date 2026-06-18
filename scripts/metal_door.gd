@@ -26,9 +26,12 @@ func open() -> void:
 	if _opening:
 		return
 	_opening = true
-	# Снять с навмеша СРАЗУ; rebake — после съезда (пока едет, ещё блокирует).
-	if is_in_group(NAVMESH_SOURCE_GROUP):
-		remove_from_group(NAVMESH_SOURCE_GROUP)
+	# НЕ снимаем с навмеша сразу: коллайдер физически стоит в проёме всю секунду
+	# съезда, а rebake асинхронный — если за этот кадр сработает ЧУЖОЙ rebake (спарк
+	# второго диода / достройка моста рядом), он перепёк бы навмеш с «открытым» проёмом,
+	# пока дверь ещё блокирует → агенты утыкаются в невидимую дверь. Снимаем с группы
+	# СИНХРОННО в _rebake_nav (t=slide_duration), когда дверь уже уехала под пол —
+	# состояние навмеша и физического коллайдера всегда согласованы.
 	var tween := create_tween()
 	tween.tween_property(self, "position:y", position.y - slide_depth, slide_duration) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
@@ -36,6 +39,8 @@ func open() -> void:
 
 
 func _rebake_nav() -> void:
+	if is_in_group(NAVMESH_SOURCE_GROUP):
+		remove_from_group(NAVMESH_SOURCE_GROUP)
 	var nav := get_tree().get_first_node_in_group(NAV_GROUP)
 	if nav != null and nav.has_method(&"rebake"):
 		nav.rebake()

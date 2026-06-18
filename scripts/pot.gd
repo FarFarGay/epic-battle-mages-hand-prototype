@@ -29,7 +29,10 @@ func _ready() -> void:
 ## Контракт strike-цели: лутать горшок может гном с can_loot, но НЕ с занятыми руками
 ## (несёт бревно — сперва донесёт). «Не лутать с полными руками» — общее правило.
 func can_gnome_interact(gnome: Node) -> bool:
-	if _broken or not gnome.can_loot:
+	# Контракт принимает Node — читаем роль через get() (не прямой .can_loot), чтобы
+	# не падать на юните без этого поля (сегодня бьёт только SoldierGnome, но контракт
+	# duck-typed — рядом is_carrying уже защищён has_method).
+	if _broken or not bool(gnome.get(&"can_loot")):
 		return false
 	return not (gnome.has_method(&"is_carrying") and gnome.is_carrying())
 

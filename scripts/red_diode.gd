@@ -30,6 +30,10 @@ func _ready() -> void:
 func _build_wire() -> void:
 	var from_node := get_node_or_null(wire_from_path) as Node3D
 	if from_node == null:
+		# Кросс-комнатный путь (../../RoomX/...) не разрешился — переименовали/переместили
+		# комнату. Иначе провод молча не строится, ток «телепортируется», баг невидим.
+		if not wire_from_path.is_empty():
+			push_warning("[RedDiode] wire_from_path не разрешён: %s (%s)" % [wire_from_path, name])
 		return
 	_wire_from = from_node.global_position + Vector3.UP * 0.25
 	var to: Vector3 = global_position + Vector3.UP * 0.25
@@ -94,6 +98,8 @@ func _on_current_arrived() -> void:
 	var lever := get_node_or_null(lever_path)
 	if lever != null and lever.has_method(&"enable"):
 		lever.call(&"enable")
+	elif not lever_path.is_empty():
+		push_warning("[RedDiode] lever_path не разрешён/без enable(): %s (%s)" % [lever_path, name])
 
 
 func _make_emissive(color: Color, energy: float) -> StandardMaterial3D:

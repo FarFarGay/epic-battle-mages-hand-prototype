@@ -90,7 +90,7 @@ func gnome_hit(gnome: Node) -> void:
 func _spawn_plank(i: int) -> void:
 	if _planks_root == null:
 		return
-	var step: float = span_length / float(planks_needed)
+	var step: float = span_length / float(maxi(planks_needed, 1))
 	var plank := MeshInstance3D.new()
 	var box := BoxMesh.new()
 	box.size = Vector3(step * 0.92, 0.16, span_half_z * 2.0)

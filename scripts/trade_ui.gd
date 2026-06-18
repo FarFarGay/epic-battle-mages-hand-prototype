@@ -27,7 +27,6 @@ signal purchased(unit_type: StringName, squad_size: int)
 
 ## Цена отряда в золоте.
 @export var base_price: int = 200
-@export var squad_size: int = 3
 
 var _open: bool = false
 var _applied: Dictionary = {}  # deed id (StringName) -> value (int)
@@ -213,5 +212,7 @@ func _on_buy() -> void:
 	var deeds_log := get_tree().get_first_node_in_group(&"deeds_log")
 	if deeds_log != null and not _applied.is_empty():
 		deeds_log.call(&"consume", _applied.keys())
-	purchased.emit(_unit_type, squad_size)
+	# Размер отряда — ИЗ КАТАЛОГА по типу (копейщик 5, рабочий 3), а не локальный
+	# экспорт: каталог — единый источник истины, иначе покупаешь не то число.
+	purchased.emit(_unit_type, SoldierSystem.get_squad_size(_unit_type))
 	close()
