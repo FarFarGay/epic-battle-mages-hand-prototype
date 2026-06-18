@@ -104,7 +104,7 @@ func _explode() -> void:
 ## Искра — электрическое заклинание, попадание в spark_target дёргает on_spark().
 ## Отдельно от урона врагам: один снаряд может и врага ударить, и механизм зажечь.
 func _notify_spark_targets() -> void:
-	for n in get_tree().get_nodes_in_group(&"spark_target"):
+	for n in get_tree().get_nodes_in_group(Layers.SPARK_TARGET_GROUP):
 		if not is_instance_valid(n):
 			continue
 		var node := n as Node3D

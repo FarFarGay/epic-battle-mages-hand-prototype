@@ -155,7 +155,7 @@ func _build_reference_point(mid: Vector3) -> Vector3:
 	for s in get_tree().get_nodes_in_group(&"soldier"):
 		if not is_instance_valid(s):
 			continue
-		if s.get(&"soldier_type") != &"worker":
+		if not (s.has_method(&"is_worker") and s.is_worker()):
 			continue
 		var p: Vector3 = (s as Node3D).global_position
 		var d: float = Vector2(p.x - mid.x, p.z - mid.z).length()

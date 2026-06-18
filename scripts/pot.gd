@@ -18,12 +18,12 @@ var _broken: bool = false
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
 	# Искра (и прочие spark-механизмы) бьёт по горшку — тот же контракт, что у диода.
-	add_to_group(&"spark_target")
+	add_to_group(Layers.SPARK_TARGET_GROUP)
 	# Цель автолута: гном-лутер ЗАРЯЖАЕТСЯ на горшок и разбивает ударом (не proximity).
-	add_to_group(&"gnome_strike_target")
+	add_to_group(Layers.GNOME_STRIKE_TARGET_GROUP)
 	# Щит башни (парирование) разбивает кувшины в радиусе. Отдельная группа, НЕ
 	# spark_target — иначе щит активировал бы и диоды-пазлы рядом.
-	add_to_group(&"shield_breakable")
+	add_to_group(Layers.SHIELD_BREAKABLE_GROUP)
 
 
 ## Контракт strike-цели: лутать горшок может гном с can_loot, но НЕ с занятыми руками

@@ -215,6 +215,18 @@ static func is_hand_soft_release(target: Object) -> bool:
 	return target is Node and (target as Node).is_in_group(HAND_SOFT_RELEASE_GROUP)
 
 
+## Контракт-группы, которые ОДИН файл регистрирует, а ДРУГОЙ читает — единый
+## источник имени, иначе опечатка в литерале тихо рвёт связь register↔read.
+##   gnome_strike_target — цели удара гнома (горшок/рычаг/дерево/мост) ⇄ SoldierGnome скан.
+##   spark_target        — цели Искры (диод/горшок) ⇄ SparkBolt._notify_spark_targets.
+##   shield_breakable    — утварь, ломаемая щитом башни (горшок) ⇄ Tower._shield_shatter_scenery.
+const GNOME_STRIKE_TARGET_GROUP := &"gnome_strike_target"
+const SPARK_TARGET_GROUP := &"spark_target"
+const SHIELD_BREAKABLE_GROUP := &"shield_breakable"
+## Склад ресурсов башни (room-режим): рабочий сдаёт сюда добытое ⇄ HUD читает запас.
+const TOWER_STORE_GROUP := &"tower_store"
+
+
 ## Возвращает true, если в маске установлен бит указанного слоя.
 static func has_layer(mask: int, layer_bit: int) -> bool:
 	return (mask & layer_bit) != 0

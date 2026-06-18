@@ -7,7 +7,7 @@ extends Node3D
 ## Idle — синий glow; после активации — зелёный + электро-вспышка. Только Искра
 ## активирует диоды (notify живёт в SparkBolt, не в других снарядах).
 
-const SPARK_TARGET_GROUP := &"spark_target"
+const SPARK_TARGET_GROUP := Layers.SPARK_TARGET_GROUP
 
 ## Что активировать на попадание Искрой. Зовём target.activate() (duck-typing) —
 ## может быть дверь (MetalDoor.activate=open) или красный диод (RedDiode.activate).

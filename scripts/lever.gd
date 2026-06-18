@@ -12,7 +12,7 @@ extends Node3D
 const ACTION_GRAB := &"hand_grab"
 ## Единая группа «гном бьёт точку → действие» (горшки + рычаги). Гном заряжается на
 ## цель и СТРАЙКОМ вызывает gnome_hit() — как с горшком, не проходом через область.
-const GNOME_STRIKE_GROUP := &"gnome_strike_target"
+const GNOME_STRIKE_GROUP := Layers.GNOME_STRIKE_TARGET_GROUP
 
 ## Визуал — в сцене lever.tscn (узлы Base / Handle{Arm,Knob}); скрипт = только
 ## поведение. Материал ручки — local_to_scene → у каждого инстанса свой (мутируем
