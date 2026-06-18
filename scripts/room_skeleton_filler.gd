@@ -1,13 +1,18 @@
 extends Node3D
 ## Sandbox-филлер: на _ready заполняет прямоугольную область бродячими скелетами.
-## В level_rooms нет skeleton_target-нод (лагеря/гномов/стен в группе) → у скелетов
-## ноль vision-целей → они просто бродят (WANDERING/RESTING). Ходячие мана-цели
-## под дэш/спарк: 1 скелет = 1 XP-орб = 5 маны, 80 шт = 4 полных манатанка.
+## По умолчанию скелеты БРОДЯТ (WANDERING/RESTING) — ходячие мана-цели под дэш/спарк
+## (1 скелет = 1 XP-орб = 5 маны). Башня помечена `skeleton_target` (в level_rooms.tscn),
+## поэтому скелет АГРИТСЯ на неё, лишь когда она въезжает в его vision_radius, и
+## БРОСАЕТ погоню, когда башня отъезжает (vision-gated скан — не идут через всю карту).
+## Урон занижен (skeleton_attack_damage) — скелеты тут «раздражают», а не выносят.
 ## Спавн распределён по физкадрам, чтобы не было фрейм-спайка на старте.
 
 @export var skeleton_scene: PackedScene
 ## Сколько скелетов. 80 × 5 маны = 400 = 4 × max_mana (100).
 @export var count: int = 80
+## Урон скелета по башне/гномам (Enemy.attack_damage). Дефолт Enemy = 8; тут занижаем —
+## комнатные скелеты раздражают (лёгкий чип), а не убивают. 0 = не трогать сцену.
+@export var skeleton_attack_damage: float = 3.0
 ## Центр области спавна (мир, XZ). Y берётся из spawn_y.
 @export var area_center: Vector3 = Vector3.ZERO
 ## Полуразмеры области по X/Z — держать внутри стен комнаты (интерьер 36×28 →
@@ -57,6 +62,9 @@ func _fill() -> void:
 		var reach: float = minf(area_half_x, area_half_z)
 		node.set(&"wander_distance_max", maxf(3.0, reach * 0.9))
 		node.set(&"wander_distance_min", maxf(2.0, reach * 0.4))
+		# Занижаем урон: комнатные скелеты — раздражатели, не убийцы (0 = не трогать).
+		if skeleton_attack_damage > 0.0:
+			node.set(&"attack_damage", skeleton_attack_damage)
 		if (i + 1) % spawns_per_frame == 0:
 			await get_tree().physics_frame
 			if not is_inside_tree():

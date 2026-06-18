@@ -154,7 +154,13 @@ func _scan_target() -> Node3D:
 	if tower != null and is_instance_valid(tower) and _target_still_valid(tower):
 		if _aggro_ok(tower):
 			return tower
-	return super._scan_target()
+	var scanned := super._scan_target()
+	# Башня помечена TARGET_GROUP (level_rooms — чтобы рядовые скелеты её атаковали),
+	# но гигант берёт её ТОЛЬКО через room-гейт выше. Vision-скан не должен подсунуть
+	# башню вне комнаты — иначе гигант агрился бы на неё без гейта.
+	if scanned != null and scanned.is_in_group(Tower.GROUP):
+		return null
+	return scanned
 
 
 ## Можно ли «проснуться» на башню. Room-гейт задан (room_size>0) → ТОЛЬКО когда
@@ -178,15 +184,19 @@ func _tower_in_room(tower: Node3D, margin: float) -> bool:
 ## цель пока damageable И (если задан room-гейт) в пределах комнаты+буфер. Мёртвая
 ## башня снимает себя с Damageable.GROUP → фильтр её отшибает.
 func _target_still_valid(target: Node3D) -> bool:
-	if target.is_in_group(TARGET_GROUP):
-		return true
-	if not (target.is_in_group(Tower.GROUP) and Damageable.is_damageable(target)):
-		return false
-	# Room-гейт: держим башню целью пока она в комнате (+буфер-гистерезис). Вышла →
-	# де-аггр → wander по комнате. Без гейта (волны) — всегда валидна пока damageable.
-	if room_size.x <= 0.0 or room_size.y <= 0.0:
-		return true
-	return _tower_in_room(target, room_leash_margin)
+	# Башня ПЕРВОЙ: room-гейт доминирует, ДАЖЕ если она в TARGET_GROUP (в level_rooms
+	# помечена им для рядовых скелетов). Иначе TARGET_GROUP-ветка вернула бы true и
+	# сняла бы room-leash — гигант гнал бы башню через всю карту. Мёртвая башня
+	# снимает себя с Damageable.GROUP → отшибётся.
+	if target.is_in_group(Tower.GROUP):
+		if not Damageable.is_damageable(target):
+			return false
+		# Room-гейт: держим башню целью пока она в комнате (+буфер-гистерезис). Вышла →
+		# де-аггр → wander по комнате. Без гейта (волны) — всегда валидна пока damageable.
+		if room_size.x <= 0.0 or room_size.y <= 0.0:
+			return true
+		return _tower_in_room(target, room_leash_margin)
+	return target.is_in_group(TARGET_GROUP)
 
 
 ## Override Skeleton._recompute_path_decision: гигант никогда не обходит
