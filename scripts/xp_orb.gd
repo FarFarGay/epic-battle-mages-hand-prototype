@@ -246,16 +246,17 @@ func _try_auto_magnetize_in_gather_zone() -> void:
 		if not is_instance_valid(s):
 			continue
 		var soldier := s as SoldierGnome
-		if soldier == null:
+		if soldier == null or not soldier.can_loot:
 			continue
 		var dx: float = global_position.x - soldier.global_position.x
 		var dz: float = global_position.z - soldier.global_position.z
 		if dx * dx + dz * dz > sr_sq:
 			continue
 		var camp := soldier.get_camp()
-		if camp == null:
-			continue
-		_activate_magnet(camp)
+		if camp != null:
+			_activate_magnet(camp)  # лагерный солдат — маршрутизация через Camp
+		else:
+			_activate_magnet_to_soldier(soldier)  # room-гном без Camp — кредит игроку
 		return
 	# Фоллбэк без развёрнутого лагеря: башня сама «вакуумит» орбы в своём радиусе.
 	# С лагерем не срабатывает — он владеет маршрутизацией (см. ранние ветки).
@@ -300,6 +301,17 @@ func _resolve_camp_from(body: Node) -> Camp:
 		if camp.get_tower() == body:
 			return camp
 	return null
+
+
+## Магнит к гному-лутеру (room-режим без лагеря): орб летит к гному, на arrival
+## кредит ИГРОКУ — мана башне, золото в банк (гном лишь расширяет радиус сбора,
+## как Overlord-миньон подбирает добычу). Цель — сам гном (движется, орб догоняет).
+func _activate_magnet_to_soldier(soldier: Node3D) -> void:
+	_camp_target = null
+	_tower = get_tree().get_first_node_in_group(Tower.GROUP)
+	_magnet_target_node = soldier
+	_state = State.MAGNETIZED
+	_magnet_area.set_deferred("monitoring", false)
 
 
 ## Магнит прямо к башне (без лагеря, room-режим): летим к башне, на arrival — мана.

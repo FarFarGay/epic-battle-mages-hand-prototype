@@ -44,6 +44,12 @@ func _fill() -> void:
 			area_center.x + randf_range(-area_half_x, area_half_x),
 			spawn_y,
 			area_center.z + randf_range(-area_half_z, area_half_z))
+		# Wander под размер комнаты: дефолтные 5-15м рассчитаны на большую карту и
+		# в тесной комнате упираются в стены (скелет целит за стену → стоит/жмётся).
+		# Привязываем к area_half — скелет бродит внутри своей комнаты.
+		var reach: float = minf(area_half_x, area_half_z)
+		node.set(&"wander_distance_max", maxf(3.0, reach * 0.9))
+		node.set(&"wander_distance_min", maxf(2.0, reach * 0.4))
 		if (i + 1) % spawns_per_frame == 0:
 			await get_tree().physics_frame
 			if not is_inside_tree():

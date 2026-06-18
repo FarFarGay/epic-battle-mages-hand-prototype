@@ -13,10 +13,23 @@ const SPAWN_FRONT_DISTANCE := 6.0
 ## Наземный Y для fallback-спавна у башни (её origin приподнят ≈5 — спавнить там
 ## нельзя, копейщики повисли бы). У домика берётся его собственный наземный Y.
 const GROUND_Y := 0.5
+## Боевой радиус купленного отряда от центра строя (башни). Меньше дефолтных 12 —
+## копейщики бьют только у башни, под её защитой, не убегают вглубь толпы.
+const SQUAD_LEASH_RADIUS := 7.0
+
+## Инпут-действие «волна вызова» (как камповый recall). Из project.godot — клавиша F.
+const RECALL_ACTION := &"caravan_halt_toggle"
+## Радиус визуального кольца волны от башни.
+const RECALL_RADIUS := 30.0
+## Скорость расширения кольца (м/с) — задаёт длительность визуала.
+const RECALL_WAVE_SPEED := 45.0
 
 ## Счётчик уникальных id отрядов (для squad-карточек HUD'а). Со смещением 1000,
 ## чтобы не пересекаться с лагерными id (на случай гибридных сцен).
 var _next_squad_id: int = 1000
+## Один отряд НА ТИП (soldier_type → Squad). Найм доливает в существующий отряд
+## своего типа, а не плодит дубликаты. На disband — чистим.
+var _squads_by_type: Dictionary = {}
 
 
 func _ready() -> void:
@@ -28,6 +41,53 @@ func _connect_trade() -> void:
 	var trade := get_tree().get_first_node_in_group(&"trade_ui")
 	if trade != null and not trade.purchased.is_connected(_on_purchased):
 		trade.purchased.connect(_on_purchased)
+
+
+## Клавиша вызова (F): волна от башни + toggle всех room-отрядов escort⇄hold —
+## комнатный аналог кампового recall (Camp._handle_halt_input), но без Camp.
+func _process(_delta: float) -> void:
+	if Input.is_action_just_pressed(RECALL_ACTION):
+		_recall_squads()
+
+
+func _recall_squads() -> void:
+	var tower := get_tree().get_first_node_in_group(&"tower")
+	if tower == null or not is_instance_valid(tower):
+		return
+	var origin: Vector3 = (tower as Node3D).global_position
+	# Кольцо-волну пульсим всегда (даже без отрядов — видно границу/обратную связь).
+	EventBus.recall_zone_pulsed.emit(origin, RECALL_RADIUS, RECALL_RADIUS / maxf(RECALL_WAVE_SPEED, 0.001))
+	# Живые отряды собираем из солдат (уникальные Squad-ссылки).
+	var squads: Array = []
+	var seen: Dictionary = {}
+	for s in get_tree().get_nodes_in_group(&"soldier"):
+		if is_instance_valid(s) and s._squad != null and not seen.has(s._squad):
+			seen[s._squad] = true
+			squads.append(s._squad)
+	if squads.is_empty():
+		return
+	# Toggle: хоть один в эскорте → все встают (HOLD-soft); иначе → все к башне.
+	var any_escort: bool = false
+	for sq in squads:
+		if sq.state == Squad.State.ESCORTING_TOWER:
+			any_escort = true
+			break
+	for sq in squads:
+		if any_escort:
+			sq.command_hold(_squad_center(sq, origin), false)
+		else:
+			sq.command_escort()
+
+
+## Средняя позиция живых членов отряда (fallback — точка башни).
+func _squad_center(sq: Squad, fallback: Vector3) -> Vector3:
+	var sum: Vector3 = Vector3.ZERO
+	var n: int = 0
+	for m in sq.members:
+		if is_instance_valid(m):
+			sum += m.global_position
+			n += 1
+	return sum / float(n) if n > 0 else fallback
 
 
 func _on_purchased(squad_size: int) -> void:
@@ -62,12 +122,16 @@ func _on_purchased(squad_size: int) -> void:
 	# Точка появления — ПЕРЕД домами, на открытой земле (не внутри здания).
 	var front: Vector3 = base + dir * SPAWN_FRONT_DISTANCE
 
-	var squad := Squad.new()
-	_next_squad_id += 1
-	squad.id = _next_squad_id
-	squad.soldier_type = SOLDIER_TYPE
-	squad.icon_color = data.get("icon_color", Color.WHITE)
-	squad.charge_max = float(data.get("charge_max", squad.charge_max))
+	# Один отряд на тип: доливаем в существующий отряд этого типа или создаём новый.
+	var squad: Squad = _squads_by_type.get(SOLDIER_TYPE)
+	var is_new: bool = squad == null
+	if is_new:
+		squad = Squad.new()
+		_next_squad_id += 1
+		squad.id = _next_squad_id
+		squad.soldier_type = SOLDIER_TYPE
+		squad.icon_color = data.get("icon_color", Color.WHITE)
+		_squads_by_type[SOLDIER_TYPE] = squad
 	var n: int = maxi(squad_size, 1)
 	var spawned: int = 0
 	for i in range(n):
@@ -79,19 +143,26 @@ func _on_purchased(squad_size: int) -> void:
 			continue
 		scene_root.add_child(soldier)
 		soldier.setup_free(SOLDIER_TYPE, stats, pos, tower)
-		squad.add_member(soldier)
+		soldier.combat_leash_radius = SQUAD_LEASH_RADIUS  # держатся у башни
+		squad.add_member(soldier)  # эмитит members_changed → карточка обновит счётчик
 		spawned += 1
 	if spawned == 0:
+		if is_new:
+			_squads_by_type.erase(SOLDIER_TYPE)
 		return
-	# Карточка управления в HUD: эмитим как Camp — squad_created + проброс
-	# members_changed/state_changed → squad_changed, disbanded → squad_disbanded.
-	EventBus.squad_created.emit(squad)
-	squad.members_changed.connect(func() -> void: EventBus.squad_changed.emit(squad))
-	squad.state_changed.connect(func() -> void: EventBus.squad_changed.emit(squad))
-	squad.disbanded.connect(func() -> void: EventBus.squad_disbanded.emit(squad), CONNECT_ONE_SHOT)
-	# Появились перед домами на земле → сразу за башней (управление — карточкой в HUD).
-	squad.command_escort()
-	# Маркер заряда squad-абилки над отрядом (ловит hand-slam при готовности).
-	var marker := SquadChargeMarker.new()
-	scene_root.add_child(marker)
-	marker.setup(squad)
+	# Новый отряд-тип → карточка в HUD (squad_created + проброс сигналов) + эскорт.
+	# Донайм в существующий — карточка уже есть, обновится через members_changed.
+	if is_new:
+		EventBus.squad_created.emit(squad)
+		squad.members_changed.connect(func() -> void: EventBus.squad_changed.emit(squad))
+		squad.state_changed.connect(func() -> void: EventBus.squad_changed.emit(squad))
+		squad.disbanded.connect(_on_squad_disbanded.bind(squad), CONNECT_ONE_SHOT)
+		squad.command_escort()
+
+
+## Отряд-тип погиб целиком — убираем карточку и чистим реестр (следующий найм
+## этого типа создаст новый отряд).
+func _on_squad_disbanded(squad: Squad) -> void:
+	EventBus.squad_disbanded.emit(squad)
+	if _squads_by_type.get(squad.soldier_type) == squad:
+		_squads_by_type.erase(squad.soldier_type)

@@ -30,6 +30,10 @@ const SOLDIER_GROUP := &"soldier"
 @export var attack_cooldown_min: float = 0.6
 @export var attack_cooldown_max: float = 1.0
 @export var soldier_color: Color = Color(0.85, 0.55, 0.25, 1.0)
+## Автолут: всасывает орбы/монеты в своём радиусе и разбивает горшки рядом. По
+## дизайну лутают строители, не воины — пока true у всех (флаг под будущее
+## разделение ролей: воинам поставим false, строителям true).
+@export var can_loot: bool = true
 @export_group("")
 
 @export_group("Defend patrol (DEFENDING_CAMP state)")
@@ -344,6 +348,10 @@ func _active_tick(delta: float) -> void:
 	# в leash-области. Иначе — squad-движение.
 	if _attack_cd <= 0.0:
 		var target: Node3D = _find_target_in_leash()
+		# Нет врага → ищем strike-точку (горшок/рычаг); кто может — решает сама цель
+		# (can_gnome_interact: горшок → can_loot, рычаг → роль). Бьём тем же зарядом.
+		if target == null:
+			target = _find_interact_target_in_leash()
 		if target != null:
 			_start_charge(target)
 			return
@@ -694,6 +702,35 @@ func _find_target_in_leash() -> Node3D:
 	return nearest
 
 
+## Strike-цель (горшок/рычаг, группа gnome_strike_target) в combat_leash_radius от
+## центра режима + enemy_detect_radius от себя. Только когда нет врага. Цель сама
+## решает, годится ли гном (can_gnome_interact: горшок→can_loot, рычаг→роль).
+## Ближайшая подходящая. См. [[feedback-symmetric-interactions]].
+func _find_interact_target_in_leash() -> Node3D:
+	var leash_center: Vector3 = _resolve_squad_center()
+	var leash_sq: float = combat_leash_radius * combat_leash_radius
+	var detect_sq: float = enemy_detect_radius * enemy_detect_radius
+	var nearest: Node3D = null
+	var nearest_d_sq: float = detect_sq
+	for n in get_tree().get_nodes_in_group(&"gnome_strike_target"):
+		if not is_instance_valid(n):
+			continue
+		var node3d := n as Node3D
+		if node3d == null:
+			continue
+		if node3d.has_method(&"can_gnome_interact") and not node3d.can_gnome_interact(self):
+			continue
+		var dx_l: float = node3d.global_position.x - leash_center.x
+		var dz_l: float = node3d.global_position.z - leash_center.z
+		if dx_l * dx_l + dz_l * dz_l > leash_sq:
+			continue
+		var d_sq: float = (node3d.global_position - global_position).length_squared()
+		if d_sq < nearest_d_sq:
+			nearest_d_sq = d_sq
+			nearest = node3d
+	return nearest
+
+
 ## True если другой копейщик (НЕ self) уже выбрал эту цель в активной
 ## боевой фазе (APPROACH / LUNGE / DRIFT). RECOVERY-юниты освобождают
 ## claim — цель снова свободна для следующего.
@@ -722,6 +759,12 @@ func _is_target_claimed_by_other(target: Node3D) -> bool:
 ## Knockback применяется ТОЛЬКО на survival, чтобы не толкать уже
 ## queue_free'нутый труп (бесполезно + лишняя физика на пачку умирающих).
 func _strike_at(target: Node3D) -> void:
+	# Strike-цель (горшок/рычаг) — бьём через gnome_hit, без enemy-логики
+	# (knockback/squad-charge). Горшок разбивается, рычаг перекидывается.
+	if target.is_in_group(&"gnome_strike_target"):
+		if target.has_method(&"gnome_hit"):
+			target.call(&"gnome_hit")
+		return
 	var damage: float = randf_range(attack_damage_min, attack_damage_max)
 	Damageable.try_damage(target, damage)
 	# Survival-чек через hp: try_damage может вызвать queue_free, но
@@ -729,12 +772,7 @@ func _strike_at(target: Node3D) -> void:
 	var alive: bool = is_instance_valid(target) and "hp" in target and target.hp > 0.0
 	if alive:
 		Pushable.try_push(target, _charge_dir * strike_knockback_speed, strike_knockback_duration)
-	else:
-		# Kill — копит squad charge-ability ([Squad._charge]). 1 убийство = 1.
-		# Только от прямых ударов squad-членов (не damage'а защитников/башни) —
-		# так заряд требует «squad в бою», как и задумано дизайном
-		# [[project-ebm-charge-abilities]].
-		if _squad != null:
-			_squad.add_charge(1.0)
+	# Squad charge-абилка убрана (overload, дублировала контроль толпы у башни) —
+	# на kill ничего не копим. Ценность отряда: число + автобой + утилита.
 	if debug_log and LogConfig.master_enabled:
 		print("[SoldierGnome:%s] удар по %s (dmg=%.1f, alive=%s)" % [name, target.name, damage, str(alive)])

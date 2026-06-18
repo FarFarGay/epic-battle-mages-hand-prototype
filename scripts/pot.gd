@@ -12,7 +12,6 @@ const COIN_SCENE := preload("res://scenes/xp_orb.tscn")
 @export var shatter_fragments: int = 10
 ## Разброс монет по XZ от центра горшка.
 @export var coin_scatter: float = 0.7
-
 var _broken: bool = false
 
 
@@ -20,6 +19,18 @@ func _ready() -> void:
 	body_entered.connect(_on_body_entered)
 	# Искра (и прочие spark-механизмы) бьёт по горшку — тот же контракт, что у диода.
 	add_to_group(&"spark_target")
+	# Цель автолута: гном-лутер ЗАРЯЖАЕТСЯ на горшок и разбивает ударом (не proximity).
+	add_to_group(&"gnome_strike_target")
+
+
+## Контракт strike-цели: лутать горшок может гном с can_loot (по дизайну — строитель).
+func can_gnome_interact(gnome: Node) -> bool:
+	return not _broken and gnome.can_loot
+
+
+## Гном ударил по горшку зарядом (SoldierGnome._strike_at по gnome_strike_target).
+func gnome_hit() -> void:
+	_break()
 
 
 ## Попадание Искрой (SparkBolt._notify_spark_targets в impact_radius) — разбиваем.

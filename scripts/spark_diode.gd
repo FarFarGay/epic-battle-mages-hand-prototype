@@ -16,29 +16,13 @@ const SPARK_TARGET_GROUP := &"spark_target"
 @export var active_color: Color = Color(0.3, 1.0, 0.45)
 
 var _activated: bool = false
-var _material: StandardMaterial3D = null
+## Визуал — в сцене spark_diode.tscn (узел Body); материал local_to_scene (свой у
+## каждого инстанса). Раньше генерился кодом (_build_visual) — убрано.
+@onready var _material: StandardMaterial3D = ($Body as MeshInstance3D).material_override
 
 
 func _ready() -> void:
 	add_to_group(SPARK_TARGET_GROUP)
-	_build_visual()
-
-
-func _build_visual() -> void:
-	var mi := MeshInstance3D.new()
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = 0.45
-	cyl.bottom_radius = 0.6
-	cyl.height = 0.5
-	mi.mesh = cyl
-	_material = StandardMaterial3D.new()
-	_material.albedo_color = idle_color
-	_material.emission_enabled = true
-	_material.emission = idle_color
-	_material.emission_energy_multiplier = 3.0
-	mi.material_override = _material
-	mi.position.y = 0.25
-	add_child(mi)
 
 
 ## Вызывается SparkBolt при попадании Искрой в радиусе. Одноразово открывает дверь.

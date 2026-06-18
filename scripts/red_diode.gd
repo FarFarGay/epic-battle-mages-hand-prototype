@@ -15,22 +15,15 @@ extends Node3D
 @export var flow_duration: float = 0.9
 
 var _energized: bool = false
-var _material: StandardMaterial3D = null
+## Тело диода — в сцене red_diode.tscn (узел Body), материал local_to_scene.
+## ПРОВОД строится процедурно (_build_wire): его длина/ориентация зависят от runtime-
+## позиций двух диодов — статичной сценой не выразить.
+@onready var _material: StandardMaterial3D = ($Body as MeshInstance3D).material_override
 var _wire_material: StandardMaterial3D = null
 var _wire_from: Vector3 = Vector3.INF
 
 
 func _ready() -> void:
-	_material = _make_emissive(idle_color, 2.0)
-	var mi := MeshInstance3D.new()
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = 0.45
-	cyl.bottom_radius = 0.6
-	cyl.height = 0.5
-	mi.mesh = cyl
-	mi.material_override = _material
-	mi.position.y = 0.25
-	add_child(mi)
 	_build_wire()
 
 

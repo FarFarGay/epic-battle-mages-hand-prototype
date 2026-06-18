@@ -24,9 +24,9 @@
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="22_skel"]
 [ext_resource type="Script" uid="uid://dndck7ob5edsp" path="res://scripts/room_skeleton_filler.gd" id="23_filler"]
 [ext_resource type="Script" uid="uid://clsrl4kk1d31f" path="res://scripts/metal_door.gd" id="24_metaldoor"]
-[ext_resource type="Script" uid="uid://dt8q0721ofwcu" path="res://scripts/spark_diode.gd" id="25_diode"]
-[ext_resource type="Script" path="res://scripts/red_diode.gd" id="26_reddiode"]
-[ext_resource type="Script" uid="uid://r0vjcokb5o2g" path="res://scripts/lever.gd" id="27_lever"]
+[ext_resource type="PackedScene" path="res://scenes/spark_diode.tscn" id="25_diode"]
+[ext_resource type="PackedScene" path="res://scenes/red_diode.tscn" id="26_reddiode"]
+[ext_resource type="PackedScene" path="res://scenes/lever.tscn" id="27_lever"]
 [ext_resource type="PackedScene" path="res://scenes/gnome_house.tscn" id="28_gnomehouse"]
 [ext_resource type="Script" path="res://scripts/fx_prewarm.gd" id="29_prewarm"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton_giant.tscn" id="30_giant"]
@@ -242,9 +242,8 @@ mesh = SubResource("BoxMesh_door")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 shape = SubResource("BoxShape3D_door")
 
-[node name="SparkDiode" type="Node3D" parent="Room2" unique_id=1470959870]
+[node name="SparkDiode" parent="Room2" instance=ExtResource("25_diode")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 38)
-script = ExtResource("25_diode")
 target_path = NodePath("../MetalDoor")
 
 [node name="Room3" type="Node3D" parent="." unique_id=455955113]
@@ -276,20 +275,17 @@ mesh = SubResource("BoxMesh_door")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 shape = SubResource("BoxShape3D_door")
 
-[node name="BlueDiode" type="Node3D" parent="Room3" unique_id=2002395934]
+[node name="BlueDiode" parent="Room3" instance=ExtResource("25_diode")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, 67)
-script = ExtResource("25_diode")
 target_path = NodePath("../RedDiode")
 
-[node name="RedDiode" type="Node3D" parent="Room3" unique_id=30280239]
+[node name="RedDiode" parent="Room3" instance=ExtResource("26_reddiode")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 67)
-script = ExtResource("26_reddiode")
 wire_from_path = NodePath("../BlueDiode")
 lever_path = NodePath("../Lever")
 
-[node name="Lever" type="Node3D" parent="Room3" unique_id=1688271218]
+[node name="Lever" parent="Room3" instance=ExtResource("27_lever")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 0, 65)
-script = ExtResource("27_lever")
 target_path = NodePath("../MetalDoor2")
 
 [node name="Room4" type="Node3D" parent="." unique_id=2136795382]
@@ -349,6 +345,11 @@ transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, -25, 0, 77)
 
 [node name="WallSouth" parent="RoomWest" unique_id=1118697678 instance=ExtResource("6_wall")]
 transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, -25, 0, 91)
+
+[node name="GnomeLever" parent="RoomWest" instance=ExtResource("27_lever")]
+transform = Transform3D(0.6, 0, 0, 0, 0.6, 0, 0, 0, 0.6, -25, 0, 84)
+target_path = NodePath("../../Room4/MetalDoor3")
+gnome_pullable = true
 
 [node name="Tower" parent="." unique_id=1617488261 instance=ExtResource("1")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)

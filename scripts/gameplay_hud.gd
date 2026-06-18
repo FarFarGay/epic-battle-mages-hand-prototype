@@ -1681,6 +1681,17 @@ func _build_squad_card(squad: Squad) -> Control:
 	btn_dismiss.set_meta(&"squad_btn_dismiss", true)
 	btn_row2.add_child(btn_dismiss)
 
+	# «Снять выделение» — отменяет sticky-aim «Идти сюда», рука возвращается к
+	# обычным действиям (каст/захват). Без него aim-режим залипал в руке.
+	var btn_deselect := Button.new()
+	btn_deselect.text = "✕ Снять"
+	btn_deselect.focus_mode = Control.FOCUS_NONE
+	btn_deselect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn_deselect.add_theme_font_size_override("font_size", 11)
+	btn_deselect.tooltip_text = "Снять выделение отряда — рука вернётся к обычным действиям"
+	btn_deselect.pressed.connect(_on_squad_deselect_pressed)
+	btn_row2.add_child(btn_deselect)
+
 	_refresh_squad_card(card, squad)
 	return card
 
@@ -1784,6 +1795,14 @@ func _update_squad_cards_dynamic() -> void:
 				_apply_escort_state(btn, squad)
 			elif btn.has_meta(&"squad_btn_defend"):
 				_apply_defend_state(btn, squad)
+
+
+## Снять выделение: отменяет активный squad-aim («Идти сюда»), рука возвращается
+## к обычным действиям. cancel_aim no-op если ничего не выделено.
+func _on_squad_deselect_pressed() -> void:
+	var hand := _resolve_hand()
+	if hand != null and hand.squad_aim != null:
+		hand.squad_aim.cancel_aim()
 
 
 func _on_squad_aim_pressed(squad_id: int) -> void:

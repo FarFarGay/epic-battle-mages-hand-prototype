@@ -10,10 +10,22 @@ extends Node3D
 ## рука рядом ничего не «схватывает» — конфликта нет, рычаг сам читает hand_grab.
 
 const ACTION_GRAB := &"hand_grab"
+## Единая группа «гном бьёт точку → действие» (горшки + рычаги). Гном заряжается на
+## цель и СТРАЙКОМ вызывает gnome_hit() — как с горшком, не проходом через область.
+const GNOME_STRIKE_GROUP := &"gnome_strike_target"
 
+## Визуал — в сцене lever.tscn (узлы Base / Handle{Arm,Knob}); скрипт = только
+## поведение. Материал ручки — local_to_scene → у каждого инстанса свой (мутируем
+## цвет независимо). Раньше визуал генерился в коде (_build_visual) — убрано.
 @export var target_path: NodePath
-## Длина рукояти-стойки (торчит вверх).
-@export var handle_length: float = 1.6
+## Гном-взаимодействие (единая система «гном → точка → действие»): рычаг — strike-
+## цель, гном ЗАРЯЖАЕТСЯ на него и перекидывает УДАРОМ (gnome_hit), как горшок.
+## Активен с _ready (без enable/RedDiode-цепочки), горит ready-цветом как задача.
+## Для «башня не лезет — пошли гнома».
+@export var gnome_pullable: bool = false
+## Требуемая роль гнома (soldier_type). Пусто = любой. Рычаг ФИЗИЧЕСКИЙ — копейщику
+## ок; магический механизм потребует искрового (шаг 2).
+@export var gnome_required_role: StringName = &""
 ## Радиус захвата у основания (XZ). Зажал ЛКМ в нём → рычаг «в руке».
 @export var engage_radius: float = 2.6
 ## Короткий рывок вбок (по X, м), после которого тумблер ПЕРЕКИДЫВАЕТСЯ в ON. Не
@@ -36,48 +48,21 @@ var _engaged: bool = false
 var _thrown: bool = false
 var _engage_ref_x: float = 0.0
 var _hand: Hand = null
-var _handle: Node3D = null
-var _handle_mat: StandardMaterial3D = null
+@onready var _handle: Node3D = $Handle
+@onready var _handle_mat: StandardMaterial3D = ($Handle/Arm as MeshInstance3D).material_override
 var _highlighted: bool = false
 
 
 func _ready() -> void:
-	_build_visual()
 	_handle.rotation.z = deg_to_rad(start_angle_deg)  # OFF-положение (наклон вбок)
-
-
-func _build_visual() -> void:
-	# Основание — короткий цилиндр на земле.
-	var base := MeshInstance3D.new()
-	var base_cyl := CylinderMesh.new()
-	base_cyl.top_radius = 0.5
-	base_cyl.bottom_radius = 0.6
-	base_cyl.height = 0.4
-	base.mesh = base_cyl
-	base.material_override = _make_mat(idle_color, 0.0)
-	base.position.y = 0.2
-	add_child(base)
-	# Пивот у основания + рукоять-СТОЙКА вверх + набалдашник на конце. Наклоняется
-	# вбок (вокруг Z) как тумблер — НЕ метёт по горизонтали.
-	_handle = Node3D.new()
-	_handle.position.y = 0.35
-	add_child(_handle)
-	_handle_mat = _make_mat(idle_color, 0.0)
-	var arm := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = Vector3(0.16, handle_length, 0.16)
-	arm.mesh = box
-	arm.material_override = _handle_mat
-	arm.position = Vector3(0.0, handle_length * 0.5, 0.0)
-	_handle.add_child(arm)
-	var knob := MeshInstance3D.new()
-	var sph := SphereMesh.new()
-	sph.radius = 0.22
-	sph.height = 0.44
-	knob.mesh = sph
-	knob.material_override = _handle_mat
-	knob.position = Vector3(0.0, handle_length, 0.0)
-	_handle.add_child(knob)
+	# Гном-рычаг — strike-цель (гном бьёт → перекид) + подсвечен как задача.
+	if gnome_pullable:
+		add_to_group(GNOME_STRIKE_GROUP)
+		if _handle_mat != null:
+			_handle_mat.albedo_color = ready_color
+			_handle_mat.emission_enabled = true
+			_handle_mat.emission = ready_color
+			_handle_mat.emission_energy_multiplier = 1.4
 
 
 ## Зовёт RedDiode когда ток дошёл. До этого рычаг мёртв (не хватается, не подсвечен).
@@ -110,7 +95,9 @@ func _refresh_handle_color() -> void:
 
 
 func _process(_delta: float) -> void:
-	if _thrown or not _enabled:
+	if _thrown:
+		return
+	if not _enabled:
 		return
 	var hand := _resolve_hand()
 	if hand == null:
@@ -135,6 +122,21 @@ func _process(_delta: float) -> void:
 			# Лёгкий нудж в сторону переключения — тактильный feedback, не полный ход.
 			var lean: float = clampf(pull / throw_distance, 0.0, 1.0) * 0.18
 			_handle.rotation.z = deg_to_rad(lerpf(start_angle_deg, end_angle_deg, lean))
+
+
+## Контракт strike-цели: может ли этот гном перекинуть рычаг (роль). Гейт по роли —
+## физический рычаг копейщику ок, магический потребует искрового (gnome_required_role).
+func can_gnome_interact(gnome: Node) -> bool:
+	if _thrown:
+		return false
+	return gnome_required_role == &"" or gnome.soldier_type == gnome_required_role
+
+
+## Контракт strike-цели: гном ударил по рычагу → перекидываем (как gnome_hit горшка).
+func gnome_hit() -> void:
+	if _thrown:
+		return
+	_throw()
 
 
 ## Щелчок тумблера в ON: быстрый снап с пружинкой, на финише — активация цели.
@@ -166,13 +168,3 @@ func _resolve_hand() -> Hand:
 		return _hand
 	_hand = get_tree().get_first_node_in_group(Hand.HAND_GROUP)
 	return _hand
-
-
-func _make_mat(color: Color, energy: float) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	if energy > 0.0:
-		mat.emission_enabled = true
-		mat.emission = color
-		mat.emission_energy_multiplier = energy
-	return mat
