@@ -4,18 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**Epic Battle Mages — Hand Prototype** (`config/name="Hand Gameplay Prototype"`). A **Godot 4.6.2 / GDScript** game: a hand-physical camp-defense / fortress game. You deploy a camp around a central harvester, build a fortified base on a polar grid, manage a population of gnomes, and survive escalating skeleton waves; win = gold + dungeon key + tower passes gate.
+**Epic Battle Mages — Hand Prototype** (`config/name="Hand Gameplay Prototype"`). A **Godot 4.6.2 / GDScript** hand-physical game. **The current `run/main_scene` is the ROOMS gameloop** (`scenes/level_rooms.tscn`, see `SPEC.md §5.22`): the player drives a mobile tower through an enfilade of rooms, opens door-puzzles by hand/magic (spark→diode→lever), harvests mana from skeleton XP-orbs, and runs a gnome production chain (workers chop trees → carry logs → build a bridge across a chasm). The older **camp-defense / fortress** game (`scenes/main.tscn`: polar build grid, gnome population, vein economy, day/night warband siege) still exists and most of this file's "big picture" describes it — but it is NOT the booting scene.
 
-- **117 `.gd` scripts** in `scripts/`, **66 scenes** in `scenes/`. Game scene: `scenes/main.tscn`.
+- **117 `.gd` scripts** in `scripts/`, **66 scenes** in `scenes/`. Booting scene: `scenes/level_rooms.tscn` (rooms gameloop). Camp game: `scenes/main.tscn`.
 - **`SPEC.md` is the detailed source of truth** — a large, sectioned, dated spec (`### 5.X` headers). This file is the quick orientation; read the relevant `SPEC.md` section for depth before changing a system. Memories named `project_ebm_*` / `feedback_*` capture design intent and gotchas not obvious from code.
 - **No test framework** — this is a **playtest-driven prototype**. The designer verifies behavior visually in-game. "Verify" here means a headless boot that catches parse/load errors (see below), not automated tests.
 
 ## Running & verifying
 
-There is no build step (Godot loads scripts directly). The only programmatic check is a **headless boot** of the main scene — it parses all `class_name` scripts and surfaces `SCRIPT ERROR` / parse errors. Run after **every** edit:
+There is no build step (Godot loads scripts directly). The only programmatic check is a **headless boot** of a scene — it parses all `class_name` scripts and surfaces `SCRIPT ERROR` / parse errors. Run after **every** edit (boot the scene whose systems you touched — rooms gameloop by default, `scenes/main.tscn` for camp systems):
 
 ```
-& "D:\Godot_v4.6.2-stable_win64.exe\Godot_v4.6.2-stable_win64_console.exe" --headless --path "D:\epic-battle-mages-hand-prototype" scenes/main.tscn --quit-after 90
+& "D:\Godot_v4.6.2-stable_win64.exe\Godot_v4.6.2-stable_win64_console.exe" --headless --path "D:\epic-battle-mages-hand-prototype" scenes/level_rooms.tscn --quit-after 90
 ```
 
 (The console exe lives *inside* the equally-named folder; the non-console exe has no stdout. `--quit-after N` is in frames. Exit 0 + no `SCRIPT ERROR`/`Parse Error` lines = clean.)
