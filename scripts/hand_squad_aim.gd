@@ -194,10 +194,12 @@ func _commit_aim() -> void:
 	# Lazy-resolve: если в _ready Camp ещё не был в группе, пробуем сейчас.
 	if not is_instance_valid(_camp):
 		_camp = get_tree().get_first_node_in_group(Camp.CAMP_GROUP) as Camp
-	if not is_instance_valid(_camp):
-		push_warning("[Hand:SquadAim] _camp не резолвится — команда не дошла")
-		return
-	_camp.command_squad_hold(_active_squad, ground)
+	# С лагерем — через его валидатор; без лагеря (комнатный отряд) — напрямую
+	# по squad (та же command_hold, что Camp вызывает внутри).
+	if is_instance_valid(_camp):
+		_camp.command_squad_hold(_active_squad, ground)
+	else:
+		_active_squad.command_hold(ground)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:SquadAim] commit %s @ (%.1f, %.1f, %.1f)" % [str(_active_squad), ground.x, ground.y, ground.z])
 	_spawn_commit_marker(ground)

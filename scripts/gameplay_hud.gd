@@ -148,6 +148,9 @@ var _squad_panel: VBoxContainer
 var _squad_scroll: ScrollContainer
 ## squad_id → Control карточки. Используется для update/remove на squad_changed.
 var _squad_cards: Dictionary = {}
+## squad_id → Squad. Реестр для резолва БЕЗ лагеря (комнатный отряд от гномов):
+## в room-режиме Camp нет, а команды отряду нужны — берём squad отсюда.
+var _squads_by_id: Dictionary = {}
 ## Кэш ссылки на руку — для toggle_aim_for через HandSquadAim. Lookup по группе.
 var _hand: Hand
 ## Action bar в нижней части экрана. Программно собирается в _build_action_bar.
@@ -190,7 +193,10 @@ func _ready() -> void:
 		_camp = get_node_or_null(camp_path) as Camp
 	_match_goal = get_tree().get_first_node_in_group(MatchGoal.GROUP) as MatchGoal
 	_harvester = get_tree().get_first_node_in_group(Harvester.HARVESTER_GROUP) as Harvester
-	_build_gold_goal()
+	# Баннер «золото для победы» не строим: легаси-цель MatchGoal читает экономику
+	# старого Camp (в комнатном режиме его нет → 0/1000 cruft). Все потребители
+	# _gold_goal_* гардят null, поэтому достаточно не создавать панель.
+	# _build_gold_goal()
 	_build_tower_stats()
 	_build_resources_rows()
 	_build_journal_button()
@@ -1376,10 +1382,10 @@ func _build_tower_stats() -> void:
 	# Centered: anchor_top=0, anchor_left=anchor_right=0.5; offset для ширины.
 	var bar_width: int = 240
 	panel.offset_left = -bar_width / 2.0
-	# Опущена ниже золотого баннера победы (тот сидит вверху по центру).
-	panel.offset_top = 78
+	# Вверху по центру (золотой баннер победы убран — место освободилось).
+	panel.offset_top = 8
 	panel.offset_right = bar_width / 2.0
-	panel.offset_bottom = 124
+	panel.offset_bottom = 54
 	panel.add_theme_constant_override("separation", 4)
 	add_child(panel)
 
@@ -1511,9 +1517,11 @@ func _ensure_squad_panel() -> void:
 
 func _on_squad_created(squad: RefCounted) -> void:
 	_ensure_squad_panel()
-	var card := _build_squad_card(squad as Squad)
+	var s := squad as Squad
+	var card := _build_squad_card(s)
 	_squad_panel.add_child(card)
-	_squad_cards[(squad as Squad).id] = card
+	_squad_cards[s.id] = card
+	_squads_by_id[s.id] = s
 
 
 func _on_squad_changed(squad: RefCounted) -> void:
@@ -1534,6 +1542,7 @@ func _on_squad_disbanded(squad: RefCounted) -> void:
 	if card != null and is_instance_valid(card):
 		card.queue_free()
 	_squad_cards.erase(s.id)
+	_squads_by_id.erase(s.id)
 
 
 ## Игрок попытался recall'нуть отряд вне зоны — флешим карточку красным
@@ -1729,7 +1738,9 @@ func _apply_dismiss_state(btn: Button, squad: Squad) -> void:
 ## Если отряд вне зоны — кнопка disabled, объясняем игроку.
 func _apply_escort_state(btn: Button, squad: Squad) -> void:
 	if not is_instance_valid(_camp):
-		btn.disabled = true
+		# Комнатный отряд (без лагеря): эскорт всегда доступен.
+		btn.disabled = false
+		btn.tooltip_text = "Отряд следует за башней"
 		return
 	var in_zone: bool = _camp.is_squad_in_recall_zone(squad)
 	btn.disabled = not in_zone
@@ -1801,19 +1812,20 @@ func _on_squad_aim_pressed(squad_id: int) -> void:
 
 func _on_squad_escort_pressed(squad_id: int) -> void:
 	var squad: Squad = _resolve_squad_by_id(squad_id)
-	if squad == null or not is_instance_valid(_camp):
+	if squad == null:
 		return
-	# Гейт по recall-зоне: дублируем UI-disabled на случай race'а.
-	if not _camp.is_squad_in_recall_zone(squad):
+	# С лагерем — гейт по recall-зоне; без лагеря (комнатный отряд) гейта нет.
+	if is_instance_valid(_camp) and not _camp.is_squad_in_recall_zone(squad):
 		EventBus.squad_recall_ignored.emit(squad)
 		if LogConfig.master_enabled:
 			print("[HUD:Squad] escort отклонён: отряд вне зоны вызова башни")
 		return
-	# Toggle, как у Q: уже escort → HOLD-soft на текущей позиции.
+	# Toggle, как у Q: уже escort → HOLD-soft на текущей позиции. Команды зовём
+	# напрямую по squad (Camp.command_squad_* — лишь валидатор-обёртка над тем же).
 	if squad.state == Squad.State.ESCORTING_TOWER:
 		squad.command_hold(_squad_alive_center_or_tower(squad), false)
 	else:
-		_camp.command_squad_escort(squad)
+		squad.command_escort()
 
 
 ## Среднее живых членов squad'а; fallback на башню если членов нет.
@@ -1860,12 +1872,12 @@ func _on_squad_dismiss_pressed(squad_id: int) -> void:
 
 
 func _resolve_squad_by_id(squad_id: int) -> Squad:
-	if not is_instance_valid(_camp):
-		return null
-	for s in _camp.get_squads():
-		if s.id == squad_id:
-			return s
-	return null
+	if is_instance_valid(_camp):
+		for s in _camp.get_squads():
+			if s.id == squad_id:
+				return s
+	# Без лагеря — реестр комнатных отрядов (купленных у гномов).
+	return _squads_by_id.get(squad_id)
 
 
 func _resolve_hand() -> Hand:

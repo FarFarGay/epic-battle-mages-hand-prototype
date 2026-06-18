@@ -52,6 +52,8 @@ func _ready() -> void:
 		set_process(false)  # обычный декор — без интеракции
 		return
 	add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
+	# Точка поселения — отсюда выходит купленный отряд (GnomeSquadSpawner).
+	add_to_group(&"gnome_settlement")
 	# Дублируем материал тела per-instance — подсветка одного домика не красит все.
 	var body := get_node_or_null("Body") as MeshInstance3D
 	if body != null and body.material_override != null:

@@ -819,6 +819,8 @@ func _dash_damage_enemy(collider: Node) -> void:
 		return  # таран бьёт только скелетов
 	if collider.is_in_group(EnemyMech.MECH_GROUP):
 		return  # меха рывком не давим
+	if not _dash_is_super and collider.is_in_group(&"super_dash_only"):
+		return  # тяжёлые враги (гигант) не берутся обычным тараном — только супер-рывок (как красную дверь)
 	if collider in _dash_hit_set:
 		return  # уже задели этим рывком
 	_dash_hit_set.append(collider)
