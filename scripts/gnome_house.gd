@@ -23,6 +23,7 @@ const DIALOG := {
 			{ "label": "А вы, собственно, кто?", "next": &"who" },
 			{ "label": "Что за хартия?", "next": &"charter", "req": &"unsigned" },
 			{ "label": "Прикупить копейщиков, бэйби.", "next": &"", "effect": &"open_trade", "req": &"signed" },
+			{ "label": "Нанять артель рабочих.", "next": &"", "effect": &"open_trade_workers", "req": &"signed" },
 			{ "label": "Кхм. Я пойду.", "next": &"" },
 		],
 	},
@@ -31,6 +32,7 @@ const DIALOG := {
 		"choices": [
 			{ "label": "Ясно. Так что за хартия?", "next": &"charter", "req": &"unsigned" },
 			{ "label": "Прикупить копейщиков?", "next": &"", "effect": &"open_trade", "req": &"signed" },
+			{ "label": "Нанять рабочих?", "next": &"", "effect": &"open_trade_workers", "req": &"signed" },
 			{ "label": "Эм. Ну, бывайте.", "next": &"" },
 		],
 	},
@@ -100,11 +102,13 @@ func _on_dialog_effect(effect_id: StringName) -> void:
 		var charter := get_tree().get_first_node_in_group(&"charter_ui")
 		if charter != null and charter.has_method(&"open"):
 			charter.call_deferred(&"open")
-	elif effect_id == &"open_trade":
-		# Покупка отряда — открываем торг (deferred, как Хартию).
+	elif effect_id == &"open_trade" or effect_id == &"open_trade_workers":
+		# Покупка отряда — открываем торг (deferred, как Хартию). Тип юнита по ветке:
+		# копейщики (open_trade) / рабочие (open_trade_workers).
 		var trade := get_tree().get_first_node_in_group(&"trade_ui")
 		if trade != null and trade.has_method(&"open"):
-			trade.call_deferred(&"open")
+			var unit_type: StringName = &"worker" if effect_id == &"open_trade_workers" else &"pikeman"
+			trade.call_deferred(&"open", unit_type)
 
 
 func _resolve_hand() -> Hand:

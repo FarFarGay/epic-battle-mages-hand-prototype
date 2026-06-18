@@ -21,15 +21,21 @@ func _ready() -> void:
 	add_to_group(&"spark_target")
 	# Цель автолута: гном-лутер ЗАРЯЖАЕТСЯ на горшок и разбивает ударом (не proximity).
 	add_to_group(&"gnome_strike_target")
+	# Щит башни (парирование) разбивает кувшины в радиусе. Отдельная группа, НЕ
+	# spark_target — иначе щит активировал бы и диоды-пазлы рядом.
+	add_to_group(&"shield_breakable")
 
 
-## Контракт strike-цели: лутать горшок может гном с can_loot (по дизайну — строитель).
+## Контракт strike-цели: лутать горшок может гном с can_loot, но НЕ с занятыми руками
+## (несёт бревно — сперва донесёт). «Не лутать с полными руками» — общее правило.
 func can_gnome_interact(gnome: Node) -> bool:
-	return not _broken and gnome.can_loot
+	if _broken or not gnome.can_loot:
+		return false
+	return not (gnome.has_method(&"is_carrying") and gnome.is_carrying())
 
 
 ## Гном ударил по горшку зарядом (SoldierGnome._strike_at по gnome_strike_target).
-func gnome_hit() -> void:
+func gnome_hit(_gnome: Node = null) -> void:
 	_break()
 
 

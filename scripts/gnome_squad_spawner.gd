@@ -1,9 +1,10 @@
 extends Node
-## Слушает TradeUI.purchased(squad_size) и спавнит купленный отряд копейщиков —
-## БЕЗ лагеря, следующих за башней. Зеркало Camp._build_and_register_squad, но без
+## Слушает TradeUI.purchased(unit_type, squad_size) и спавнит купленный отряд (копейщики
+## или рабочие — по типу) БЕЗ лагеря, следующий за башней. Зеркало Camp._build_and_register_squad, но без
 ## Camp/экономики/палаток: SoldierGnome.setup_free(escort=башня) + command_escort().
 ## Отряд (Squad, RefCounted) жив, пока солдаты держат ссылку _squad.
 
+## Тип по умолчанию (fallback, если торг не передал тип).
 const SOLDIER_TYPE := &"pikeman"
 ## Радиус кучки спавна вокруг точки появления.
 const SPAWN_RADIUS := 1.4
@@ -16,6 +17,9 @@ const GROUND_Y := 0.5
 ## Боевой радиус купленного отряда от центра строя (башни). Меньше дефолтных 12 —
 ## копейщики бьют только у башни, под её защитой, не убегают вглубь толпы.
 const SQUAD_LEASH_RADIUS := 7.0
+## Рабочий радиус для артели: больше боевого — чтобы охватить и дерево, и стройку,
+## когда отряд припаркован между ними (рабочие сами курсируют руб↔стройка).
+const WORK_LEASH_RADIUS := 16.0
 
 ## Инпут-действие «волна вызова» (как камповый recall). Из project.godot — клавиша F.
 const RECALL_ACTION := &"caravan_halt_toggle"
@@ -90,13 +94,14 @@ func _squad_center(sq: Squad, fallback: Vector3) -> Vector3:
 	return sum / float(n) if n > 0 else fallback
 
 
-func _on_purchased(squad_size: int) -> void:
+func _on_purchased(unit_type: StringName, squad_size: int) -> void:
 	var tower := get_tree().get_first_node_in_group(&"tower")
 	if tower == null or not is_instance_valid(tower):
 		return
 	if SoldierSystem == null:
 		return
-	var data: Dictionary = SoldierSystem.get_soldier_data(SOLDIER_TYPE)
+	var soldier_type: StringName = unit_type if SoldierSystem.has_soldier(unit_type) else SOLDIER_TYPE
+	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
 	if data.is_empty():
 		return
 	var scene: PackedScene = data.get("scene", null)
@@ -123,15 +128,17 @@ func _on_purchased(squad_size: int) -> void:
 	var front: Vector3 = base + dir * SPAWN_FRONT_DISTANCE
 
 	# Один отряд на тип: доливаем в существующий отряд этого типа или создаём новый.
-	var squad: Squad = _squads_by_type.get(SOLDIER_TYPE)
+	var squad: Squad = _squads_by_type.get(soldier_type)
 	var is_new: bool = squad == null
 	if is_new:
 		squad = Squad.new()
 		_next_squad_id += 1
 		squad.id = _next_squad_id
-		squad.soldier_type = SOLDIER_TYPE
+		squad.soldier_type = soldier_type
 		squad.icon_color = data.get("icon_color", Color.WHITE)
-		_squads_by_type[SOLDIER_TYPE] = squad
+		_squads_by_type[soldier_type] = squad
+	# Рабочим — большой work-радиус (охват дерево↔стройка); воинам — боевой leash.
+	var leash: float = WORK_LEASH_RADIUS if soldier_type == &"worker" else SQUAD_LEASH_RADIUS
 	var n: int = maxi(squad_size, 1)
 	var spawned: int = 0
 	for i in range(n):
@@ -142,13 +149,13 @@ func _on_purchased(squad_size: int) -> void:
 		if soldier == null:
 			continue
 		scene_root.add_child(soldier)
-		soldier.setup_free(SOLDIER_TYPE, stats, pos, tower)
-		soldier.combat_leash_radius = SQUAD_LEASH_RADIUS  # держатся у башни
+		soldier.setup_free(soldier_type, stats, pos, tower)
+		soldier.combat_leash_radius = leash
 		squad.add_member(soldier)  # эмитит members_changed → карточка обновит счётчик
 		spawned += 1
 	if spawned == 0:
 		if is_new:
-			_squads_by_type.erase(SOLDIER_TYPE)
+			_squads_by_type.erase(soldier_type)
 		return
 	# Новый отряд-тип → карточка в HUD (squad_created + проброс сигналов) + эскорт.
 	# Донайм в существующий — карточка уже есть, обновится через members_changed.

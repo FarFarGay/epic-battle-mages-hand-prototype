@@ -139,7 +139,7 @@ func can_gnome_interact(gnome: Node) -> bool:
 
 
 ## Контракт strike-цели: гном ударил по рычагу → перекидываем (как gnome_hit горшка).
-func gnome_hit() -> void:
+func gnome_hit(_gnome: Node = null) -> void:
 	if _thrown:
 		return
 	_throw()

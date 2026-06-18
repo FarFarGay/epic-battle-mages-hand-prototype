@@ -128,6 +128,18 @@ var _squad: Squad = null
 ## Цель эскорта при призыве БЕЗ лагеря (setup_free) — обычно башня. Когда задана,
 ## заменяет _camp.get_tower_position() как центр ESCORT-строя. null у лагерных солдат.
 var _escort_target: Node3D = null
+## Рабочий (роль &"worker") несёт бревно. Флаг переключает, какая strike-цель его
+## примет: пустые руки → дерево (WoodSource), гружён → стройка (BridgeSite). Так
+## единая модель «гном → точка → действие» даёт курьерский цикл руб-неси-строй без
+## отдельного FSM. Воины (копейщик) бревно не носят — флаг всегда false.
+var _carrying_log: bool = false
+var _log_visual: MeshInstance3D = null
+const LOG_COLOR := Color(0.5, 0.34, 0.18)
+## Рабочий спрятан ВНУТРИ башни (механика IN_TENT на Tower): невидим, неуязвим,
+## вне группы целей скелетов, позиция приклеена к башне. Выходит по команде «Идти сюда».
+var _hidden_in_tower: bool = false
+## Дистанция до центра башни, на которой рабочий «забегает внутрь» и прячется.
+const HIDE_ENTER_RADIUS := 2.2
 var _attack_cd: float = 0.0
 ## Текущая патрульная точка в DEFENDING_CAMP. INF = «нужно выбрать новую»
 ## (старт или дошли до прежней).
@@ -253,6 +265,11 @@ func _apply_soldier_stats(p_type: StringName, stats: Dictionary) -> void:
 	attack_cooldown_max = float(stats.get("attack_cooldown_max", attack_cooldown_max))
 	if stats.has("move_speed"):
 		move_speed = float(stats.move_speed)
+	# Цвет типа (рабочие — зелёные, копейщики — рыжие). gnome_color читает
+	# setup()→_apply_visual (вызывается ПОСЛЕ этого метода в setup_free).
+	if stats.has("color"):
+		soldier_color = stats.color
+		gnome_color = stats.color
 
 
 ## Общий хвост призыва: выход из палатки в боевой outside-режим.
@@ -274,6 +291,96 @@ func _ticks_without_camp() -> bool:
 ## позиционирование стоит на месте.
 func _has_squad_context() -> bool:
 	return _camp != null or (_escort_target != null and is_instance_valid(_escort_target))
+
+
+## Роль «рабочий»: рубит дерево, носит брёвна, строит мост. Не ищет врага (утилита,
+## не комбатант — берегите копейщиками). Воин (копейщик) — false.
+func is_worker() -> bool:
+	return soldier_type == &"worker"
+
+
+## Контракт для strike-целей: руки заняты бревном? Дерево пускает только пустого,
+## стройка — только гружёного, горшок — только пустого («не лутает с полными руками»).
+func is_carrying() -> bool:
+	return _carrying_log
+
+
+## Дерево выдало бревно рабочему (WoodSource.gnome_hit) — показываем ношу над гномом.
+func receive_log() -> void:
+	_carrying_log = true
+	if _log_visual != null:
+		return
+	_log_visual = MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(0.72, 0.22, 0.22)
+	_log_visual.mesh = box
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = LOG_COLOR
+	_log_visual.material_override = mat
+	_log_visual.position = Vector3(0.0, 1.0, 0.35)  # перед/над гномом
+	add_child(_log_visual)
+
+
+## Рабочий положил бревно на стройку (BridgeSite.gnome_hit). True если бревно было.
+func deliver_log() -> bool:
+	if not _carrying_log:
+		return false
+	_carrying_log = false
+	if _log_visual != null:
+		_log_visual.queue_free()
+		_log_visual = null
+	return true
+
+
+## Шаг «спрятаться в башню» (рабочий в ESCORT). Бежит к центру башни; добежал —
+## прячется (невидим/неуязвим/приклеен к башне), как гном IN_TENT в палатке. Уже
+## спрятан → остаётся приклеенным к башне (та его «возит»).
+func _tick_hide_in_tower() -> void:
+	var tower: Vector3 = _tower_center()
+	if _hidden_in_tower:
+		# Приклеены к башне ТОЛЬКО по XZ — origin башни приподнят (y≈3), тянуть
+		# рабочего по Y нельзя (повисал бы в воздухе на высоте башни). Y держим
+		# наземный (свой текущий) — на выходе из прятки рабочий стоит на полу.
+		velocity = Vector3.ZERO
+		global_position = Vector3(tower.x, global_position.y, tower.z)
+		return
+	var to := Vector3(tower.x - global_position.x, 0.0, tower.z - global_position.z)
+	var d: float = to.length()
+	if d <= HIDE_ENTER_RADIUS:
+		_enter_hidden()
+		velocity = Vector3.ZERO
+	else:
+		_move_toward(to, d)  # бежим к башне (sprint-догон)
+
+
+## Спрятался в башню: невидим, вне целей скелетов, неуязвим (см. take_damage),
+## боевой стейт сброшен. Несомое бревно сохраняется — выйдет и достроит.
+func _enter_hidden() -> void:
+	if _hidden_in_tower:
+		return
+	_hidden_in_tower = true
+	visible = false
+	if _combat_state != CombatState.READY:
+		_reset_combat_state()
+	if is_in_group(SKELETON_TARGET_GROUP):
+		remove_from_group(SKELETON_TARGET_GROUP)
+
+
+## Вышел из башни наружу (команда «Идти сюда»): снова видим и уязвим, цель скелетов.
+func _exit_hidden() -> void:
+	if not _hidden_in_tower:
+		return
+	_hidden_in_tower = false
+	visible = true
+	if not is_in_group(SKELETON_TARGET_GROUP):
+		add_to_group(SKELETON_TARGET_GROUP)
+
+
+## Спрятанный в башне рабочий неуязвим (как гном IN_TENT). Иначе — обычный урон.
+func take_damage(amount: float) -> void:
+	if _hidden_in_tower:
+		return
+	super.take_damage(amount)
 
 
 ## Squad назначает себя на add_member. Двусторонняя ссылка нужна юниту
@@ -306,6 +413,17 @@ func _active_tick(delta: float) -> void:
 	if _attack_cd > 0.0:
 		_attack_cd -= delta
 
+	# Рабочий + режим ESCORT = «спрятаться в башню» (не вставать рядом, как
+	# копейщики, а забежать ВНУТРЬ — рабочие не воюют). Прячемся механикой
+	# IN_TENT, наведённой на башню. Команда «Идти сюда» (HOLD) выводит из
+	# башни на стройку. См. _tick_hide_in_tower / _enter_hidden / _exit_hidden.
+	if is_worker():
+		if _squad != null and _squad.state == Squad.State.ESCORTING_TOWER:
+			_tick_hide_in_tower()
+			return
+		elif _hidden_in_tower:
+			_exit_hidden()  # сменили на HOLD/строить — выходим наружу
+
 	# Strict-march: ИНИЦИАЛЬНОЕ исполнение команды «Идти сюда» — идём
 	# к слоту напролом. Combat-assist: если по дороге попался враг в
 	# lunge-range — НЕ тормозим у слота, а вбегаем в lunge напрямую.
@@ -321,8 +439,9 @@ func _active_tick(delta: float) -> void:
 			and not _strict_arrived_at_slot:
 		if _combat_state != CombatState.READY:
 			_reset_combat_state()
-		# Combat-assist на марше: ловим близкого врага и бьём с ходу.
-		if _attack_cd <= 0.0:
+		# Combat-assist на марше: ловим близкого врага и бьём с ходу. Рабочий —
+		# не комбатант, врага не ловит (только марш к слоту, потом стройка).
+		if _attack_cd <= 0.0 and not is_worker():
 			var assist_target: Node3D = _find_target_in_leash()
 			if assist_target != null:
 				var to_assist: float = global_position.distance_to(assist_target.global_position)
@@ -347,9 +466,13 @@ func _active_tick(delta: float) -> void:
 	# READY: пробуем стартовать новый charge, если cooldown готов и есть цель
 	# в leash-области. Иначе — squad-движение.
 	if _attack_cd <= 0.0:
-		var target: Node3D = _find_target_in_leash()
-		# Нет врага → ищем strike-точку (горшок/рычаг); кто может — решает сама цель
-		# (can_gnome_interact: горшок → can_loot, рычаг → роль). Бьём тем же зарядом.
+		# Рабочий врага не ищет (утилита, не комбатант) — сразу к strike-точке
+		# (дерево/стройка/горшок). Копейщик — враг в приоритете, утварь когда чисто.
+		var target: Node3D = null
+		if not is_worker():
+			target = _find_target_in_leash()
+		# Нет врага → ищем strike-точку; кто может — решает сама цель
+		# (can_gnome_interact: дерево/стройка → роль+ноша, горшок → can_loot). Тем же зарядом.
 		if target == null:
 			target = _find_interact_target_in_leash()
 		if target != null:
@@ -763,7 +886,8 @@ func _strike_at(target: Node3D) -> void:
 	# (knockback/squad-charge). Горшок разбивается, рычаг перекидывается.
 	if target.is_in_group(&"gnome_strike_target"):
 		if target.has_method(&"gnome_hit"):
-			target.call(&"gnome_hit")
+			# Передаём себя: дерево/стройка кредитуют/списывают бревно у этого гнома.
+			target.call(&"gnome_hit", self)
 		return
 	var damage: float = randf_range(attack_damage_min, attack_damage_max)
 	Damageable.try_damage(target, damage)

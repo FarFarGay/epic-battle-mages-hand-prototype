@@ -117,6 +117,7 @@ var _super_label: Label
 ## расположение, и счётчик заводить новой ноды в .tscn ради этого нет смысла.
 var _journal_button: Button
 var _journal_badge: Label
+var _bridge_button: Button
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
 var _resource_labels: Dictionary = {}
@@ -200,6 +201,7 @@ func _ready() -> void:
 	_build_tower_stats()
 	_build_resources_rows()
 	_build_journal_button()
+	_build_bridge_button()
 	_build_action_bar()
 	_build_gatherer_card()
 	_update_counts()
@@ -1066,6 +1068,29 @@ func _on_journal_button_pressed() -> void:
 	JournalPanel.toggle()
 
 
+## Кнопка «Строить мост» — запускает планирование рукой (HandBridgeAim, два клика).
+## Под кнопкой журнала/режима. Toggle: повторный клик отменяет планирование.
+func _build_bridge_button() -> void:
+	_bridge_button = Button.new()
+	_bridge_button.text = "🌉 строить мост"
+	_bridge_button.focus_mode = Control.FOCUS_NONE
+	_bridge_button.tooltip_text = "Два клика по краям пропасти задают мост, потом пошли туда отряд рабочих («Идти сюда»)"
+	_bridge_button.add_theme_font_size_override("font_size", 13)
+	_bridge_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_bridge_button.offset_left = -160
+	_bridge_button.offset_top = 330
+	_bridge_button.offset_right = -10
+	_bridge_button.offset_bottom = 362
+	_bridge_button.pressed.connect(_on_bridge_button_pressed)
+	add_child(_bridge_button)
+
+
+func _on_bridge_button_pressed() -> void:
+	var hand := _resolve_hand()
+	if hand != null and hand.bridge_aim != null:
+		hand.bridge_aim.toggle_aim()
+
+
 ## Индикатор режима сбора. Под кнопкой журнала, программно. Зелёный при WORK,
 ## красный с маленькой подсказкой клавиши при ALARM. На WORK скрывается —
 ## стандартный режим, не требует акцента.
@@ -1646,7 +1671,13 @@ func _build_squad_card(squad: Squad) -> Control:
 	btn_row.add_child(btn_aim)
 
 	var btn_escort := Button.new()
-	btn_escort.text = "За башней"
+	# Рабочие не воюют → их «эскорт» = спрятаться ВНУТРЬ башни (безопасность),
+	# а не вставать рядом. Та же command_escort, но SoldierGnome для worker'а
+	# уводит в прятку. Копейщикам — обычное «За башней».
+	var is_worker_squad: bool = squad.soldier_type == &"worker"
+	btn_escort.text = "В башню" if is_worker_squad else "За башней"
+	if is_worker_squad:
+		btn_escort.tooltip_text = "Рабочие прячутся внутри башни (неуязвимы). «Идти сюда» — вывести на стройку."
 	btn_escort.focus_mode = Control.FOCUS_NONE
 	btn_escort.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	btn_escort.add_theme_font_size_override("font_size", 11)
@@ -1751,7 +1782,7 @@ func _apply_escort_state(btn: Button, squad: Squad) -> void:
 	if not is_instance_valid(_camp):
 		# Комнатный отряд (без лагеря): эскорт всегда доступен.
 		btn.disabled = false
-		btn.tooltip_text = "Отряд следует за башней"
+		btn.tooltip_text = "Рабочие прячутся внутри башни (неуязвимы)" if squad.soldier_type == &"worker" else "Отряд следует за башней"
 		return
 	var in_zone: bool = _camp.is_squad_in_recall_zone(squad)
 	btn.disabled = not in_zone

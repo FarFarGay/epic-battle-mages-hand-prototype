@@ -431,6 +431,7 @@ func _try_start_parry() -> void:
 	shield.setup(global_position, parry_radius, parry_color, parry_window + 0.25)
 	# Щит дробит скелетов в зоне (разовый импульс, только скелеты — НЕ мех/гномы).
 	_shield_zap_skeletons()
+	_shield_shatter_scenery()
 	if debug_log and LogConfig.master_enabled:
 		print("[Tower] парирование: окно открыто (r=%.1f)" % parry_radius)
 
@@ -479,6 +480,23 @@ func _shield_zap_skeletons() -> void:
 		if node.global_position.distance_squared_to(_parry_center) > r_sq:
 			continue
 		Damageable.try_damage(node, parry_skeleton_damage, HitStop.MEDIUM)
+
+
+## Разовый «удар щитом» по разрушаемой утвари (кувшины, группа shield_breakable) в
+## зоне купола — разбиваем через их же on_spark (тот же энерго-импульс, что от Искры).
+## Отдельно от скелетов: утварь без hp/Damageable, ломается контрактом, не уроном.
+func _shield_shatter_scenery() -> void:
+	var r_sq: float = parry_radius * parry_radius
+	for n in get_tree().get_nodes_in_group(&"shield_breakable"):
+		if not is_instance_valid(n):
+			continue
+		var node := n as Node3D
+		if node == null:
+			continue
+		if node.global_position.distance_squared_to(_parry_center) > r_sq:
+			continue
+		if node.has_method(&"on_spark"):
+			node.call(&"on_spark")
 
 
 func _process(delta: float) -> void:

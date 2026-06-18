@@ -30,6 +30,9 @@ extends Node
 
 const PIKEMAN_SCENE: PackedScene = preload("res://scenes/soldier_pikeman.tscn")
 const ARCHER_SCENE: PackedScene = preload("res://scenes/archer_soldier.tscn")
+## Рабочий — это БУРЫЙ ГНОМ (тело gnome.tscn) с поведением SoldierGnome (squad-команды
+## + руб-неси-строй по роли). Не отдельная «модель», а существующий визуал гнома.
+const WORKER_SCENE: PackedScene = preload("res://scenes/soldier_worker.tscn")
 
 const SOLDIER_CATALOG: Dictionary = {
 	&"archer_squad": {
@@ -96,6 +99,31 @@ const SOLDIER_CATALOG: Dictionary = {
 			"attack_cooldown_min": 0.6,
 			"attack_cooldown_max": 1.0,
 			"move_speed": 2.2,
+		},
+	},
+	&"worker": {
+		"name": "Артель рабочих",
+		"description": "Гномы-работяги: рубят дерево, носят брёвна, строят мост. Утилита, НЕ воюют — берегите копейщиками.",
+		"icon_color": Color(0.7, 0.45, 0.25, 1.0),
+		"squad_size": 3,
+		# БУРЫЙ ГНОМ (soldier_worker.tscn — тело gnome.tscn) с поведением SoldierGnome.
+		# Поведение разводится по роли soldier_type==&"worker" (is_worker): не ищет
+		# врага, рубит дерево / носит брёвна / строит, прячется в башню по команде.
+		"scene": WORKER_SCENE,
+		# Stats рабочего: средний HP (уязвимы, не танки — прячь в башню/прикрывай
+		# копейщиками), символический урон (бьют по дереву/стройке, не по врагу).
+		"stats": {
+			"hp": 60.0,
+			# Большой радиус «вижу цель» — рабочий курсирует дерево↔стройка (до ~20м),
+			# не должен стопориться на краю детекта между ними.
+			"enemy_detect_radius": 26.0,
+			"attack_range": 2.2,
+			"attack_damage_min": 4.0,
+			"attack_damage_max": 6.0,
+			"attack_cooldown_min": 0.8,
+			"attack_cooldown_max": 1.2,
+			"move_speed": 2.4,
+			"color": Color(0.7, 0.45, 0.25, 1.0),
 		},
 	},
 }

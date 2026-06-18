@@ -14,6 +14,7 @@
 [ext_resource type="PackedScene" path="res://scenes/super_carrier.tscn" id="12"]
 [ext_resource type="Script" path="res://scripts/hand_squad_aim.gd" id="13"]
 [ext_resource type="Script" path="res://scripts/hand_build_aim.gd" id="14_build"]
+[ext_resource type="Script" path="res://scripts/hand_bridge_aim.gd" id="23_bridge"]
 [ext_resource type="Script" path="res://scripts/hand_spell_mine_scatter.gd" id="15_mine_spell"]
 [ext_resource type="PackedScene" path="res://scenes/mine.tscn" id="16_mine_scene"]
 [ext_resource type="PackedScene" path="res://scenes/mine_projectile.tscn" id="17_mine_proj"]
@@ -104,3 +105,6 @@ script = ExtResource("13")
 
 [node name="BuildAim" type="Node" parent="."]
 script = ExtResource("14_build")
+
+[node name="BridgeAim" type="Node" parent="."]
+script = ExtResource("23_bridge")

@@ -16,6 +16,11 @@ extends Node3D
 @export var area_half_z: float = 12.0
 @export var spawn_y: float = 1.0
 @export var spawns_per_frame: int = 8
+## Запретная зона (мир, XZ) — точки внутри неё НЕ занимаются (пропасть/мост). Радиус
+## 0 = выключено. Точка в зоне пере-роллится несколько раз, не вышло — спавн пропущен.
+@export var exclude_center: Vector3 = Vector3.ZERO
+@export var exclude_half_x: float = 0.0
+@export var exclude_half_z: float = 0.0
 
 
 func _ready() -> void:
@@ -40,10 +45,12 @@ func _fill() -> void:
 				inst.queue_free()
 			continue
 		scene.add_child(node)
-		node.global_position = Vector3(
-			area_center.x + randf_range(-area_half_x, area_half_x),
-			spawn_y,
-			area_center.z + randf_range(-area_half_z, area_half_z))
+		var spawn_pos: Vector3 = _pick_spawn_pos()
+		if spawn_pos == Vector3.INF:
+			# Не нашли точку вне запретной зоны — этот скелет пропускаем (не на пропасти).
+			node.queue_free()
+			continue
+		node.global_position = spawn_pos
 		# Wander под размер комнаты: дефолтные 5-15м рассчитаны на большую карту и
 		# в тесной комнате упираются в стены (скелет целит за стену → стоит/жмётся).
 		# Привязываем к area_half — скелет бродит внутри своей комнаты.
@@ -54,3 +61,21 @@ func _fill() -> void:
 			await get_tree().physics_frame
 			if not is_inside_tree():
 				return
+
+
+## Случайная точка в области спавна, ВНЕ запретной зоны (пропасть/мост). До 8 попыток
+## пере-ролла; не вышло — Vector3.INF (вызывающий пропустит спавн).
+func _pick_spawn_pos() -> Vector3:
+	var excluded: bool = exclude_half_x > 0.0 and exclude_half_z > 0.0
+	for _attempt in range(8):
+		var p := Vector3(
+			area_center.x + randf_range(-area_half_x, area_half_x),
+			spawn_y,
+			area_center.z + randf_range(-area_half_z, area_half_z))
+		if not excluded:
+			return p
+		var dx: float = absf(p.x - exclude_center.x)
+		var dz: float = absf(p.z - exclude_center.z)
+		if dx > exclude_half_x or dz > exclude_half_z:
+			return p  # вне запретной зоны
+	return Vector3.INF

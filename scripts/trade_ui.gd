@@ -3,7 +3,8 @@ extends CanvasLayer
 ## СКИДКУ на цену → итоговое «Купить за: N». Монеты (номинал COIN_VALUE) тащишь
 ## drag-n-drop'ом из кошелька-стопки в зону стола, пока не наберёшь N. Хватило →
 ## купил: списываем N золота, гасим применённые поступки, эмитим
-## purchased(squad_size). Пример: цена 200, «Убил Гиганта» −150 → купить за 50
+## purchased(unit_type, squad_size). Тип юнита задаёт open(unit_type) из gnome_house
+## (копейщики / рабочие). Пример: цена 200, «Убил Гиганта» −150 → купить за 50
 ## (2 монеты по 25). Игра на паузе.
 
 const GROUP := &"trade_ui"
@@ -11,7 +12,7 @@ const GROUP := &"trade_ui"
 const COIN_VALUE := 25
 const CoinToken := preload("res://scripts/coin_token.gd")
 
-signal purchased(squad_size: int)
+signal purchased(unit_type: StringName, squad_size: int)
 
 @onready var _root: Control = $Root
 @onready var _price_label: Label = $Root/Panel/Margin/VBox/PriceLabel
@@ -31,6 +32,8 @@ signal purchased(squad_size: int)
 var _open: bool = false
 var _applied: Dictionary = {}  # deed id (StringName) -> value (int)
 var _placed: int = 0  # золото, выложенное монетами на стол
+## Тип покупаемого юнита (gnome_house задаёт через open). Спавнер маппит тип → сцена.
+var _unit_type: StringName = &"pikeman"
 
 
 func _ready() -> void:
@@ -63,9 +66,10 @@ func _process(_delta: float) -> void:
 	_pay_zone.self_modulate = Color(1.25, 1.35, 1.2) if dragging else Color(1, 1, 1)
 
 
-func open() -> void:
+func open(unit_type: StringName = &"pikeman") -> void:
 	if _open:
 		return
+	_unit_type = unit_type
 	_open = true
 	_applied = {}
 	_placed = 0
@@ -180,7 +184,10 @@ func _rebuild() -> void:
 		btn.pressed.connect(_on_deed_toggled.bind(deed))
 		_deeds_list.add_child(btn)
 	_buy_btn.disabled = _placed < rem
-	_buy_btn.text = "Купить отряд" if rem > 0 else "Купить (даром!)"
+	var unit_name: String = "отряд"
+	if SoldierSystem != null and SoldierSystem.has_soldier(_unit_type):
+		unit_name = String(SoldierSystem.get_soldier_data(_unit_type).get("name", "отряд"))
+	_buy_btn.text = ("Купить: %s" % unit_name) if rem > 0 else ("Купить даром: %s" % unit_name)
 
 
 func _on_deed_toggled(deed: Dictionary) -> void:
@@ -206,5 +213,5 @@ func _on_buy() -> void:
 	var deeds_log := get_tree().get_first_node_in_group(&"deeds_log")
 	if deeds_log != null and not _applied.is_empty():
 		deeds_log.call(&"consume", _applied.keys())
-	purchased.emit(squad_size)
+	purchased.emit(_unit_type, squad_size)
 	close()
