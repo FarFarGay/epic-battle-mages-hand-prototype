@@ -34,6 +34,10 @@ const ARCHER_SCENE: PackedScene = preload("res://scenes/archer_soldier.tscn")
 ## + руб-неси-строй по роли). Не отдельная «модель», а существующий визуал гнома.
 const WORKER_SCENE: PackedScene = preload("res://scenes/soldier_worker.tscn")
 
+## Id роли «рабочий» (ключ каталога) — единый источник вместо россыпи литералов
+## &"worker" по spawner/HUD/контрактам. SoldierGnome.is_worker() сверяется с ним.
+const ROLE_WORKER := &"worker"
+
 const SOLDIER_CATALOG: Dictionary = {
 	&"archer_squad": {
 		"name": "Отряд лучников",
@@ -106,6 +110,9 @@ const SOLDIER_CATALOG: Dictionary = {
 		"description": "Гномы-работяги: рубят дерево, носят брёвна, строят мост. Утилита, НЕ воюют — берегите копейщиками.",
 		"icon_color": Color(0.7, 0.45, 0.25, 1.0),
 		"squad_size": 3,
+		# Потолок артели: всего рабочих не больше этого (докупка доливает до капа,
+		# выше — нельзя). 0/нет = без потолка (копейщики). Стартовая артель = этот кап.
+		"squad_cap": 7,
 		# БУРЫЙ ГНОМ (soldier_worker.tscn — тело gnome.tscn) с поведением SoldierGnome.
 		# Поведение разводится по роли soldier_type==&"worker" (is_worker): не ищет
 		# врага, рубит дерево / носит брёвна / строит, прячется в башню по команде.
@@ -113,7 +120,9 @@ const SOLDIER_CATALOG: Dictionary = {
 		# Stats рабочего: средний HP (уязвимы, не танки — прячь в башню/прикрывай
 		# копейщиками), символический урон (бьют по дереву/стройке, не по врагу).
 		"stats": {
-			"hp": 60.0,
+			# Переживает удар (даже slam Гиганта 84) — рабочий-утилита не должен
+			# гибнуть с одного попадания; прячь в башню/прикрывай копейщиками.
+			"hp": 120.0,
 			# Большой радиус «вижу цель» — рабочий курсирует дерево↔стройка (до ~20м),
 			# не должен стопориться на краю детекта между ними.
 			"enemy_detect_radius": 26.0,
@@ -134,6 +143,13 @@ const SOLDIER_CATALOG: Dictionary = {
 func get_squad_size(id: StringName) -> int:
 	var data: Dictionary = SOLDIER_CATALOG.get(id, {})
 	return int(data.get("squad_size", 1))
+
+
+## Потолок численности отряда этого типа (всего особей). 0 = без потолка.
+## Спавнер доливает докупку до капа; стартовая артель рабочих = этот кап.
+func get_squad_cap(id: StringName) -> int:
+	var data: Dictionary = SOLDIER_CATALOG.get(id, {})
+	return int(data.get("squad_cap", 0))
 
 
 ## Полная Dictionary'я каталога для id (name, description, cost, stats, scene).

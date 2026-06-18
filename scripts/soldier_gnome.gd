@@ -128,13 +128,15 @@ var _squad: Squad = null
 ## Цель эскорта при призыве БЕЗ лагеря (setup_free) — обычно башня. Когда задана,
 ## заменяет _camp.get_tower_position() как центр ESCORT-строя. null у лагерных солдат.
 var _escort_target: Node3D = null
-## Рабочий (роль &"worker") несёт бревно. Флаг переключает, какая strike-цель его
-## примет: пустые руки → дерево (WoodSource), гружён → стройка (BridgeSite). Так
-## единая модель «гном → точка → действие» даёт курьерский цикл руб-неси-строй без
-## отдельного FSM. Воины (копейщик) бревно не носят — флаг всегда false.
-var _carrying_log: bool = false
-var _log_visual: MeshInstance3D = null
-const LOG_COLOR := Color(0.5, 0.34, 0.18)
+## Рабочий (роль &"worker") несёт ЕДИНИЦУ РЕСУРСА (тип ∈ ResourcePile.ResourceType).
+## -1 = руки пусты. Тип переключает, какая strike-цель его примет: пусто → источник
+## (WoodSource), гружён → стройка (BridgeSite) либо склад башни (TowerStore). Единая
+## модель «гном → точка → действие» даёт курьерский цикл добыл-донёс без отдельного
+## FSM. Воины (копейщик) ресурс не носят — тип всегда -1.
+var _carried_type: int = -1
+var _worker_carry_visual: MeshInstance3D = null
+## Троттл красного кольца «склад полон» — чтобы не спавнить кольцо каждый кадр.
+var _store_full_ring_cd: float = 0.0
 ## Рабочий спрятан ВНУТРИ башни (механика IN_TENT на Tower): невидим, неуязвим,
 ## вне группы целей скелетов, позиция приклеена к башне. Выходит по команде «Идти сюда».
 var _hidden_in_tower: bool = false
@@ -191,6 +193,10 @@ const SQUAD_TARGET_ARRIVAL: float = 0.4
 const POSE_NEUTRAL: Vector3 = Vector3.ONE
 const POSE_WINDUP: Vector3 = Vector3(1.3, 0.95, 0.6)
 const POSE_LUNGE: Vector3 = Vector3(0.6, 1.0, 1.7)
+## Позы РЕМОНТА — мягче боевых (рабочий «постукивает» по башне, а не таранит насмерть):
+## деформация поскромнее, чтобы гном не плющился драматично на каждый удар.
+const POSE_REPAIR_WINDUP: Vector3 = Vector3(1.1, 0.98, 0.88)
+const POSE_REPAIR_LUNGE: Vector3 = Vector3(0.9, 1.0, 1.16)
 
 ## Тайминги переходов между позами. WINDUP-ramp длиннее чем lunge-ramp:
 ## anticipation должна успеть «прочитаться» (пара кадров наростания + пара
@@ -296,47 +302,64 @@ func _has_squad_context() -> bool:
 ## Роль «рабочий»: рубит дерево, носит брёвна, строит мост. Не ищет врага (утилита,
 ## не комбатант — берегите копейщиками). Воин (копейщик) — false.
 func is_worker() -> bool:
-	return soldier_type == &"worker"
+	return soldier_type == SoldierSystem.ROLE_WORKER
 
 
-## Контракт для strike-целей: руки заняты бревном? Дерево пускает только пустого,
-## стройка — только гружёного, горшок — только пустого («не лутает с полными руками»).
+## Намерен ли отряд чинить башню (кнопка «Ремонт» / клик ЛКМ по башне). Гейт для
+## Tower.can_gnome_interact: БЕЗ намерения рабочий рядом с башней её НЕ трогает —
+## ремонт только по явной команде, не по близости (обычный «иди сюда» — мимо).
+func wants_repair() -> bool:
+	return _squad != null and _squad.repair_intent
+
+
+## Контракт для strike-целей: руки заняты? Источник пускает только пустого,
+## стройка/склад — только гружёного, горшок — только пустого («не лутает с полными руками»).
 func is_carrying() -> bool:
-	return _carrying_log
+	return _carried_type >= 0
 
 
-## Дерево выдало бревно рабочему (WoodSource.gnome_hit) — показываем ношу над гномом.
-func receive_log() -> void:
-	_carrying_log = true
-	if _log_visual != null:
-		return
-	_log_visual = MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = Vector3(0.72, 0.22, 0.22)
-	_log_visual.mesh = box
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = LOG_COLOR
-	_log_visual.material_override = mat
-	_log_visual.position = Vector3(0.0, 1.0, 0.35)  # перед/над гномом
-	add_child(_log_visual)
+## Тип несомого ресурса (-1 = пусто). Склад/стройка сверяют, что им принесли.
+func carried_type() -> int:
+	return _carried_type
 
 
-## Рабочий положил бревно на стройку (BridgeSite.gnome_hit). True если бревно было.
-func deliver_log() -> bool:
-	if not _carrying_log:
-		return false
-	_carrying_log = false
-	if _log_visual != null:
-		_log_visual.queue_free()
-		_log_visual = null
-	return true
+## Источник выдал единицу ресурса рабочему (WoodSource.gnome_hit) — показываем ношу
+## над гномом, цвет по типу (общий ResourcePile.color_for_type — единый язык материалов).
+func receive_resource(type: int) -> void:
+	_carried_type = type
+	if _worker_carry_visual == null:
+		_worker_carry_visual = MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(0.72, 0.22, 0.22)
+		_worker_carry_visual.mesh = box
+		_worker_carry_visual.material_override = StandardMaterial3D.new()
+		_worker_carry_visual.position = Vector3(0.0, 1.0, 0.35)  # перед/над гномом
+		add_child(_worker_carry_visual)
+	(_worker_carry_visual.material_override as StandardMaterial3D).albedo_color = ResourcePile.color_for_type(type)
+	_worker_carry_visual.visible = true
 
 
-## Поведение рабочего (НЕ комбатант): найти рабочую цель (дерево, если руки пусты;
-## стройку, если несёт бревно) → подойти ПО НАВМЕШУ (обходя пропасть/стены) на
-## дистанцию удара → стукнуть НА МЕСТЕ (gnome_hit, без боевого выпада). Нет цели —
+## Рабочий сдал единицу (BridgeSite/TowerStore). Возвращает ТИП сданного (-1 если рук
+## не было — рассинхрон). Вызывающий сверяет тип, если ему нужен конкретный материал.
+func deliver_resource() -> int:
+	if _carried_type < 0:
+		return -1
+	var t: int = _carried_type
+	_carried_type = -1
+	if _worker_carry_visual != null:
+		_worker_carry_visual.queue_free()
+		_worker_carry_visual = null
+	return t
+
+
+## Поведение рабочего (НЕ комбатант): найти рабочую цель (источник, если руки пусты;
+## стройку, если несёт ресурс) → подойти ПО НАВМЕШУ (обходя пропасть/стены) на
+## дистанцию удара → стукнуть НА МЕСТЕ (gnome_hit, без боевого выпада). Несёт, но
+## стройки рядом нет → сдать на склад башни (копим до капа). Совсем нет работы —
 ## встать на слот строя (тоже по навмешу). Так рабочие не улетают в пропасть.
 func _tick_worker(delta: float) -> void:
+	if _store_full_ring_cd > 0.0:
+		_store_full_ring_cd -= delta
 	var target: Node3D = _find_interact_target_in_leash()
 	if target != null:
 		var to := Vector3(target.global_position.x - global_position.x, 0.0, target.global_position.z - global_position.z)
@@ -344,13 +367,20 @@ func _tick_worker(delta: float) -> void:
 		if d > attack_range:
 			_move_toward(to, d)  # навмеш-шаг (огибает пропасть, не прёт напрямую)
 			return
-		# В упор — стоим и бьём на cooldown'е (рубим дерево / кладём доску).
+		# В упор — стоим и бьём на cooldown'е (рубим источник / кладём доску). Башню
+		# тут НЕ чиним: она исключена из целей без намерения ремонта (can_gnome_interact
+		# гейтит по wants_repair) — обычный «иди сюда» проходит мимо неё. Ремонт — только
+		# через _tick_repair_tower (кнопка / клик по башне), см. _active_tick.
 		velocity = Vector3.ZERO
 		if d > 0.001:
 			look_at(global_position + to / d, Vector3.UP)
 		if _attack_cd <= 0.0:
-			_strike_at(target)  # gnome_hit, без lunge
+			_strike_at(target)
 			_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max)
+		return
+	# Несём ресурс, но стройки-приёмника рядом нет → относим на склад башни (копим до капа).
+	if is_carrying():
+		_tick_deposit_to_store()
 		return
 	# Нет работы → строимся на слоте режима (HOLD-точка), тоже по навмешу.
 	if _squad == null or not _has_squad_context():
@@ -363,6 +393,127 @@ func _tick_worker(delta: float) -> void:
 		velocity = Vector3.ZERO
 		return
 	_move_toward(to_goal, dist)
+
+
+## Башня повреждена и ждёт ремонта? Сигнал — её членство в gnome_strike_target
+## (Tower добавляет себя туда при уроне, убирает на полном HP). Так репорка не
+## дёргает hp напрямую — тот же контракт «гном → точка → действие».
+func _tower_needs_repair() -> bool:
+	var tower := get_tree().get_first_node_in_group(&"tower")
+	return tower != null and is_instance_valid(tower) \
+			and (tower as Node).is_in_group(Layers.GNOME_STRIKE_TARGET_GROUP)
+
+
+## Радиус кольца ремонта — рабочие встают ВНЕ модели башни (коллайдер ~1м), видны
+## рядом, бьют внутрь. Угол на гнома стабилен (по индексу в отряде) — распределяет
+## артель вокруг башни, а не кучей в одной точке.
+const REPAIR_RING_RADIUS := 2.6
+var _repair_angle: float = INF
+## Фаза замаха ремонта: 0=готов, 1=замах (coil), 2=удержание выпада → возврат.
+var _repair_swing_phase: int = 0
+var _repair_swing_t: float = 0.0
+
+
+## Шаг ремонта башни: рабочий ИДЁТ К БАШНЕ (на свою точку кольца вокруг неё), и только
+## дойдя — чинит замахом-позой (_repair_swing). Был спрятан внутри (в центре, в навмеш-
+## hole) → выскакивает на кольцо разом; снаружи и далеко → идёт по навмешу. Так ремонт
+## происходит У БАШНИ, а не в точке, где рабочего застала команда.
+func _tick_repair_tower(delta: float) -> void:
+	var tower := get_tree().get_first_node_in_group(&"tower")
+	if tower == null or not is_instance_valid(tower):
+		velocity = Vector3.ZERO
+		return
+	var center: Vector3 = _tower_center()
+	if _repair_angle == INF:
+		_repair_angle = _compute_repair_angle()
+		# Рассинхрон ударов: на старте ремонта у каждого рабочего свой случайный
+		# сдвиг cooldown'а — иначе вся артель машет в унисон (стартуют с cd=0 разом).
+		_attack_cd = randf_range(0.0, attack_cooldown_max)
+	var goal := Vector3(
+		center.x + cos(_repair_angle) * REPAIR_RING_RADIUS,
+		global_position.y,
+		center.z + sin(_repair_angle) * REPAIR_RING_RADIUS)
+	# Из прятки (в центре башни, внутри навмеш-hole — путь наружу не строится) —
+	# выскакиваем на кольцо телепортом. Иначе — обычный навмеш-подход.
+	if _hidden_in_tower:
+		_exit_hidden()
+		global_position = goal
+		velocity = Vector3.ZERO
+		return
+	var to := Vector3(goal.x - global_position.x, 0.0, goal.z - global_position.z)
+	var d: float = to.length()
+	if d > SQUAD_TARGET_ARRIVAL:
+		_move_toward(to, d)  # идём к башне (на своё место кольца), а не чиним на месте
+		return
+	# На кольце у башни — лицом к ней, бьём-чиним замахом.
+	velocity = Vector3.ZERO
+	if Vector2(global_position.x - center.x, global_position.z - center.z).length() > 0.001:
+		look_at(Vector3(center.x, global_position.y, center.z), Vector3.UP)
+	_repair_swing(delta, tower as Node3D)
+
+
+## Замах-удар ремонта НА МЕСТЕ (тело не движется — у башни origin приподнят y≈3,
+## боевой выпад мерит 3D-дистанцию и в неё бы не попал; плюс рабочий не пролетает
+## сквозь модель). Поза копейщика: coil (замах) → выпад + удар-починка (_strike_at —
+## надёжно лечит, без дист-гейта) → возврат. Стоим (velocity=0), фазы по таймеру.
+func _repair_swing(delta: float, target: Node3D) -> void:
+	velocity = Vector3.ZERO
+	match _repair_swing_phase:
+		0:  # готов — на cooldown'е начинаем замах (мягкая coil-поза)
+			if _attack_cd <= 0.0:
+				_repair_swing_phase = 1
+				_repair_swing_t = LUNGE_WINDUP_DURATION
+				_tween_pose_to(POSE_REPAIR_WINDUP, POSE_WINDUP_TIME)
+		1:  # замах на исходе → выпад + удар-починка
+			_repair_swing_t -= delta
+			if _repair_swing_t <= 0.0:
+				_tween_pose_to(POSE_REPAIR_LUNGE, POSE_LUNGE_TIME)
+				if is_instance_valid(target):
+					_strike_at(target)  # gnome_hit → лечит башню + её импакт-FX
+				_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max)
+				_repair_swing_phase = 2
+				_repair_swing_t = POSE_RESTORE_TIME
+		2:  # удержание выпада → возврат в нейтраль
+			_repair_swing_t -= delta
+			if _repair_swing_t <= 0.0:
+				_tween_pose_to(POSE_NEUTRAL, POSE_RESTORE_TIME)
+				_repair_swing_phase = 0
+
+
+## Стабильный угол на кольце ремонта — по индексу гнома в отряде (равномерно).
+func _compute_repair_angle() -> float:
+	var idx: int = 0
+	var n: int = 1
+	if _squad != null:
+		var i: int = _squad.members.find(self)
+		if i >= 0:
+			idx = i
+		n = maxi(_squad.members.size(), 1)
+	return TAU * float(idx) / float(n)
+
+
+## Нести ресурс на склад башни и сдать. Точка сдачи = центр башни (склад логически
+## «башни»). Дошёл → сдаём 1 единицу; склад полон по типу → встаём, краснеет кольцо.
+func _tick_deposit_to_store() -> void:
+	var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
+	if store == null:
+		velocity = Vector3.ZERO
+		return
+	var dest: Vector3 = _tower_center()
+	var to := Vector3(dest.x - global_position.x, 0.0, dest.z - global_position.z)
+	var d: float = to.length()
+	if d > attack_range:
+		_move_toward(to, d)
+		return
+	velocity = Vector3.ZERO
+	# Склад полон по этому типу — сдать нельзя: ждём, периодически краснеет кольцо.
+	if store.is_full(_carried_type):
+		if _store_full_ring_cd <= 0.0:
+			AoeVisual.spawn_ground_ring(get_tree().current_scene, dest, 2.2, 0.8, Color(1.0, 0.25, 0.2, 0.9))
+			_store_full_ring_cd = 1.2
+		return
+	if store.deposit(_carried_type, 1) > 0:
+		deliver_resource()
 
 
 ## Шаг «спрятаться в башню» (рабочий в ESCORT). Бежит к центру башни; добежал —
@@ -452,6 +603,17 @@ func _active_tick(delta: float) -> void:
 	# башни на стройку. См. _tick_hide_in_tower / _enter_hidden / _exit_hidden.
 	if is_worker():
 		if _squad != null and _squad.state == Squad.State.ESCORTING_TOWER:
+			# «Ремонт башни» (кнопка): вместо прятки ВЫХОДИМ ИЗ башни наружу, встаём
+			# в кольцо вокруг неё (физически видны рядом) и бьём-чиним внутрь.
+			# Башня отремонтирована → сбрасываем намерение и прячемся обратно внутрь.
+			if _squad.repair_intent and _tower_needs_repair():
+				_tick_repair_tower(delta)
+				return
+			if _squad.repair_intent:
+				_squad.repair_intent = false
+				_repair_angle = INF  # следующий ремонт пере-распределит по кольцу
+				_repair_swing_phase = 0  # ремонт окончен — сбросить замах
+				_tween_pose_to(POSE_NEUTRAL, POSE_RESTORE_TIME)
 			_tick_hide_in_tower()
 			return
 		if _hidden_in_tower:
@@ -461,6 +623,15 @@ func _active_tick(delta: float) -> void:
 		# прошивал точку моста насквозь → рабочие улетали в пропасть. См. _tick_worker.
 		_tick_worker(delta)
 		return
+
+	# «В башню» для КОПЕЙЩИКОВ (флаг hide_in_tower): прячутся ВНУТРЬ башни (неуязвимы),
+	# той же IN_TENT-механикой, что рабочие — но по отдельной команде, НЕ вместо боевого
+	# эскорта «За башней». Рабочие сюда не доходят (их прятка — выше, в is_worker-ветке).
+	if _squad != null and _squad.state == Squad.State.ESCORTING_TOWER and _squad.hide_in_tower:
+		_tick_hide_in_tower()
+		return
+	if _hidden_in_tower:
+		_exit_hidden()  # сменили команду на эскорт/бой → выходим из башни
 
 	# Strict-march: ИНИЦИАЛЬНОЕ исполнение команды «Идти сюда» — идём
 	# к слоту напролом. Combat-assist: если по дороге попался враг в
@@ -873,7 +1044,7 @@ func _find_interact_target_in_leash() -> Node3D:
 	var detect_sq: float = enemy_detect_radius * enemy_detect_radius
 	var nearest: Node3D = null
 	var nearest_d_sq: float = detect_sq
-	for n in get_tree().get_nodes_in_group(&"gnome_strike_target"):
+	for n in get_tree().get_nodes_in_group(Layers.GNOME_STRIKE_TARGET_GROUP):
 		if not is_instance_valid(n):
 			continue
 		var node3d := n as Node3D
@@ -922,7 +1093,7 @@ func _is_target_claimed_by_other(target: Node3D) -> bool:
 func _strike_at(target: Node3D) -> void:
 	# Strike-цель (горшок/рычаг) — бьём через gnome_hit, без enemy-логики
 	# (knockback/squad-charge). Горшок разбивается, рычаг перекидывается.
-	if target.is_in_group(&"gnome_strike_target"):
+	if target.is_in_group(Layers.GNOME_STRIKE_TARGET_GROUP):
 		if target.has_method(&"gnome_hit"):
 			# Передаём себя: дерево/стройка кредитуют/списывают бревно у этого гнома.
 			target.call(&"gnome_hit", self)

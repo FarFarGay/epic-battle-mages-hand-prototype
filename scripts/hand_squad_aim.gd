@@ -194,9 +194,12 @@ func _commit_aim() -> void:
 	# Lazy-resolve: если в _ready Camp ещё не был в группе, пробуем сейчас.
 	if not is_instance_valid(_camp):
 		_camp = get_tree().get_first_node_in_group(Camp.CAMP_GROUP) as Camp
-	# С лагерем — через его валидатор; без лагеря (комнатный отряд) — напрямую
-	# по squad (та же command_hold, что Camp вызывает внутри).
-	if is_instance_valid(_camp):
+	# Клик ЛКМ ПО БАШНЕ отрядом рабочих = команда РЕМОНТА (выйти и чинить, как кнопка
+	# «Ремонт башни»), а не «встать тут». Клик по земле — обычный hold БЕЗ ремонта
+	# (рабочие просто идут на точку; башню без явного намерения не трогают).
+	if _is_tower_click(ground) and _active_squad.soldier_type == SoldierSystem.ROLE_WORKER:
+		_active_squad.command_escort(true)
+	elif is_instance_valid(_camp):
 		_camp.command_squad_hold(_active_squad, ground)
 	else:
 		_active_squad.command_hold(ground)
@@ -206,6 +209,23 @@ func _commit_aim() -> void:
 	# Sticky: aim НЕ завершается. Игрок может тут же ПКМ в другую точку,
 	# не возвращаясь в HUD. Выход — Esc / повторный клик кнопки / новый
 	# aim для другого squad'а / гибель squad'а.
+
+
+## Курсор реально наведён на коллайдер башни? Луч из камеры по слою ACTORS (там только
+## башня) — точная проверка «клик ПО башне», а НЕ радиус вокруг неё. Радиус-эвристика
+## перехватывала команды рядом с башней (мост строят У ПРОПАСТИ, где стоит башня) →
+## «иди сюда» к мосту срывалось в ремонт. Точный луч бьёт только по самой башне.
+func _is_tower_click(_ground: Vector3) -> bool:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return false
+	var mouse: Vector2 = get_viewport().get_mouse_position()
+	var from: Vector3 = cam.project_ray_origin(mouse)
+	var to: Vector3 = from + cam.project_ray_normal(mouse) * 1000.0
+	var q := PhysicsRayQueryParameters3D.create(from, to, Layers.ACTORS)
+	var hit: Dictionary = cam.get_world_3d().direct_space_state.intersect_ray(q)
+	var collider = hit.get("collider")
+	return collider is Node and (collider as Node).is_in_group(&"tower")
 
 
 func _finish_aim() -> void:

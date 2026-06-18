@@ -29,6 +29,10 @@ signal mana_changed(current: float, maximum: float)
 ## Максимум HP. Текущее значение в `hp`, сетится в _ready = max_hp. Урон —
 ## через take_damage(amount). Смерть при hp ≤ 0.
 @export var max_hp: float = 1000.0
+## Сколько HP восстанавливает ОДИН удар гнома-ремонтника (gnome_hit). Башня — strike-цель
+## (gnome_strike_target), пока повреждена; рабочие чинят ударами (кнопка «Ремонт башни»
+## / «иди сюда» к башне). 7 рабочих × ~1 удар/с × это значение = скорость починки.
+@export var repair_per_hit: float = 25.0
 ## Reach-бонус для расчётов «бьём с края» (Enemy.target_reach_bonus + AOE-фильтр
 ## AoeDamage). Башня широкая (коллизия 2×2) — её центр дальше малого radius'а
 ## взрыва/strike'а, хотя коллайдер задет. ≈ полу-размер по XZ (1.0). Без него
@@ -231,6 +235,8 @@ var _visual_base_basis: Basis = Basis()
 var _recoil_dir: Vector3 = Vector3.ZERO
 var _recoil_age: float = 0.0
 var _recoil_active: bool = false
+## Tween scale-punch'а от ремонта (трекаем, чтобы частые удары не штабелировались).
+var _repair_punch_tween: Tween = null
 const _RECOIL_TILT_FRAC := 0.33  # доля HitTilt.MAX_TILT_DEG (~7° на пике)
 const _RECOIL_KICK := 0.22       # м — позиционный рывок назад на пике
 # Шейк камеры только на СИЛЬНЫЙ удар по башне (≥ порога) — отсекает чип рядовых
@@ -298,6 +304,10 @@ func take_damage(amount: float) -> void:
 	damaged.emit(amount)
 	health_changed.emit(maxf(hp, 0.0), max_hp)
 	HitFlash.flash(_mesh)
+	# Повреждена → становится strike-целью гномов-ремонтников (рабочие чинят ударами).
+	# Единая модель «гном → точка → действие»; снимется на полном HP в gnome_hit.
+	if hp > 0.0 and not is_in_group(Layers.GNOME_STRIKE_TARGET_GROUP):
+		add_to_group(Layers.GNOME_STRIKE_TARGET_GROUP)
 	if amount >= _SHAKE_HIT_THRESHOLD:
 		EventBus.camera_shake.emit(clampf(amount / 100.0, 0.2, 0.7), global_position)
 	if debug_log and LogConfig.master_enabled:
@@ -310,6 +320,9 @@ func take_damage(amount: float) -> void:
 		# no-op'ом через ранний return по _dying в начале функции.
 		set_physics_process(false)
 		velocity = Vector3.ZERO
+		# Мёртвую башню не чинят — вон из strike-группы ремонтников.
+		if is_in_group(Layers.GNOME_STRIKE_TARGET_GROUP):
+			remove_from_group(Layers.GNOME_STRIKE_TARGET_GROUP)
 		# Снимаем флаг damageable ДО детонации: взрыв (MASK_DEATH_BLAST включает
 		# ACTORS) не должен задеть саму мёртвую башню. Сама стенка-коллизия остаётся.
 		remove_from_group(Damageable.GROUP)
@@ -321,6 +334,48 @@ func take_damage(amount: float) -> void:
 		destroyed.emit()
 		if debug_log and LogConfig.master_enabled:
 			print("[Tower] DEAD")
+
+
+## Контракт strike-цели: чинить башню может рабочий со свободными руками, пока башня
+## жива и повреждена, И ТОЛЬКО ПО ЯВНОМУ НАМЕРЕНИЮ ремонта (кнопка / клик по башне —
+## wants_repair). Без намерения рабочий рядом её не трогает (обычный «иди сюда» —
+## просто встаёт на точку, не чинит). Гружёный сперва сдаст ресурс; копейщик — мимо.
+func can_gnome_interact(gnome: Node) -> bool:
+	if _dying or hp >= max_hp:
+		return false
+	if not (gnome.has_method(&"is_worker") and gnome.is_worker()):
+		return false
+	if not (gnome.has_method(&"wants_repair") and gnome.wants_repair()):
+		return false
+	return not (gnome.has_method(&"is_carrying") and gnome.is_carrying())
+
+
+## Рабочий ударил по башне (ремонт) — восстанавливаем HP. Полное HP → выходим из
+## strike-группы (рабочие сами переключатся: вернутся в башню / к другой работе).
+func gnome_hit(_gnome: Node = null) -> void:
+	if _dying or hp >= max_hp:
+		return
+	hp = minf(hp + repair_per_hit, max_hp)
+	health_changed.emit(hp, max_hp)
+	_play_repair_impact(_gnome)
+	if hp >= max_hp and is_in_group(Layers.GNOME_STRIKE_TARGET_GROUP):
+		remove_from_group(Layers.GNOME_STRIKE_TARGET_GROUP)
+
+
+## Визуальный отклик на ремонт: башня «вздрагивает» (лёгкий scale-punch меша) +
+## искры у точки удара рабочего. Punch трекаем tween'ом — на 7 рабочих удары
+## частые, без трекинга они бы штабелировались на scale.
+func _play_repair_impact(gnome: Node) -> void:
+	_repair_punch_tween = HitPunch.punch(_mesh, _repair_punch_tween, 1.05, 0.05, 0.13)
+	var scene: Node = get_tree().current_scene
+	if scene == null:
+		return
+	var at: Vector3 = global_position + Vector3.UP * 1.2
+	if gnome is Node3D and is_instance_valid(gnome):
+		# Точка контакта — между рабочим и центром башни (искры летят у её основания).
+		at = (gnome as Node3D).global_position.lerp(global_position, 0.4)
+		at.y = global_position.y + 1.2
+	AoeVisual.spawn_pulse_sparks(scene, at, 0.8, 7.0)
 
 
 ## Детонация при гибели: визуал взрыва + ударная волна + урон по площади всем
@@ -487,7 +542,7 @@ func _shield_zap_skeletons() -> void:
 ## Отдельно от скелетов: утварь без hp/Damageable, ломается контрактом, не уроном.
 func _shield_shatter_scenery() -> void:
 	var r_sq: float = parry_radius * parry_radius
-	for n in get_tree().get_nodes_in_group(&"shield_breakable"):
+	for n in get_tree().get_nodes_in_group(Layers.SHIELD_BREAKABLE_GROUP):
 		if not is_instance_valid(n):
 			continue
 		var node := n as Node3D

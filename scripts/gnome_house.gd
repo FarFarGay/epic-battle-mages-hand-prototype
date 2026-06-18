@@ -43,6 +43,14 @@ const DIALOG := {
 			{ "label": "Я ещё подумаю.", "next": &"root" },
 		],
 	},
+	# Артель уже под завязку (кап рабочих). Гном отшивает с фирменным подтекстом.
+	&"workers_full": {
+		"text": "«Эй-эй, полегче, жеребец! У тебя уже СЕМЕРО таких крепких работяг — потные, мускулистые, на всё ради тебя готовы, м-м-м. Больше в одну артель при всём желании не втиснуть, как ни смазывай. Дай ребятам выдохнуть — они и так из кожи вон лезут, чтоб тебе угодить. Ненасытный котик. Йе-е.» (медленно обмахивается бархатным жилетом и закусывает губу)",
+		"choices": [
+			{ "label": "Ха. Ну ладно, что ещё есть?", "next": &"root" },
+			{ "label": "Понял-понял. Я пошёл.", "next": &"" },
+		],
+	},
 }
 
 var _hand: Hand = null
@@ -103,12 +111,32 @@ func _on_dialog_effect(effect_id: StringName) -> void:
 		if charter != null and charter.has_method(&"open"):
 			charter.call_deferred(&"open")
 	elif effect_id == &"open_trade" or effect_id == &"open_trade_workers":
+		# Артель рабочих под завязку (кап) → гном отшивает флейвором, торг НЕ открываем
+		# (иначе пустой стол «Артель полна»). Копейщиков кап нет — торг как обычно.
+		if effect_id == &"open_trade_workers" and _workers_at_cap():
+			var dlg := get_tree().get_first_node_in_group(DIALOG_GROUP)
+			if dlg != null and dlg.has_method(&"open"):
+				dlg.call_deferred(&"open", DIALOG, &"workers_full")
+			return
 		# Покупка отряда — открываем торг (deferred, как Хартию). Тип юнита по ветке:
 		# копейщики (open_trade) / рабочие (open_trade_workers).
 		var trade := get_tree().get_first_node_in_group(&"trade_ui")
 		if trade != null and trade.has_method(&"open"):
-			var unit_type: StringName = &"worker" if effect_id == &"open_trade_workers" else &"pikeman"
+			var unit_type: StringName = SoldierSystem.ROLE_WORKER if effect_id == &"open_trade_workers" else &"pikeman"
 			trade.call_deferred(&"open", unit_type)
+
+
+## Артель рабочих уже на потолке численности (squad_cap)? Считаем живых по группе
+## soldier (спрятанные в башне рабочие остаются в ней — учитываются).
+func _workers_at_cap() -> bool:
+	var cap: int = SoldierSystem.get_squad_cap(SoldierSystem.ROLE_WORKER)
+	if cap <= 0:
+		return false
+	var count: int = 0
+	for s in get_tree().get_nodes_in_group(&"soldier"):
+		if is_instance_valid(s) and s.get(&"soldier_type") == SoldierSystem.ROLE_WORKER:
+			count += 1
+	return count >= cap
 
 
 func _resolve_hand() -> Hand:

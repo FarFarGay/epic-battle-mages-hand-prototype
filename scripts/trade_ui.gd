@@ -1,6 +1,6 @@
 extends CanvasLayer
 ## Стол торга: покупка отряда перетаскиванием монет. Поступки (реплики снизу) дают
-## СКИДКУ на цену → итоговое «Купить за: N». Монеты (номинал COIN_VALUE) тащишь
+## СКИДКУ на цену → итоговое «Купить за: N». Монеты (номинал coin_value) тащишь
 ## drag-n-drop'ом из кошелька-стопки в зону стола, пока не наберёшь N. Хватило →
 ## купил: списываем N золота, гасим применённые поступки, эмитим
 ## purchased(unit_type, squad_size). Тип юнита задаёт open(unit_type) из gnome_house
@@ -8,9 +8,10 @@ extends CanvasLayer
 ## (2 монеты по 25). Игра на паузе.
 
 const GROUP := &"trade_ui"
-## Номинал одной перетаскиваемой монеты в золоте. Цены кратны ему (200/150/50 / 25).
-const COIN_VALUE := 25
 const CoinToken := preload("res://scripts/coin_token.gd")
+
+## Номинал одной перетаскиваемой монеты в золоте. Цены кратны ему (200/150/50 / 25).
+@export var coin_value: int = 25
 
 signal purchased(unit_type: StringName, squad_size: int)
 
@@ -104,6 +105,16 @@ func _gold() -> int:
 	return 0
 
 
+## Сколько живых юнитов этого типа уже есть (для потолка артели). Считаем по группе
+## soldier — спрятанные в башне рабочие остаются в ней (сняты лишь с целей скелетов).
+func _count_of_type(unit_type: StringName) -> int:
+	var c: int = 0
+	for s in get_tree().get_nodes_in_group(&"soldier"):
+		if is_instance_valid(s) and s.get(&"soldier_type") == unit_type:
+			c += 1
+	return c
+
+
 func _get_deeds() -> Array:
 	var deeds_log := get_tree().get_first_node_in_group(&"deeds_log")
 	if deeds_log != null and deeds_log.has_method(&"get_deeds"):
@@ -115,7 +126,7 @@ func _get_deeds() -> Array:
 
 ## Можно взять ещё монету, если ещё не набрали нужное И в кошельке хватает золота.
 func _can_take_coin() -> bool:
-	return _placed < _remaining() and _gold() >= _placed + COIN_VALUE
+	return _placed < _remaining() and _gold() >= _placed + coin_value
 
 
 func _coin_get_drag(_at: Vector2):
@@ -130,7 +141,7 @@ func _zone_can_drop(_at: Vector2, data) -> bool:
 
 
 func _zone_drop(_at: Vector2, _data) -> void:
-	_placed += COIN_VALUE
+	_placed += coin_value
 	_rebuild()
 
 
@@ -144,7 +155,7 @@ func _noop(_at: Vector2, _data) -> void:
 
 
 func _on_coin_removed() -> void:
-	_placed = maxi(0, _placed - COIN_VALUE)
+	_placed = maxi(0, _placed - coin_value)
 	_rebuild()
 
 
@@ -159,11 +170,11 @@ func _make_coin(clickable: bool) -> Control:
 func _rebuild() -> void:
 	var rem: int = _remaining()
 	_price_label.text = "Купить за: %d золота" % rem
-	_wallet_label.text = "Кошелёк: %d   (монета %d)" % [_gold(), COIN_VALUE]
+	_wallet_label.text = "Кошелёк: %d   (монета %d)" % [_gold(), coin_value]
 	_zone_label.text = "На стол положено: %d / %d" % [mini(_placed, rem), rem]
 	for c in _placed_row.get_children():
 		c.queue_free()
-	var n: int = int(_placed / COIN_VALUE)
+	var n: int = int(_placed / coin_value)
 	for i in range(n):
 		var coin := _make_coin(true)
 		coin.clicked.connect(_on_coin_removed)
@@ -187,6 +198,12 @@ func _rebuild() -> void:
 	if SoldierSystem != null and SoldierSystem.has_soldier(_unit_type):
 		unit_name = String(SoldierSystem.get_soldier_data(_unit_type).get("name", "отряд"))
 	_buy_btn.text = ("Купить: %s" % unit_name) if rem > 0 else ("Купить даром: %s" % unit_name)
+	# Потолок артели (рабочие — 7): полно → купить нельзя (иначе платил бы зря).
+	var cap: int = SoldierSystem.get_squad_cap(_unit_type) if SoldierSystem != null else 0
+	if cap > 0 and _count_of_type(_unit_type) >= cap:
+		_buy_btn.disabled = true
+		_buy_btn.text = "Артель полна (%d/%d)" % [cap, cap]
+		_price_label.text = "Артель уже полна — больше не нанять"
 
 
 func _on_deed_toggled(deed: Dictionary) -> void:

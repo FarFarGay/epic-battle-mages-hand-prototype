@@ -6,27 +6,27 @@ extends Node
 
 ## Тип по умолчанию (fallback, если торг не передал тип).
 const SOLDIER_TYPE := &"pikeman"
-## Радиус кучки спавна вокруг точки появления.
-const SPAWN_RADIUS := 1.4
-## Отступ точки появления ПЕРЕД домами (в сторону открытого пола / башни), чтобы
-## копейщики возникали на земле перед поселением, а не внутри здания.
-const SPAWN_FRONT_DISTANCE := 6.0
-## Наземный Y для fallback-спавна у башни (её origin приподнят ≈5 — спавнить там
-## нельзя, копейщики повисли бы). У домика берётся его собственный наземный Y.
-const GROUND_Y := 0.5
-## Боевой радиус купленного отряда от центра строя (башни). Меньше дефолтных 12 —
-## копейщики бьют только у башни, под её защитой, не убегают вглубь толпы.
-const SQUAD_LEASH_RADIUS := 7.0
-## Рабочий радиус для артели: больше боевого — чтобы охватить и дерево, и стройку,
-## когда отряд припаркован между ними (рабочие сами курсируют руб↔стройка).
-const WORK_LEASH_RADIUS := 16.0
-
 ## Инпут-действие «волна вызова» (как камповый recall). Из project.godot — клавиша F.
 const RECALL_ACTION := &"caravan_halt_toggle"
-## Радиус визуального кольца волны от башни.
-const RECALL_RADIUS := 30.0
+
+## Радиус кучки спавна вокруг точки появления.
+@export var spawn_radius: float = 1.4
+## Отступ точки появления ПЕРЕД домами (в сторону открытого пола / башни), чтобы
+## копейщики возникали на земле перед поселением, а не внутри здания.
+@export var spawn_front_distance: float = 6.0
+## Наземный Y для fallback-спавна у башни (её origin приподнят ≈5 — спавнить там
+## нельзя, копейщики повисли бы). У домика берётся его собственный наземный Y.
+@export var ground_y: float = 0.5
+## Боевой радиус купленного отряда от центра строя (башни). Меньше дефолтных 12 —
+## копейщики бьют только у башни, под её защитой, не убегают вглубь толпы.
+@export var squad_leash_radius: float = 7.0
+## Рабочий радиус для артели: больше боевого — чтобы охватить и дерево, и стройку,
+## когда отряд припаркован между ними (рабочие сами курсируют руб↔стройка).
+@export var work_leash_radius: float = 16.0
+## Радиус визуального кольца волны вызова от башни.
+@export var recall_radius: float = 30.0
 ## Скорость расширения кольца (м/с) — задаёт длительность визуала.
-const RECALL_WAVE_SPEED := 45.0
+@export var recall_wave_speed: float = 45.0
 
 ## Счётчик уникальных id отрядов (для squad-карточек HUD'а). Со смещением 1000,
 ## чтобы не пересекаться с лагерными id (на случай гибридных сцен).
@@ -39,6 +39,8 @@ var _squads_by_type: Dictionary = {}
 func _ready() -> void:
 	# Deferred: TradeUI мог ещё не войти в группу к нашему _ready (порядок детей).
 	call_deferred(&"_connect_trade")
+	# Стартовая артель рабочих (7) живёт в башне с самого начала.
+	_spawn_starting_workers()
 
 
 func _connect_trade() -> void:
@@ -60,7 +62,7 @@ func _recall_squads() -> void:
 		return
 	var origin: Vector3 = (tower as Node3D).global_position
 	# Кольцо-волну пульсим всегда (даже без отрядов — видно границу/обратную связь).
-	EventBus.recall_zone_pulsed.emit(origin, RECALL_RADIUS, RECALL_RADIUS / maxf(RECALL_WAVE_SPEED, 0.001))
+	EventBus.recall_zone_pulsed.emit(origin, recall_radius, recall_radius / maxf(recall_wave_speed, 0.001))
 	# Живые отряды собираем из солдат (уникальные Squad-ссылки).
 	var squads: Array = []
 	var seen: Dictionary = {}
@@ -95,12 +97,83 @@ func _squad_center(sq: Squad, fallback: Vector3) -> Vector3:
 
 
 func _on_purchased(unit_type: StringName, squad_size: int) -> void:
-	var tower := get_tree().get_first_node_in_group(&"tower")
-	if tower == null or not is_instance_valid(tower):
-		return
 	if SoldierSystem == null:
 		return
 	var soldier_type: StringName = unit_type if SoldierSystem.has_soldier(unit_type) else SOLDIER_TYPE
+	# Кап артели (рабочие — 7): докупка доливает только до потолка. Уже полно → ничего.
+	var add: int = _clamp_to_cap(soldier_type, maxi(squad_size, 1))
+	if add <= 0:
+		return
+	var front: Vector3 = _purchase_front()
+	if front == Vector3.INF:
+		return
+	_spawn_squad(soldier_type, add, front)
+
+
+## Стартовая артель рабочих — появляется У БАШНИ и сразу прячется внутрь (они в ней
+## «живут»). Численность = кап типа (7). Зовётся deferred из _ready (ждёт дерево сцены).
+func _spawn_starting_workers() -> void:
+	await get_tree().physics_frame
+	if not is_inside_tree() or SoldierSystem == null:
+		return
+	var soldier_type: StringName = SoldierSystem.ROLE_WORKER
+	var count: int = SoldierSystem.get_squad_cap(soldier_type)
+	if count <= 0:
+		count = SoldierSystem.get_squad_size(soldier_type)
+	var tower := get_tree().get_first_node_in_group(&"tower")
+	if tower == null or not is_instance_valid(tower):
+		return
+	var t: Vector3 = (tower as Node3D).global_position
+	_spawn_squad(soldier_type, count, Vector3(t.x, ground_y, t.z))
+
+
+## Сколько добавить с учётом потолка типа: cap<=0 → без потолка (вернёт want).
+func _clamp_to_cap(soldier_type: StringName, want: int) -> int:
+	var cap: int = SoldierSystem.get_squad_cap(soldier_type)
+	if cap <= 0:
+		return want
+	return clampi(want, 0, maxi(cap - _count_of_type(soldier_type), 0))
+
+
+## Живых членов отряда этого типа (для капа). Реестр _squads_by_type — один на тип.
+func _count_of_type(soldier_type: StringName) -> int:
+	var sq: Squad = _squads_by_type.get(soldier_type)
+	if sq == null:
+		return 0
+	var c: int = 0
+	for m in sq.members:
+		if is_instance_valid(m):
+			c += 1
+	return c
+
+
+## Точка появления при ПОКУПКЕ — перед говорящим домиком (откуда выходят), иначе у
+## башни на наземном Y. INF = нет башни (спавн невозможен).
+func _purchase_front() -> Vector3:
+	var tower := get_tree().get_first_node_in_group(&"tower")
+	if tower == null or not is_instance_valid(tower):
+		return Vector3.INF
+	var house := get_tree().get_first_node_in_group(&"gnome_settlement")
+	var anchor: Node3D = (house if house != null else tower) as Node3D
+	# Наземный Y якоря. У домика origin на полу; у башни origin приподнят (≈5) —
+	# тогда садим на ground_y, чтобы не спавнить в воздухе.
+	var anchor_y: float = anchor.global_position.y
+	if house == null:
+		anchor_y = ground_y
+	var base: Vector3 = Vector3(anchor.global_position.x, anchor_y, anchor.global_position.z)
+	# Направление «в комнату» — от дома к башне (в открытое пространство, не в стену).
+	var to_tower: Vector3 = (tower as Node3D).global_position - base
+	to_tower.y = 0.0
+	var dir: Vector3 = to_tower.normalized() if to_tower.length() > 0.1 else Vector3.FORWARD
+	return base + dir * spawn_front_distance
+
+
+## Спавнит count юнитов типа кучкой у front, доливая в отряд-этого-типа (один на тип)
+## или создавая новый (тогда — карточка HUD + эскорт). Общий путь покупки и старта.
+func _spawn_squad(soldier_type: StringName, count: int, front: Vector3) -> void:
+	var tower := get_tree().get_first_node_in_group(&"tower")
+	if tower == null or not is_instance_valid(tower):
+		return
 	var data: Dictionary = SoldierSystem.get_soldier_data(soldier_type)
 	if data.is_empty():
 		return
@@ -111,23 +184,7 @@ func _on_purchased(unit_type: StringName, squad_size: int) -> void:
 	if scene_root == null:
 		return
 	var stats: Dictionary = data.get("stats", {})
-	# «Дом» — говорящий гномий домик (откуда выходят), иначе fallback на башню.
-	var house := get_tree().get_first_node_in_group(&"gnome_settlement")
-	var anchor: Node3D = (house if house != null else tower) as Node3D
-	# Наземный Y якоря. У домика origin на полу; у башни origin приподнят (≈5) —
-	# тогда садим на GROUND_Y, чтобы не спавнить в воздухе.
-	var ground_y: float = anchor.global_position.y
-	if house == null:
-		ground_y = GROUND_Y
-	var base: Vector3 = Vector3(anchor.global_position.x, ground_y, anchor.global_position.z)
-	# Направление «в комнату» — от дома к башне (в открытое пространство, не в стену).
-	var to_tower: Vector3 = (tower as Node3D).global_position - base
-	to_tower.y = 0.0
-	var dir: Vector3 = to_tower.normalized() if to_tower.length() > 0.1 else Vector3.FORWARD
-	# Точка появления — ПЕРЕД домами, на открытой земле (не внутри здания).
-	var front: Vector3 = base + dir * SPAWN_FRONT_DISTANCE
-
-	# Один отряд на тип: доливаем в существующий отряд этого типа или создаём новый.
+	# Один отряд на тип: доливаем в существующий или создаём новый.
 	var squad: Squad = _squads_by_type.get(soldier_type)
 	var is_new: bool = squad == null
 	if is_new:
@@ -137,20 +194,19 @@ func _on_purchased(unit_type: StringName, squad_size: int) -> void:
 		squad.soldier_type = soldier_type
 		squad.icon_color = data.get("icon_color", Color.WHITE)
 		_squads_by_type[soldier_type] = squad
-	# Рабочим — большой work-радиус (охват дерево↔стройка); воинам — боевой leash.
-	var leash: float = WORK_LEASH_RADIUS if soldier_type == &"worker" else SQUAD_LEASH_RADIUS
-	var n: int = maxi(squad_size, 1)
+	var n: int = maxi(count, 1)
 	var spawned: int = 0
 	for i in range(n):
 		var ang: float = TAU * float(i) / float(n)
-		# Кучка вокруг точки появления перед домами, на наземном Y.
-		var pos: Vector3 = front + Vector3(cos(ang) * SPAWN_RADIUS, 0.0, sin(ang) * SPAWN_RADIUS)
+		var pos: Vector3 = front + Vector3(cos(ang) * spawn_radius, 0.0, sin(ang) * spawn_radius)
 		var soldier := scene.instantiate() as SoldierGnome
 		if soldier == null:
 			continue
 		scene_root.add_child(soldier)
 		soldier.setup_free(soldier_type, stats, pos, tower)
-		soldier.combat_leash_radius = leash
+		# Рабочим — большой work-радиус (охват дерево↔стройка); воинам — боевой leash.
+		# Решение по контракту is_worker(), не по сырому soldier_type.
+		soldier.combat_leash_radius = work_leash_radius if soldier.is_worker() else squad_leash_radius
 		squad.add_member(soldier)  # эмитит members_changed → карточка обновит счётчик
 		spawned += 1
 	if spawned == 0:
@@ -161,10 +217,27 @@ func _on_purchased(unit_type: StringName, squad_size: int) -> void:
 	# Донайм в существующий — карточка уже есть, обновится через members_changed.
 	if is_new:
 		EventBus.squad_created.emit(squad)
-		squad.members_changed.connect(func() -> void: EventBus.squad_changed.emit(squad))
-		squad.state_changed.connect(func() -> void: EventBus.squad_changed.emit(squad))
-		squad.disbanded.connect(_on_squad_disbanded.bind(squad), CONNECT_ONE_SHOT)
+		# СЛАБАЯ ссылка: связи висят на сигналах САМОГО отряда; сильный захват squad
+		# (RefCounted) замкнул бы его на себя → не освобождается (утечка при выходе/
+		# disband). WeakRef рвёт цикл — отряд живёт, пока его держат реестр и члены.
+		var wr: WeakRef = weakref(squad)
+		squad.members_changed.connect(func() -> void: _emit_squad_changed(wr))
+		squad.state_changed.connect(func() -> void: _emit_squad_changed(wr))
+		squad.disbanded.connect(func() -> void: _emit_squad_disbanded(wr), CONNECT_ONE_SHOT)
 		squad.command_escort()
+
+
+## Проброс squad_changed по WeakRef (см. _spawn_squad — рвём self-цикл RefCounted).
+func _emit_squad_changed(wr: WeakRef) -> void:
+	var s: Squad = wr.get_ref()
+	if s != null:
+		EventBus.squad_changed.emit(s)
+
+
+func _emit_squad_disbanded(wr: WeakRef) -> void:
+	var s: Squad = wr.get_ref()
+	if s != null:
+		_on_squad_disbanded(s)
 
 
 ## Отряд-тип погиб целиком — убираем карточку и чистим реестр (следующий найм

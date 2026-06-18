@@ -10,8 +10,7 @@ extends Node3D
 ## ориентирует через look_at). Доски спавнятся ПРОЦЕДУРНО по ходу стройки от центра
 ## к краям (визуал зависит от runtime-прогресса; ср. процедурный провод RedDiode).
 
-const GNOME_STRIKE_GROUP := &"gnome_strike_target"
-const WORKER_ROLE := &"worker"
+const GNOME_STRIKE_GROUP := Layers.GNOME_STRIKE_TARGET_GROUP
 const NAV_GROUP := &"nav_region"
 const NAVMESH_SOURCE_GROUP := &"navmesh_source"
 ## Барьер пропасти помечен этой группой в сцене — находим по ней (чертёж создаётся в
@@ -69,17 +68,17 @@ func _spawn_ghost() -> void:
 func can_gnome_interact(gnome: Node) -> bool:
 	if _complete:
 		return false
-	if gnome.get(&"soldier_type") != WORKER_ROLE:
+	if not (gnome.has_method(&"is_worker") and gnome.is_worker()):
 		return false
 	return gnome.has_method(&"is_carrying") and gnome.is_carrying()
 
 
 ## Рабочий положил бревно: списываем его ношу, кладём доску. Набрали — мост готов.
 func gnome_hit(gnome: Node) -> void:
-	if _complete or gnome == null or not gnome.has_method(&"deliver_log"):
+	if _complete or gnome == null or not gnome.has_method(&"deliver_resource"):
 		return
-	if not gnome.deliver_log():
-		return  # бревна не оказалось (рассинхрон) — доску не кладём
+	if gnome.deliver_resource() < 0:
+		return  # ресурса не оказалось (рассинхрон) — доску не кладём
 	_planks += 1
 	_spawn_plank(_planks)
 	if _planks >= planks_needed:
@@ -131,6 +130,11 @@ func _do_rebake() -> void:
 ## моста: старый цельный барьер заменяем двумя сегментами (до и после полосы). Пройти
 ## можно ТОЛЬКО в полосе (по мосту); остальная пропасть — стена. Сама тёмная полоса
 ## (ChasmVisual) остаётся — пропасть никуда не девается, просто через неё лёг мост.
+##
+## ДОПУЩЕНИЕ: барьер пропасти axis-aligned, длинной осью по МИРОВОМУ Z (мост кладут
+## поперёк, по X). Вырез — Z-полоса на всю толщину X. Повёрнутый барьер или мост,
+## нарисованный по диагонали, дадут рассинхрон визуала моста и навмеш-проёма. Для
+## текущей Z-ориентированной пропасти штатно; повёрнутый барьер — предупреждаем.
 func _open_chasm_gap() -> void:
 	var barrier := get_tree().get_first_node_in_group(CHASM_BARRIER_GROUP) as Node3D
 	if barrier == null:
@@ -146,6 +150,10 @@ func _open_chasm_gap() -> void:
 		barrier.queue_free()
 		return
 	var w: Transform3D = cs.global_transform
+	# Вырез считается по мировым X/Z (см. допущение выше). Заметный поворот барьера
+	# вокруг Y → полоса ляжет не туда; предупреждаем, но не падаем.
+	if absf(w.basis.x.y) > 0.01 or absf(w.basis.z.y) > 0.01 or absf(w.basis.x.z) > 0.05:
+		push_warning("[BridgeSite] барьер пропасти повёрнут — Z-вырез может не совпасть с мостом")
 	var cx: float = w.origin.x
 	var sx: float = box.size.x
 	var sy: float = box.size.y

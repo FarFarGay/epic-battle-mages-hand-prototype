@@ -211,7 +211,8 @@ func _ready() -> void:
 	if is_instance_valid(_camp):
 		_refresh_squad_bar(_camp.get_squad_xp(), _camp.get_squad_level())
 		_refresh_journal_badge(_camp.get_pending_upgrade_choices())
-		_sync_all_resources()
+	# Материалы: из Camp.economy (камп) ИЛИ со склада башни (room-режим) — внутри.
+	_sync_all_resources()
 	_refresh_gold_goal()
 	# match_won → баннер фиксируется на «победа» (на случай если игрок остаётся
 	# в сцене). Подписка идемпотентна с _disconnect_eventbus.
@@ -1172,11 +1173,25 @@ func _build_resources_rows() -> void:
 
 
 func _sync_all_resources() -> void:
-	if not is_instance_valid(_camp):
+	if is_instance_valid(_camp):
+		for entry in RESOURCE_DISPLAY:
+			var type: int = int(entry["type"])
+			_refresh_resource_label(type, _camp.economy.get_resource(type))
+		return
+	# Room-режим: материалы со склада башни (золото обновляется реактивно из gold_bank).
+	var store := _tower_store()
+	if store == null:
 		return
 	for entry in RESOURCE_DISPLAY:
 		var type: int = int(entry["type"])
-		_refresh_resource_label(type, _camp.economy.get_resource(type))
+		if type == int(ResourcePile.ResourceType.GOLD):
+			continue
+		_refresh_resource_label(type, store.get_amount(type))
+
+
+## Склад башни (room-режим) — источник материалов для HUD, когда нет Camp.
+func _tower_store() -> Node:
+	return get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
 
 
 func _on_resource_changed(type: int, amount: int) -> void:
@@ -1197,7 +1212,13 @@ func _refresh_resource_label(type: int, amount: int) -> void:
 		label.text = "%d" % amount
 		label.add_theme_color_override("font_color", Color.WHITE if amount > 0 else Color(0.6, 0.6, 0.6, 1))
 		return
-	var cap: int = _camp.economy.cap_for(type) if is_instance_valid(_camp) else 0
+	var cap: int = 0
+	if is_instance_valid(_camp):
+		cap = _camp.economy.cap_for(type)
+	else:
+		var store := _tower_store()
+		if store != null:
+			cap = store.cap_for(type)
 	label.text = "%d/%d" % [amount, cap]
 	if cap > 0 and amount >= cap:
 		label.add_theme_color_override("font_color", Color(1.0, 0.7, 0.2, 1))  # полно
@@ -1680,7 +1701,7 @@ func _build_squad_card(squad: Squad) -> Control:
 	# Рабочие не воюют → их «эскорт» = спрятаться ВНУТРЬ башни (безопасность),
 	# а не вставать рядом. Та же command_escort, но SoldierGnome для worker'а
 	# уводит в прятку. Копейщикам — обычное «За башней».
-	var is_worker_squad: bool = squad.soldier_type == &"worker"
+	var is_worker_squad: bool = squad.soldier_type == SoldierSystem.ROLE_WORKER
 	btn_escort.text = "В башню" if is_worker_squad else "За башней"
 	if is_worker_squad:
 		btn_escort.tooltip_text = "Рабочие прячутся внутри башни (неуязвимы). «Идти сюда» — вывести на стройку."
@@ -1741,6 +1762,27 @@ func _build_squad_card(squad: Squad) -> Control:
 		btn_build.pressed.connect(_on_squad_build_pressed.bind(btn_build))
 		btn_row2.add_child(btn_build)
 
+		var btn_repair := Button.new()
+		btn_repair.text = "🔧 Ремонт башни"
+		btn_repair.focus_mode = Control.FOCUS_NONE
+		btn_repair.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn_repair.add_theme_font_size_override("font_size", 11)
+		btn_repair.tooltip_text = "Рабочие выходят из башни и чинят её; отремонтировав — прячутся обратно"
+		btn_repair.pressed.connect(_on_squad_repair_pressed.bind(squad.id))
+		btn_row2.add_child(btn_repair)
+	else:
+		# Копейщики: «В башню» — спрятаться ВНУТРЬ (неуязвимы), отдельно от боевого
+		# «За башней». Увести отряд в укрытие на опасный момент (босс/AOE), потом
+		# снова «За башней» / «Идти сюда» — выйдут в бой.
+		var btn_hide := Button.new()
+		btn_hide.text = "🏰 В башню"
+		btn_hide.focus_mode = Control.FOCUS_NONE
+		btn_hide.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn_hide.add_theme_font_size_override("font_size", 11)
+		btn_hide.tooltip_text = "Спрятать отряд ВНУТРЬ башни (неуязвимы). «За башней» / «Идти сюда» — выйдут обратно."
+		btn_hide.pressed.connect(_on_squad_hide_pressed.bind(squad.id))
+		btn_row2.add_child(btn_hide)
+
 	_refresh_squad_card(card, squad)
 	return card
 
@@ -1800,7 +1842,7 @@ func _apply_escort_state(btn: Button, squad: Squad) -> void:
 	if not is_instance_valid(_camp):
 		# Комнатный отряд (без лагеря): эскорт всегда доступен.
 		btn.disabled = false
-		btn.tooltip_text = "Рабочие прячутся внутри башни (неуязвимы)" if squad.soldier_type == &"worker" else "Отряд следует за башней"
+		btn.tooltip_text = "Рабочие прячутся внутри башни (неуязвимы)" if squad.soldier_type == SoldierSystem.ROLE_WORKER else "Отряд следует за башней"
 		return
 	var in_zone: bool = _camp.is_squad_in_recall_zone(squad)
 	btn.disabled = not in_zone
@@ -1899,6 +1941,25 @@ func _on_squad_escort_pressed(squad_id: int) -> void:
 		squad.command_hold(_squad_alive_center_or_tower(squad), false)
 	else:
 		squad.command_escort()
+
+
+## «Ремонт башни» (рабочие): выходят из башни и чинят повреждённую (command_escort
+## с repair=true). Башня цела → просто прячутся внутрь. Если рабочие были снаружи —
+## приходят к башне чинить; отремонтировав, прячутся (SoldierGnome ведёт цикл).
+func _on_squad_repair_pressed(squad_id: int) -> void:
+	var squad: Squad = _resolve_squad_by_id(squad_id)
+	if squad == null:
+		return
+	squad.command_escort(true)
+
+
+## «В башню» (копейщики) — спрятать отряд ВНУТРЬ башни (неуязвимы), отдельно от
+## боевого «За башней». command_escort(hide=true) → SoldierGnome уводит в прятку.
+func _on_squad_hide_pressed(squad_id: int) -> void:
+	var squad: Squad = _resolve_squad_by_id(squad_id)
+	if squad == null:
+		return
+	squad.command_escort(false, true)
 
 
 ## Среднее живых членов squad'а; fallback на башню если членов нет.

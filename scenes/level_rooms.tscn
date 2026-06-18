@@ -39,6 +39,7 @@
 [ext_resource type="PackedScene" uid="uid://tradeui001" path="res://scenes/trade_ui.tscn" id="37_trade"]
 [ext_resource type="Script" uid="uid://cv0nhq65n6pnb" path="res://scripts/gnome_squad_spawner.gd" id="38_squadspawn"]
 [ext_resource type="Script" uid="uid://cr6su60qs204u" path="res://scripts/wood_source.gd" id="39_wood"]
+[ext_resource type="Script" path="res://scripts/tower_store.gd" id="40_towerstore"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -465,7 +466,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 16)
 material_override = SubResource("Mat_foliage")
 mesh = SubResource("Sph_foliage")
 
-[node name="Tower" parent="." unique_id=1617488261 instance=ExtResource("1")]
+[node name="Tower" parent="." unique_id=1617488261 instance=ExtResource("1") groups=["skeleton_target"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
 
 [node name="CameraRig" parent="." unique_id=1454102563 instance=ExtResource("3")]
@@ -534,6 +535,9 @@ script = ExtResource("29_prewarm")
 
 [node name="GoldBank" type="Node" parent="." unique_id=1139174719]
 script = ExtResource("32_gold")
+
+[node name="TowerStore" type="Node" parent="."]
+script = ExtResource("40_towerstore")
 
 [node name="PlayerProfile" type="Node" parent="." unique_id=1908250858]
 script = ExtResource("34_profile")

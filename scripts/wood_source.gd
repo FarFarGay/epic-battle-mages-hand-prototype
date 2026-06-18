@@ -5,10 +5,12 @@ extends Node3D
 ## свободны) и тратит запас. Кончился запас — дерево выходит из strike-группы (срублено,
 ## остаётся пенёк). Визуал (ствол/крона) — узлы сцены (Trunk/Foliage), скрипт = поведение.
 
-const GNOME_STRIKE_GROUP := &"gnome_strike_target"
-const WORKER_ROLE := &"worker"
+const GNOME_STRIKE_GROUP := Layers.GNOME_STRIKE_TARGET_GROUP
 
-## Сколько брёвен можно нарубить. Для моста нужно ~planks_needed; ставим с запасом.
+## Тип ресурса источника (дерево=WOOD; камень/железо — те же ноды с другим типом+визуалом).
+## Рабочий получает единицу ЭТОГО типа, несёт на склад/стройку. См. [ResourcePile.ResourceType].
+@export var resource_type: int = ResourcePile.ResourceType.WOOD
+## Сколько единиц можно добыть. Для моста нужно ~planks_needed; ставим с запасом.
 @export var wood_remaining: int = 16
 
 var _initial_wood: int = 16
@@ -41,12 +43,13 @@ func _recenter_on_trunk() -> void:
 		_foliage.position -= off
 
 
-## Контракт strike-цели: рубить дерево может только рабочий со свободными руками
-## (гружёный сперва донесёт бревно на стройку). Не рабочий (копейщик) — мимо.
+## Контракт strike-цели: добывать может только рабочий со свободными руками
+## (гружёный сперва донесёт единицу на склад/стройку). Не рабочий (копейщик) — мимо.
+## Роль через контракт is_worker() (duck-typed на Node), не сырое поле soldier_type.
 func can_gnome_interact(gnome: Node) -> bool:
 	if wood_remaining <= 0:
 		return false
-	if gnome.get(&"soldier_type") != WORKER_ROLE:
+	if not (gnome.has_method(&"is_worker") and gnome.is_worker()):
 		return false
 	return not (gnome.has_method(&"is_carrying") and gnome.is_carrying())
 
@@ -60,11 +63,11 @@ func can_gnome_interact(gnome: Node) -> bool:
 func gnome_hit(gnome: Node) -> void:
 	if wood_remaining <= 0:
 		return
-	if gnome == null or not gnome.has_method(&"receive_log"):
+	if gnome == null or not gnome.has_method(&"receive_resource"):
 		return
 	if gnome.has_method(&"is_carrying") and gnome.is_carrying():
 		return
-	gnome.receive_log()
+	gnome.receive_resource(resource_type)
 	wood_remaining -= 1
 	_refresh_visual()
 	if wood_remaining <= 0:

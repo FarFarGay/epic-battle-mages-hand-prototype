@@ -52,6 +52,15 @@ var soldier_type: StringName = &""
 var icon_color: Color = Color.WHITE
 var members: Array[SoldierGnome] = []
 var state: int = State.HOLDING_POSITION
+## Намерение «чинить башню» (рабочие): при ESCORTING_TOWER юнит выходит и ЧИНИТ
+## повреждённую башню (strike), а не прячется; башня цела → прячется (см.
+## SoldierGnome). Ставит кнопка «Ремонт башни» (command_escort(true)); любая
+## другая команда сбрасывает.
+var repair_intent: bool = false
+## Намерение «спрятаться внутрь башни» (неуязвимы). Для рабочих эскорт = прятка
+## всегда; для КОПЕЙЩИКОВ это отдельная команда «В башню» (а «За башней» — боевой
+## эскорт рядом). Ставит command_escort(hide=true); другая команда сбрасывает.
+var hide_in_tower: bool = false
 ## Точка удержания при HOLDING_POSITION. Игнорируется в ESCORTING_TOWER.
 var hold_position: Vector3 = Vector3.ZERO
 ## Жёсткий приоритет последней `command_hold`. Пока true — каждый юнит,
@@ -115,14 +124,21 @@ func command_hold(pos: Vector3, strict: bool = true) -> void:
 	state = State.HOLDING_POSITION
 	hold_position = pos
 	_strict_move = strict
+	repair_intent = false
+	hide_in_tower = false
 	state_changed.emit()
 
 
 ## Команда: эскорт башни. Юниты идут за башней, стреляют по пути (бой
-## приоритетнее перемещения — обычный attack-and-move).
-func command_escort() -> void:
+## приоритетнее перемещения — обычный attack-and-move). Для рабочих эскорт =
+## спрятаться внутрь башни. repair=true (кнопка «Ремонт башни») — вместо прятки
+## выйти и ЧИНИТЬ башню (пока повреждена), затем спрятаться. hide=true (кнопка
+## «В башню») — спрятаться ВНУТРЬ (и копейщики тоже), а не вставать рядом.
+func command_escort(repair: bool = false, hide: bool = false) -> void:
 	state = State.ESCORTING_TOWER
 	_strict_move = false
+	repair_intent = repair
+	hide_in_tower = hide
 	state_changed.emit()
 
 
@@ -133,6 +149,8 @@ func command_escort() -> void:
 func command_defend() -> void:
 	state = State.DEFENDING_CAMP
 	_strict_move = false
+	repair_intent = false
+	hide_in_tower = false
 	state_changed.emit()
 
 
