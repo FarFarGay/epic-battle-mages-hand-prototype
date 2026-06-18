@@ -133,14 +133,14 @@ metallic_specular = 0.7
 roughness = 0.32
 
 [sub_resource type="BoxMesh" id="BoxMesh_chasm"]
-size = Vector3(34, 0.12, 8)
+size = Vector3(8, 0.12, 28)
 
 [sub_resource type="StandardMaterial3D" id="Material_chasm"]
 albedo_color = Color(0.02, 0.02, 0.04, 1)
 roughness = 1.0
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_chasm"]
-size = Vector3(38, 3, 8)
+size = Vector3(8, 3, 30)
 
 [node name="LevelRooms" type="Node3D" unique_id=169599323]
 
@@ -376,19 +376,28 @@ lever_path = NodePath("../GnomeLever")
 [node name="WallEast" parent="Room5" instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, 18, 0, 112)
 
-[node name="WallWest" parent="Room5" instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, -18, 0, 112)
-
 [node name="WallNorth" parent="Room5" instance=ExtResource("6_wall")]
-transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 126)
+transform = Transform3D(18.5, 0, 0, 0, 1, 0, 0, 0, 1, -18, 0, 126)
+
+[node name="WallSouthWest" parent="Room5" instance=ExtResource("6_wall")]
+transform = Transform3D(12.85, 0, 0, 0, 1, 0, 0, 0, 1, -29, 0, 98)
+
+[node name="WallSouthEast" parent="Room5" instance=ExtResource("6_wall")]
+transform = Transform3D(3.6, 0, 0, 0, 1, 0, 0, 0, 1, 11, 0, 98)
+
+[node name="WallWestSouth" parent="Room5" instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 21, -54, 0, 103)
+
+[node name="WallWestNorth" parent="Room5" instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 21, -54, 0, 121)
 
 [node name="ChasmVisual" type="MeshInstance3D" parent="Room5"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.05, 112)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -18, 0.05, 112)
 mesh = SubResource("BoxMesh_chasm")
 material_override = SubResource("Material_chasm")
 
 [node name="ChasmBarrier" type="StaticBody3D" parent="Room5" groups=["navmesh_source"]]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 112)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -18, 0, 112)
 collision_layer = 544
 collision_mask = 0
 
