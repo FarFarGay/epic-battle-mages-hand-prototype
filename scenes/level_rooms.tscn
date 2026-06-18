@@ -38,7 +38,7 @@
 [ext_resource type="Script" uid="uid://bectdk8n5vo4y" path="res://scripts/deeds_log.gd" id="36_deeds"]
 [ext_resource type="PackedScene" uid="uid://tradeui001" path="res://scenes/trade_ui.tscn" id="37_trade"]
 [ext_resource type="Script" uid="uid://cv0nhq65n6pnb" path="res://scripts/gnome_squad_spawner.gd" id="38_squadspawn"]
-[ext_resource type="Script" path="res://scripts/wood_source.gd" id="39_wood"]
+[ext_resource type="Script" uid="uid://cr6su60qs204u" path="res://scripts/wood_source.gd" id="39_wood"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -142,22 +142,20 @@ size = Vector3(8, 0.12, 28)
 [sub_resource type="BoxShape3D" id="BoxShape3D_chasm"]
 size = Vector3(8, 3, 30)
 
-[sub_resource type="CylinderMesh" id="Cyl_trunk"]
-top_radius = 0.35
-bottom_radius = 0.5
-height = 2.4
-
 [sub_resource type="StandardMaterial3D" id="Mat_trunk"]
 albedo_color = Color(0.42, 0.28, 0.16, 1)
 roughness = 0.95
 
-[sub_resource type="SphereMesh" id="Sph_foliage"]
-radius = 1.6
-height = 3.0
+[sub_resource type="CylinderMesh" id="Cyl_trunk"]
+top_radius = 0.35
+height = 2.4
 
 [sub_resource type="StandardMaterial3D" id="Mat_foliage"]
 albedo_color = Color(0.24, 0.5, 0.22, 1)
-roughness = 1.0
+
+[sub_resource type="SphereMesh" id="Sph_foliage"]
+radius = 1.6
+height = 3.0
 
 [node name="LevelRooms" type="Node3D" unique_id=169599323]
 
@@ -422,50 +420,50 @@ collision_mask = 0
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 48.4, 1.5, 0)
 shape = SubResource("BoxShape3D_chasm")
 
-[node name="WoodSource" type="Node3D" parent="Room5"]
+[node name="WoodSource" type="Node3D" parent="Room5" unique_id=1415507107]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 112)
 script = ExtResource("39_wood")
 wood_remaining = 6
 
-[node name="Trunk" type="MeshInstance3D" parent="Room5/WoodSource"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
-mesh = SubResource("Cyl_trunk")
+[node name="Trunk" type="MeshInstance3D" parent="Room5/WoodSource" unique_id=1597788968]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 7)
 material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
 
-[node name="Foliage" type="MeshInstance3D" parent="Room5/WoodSource"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
-mesh = SubResource("Sph_foliage")
+[node name="Foliage" type="MeshInstance3D" parent="Room5/WoodSource" unique_id=1983723796]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 7)
 material_override = SubResource("Mat_foliage")
+mesh = SubResource("Sph_foliage")
 
-[node name="WoodSource2" type="Node3D" parent="Room5"]
+[node name="WoodSource2" type="Node3D" parent="Room5" unique_id=1263815007]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 118)
 script = ExtResource("39_wood")
 wood_remaining = 6
 
-[node name="Trunk" type="MeshInstance3D" parent="Room5/WoodSource2"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
-mesh = SubResource("Cyl_trunk")
+[node name="Trunk" type="MeshInstance3D" parent="Room5/WoodSource2" unique_id=872845925]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 5)
 material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
 
-[node name="Foliage" type="MeshInstance3D" parent="Room5/WoodSource2"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
-mesh = SubResource("Sph_foliage")
+[node name="Foliage" type="MeshInstance3D" parent="Room5/WoodSource2" unique_id=1826483227]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 5)
 material_override = SubResource("Mat_foliage")
+mesh = SubResource("Sph_foliage")
 
-[node name="WoodSource3" type="Node3D" parent="Room5"]
+[node name="WoodSource3" type="Node3D" parent="Room5" unique_id=1803264559]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 0, 106)
 script = ExtResource("39_wood")
 wood_remaining = 6
 
-[node name="Trunk" type="MeshInstance3D" parent="Room5/WoodSource3"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
-mesh = SubResource("Cyl_trunk")
+[node name="Trunk" type="MeshInstance3D" parent="Room5/WoodSource3" unique_id=434011427]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 16)
 material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
 
-[node name="Foliage" type="MeshInstance3D" parent="Room5/WoodSource3"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
-mesh = SubResource("Sph_foliage")
+[node name="Foliage" type="MeshInstance3D" parent="Room5/WoodSource3" unique_id=1980433918]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 16)
 material_override = SubResource("Mat_foliage")
+mesh = SubResource("Sph_foliage")
 
 [node name="Tower" parent="." unique_id=1617488261 instance=ExtResource("1")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
@@ -518,7 +516,7 @@ area_center = Vector3(-25, 0, 84)
 area_half_x = 5.0
 area_half_z = 5.0
 
-[node name="SkeletonFiller6" type="Node3D" parent="."]
+[node name="SkeletonFiller6" type="Node3D" parent="." unique_id=891994549]
 script = ExtResource("23_filler")
 skeleton_scene = ExtResource("22_skel")
 count = 26

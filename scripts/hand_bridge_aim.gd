@@ -112,11 +112,22 @@ func _commit(end: Vector3) -> void:
 	_finish()
 
 
-## Создаёт BridgeSite в СЕРЕДИНЕ пролёта, локальный +X вдоль линии (look_at),
-## длина = dist, число досок ∝ длине. Чертёж сам встаёт в strike-группу.
+## Создаёт BridgeSite на БЛИЖНЕМ к РАБОЧИМ конце пролёта (они строят — заходят с
+## ближайшего к ним края), локальный +X направлен к ДАЛЬНЕМУ концу. Доски растут от
+## ближнего конца к дальнему — рабочий стоит на доступном краю и строит «от себя»,
+## а не упирается в середину пропасти. Длина = dist, число досок ∝ длине.
 func _create_bridge(start: Vector3, end: Vector3, dist: float) -> void:
+	# Ближний конец = тот, что ближе к рабочим (они строят). Опора — ближайший к
+	# пролёту гном-рабочий; нет рабочих → fallback на башню → на start.
 	var mid: Vector3 = (start + end) * 0.5
-	mid.y = start.y
+	var ref: Vector3 = _build_reference_point(mid)
+	var near: Vector3 = start
+	var far: Vector3 = end
+	var d_start: float = Vector2(start.x - ref.x, start.z - ref.z).length()
+	var d_end: float = Vector2(end.x - ref.x, end.z - ref.z).length()
+	if d_end < d_start:
+		near = end
+		far = start
 	var site := Node3D.new()
 	site.set_script(BRIDGE_SITE_SCRIPT)
 	site.span_length = dist
@@ -126,14 +137,37 @@ func _create_bridge(start: Vector3, end: Vector3, dist: float) -> void:
 	if scene == null:
 		return
 	scene.add_child(site)
-	site.global_position = mid
-	# Ориентируем локальный +X вдоль пролёта. look_at смотрит -Z на target —
-	# нам нужен +X вдоль (end-start), поэтому ставим yaw напрямую.
-	var dir := Vector3(end.x - start.x, 0.0, end.z - start.z).normalized()
+	site.global_position = Vector3(near.x, near.y, near.z)
+	# Локальный +X — к дальнему концу. look_at смотрит -Z на target, поэтому yaw напрямую.
+	var dir := Vector3(far.x - near.x, 0.0, far.z - near.z).normalized()
 	site.rotation.y = atan2(-dir.z, dir.x)
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:BridgeAim] мост заложен @ (%.1f, %.1f), длина %.1f, досок %d" % [
-			mid.x, mid.z, dist, site.planks_needed])
+		print("[Hand:BridgeAim] мост от (%.1f,%.1f) к (%.1f,%.1f), длина %.1f, досок %d" % [
+			near.x, near.z, far.x, far.z, dist, site.planks_needed])
+
+
+## Опора для выбора ближнего конца: позиция ближайшего к пролёту гнома-рабочего (кто
+## будет строить). Нет рабочих → башня → сам центр пролёта. Спрятанные в башне рабочие
+## стоят в точке башни — тогда ближний конец естественно со стороны башни.
+func _build_reference_point(mid: Vector3) -> Vector3:
+	var best: Vector3 = Vector3.INF
+	var best_d: float = INF
+	for s in get_tree().get_nodes_in_group(&"soldier"):
+		if not is_instance_valid(s):
+			continue
+		if s.get(&"soldier_type") != &"worker":
+			continue
+		var p: Vector3 = (s as Node3D).global_position
+		var d: float = Vector2(p.x - mid.x, p.z - mid.z).length()
+		if d < best_d:
+			best_d = d
+			best = p
+	if best != Vector3.INF:
+		return best
+	var tower := get_tree().get_first_node_in_group(&"tower")
+	if tower != null:
+		return (tower as Node3D).global_position
+	return mid
 
 
 func _spawn_preview() -> void:

@@ -117,7 +117,9 @@ var _super_label: Label
 ## расположение, и счётчик заводить новой ноды в .tscn ради этого нет смысла.
 var _journal_button: Button
 var _journal_badge: Label
-var _bridge_button: Button
+## Меню стройки отряда рабочих (popup, ленивое создание). Пункт «Мост» = BUILD_MENU_BRIDGE.
+var _build_menu: PopupMenu
+const BUILD_MENU_BRIDGE := 0
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
 var _resource_labels: Dictionary = {}
@@ -201,7 +203,6 @@ func _ready() -> void:
 	_build_tower_stats()
 	_build_resources_rows()
 	_build_journal_button()
-	_build_bridge_button()
 	_build_action_bar()
 	_build_gatherer_card()
 	_update_counts()
@@ -1068,27 +1069,32 @@ func _on_journal_button_pressed() -> void:
 	JournalPanel.toggle()
 
 
-## Кнопка «Строить мост» — запускает планирование рукой (HandBridgeAim, два клика).
-## Под кнопкой журнала/режима. Toggle: повторный клик отменяет планирование.
-func _build_bridge_button() -> void:
-	_bridge_button = Button.new()
-	_bridge_button.text = "🌉 строить мост"
-	_bridge_button.focus_mode = Control.FOCUS_NONE
-	_bridge_button.tooltip_text = "Два клика по краям пропасти задают мост, потом пошли туда отряд рабочих («Идти сюда»)"
-	_bridge_button.add_theme_font_size_override("font_size", 13)
-	_bridge_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_bridge_button.offset_left = -160
-	_bridge_button.offset_top = 330
-	_bridge_button.offset_right = -10
-	_bridge_button.offset_bottom = 362
-	_bridge_button.pressed.connect(_on_bridge_button_pressed)
-	add_child(_bridge_button)
+## Меню стройки (popup) для отряда рабочих — открывается из вкладки «Стройка» в
+## карточке. Пункты = что можно построить (пока Мост; дальше добавим). Создаётся
+## лениво один раз, переиспользуется всеми карточками.
+func _ensure_build_menu() -> PopupMenu:
+	if _build_menu != null and is_instance_valid(_build_menu):
+		return _build_menu
+	_build_menu = PopupMenu.new()
+	_build_menu.add_item("🌉 Мост через пропасть", BUILD_MENU_BRIDGE)
+	_build_menu.id_pressed.connect(_on_build_menu_id)
+	add_child(_build_menu)
+	return _build_menu
 
 
-func _on_bridge_button_pressed() -> void:
-	var hand := _resolve_hand()
-	if hand != null and hand.bridge_aim != null:
-		hand.bridge_aim.toggle_aim()
+## Открыть меню стройки под кнопкой «Стройка».
+func _open_build_menu(btn: Button) -> void:
+	var menu := _ensure_build_menu()
+	menu.reset_size()
+	menu.position = Vector2i(btn.get_screen_position()) + Vector2i(0, int(btn.size.y))
+	menu.popup()
+
+
+func _on_build_menu_id(id: int) -> void:
+	if id == BUILD_MENU_BRIDGE:
+		var hand := _resolve_hand()
+		if hand != null and hand.bridge_aim != null:
+			hand.bridge_aim.start_aim()
 
 
 ## Индикатор режима сбора. Под кнопкой журнала, программно. Зелёный при WORK,
@@ -1723,6 +1729,18 @@ func _build_squad_card(squad: Squad) -> Control:
 	btn_deselect.pressed.connect(_on_squad_deselect_pressed)
 	btn_row2.add_child(btn_deselect)
 
+	# Вкладка «Стройка» — только у рабочих. Открывает меню «что построить» (мост и
+	# т.д.), вместо постоянной кнопки на экране. После выбора — планирование рукой.
+	if is_worker_squad:
+		var btn_build := Button.new()
+		btn_build.text = "🔨 Стройка"
+		btn_build.focus_mode = Control.FOCUS_NONE
+		btn_build.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn_build.add_theme_font_size_override("font_size", 11)
+		btn_build.tooltip_text = "Выбрать, что построить (мост и пр.), потом отправить сюда рабочих"
+		btn_build.pressed.connect(_on_squad_build_pressed.bind(btn_build))
+		btn_row2.add_child(btn_build)
+
 	_refresh_squad_card(card, squad)
 	return card
 
@@ -1834,6 +1852,11 @@ func _on_squad_deselect_pressed() -> void:
 	var hand := _resolve_hand()
 	if hand != null and hand.squad_aim != null:
 		hand.squad_aim.cancel_aim()
+
+
+## Вкладка «Стройка» (рабочие) — открыть меню выбора постройки под кнопкой.
+func _on_squad_build_pressed(btn: Button) -> void:
+	_open_build_menu(btn)
 
 
 func _on_squad_aim_pressed(squad_id: int) -> void:

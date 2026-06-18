@@ -18,8 +18,27 @@ var _initial_wood: int = 16
 
 func _ready() -> void:
 	_initial_wood = maxi(wood_remaining, 1)
+	_recenter_on_trunk()
 	if wood_remaining > 0:
 		add_to_group(GNOME_STRIKE_GROUP)
+
+
+## Точка рубки (origin узла, куда идёт рабочий) ДОЛЖНА совпадать с деревом. В редакторе
+## легко подвинуть меши (Trunk/Foliage) внутри узла, оставив origin на месте → рабочий
+## рубит «пустоту». Само-исцеление: переносим origin на ствол, компенсируя детей (их
+## мировое положение не меняется). Двигаешь дерево как хочешь — точка рубки следует.
+func _recenter_on_trunk() -> void:
+	if _trunk == null:
+		return
+	var off: Vector3 = _trunk.position
+	off.y = 0.0
+	if off.length() < 0.05:
+		return
+	global_position += off  # узел без поворота → локальное смещение = мировое
+	if _trunk != null:
+		_trunk.position -= off
+	if _foliage != null:
+		_foliage.position -= off
 
 
 ## Контракт strike-цели: рубить дерево может только рабочий со свободными руками

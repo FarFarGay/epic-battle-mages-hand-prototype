@@ -332,6 +332,39 @@ func deliver_log() -> bool:
 	return true
 
 
+## Поведение рабочего (НЕ комбатант): найти рабочую цель (дерево, если руки пусты;
+## стройку, если несёт бревно) → подойти ПО НАВМЕШУ (обходя пропасть/стены) на
+## дистанцию удара → стукнуть НА МЕСТЕ (gnome_hit, без боевого выпада). Нет цели —
+## встать на слот строя (тоже по навмешу). Так рабочие не улетают в пропасть.
+func _tick_worker(delta: float) -> void:
+	var target: Node3D = _find_interact_target_in_leash()
+	if target != null:
+		var to := Vector3(target.global_position.x - global_position.x, 0.0, target.global_position.z - global_position.z)
+		var d: float = to.length()
+		if d > attack_range:
+			_move_toward(to, d)  # навмеш-шаг (огибает пропасть, не прёт напрямую)
+			return
+		# В упор — стоим и бьём на cooldown'е (рубим дерево / кладём доску).
+		velocity = Vector3.ZERO
+		if d > 0.001:
+			look_at(global_position + to / d, Vector3.UP)
+		if _attack_cd <= 0.0:
+			_strike_at(target)  # gnome_hit, без lunge
+			_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max)
+		return
+	# Нет работы → строимся на слоте режима (HOLD-точка), тоже по навмешу.
+	if _squad == null or not _has_squad_context():
+		velocity = Vector3.ZERO
+		return
+	var goal: Vector3 = _squad.target_for_member(self, _resolve_squad_center())
+	var to_goal := Vector3(goal.x - global_position.x, 0.0, goal.z - global_position.z)
+	var dist: float = to_goal.length()
+	if dist <= SQUAD_TARGET_ARRIVAL:
+		velocity = Vector3.ZERO
+		return
+	_move_toward(to_goal, dist)
+
+
 ## Шаг «спрятаться в башню» (рабочий в ESCORT). Бежит к центру башни; добежал —
 ## прячется (невидим/неуязвим/приклеен к башне), как гном IN_TENT в палатке. Уже
 ## спрятан → остаётся приклеенным к башне (та его «возит»).
@@ -421,8 +454,13 @@ func _active_tick(delta: float) -> void:
 		if _squad != null and _squad.state == Squad.State.ESCORTING_TOWER:
 			_tick_hide_in_tower()
 			return
-		elif _hidden_in_tower:
+		if _hidden_in_tower:
 			_exit_hidden()  # сменили на HOLD/строить — выходим наружу
+		# Рабочий НЕ воюет и НЕ делает боевой выпад: он подходит к цели (дерево/мост)
+		# ПО НАВМЕШУ (в обход пропасти) и бьёт НА МЕСТЕ. Боевой charge с lunge'ом
+		# прошивал точку моста насквозь → рабочие улетали в пропасть. См. _tick_worker.
+		_tick_worker(delta)
+		return
 
 	# Strict-march: ИНИЦИАЛЬНОЕ исполнение команды «Идти сюда» — идём
 	# к слоту напролом. Combat-assist: если по дороге попался враг в
