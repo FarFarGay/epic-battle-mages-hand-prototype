@@ -26,6 +26,10 @@ const GNOME_STRIKE_GROUP := &"gnome_strike_target"
 ## Требуемая роль гнома (soldier_type). Пусто = любой. Рычаг ФИЗИЧЕСКИЙ — копейщику
 ## ок; магический механизм потребует искрового (шаг 2).
 @export var gnome_required_role: StringName = &""
+## true → гном-рычаг ЗАПИТАН: доступен гному только после enable() (цепь искра →
+## синий диод → ток → красный диод). false → активен сразу (standalone). Это кооп:
+## башня питает цепь искрой, гном перекидывает рычаг.
+@export var gnome_needs_power: bool = false
 ## Радиус захвата у основания (XZ). Зажал ЛКМ в нём → рычаг «в руке».
 @export var engage_radius: float = 2.6
 ## Короткий рывок вбок (по X, м), после которого тумблер ПЕРЕКИДЫВАЕТСЯ в ON. Не
@@ -55,22 +59,22 @@ var _highlighted: bool = false
 
 func _ready() -> void:
 	_handle.rotation.z = deg_to_rad(start_angle_deg)  # OFF-положение (наклон вбок)
-	# Гном-рычаг — strike-цель (гном бьёт → перекид) + подсвечен как задача.
-	if gnome_pullable:
-		add_to_group(GNOME_STRIKE_GROUP)
-		if _handle_mat != null:
-			_handle_mat.albedo_color = ready_color
-			_handle_mat.emission_enabled = true
-			_handle_mat.emission = ready_color
-			_handle_mat.emission_energy_multiplier = 1.4
+	# Standalone гном-рычаг — активен сразу; запитанный (gnome_needs_power) ждёт
+	# enable() от RedDiode (цепь искра → синий → красный).
+	if gnome_pullable and not gnome_needs_power:
+		enable()
 
 
-## Зовёт RedDiode когда ток дошёл. До этого рычаг мёртв (не хватается, не подсвечен).
+## Активация рычага. Hand-рычаг зовёт RedDiode (ток дошёл); гном-рычаг — RedDiode
+## по той же цепи (искра→синий→красный). До enable рычаг мёртв.
 func enable() -> void:
 	if _enabled:
 		return
 	_enabled = true
-	add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)  # теперь рука подсвечивает наведение
+	if gnome_pullable:
+		add_to_group(GNOME_STRIKE_GROUP)  # гном теперь может БИТЬ рычаг (strike-цель)
+	else:
+		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)  # рука подсвечивает/тянет
 	_refresh_handle_color()
 
 
@@ -97,7 +101,9 @@ func _refresh_handle_color() -> void:
 func _process(_delta: float) -> void:
 	if _thrown:
 		return
-	if not _enabled:
+	# Гном-рычаг рукой не тянем — только гном бьёт (через gnome_hit). Hand-pull
+	# только для не-gnome рычагов и только после enable.
+	if not _enabled or gnome_pullable:
 		return
 	var hand := _resolve_hand()
 	if hand == null:
@@ -127,7 +133,7 @@ func _process(_delta: float) -> void:
 ## Контракт strike-цели: может ли этот гном перекинуть рычаг (роль). Гейт по роли —
 ## физический рычаг копейщику ок, магический потребует искрового (gnome_required_role).
 func can_gnome_interact(gnome: Node) -> bool:
-	if _thrown:
+	if _thrown or not _enabled:
 		return false
 	return gnome_required_role == &"" or gnome.soldier_type == gnome_required_role
 

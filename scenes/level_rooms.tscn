@@ -335,6 +335,10 @@ transform = Transform3D(-0.34202015, 0, -0.9396926, 0, 1, 0, 0.9396926, 0, -0.34
 [node name="House4" parent="Room4" unique_id=169079150 instance=ExtResource("28_gnomehouse")]
 transform = Transform3D(-0.57357645, 0, -0.81915206, 0, 1, 0, 0.81915206, 0, -0.57357645, 10.395116, 0, 90.92354)
 
+[node name="BlueDiodeWest" parent="Room4" instance=ExtResource("25_diode")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, 82)
+target_path = NodePath("../../RoomWest/RedDiodeWest")
+
 [node name="RoomWest" type="Node3D" parent="." unique_id=937540607]
 
 [node name="WallWest" parent="RoomWest" unique_id=851177750 instance=ExtResource("6_wall")]
@@ -350,6 +354,12 @@ transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, -25, 0, 91)
 transform = Transform3D(0.6, 0, 0, 0, 0.6, 0, 0, 0, 0.6, -25, 0, 84)
 target_path = NodePath("../../Room4/MetalDoor3")
 gnome_pullable = true
+gnome_needs_power = true
+
+[node name="RedDiodeWest" parent="RoomWest" instance=ExtResource("26_reddiode")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20, 0, 84)
+wire_from_path = NodePath("../../Room4/BlueDiodeWest")
+lever_path = NodePath("../GnomeLever")
 
 [node name="Tower" parent="." unique_id=1617488261 instance=ExtResource("1")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
