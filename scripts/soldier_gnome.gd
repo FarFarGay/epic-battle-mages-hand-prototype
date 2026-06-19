@@ -390,8 +390,12 @@ func _tick_gather(_delta: float) -> void:
 	_approach_and_hit(tree)
 
 
-## BUILD: несём ресурс → кладём в блюпринт; пусто → берём ресурс со склада башни.
-## Склад пуст — стоим у блюпринта (надо сперва насобирать, см. GATHER).
+## Радиус поиска дерева для авто-рубки под мост (склад пуст). Покрывает комнату.
+const BUILD_WOOD_SEARCH_RADIUS := 60.0
+
+## BUILD: несём ресурс → кладём в блюпринт; пусто → берём со склада, а если склад пуст —
+## РУБИМ ближайшее дерево напрямую (замыкаем петлю, иначе артель встаёт у башни и мост
+## не достраивается). Так BUILD самодостаточен: рубит → несёт → кладёт доску.
 func _tick_build(_delta: float) -> void:
 	var bridge: Node3D = _squad.work_target if is_instance_valid(_squad.work_target) else null
 	if bridge == null or not bridge.is_in_group(Layers.BUILD_SITE_GROUP):
@@ -407,9 +411,15 @@ func _tick_build(_delta: float) -> void:
 		return
 	var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
 	if store != null and int(store.call(&"get_amount", BUILD_RESOURCE)) > 0:
-		_ferry_take_from_store()  # на склад башни за ресурсом
+		_ferry_take_from_store()  # на складе есть запас — несём оттуда
+		return
+	# Склад пуст: рубим ближайший источник дерева напрямую (получим бревно в руки → на
+	# следующем тике понесём к мосту). Источников рядом нет — ждём у моста.
+	var tree: Node3D = _nearest_in_group_near(Layers.RESOURCE_SOURCE_GROUP, global_position, BUILD_WOOD_SEARCH_RADIUS)
+	if tree != null:
+		_approach_and_hit(tree)
 	else:
-		_approach_point(_tower_center())  # склада нет/пуст — ждём у башни (склада)
+		_approach_point(bridge.global_position)
 
 
 ## STRIKE: разбить/переключить указанную цель (горшок/рычаг). Несём — сперва сдаём.

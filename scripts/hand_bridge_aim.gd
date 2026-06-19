@@ -32,7 +32,9 @@ var _effects_root: Node = null
 var _aiming: bool = false
 ## Начало пролёта (мир). INF = первый клик ещё не сделан.
 var _start: Vector3 = Vector3.INF
-var _preview: MeshInstance3D = null
+## Пул силуэтов-досок превью (плитка): до первого клика — одна доска «в руке» в точке
+## курсора; после — ряд досок от _start к курсору. Переиспользуются между кадрами.
+var _plank_ghosts: Array[MeshInstance3D] = []
 
 
 func _ready() -> void:
@@ -88,15 +90,20 @@ func _process(_delta: float) -> void:
 		cancel_aim()
 		return
 	if _start == Vector3.INF:
-		# Ждём первый клик — начало пролёта.
+		# До первого клика — силуэт ПЕРВОЙ доски «в руке» под курсором.
+		_update_first_plank(ground)
 		if Input.is_action_just_pressed(ACTION_COMMIT) and not _hand.is_pointer_over_ui():
 			_start = ground
-			_spawn_preview()
 		return
-	# Первая точка есть — тянем превью к курсору, ждём второй клик.
-	_update_preview(ground)
+	# Первая точка есть — тянем РЯД досок-силуэтов к курсору, ждём второй клик.
+	_update_plank_row(_start, ground)
 	if Input.is_action_just_pressed(ACTION_COMMIT) and not _hand.is_pointer_over_ui():
 		_commit(ground)
+
+
+## Число досок по длине пролёта — синхронно с BridgeSite.planks_needed в _create_bridge.
+func _planks_for(dist: float) -> int:
+	return clampi(int(round(dist / METERS_PER_PLANK)), MIN_PLANKS, MAX_PLANKS)
 
 
 ## Второй клик: если пролёт достаточной длины — создаём BridgeSite и выходим.
@@ -128,7 +135,7 @@ func _create_bridge(start: Vector3, end: Vector3, dist: float) -> void:
 	if d_end < d_start:
 		near = end
 		far = start
-	var site := Node3D.new()
+	var site := StaticBody3D.new()
 	site.set_script(BRIDGE_SITE_SCRIPT)
 	site.span_length = dist
 	site.span_half_z = SPAN_HALF_Z
@@ -170,17 +177,55 @@ func _build_reference_point(mid: Vector3) -> Vector3:
 	return mid
 
 
-func _spawn_preview() -> void:
+## До первого клика: одна доска-силуэт «в руке» под курсором (первая деталь).
+## Направление ещё не задано — кладём горизонтально, размером в одну доску.
+func _update_first_plank(cursor: Vector3) -> void:
+	_acquire_plank(0, cursor + Vector3.UP * 0.14, 0.0, METERS_PER_PLANK)
+	_hide_planks_from(1)
+
+
+## Тянет РЯД досок-силуэтов от _start к курсору: плитка из _planks_for(d) досок вдоль
+## пролёта (последняя — у курсора, «с другой стороны»). Так игрок видит сам настил, а
+## не абстрактную область.
+func _update_plank_row(start: Vector3, cursor: Vector3) -> void:
+	var to := Vector3(cursor.x - start.x, 0.0, cursor.z - start.z)
+	var d: float = to.length()
+	if d < 0.05:
+		_hide_planks_from(0)
+		return
+	var count: int = _planks_for(d)
+	var step: float = d / float(count)
+	var dir: Vector3 = to / d
+	var rot_y: float = atan2(-dir.z, dir.x)
+	for i in range(count):
+		var center: Vector3 = start + dir * (step * (float(i) + 0.5)) + Vector3.UP * 0.14
+		_acquire_plank(i, center, rot_y, step)
+	_hide_planks_from(count)
+
+
+## Pool-API: переиспользует доску-силуэт по индексу slot (создавая при необходимости).
+## После вызова доска видна, на месте, нужной длины/ориентации.
+func _acquire_plank(slot: int, pos: Vector3, rot_y: float, length: float) -> void:
+	var m: MeshInstance3D = null
+	if slot < _plank_ghosts.size():
+		m = _plank_ghosts[slot]
+		if not is_instance_valid(m):
+			m = _make_plank()
+			_plank_ghosts[slot] = m
+	else:
+		m = _make_plank()
+		_plank_ghosts.append(m)
+	(m.mesh as BoxMesh).size = Vector3(length * 0.92, 0.12, SPAN_HALF_Z * 2.0)
+	m.global_position = pos
+	m.rotation.y = rot_y
+	m.visible = true
+
+
+func _make_plank() -> MeshInstance3D:
 	if _effects_root == null:
 		_effects_root = get_tree().current_scene
-	if _effects_root == null:
-		return
-	if is_instance_valid(_preview):
-		_preview.queue_free()
-	_preview = MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = Vector3(1.0, 0.12, SPAN_HALF_Z * 2.0)  # X масштабируем по длине
-	_preview.mesh = box
+	var m := MeshInstance3D.new()
+	m.mesh = BoxMesh.new()
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = ghost_color
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -188,33 +233,27 @@ func _spawn_preview() -> void:
 	mat.emission_enabled = true
 	mat.emission = Color(ghost_color.r, ghost_color.g, ghost_color.b, 1.0)
 	mat.emission_energy_multiplier = 0.5
-	_preview.material_override = mat
-	_preview.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_effects_root.add_child(_preview)
+	m.material_override = mat
+	m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if _effects_root != null:
+		_effects_root.add_child(m)
+	return m
 
 
-## Тянет превью-настил от _start к курсору (центр, длина, ориентация).
-func _update_preview(cursor: Vector3) -> void:
-	if not is_instance_valid(_preview):
-		return
-	var to := Vector3(cursor.x - _start.x, 0.0, cursor.z - _start.z)
-	var d: float = to.length()
-	if d < 0.05:
-		_preview.visible = false
-		return
-	_preview.visible = true
-	var mid: Vector3 = _start + to * 0.5 + Vector3.UP * 0.14
-	_preview.global_position = mid
-	var dir: Vector3 = to / d
-	_preview.rotation.y = atan2(-dir.z, dir.x)
-	_preview.scale = Vector3(d, 1.0, 1.0)
+## Прячет доски-силуэты с индекса from и дальше (лишние при укорачивании ряда).
+func _hide_planks_from(from: int) -> void:
+	for i in range(from, _plank_ghosts.size()):
+		var m: MeshInstance3D = _plank_ghosts[i]
+		if is_instance_valid(m):
+			m.visible = false
 
 
 func _finish() -> void:
 	_aiming = false
 	_start = Vector3.INF
-	if is_instance_valid(_preview):
-		_preview.queue_free()
-	_preview = null
+	for m in _plank_ghosts:
+		if is_instance_valid(m):
+			m.queue_free()
+	_plank_ghosts.clear()
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
 		_hand.pop_category()

@@ -82,6 +82,14 @@ const WALL_GATE_BLOCK := 1 << 11    # 2048 — bit 11 = layer 12
 ## отличие от parsed_geometry_type=BOTH, который парсил бы и импорт-меши).
 const NAV_CARVE := 1 << 12          # 4096 — bit 12 = layer 13
 
+## Настил-постройка, разрушаемая АТАКАМИ ИГРОКА (мост). Коллайдер настила на ЭТОМ
+## слое: магия/слэм/burn (MASK_HAND_SLAM включает его), а также дэш и щит башни
+## (явный sphere-query по этому слою) находят его и бьют через Damageable. При этом
+## слой НЕ маскируют ни Tower (575 — настил не блокирует ходьбу башни по мосту), ни
+## Skeleton/стрелы (враги мост не ломают), ни Искра (она бьёт только свои группы) —
+## потому «разрушается всем кроме искры» выходит без единого фильтра-исключения.
+const DESTRUCTIBLE_DECK := 1 << 13  # 8192 — bit 13 = layer 14
+
 # Композитные маски — собирай через OR из именованных битов.
 
 ## Hand cursor raycast: пол + предметы + смонтированные модули. Под цели
@@ -114,7 +122,7 @@ const MASK_HAND_TARGETS := ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE | MOUNTED_MO
 ## через бит ITEMS (мина была на ITEMS), но Tower тоже сканирует ITEMS
 ## и физически врезался в мины — пришлось переселить мины на отдельный
 ## слой и явно включить его в этой маске.
-const MASK_HAND_SLAM := ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE | COLD_ENEMY | FRIENDLY_UNIT | MINE_HAZARD          # 1462
+const MASK_HAND_SLAM := ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE | COLD_ENEMY | FRIENDLY_UNIT | MINE_HAZARD | DESTRUCTIBLE_DECK   # 9654
 
 ## «Всё обычное» (без палаток лагеря). Tower / Item / Ground / shatter.
 const MASK_ALL_GAMEPLAY := TERRAIN | ITEMS | ACTORS | PROJECTILES | ENEMIES   # 31

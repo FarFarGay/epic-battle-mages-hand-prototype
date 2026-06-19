@@ -1,4 +1,4 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/gameplay_hud.gd" id="1"]
 
@@ -8,6 +8,34 @@ content_margin_left = 8.0
 content_margin_top = 6.0
 content_margin_right = 8.0
 content_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxFlat" id="SB_bar_bg"]
+bg_color = Color(0, 0, 0, 0.55)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="SB_hp_fill"]
+bg_color = Color(0.8, 0.15, 0.15, 1)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="SB_mana_fill"]
+bg_color = Color(0.2, 0.5, 0.95, 1)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="SB_super_fill"]
+bg_color = Color(1, 0.78, 0.18, 1)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
 
 [node name="GameplayHud" type="CanvasLayer"]
 script = ExtResource("1")
@@ -55,3 +83,156 @@ theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_font_sizes/font_size = 14
 text = "0"
 horizontal_alignment = 2
+
+; --- Панель отрядов (юниты). Двигай/растягивай ЭТОТ узел в редакторе — gameplay_hud.gd
+; кладёт карточки внутрь SquadList. Дефолт: правый столбец под ресурсами/журналом. ---
+[node name="SquadScroll" type="ScrollContainer" parent="."]
+anchor_left = 1.0
+anchor_top = 0.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -300.0
+offset_top = 296.0
+offset_right = -10.0
+offset_bottom = -16.0
+grow_horizontal = 0
+mouse_filter = 2
+horizontal_scroll_mode = 0
+
+[node name="SquadList" type="VBoxContainer" parent="SquadScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+; --- Якоря панелей HUD. Двигай/растягивай ЭТИ узлы в редакторе — gameplay_hud.gd
+; кладёт соответствующий виджет внутрь, заполняя якорь. Так весь HUD позиционируется
+; мышкой, без правок кода. ---
+
+; Бар заклинаний (низ по центру). Полоса во всю ширину снизу, бар центрируется внутри.
+[node name="ActionBarAnchor" type="Control" parent="."]
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -84.0
+offset_bottom = -16.0
+mouse_filter = 2
+
+; HP/MP/сила башни (верх по центру). Бары — реальные узлы (видно/двигаешь в редакторе),
+; код только обновляет value/текст. SuperBar прячется кодом, если великий удар закрыт.
+[node name="TowerStats" type="VBoxContainer" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -120.0
+offset_top = 8.0
+offset_right = 120.0
+offset_bottom = 54.0
+theme_override_constants/separation = 4
+
+[node name="HPBar" type="ProgressBar" parent="TowerStats"]
+custom_minimum_size = Vector2(240, 18)
+theme_override_styles/background = SubResource("SB_bar_bg")
+theme_override_styles/fill = SubResource("SB_hp_fill")
+max_value = 1.0
+value = 1.0
+show_percentage = false
+
+[node name="Label" type="Label" parent="TowerStats/HPBar"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 12
+text = "HP 0/0"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ManaBar" type="ProgressBar" parent="TowerStats"]
+custom_minimum_size = Vector2(240, 18)
+theme_override_styles/background = SubResource("SB_bar_bg")
+theme_override_styles/fill = SubResource("SB_mana_fill")
+max_value = 1.0
+value = 1.0
+show_percentage = false
+
+[node name="Label" type="Label" parent="TowerStats/ManaBar"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 12
+text = "MP 0/0"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SuperBar" type="ProgressBar" parent="TowerStats"]
+custom_minimum_size = Vector2(240, 12)
+theme_override_styles/background = SubResource("SB_bar_bg")
+theme_override_styles/fill = SubResource("SB_super_fill")
+max_value = 1.0
+value = 0.0
+show_percentage = false
+
+[node name="Label" type="Label" parent="TowerStats/SuperBar"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 10
+text = "ВЕЛИКАЯ СИЛА"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+; Цель по золоту (верх по центру).
+[node name="GoldGoalAnchor" type="Control" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -160.0
+offset_top = 8.0
+offset_right = 160.0
+offset_bottom = 100.0
+mouse_filter = 2
+
+; Кнопка журнала (верх справа, под ресурсами). Реальная кнопка — видно/двигаешь в редакторе.
+[node name="JournalButton" type="Button" parent="."]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -160.0
+offset_top = 250.0
+offset_right = -10.0
+offset_bottom = 286.0
+focus_mode = 0
+theme_override_font_sizes/font_size = 14
+text = "📔 журнал [J]"
+
+[node name="Badge" type="Label" parent="JournalButton"]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -22.0
+offset_top = -8.0
+offset_right = -2.0
+offset_bottom = 12.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 12
+text = "0"
+horizontal_alignment = 1
+vertical_alignment = 1
+visible = false
+
+[node name="BG" type="ColorRect" parent="JournalButton/Badge"]
+show_behind_parent = true
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.85, 0.15, 0.15, 1)
+mouse_filter = 2
+
+; Индикатор тревоги (верх справа, под журналом).
+[node name="ModeLabelAnchor" type="Control" parent="."]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -160.0
+offset_top = 296.0
+offset_right = -10.0
+offset_bottom = 322.0
+mouse_filter = 2

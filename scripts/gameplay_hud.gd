@@ -443,6 +443,18 @@ func _refresh_gatherer_mode_buttons(mode: int) -> void:
 ## Update'ы — `_update_action_bar` каждые ACTION_BAR_UPDATE_INTERVAL (0.1с):
 ## active highlight (золотая рамка вокруг текущей equipped способности),
 ## cooldown-dim (~0.35× если can_trigger=false).
+## Привязать процедурный виджет к узлу-ЯКОРЮ из сцены (gameplay_hud.tscn) — дизайнер
+## двигает/растягивает якорь МЫШКОЙ в редакторе, виджет заполняет его. Нет якоря (старая
+## сцена) — фолбэк: добавляем на сам HUD с уже выставленными caller'ом пресетом/офсетами.
+func _attach_panel(widget: Control, anchor_name: StringName) -> void:
+	var anchor := get_node_or_null(NodePath(anchor_name))
+	if anchor != null:
+		widget.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		anchor.add_child(widget)
+	else:
+		add_child(widget)
+
+
 func _build_action_bar() -> void:
 	# Трей показывает только разблокированные заклинания (single source of truth —
 	# SpellSystem). Сейчас открыта только Искра → один слот; великий удар locked →
@@ -458,7 +470,7 @@ func _build_action_bar() -> void:
 	# в gui_get_hovered_control() и Hand.is_pointer_over_ui() блокировал бы
 	# каст заклинаний над всей нижней полосой экрана.
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(center)
+	_attach_panel(center, &"ActionBarAnchor")
 
 	var bar_panel := PanelContainer.new()
 	var bar_stylebox := StyleBoxFlat.new()
@@ -1022,48 +1034,14 @@ func _on_level_up(_level: int) -> void:
 	tween.tween_property(_squad_xp_bar, "modulate", Color.WHITE, 0.2)
 
 
-## Кнопка журнала — крепится к нижнему правому углу HUD'а, под RightPanel.
-## Бэйдж — Label поверх кнопки, виден только когда pending_upgrade_choices > 0.
-## Программно, без правки .tscn.
+## Кнопка журнала — узел JournalButton в сцене (gameplay_hud.tscn): двигаешь/стилизуешь
+## в редакторе. Код только цепляет нажатие и кэширует бэйдж (Badge) для счётчика.
 func _build_journal_button() -> void:
-	_journal_button = Button.new()
-	_journal_button.text = "📔 журнал [J]"
-	_journal_button.focus_mode = Control.FOCUS_NONE
-	_journal_button.custom_minimum_size = Vector2(150, 36)
-	_journal_button.add_theme_font_size_override("font_size", 14)
-	# Под RightPanel (offset_bottom=240 в .tscn) — оставляю 10px зазор.
-	_journal_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_journal_button.offset_left = -160
-	_journal_button.offset_top = 250
-	_journal_button.offset_right = -10
-	_journal_button.offset_bottom = 286
+	_journal_button = get_node_or_null(^"JournalButton") as Button
+	if _journal_button == null:
+		return  # узла нет — кнопка задаётся в gameplay_hud.tscn
 	_journal_button.pressed.connect(_on_journal_button_pressed)
-	add_child(_journal_button)
-
-	# Бэйдж: красный кружок с числом в правом верхнем углу кнопки.
-	_journal_badge = Label.new()
-	_journal_badge.text = "0"
-	_journal_badge.custom_minimum_size = Vector2(20, 20)
-	_journal_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_journal_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_journal_badge.add_theme_font_size_override("font_size", 12)
-	_journal_badge.add_theme_color_override("font_color", Color.WHITE)
-	# Бэйдж получает свой StyleBox через PanelContainer-обёртку — но нам
-	# хватит цветного фона через ColorRect под Label'ом.
-	var bg := ColorRect.new()
-	bg.color = Color(0.85, 0.15, 0.15, 1.0)
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_journal_badge.add_child(bg)
-	_journal_badge.move_child(bg, 0)  # фон под текст
-	_journal_badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_journal_badge.offset_left = -22
-	_journal_badge.offset_top = -8
-	_journal_badge.offset_right = -2
-	_journal_badge.offset_bottom = 12
-	_journal_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_journal_badge.visible = false
-	_journal_button.add_child(_journal_badge)
+	_journal_badge = _journal_button.get_node_or_null(^"Badge") as Label
 
 
 func _on_journal_button_pressed() -> void:
@@ -1093,6 +1071,7 @@ func _open_build_menu(btn: Button) -> void:
 
 func _on_build_menu_id(id: int) -> void:
 	if id == BUILD_MENU_BRIDGE:
+		_cancel_hand_aims(&"bridge")  # вход в планирование моста гасит squad/build aim
 		var hand := _resolve_hand()
 		if hand != null and hand.bridge_aim != null:
 			hand.bridge_aim.start_aim()
@@ -1111,7 +1090,7 @@ func _refresh_mode_label(mode: int) -> void:
 		_mode_label.offset_bottom = 322
 		_mode_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_mode_label.add_theme_font_size_override("font_size", 13)
-		add_child(_mode_label)
+		_attach_panel(_mode_label, &"ModeLabelAnchor")
 	# Акцент только на ALARM. FREE/WORK — спокойные режимы, label скрыт.
 	if mode == Camp.CollectionMode.ALARM:
 		_mode_label.text = "⚠ тревога [V→C сброс]"
@@ -1254,7 +1233,7 @@ func _build_gold_goal() -> void:
 	box.content_margin_top = 6
 	box.content_margin_bottom = 6
 	panel.add_theme_stylebox_override("panel", box)
-	add_child(panel)
+	_attach_panel(panel, &"GoldGoalAnchor")
 	_gold_goal_panel = panel
 
 	var vbox := VBoxContainer.new()
@@ -1428,74 +1407,24 @@ func _on_match_won() -> void:
 
 ## Tower HP/Mana панель сверху по центру. Две полоски с overlay-Label'ами:
 ## красный HP сверху, синяя Mana снизу. Обновления через EventBus.
+## HP/MP/сила башни — узлы TowerStats (HPBar/ManaBar/SuperBar + дочерние Label) в сцене
+## (gameplay_hud.tscn): двигаешь/стилизуешь в редакторе. Код кэширует их и обновляет
+## value/текст. Великий удар закрыт → прячем золотой SuperBar (пустой вводит в заблуждение).
 func _build_tower_stats() -> void:
-	var panel := VBoxContainer.new()
-	panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	# Centered: anchor_top=0, anchor_left=anchor_right=0.5; offset для ширины.
-	var bar_width: int = 240
-	panel.offset_left = -bar_width / 2.0
-	# Вверху по центру (золотой баннер победы убран — место освободилось).
-	panel.offset_top = 8
-	panel.offset_right = bar_width / 2.0
-	panel.offset_bottom = 54
-	panel.add_theme_constant_override("separation", 4)
-	add_child(panel)
-
-	_hp_bar = _make_stat_bar(panel, Color(0.8, 0.15, 0.15, 1.0), bar_width)
-	_hp_label = _make_stat_overlay(_hp_bar, "HP")
-
-	_mana_bar = _make_stat_bar(panel, Color(0.2, 0.5, 0.95, 1.0), bar_width)
-	_mana_label = _make_stat_overlay(_mana_bar, "MP")
-
-	# Великая сила — золотой бар третьим. Высота меньше — это «накопление»,
-	# не run-time ресурс как HP/MP, ему не нужен такой же визуальный вес.
-	# Строится только если великий удар разблокирован (иначе бар-заглушка, который
-	# никогда не наполнится, вводит в заблуждение). _refresh_super_charge guard'ит null.
-	if SpellSystem.is_unlocked(&"super"):
-		_super_bar = _make_stat_bar(panel, Color(1.0, 0.78, 0.18, 1.0), bar_width)
-		_super_bar.custom_minimum_size = Vector2(bar_width, 12)
-		_super_label = _make_stat_overlay(_super_bar, "ВЕЛИКАЯ СИЛА")
-		_super_label.add_theme_font_size_override("font_size", 10)
-
-
-func _make_stat_bar(parent: Control, fill_color: Color, width: int) -> ProgressBar:
-	var bar := ProgressBar.new()
-	bar.custom_minimum_size = Vector2(width, 18)
-	bar.show_percentage = false
-	bar.min_value = 0.0
-	bar.max_value = 1.0
-	bar.value = 1.0
-	# Per-bar StyleBoxFlat для fill — иначе все ProgressBar'ы общие
-	# дефолтные стили и не отличаются цветом.
-	var fill := StyleBoxFlat.new()
-	fill.bg_color = fill_color
-	fill.corner_radius_top_left = 2
-	fill.corner_radius_top_right = 2
-	fill.corner_radius_bottom_left = 2
-	fill.corner_radius_bottom_right = 2
-	bar.add_theme_stylebox_override("fill", fill)
-	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(0.0, 0.0, 0.0, 0.55)
-	bg.corner_radius_top_left = 2
-	bg.corner_radius_top_right = 2
-	bg.corner_radius_bottom_left = 2
-	bg.corner_radius_bottom_right = 2
-	bar.add_theme_stylebox_override("background", bg)
-	parent.add_child(bar)
-	return bar
-
-
-func _make_stat_overlay(bar: ProgressBar, prefix: String) -> Label:
-	var label := Label.new()
-	label.text = prefix + " 0/0"
-	label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_color_override("font_color", Color.WHITE)
-	label.add_theme_font_size_override("font_size", 12)
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.add_child(label)
-	return label
+	var panel := get_node_or_null(^"TowerStats")
+	if panel == null:
+		return  # узлы задаются в gameplay_hud.tscn
+	_hp_bar = panel.get_node_or_null(^"HPBar") as ProgressBar
+	if _hp_bar != null:
+		_hp_label = _hp_bar.get_node_or_null(^"Label") as Label
+	_mana_bar = panel.get_node_or_null(^"ManaBar") as ProgressBar
+	if _mana_bar != null:
+		_mana_label = _mana_bar.get_node_or_null(^"Label") as Label
+	_super_bar = panel.get_node_or_null(^"SuperBar") as ProgressBar
+	if _super_bar != null:
+		_super_label = _super_bar.get_node_or_null(^"Label") as Label
+		if not SpellSystem.is_unlocked(&"super"):
+			_super_bar.visible = false
 
 
 func _refresh_tower_health(current: float, maximum: float) -> void:
@@ -1540,23 +1469,23 @@ func _refresh_super_charge(current: float, maximum: float) -> void:
 func _ensure_squad_panel() -> void:
 	if _squad_panel != null and is_instance_valid(_squad_panel):
 		return
+	# Предпочитаем узлы из сцены (gameplay_hud.tscn: SquadScroll → SquadList) — дизайнер
+	# двигает/растягивает панель МЫШКОЙ в редакторе, без правок кода. Карточки кладём в
+	# SquadList. Нет узла (старая сцена) — создаём процедурно как раньше (фолбэк).
+	_squad_scroll = get_node_or_null(^"SquadScroll")
+	if _squad_scroll != null:
+		_squad_panel = _squad_scroll.get_node_or_null(^"SquadList")
+	if _squad_panel != null and is_instance_valid(_squad_panel):
+		return
 	_squad_scroll = ScrollContainer.new()
-	# PRESET_RIGHT_WIDE — anchor_top=0, anchor_bottom=1: контейнер тянется
-	# на всю высоту экрана. Колонка СЛЕВА от RightPanel (та занимает
-	# x∈[-200,-10] из gameplay_hud.tscn): зазор 10px → offset_right=-210,
-	# ширина 220px → offset_left=-430. До этого squad-панель сидела
-	# в том же x-диапазоне что и RightPanel и буквально перекрывала
-	# счётчики ресурсов.
 	_squad_scroll.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
-	_squad_scroll.offset_left = -430.0
-	_squad_scroll.offset_top = 80.0
-	_squad_scroll.offset_right = -210.0
-	_squad_scroll.offset_bottom = -20.0
+	_squad_scroll.offset_left = -300.0
+	_squad_scroll.offset_top = 296.0
+	_squad_scroll.offset_right = -10.0
+	_squad_scroll.offset_bottom = -16.0
 	_squad_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	# IGNORE на wrapper'е: ScrollContainer по дефолту STOP и ловит hover
-	# в своём rect (полоса в полэкрана справа), из-за чего Hand считал
-	# курсор «над UI» и блокировал каст. Кнопки внутри карточек остаются
-	# STOP (дефолт) и продолжают принимать клики.
+	# IGNORE на wrapper'е: иначе ScrollContainer (STOP по дефолту) ловит hover в своём
+	# rect и Hand считает курсор «над UI», блокируя каст. Кнопки внутри остаются STOP.
 	_squad_scroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_squad_scroll)
 
@@ -1678,8 +1607,13 @@ func _build_squad_card(squad: Squad) -> Control:
 	# Кнопки команд. Назначаем bind через squad-id, в callback резолвим
 	# Camp.get_squads().find(id) — squad-объект мог быть disbanded между
 	# spawn-ом карточки и кликом.
-	var btn_row := HBoxContainer.new()
-	btn_row.add_theme_constant_override("separation", 4)
+	# Сетка 2×N вместо одного ряда: кнопки переносятся на новую строку, а не вылезают
+	# вправо за край панели — карточка влезает в ЛЮБУЮ заданную ширину SquadScroll.
+	var btn_row := GridContainer.new()
+	btn_row.columns = 2
+	btn_row.add_theme_constant_override("h_separation", 4)
+	btn_row.add_theme_constant_override("v_separation", 4)
+	btn_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	btn_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(btn_row)
 
@@ -1726,8 +1660,11 @@ func _build_squad_card(squad: Squad) -> Control:
 	# Tooltip объясняет, что нужно вернуть в лагерь. Refresh state — в
 	# `_refresh_squad_card` (статика на event-ах) и в `_update_squad_cards_dynamic`
 	# (раз в 0.25с — пока юниты идут к лагерю, кнопка переключится сама).
-	var btn_row2 := HBoxContainer.new()
-	btn_row2.add_theme_constant_override("separation", 4)
+	var btn_row2 := GridContainer.new()
+	btn_row2.columns = 2
+	btn_row2.add_theme_constant_override("h_separation", 4)
+	btn_row2.add_theme_constant_override("v_separation", 4)
+	btn_row2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	btn_row2.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(btn_row2)
 	var btn_dismiss := Button.new()
@@ -1888,16 +1825,32 @@ func _update_squad_cards_dynamic() -> void:
 				_apply_defend_state(btn, squad)
 
 
-## Снять выделение: отменяет активный squad-aim («Идти сюда»), рука возвращается
-## к обычным действиям. cancel_aim no-op если ничего не выделено.
-func _on_squad_deselect_pressed() -> void:
+## Сбросить активные aim-режимы руки (squad/build/bridge), КРОМЕ указанного. Новый
+## режим всегда отменяет предыдущий — нельзя одновременно «Идти сюда» и «Стройка».
+## cancel_aim у всех трёх идемпотентен (no-op если режим не активен), потому зовём без
+## проверок. `except`: "squad"|"build"|"bridge" — не трогать этот (для toggle-кнопок).
+func _cancel_hand_aims(except: StringName = &"") -> void:
 	var hand := _resolve_hand()
-	if hand != null and hand.squad_aim != null:
+	if hand == null:
+		return
+	if except != &"squad" and hand.squad_aim != null:
 		hand.squad_aim.cancel_aim()
+	if except != &"build" and hand.build_aim != null:
+		hand.build_aim.cancel_aim()
+	if except != &"bridge" and hand.bridge_aim != null:
+		hand.bridge_aim.cancel_aim()
 
 
-## Вкладка «Стройка» (рабочие) — открыть меню выбора постройки под кнопкой.
+## Снять выделение: гасит ЛЮБОЙ активный aim-режим руки, рука возвращается к обычным
+## действиям. Все cancel_aim — no-op если ничего не активно.
+func _on_squad_deselect_pressed() -> void:
+	_cancel_hand_aims()
+
+
+## Вкладка «Стройка» (рабочие) — открыть меню выбора постройки под кнопкой. Сначала
+## гасим активные aim'ы (squad «Идти сюда» и пр.) — вход в режим стройки отменяет их.
 func _on_squad_build_pressed(btn: Button) -> void:
+	_cancel_hand_aims()
 	_open_build_menu(btn)
 
 
@@ -1918,6 +1871,7 @@ func _on_squad_aim_pressed(squad_id: int) -> void:
 		if LogConfig.master_enabled:
 			print("[HUD:SquadAim]   hand.squad_aim == null — координатор не подключён в hand.tscn")
 		return
+	_cancel_hand_aims(&"squad")  # «Идти сюда» гасит build/bridge aim (toggle squad — ниже)
 	hand.squad_aim.toggle_aim_for(squad)
 	# Обновляем подсветку кнопки.
 	var card: Control = _squad_cards.get(squad_id)
@@ -1929,6 +1883,7 @@ func _on_squad_escort_pressed(squad_id: int) -> void:
 	var squad: Squad = _resolve_squad_by_id(squad_id)
 	if squad == null:
 		return
+	_cancel_hand_aims()  # команда отменяет активный aim-режим
 	# С лагерем — гейт по recall-зоне; без лагеря (комнатный отряд) гейта нет.
 	if is_instance_valid(_camp) and not _camp.is_squad_in_recall_zone(squad):
 		EventBus.squad_recall_ignored.emit(squad)
@@ -1950,6 +1905,7 @@ func _on_squad_repair_pressed(squad_id: int) -> void:
 	var squad: Squad = _resolve_squad_by_id(squad_id)
 	if squad == null:
 		return
+	_cancel_hand_aims()  # команда отменяет активный aim-режим
 	squad.command_escort(true)
 
 
@@ -1959,6 +1915,7 @@ func _on_squad_hide_pressed(squad_id: int) -> void:
 	var squad: Squad = _resolve_squad_by_id(squad_id)
 	if squad == null:
 		return
+	_cancel_hand_aims()  # команда отменяет активный aim-режим
 	squad.command_escort(false, true)
 
 
@@ -1985,6 +1942,7 @@ func _on_squad_defend_pressed(squad_id: int) -> void:
 	var squad: Squad = _resolve_squad_by_id(squad_id)
 	if squad == null or not is_instance_valid(_camp):
 		return
+	_cancel_hand_aims()  # команда отменяет активный aim-режим
 	# Гейт по build-zone: дублируем UI-disabled на случай race'а
 	# (кнопка disabled выставляется реактивно, но между тиками
 	# squad мог уйти за периметр).
@@ -1999,6 +1957,7 @@ func _on_squad_dismiss_pressed(squad_id: int) -> void:
 	var squad: Squad = _resolve_squad_by_id(squad_id)
 	if squad == null or not is_instance_valid(_camp):
 		return
+	_cancel_hand_aims()  # роспуск отменяет активный aim-режим
 	# can_dismiss_squad — внутренний guard, но логируем намерение для отладки.
 	if LogConfig.master_enabled:
 		print("[HUD:Squad] dismiss squad_id=%d (can=%s)" % [squad_id, str(_camp.can_dismiss_squad(squad))])

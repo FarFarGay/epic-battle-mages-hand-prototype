@@ -487,6 +487,7 @@ func _try_start_parry() -> void:
 	# Щит дробит скелетов в зоне (разовый импульс, только скелеты — НЕ мех/гномы).
 	_shield_zap_skeletons()
 	_shield_shatter_scenery()
+	_shield_damage_structures()
 	if debug_log and LogConfig.master_enabled:
 		print("[Tower] парирование: окно открыто (r=%.1f)" % parry_radius)
 
@@ -552,6 +553,27 @@ func _shield_shatter_scenery() -> void:
 			continue
 		if node.has_method(&"on_spark"):
 			node.call(&"on_spark")
+
+
+## Разовый удар щитом по разрушаемым ПОСТРОЙКАМ-настилам (мост) в зоне купола — через
+## Damageable (HP), как магия/дэш. Sphere-query по слою DESTRUCTIBLE_DECK: ничего
+## другого на нём нет, потому це́лит ровно настил. Разово на активацию (не каждый кадр).
+func _shield_damage_structures() -> void:
+	if parry_skeleton_damage <= 0.0:
+		return
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return
+	var shape := SphereShape3D.new()
+	shape.radius = parry_radius
+	var q := PhysicsShapeQueryParameters3D.new()
+	q.shape = shape
+	q.collision_mask = Layers.DESTRUCTIBLE_DECK
+	q.transform = Transform3D(Basis(), _parry_center)
+	for hit in space.intersect_shape(q, 8):
+		var c = hit.get("collider")
+		if c != null and is_instance_valid(c) and Damageable.is_damageable(c):
+			Damageable.try_damage(c, parry_skeleton_damage, HitStop.MEDIUM)
 
 
 func _process(delta: float) -> void:
@@ -816,6 +838,7 @@ func _physics_process(delta: float) -> void:
 			var dspeed: float = super_dash_speed if _dash_is_super else dash_speed
 			velocity.x = _dash_dir.x * dspeed * slow
 			velocity.z = _dash_dir.y * dspeed * slow
+			_dash_try_damage_structures()  # таран рвёт настил-постройки (мост) на пути
 		else:
 			velocity.x = move_dir.x * move_speed * slow
 			velocity.z = move_dir.y * move_speed * slow
@@ -900,6 +923,36 @@ func _dash_damage_enemy(collider: Node) -> void:
 		return  # уже задели этим рывком
 	_dash_hit_set.append(collider)
 	Damageable.try_damage(collider, dmg, HitStop.HEAVY)
+
+
+## Радиус «тарана» дэша по настилам-постройкам (мост): настил НЕ блокирует башню
+## физически (другой слой), потому slide-collision его не ловит — добираем sphere-query.
+const DASH_STRUCTURE_RADIUS := 2.5
+
+## Рывок рвёт разрушаемые настилы (мост) на пути: sphere-query по слою DESTRUCTIBLE_DECK
+## каждый физкадр рывка, каждую цель бьём раз за рывок (_dash_hit_set, как у скелетов).
+func _dash_try_damage_structures() -> void:
+	var dmg: float = super_dash_damage if _dash_is_super else dash_damage
+	if dmg <= 0.0:
+		return
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return
+	var shape := SphereShape3D.new()
+	shape.radius = DASH_STRUCTURE_RADIUS
+	var q := PhysicsShapeQueryParameters3D.new()
+	q.shape = shape
+	q.collision_mask = Layers.DESTRUCTIBLE_DECK
+	q.transform = Transform3D(Basis(), global_position)
+	for hit in space.intersect_shape(q, 8):
+		var c = hit.get("collider")
+		if c == null or not is_instance_valid(c):
+			continue
+		if c in _dash_hit_set:
+			continue
+		if Damageable.is_damageable(c):
+			_dash_hit_set.append(c)
+			Damageable.try_damage(c, dmg, HitStop.HEAVY)
 
 
 func _push_kinematic(target: Node, col: KinematicCollision3D, intended_velocity: Vector3) -> void:
