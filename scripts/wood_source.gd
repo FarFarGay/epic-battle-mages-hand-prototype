@@ -23,6 +23,7 @@ func _ready() -> void:
 	_recenter_on_trunk()
 	if wood_remaining > 0:
 		add_to_group(GNOME_STRIKE_GROUP)
+		add_to_group(Layers.RESOURCE_SOURCE_GROUP)  # area-клик → GATHER
 
 
 ## Точка рубки (origin узла, куда идёт рабочий) ДОЛЖНА совпадать с деревом. В редакторе

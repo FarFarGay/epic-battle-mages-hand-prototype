@@ -39,6 +39,8 @@ func can_gnome_interact(gnome: Node) -> bool:
 
 ## Гном ударил по горшку зарядом (SoldierGnome._strike_at по gnome_strike_target).
 func gnome_hit(_gnome: Node = null) -> void:
+	if _broken:
+		return
 	_break()
 
 

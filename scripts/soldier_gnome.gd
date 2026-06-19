@@ -352,47 +352,151 @@ func deliver_resource() -> int:
 	return t
 
 
-## Поведение рабочего (НЕ комбатант): найти рабочую цель (источник, если руки пусты;
-## стройку, если несёт ресурс) → подойти ПО НАВМЕШУ (обходя пропасть/стены) на
-## дистанцию удара → стукнуть НА МЕСТЕ (gnome_hit, без боевого выпада). Несёт, но
-## стройки рядом нет → сдать на склад башни (копим до капа). Совсем нет работы —
-## встать на слот строя (тоже по навмешу). Так рабочие не улетают в пропасть.
-func _tick_worker(delta: float) -> void:
+## Площадь сбора вокруг work_point: рабочий рубит ЛЮБЫЕ деревья в этом радиусе от
+## указанной точки (а не одно), пока не кончатся — тогда стоит.
+const GATHER_AREA_RADIUS := 8.0
+## Ресурс, которым строится мост (берётся со склада башни при BUILD).
+const BUILD_RESOURCE := ResourcePile.ResourceType.WOOD
+
+
+## Направленная работа рабочего по area-клику (work_kind отряда). Единая модель:
+## ткнул область на цель → идём туда и делаем контекстное действие.
+func _tick_worker_order(delta: float) -> void:
 	if _store_full_ring_cd > 0.0:
 		_store_full_ring_cd -= delta
-	var target: Node3D = _find_interact_target_in_leash()
-	if target != null:
-		var to := Vector3(target.global_position.x - global_position.x, 0.0, target.global_position.z - global_position.z)
-		var d: float = to.length()
-		if d > attack_range:
-			_move_toward(to, d)  # навмеш-шаг (огибает пропасть, не прёт напрямую)
-			return
-		# В упор — стоим и бьём на cooldown'е (рубим источник / кладём доску). Башню
-		# тут НЕ чиним: она исключена из целей без намерения ремонта (can_gnome_interact
-		# гейтит по wants_repair) — обычный «иди сюда» проходит мимо неё. Ремонт — только
-		# через _tick_repair_tower (кнопка / клик по башне), см. _active_tick.
+	if _squad == null:
 		velocity = Vector3.ZERO
-		if d > 0.001:
-			look_at(global_position + to / d, Vector3.UP)
-		if _attack_cd <= 0.0:
-			_strike_at(target)
-			_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max)
 		return
-	# Несём ресурс, но стройки-приёмника рядом нет → относим на склад башни (копим до капа).
+	match _squad.work_kind:
+		Squad.WorkKind.GATHER:
+			_tick_gather(delta)
+		Squad.WorkKind.BUILD:
+			_tick_build(delta)
+		Squad.WorkKind.STRIKE:
+			_tick_strike_order(delta)
+		_:
+			_tick_worker_idle()  # NONE — просто стоим у точки
+
+
+## GATHER: пусто → рубим ближайшее дерево в области work_point; несём → сдаём на склад.
+func _tick_gather(_delta: float) -> void:
 	if is_carrying():
 		_tick_deposit_to_store()
 		return
-	# Нет работы → строимся на слоте режима (HOLD-точка), тоже по навмешу.
+	var tree: Node3D = _nearest_in_group_near(Layers.RESOURCE_SOURCE_GROUP, _squad.work_point, GATHER_AREA_RADIUS)
+	if tree == null:
+		_tick_worker_idle()  # деревья в области кончились — стоим
+		return
+	_approach_and_hit(tree)
+
+
+## BUILD: несём ресурс → кладём в блюпринт; пусто → берём ресурс со склада башни.
+## Склад пуст — стоим у блюпринта (надо сперва насобирать, см. GATHER).
+func _tick_build(_delta: float) -> void:
+	var bridge: Node3D = _squad.work_target if is_instance_valid(_squad.work_target) else null
+	if bridge == null or not bridge.is_in_group(Layers.BUILD_SITE_GROUP):
+		# Достроен/снят: лишний ресурс в руках (взяли со склада, не успели положить) —
+		# вернуть на склад, иначе встать.
+		if is_carrying():
+			_tick_deposit_to_store()
+		else:
+			velocity = Vector3.ZERO
+		return
+	if is_carrying():
+		_approach_and_hit(bridge)  # кладём доску
+		return
+	var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
+	if store != null and int(store.call(&"get_amount", BUILD_RESOURCE)) > 0:
+		_ferry_take_from_store()  # на склад башни за ресурсом
+	else:
+		_approach_point(_tower_center())  # склада нет/пуст — ждём у башни (склада)
+
+
+## STRIKE: разбить/переключить указанную цель (горшок/рычаг). Несём — сперва сдаём.
+func _tick_strike_order(_delta: float) -> void:
+	var target: Node3D = _squad.work_target if is_instance_valid(_squad.work_target) else null
+	if target == null or not target.is_in_group(Layers.GNOME_STRIKE_TARGET_GROUP):
+		velocity = Vector3.ZERO  # разбито/переключено (вышло из группы) — стоим
+		return
+	if is_carrying():
+		_tick_deposit_to_store()
+		return
+	_approach_and_hit(target)
+
+
+## Подойти к цели ПО НАВМЕШУ и стукнуть НА МЕСТЕ на cooldown'е (gnome_hit: рубит/кладёт/
+## разбивает/переключает). Без боевого выпада — рабочий не прошивает точку насквозь.
+func _approach_and_hit(target: Node3D) -> void:
+	var to := Vector3(target.global_position.x - global_position.x, 0.0, target.global_position.z - global_position.z)
+	var d: float = to.length()
+	if d > attack_range:
+		_move_toward(to, d)
+		return
+	velocity = Vector3.ZERO
+	if d > 0.001:
+		look_at(global_position + to / d, Vector3.UP)
+	if _attack_cd <= 0.0:
+		_strike_at(target)
+		_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max)
+
+
+## Идти к точке по навмешу и встать (для idle / ожидания у склада).
+func _approach_point(p: Vector3) -> void:
+	var to := Vector3(p.x - global_position.x, 0.0, p.z - global_position.z)
+	var d: float = to.length()
+	if d <= SQUAD_TARGET_ARRIVAL:
+		velocity = Vector3.ZERO
+		return
+	_move_toward(to, d)
+
+
+## Идём за ресурсом на склад башни: дошёл → берём 1 единицу (BUILD_RESOURCE) в руки.
+func _ferry_take_from_store() -> void:
+	var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
+	if store == null:
+		velocity = Vector3.ZERO
+		return
+	var dest: Vector3 = _tower_center()
+	var to := Vector3(dest.x - global_position.x, 0.0, dest.z - global_position.z)
+	var d: float = to.length()
+	if d > attack_range:
+		_move_toward(to, d)
+		return
+	velocity = Vector3.ZERO
+	if int(store.call(&"get_amount", BUILD_RESOURCE)) > 0 and bool(store.call(&"take", BUILD_RESOURCE, 1)):
+		receive_resource(BUILD_RESOURCE)
+
+
+## Нет работы → строимся на слоте режима (HOLD-точка) по навмешу. Так артель не
+## разбегается, а стоит кучкой у указанной точки.
+func _tick_worker_idle() -> void:
 	if _squad == null or not _has_squad_context():
 		velocity = Vector3.ZERO
 		return
 	var goal: Vector3 = _squad.target_for_member(self, _resolve_squad_center())
-	var to_goal := Vector3(goal.x - global_position.x, 0.0, goal.z - global_position.z)
-	var dist: float = to_goal.length()
-	if dist <= SQUAD_TARGET_ARRIVAL:
-		velocity = Vector3.ZERO
-		return
-	_move_toward(to_goal, dist)
+	_approach_point(goal)
+
+
+## Ближайший узел группы в радиусе r от точки p (XZ), который примет нас сейчас
+## (can_gnome_interact). Для GATHER — ближайшее дерево с ресурсом в области.
+func _nearest_in_group_near(group: StringName, p: Vector3, r: float) -> Node3D:
+	var best: Node3D = null
+	var best_d: float = r * r
+	for n in get_tree().get_nodes_in_group(group):
+		if not is_instance_valid(n):
+			continue
+		var node := n as Node3D
+		if node == null:
+			continue
+		if node.has_method(&"can_gnome_interact") and not node.can_gnome_interact(self):
+			continue
+		var dx: float = node.global_position.x - p.x
+		var dz: float = node.global_position.z - p.z
+		var dd: float = dx * dx + dz * dz
+		if dd < best_d:
+			best_d = dd
+			best = node
+	return best
 
 
 ## Башня повреждена и ждёт ремонта? Сигнал — её членство в gnome_strike_target
@@ -618,10 +722,9 @@ func _active_tick(delta: float) -> void:
 			return
 		if _hidden_in_tower:
 			_exit_hidden()  # сменили на HOLD/строить — выходим наружу
-		# Рабочий НЕ воюет и НЕ делает боевой выпад: он подходит к цели (дерево/мост)
-		# ПО НАВМЕШУ (в обход пропасти) и бьёт НА МЕСТЕ. Боевой charge с lunge'ом
-		# прошивал точку моста насквозь → рабочие улетали в пропасть. См. _tick_worker.
-		_tick_worker(delta)
+		# Направленная работа по area-клику (work_kind): GATHER/BUILD/STRIKE/идти.
+		# Рабочий НЕ воюет и НЕ делает боевой выпад — подходит ПО НАВМЕШУ и бьёт НА МЕСТЕ.
+		_tick_worker_order(delta)
 		return
 
 	# «В башню» для КОПЕЙЩИКОВ (флаг hide_in_tower): прячутся ВНУТРЬ башни (неуязвимы),
@@ -1039,11 +1142,13 @@ func _find_target_in_leash() -> Node3D:
 ## решает, годится ли гном (can_gnome_interact: горшок→can_loot, рычаг→роль).
 ## Ближайшая подходящая. См. [[feedback-symmetric-interactions]].
 func _find_interact_target_in_leash() -> Node3D:
+	# Только КОПЕЙЩИКИ (утварь/рычаги в бою): цель в боевом leash'е от центра строя,
+	# чтобы не убегать от башни. Рабочие сюда не ходят — у них направленный work_order
+	# (см. _tick_worker_order), цели берутся явно по area-клику.
 	var leash_center: Vector3 = _resolve_squad_center()
 	var leash_sq: float = combat_leash_radius * combat_leash_radius
-	var detect_sq: float = enemy_detect_radius * enemy_detect_radius
 	var nearest: Node3D = null
-	var nearest_d_sq: float = detect_sq
+	var nearest_d_sq: float = enemy_detect_radius * enemy_detect_radius
 	for n in get_tree().get_nodes_in_group(Layers.GNOME_STRIKE_TARGET_GROUP):
 		if not is_instance_valid(n):
 			continue

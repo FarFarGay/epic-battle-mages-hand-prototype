@@ -194,11 +194,11 @@ func _commit_aim() -> void:
 	# Lazy-resolve: если в _ready Camp ещё не был в группе, пробуем сейчас.
 	if not is_instance_valid(_camp):
 		_camp = get_tree().get_first_node_in_group(Camp.CAMP_GROUP) as Camp
-	# Клик ЛКМ ПО БАШНЕ отрядом рабочих = команда РЕМОНТА (выйти и чинить, как кнопка
-	# «Ремонт башни»), а не «встать тут». Клик по земле — обычный hold БЕЗ ремонта
-	# (рабочие просто идут на точку; башню без явного намерения не трогают).
-	if _is_tower_click(ground) and _active_squad.soldier_type == SoldierSystem.ROLE_WORKER:
-		_active_squad.command_escort(true)
+	# Рабочий отряд: area-клик = НАПРАВЛЕННОЕ действие по тому, на что ткнул.
+	# Башня → ремонт; блюпринт → строить; ресурс → собирать; горшок/рычаг → разбить/
+	# переключить; пусто → просто идти на точку. Копейщики — обычный hold.
+	if _active_squad.soldier_type == SoldierSystem.ROLE_WORKER:
+		_commit_worker_order(ground)
 	elif is_instance_valid(_camp):
 		_camp.command_squad_hold(_active_squad, ground)
 	else:
@@ -209,6 +209,47 @@ func _commit_aim() -> void:
 	# Sticky: aim НЕ завершается. Игрок может тут же ПКМ в другую точку,
 	# не возвращаясь в HUD. Выход — Esc / повторный клик кнопки / новый
 	# aim для другого squad'а / гибель squad'а.
+
+
+## Радиус, в котором area-клик «цепляет» strike-цель (кольцо прицела + запас).
+const WORK_PICK_RADIUS := 5.0
+
+
+## Рабочий area-клик → понять, на ЧТО ткнул, и выдать work-order. Башня → ремонт;
+## блюпринт → BUILD; ресурс → GATHER; горшок/рычаг → STRIKE; пусто → просто идти.
+func _commit_worker_order(ground: Vector3) -> void:
+	if _is_tower_click(ground):
+		_active_squad.command_escort(true)  # ремонт: выйти, чинить, потом спрятаться
+		return
+	var target := _nearest_strike_target_near(ground, WORK_PICK_RADIUS)
+	if target == null:
+		_active_squad.command_hold(ground)  # просто идти на точку (без работы)
+	elif target.is_in_group(Layers.BUILD_SITE_GROUP):
+		_active_squad.command_work(Squad.WorkKind.BUILD, ground, target)
+	elif target.is_in_group(Layers.RESOURCE_SOURCE_GROUP):
+		_active_squad.command_work(Squad.WorkKind.GATHER, ground, target)
+	else:
+		_active_squad.command_work(Squad.WorkKind.STRIKE, ground, target)  # горшок/рычаг
+
+
+## Ближайшая strike-цель (gnome_strike_target) в радиусе r от точки по XZ, КРОМЕ
+## башни (она по area-клику = ремонт, отдельной веткой).
+func _nearest_strike_target_near(p: Vector3, r: float) -> Node3D:
+	var best: Node3D = null
+	var best_d: float = r * r
+	for n in get_tree().get_nodes_in_group(Layers.GNOME_STRIKE_TARGET_GROUP):
+		if not is_instance_valid(n):
+			continue
+		var node := n as Node3D
+		if node == null or node.is_in_group(&"tower"):
+			continue
+		var dx: float = node.global_position.x - p.x
+		var dz: float = node.global_position.z - p.z
+		var d: float = dx * dx + dz * dz
+		if d < best_d:
+			best_d = d
+			best = node
+	return best
 
 
 ## Курсор реально наведён на коллайдер башни? Луч из камеры по слою ACTORS (там только

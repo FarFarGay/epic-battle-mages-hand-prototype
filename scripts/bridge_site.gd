@@ -43,6 +43,7 @@ func _ready() -> void:
 		add_child(_planks_root)
 	_spawn_ghost()
 	add_to_group(GNOME_STRIKE_GROUP)
+	add_to_group(Layers.BUILD_SITE_GROUP)  # area-клик → BUILD
 
 
 ## Полупрозрачный «чертёж» во всю длину пролёта — видно, ЧТО будет построено,
@@ -108,6 +109,8 @@ func _spawn_plank(i: int) -> void:
 func _finish() -> void:
 	_complete = true
 	remove_from_group(GNOME_STRIKE_GROUP)
+	if is_in_group(Layers.BUILD_SITE_GROUP):
+		remove_from_group(Layers.BUILD_SITE_GROUP)  # достроен — больше не цель BUILD
 	if is_instance_valid(_ghost):
 		_ghost.queue_free()
 		_ghost = null

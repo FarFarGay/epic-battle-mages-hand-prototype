@@ -52,6 +52,17 @@ var soldier_type: StringName = &""
 var icon_color: Color = Color.WHITE
 var members: Array[SoldierGnome] = []
 var state: int = State.HOLDING_POSITION
+## Тип направленной работы рабочих (по area-клику ЛКМ на цель). NONE = просто стоять
+## в точке. GATHER — рубить деревья у work_point и носить на склад. BUILD — строить
+## work_target (блюпринт), беря ресурс со склада. STRIKE — разбить/переключить
+## work_target (горшок/рычаг). Ремонт башни идёт отдельно (repair_intent, см. ниже).
+enum WorkKind { NONE, GATHER, BUILD, STRIKE }
+var work_kind: int = WorkKind.NONE
+## Точка work-приказа (центр области сбора / куда идти).
+var work_point: Vector3 = Vector3.ZERO
+## Конкретная цель для BUILD/STRIKE (блюпринт/горшок/рычаг). Может стать freed —
+## читать через is_instance_valid.
+var work_target: Node3D = null
 ## Намерение «чинить башню» (рабочие): при ESCORTING_TOWER юнит выходит и ЧИНИТ
 ## повреждённую башню (strike), а не прячется; башня цела → прячется (см.
 ## SoldierGnome). Ставит кнопка «Ремонт башни» (command_escort(true)); любая
@@ -126,6 +137,22 @@ func command_hold(pos: Vector3, strict: bool = true) -> void:
 	_strict_move = strict
 	repair_intent = false
 	hide_in_tower = false
+	work_kind = WorkKind.NONE
+	work_target = null
+	state_changed.emit()
+
+
+## Направленная работа рабочих по area-клику: kind (GATHER/BUILD/STRIKE), точка и
+## (для BUILD/STRIKE) конкретная цель. Выводит из башни (HOLDING), не прячет/не чинит.
+func command_work(kind: int, point: Vector3, target: Node3D = null) -> void:
+	state = State.HOLDING_POSITION
+	hold_position = point
+	_strict_move = false
+	repair_intent = false
+	hide_in_tower = false
+	work_kind = kind
+	work_point = point
+	work_target = target
 	state_changed.emit()
 
 
@@ -139,6 +166,8 @@ func command_escort(repair: bool = false, hide: bool = false) -> void:
 	_strict_move = false
 	repair_intent = repair
 	hide_in_tower = hide
+	work_kind = WorkKind.NONE
+	work_target = null
 	state_changed.emit()
 
 
@@ -151,6 +180,8 @@ func command_defend() -> void:
 	_strict_move = false
 	repair_intent = false
 	hide_in_tower = false
+	work_kind = WorkKind.NONE
+	work_target = null
 	state_changed.emit()
 
 

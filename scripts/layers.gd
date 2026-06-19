@@ -225,6 +225,10 @@ const SPARK_TARGET_GROUP := &"spark_target"
 const SHIELD_BREAKABLE_GROUP := &"shield_breakable"
 ## Склад ресурсов башни (room-режим): рабочий сдаёт сюда добытое ⇄ HUD читает запас.
 const TOWER_STORE_GROUP := &"tower_store"
+## Источник ресурса (дерево и т.п.) — area-клик по нему = приказ GATHER (рубить+носить).
+const RESOURCE_SOURCE_GROUP := &"resource_source"
+## Блюпринт стройки (мост и т.п.) — area-клик по нему = приказ BUILD (нести ресурс+класть).
+const BUILD_SITE_GROUP := &"build_site"
 
 
 ## Возвращает true, если в маске установлен бит указанного слоя.
