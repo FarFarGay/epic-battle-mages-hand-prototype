@@ -7,3 +7,8 @@
 # Скачанные архивы текстур (freestylized.com) — download-артефакты.
 # В репо лежат только распакованные PNG, сами .zip не нужны.
 *.zip
+
+# Godot AI — MCP-аддон (дев-инструмент, не часть игры). Включается локально
+# через project.godot ([editor_plugins] + autoload _mcp_game_helper); эти строки
+# держим локально, в репо не коммитим.
+addons/godot_ai/

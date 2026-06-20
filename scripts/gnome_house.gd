@@ -24,6 +24,7 @@ const DIALOG := {
 			{ "label": "Что за хартия?", "next": &"charter", "req": &"unsigned" },
 			{ "label": "Прикупить копейщиков, бэйби.", "next": &"", "effect": &"open_trade", "req": &"signed" },
 			{ "label": "Нанять артель рабочих.", "next": &"", "effect": &"open_trade_workers", "req": &"signed" },
+			{ "label": "Нанять лучников.", "next": &"", "effect": &"open_trade_archers", "req": &"signed" },
 			{ "label": "Кхм. Я пойду.", "next": &"" },
 		],
 	},
@@ -33,6 +34,7 @@ const DIALOG := {
 			{ "label": "Ясно. Так что за хартия?", "next": &"charter", "req": &"unsigned" },
 			{ "label": "Прикупить копейщиков?", "next": &"", "effect": &"open_trade", "req": &"signed" },
 			{ "label": "Нанять рабочих?", "next": &"", "effect": &"open_trade_workers", "req": &"signed" },
+			{ "label": "Нанять лучников?", "next": &"", "effect": &"open_trade_archers", "req": &"signed" },
 			{ "label": "Эм. Ну, бывайте.", "next": &"" },
 		],
 	},
@@ -110,19 +112,23 @@ func _on_dialog_effect(effect_id: StringName) -> void:
 		var charter := get_tree().get_first_node_in_group(&"charter_ui")
 		if charter != null and charter.has_method(&"open"):
 			charter.call_deferred(&"open")
-	elif effect_id == &"open_trade" or effect_id == &"open_trade_workers":
+	elif effect_id == &"open_trade" or effect_id == &"open_trade_workers" or effect_id == &"open_trade_archers":
 		# Артель рабочих под завязку (кап) → гном отшивает флейвором, торг НЕ открываем
-		# (иначе пустой стол «Артель полна»). Копейщиков кап нет — торг как обычно.
+		# (иначе пустой стол «Артель полна»). У копейщиков/лучников капа нет — торг как обычно.
 		if effect_id == &"open_trade_workers" and _workers_at_cap():
 			var dlg := get_tree().get_first_node_in_group(DIALOG_GROUP)
 			if dlg != null and dlg.has_method(&"open"):
 				dlg.call_deferred(&"open", DIALOG, &"workers_full")
 			return
 		# Покупка отряда — открываем торг (deferred, как Хартию). Тип юнита по ветке:
-		# копейщики (open_trade) / рабочие (open_trade_workers).
+		# копейщики (open_trade) / рабочие (open_trade_workers) / лучники (open_trade_archers).
 		var trade := get_tree().get_first_node_in_group(&"trade_ui")
 		if trade != null and trade.has_method(&"open"):
-			var unit_type: StringName = SoldierSystem.ROLE_WORKER if effect_id == &"open_trade_workers" else &"pikeman"
+			var unit_type: StringName = &"pikeman"
+			if effect_id == &"open_trade_workers":
+				unit_type = SoldierSystem.ROLE_WORKER
+			elif effect_id == &"open_trade_archers":
+				unit_type = &"archer_squad"
 			trade.call_deferred(&"open", unit_type)
 
 

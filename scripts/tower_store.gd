@@ -14,6 +14,10 @@ const GROUP := Layers.TOWER_STORE_GROUP
 ## Потолок запаса на каждый материал. CampEconomy.base_cap=60 рассчитан на лагерь;
 ## в комнатах склад скромнее (мост ~3-24 дерева). Дизайнер крутит в инспекторе.
 @export var capacity: int = 30
+## DEBUG: на старте выдать столько КАЖДОГО материала (дерево/камень/железо) для
+## тестов стройки. 0 = выкл. Поднимает кап под себя, чтобы выдача не обрезалась.
+## Перед билдом вернуть в 0.
+@export var debug_start_amount: int = 100
 
 var _econ := CampEconomy.new()
 
@@ -21,6 +25,14 @@ var _econ := CampEconomy.new()
 func _ready() -> void:
 	add_to_group(GROUP)
 	_econ.base_cap = capacity
+	if debug_start_amount > 0:
+		_econ.base_cap = maxi(_econ.base_cap, debug_start_amount)
+		for type in [
+			ResourcePile.ResourceType.WOOD,
+			ResourcePile.ResourceType.STONE,
+			ResourcePile.ResourceType.IRON,
+		]:
+			_econ.add_resource(type, debug_start_amount)  # эмитит resources_changed → HUD
 
 
 ## Сдать на склад до капа. Возвращает СКОЛЬКО реально приняли (0 = склад полон по

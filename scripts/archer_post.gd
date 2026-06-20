@@ -367,9 +367,12 @@ func _physics_process(delta: float) -> void:
 		_scan_timer = TARGET_SCAN_INTERVAL
 		_refresh_target()
 	_attack_timer -= delta
-	if _cached_target != null and is_instance_valid(_cached_target) and _attack_timer <= 0.0:
-		# Голова сама уже доворачивается к цели через _tick_scan_animation
-		# (cached_target → target_yaw), отдельный _aim_head_at не нужен.
+	if _cached_target != null and is_instance_valid(_cached_target) and _attack_timer <= 0.0 \
+			and _is_target_in_attack_zone(_cached_target):
+		# Стреляем ТОЛЬКО когда голова УЖЕ навелась (цель в attack-конусе вокруг
+		# _head_yaw). Детект — 360°, но выстрел ждёт доворота головы
+		# (_tick_scan_animation плавно крутит к цели) — лучник поворачивается к
+		# цели и бьёт, а не палит мгновенно во все стороны.
 		_fire_at(_cached_target)
 		_attack_timer = randf_range(attack_cooldown_min, attack_cooldown_max)
 
@@ -441,12 +444,13 @@ func _refresh_target() -> void:
 	if alarm != null and _is_target_in_attack_range(alarm):
 		_cached_target = alarm
 		return
-	# Приоритет 2: keep current если ещё в зоне.
+	# Приоритет 2: keep current если ещё в attack_radius (360°, БЕЗ конуса) — пост
+	# не бросает цель, пока доворачивает к ней голову.
 	if _cached_target != null and is_instance_valid(_cached_target):
-		if _is_target_in_attack_zone(_cached_target):
+		if _is_target_in_attack_range(_cached_target):
 			return
-	# Приоритет 3: ищем нового через cone-scan.
-	_cached_target = _scan_cone_for_target()
+	# Приоритет 3: ищем ближайшего врага ВОКРУГ (360°, см. _scan_for_target).
+	_cached_target = _scan_for_target()
 
 
 ## True если cached/alarm-target в attack_radius и в attack-конусе вокруг
@@ -479,11 +483,10 @@ func _is_target_in_attack_range(node: Node3D) -> bool:
 	return d_sq > VecUtil.EPSILON_SQ and d_sq <= attack_radius * attack_radius
 
 
-## Cone-scan: ищет ближайшую damageable-цель в attack-конусе вокруг ТЕКУЩЕГО
-## _head_yaw (не _base_yaw). Это значит конус следует за головой — во время
-## плавного доворота от alarm-цели обратно к зоне патруля пост сканирует
-## промежуточные углы и может «подобрать» нового врага по пути.
-func _scan_cone_for_target() -> Node3D:
+## 360°-скан: ближайшая damageable-цель в attack_radius ВОКРУГ поста (без конуса).
+## Пост-часовой видит врагов со всех сторон; голова потом доворачивается к выбранной
+## цели (_tick_scan_animation), и выстрел ждёт доворота (см. _physics_process).
+func _scan_for_target() -> Node3D:
 	var space := get_world_3d().direct_space_state
 	if space == null:
 		return null
@@ -495,8 +498,6 @@ func _scan_cone_for_target() -> Node3D:
 	query.collision_mask = TARGET_MASK
 	query.collide_with_bodies = true
 	var results := space.intersect_shape(query, 32)
-	var head_forward := Vector3(-sin(_head_yaw), 0.0, -cos(_head_yaw))
-	var cos_half := cos(attack_cone_half_angle)
 	var best: Node3D = null
 	var best_dist_sq: float = INF
 	for r in results:
@@ -509,13 +510,7 @@ func _scan_cone_for_target() -> Node3D:
 		var to_t := node.global_position - global_position
 		to_t.y = 0.0
 		var d_sq := to_t.length_squared()
-		if d_sq < VecUtil.EPSILON_SQ:
-			continue
-		var d := sqrt(d_sq)
-		if d > attack_radius:
-			continue
-		var cos_theta: float = to_t.dot(head_forward) / d
-		if cos_theta < cos_half:
+		if d_sq < VecUtil.EPSILON_SQ or d_sq > attack_radius * attack_radius:
 			continue
 		if d_sq < best_dist_sq:
 			best_dist_sq = d_sq

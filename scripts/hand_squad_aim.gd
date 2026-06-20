@@ -41,6 +41,15 @@ const ACTION_AIM_CANCEL := &"ui_cancel"  # Esc — отмена aim'а (Godot-д
 ## Подтверждает игроку «команда ушла, отряд идёт сюда» — нужно потому что
 ## sticky-aim продолжается, и обычный (cursor-ring) сразу уходит за курсором.
 @export var commit_marker_duration: float = 0.6
+## Цвет КОНТУРА зоны добычи вокруг башни. Голубой — тот же язык «зоны», что и
+## у build-зоны лагеря; читается на зелёной траве (зелёный сливался).
+@export var gather_zone_color: Color = Color(0.45, 0.75, 1.0, 0.8)
+## Цвет ЗАЛИВКИ зоны (диск под контуром) — подсветка площади «здесь рабочие
+## могут добывать». Низкая alpha, чтобы не забивать сцену.
+@export var gather_zone_fill_color: Color = Color(0.45, 0.75, 1.0, 0.12)
+## Цвет ВСПЫШКИ зоны при отклонённом приказе (клик по источнику вне радиуса).
+## Заливка коротко краснеет — игрок видит «слишком далеко от башни».
+@export var gather_zone_reject_color: Color = Color(1.0, 0.3, 0.3, 0.5)
 @export var debug_log: bool = true
 
 @export_group("")
@@ -51,6 +60,13 @@ var _camp: Camp
 var _effects_root: Node = null
 var _active_squad: Squad = null
 var _aim_indicator: MeshInstance3D = null
+## Визуал зоны добычи вокруг башни: залитый диск (_zone_fill, видная площадь) +
+## контур-кольцо (_zone_ring) сверху. Видно ТОЛЬКО пока aim активен для РАБОЧЕГО
+## отряда («управляешь строителями»). Башня мобильна → каждый кадр переставляем
+## на её позицию. Клик по источнику вне радиуса отклоняется (диск краснеет,
+## _flash_zone_reject). Чистятся в _finish_aim.
+var _zone_fill: MeshInstance3D = null
+var _zone_ring: MeshInstance3D = null
 
 
 func _ready() -> void:
@@ -102,6 +118,7 @@ func start_aim(squad: Squad) -> void:
 	_active_squad = squad
 	_hand.push_category(Hand.Category.SQUAD_AIM)
 	_spawn_indicator()
+	_spawn_zone_indicator()  # no-op если отряд не рабочий / нет башни
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:SquadAim] aim старт для %s" % str(squad))
 
@@ -133,6 +150,14 @@ func _process(_delta: float) -> void:
 		# Подсветка hostile когда враги в радиусе кольца — игрок видит, что
 		# это указание цели, а не просто перемещение в пустое место.
 		_set_ring_hostile(_has_enemies_in_aim_zone(ground))
+	# Зона добычи следует за башней (WASD двигает башню во время sticky-aim'а).
+	if is_instance_valid(_zone_fill) or is_instance_valid(_zone_ring):
+		var t := _tower_node()
+		if t != null:
+			if is_instance_valid(_zone_fill):
+				_zone_fill.global_position = t.global_position + Vector3.UP * 0.03
+			if is_instance_valid(_zone_ring):
+				_zone_ring.global_position = t.global_position + Vector3.UP * 0.05
 	# Esc — отмена aim'а без команды. UI-гейт не нужен: ui_cancel не должен
 	# использоваться никакой кнопкой HUD'а как клавиатурный shortcut.
 	if Input.is_action_just_pressed(ACTION_AIM_CANCEL):
@@ -227,6 +252,13 @@ func _commit_worker_order(ground: Vector3) -> void:
 	elif target.is_in_group(Layers.BUILD_SITE_GROUP):
 		_active_squad.command_work(Squad.WorkKind.BUILD, ground, target)
 	elif target.is_in_group(Layers.RESOURCE_SOURCE_GROUP):
+		# Зона добычи: нельзя послать рабочих добывать дальше радиуса башни.
+		# Источник вне зоны → приказ отклонён, кольцо краснеет, return.
+		if not _source_in_gather_zone(target):
+			_flash_zone_reject()
+			if debug_log and LogConfig.master_enabled:
+				print("[Hand:SquadAim] GATHER отклонён — источник вне зоны добычи башни")
+			return
 		_active_squad.command_work(Squad.WorkKind.GATHER, ground, target)
 	else:
 		_active_squad.command_work(Squad.WorkKind.STRIKE, ground, target)  # горшок/рычаг
@@ -271,6 +303,7 @@ func _is_tower_click(_ground: Vector3) -> bool:
 
 func _finish_aim() -> void:
 	_clear_indicator()
+	_clear_zone_indicator()
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.SQUAD_AIM:
 		_hand.pop_category()
 	_active_squad = null
@@ -294,6 +327,67 @@ func _clear_indicator() -> void:
 	if is_instance_valid(_aim_indicator):
 		_aim_indicator.queue_free()
 	_aim_indicator = null
+
+
+## Башня сцены (мобильный центр зоны добычи) или null. Через группу — без NodePath,
+## как остальной discovery башни в этом файле.
+func _tower_node() -> Tower:
+	return get_tree().get_first_node_in_group(Tower.GROUP) as Tower
+
+
+## Кольцо зоны добычи спавним ТОЛЬКО для рабочего отряда и только если в сцене
+## есть башня с положительным gather_radius. Иначе no-op (копейщики, легаси-сцены
+## без башни) — зона не для них.
+func _spawn_zone_indicator() -> void:
+	_clear_zone_indicator()
+	if _effects_root == null or not is_instance_valid(_active_squad):
+		return
+	if _active_squad.soldier_type != SoldierSystem.ROLE_WORKER:
+		return
+	var t := _tower_node()
+	if t == null or t.gather_radius <= 0.0:
+		return
+	# Залитый диск (видная площадь) + контур-кольцо сверху (граница).
+	_zone_fill = AoeVisual.spawn_ground_disc(
+		_effects_root, t.global_position, t.gather_radius, gather_zone_fill_color,
+	)
+	_zone_ring = AoeVisual.spawn_ground_ring(
+		_effects_root, t.global_position, t.gather_radius, 0.0, gather_zone_color,
+	)
+
+
+func _clear_zone_indicator() -> void:
+	if is_instance_valid(_zone_fill):
+		_zone_fill.queue_free()
+	_zone_fill = null
+	if is_instance_valid(_zone_ring):
+		_zone_ring.queue_free()
+	_zone_ring = null
+
+
+## Источник внутри радиуса добычи башни? XZ-дистанция от текущей позиции башни.
+## Нет башни / radius<=0 → true (не блокируем в сценах без зоны, напр. легаси-лагерь).
+func _source_in_gather_zone(source: Node3D) -> bool:
+	var t := _tower_node()
+	if t == null or t.gather_radius <= 0.0:
+		return true
+	var dx: float = source.global_position.x - t.global_position.x
+	var dz: float = source.global_position.z - t.global_position.z
+	return dx * dx + dz * dz <= t.gather_radius * t.gather_radius
+
+
+## Красная вспышка ЗАЛИВКИ зоны — приказ на добычу вне радиуса отклонён.
+## Tween возвращает цвет к нейтральной заливке. Заливка — самый заметный
+## элемент зоны, на ней вспышка читается лучше тонкого контура.
+func _flash_zone_reject() -> void:
+	if not is_instance_valid(_zone_fill):
+		return
+	var mat := _zone_fill.material_override as StandardMaterial3D
+	if mat == null:
+		return
+	mat.albedo_color = gather_zone_reject_color
+	var tw := create_tween()
+	tw.tween_property(mat, "albedo_color", gather_zone_fill_color, 0.4)
 
 
 ## True если в этот кадр любой SquadChargeMarker готов «съесть» ЛКМ —

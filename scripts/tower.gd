@@ -59,6 +59,14 @@ signal mana_changed(current: float, maximum: float)
 ## refresh'им knockback каждый физкадр.
 @export var enemy_push_duration: float = 0.2
 
+@export_group("Gather Zone")
+## Радиус зоны добычи вокруг башни (м). Рабочих НЕЛЬЗЯ послать добывать
+## дальше этого радиуса — клик по источнику вне зоны отклоняется. Зона
+## МОБИЛЬНА: считается от текущей позиции башни (WASD), а не от всей карты.
+## Видна как кольцо, пока управляешь рабочим отрядом (HandSquadAim). 0 →
+## зона выключена (нет ограничения, кольцо не рисуется).
+@export var gather_radius: float = 16.0
+
 @export_group("Dash (рывок, Space)")
 ## Скорость броска (м/с) — заметно выше move_speed. Рывок перекрывает обычное
 ## движение на dash_duration.

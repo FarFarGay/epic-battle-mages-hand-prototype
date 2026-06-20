@@ -378,10 +378,16 @@ func _tick_worker_order(delta: float) -> void:
 			_tick_worker_idle()  # NONE — просто стоим у точки
 
 
-## GATHER: пусто → рубим ближайшее дерево в области work_point; несём → сдаём на склад.
+## GATHER: пусто → рубим ближайшее дерево в области work_point; несём → сдаём на склад,
+## а если склад ПОЛОН по типу — роняем кучку (ResourceOrb) ПРЯМО ТУТ, у источника
+## (башня заберёт магнитом, когда освободится место). Не таскаем к башне впустую.
 func _tick_gather(_delta: float) -> void:
 	if is_carrying():
-		_tick_deposit_to_store()
+		var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
+		if store != null and store.is_full(_carried_type):
+			_drop_carried_as_orb()
+		else:
+			_tick_deposit_to_store()
 		return
 	var tree: Node3D = _nearest_in_group_near(Layers.RESOURCE_SOURCE_GROUP, _squad.work_point, GATHER_AREA_RADIUS)
 	if tree == null:
@@ -390,36 +396,106 @@ func _tick_gather(_delta: float) -> void:
 	_approach_and_hit(tree)
 
 
+## Склад полон — роняем несомую единицу кучкой ([ResourceOrb]) на своём месте (у
+## источника). Рядом есть idle-кучка того же типа → вливаем в неё (не плодим), иначе
+## новая. Ношу списываем (deliver_resource). Башня заберёт магнитом, когда будет место.
+func _drop_carried_as_orb() -> void:
+	velocity = Vector3.ZERO
+	var type: int = _carried_type
+	# Слияние с соседней idle-кучкой того же типа.
+	for o in get_tree().get_nodes_in_group(ResourceOrb.GROUP):
+		var orb := o as ResourceOrb
+		if orb == null or not is_instance_valid(orb) or not orb.is_idle():
+			continue
+		if orb.resource_type != type:
+			continue
+		var dx: float = orb.global_position.x - global_position.x
+		var dz: float = orb.global_position.z - global_position.z
+		if dx * dx + dz * dz <= ResourceOrb.MERGE_RADIUS * ResourceOrb.MERGE_RADIUS:
+			orb.add_units(1)
+			deliver_resource()  # ноша ушла в кучку
+			return
+	# Новой кучки рядом нет — спавним.
+	var scene := get_tree().current_scene
+	if scene != null:
+		var orb := ResourceOrb.new()
+		orb.resource_type = type
+		orb.amount = 1
+		scene.add_child(orb)
+		orb.global_position = global_position + Vector3.UP * 0.35
+	deliver_resource()  # ноша ушла в кучку
+
+
 ## Радиус поиска дерева для авто-рубки под мост (склад пуст). Покрывает комнату.
 const BUILD_WOOD_SEARCH_RADIUS := 60.0
 
-## BUILD: несём ресурс → кладём в блюпринт; пусто → берём со склада, а если склад пуст —
-## РУБИМ ближайшее дерево напрямую (замыкаем петлю, иначе артель встаёт у башни и мост
-## не достраивается). Так BUILD самодостаточен: рубит → несёт → кладёт доску.
+## Радиус поиска блюпринтов, если у башни нет зоны (нет башни/gather_radius=0).
+const BUILD_ZONE_FALLBACK_RADIUS := 60.0
+
+## BUILD: достраиваем ВСЕ блюпринты в зоне башни ПО ПОРЯДКУ (ближайший к башне первым).
+## Текущая цель достроена/снята → берём следующую в gather_radius башни. Несём ресурс →
+## кладём; пусто → берём со склада, склад пуст → рубим ближайшее дерево (замыкаем петлю).
+## Зоны нет блюпринтов → сдаём лишнее и встаём.
 func _tick_build(_delta: float) -> void:
-	var bridge: Node3D = _squad.work_target if is_instance_valid(_squad.work_target) else null
-	if bridge == null or not bridge.is_in_group(Layers.BUILD_SITE_GROUP):
-		# Достроен/снят: лишний ресурс в руках (взяли со склада, не успели положить) —
-		# вернуть на склад, иначе встать.
+	var site: Node3D = _squad.work_target if is_instance_valid(_squad.work_target) else null
+	if site == null or not site.is_in_group(Layers.BUILD_SITE_GROUP):
+		# Цель готова/снята — следующий блюпринт в зоне башни (общий для артели: все
+		# гномы детерминированно выбирают ближайший к башне → строят по очереди вместе).
+		site = _next_build_site_in_tower_zone()
+		if site != null:
+			_squad.work_target = site
+	if site == null:
+		# Все блюпринты в зоне построены: лишний ресурс в руках вернуть на склад, иначе встать.
 		if is_carrying():
 			_tick_deposit_to_store()
 		else:
 			velocity = Vector3.ZERO
 		return
 	if is_carrying():
-		_approach_and_hit(bridge)  # кладём доску
+		_approach_and_hit(site)  # кладём ресурс
 		return
 	var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
 	if store != null and int(store.call(&"get_amount", BUILD_RESOURCE)) > 0:
 		_ferry_take_from_store()  # на складе есть запас — несём оттуда
 		return
-	# Склад пуст: рубим ближайший источник дерева напрямую (получим бревно в руки → на
-	# следующем тике понесём к мосту). Источников рядом нет — ждём у моста.
+	# Склад пуст: рубим ближайший источник дерева напрямую (получим ресурс в руки → на
+	# следующем тике понесём к блюпринту). Источников рядом нет — ждём у блюпринта.
 	var tree: Node3D = _nearest_in_group_near(Layers.RESOURCE_SOURCE_GROUP, global_position, BUILD_WOOD_SEARCH_RADIUS)
 	if tree != null:
 		_approach_and_hit(tree)
 	else:
-		_approach_point(bridge.global_position)
+		_approach_point(site.global_position)
+
+
+## Ближайший к БАШНЕ непостроенный блюпринт (BUILD_SITE_GROUP) в её зоне стройки
+## (gather_radius — тот же leash, что у зоны добычи). Детерминирован (по дистанции до
+## башни) — вся артель сходится на одну цель, строя по очереди. Нет башни/зоны → fallback
+## радиус вокруг себя. null = блюпринтов в зоне нет.
+func _next_build_site_in_tower_zone() -> Node3D:
+	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
+	var center: Vector3 = global_position
+	var radius_sq: float = BUILD_ZONE_FALLBACK_RADIUS * BUILD_ZONE_FALLBACK_RADIUS
+	if tower != null:
+		center = tower.global_position
+		var gr: Variant = tower.get(&"gather_radius")
+		var r: float = float(gr) if gr != null else 0.0
+		if r > 0.0:
+			radius_sq = r * r
+	var best: Node3D = null
+	var best_d: float = radius_sq
+	for n in get_tree().get_nodes_in_group(Layers.BUILD_SITE_GROUP):
+		if not is_instance_valid(n):
+			continue
+		var node3d := n as Node3D
+		if node3d == null:
+			continue
+		var dx: float = node3d.global_position.x - center.x
+		var dz: float = node3d.global_position.z - center.z
+		var d: float = dx * dx + dz * dz
+		if d <= best_d:
+			best_d = d
+			best = node3d
+	return best
 
 
 ## STRIKE: разбить/переключить указанную цель (горшок/рычаг). Несём — сперва сдаём.
@@ -1121,20 +1197,14 @@ func _move_toward(to_goal_xz: Vector3, dist: float) -> void:
 ## ENEMY_GROUP — и NEAR, и FAR-LOD враги (в отличие от broad-phase, которая
 ## FAR-Skeleton'ов пропускает). Archer'ы и гиганты — без LOD'а, всегда видимы.
 func _find_target_in_leash() -> Node3D:
-	var leash_center: Vector3 = _resolve_squad_center()
-	var leash_sq: float = combat_leash_radius * combat_leash_radius
+	# БЕЗ зоны-leash'а от центра строя: воюющие юниты вступают в бой по СВОЕМУ радиусу
+	# обнаружения (enemy_detect_radius), не привязаны к зоне (решение юзера 2026-06-21).
 	var detect_sq: float = enemy_detect_radius * enemy_detect_radius
 	var nearest: Enemy = null
 	var nearest_d_sq: float = detect_sq
 	for n in get_tree().get_nodes_in_group(Enemy.ENEMY_GROUP):
 		var enemy := n as Enemy
-		if enemy == null:
-			continue
-		if not is_instance_valid(enemy):
-			continue
-		var dx_l: float = enemy.global_position.x - leash_center.x
-		var dz_l: float = enemy.global_position.z - leash_center.z
-		if dx_l * dx_l + dz_l * dz_l > leash_sq:
+		if enemy == null or not is_instance_valid(enemy):
 			continue
 		var d_sq: float = (enemy.global_position - global_position).length_squared()
 		if d_sq >= detect_sq:

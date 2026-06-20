@@ -120,6 +120,8 @@ var _journal_badge: Label
 ## Меню стройки отряда рабочих (popup, ленивое создание). Пункт «Мост» = BUILD_MENU_BRIDGE.
 var _build_menu: PopupMenu
 const BUILD_MENU_BRIDGE := 0
+const BUILD_MENU_WALL := 1
+const BUILD_MENU_WATCHTOWER := 2
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
 var _resource_labels: Dictionary = {}
@@ -1056,6 +1058,8 @@ func _ensure_build_menu() -> PopupMenu:
 		return _build_menu
 	_build_menu = PopupMenu.new()
 	_build_menu.add_item("🌉 Мост через пропасть", BUILD_MENU_BRIDGE)
+	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.WALL).get("menu_label", "Стена")), BUILD_MENU_WALL)
+	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.WATCHTOWER).get("menu_label", "Сторожевая башня")), BUILD_MENU_WATCHTOWER)
 	_build_menu.id_pressed.connect(_on_build_menu_id)
 	add_child(_build_menu)
 	return _build_menu
@@ -1064,9 +1068,24 @@ func _ensure_build_menu() -> PopupMenu:
 ## Открыть меню стройки под кнопкой «Стройка».
 func _open_build_menu(btn: Button) -> void:
 	var menu := _ensure_build_menu()
+	# Сторожевая башня доступна только при наличии отряда лучников — иначе greyed-out.
+	var tower_idx: int = menu.get_item_index(BUILD_MENU_WATCHTOWER)
+	if tower_idx >= 0:
+		var has_archers: bool = _has_archer_squad()
+		menu.set_item_disabled(tower_idx, not has_archers)
+		var base_label: String = String(RoomBuildings.get_data(RoomBuildings.WATCHTOWER).get("menu_label", "Сторожевая башня"))
+		menu.set_item_text(tower_idx, base_label if has_archers else base_label + " (нужны лучники)")
 	menu.reset_size()
 	menu.position = Vector2i(btn.get_screen_position()) + Vector2i(0, int(btn.size.y))
 	menu.popup()
+
+
+## Есть ли живой лучник (отряд лучников куплен в доме). Гейт сторожевой башни.
+func _has_archer_squad() -> bool:
+	for s in get_tree().get_nodes_in_group(&"soldier"):
+		if is_instance_valid(s) and s.get(&"soldier_type") == &"archer_squad":
+			return true
+	return false
 
 
 func _on_build_menu_id(id: int) -> void:
@@ -1075,6 +1094,18 @@ func _on_build_menu_id(id: int) -> void:
 		var hand := _resolve_hand()
 		if hand != null and hand.bridge_aim != null:
 			hand.bridge_aim.start_aim()
+	elif id == BUILD_MENU_WALL:
+		_cancel_hand_aims(&"place")  # размещение гасит squad/build/bridge aim
+		var hand := _resolve_hand()
+		if hand != null and hand.place_aim != null:
+			hand.place_aim.start_aim(RoomBuildings.WALL)
+	elif id == BUILD_MENU_WATCHTOWER:
+		if not _has_archer_squad():
+			return  # нет лучников — пункт и так greyed, на всякий случай
+		_cancel_hand_aims(&"place")
+		var hand := _resolve_hand()
+		if hand != null and hand.place_aim != null:
+			hand.place_aim.start_aim(RoomBuildings.WATCHTOWER)
 
 
 ## Индикатор режима сбора. Под кнопкой журнала, программно. Зелёный при WORK,
@@ -1825,10 +1856,10 @@ func _update_squad_cards_dynamic() -> void:
 				_apply_defend_state(btn, squad)
 
 
-## Сбросить активные aim-режимы руки (squad/build/bridge), КРОМЕ указанного. Новый
-## режим всегда отменяет предыдущий — нельзя одновременно «Идти сюда» и «Стройка».
-## cancel_aim у всех трёх идемпотентен (no-op если режим не активен), потому зовём без
-## проверок. `except`: "squad"|"build"|"bridge" — не трогать этот (для toggle-кнопок).
+## Сбросить активные aim-режимы руки (squad/build/bridge/place), КРОМЕ указанного.
+## Новый режим всегда отменяет предыдущий — нельзя одновременно «Идти сюда» и «Стройка».
+## cancel_aim идемпотентен (no-op если режим не активен), потому зовём без проверок.
+## `except`: "squad"|"build"|"bridge"|"place" — не трогать этот (для toggle-кнопок).
 func _cancel_hand_aims(except: StringName = &"") -> void:
 	var hand := _resolve_hand()
 	if hand == null:
@@ -1839,6 +1870,8 @@ func _cancel_hand_aims(except: StringName = &"") -> void:
 		hand.build_aim.cancel_aim()
 	if except != &"bridge" and hand.bridge_aim != null:
 		hand.bridge_aim.cancel_aim()
+	if except != &"place" and hand.place_aim != null:
+		hand.place_aim.cancel_aim()
 
 
 ## Снять выделение: гасит ЛЮБОЙ активный aim-режим руки, рука возвращается к обычным

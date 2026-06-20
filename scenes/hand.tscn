@@ -1,4 +1,4 @@
-[gd_scene load_steps=26 format=3]
+[gd_scene load_steps=27 format=3]
 
 [ext_resource type="Script" path="res://scripts/hand.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hand_physical.gd" id="2"]
@@ -15,6 +15,7 @@
 [ext_resource type="Script" path="res://scripts/hand_squad_aim.gd" id="13"]
 [ext_resource type="Script" path="res://scripts/hand_build_aim.gd" id="14_build"]
 [ext_resource type="Script" path="res://scripts/hand_bridge_aim.gd" id="23_bridge"]
+[ext_resource type="Script" path="res://scripts/hand_place_aim.gd" id="24_place"]
 [ext_resource type="Script" path="res://scripts/hand_spell_mine_scatter.gd" id="15_mine_spell"]
 [ext_resource type="PackedScene" path="res://scenes/mine.tscn" id="16_mine_scene"]
 [ext_resource type="PackedScene" path="res://scenes/mine_projectile.tscn" id="17_mine_proj"]
@@ -108,3 +109,6 @@ script = ExtResource("14_build")
 
 [node name="BridgeAim" type="Node" parent="."]
 script = ExtResource("23_bridge")
+
+[node name="PlaceAim" type="Node" parent="."]
+script = ExtResource("24_place")

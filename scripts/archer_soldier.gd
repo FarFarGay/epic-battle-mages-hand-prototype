@@ -164,9 +164,18 @@ func _active_tick(delta: float) -> void:
 	if _attack_cd > 0.0:
 		_attack_cd -= delta
 
+	# «В башню» (hide_in_tower): прячемся ВНУТРЬ башни, как копейщики. ArcherSoldier
+	# переопределяет _active_tick целиком, поэтому ветку пряток дублируем явно (иначе
+	# лучник эскортит, но не заходит внутрь — см. SoldierGnome._active_tick).
+	if _squad != null and _squad.state == Squad.State.ESCORTING_TOWER and _squad.hide_in_tower:
+		_tick_hide_in_tower()
+		return
+	if _hidden_in_tower:
+		_exit_hidden()  # сменили команду на бой/эскорт → выходим из башни
+
 	# Strict-march: дойти до слота. Combat-assist по пути — стрельба в врага
 	# в attack_range без остановки strict-марша (стоим стреляем, потом идём).
-	if _squad != null and _camp != null \
+	if _squad != null and _has_squad_context() \
 			and _squad.state == Squad.State.HOLDING_POSITION \
 			and _squad.is_strict_move() \
 			and not _strict_arrived_at_slot:
@@ -185,8 +194,10 @@ func _active_tick(delta: float) -> void:
 	if _try_fire_at_resolved_target(delta):
 		return
 
-	# Нет цели — squad-positioning (как у pikeman'а).
-	if _squad == null or _camp == null:
+	# Нет цели — squad-positioning (как у pikeman'а). Гейт по _has_squad_context
+	# (camp ИЛИ escort_target=башня) — иначе в комнатах (без Camp) лучник не слушал
+	# бы команды «Идти сюда»/«В башню».
+	if _squad == null or not _has_squad_context():
 		velocity = Vector3.ZERO
 		_facing = _outward_facing()
 		return
