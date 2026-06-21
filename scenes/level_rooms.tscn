@@ -40,6 +40,7 @@
 [ext_resource type="Script" uid="uid://cv0nhq65n6pnb" path="res://scripts/gnome_squad_spawner.gd" id="38_squadspawn"]
 [ext_resource type="Script" uid="uid://cr6su60qs204u" path="res://scripts/wood_source.gd" id="39_wood"]
 [ext_resource type="Script" uid="uid://p2cjfeqpaog8" path="res://scripts/tower_store.gd" id="40_towerstore"]
+[ext_resource type="PackedScene" path="res://scenes/skeleton_stone_thrower.tscn" id="41_8brgo"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -158,6 +159,68 @@ albedo_color = Color(0.24, 0.5, 0.22, 1)
 radius = 1.6
 height = 3.0
 
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_wq2ia"]
+albedo_color = Color(0.5, 0.51, 0.55, 1)
+roughness = 0.95
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_8brgo"]
+albedo_color = Color(0.58, 0.59, 0.62, 1)
+roughness = 0.95
+
+[sub_resource type="BoxMesh" id="BoxMesh_4w2r8"]
+size = Vector3(1.7, 1.4, 1.5)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_5ltah"]
+albedo_color = Color(0.48, 0.49, 0.53, 1)
+roughness = 0.95
+
+[sub_resource type="BoxMesh" id="BoxMesh_mjs4f"]
+size = Vector3(1.3, 1, 1.2)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_xhgmq"]
+albedo_color = Color(0.62, 0.62, 0.66, 1)
+roughness = 0.95
+
+[sub_resource type="BoxMesh" id="BoxMesh_lhsvk"]
+size = Vector3(1.1, 0.9, 1.3)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_2ji6t"]
+albedo_color = Color(0.33, 0.32, 0.34, 1)
+roughness = 0.9
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_w8dvj"]
+albedo_color = Color(0.32, 0.24, 0.2, 1)
+metallic = 0.8
+roughness = 0.4
+emission_enabled = true
+emission = Color(0.95, 0.45, 0.12, 1)
+emission_energy_multiplier = 0.6
+
+[sub_resource type="BoxMesh" id="BoxMesh_11skg"]
+size = Vector3(0.9, 0.8, 0.9)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_jx7x4"]
+albedo_color = Color(0.32, 0.24, 0.2, 1)
+metallic = 0.8
+roughness = 0.4
+emission_enabled = true
+emission = Color(0.95, 0.45, 0.12, 1)
+emission_energy_multiplier = 0.6
+
+[sub_resource type="BoxMesh" id="BoxMesh_o130g"]
+size = Vector3(0.7, 0.6, 0.8)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_vgjc5"]
+albedo_color = Color(0.32, 0.24, 0.2, 1)
+metallic = 0.8
+roughness = 0.4
+emission_enabled = true
+emission = Color(0.95, 0.45, 0.12, 1)
+emission_energy_multiplier = 0.6
+
+[sub_resource type="BoxMesh" id="BoxMesh_utu4w"]
+size = Vector3(0.8, 0.6, 0.7)
+
 [node name="LevelRooms" type="Node3D" unique_id=169599323]
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=411368344]
@@ -209,9 +272,6 @@ coverage_target_path = NodePath("../Ground/GroundMesh")
 
 [node name="Room1" type="Node3D" parent="." unique_id=1436589507]
 
-[node name="WallNorth" parent="Room1" unique_id=1700252984 instance=ExtResource("6_wall")]
-transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -14)
-
 [node name="WallEast" parent="Room1" unique_id=1661610944 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, 18, 0, 0)
 
@@ -239,13 +299,13 @@ mesh = SubResource("BoxMesh_door")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 shape = SubResource("BoxShape3D_door")
 
+[node name="WallNorth" parent="Room1" unique_id=1671344303 instance=ExtResource("6_wall")]
+transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -14)
+
 [node name="Room2" type="Node3D" parent="." unique_id=489139874]
 
 [node name="WallEast" parent="Room2" unique_id=1304910471 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, 18, 0, 28)
-
-[node name="WallWest" parent="Room2" unique_id=2126545282 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, -18, 0, 28)
 
 [node name="WallSouthLeft" parent="Room2" unique_id=1785490701 instance=ExtResource("6_wall")]
 transform = Transform3D(3.625, 0, 0, 0, 1, 0, 0, 0, 1, -11.25, 0, 42)
@@ -271,6 +331,9 @@ shape = SubResource("BoxShape3D_door")
 [node name="SparkDiode" parent="Room2" unique_id=27003064 instance=ExtResource("25_diode")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 38)
 target_path = NodePath("../MetalDoor")
+
+[node name="WallWest" parent="Room2" unique_id=2108775321 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, -18, 0, 28)
 
 [node name="Room3" type="Node3D" parent="." unique_id=455955113]
 
@@ -585,3 +648,304 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -26, 0, 81)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -22, 0, 88)
 
 [node name="StartMenu" parent="." unique_id=606901594 instance=ExtResource("20_startmenu")]
+
+[node name="Room6" type="Node3D" parent="." unique_id=1386067645]
+
+[node name="WallEast" parent="Room6" unique_id=1321794723 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 92, 0, 112)
+
+[node name="WallSouth" parent="Room6" unique_id=382709928 instance=ExtResource("6_wall")]
+transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 126)
+
+[node name="Room8" type="Node3D" parent="." unique_id=1097619881]
+
+[node name="WallEast" parent="Room8" unique_id=1747620114 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 92, 0, 84)
+
+[node name="WallNorthLeft" parent="Room8" unique_id=460791204 instance=ExtResource("6_wall")]
+transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, 62.5, 0, 42.999996)
+
+[node name="WallNorthRight" parent="Room8" unique_id=1809837513 instance=ExtResource("6_wall")]
+transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, 84.5, 0, 42.999996)
+
+[node name="WallWestNorth" parent="Room8" unique_id=445282470 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 20, 55, 0, 75)
+
+[node name="WallWestSouth" parent="Room8" unique_id=801119437 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 20, 55, 0, 93)
+
+[node name="DoorWest" type="StaticBody3D" parent="Room8" unique_id=640944273 groups=["hand_immune", "navmesh_source", "room_door", "slam_damage_immune"]]
+transform = Transform3D(-3.6199901e-06, 0, 1, 0, 1, 0, -1, 0, -3.6199901e-06, 55, 0, 84)
+collision_layer = 544
+collision_mask = 0
+script = ExtResource("21_door")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Room8/DoorWest" unique_id=1972501582]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+material_override = SubResource("Material_door")
+mesh = SubResource("BoxMesh_door")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room8/DoorWest" unique_id=1273752055]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("BoxShape3D_door")
+
+[node name="Room9" type="Node3D" parent="." unique_id=960184648]
+
+[node name="WallWest" parent="Room9" unique_id=1373108981 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 55, 0, 56)
+
+[node name="WallEastNorth" parent="Room9" unique_id=1347871448 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 92, 0, 48.625)
+
+[node name="WallEastSouth" parent="Room9" unique_id=1018263733 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 92, 0, 63.375)
+
+[node name="Room10" type="Node3D" parent="." unique_id=427054087]
+
+[node name="WallNorth" parent="Room10" unique_id=12947699 instance=ExtResource("6_wall")]
+transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 110.5, 0, 48.5)
+
+[node name="WallSouth" parent="Room10" unique_id=1849406209 instance=ExtResource("6_wall")]
+transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 110.5, 0, 75)
+
+[node name="WallEast" parent="Room10" unique_id=780198487 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 129, 0, 61.6)
+
+[node name="Room11" type="Node3D" parent="." unique_id=1942734947]
+
+[node name="WallNorth" parent="Room11" unique_id=1728392868 instance=ExtResource("6_wall")]
+transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 70)
+
+[node name="WallSouth" parent="Room11" unique_id=834258109 instance=ExtResource("6_wall")]
+transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 98)
+
+[node name="GnomeHouseB" parent="." unique_id=1635103079 instance=ExtResource("28_gnomehouse")]
+transform = Transform3D(0.49999997, 0, -0.86602545, 0, 1, 0, 0.86602545, 0, 0.49999997, 89.07775, 0, 98.28968)
+dialog_enabled = true
+dialog_id = &"b"
+
+[node name="GnomeHouseC" parent="." unique_id=663119585 instance=ExtResource("28_gnomehouse")]
+transform = Transform3D(0.087155804, 0, -0.9961947, 0, 1, 0, 0.9961947, 0, 0.087155804, 88.227936, 0, 103.06302)
+dialog_enabled = true
+dialog_id = &"c"
+
+[node name="GnomeHouseD" parent="." unique_id=560907591 instance=ExtResource("28_gnomehouse")]
+transform = Transform3D(-0.64278764, 0, -0.76604444, 0, 1, 0, 0.76604444, 0, -0.64278764, 87.46241, 0, 107.551765)
+dialog_enabled = true
+dialog_id = &"d"
+
+[node name="PotsExtra" type="Node3D" parent="." unique_id=2134956298]
+
+[node name="PotBigRoom6" parent="PotsExtra" unique_id=1484983746 instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 112)
+coin_count = 5
+gold_per_coin = 20
+
+[node name="PotBigRoom10" parent="PotsExtra" unique_id=201098503 instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 110.5, 0, 56)
+coin_count = 5
+gold_per_coin = 20
+
+[node name="PotSmallRoom8" parent="PotsExtra" unique_id=838520210 instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 84)
+coin_count = 4
+
+[node name="PotSmallRoom9" parent="PotsExtra" unique_id=926210572 instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 56)
+coin_count = 4
+
+[node name="PotSmallRoom11" parent="PotsExtra" unique_id=321399225 instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 84)
+coin_count = 4
+
+[node name="PotBigRoom11" parent="PotsExtra" unique_id=66298528 instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0, 88)
+coin_count = 5
+gold_per_coin = 20
+
+[node name="PotSmallRoom8b" parent="PotsExtra" unique_id=1013685539 instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 68, 0, 90)
+coin_count = 4
+
+[node name="PotSmallRoom10" parent="PotsExtra" unique_id=724953693 instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 115, 0, 62)
+coin_count = 4
+
+[node name="ResWood2" type="Node3D" parent="." unique_id=410355176]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 88, 0, 76)
+script = ExtResource("39_wood")
+wood_remaining = 33
+
+[node name="Trunk" type="MeshInstance3D" parent="ResWood2" unique_id=655693401]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 7)
+material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
+
+[node name="Foliage" type="MeshInstance3D" parent="ResWood2" unique_id=130695335]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 7)
+material_override = SubResource("Mat_foliage")
+mesh = SubResource("Sph_foliage")
+
+[node name="ResWood3" type="Node3D" parent="." unique_id=1274661069]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 59, 0, 48)
+script = ExtResource("39_wood")
+wood_remaining = 33
+
+[node name="Trunk" type="MeshInstance3D" parent="ResWood3" unique_id=543069422]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 7)
+material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
+
+[node name="Foliage" type="MeshInstance3D" parent="ResWood3" unique_id=1300676327]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 7)
+material_override = SubResource("Mat_foliage")
+mesh = SubResource("Sph_foliage")
+
+[node name="ResStone2" type="Node3D" parent="." unique_id=238538709]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 88, 0, 81)
+script = ExtResource("39_wood")
+resource_type = 2
+wood_remaining = 33
+
+[node name="Trunk" type="MeshInstance3D" parent="ResStone2" unique_id=1818173772]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
+visible = false
+material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
+
+[node name="Foliage" type="MeshInstance3D" parent="ResStone2" unique_id=210179987]
+transform = Transform3D(1.15, 0, 0, 0, 0.2, 0, 0, 0, 1.15, 0, 0.28, 0)
+material_override = SubResource("StandardMaterial3D_wq2ia")
+mesh = SubResource("Sph_foliage")
+
+[node name="RockA" type="MeshInstance3D" parent="ResStone2" unique_id=67852862]
+transform = Transform3D(0.91652817, -0.09920122, 0.38747287, 0.14869158, 0.98383135, -0.09983342, -0.37130436, 0.14911409, 0.9164595, 0.6, 0.7, 0.4)
+material_override = SubResource("StandardMaterial3D_8brgo")
+mesh = SubResource("BoxMesh_4w2r8")
+
+[node name="RockB" type="MeshInstance3D" parent="ResStone2" unique_id=938562938]
+transform = Transform3D(0.8183951, -0.110475466, -0.5639368, 0.099708654, 0.9937607, -0.04997917, 0.5659397, -0.015326679, 0.82430416, -0.9, 0.5, 0.6)
+material_override = SubResource("StandardMaterial3D_5ltah")
+mesh = SubResource("BoxMesh_mjs4f")
+
+[node name="RockC" type="MeshInstance3D" parent="ResStone2" unique_id=52359755]
+transform = Transform3D(0.6255199, 0.06258905, 0.77769375, 0.04961975, 0.9915679, -0.119712204, -0.7786288, 0.11347133, 0.61713976, 0.7, 0.45, -0.8)
+material_override = SubResource("StandardMaterial3D_xhgmq")
+mesh = SubResource("BoxMesh_lhsvk")
+
+[node name="ResStone3" type="Node3D" parent="." unique_id=1550360469]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 59, 0, 53)
+script = ExtResource("39_wood")
+resource_type = 2
+wood_remaining = 33
+
+[node name="Trunk" type="MeshInstance3D" parent="ResStone3" unique_id=44124497]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
+visible = false
+material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
+
+[node name="Foliage" type="MeshInstance3D" parent="ResStone3" unique_id=2041594999]
+transform = Transform3D(1.15, 0, 0, 0, 0.2, 0, 0, 0, 1.15, 0, 0.28, 0)
+material_override = SubResource("StandardMaterial3D_wq2ia")
+mesh = SubResource("Sph_foliage")
+
+[node name="RockA" type="MeshInstance3D" parent="ResStone3" unique_id=1295710635]
+transform = Transform3D(0.91652817, -0.09920122, 0.38747287, 0.14869158, 0.98383135, -0.09983342, -0.37130436, 0.14911409, 0.9164595, 0.6, 0.7, 0.4)
+material_override = SubResource("StandardMaterial3D_8brgo")
+mesh = SubResource("BoxMesh_4w2r8")
+
+[node name="RockB" type="MeshInstance3D" parent="ResStone3" unique_id=2032214686]
+transform = Transform3D(0.8183951, -0.110475466, -0.5639368, 0.099708654, 0.9937607, -0.04997917, 0.5659397, -0.015326679, 0.82430416, -0.9, 0.5, 0.6)
+material_override = SubResource("StandardMaterial3D_5ltah")
+mesh = SubResource("BoxMesh_mjs4f")
+
+[node name="RockC" type="MeshInstance3D" parent="ResStone3" unique_id=2057702983]
+transform = Transform3D(0.6255199, 0.06258905, 0.77769375, 0.04961975, 0.9915679, -0.119712204, -0.7786288, 0.11347133, 0.61713976, 0.7, 0.45, -0.8)
+material_override = SubResource("StandardMaterial3D_xhgmq")
+mesh = SubResource("BoxMesh_lhsvk")
+
+[node name="ResIron2" type="Node3D" parent="." unique_id=1578154131]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 88, 0, 86)
+script = ExtResource("39_wood")
+resource_type = 3
+wood_remaining = 33
+
+[node name="Trunk" type="MeshInstance3D" parent="ResIron2" unique_id=1616756595]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
+visible = false
+material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
+
+[node name="Foliage" type="MeshInstance3D" parent="ResIron2" unique_id=805112473]
+transform = Transform3D(1.15, 0, 0, 0, 0.2, 0, 0, 0, 1.15, 0, 0.28, 0)
+material_override = SubResource("StandardMaterial3D_2ji6t")
+mesh = SubResource("Sph_foliage")
+
+[node name="OreA" type="MeshInstance3D" parent="ResIron2" unique_id=1566679878]
+transform = Transform3D(0.8882368, -0.035492957, 0.45801273, 0.18979606, 0.9362934, -0.29552022, -0.4183454, 0.34942093, 0.83838665, 0.5, 0.5, 0.3)
+material_override = SubResource("StandardMaterial3D_w8dvj")
+mesh = SubResource("BoxMesh_11skg")
+
+[node name="OreB" type="MeshInstance3D" parent="ResIron2" unique_id=1064422968]
+transform = Transform3D(0.7251535, -0.25154006, -0.64099926, 0.24616797, 0.9640719, -0.09983342, 0.6430815, -0.085398935, 0.7610212, -0.6, 0.4, 0.5)
+material_override = SubResource("StandardMaterial3D_jx7x4")
+mesh = SubResource("BoxMesh_o130g")
+
+[node name="OreC" type="MeshInstance3D" parent="ResIron2" unique_id=1687212873]
+transform = Transform3D(0.5542926, 0.11239907, 0.82469755, 0.0978434, 0.9751704, -0.19866933, -0.82655084, 0.19081217, 0.5295322, 0.6, 0.4, -0.6)
+material_override = SubResource("StandardMaterial3D_vgjc5")
+mesh = SubResource("BoxMesh_utu4w")
+
+[node name="ResIron3" type="Node3D" parent="." unique_id=243854509]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 59, 0, 58)
+script = ExtResource("39_wood")
+resource_type = 3
+wood_remaining = 33
+
+[node name="Trunk" type="MeshInstance3D" parent="ResIron3" unique_id=779411599]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
+visible = false
+material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
+
+[node name="Foliage" type="MeshInstance3D" parent="ResIron3" unique_id=565126434]
+transform = Transform3D(1.15, 0, 0, 0, 0.2, 0, 0, 0, 1.15, 0, 0.28, 0)
+material_override = SubResource("StandardMaterial3D_2ji6t")
+mesh = SubResource("Sph_foliage")
+
+[node name="OreA" type="MeshInstance3D" parent="ResIron3" unique_id=207443871]
+transform = Transform3D(0.8882368, -0.035492957, 0.45801273, 0.18979606, 0.9362934, -0.29552022, -0.4183454, 0.34942093, 0.83838665, 0.5, 0.5, 0.3)
+material_override = SubResource("StandardMaterial3D_w8dvj")
+mesh = SubResource("BoxMesh_11skg")
+
+[node name="OreB" type="MeshInstance3D" parent="ResIron3" unique_id=1034715296]
+transform = Transform3D(0.7251535, -0.25154006, -0.64099926, 0.24616797, 0.9640719, -0.09983342, 0.6430815, -0.085398935, 0.7610212, -0.6, 0.4, 0.5)
+material_override = SubResource("StandardMaterial3D_jx7x4")
+mesh = SubResource("BoxMesh_o130g")
+
+[node name="OreC" type="MeshInstance3D" parent="ResIron3" unique_id=57563979]
+transform = Transform3D(0.5542926, 0.11239907, 0.82469755, 0.0978434, 0.9751704, -0.19866933, -0.82655084, 0.19081217, 0.5295322, 0.6, 0.4, -0.6)
+material_override = SubResource("StandardMaterial3D_vgjc5")
+mesh = SubResource("BoxMesh_utu4w")
+
+[node name="SkeletonFillerR6" type="Node3D" parent="." unique_id=1129011248]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 20
+area_center = Vector3(73.5, 0, 112)
+
+[node name="SkeletonFillerR8" type="Node3D" parent="." unique_id=1267277578]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 20
+area_center = Vector3(73.5, 0, 84)
+
+[node name="SkeletonFillerR9" type="Node3D" parent="." unique_id=489102522]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 20
+area_center = Vector3(73.5, 0, 56)
+
+[node name="StoneThrowerTest" parent="." unique_id=990126243 instance=ExtResource("41_8brgo")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 3, 84)

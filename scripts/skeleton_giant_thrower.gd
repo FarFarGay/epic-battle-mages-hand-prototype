@@ -39,6 +39,10 @@ var _hit_punch_tween: Tween = null
 func _ready() -> void:
 	super._ready()
 	add_to_group(GIANT_GROUP)
+	# Тяжёлый, как melee-гигант: обычный таран башни его НЕ берёт — только
+	# СУПЕР-рывок (плюс AoE/магия). Семантическая группа, не хардкод по типу.
+	# Наследуется и каменщиком-россыпью ([SkeletonStoneThrower]).
+	add_to_group(&"super_dash_only")
 	add_to_group(FogOfWar.FOG_REVEAL_GROUP)
 	_ensure_thrower_material()
 	if _mesh:

@@ -13,10 +13,15 @@ const DIALOG_GROUP := &"dialog_ui"
 ## Радиус (XZ) вокруг домика, в котором рука может «поговорить» по ЛКМ.
 @export var engage_radius: float = 3.2
 @export var highlight_color: Color = Color(0.95, 0.85, 0.4)
+## Какой диалог у этого домика — ключ в [DIALOGS]. У каждого дома СВОЙ id, чтобы
+## реплики не дублировались. Дефолт — текущий «Загадочный». Новые дома (b/c/d) —
+## заглушки, контент наполним позже.
+@export var dialog_id: StringName = &"mysterious"
 
-## Дерево диалога поселения. Узлы: text + choices [{label, next, effect?}].
+## Реестр диалогов поселения по dialog_id. Узлы: text + choices [{label, next, effect?}].
 ## next пустой → закрыть. effect (опц.) → DialogUI.effect_selected.
-const DIALOG := {
+const DIALOGS := {
+	&"mysterious": {
 	&"root": {
 		"text": "Гном в бархатном жилете щурится из дверей: «О, прив-е-ет, {name}! Это ты уделал ту костлявую дылду-переростка? Гру́вно. Просто шага-делик, йе-е! Заходи, котик, потолкуем о деле.» (крутит бёдрами и подмигивает обоими глазами по очереди)",
 		"choices": [
@@ -53,6 +58,10 @@ const DIALOG := {
 			{ "label": "Понял-понял. Я пошёл.", "next": &"" },
 		],
 	},
+	},
+	&"b": { &"root": { "text": "[Гномий дом B — диалог наполним позже.]", "choices": [ { "label": "Бывай.", "next": &"" } ] } },
+	&"c": { &"root": { "text": "[Гномий дом C — диалог наполним позже.]", "choices": [ { "label": "Бывай.", "next": &"" } ] } },
+	&"d": { &"root": { "text": "[Гномий дом D — диалог наполним позже.]", "choices": [ { "label": "Бывай.", "next": &"" } ] } },
 }
 
 var _hand: Hand = null
@@ -101,7 +110,7 @@ func _process(_delta: float) -> void:
 		if dlg != null and dlg.has_method(&"open"):
 			if not dlg.is_connected(&"effect_selected", _on_dialog_effect):
 				dlg.connect(&"effect_selected", _on_dialog_effect)
-			dlg.call(&"open", DIALOG, &"root")
+			dlg.call(&"open", _dialog(), &"root")
 
 
 ## Обработка эффектов веток диалога (DialogUI.effect_selected).
@@ -118,7 +127,7 @@ func _on_dialog_effect(effect_id: StringName) -> void:
 		if effect_id == &"open_trade_workers" and _workers_at_cap():
 			var dlg := get_tree().get_first_node_in_group(DIALOG_GROUP)
 			if dlg != null and dlg.has_method(&"open"):
-				dlg.call_deferred(&"open", DIALOG, &"workers_full")
+				dlg.call_deferred(&"open", _dialog(), &"workers_full")
 			return
 		# Покупка отряда — открываем торг (deferred, как Хартию). Тип юнита по ветке:
 		# копейщики (open_trade) / рабочие (open_trade_workers) / лучники (open_trade_archers).
@@ -143,6 +152,11 @@ func _workers_at_cap() -> bool:
 		if is_instance_valid(s) and s.get(&"soldier_type") == SoldierSystem.ROLE_WORKER:
 			count += 1
 	return count >= cap
+
+
+## Диалог этого домика по dialog_id (fallback — «mysterious», если id неизвестен).
+func _dialog() -> Dictionary:
+	return DIALOGS.get(dialog_id, DIALOGS[&"mysterious"])
 
 
 func _resolve_hand() -> Hand:

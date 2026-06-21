@@ -86,6 +86,15 @@ const ACTION_BAR_FIXED_SUPER: Dictionary = {
 	"category_str": "SUPER", "type": -1,
 }
 
+## Щит (парирование, parry) — фиксированный слот, не draggable. Своя клавиша Q
+## (project.godot `parry`). Показывает заряды (3 подряд) пипсами + тускнеет на
+## длинном кулдауне. Состояние читается из Tower (parry_charges / recharge).
+const ACTION_BAR_FIXED_SHIELD: Dictionary = {
+	"key": "Q", "name": "Щит",
+	"color": Color(0.5, 0.9, 1.0),
+	"category_str": "SHIELD", "type": -1,
+}
+
 @export_node_path("Camp") var camp_path: NodePath
 
 ## Счётчик собирателей переехал в gatherer card (squad_panel, см.
@@ -94,6 +103,8 @@ const ACTION_BAR_FIXED_SUPER: Dictionary = {
 @onready var _vbox: VBoxContainer = $RightPanel/Margin/VBox
 
 var _camp: Camp
+## Кэш башни — источник состояния щита (parry_charges / recharge) для слота щита.
+var _tower_ref: Tower = null
 var _update_timer: float = 0.0
 ## Squad XP UI — построен программно, чтобы не править gameplay_hud.tscn.
 ## Структура: Icon (золото) + Label "ур. N" + ProgressBar с XP/threshold.
@@ -501,13 +512,15 @@ func _build_action_bar() -> void:
 		_action_slots.append(_build_action_slot(i, true))
 	# Фиксированный Super-слот — только если великий удар разблокирован.
 	if SpellSystem.is_unlocked(&"super"):
-		_action_slots.append(_build_action_slot(_slot_assignments.size(), false))
+		_action_slots.append(_build_action_slot(_action_slots.size(), false, ACTION_BAR_FIXED_SUPER))
+	# Щит (parry) — фиксированный слот, всегда (клавиша Q). Заряды/кулдаун из Tower.
+	_action_slots.append(_build_action_slot(_action_slots.size(), false, ACTION_BAR_FIXED_SHIELD))
 
 
 ## Один слот action bar'а. slot_idx — место в _action_slots; draggable=true
 ## для 0..4 (используют _slot_assignments[idx] как ability_id), false для
 ## Super (использует ACTION_BAR_FIXED_SUPER).
-func _build_action_slot(slot_idx: int, draggable: bool) -> Dictionary:
+func _build_action_slot(slot_idx: int, draggable: bool, fixed_meta: Dictionary = {}) -> Dictionary:
 	var slot_panel := PanelContainer.new()
 	var slot_stylebox := StyleBoxFlat.new()
 	slot_stylebox.bg_color = COLOR_SLOT_BG
@@ -556,6 +569,9 @@ func _build_action_slot(slot_idx: int, draggable: bool) -> Dictionary:
 	var slot: Dictionary = {
 		"slot_idx": slot_idx,
 		"draggable": draggable,
+		# Для non-draggable слотов (super/щит) — их meta-запись. Draggable берут meta
+		# из _slot_assignments по slot_idx.
+		"fixed_meta": fixed_meta,
 		"panel": slot_panel,
 		"stylebox": slot_stylebox,
 		"icon": icon,
@@ -584,8 +600,8 @@ func _refresh_slot_visuals(slot: Dictionary) -> void:
 		meta = ABILITY_META.get(ability_id, {})
 		key_text = "%d" % (slot_idx + 1)
 	else:
-		meta = ACTION_BAR_FIXED_SUPER
-		key_text = ACTION_BAR_FIXED_SUPER.key
+		meta = slot.fixed_meta
+		key_text = String(meta.get("key", ""))
 	(slot.icon as ColorRect).color = meta.get("color", Color.WHITE)
 	(slot.key_label as Label).text = key_text
 	(slot.name_label as Label).text = meta.get("name", "—")
@@ -597,6 +613,10 @@ func _update_action_bar() -> void:
 	var hand := _resolve_hand()
 	for slot in _action_slots:
 		var meta: Dictionary = _slot_meta(slot)
+		# Щит — своя отрисовка: заряды пипсами + тускнение на длинном кулдауне.
+		if meta.get("category_str", "") == "SHIELD":
+			_update_shield_slot(slot, meta)
+			continue
 		var is_active: bool = _meta_is_active(hand, meta)
 		var is_ready: bool = _meta_is_ready(hand, meta)
 
@@ -925,7 +945,7 @@ func _slot_meta(slot: Dictionary) -> Dictionary:
 	if slot.draggable:
 		var ability_id: StringName = _slot_assignments[slot.slot_idx]
 		return ABILITY_META.get(ability_id, {})
-	return ACTION_BAR_FIXED_SUPER
+	return slot.fixed_meta
 
 
 func _meta_is_active(hand: Hand, meta: Dictionary) -> bool:
@@ -973,6 +993,68 @@ func _meta_has_mana(slot: Dictionary, meta: Dictionary) -> bool:
 	var ability_id: StringName = _slot_assignments[slot.slot_idx]
 	var lvl: Dictionary = SpellSystem.get_current_level_data(ability_id)
 	return _current_mana >= float(lvl.get("mana_cost", 0.0))
+
+
+## Кэш башни (источник состояния щита). Лениво по группе.
+func _resolve_tower() -> Tower:
+	if _tower_ref != null and is_instance_valid(_tower_ref):
+		return _tower_ref
+	_tower_ref = get_tree().get_first_node_in_group(Tower.GROUP) as Tower
+	return _tower_ref
+
+
+## Отрисовка слота щита: иконка полным цветом при наличии зарядов, иначе тускнеет
+## (идёт длинный кулдаун). Имя-лейбл = пипсы зарядов: ● на заряд, ○ на потраченный
+## (наглядно «3 подряд»).
+func _update_shield_slot(slot: Dictionary, meta: Dictionary) -> void:
+	var tower := _resolve_tower()
+	var charges: int = 0
+	var maxc: int = 0
+	var recharge: float = 1.0
+	if tower != null:
+		charges = tower.parry_charges()
+		maxc = tower.parry_max_charges
+		recharge = tower.parry_recharge_fraction()
+	var stylebox: StyleBoxFlat = slot.stylebox
+	stylebox.border_color = COLOR_SLOT_BORDER_NORMAL
+	stylebox.set_border_width_all(2)
+	var icon: ColorRect = slot.icon
+	var base: Color = meta.get("color", Color.WHITE)
+	if charges > 0:
+		# Есть заряды — иконка полным цветом, заливка-кулдаун скрыта.
+		icon.color = base
+		_set_shield_cd_fill(slot, base, 0.0, false)
+	else:
+		# Длинный кулдаун: фон тусклый, поверх — заливка снизу вверх по прогрессу
+		# (parry_recharge_fraction 0→1) — кулдаун «заполняется постепенно».
+		icon.color = Color(base.r * 0.22, base.g * 0.22, base.b * 0.22, 1.0)
+		_set_shield_cd_fill(slot, base, recharge, true)
+	var pips: String = ""
+	for i in range(maxc):
+		pips += "●" if i < charges else "○"
+	(slot.name_label as Label).text = pips
+
+
+## Заливка-кулдаун поверх иконки щита: ColorRect-оверлей, растущий снизу вверх на
+## долю frac (0..1). Лениво создаётся как ребёнок иконки и кешируется в slot.cd_fill.
+func _set_shield_cd_fill(slot: Dictionary, color: Color, frac: float, show: bool) -> void:
+	var fill: ColorRect = slot.get("cd_fill")
+	if fill == null or not is_instance_valid(fill):
+		fill = ColorRect.new()
+		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		(slot.icon as Control).add_child(fill)
+		slot["cd_fill"] = fill
+	if not show:
+		fill.visible = false
+		return
+	fill.visible = true
+	fill.color = color
+	var icon: Control = slot.icon
+	var h: float = icon.size.y if icon.size.y > 1.0 else 48.0
+	var w: float = icon.size.x if icon.size.x > 1.0 else 48.0
+	var fh: float = h * clampf(frac, 0.0, 1.0)
+	fill.position = Vector2(0.0, h - fh)
+	fill.size = Vector2(w, fh)
 
 
 func _process(delta: float) -> void:

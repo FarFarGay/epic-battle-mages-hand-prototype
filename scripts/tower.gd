@@ -116,8 +116,14 @@ signal mana_changed(current: float, maximum: float)
 ## Длительность активного окна отражения (сек). Короткое — награждает реакцию на
 ## телеграф/подлёт снаряда, а не зажатие.
 @export var parry_window: float = 0.25
-## Кулдаун между парированиями (сек) — нельзя спамить, надо ловить момент.
+## Короткий gap между КАСТАМИ щита (сек) — чтобы три заряда шли отдельными нажатиями,
+## а не в один кадр. Это НЕ длинный кулдаун (см. parry_recharge_time).
 @export var parry_cooldown: float = 1.5
+## Сколько щитов можно поднять ПОДРЯД, прежде чем уйти в длинный кулдаун.
+@export var parry_max_charges: int = 3
+## Длинный кулдаун (сек) ПОСЛЕ того как израсходованы все заряды — затем заряды
+## разом восстанавливаются до parry_max_charges.
+@export var parry_recharge_time: float = 8.0
 ## Радиус ловли снарядов (м, 360° вокруг башни). Достаточно большой, чтобы отбить
 ## на подлёте, но не вся карта.
 @export var parry_radius: float = 6.0
@@ -199,6 +205,12 @@ var _kb_until_msec: int = 0
 ## Парирование: до какого msec активно окно отражения и когда снова готово.
 var _parry_active_until_msec: int = 0
 var _parry_cd_until_msec: int = 0
+## Заряды щита: можно поднять parry_max_charges подряд (короткий gap между ними),
+## затем — длинный кулдаун (_parry_recharge_until_msec), по истечении заряды
+## восстанавливаются разом. Init = parry_max_charges в _ready.
+var _parry_charges: int = 3
+## msec до конца ДЛИННОГО кулдауна (после трат всех зарядов). 0 = не в нём.
+var _parry_recharge_until_msec: int = 0
 ## Центр зоны ловли — фиксируется в точке каста (не едет за башней). Совпадает с
 ## куполом-визуалом: «развернул барьер здесь», снаряды в этом круге отлетают.
 var _parry_center: Vector3 = Vector3.ZERO
@@ -262,6 +274,7 @@ func _ready() -> void:
 	add_to_group(&"navmesh_source")
 	hp = max_hp
 	mana = 0.0  # старт с пустой маной — копится регеном / XP-орбами
+	_parry_charges = parry_max_charges  # старт с полным набором зарядов щита
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
 	destroyed.connect(func() -> void: EventBus.tower_destroyed.emit())
@@ -480,10 +493,17 @@ func _try_start_parry() -> void:
 	if not parry_enabled or _dying:
 		return
 	var now: int = Time.get_ticks_msec()
+	_refill_parry_charges(now)
 	if now < _parry_cd_until_msec:
-		return
+		return  # короткий gap между подряд-кастами
+	if _parry_charges <= 0:
+		return  # все заряды израсходованы — ждём длинный кулдаун
 	if not Input.is_action_just_pressed("parry"):
 		return
+	# Тратим заряд. Когда ушёл последний — стартуем длинный кулдаун.
+	_parry_charges -= 1
+	if _parry_charges <= 0:
+		_parry_recharge_until_msec = now + int(parry_recharge_time * 1000.0)
 	_parry_active_until_msec = now + int(parry_window * 1000.0)
 	_parry_cd_until_msec = now + int(parry_cooldown * 1000.0)
 	_parry_center = global_position  # фиксируем зону ловли в точке каста (= купол)
@@ -498,6 +518,33 @@ func _try_start_parry() -> void:
 	_shield_damage_structures()
 	if debug_log and LogConfig.master_enabled:
 		print("[Tower] парирование: окно открыто (r=%.1f)" % parry_radius)
+
+
+## Восстанавливает заряды щита РАЗОМ, когда длинный кулдаун истёк. Зовётся и из
+## _try_start_parry (по нажатию), и continuous из _physics_process — чтобы HUD
+## видел восстановление даже без нажатия.
+func _refill_parry_charges(now: int) -> void:
+	if _parry_recharge_until_msec > 0 and now >= _parry_recharge_until_msec:
+		_parry_charges = parry_max_charges
+		_parry_recharge_until_msec = 0
+
+
+## --- Публичный API щита для HUD ---
+
+## Сколько зарядов щита доступно сейчас (0..parry_max_charges).
+func parry_charges() -> int:
+	return _parry_charges
+
+
+## Прогресс длинного кулдауна 0..1 (1 = заряды есть/готов). <1 — идёт recharge.
+func parry_recharge_fraction() -> float:
+	if _parry_charges > 0 or _parry_recharge_until_msec <= 0:
+		return 1.0
+	var remaining: float = float(_parry_recharge_until_msec - Time.get_ticks_msec())
+	var total: float = parry_recharge_time * 1000.0
+	if total <= 0.0:
+		return 1.0
+	return clampf(1.0 - remaining / total, 0.0, 1.0)
 
 
 ## Пока окно активно — отражаем каждый вражеский снаряд (Reflectable.GROUP) в
@@ -915,14 +962,17 @@ func _push_item(item: Item, col: KinematicCollision3D, intended_velocity: Vector
 	item.apply_central_impulse(push_dir * v_diff * item.mass * ratio * push_strength)
 
 
-## Таран рывком: урон скелету при контакте во время дэша. Только скелеты (мех
-## исключён, как у щита); каждого бьём раз за рывок (_dash_hit_set). Обычные гибнут.
+## Таран рывком: урон ЛЮБОМУ врагу при контакте во время дэша (мех исключён,
+## как у щита); каждого бьём раз за рывок (_dash_hit_set). Обычные гибнут.
+## Гейт по ENEMY_GROUP, не SKELETON_GROUP: melee-only был асимметрией — лучники
+## и каменщики-метатели (extends Archer) в SKELETON_GROUP не входят, и таран их
+## не брал. Тот же сдвиг к ENEMY_GROUP уже сделан у гномов/руки (см. их коммент).
 func _dash_damage_enemy(collider: Node) -> void:
 	var dmg: float = super_dash_damage if _dash_is_super else dash_damage
 	if dmg <= 0.0 or collider == null:
 		return
-	if not collider.is_in_group(Skeleton.SKELETON_GROUP):
-		return  # таран бьёт только скелетов
+	if not collider.is_in_group(Enemy.ENEMY_GROUP):
+		return  # таран бьёт только врагов
 	if collider.is_in_group(EnemyMech.MECH_GROUP):
 		return  # меха рывком не давим
 	if not _dash_is_super and collider.is_in_group(&"super_dash_only"):

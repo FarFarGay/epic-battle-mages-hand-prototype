@@ -1,0 +1,67 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/skeleton_stone_thrower.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/giant_stone.tscn" id="2"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_stonethrower"]
+radius = 0.5
+height = 4.4
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_stonethrower"]
+radius = 0.5
+height = 4.4
+
+[node name="SkeletonStoneThrower" type="CharacterBody3D"]
+collision_layer = 16
+collision_mask = 2087
+script = ExtResource("1")
+hp = 240.0
+move_speed = 4.0
+knockback_resistance = 0.2
+attack_range = 35.0
+attack_damage = 0.0
+attack_cooldown = 1.4
+attack_windup = 0.7
+attack_windup_point_blank = 0.7
+attack_radius_max = 34.0
+attack_radius_min = 16.0
+vision_radius = 42.0
+retreat_speed_factor = 0.9
+arrow_speed = 24.0
+arrow_spawn_offset = Vector3(0, 2.2, 0)
+arrow_inaccuracy_radius = 1.0
+shatter_fragment_count = 14
+shatter_lifetime = 3.0
+shatter_color = Color(0.5, 0.46, 0.42, 1)
+debug_log = true
+stone_scene = ExtResource("2")
+has_telegraph = true
+telegraph_radius = 7.0
+telegraph_color = Color(1, 0.45, 0.15, 0.85)
+volley_count = 30
+volley_scatter_radius = 7.0
+volley_sweep_time = 0.7
+rock_aoe_radius = 1.6
+rock_damage_min = 5.0
+rock_damage_max = 9.0
+rock_scale = 0.6
+rock_gravity = 14.0
+rock_marker_color = Color(1, 0.5, 0.15, 0.85)
+dodge_detect_radius = 6.0
+dodge_cooldown = 1.6
+dodge_dash_speed = 9.0
+dodge_dash_duration = 0.16
+death_explosion_radius = 7.0
+death_explosion_damage = 130.0
+death_explosion_knockback = 8.0
+death_explosion_shake = 0.7
+strafe_speed_factor = 0.8
+range_tolerance = 2.5
+reposition_jitter = 4.0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("CapsuleShape3D_stonethrower")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+mesh = SubResource("CapsuleMesh_stonethrower")
+cast_shadow = 0
