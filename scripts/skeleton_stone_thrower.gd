@@ -306,6 +306,8 @@ func _on_destroyed() -> void:
 			Color(1.0, 0.5, 0.2, 0.9), 0.25)
 	if death_explosion_shake > 0.0:
 		EventBus.camera_shake.emit(death_explosion_shake, pos)
+	# Та же маска, что у камней залпа: башня/гномы/палисад + ENEMIES — взрыв
+	# косит и обычных скелетов рядом (симметрично атаке метателя).
 	AoeDamage.apply_uniform(get_tree(), pos, death_explosion_radius,
-		Layers.MASK_HOSTILE_PROJECTILE & ~Layers.TERRAIN,
+		(Layers.MASK_HOSTILE_PROJECTILE & ~Layers.TERRAIN) | Layers.ENEMIES,
 		death_explosion_damage, death_explosion_knockback, 0.3)

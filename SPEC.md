@@ -52,6 +52,7 @@ hand_gameplay_prot/
 │   ├── skeleton_archer.tscn   — скелет-лучник (kite-AI, фиолетовый)
 │   ├── skeleton_giant.tscn    — гигант-танк, идёт на Tower, AOE-slam
 │   ├── skeleton_giant_thrower.tscn — каменщик-гигант, ranged AOE, бросает камень с телеграфом
+│   ├── skeleton_stone_thrower.tscn — каменщик-бомбардир, россыпь ~30 камней по дуге + взрыв на смерти
 │   ├── giant_stone.tscn       — снаряд каменщика
 │   ├── archer_group.tscn      — координатор группы из 4 лучников (волейный залп по точке)
 │   ├── enemy_arrow.tscn       — стрела вражеского лучника
@@ -118,6 +119,7 @@ hand_gameplay_prot/
     ├── skeleton_archer.gd      — class_name SkeletonArcher extends Skeleton (kite-AI, baseline для thrower'а)
     ├── skeleton_giant.gd       — class_name SkeletonGiant extends Skeleton (Tower-hunter, AOE-slam)
     ├── skeleton_giant_thrower.gd — class_name SkeletonGiantThrower extends SkeletonArcher (Tower-hunter ranged, GiantStone)
+    ├── skeleton_stone_thrower.gd — class_name SkeletonStoneThrower extends SkeletonGiantThrower (бомбардир: россыпь камней, динамика, взрыв на смерти, §5.5.3.5)
     ├── enemy_mech.gd           — class_name EnemyMech extends SkeletonArcher (апекс-враг башни; супер-залп, парируемые снаряды, §5.16.1)
     ├── mech_charge_fx.gd       — class_name MechChargeFx (телеграф зарядки супер-залпа меха)
     ├── giant_stone.gd          — class_name GiantStone (AOE-impact камень; Reflectable)
@@ -1134,7 +1136,7 @@ static func spawn(
 
 **Hit-feedback:** `_on_self_damaged` зовёт `HitPunch.punch(_mesh, _hit_punch_tween, 1.18)` (см. §3 общий helper). `peak=1.18` мягче дефолтных 1.25 — гигант массивный, заметный squash смотрится мультяшно. + `HitFlash.flash(_mesh)` (короткий красный flash).
 
-**Группы:** `&"skeleton_giant"` (общая для обоих гигантов — HUD/cheat карточка считает их одним типом) + `&"enemy"` + `&"damageable"` + `&"fog_reveal"`. **НЕ** в `&"skeleton"` (наследует от Archer, не Skeleton — нет boids/target_load).
+**Группы:** `&"skeleton_giant"` (общая для обоих гигантов — HUD/cheat карточка считает их одним типом) + `&"super_dash_only"` (тяжёлый — обычный таран/щит не берут, только супер-рывок; добавлено 2026-06-22, см. §5.16.2) + `&"enemy"` + `&"damageable"` + `&"fog_reveal"`. **НЕ** в `&"skeleton"` (наследует от Archer, не Skeleton — нет boids/target_load).
 
 #### 5.5.3.4 ArcherGroup — `scenes/archer_group.tscn`, `scripts/archer_group.gd` (2026-05-22)
 
@@ -1162,6 +1164,41 @@ static func spawn(
 **WaveDirector / cheat-интеграция.** Cheat-кнопка «Призвать группу лучников» (JournalPanel → читы) → `wave_director.cheat_spawn_archer_group()`. Группа спавнится **с явной позицией ДО `add_child`** (`group.position = origin` перед `add_child` — иначе `archer._ready` дёргает `global_position` пока group ещё в (0,0,0), и все archers рождаются в центре карты).
 
 **Зависимости:** `SkeletonArcher` (members), `AoeVisual.spawn_ground_ring` (common ring). Не привязан к Wave/Camp/Tower — просто спавнит archer'ов и координирует их через приватные поля.
+
+#### 5.5.3.5 SkeletonStoneThrower — `scenes/skeleton_stone_thrower.tscn`, `scripts/skeleton_stone_thrower.gd` (2026-06-22)
+
+**Тип корня:** `CharacterBody3D` с `class_name SkeletonStoneThrower`. **Наследник `SkeletonGiantThrower`** (→ `SkeletonArcher` → `Enemy`) — переиспользует готовый Tower-приоритет (`_resolve_target`), `GIANT_GROUP`/`FOG_REVEAL`, knockback-резист и shatter лучника. Override только: `_perform_strike` (залп вместо одного валуна), `_kite_to_range`/`_on_state_enter` (динамичный танец), `_ai_step` (рывок-уворот), `_on_destroyed` (взрыв), material.
+
+**Концепция:** третий вариант босса-ranged — **бомбардир**. Если `SkeletonGiantThrower` кидает ОДИН тяжёлый валун, метатель сыплет **россыпь ~30 мелких камней по дуге** в зону башни «росчерком». Каждый камень падает в свою точку, каждая точка заранее отмечена кольцом на земле. Уворачивается от магии хуже гиганта (по нему реально попасть). На смерти — **мощный взрыв** по башне и всему вокруг (выгодно убивать издалека). По дизайну (2026-06-22) он **динамичный, как и башня**: не залипает на одной дистанции и кружит вокруг цели.
+
+**Параметры (через `.tscn`):**
+- `hp = 240.0` (как `SkeletonGiant`), `knockback_resistance = 0.2`, размер капсулы `radius=0.5 / height=4.4` (точь-в-точь melee-гигант).
+- `move_speed = 4.0` (быстрый — для динамики), `retreat_speed_factor = 0.9`.
+- `attack_range = 35`, `attack_radius_min = 16`, `attack_radius_max = 34` — широкая полоса дистанций.
+- `attack_cooldown = 1.4`, `attack_windup = 0.7` — бьёт ЧАСТО (vs `SkeletonGiantThrower` 3.0/1.2).
+- `arrow_speed = 24`, `arrow_spawn_offset = (0, 2.2, 0)`, `arrow_inaccuracy_radius = 1.0` (центр зоны почти на башне; разброс даёт сам залп).
+- `has_telegraph = true`, `telegraph_radius = 7.0` (= `volley_scatter_radius`) — broad-кольцо WINDUP'а показывает всю опасную зону; точечные маркеры на лету — куда сядет каждый камень.
+- **Залп:** `volley_count = 30`, `volley_scatter_radius = 7.0`, `volley_sweep_time = 0.7`. Камень: `rock_aoe_radius = 1.6`, `rock_damage_min/max = 5/9`, `rock_scale = 0.6`, `rock_gravity = 14`, `rock_marker_color = (1, 0.5, 0.15, 0.85)`.
+- **Динамика:** `strafe_speed_factor = 0.8`, `range_tolerance = 2.5`, `reposition_jitter = 4.0`.
+- **Уворот (хуже гиганта):** `dodge_detect_radius = 6` (vs 8), `dodge_cooldown = 1.6` (vs 0.7), `dodge_dash_speed = 9`, `dodge_dash_duration = 0.16` (рывок ≈1.4м vs гигантских ≈2.9м).
+- **Взрыв на смерти:** `death_explosion_radius = 7`, `death_explosion_damage = 130`, `death_explosion_knockback = 8`, `death_explosion_shake = 0.7`.
+- `shatter_fragment_count = 14`, `shatter_color = (0.5, 0.46, 0.42)`.
+
+**Визуал:** shared static material `_shared_stone_thrower_material` — пыльно-серый body `Color(0.5, 0.46, 0.42)` с горячей красно-оранжевой emission `(1.0, 0.4, 0.12) × 0.7` («начинён камнями, вот-вот рванёт»; отличает от серо-каменного `SkeletonGiantThrower` и багряного `SkeletonGiant`).
+
+**Залп (`_perform_strike` override → корутина `_spawn_volley`).** Центр зоны = `_telegraphed_aim` (зафиксирован broad-кольцом в WINDUP), fallback на `target.global_position`. `_spawn_volley` высевает `volley_count` камней со стаггером `volley_sweep_time / volley_count` (эффект проходящего залпа, не мгновенной кучи); гард `is_instance_valid(self)` после каждого `await` — метатель мог погибнуть посреди росчерка. `_spawn_one_rock`: per-instance ужатый `GiantStone` (`aoe_radius`/`damage`/`gravity` мелкие, mesh `scale=0.6` через дочерний `MeshInstance3D` — на root нельзя, `look_at` снаряда стирает scale), точка падения uniform в диске `volley_scatter_radius` (`sqrt(rand)`), + точечный `AoeVisual.spawn_ground_ring` с длительностью ≈ времени полёта. **AOE-маска камня** per-instance = `(MASK_HOSTILE_PROJECTILE & ~TERRAIN) | ENEMIES` — камни бьют башню/гномов/палисад **и обычных скелетов** (общий `giant_stone.tscn` не трогаем, чтобы не менять одиночного гиганта-каменщика).
+
+**Динамичный танец (`_kite_to_range` override).** На входе в APPROACH `_pick_new_approach()` выбирает НОВУЮ `_desired_range` в `[attack_radius_min, attack_radius_max]` + сторону обхода `_strafe_sign` + сдвиг `formation_offset` в диске `reposition_jitter` (меняет и угол). Движение — ДУГОЙ: радиаль к ошибке дистанции + касательный обход (`strafe_speed_factor`). Стреляет, как только в `range_tolerance` от выбранного радиуса. Итог: каждый выстрел с новой дистанции и точки, путь кружащий, не «встал в кольцо и замер».
+
+**Уворот (`_ai_step` override).** Сверху обычной ranged-логики — короткий рывок от ближайшего `player_projectile` (порт `_scan_threat`/`_start_evade` из `SkeletonGiant`), но «хуже»: поздно замечает, редко готов, прыгает недалеко (см. `dodge_*`). Single-target Искра нередко всё равно цепляет, AoE перекрывает гарантированно.
+
+**Взрыв на смерти (`_on_destroyed` override).** `super._on_destroyed()` (shatter лучника) + `AoeVisual.spawn_explosion` + `spawn_expanding_ring` + `EventBus.camera_shake`. Урон — `AoeDamage.apply_uniform` маской `(MASK_HOSTILE_PROJECTILE & ~TERRAIN) | ENEMIES` в `death_explosion_radius`: косит башню, гномов, палисад **и скелетов**.
+
+**Тяжёлый (наследует `super_dash_only` от `SkeletonGiantThrower`).** Обычный таран башни его НЕ берёт — только СУПЕР-рывок (+ AoE/магия), как melee-гигант. См. §5.16.2 (гейт тарана сменён на `ENEMY_GROUP`).
+
+**Группы:** `&"skeleton_giant"` + `&"super_dash_only"` + `&"enemy"` + `&"damageable"` + `&"fog_reveal"`. **НЕ** в `&"skeleton"`.
+
+**Статус (2026-06-22):** в `WaveDirector` НЕ вшит — стоит один тестовый экземпляр `StoneThrowerTest` в `level_rooms.tscn` (Room8, `(73.5, 3, 84)`). Room-гейта нет: цель — башня, как только она в радиусе 35м. TODO: тюнинг после плейтеста, затем интеграция в боссовые волны.
 
 #### 5.5.4 EnemySpawner — `scripts/enemy_spawner.gd` (Node3D в `main.tscn`)
 
@@ -3136,6 +3173,7 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 
 - **[SkeletonGiant]** (extends Skeleton, `class_name SkeletonGiant`): танк-приоритет на Tower, AOE-slam, `knockback_resistance=0.2` (не сбивается со штриха стрелами/слемом). FOG_REVEAL_GROUP — рассеивает туман вокруг себя (виден издалека). Override `_scan_target` → Tower имеет абсолютный приоритет; `_target_still_valid` → Tower валидна пока damageable; `_perform_strike` → добавляет Tower в AoE-итерацию (база итерирует только TARGET_GROUP).
 - **[SkeletonGiantThrower]** (extends SkeletonArcher): ranged-танк, бросает [GiantStone] (AOE-камень с волной от импакта) с дистанции 25-35м. Override `_resolve_target` → Tower priority. Кидание с телеграфом (`telegraph_radius`, цвет красно-оранжевый) — игрок видит куда полетит.
+- **[SkeletonStoneThrower]** (extends SkeletonGiantThrower, §5.5.3.5): ranged-бомбардир. Россыпь ~30 мелких камней по дуге в зону башни (каждый с наземным маркером), динамичный танец вокруг цели (новая дистанция+обход каждый цикл), уворот хуже гиганта, мощный взрыв на смерти. Камни и взрыв бьют и обычных скелетов. **В WaveDirector пока НЕ вшит** — тестовый экземпляр в `level_rooms` (Room8).
 
 **WaveDirector orchestration** (через инспектор):
 - `giant_every_n_waves = 3` — каждая 3-я ночная волна спавнит +1 гиганта.
@@ -3297,9 +3335,10 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 
 **Tower-парирование (клавиша Q, action `parry`):** окно `parry_window=0.25с` + кулдаун `parry_cooldown=1.5с`, без маны. Зона ловли `parry_radius=6м` зафиксирована в точке каста (`_parry_center`, не едет за башней — совпадает с куполом). Пока окно активно — каждый `Reflectable`-снаряд в зоне разворачивается. Визуал — `ParryShield` (`scripts/parry_shield.gd`): ледяной купол-пузырь, мгновенно вспыхивает на радиус и гаснет.
 
-**Урон башни по СКЕЛЕТАМ (мех исключён):**
+**Урон башни по ВРАГАМ (мех исключён):**
 - Щит при подъёме — разовый импульс `parry_skeleton_damage=100` по скелетам в `parry_radius` (обычные hp=30 гибнут сразу; гиганты лишь дробятся).
-- Дэш-таран — `dash_damage=100` при контакте во время рывка (раз за рывок, `_dash_hit_set`), добавлено в `Tower._resolve_contacts`.
+- Дэш-таран — `dash_damage=100` (супер `super_dash_damage=250`) при контакте во время рывка (раз за рывок, `_dash_hit_set`), в `Tower._resolve_contacts`. **Гейт `_dash_damage_enemy` — `ENEMY_GROUP`, не `SKELETON_GROUP`** (2026-06-22): melee-only был асимметрией — лучники/каменщики (extends Archer) в `SKELETON_GROUP` не входят, таран их не брал. Тот же сдвиг к `ENEMY_GROUP` уже сделан у гномов/руки.
+- **Тяжёлые враги (`super_dash_only`) — только СУПЕР-рывок.** Группа: оба гиганта (`SkeletonGiant`) + оба каменщика-метателя (`SkeletonGiantThrower` и наследник `SkeletonStoneThrower`). Обычный таран и зона щита их пропускают (семантическая группа, не хардкод по типу — как `room_door` для супер-двери); берут их только супер-рывок + AoE/магия.
 
 #### 5.16.3 Экономика: мана, XP отряда, супер
 
