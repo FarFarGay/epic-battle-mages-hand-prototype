@@ -83,6 +83,7 @@ func start_aim(building_id: StringName) -> void:
 		_aiming = true
 		_hand.push_category(Hand.Category.BUILD_AIM)
 	_spawn_ghost()
+	_set_build_zones_visible(true)  # показать зоны-индикаторы (напр. кольцо бура)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:PlaceAim] старт размещения: %s" % String(_data.get("name", building_id)))
 
@@ -216,5 +217,14 @@ func _clear_ghost() -> void:
 func _finish() -> void:
 	_aiming = false
 	_clear_ghost()
+	_set_build_zones_visible(false)  # спрятать зоны-индикаторы (вне режима стройки)
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
 		_hand.pop_category()
+
+
+## Показать/спрятать наземные зоны-индикаторы стройки (группа build_zone_indicator).
+## Сейчас это кольцо зоны бура ([OilRig]); видно только пока активен режим стройки.
+func _set_build_zones_visible(v: bool) -> void:
+	for n in get_tree().get_nodes_in_group(&"build_zone_indicator"):
+		if n is Node3D:
+			(n as Node3D).visible = v

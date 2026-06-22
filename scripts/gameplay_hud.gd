@@ -133,6 +133,9 @@ var _build_menu: PopupMenu
 const BUILD_MENU_BRIDGE := 0
 const BUILD_MENU_WALL := 1
 const BUILD_MENU_WATCHTOWER := 2
+const BUILD_MENU_OIL_PUMP := 3
+const BUILD_MENU_OIL_TANK := 4
+const BUILD_MENU_PIPE := 5
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
 var _resource_labels: Dictionary = {}
@@ -1142,6 +1145,9 @@ func _ensure_build_menu() -> PopupMenu:
 	_build_menu.add_item("🌉 Мост через пропасть", BUILD_MENU_BRIDGE)
 	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.WALL).get("menu_label", "Стена")), BUILD_MENU_WALL)
 	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.WATCHTOWER).get("menu_label", "Сторожевая башня")), BUILD_MENU_WATCHTOWER)
+	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.OIL_PUMP).get("menu_label", "Насос")), BUILD_MENU_OIL_PUMP)
+	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.OIL_TANK).get("menu_label", "Цистерна")), BUILD_MENU_OIL_TANK)
+	_build_menu.add_item("🔧 Труба (бур → цистерна)", BUILD_MENU_PIPE)
 	_build_menu.id_pressed.connect(_on_build_menu_id)
 	add_child(_build_menu)
 	return _build_menu
@@ -1158,6 +1164,21 @@ func _open_build_menu(btn: Button) -> void:
 		var wall_label: String = String(RoomBuildings.get_data(RoomBuildings.WALL).get("menu_label", "Стена"))
 		menu.set_item_disabled(wall_idx, not knows)
 		menu.set_item_text(wall_idx, wall_label if knows else wall_label + " (знание гномов)")
+	# Насос нефтекачалки — то же знание построек (ставится рядом с буром, §путь A).
+	var pump_idx: int = menu.get_item_index(BUILD_MENU_OIL_PUMP)
+	if pump_idx >= 0:
+		var pump_label: String = String(RoomBuildings.get_data(RoomBuildings.OIL_PUMP).get("menu_label", "Насос"))
+		menu.set_item_disabled(pump_idx, not knows)
+		menu.set_item_text(pump_idx, pump_label if knows else pump_label + " (знание гномов)")
+	var tank_idx: int = menu.get_item_index(BUILD_MENU_OIL_TANK)
+	if tank_idx >= 0:
+		var tank_label: String = String(RoomBuildings.get_data(RoomBuildings.OIL_TANK).get("menu_label", "Цистерна"))
+		menu.set_item_disabled(tank_idx, not knows)
+		menu.set_item_text(tank_idx, tank_label if knows else tank_label + " (знание гномов)")
+	var pipe_idx: int = menu.get_item_index(BUILD_MENU_PIPE)
+	if pipe_idx >= 0:
+		menu.set_item_disabled(pipe_idx, not knows)
+		menu.set_item_text(pipe_idx, "🔧 Труба (бур → цистерна)" if knows else "🔧 Труба (знание гномов)")
 	# Сторожевая башня: знание гномов И отряд лучников.
 	var tower_idx: int = menu.get_item_index(BUILD_MENU_WATCHTOWER)
 	if tower_idx >= 0:
@@ -1210,6 +1231,27 @@ func _on_build_menu_id(id: int) -> void:
 		var hand := _resolve_hand()
 		if hand != null and hand.place_aim != null:
 			hand.place_aim.start_aim(RoomBuildings.WATCHTOWER)
+	elif id == BUILD_MENU_OIL_PUMP:
+		if not _building_unlocked():
+			return  # нет знания гномов — пункт и так greyed
+		_cancel_hand_aims(&"place")
+		var hand := _resolve_hand()
+		if hand != null and hand.place_aim != null:
+			hand.place_aim.start_aim(RoomBuildings.OIL_PUMP)
+	elif id == BUILD_MENU_OIL_TANK:
+		if not _building_unlocked():
+			return  # нет знания гномов — пункт и так greyed
+		_cancel_hand_aims(&"place")
+		var hand := _resolve_hand()
+		if hand != null and hand.place_aim != null:
+			hand.place_aim.start_aim(RoomBuildings.OIL_TANK)
+	elif id == BUILD_MENU_PIPE:
+		if not _building_unlocked():
+			return  # нет знания гномов — пункт и так greyed
+		_cancel_hand_aims(&"pipe")  # вход в прокладку трубы гасит другие aim
+		var hand := _resolve_hand()
+		if hand != null and hand.pipe_aim != null:
+			hand.pipe_aim.toggle_aim()
 
 
 ## Индикатор режима сбора. Под кнопкой журнала, программно. Зелёный при WORK,
@@ -1976,6 +2018,8 @@ func _cancel_hand_aims(except: StringName = &"") -> void:
 		hand.bridge_aim.cancel_aim()
 	if except != &"place" and hand.place_aim != null:
 		hand.place_aim.cancel_aim()
+	if except != &"pipe" and hand.pipe_aim != null:
+		hand.pipe_aim.cancel_aim()
 
 
 ## Снять выделение: гасит ЛЮБОЙ активный aim-режим руки, рука возвращается к обычным

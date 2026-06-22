@@ -30,8 +30,16 @@ enum State { BROKEN, RESTORING, PUMPING }
 @export var modules_required: int = 3
 
 @export_group("Добыча")
-## Нефть в секунду в режиме PUMPING.
+## Нефть в секунду в режиме PUMPING. ПЕРЕСЧИТЫВАЕТСЯ как _pumps × oil_per_pump
+## (см. register_pump) — каждый насос ускоряет добычу. Стартовое значение —
+## fallback, если бур запустят не насосом.
 @export var oil_per_sec: float = 1.0
+## Прибавка к добыче за один зарегистрированный насос.
+@export var oil_per_pump: float = 1.0
+## Радиус (XZ) зоны бура: модуль регистрируется, только если построен в нём.
+@export var pump_zone_radius: float = 12.0
+## Путь к кольцу-индикатору зоны (видно только в режиме стройки, см. HandPlaceAim).
+@export var build_zone_path: NodePath = NodePath("BuildZone")
 ## Цель матча — накопить столько нефти (победа). Подключим к WinOverlay стадией 4.
 @export var oil_goal: float = 100.0
 
@@ -48,12 +56,21 @@ var _state: int = State.BROKEN
 var _modules_done: int = 0
 var _oil: float = 0.0
 var _drill: Node3D = null
+var _pumps: int = 0
+## Цистерна-приёмник добычи (ставит OilTank на достройке; позже — через трубу).
+var _cistern: Node3D = null
 
 
 func _ready() -> void:
 	add_to_group(GROUP)
 	_drill = get_node_or_null(drill_path) as Node3D
 	set_process(false)  # тикаем только в PUMPING
+	# Кольцо зоны: прячем, показывать будет HandPlaceAim в режиме стройки (через
+	# группу build_zone_indicator). Видно ТОЛЬКО когда строишь.
+	var bz := get_node_or_null(build_zone_path) as Node3D
+	if bz != null:
+		bz.visible = false
+		bz.add_to_group(&"build_zone_indicator")
 
 
 func _process(delta: float) -> void:
@@ -62,12 +79,10 @@ func _process(delta: float) -> void:
 	# Вращение бура.
 	if _drill != null:
 		_drill.rotation.y += drill_spin_speed * delta
-	# Добыча нефти.
-	var before: float = _oil
-	_oil = minf(_oil + oil_per_sec * delta, oil_goal)
-	if _oil != before:
-		oil_changed.emit(_oil, oil_goal)
-		# Стадия 4 (TODO): при _oil >= oil_goal → победа (EventBus.match_won).
+	# Добыча идёт ТОЛЬКО в подключённую трубой цистерну. Нет трубы/цистерны —
+	# бур крутится, но нефти некуда течь (ничего не копится). Связь ставит труба.
+	if _cistern != null and is_instance_valid(_cistern) and _cistern.has_method(&"add_oil"):
+		_cistern.call(&"add_oil", oil_per_sec * delta)
 
 
 ## Гейт ремонта: есть ли у игрока «лицензия строителя» (станок Room11 запущен).
@@ -113,6 +128,38 @@ func ignite() -> void:
 	ignited.emit()
 	if debug_log and LogConfig.master_enabled:
 		print("[OilRig] ★ НАСОС ЗАПУЩЕН — добыча нефти пошла")
+
+
+## Зарегистрировать модуль-насос (зовёт [OilPump] на достройке). Только если
+## построен в зоне бура (pump_zone_radius). Первый насос ЗАПУСКАЕТ бур (PUMPING +
+## вспышка), каждый следующий ускоряет добычу. Возвращает успех (false = вне зоны).
+func register_pump(pump: Node3D) -> bool:
+	if pump == null or not is_instance_valid(pump):
+		return false
+	var dx: float = pump.global_position.x - global_position.x
+	var dz: float = pump.global_position.z - global_position.z
+	if dx * dx + dz * dz > pump_zone_radius * pump_zone_radius:
+		return false  # построен вне зоны бура — не цепляется
+	_pumps += 1
+	oil_per_sec = float(_pumps) * oil_per_pump
+	if _state != State.PUMPING:
+		_set_state(State.PUMPING)
+		set_process(true)
+		ignited.emit()
+		var root: Node = get_tree().current_scene
+		if is_instance_valid(root):
+			AoeVisual.spawn_explosion(root, global_position + Vector3.UP * 1.5, 2.0)
+		EventBus.camera_shake.emit(0.4, global_position)
+	if debug_log and LogConfig.master_enabled:
+		print("[OilRig] насос #%d зарегистрирован → добыча %.1f/с" % [_pumps, oil_per_sec])
+	return true
+
+
+## Подключить цистерну-приёмник (зовёт OilTank на достройке; позже — трубопровод).
+func set_cistern(c: Node3D) -> void:
+	_cistern = c
+	if debug_log and LogConfig.master_enabled:
+		print("[OilRig] цистерна подключена — добыча пойдёт в неё")
 
 
 func get_oil() -> float:

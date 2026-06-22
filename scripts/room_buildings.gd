@@ -11,6 +11,8 @@ extends RefCounted
 
 const WALL := &"wall"
 const WATCHTOWER := &"watchtower"
+const OIL_PUMP := &"oil_pump"
+const OIL_TANK := &"oil_tank"
 
 const CATALOG: Dictionary = {
 	WALL: {
@@ -50,6 +52,31 @@ const CATALOG: Dictionary = {
 		"resources_needed": 6,
 		"site_hp": 50.0,
 		"ghost_color": Color(0.7, 0.6, 1.0, 0.45),
+	},
+	OIL_PUMP: {
+		"name": "Нефтенасос",
+		"menu_label": "🛢 Насос (к буру)",
+		# Модуль нефтекачалки (§путь A): ставится рядом с буром, на достройке
+		# регистрируется на OilRig в его зоне → бур качает (см. oil_pump.gd).
+		"scene": "res://scenes/oil_pump.tscn",
+		"footprint": Vector3(1.4, 1.6, 1.4),
+		# WOOD для тестируемости (деревья в сцене есть), как у стен/башни.
+		"resource_type": ResourcePile.ResourceType.WOOD,
+		"resources_needed": 5,
+		"site_hp": 45.0,
+		"ghost_color": Color(1.0, 0.6, 0.2, 0.45),
+	},
+	OIL_TANK: {
+		"name": "Цистерна",
+		"menu_label": "🛢 Цистерна (хранилище)",
+		# Хранит добытую нефть = счётчик победы. На достройке цепляется к буру
+		# (oil_tank.gd), бур гонит добычу сюда. Позже — связь через трубопровод.
+		"scene": "res://scenes/oil_tank.tscn",
+		"footprint": Vector3(3.8, 3.0, 3.8),
+		"resource_type": ResourcePile.ResourceType.WOOD,
+		"resources_needed": 8,
+		"site_hp": 60.0,
+		"ghost_color": Color(0.8, 0.6, 0.3, 0.4),
 	},
 }
 
