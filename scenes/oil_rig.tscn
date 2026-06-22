@@ -1,0 +1,92 @@
+[gd_scene load_steps=11 format=3]
+
+[ext_resource type="Script" path="res://scripts/oil_rig.gd" id="1"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_metal"]
+albedo_color = Color(0.3, 0.28, 0.26, 1)
+metallic = 0.45
+roughness = 0.65
+
+[sub_resource type="StandardMaterial3D" id="Mat_core"]
+albedo_color = Color(0.5, 0.25, 0.08, 1)
+emission_enabled = true
+emission = Color(1, 0.5, 0.12, 1)
+emission_energy_multiplier = 3.5
+
+[sub_resource type="StandardMaterial3D" id="Mat_seam"]
+albedo_color = Color(0.05, 0.04, 0.07, 1)
+metallic = 0.2
+roughness = 0.15
+emission_enabled = true
+emission = Color(0.6, 0.32, 0.1, 1)
+emission_energy_multiplier = 0.5
+
+[sub_resource type="CylinderMesh" id="Cyl_seam"]
+top_radius = 2.2
+bottom_radius = 2.2
+height = 0.06
+
+[sub_resource type="CylinderMesh" id="Cyl_housing"]
+top_radius = 0.95
+bottom_radius = 1.05
+height = 1.8
+
+[sub_resource type="CylinderMesh" id="Cyl_core"]
+top_radius = 1.08
+bottom_radius = 1.08
+height = 0.4
+
+[sub_resource type="CylinderMesh" id="Cyl_shaft"]
+top_radius = 0.22
+bottom_radius = 0.22
+height = 1.8
+
+[sub_resource type="CylinderMesh" id="Cyl_bit"]
+top_radius = 0.55
+bottom_radius = 0
+height = 1.2
+
+[sub_resource type="CylinderShape3D" id="Shape_col"]
+radius = 1.1
+height = 2.6
+
+[node name="OilRig" type="StaticBody3D"]
+collision_layer = 544
+collision_mask = 0
+script = ExtResource("1")
+modules_required = 3
+oil_per_sec = 1.0
+oil_goal = 100.0
+drill_path = NodePath("DrillBit")
+drill_spin_speed = 7.0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.4, 0)
+shape = SubResource("Shape_col")
+
+[node name="Seam" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.04, 0)
+mesh = SubResource("Cyl_seam")
+material_override = SubResource("Mat_seam")
+
+[node name="Housing" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.45, 0)
+mesh = SubResource("Cyl_housing")
+material_override = SubResource("Mat_metal")
+
+[node name="CoreBand" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.05, 0)
+mesh = SubResource("Cyl_core")
+material_override = SubResource("Mat_core")
+
+[node name="DrillShaft" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
+mesh = SubResource("Cyl_shaft")
+material_override = SubResource("Mat_metal")
+
+[node name="DrillBit" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, 0)
+
+[node name="Cone" type="MeshInstance3D" parent="DrillBit"]
+mesh = SubResource("Cyl_bit")
+material_override = SubResource("Mat_metal")

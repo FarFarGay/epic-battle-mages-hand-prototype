@@ -41,6 +41,7 @@
 [ext_resource type="Script" uid="uid://cr6su60qs204u" path="res://scripts/wood_source.gd" id="39_wood"]
 [ext_resource type="Script" uid="uid://p2cjfeqpaog8" path="res://scripts/tower_store.gd" id="40_towerstore"]
 [ext_resource type="PackedScene" path="res://scenes/blueprint_machine.tscn" id="41_4w2r8"]
+[ext_resource type="PackedScene" path="res://scenes/oil_rig.tscn" id="41_5ltah"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton_stone_thrower.tscn" id="41_8brgo"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
@@ -658,11 +659,6 @@ transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 92, 0, 112)
 [node name="WallSouth" parent="Room6" unique_id=382709928 instance=ExtResource("6_wall")]
 transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 126)
 
-[node name="BuilderHouse" parent="Room6" unique_id=2124860968 instance=ExtResource("28_gnomehouse")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 84, 0, 110)
-dialog_enabled = true
-dialog_id = &"builders"
-
 [node name="Room8" type="Node3D" parent="." unique_id=1097619881]
 
 [node name="WallEast" parent="Room8" unique_id=1747620114 instance=ExtResource("6_wall")]
@@ -694,6 +690,9 @@ mesh = SubResource("BoxMesh_door")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Room8/DoorWest" unique_id=1273752055]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 shape = SubResource("BoxShape3D_door")
+
+[node name="OilRig" parent="Room8" unique_id=1927155253 instance=ExtResource("41_5ltah")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 100)
 
 [node name="Room9" type="Node3D" parent="." unique_id=960184648]
 
@@ -731,7 +730,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 84)
 [node name="GnomeHouseB" parent="." unique_id=1635103079 instance=ExtResource("28_gnomehouse")]
 transform = Transform3D(0.49999997, 0, -0.86602545, 0, 1, 0, 0.86602545, 0, 0.49999997, 89.07775, 0, 98.28968)
 dialog_enabled = true
-dialog_id = &"b"
+dialog_id = &"builders"
 
 [node name="GnomeHouseC" parent="." unique_id=663119585 instance=ExtResource("28_gnomehouse")]
 transform = Transform3D(0.087155804, 0, -0.9961947, 0, 1, 0, 0.9961947, 0, 0.087155804, 88.227936, 0, 103.06302)
@@ -949,6 +948,9 @@ script = ExtResource("23_filler")
 skeleton_scene = ExtResource("22_skel")
 count = 20
 area_center = Vector3(73.5, 0, 84)
+exclude_center = Vector3(73.5, 0, 84)
+exclude_half_x = 4.5
+exclude_half_z = 4.5
 
 [node name="SkeletonFillerR9" type="Node3D" parent="." unique_id=489102522]
 script = ExtResource("23_filler")
