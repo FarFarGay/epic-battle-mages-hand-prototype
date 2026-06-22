@@ -298,6 +298,11 @@ func _start_evade(threat_pos: Vector3) -> void:
 ## палисад; терраин исключён). Поэтому метателя выгодно убивать издалека.
 func _on_destroyed() -> void:
 	super._on_destroyed()
+	# Отметить победу над камнеметателем — гномы-строители (Room6) откроют найм
+	# лучников (см. их диалог, req thrower_defeated).
+	var profile := get_tree().get_first_node_in_group(&"player_profile")
+	if profile != null and profile.has_method(&"mark_stone_thrower_defeated"):
+		profile.call(&"mark_stone_thrower_defeated")
 	var pos: Vector3 = global_position
 	var root: Node = _effects_root if is_instance_valid(_effects_root) else get_tree().current_scene
 	if is_instance_valid(root):

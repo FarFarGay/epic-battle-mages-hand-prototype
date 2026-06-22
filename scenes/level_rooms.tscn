@@ -40,6 +40,7 @@
 [ext_resource type="Script" uid="uid://cv0nhq65n6pnb" path="res://scripts/gnome_squad_spawner.gd" id="38_squadspawn"]
 [ext_resource type="Script" uid="uid://cr6su60qs204u" path="res://scripts/wood_source.gd" id="39_wood"]
 [ext_resource type="Script" uid="uid://p2cjfeqpaog8" path="res://scripts/tower_store.gd" id="40_towerstore"]
+[ext_resource type="PackedScene" path="res://scenes/blueprint_machine.tscn" id="41_4w2r8"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton_stone_thrower.tscn" id="41_8brgo"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
@@ -657,6 +658,11 @@ transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 92, 0, 112)
 [node name="WallSouth" parent="Room6" unique_id=382709928 instance=ExtResource("6_wall")]
 transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 126)
 
+[node name="BuilderHouse" parent="Room6" unique_id=2124860968 instance=ExtResource("28_gnomehouse")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 84, 0, 110)
+dialog_enabled = true
+dialog_id = &"builders"
+
 [node name="Room8" type="Node3D" parent="." unique_id=1097619881]
 
 [node name="WallEast" parent="Room8" unique_id=1747620114 instance=ExtResource("6_wall")]
@@ -718,6 +724,9 @@ transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 70)
 
 [node name="WallSouth" parent="Room11" unique_id=834258109 instance=ExtResource("6_wall")]
 transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 98)
+
+[node name="BlueprintMachine" parent="Room11" unique_id=428979207 instance=ExtResource("41_4w2r8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 84)
 
 [node name="GnomeHouseB" parent="." unique_id=1635103079 instance=ExtResource("28_gnomehouse")]
 transform = Transform3D(0.49999997, 0, -0.86602545, 0, 1, 0, 0.86602545, 0, 0.49999997, 89.07775, 0, 98.28968)

@@ -1150,16 +1150,36 @@ func _ensure_build_menu() -> PopupMenu:
 ## Открыть меню стройки под кнопкой «Стройка».
 func _open_build_menu(btn: Button) -> void:
 	var menu := _ensure_build_menu()
-	# Сторожевая башня доступна только при наличии отряда лучников — иначе greyed-out.
+	# Стена и башня — знание гномов-строителей (станок Room11 запущен). До этого
+	# оба пункта greyed с подсказкой. Мост — отдельная механика, не гейтится.
+	var knows: bool = _building_unlocked()
+	var wall_idx: int = menu.get_item_index(BUILD_MENU_WALL)
+	if wall_idx >= 0:
+		var wall_label: String = String(RoomBuildings.get_data(RoomBuildings.WALL).get("menu_label", "Стена"))
+		menu.set_item_disabled(wall_idx, not knows)
+		menu.set_item_text(wall_idx, wall_label if knows else wall_label + " (знание гномов)")
+	# Сторожевая башня: знание гномов И отряд лучников.
 	var tower_idx: int = menu.get_item_index(BUILD_MENU_WATCHTOWER)
 	if tower_idx >= 0:
 		var has_archers: bool = _has_archer_squad()
-		menu.set_item_disabled(tower_idx, not has_archers)
 		var base_label: String = String(RoomBuildings.get_data(RoomBuildings.WATCHTOWER).get("menu_label", "Сторожевая башня"))
-		menu.set_item_text(tower_idx, base_label if has_archers else base_label + " (нужны лучники)")
+		menu.set_item_disabled(tower_idx, not (knows and has_archers))
+		var suffix: String = ""
+		if not knows:
+			suffix = " (знание гномов)"
+		elif not has_archers:
+			suffix = " (нужны лучники)"
+		menu.set_item_text(tower_idx, base_label + suffix)
 	menu.reset_size()
 	menu.position = Vector2i(btn.get_screen_position()) + Vector2i(0, int(btn.size.y))
 	menu.popup()
+
+
+## Знает ли игрок постройку стен/башен — флаг PlayerProfile.building_unlocked,
+## ставится запуском станка гномов в Room11 ([BlueprintMachine]).
+func _building_unlocked() -> bool:
+	var p := get_tree().get_first_node_in_group(&"player_profile")
+	return p != null and p.get(&"building_unlocked") == true
 
 
 ## Есть ли живой лучник (отряд лучников куплен в доме). Гейт сторожевой башни.
@@ -1177,13 +1197,15 @@ func _on_build_menu_id(id: int) -> void:
 		if hand != null and hand.bridge_aim != null:
 			hand.bridge_aim.start_aim()
 	elif id == BUILD_MENU_WALL:
+		if not _building_unlocked():
+			return  # нет знания гномов — пункт и так greyed, на всякий случай
 		_cancel_hand_aims(&"place")  # размещение гасит squad/build/bridge aim
 		var hand := _resolve_hand()
 		if hand != null and hand.place_aim != null:
 			hand.place_aim.start_aim(RoomBuildings.WALL)
 	elif id == BUILD_MENU_WATCHTOWER:
-		if not _has_archer_squad():
-			return  # нет лучников — пункт и так greyed, на всякий случай
+		if not _building_unlocked() or not _has_archer_squad():
+			return  # нет знания/лучников — пункт и так greyed, на всякий случай
 		_cancel_hand_aims(&"place")
 		var hand := _resolve_hand()
 		if hand != null and hand.place_aim != null:

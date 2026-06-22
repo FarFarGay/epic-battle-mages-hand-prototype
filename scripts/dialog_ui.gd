@@ -90,6 +90,15 @@ func _req_met(req: StringName) -> bool:
 		return signed
 	if req == &"unsigned":
 		return not signed
+	# Прогресс гномов-строителей (Room6) — флаги PlayerProfile.
+	if req == &"thrower_defeated":
+		return prof != null and prof.get(&"stone_thrower_defeated") == true
+	if req == &"thrower_alive":
+		return prof == null or prof.get(&"stone_thrower_defeated") != true
+	if req == &"building_known":
+		return prof != null and prof.get(&"building_unlocked") == true
+	if req == &"building_locked":
+		return prof == null or prof.get(&"building_unlocked") != true
 	return true
 
 

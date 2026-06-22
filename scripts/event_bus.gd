@@ -158,6 +158,11 @@ signal day_phase_changed(is_night: bool, duration_seconds: float)
 ## Слушают QuestActor (для перекраса) и потенциально HUD.
 signal quest_advanced(new_index: int)
 
+## Гномы-строители (Room6): станок-чертёжник в Room11 запущен ([BlueprintMachine])
+## → игрок получил знание о постройке стен/башен. HUD слушает, чтобы
+## разблокировать меню построек. Идемпотентно (флаг живёт в PlayerProfile).
+signal building_unlocked
+
 # --- Squads / Army (мобилизованные солдаты) ---
 ## Отряд создан (recruit_squad) — UI добавляет карточку.
 signal squad_created(squad: RefCounted)

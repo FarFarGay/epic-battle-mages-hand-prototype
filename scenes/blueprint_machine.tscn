@@ -1,0 +1,39 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/blueprint_machine.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/spark_diode.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/lever.tscn" id="3"]
+
+[sub_resource type="BoxMesh" id="Box_core"]
+size = Vector3(2.4, 1.8, 1.4)
+
+[sub_resource type="StandardMaterial3D" id="Mat_core"]
+resource_local_to_scene = true
+albedo_color = Color(0.34, 0.31, 0.36, 1)
+metallic = 0.45
+roughness = 0.55
+
+[node name="BlueprintMachine" type="Node3D"]
+script = ExtResource("1")
+diode_paths = [NodePath("Diode2"), NodePath("Diode3"), NodePath("Diode1")]
+lever_path = NodePath("Lever")
+core_path = NodePath("Core")
+
+[node name="Core" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+mesh = SubResource("Box_core")
+material_override = SubResource("Mat_core")
+
+[node name="Diode1" parent="." instance=ExtResource("2")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.5, 0, 3)
+
+[node name="Diode2" parent="." instance=ExtResource("2")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 4)
+
+[node name="Diode3" parent="." instance=ExtResource("2")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 0, 3)
+
+[node name="Lever" parent="." instance=ExtResource("3")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2.8)
+target_path = NodePath("..")
+gnome_pullable = false
