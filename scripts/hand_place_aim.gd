@@ -28,9 +28,10 @@ const WALL_SNAP_GROUP := &"wall_snap"
 ## Радиус магнита (м): ближайшая snap-точка силуэта (центр/край) притягивается к
 ## ближайшей snap-точке соседней стены в пределах этого радиуса. 0 → магнит выкл.
 @export var snap_radius: float = 1.6
-## Радиус примагничивания КОНЦОВ труб к портам (больше стенового — концы стыковать
-## должно быть легко). Используется в _snap_pipe.
-@export var pipe_snap_radius: float = 2.8
+## Шаг нефте-РЕШЁТКИ (м). Труба-тайл = ровно одна клетка (порты на ±GRID*0.5 от
+## центра). Якорь решётки — центр коллектора; буры и трубы притягивают сюда свои
+## порты, поэтому петля коллектор↔бур ВСЕГДА замыкается (концы на одной решётке).
+@export var oil_grid: float = 2.0
 @export var debug_log: bool = true
 @export var effects_root_path: NodePath
 
@@ -42,6 +43,11 @@ var _data: Dictionary = {}
 var _footprint: Vector3 = Vector3(2.0, 1.5, 0.3)
 var _ghost: Node3D = null
 var _ghost_mat: StandardMaterial3D = null
+## Сетка строительства на полу (только для нефте-построек) — игрок видит клетки.
+var _grid: MeshInstance3D = null
+## Заливка занимаемой КЛЕТКИ под силуэтом нефте-постройки — игрок видит «куб» сетки.
+var _cell: MeshInstance3D = null
+var _cell_mat: StandardMaterial3D = null
 ## Текущий поворот силуэта (рад). Крутится кликом средней кнопки мыши, сохраняется
 ## между установками (sticky) — следующая стена встаёт под тем же углом.
 var _rot_y: float = 0.0
@@ -89,6 +95,7 @@ func start_aim(building_id: StringName) -> void:
 		_aiming = true
 		_hand.push_category(Hand.Category.BUILD_AIM)
 	_spawn_ghost()
+	_update_grid()  # сетка пола — только для труб/бура (нефте-решётка)
 	_set_build_zones_visible(true)  # показать зоны-индикаторы (напр. кольцо бура)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:PlaceAim] старт размещения: %s" % String(_data.get("name", building_id)))
@@ -110,11 +117,19 @@ func _process(_delta: float) -> void:
 	if Input.is_action_just_pressed(ACTION_CANCEL):
 		cancel_aim()
 		return
-	# Силуэт следует за курсором, магнитясь к соседним стенам. ЛКМ — поставить
-	# (sticky, ставим следующую). Поворот — клик средней кнопки (см. _input).
-	# Трубы снапятся ПО КОНЦАМ (порты) к трубам/коллектору/буру; прочее — по стенам.
+	# Силуэт следует за курсором. ЛКМ — поставить (sticky, ставим следующую). Поворот —
+	# клик средней кнопки (см. _input). Нефте-постройки (трубы И бур) притягивают порты
+	# к ЕДИНОЙ решётке (якорь — коллектор) → концы всегда совпадают; прочее — по стенам.
 	var is_pipe: bool = _data.has("pipe_kind")
-	var place: Vector3 = _snap_pipe(ground) if is_pipe else _snap_center(ground)
+	var is_oil: bool = is_pipe or _building == RoomBuildings.OIL_DRILL
+	var place: Vector3
+	if is_oil:
+		place = _snap_oil_grid(ground)
+		# _snapped = порт примагниченной постройки совпал с портом существующего хоста
+		# (коллектор/бур/труба). Для труб это ГЕЙТ (в воздух нельзя), буру — лишь подсветка.
+		_snapped = _touches_host(_oil_ports_world(place, _rot_y))
+	else:
+		place = _snap_center(ground)
 	_update_ghost(place)
 	if Input.is_action_just_pressed(ACTION_COMMIT) and not _hand.is_pointer_over_ui():
 		# Трубу в воздух нельзя — только встык к порту (бур/коллектор/другая труба).
@@ -131,10 +146,20 @@ func _process(_delta: float) -> void:
 func _input(event: InputEvent) -> void:
 	if not _aiming:
 		return
-	if event is InputEventMouseButton and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_MIDDLE:
-		if (event as InputEventMouseButton).pressed:
+	if not (event is InputEventMouseButton):
+		return
+	var mb := event as InputEventMouseButton
+	if mb.button_index == MOUSE_BUTTON_MIDDLE:
+		if mb.pressed:
 			_rot_y = wrapf(_rot_y + deg_to_rad(rotate_step_deg), -PI, PI)
 		get_viewport().set_input_as_handled()  # и press, и release — камера не орбитит
+	elif mb.button_index == MOUSE_BUTTON_RIGHT:
+		# ПКМ — снести трубу под курсором («построил не так»). Только трубы (instant,
+		# бесплатны → сносить тоже бесплатно); бур/коллектор не трогаем. Гасим событие,
+		# чтобы камера не реагировала на ПКМ во время стройки.
+		if mb.pressed and not _hand.is_pointer_over_ui():
+			_delete_pipe_under_cursor()
+		get_viewport().set_input_as_handled()
 
 
 ## Ставит RoomBuildSite на точке pos с текущим поворотом. Площадку строят рабочие
@@ -170,34 +195,54 @@ func _commit(pos: Vector3) -> void:
 			_building, pos.x, pos.z, rad_to_deg(_rot_y)])
 
 
-## Снап трубы ПО КОНЦАМ: ближайший конец ставимого тайла притягивается к ближайшему
-## порту существующего хоста (труба/коллектор/бур, группа pipe_port_host) в пределах
-## snap_radius. Концы стыкуются как настоящие трубы — встык к выступу коллектора/бура.
-func _snap_pipe(raw: Vector3) -> Vector3:
-	_snapped = false
-	if pipe_snap_radius <= 0.0:
-		return raw
-	var kind: int = int(_data.get("pipe_kind", 0))
-	var bz := Basis(Vector3.UP, _rot_y)
-	var my_ports: Array = []
-	for lp in PipeSegment.local_ports(kind):
-		my_ports.append(raw + bz * (lp as Vector3))
-	var best_d: float = pipe_snap_radius
-	var best_delta: Vector3 = Vector3.ZERO
+## Якорь нефте-решётки — центр коллектора (порты коллектора у inlet_dist=3.0 ложатся
+## на решётку шага 2 → нечётное кратное полуклетки). Нет коллектора → мир-ноль (трубы
+## всё равно лягут на общую решётку и сойдутся между собой).
+func _oil_anchor() -> Vector3:
+	var c := get_tree().get_first_node_in_group(OilCollector.GROUP)
+	return (c as Node3D).global_position if c is Node3D else Vector3.ZERO
+
+
+## Мировые порты нефте-постройки в точке center при повороте rot: труба — концы тайла
+## ([PipeSegment]); бур — единственный выходной патрубок ([OilRig.OUTLET_LOCAL]).
+func _oil_ports_world(center: Vector3, rot: float) -> Array:
+	var b := Basis(Vector3.UP, rot)
+	var out: Array = []
+	if _data.has("pipe_kind"):
+		for lp in PipeSegment.local_ports(int(_data.get("pipe_kind", 0))):
+			out.append(center + b * (lp as Vector3))
+	elif _building == RoomBuildings.OIL_DRILL:
+		out.append(center + b * OilRig.OUTLET_LOCAL)
+	return out
+
+
+## ЕДИНЫЙ снап нефте-построек: притягиваем ЦЕНТР здания к ЦЕНТРУ КЛЕТКИ (якорь —
+## коллектор, шаг oil_grid). Здание занимает клетку(и) ровно. Порты при этом ложатся
+## на узлы автоматически: труба — концы на границах клетки; бур/коллектор — патрубок
+## кратен клетке (OUTLET/inlet=3.0) → конец на узле. Один путь для труб И бура.
+func _snap_oil_grid(raw: Vector3) -> Vector3:
+	var a: Vector3 = _oil_anchor()
+	var s: float = oil_grid
+	return Vector3(
+		a.x + roundf((raw.x - a.x) / s) * s,
+		raw.y,
+		a.z + roundf((raw.z - a.z) / s) * s)
+
+
+## Совпал ли хоть один порт постройки (ports) с портом существующего хоста — для гейта
+## труб (в воздух нельзя) и подсветки силуэта. Допуск — [OilCollector.PORT_TOL].
+func _touches_host(ports: Array) -> bool:
+	var tol2: float = OilCollector.PORT_TOL * OilCollector.PORT_TOL
 	for host in get_tree().get_nodes_in_group(PipeSegment.PORT_HOST_GROUP):
 		if not is_instance_valid(host) or not host.has_method(&"pipe_ports"):
 			continue
 		for hp in host.call(&"pipe_ports"):
-			for mp in my_ports:
+			for mp in ports:
 				var dx: float = (mp as Vector3).x - (hp as Vector3).x
 				var dz: float = (mp as Vector3).z - (hp as Vector3).z
-				var d: float = sqrt(dx * dx + dz * dz)
-				if d < best_d:
-					best_d = d
-					best_delta = Vector3((hp as Vector3).x - (mp as Vector3).x, 0.0, (hp as Vector3).z - (mp as Vector3).z)
-	if best_delta != Vector3.ZERO:
-		_snapped = true
-	return raw + best_delta
+				if dx * dx + dz * dz <= tol2:
+					return true
+	return false
 
 
 ## Магнит: притягивает ближайшую snap-точку силуэта (центр + два края по локальному X)
@@ -250,6 +295,11 @@ func _update_ghost(pos: Vector3) -> void:
 			c = Color(_data.get("ghost_color", ghost_color_valid))
 		_ghost_mat.albedo_color = c
 		_ghost_mat.emission = Color(c.r, c.g, c.b, 1.0)
+	# Занимаемая клетка под силуэтом: красная для трубы не у порта, иначе зелёная.
+	if is_instance_valid(_cell) and _cell_mat != null:
+		_cell.global_position = Vector3(pos.x, 0.07, pos.z)
+		var bad: bool = _data.has("pipe_kind") and not _snapped
+		_cell_mat.albedo_color = Color(1.0, 0.35, 0.3, 0.3) if bad else Color(0.4, 1.0, 0.5, 0.28)
 
 
 ## Силуэт-призрак. Для труб — РЕАЛЬНАЯ форма (тюбы крест/угол/прямая, видно поворот);
@@ -280,17 +330,92 @@ func _spawn_ghost() -> void:
 		_ghost.add_child(mi)
 	if _effects_root != null:
 		_effects_root.add_child(_ghost)
+	# Заливка занимаемой клетки (нефте-постройки) — игрок видит «куб» сетки под силуэтом.
+	if _data.has("pipe_kind") or _building == RoomBuildings.OIL_DRILL:
+		_cell = MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(oil_grid - 0.12, oil_grid - 0.12)  # тонкий зазор по краям клетки
+		_cell.mesh = pm
+		_cell_mat = StandardMaterial3D.new()
+		_cell_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_cell_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_cell_mat.albedo_color = Color(0.4, 1.0, 0.5, 0.28)
+		_cell.material_override = _cell_mat
+		_cell.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if _effects_root != null:
+			_effects_root.add_child(_cell)
 
 
 func _clear_ghost() -> void:
 	if is_instance_valid(_ghost):
 		_ghost.queue_free()
 	_ghost = null
+	if is_instance_valid(_cell):
+		_cell.queue_free()
+	_cell = null
+
+
+## Сетка пола для нефте-построек (труба/бур): полупрозрачные клетки шага oil_grid,
+## фаза — центр коллектора (та же решётка, что у снапа). Для прочих зданий скрыта.
+func _update_grid() -> void:
+	var is_oil: bool = _data.has("pipe_kind") or _building == RoomBuildings.OIL_DRILL
+	if not is_oil:
+		_clear_grid()
+		return
+	if _effects_root == null:
+		_effects_root = get_tree().current_scene
+	var anchor: Vector3 = _oil_anchor()
+	if not is_instance_valid(_grid):
+		_grid = MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(80.0, 80.0)
+		_grid.mesh = pm
+		_grid.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var mat := ShaderMaterial.new()
+		mat.shader = load("res://shaders/build_grid.gdshader")
+		mat.set_shader_parameter(&"cell", oil_grid)
+		_grid.material_override = mat
+		_effects_root.add_child(_grid)
+	var m := _grid.material_override as ShaderMaterial
+	if m != null:
+		m.set_shader_parameter(&"grid_anchor", Vector2(anchor.x, anchor.z))
+	_grid.global_position = Vector3(anchor.x, 0.06, anchor.z)  # поверх травы
+
+
+func _clear_grid() -> void:
+	if is_instance_valid(_grid):
+		_grid.queue_free()
+	_grid = null
+
+
+## Снести ближайшую трубу к точке курсора (ПКМ). Радиус — чуть меньше клетки, чтобы
+## целить однозначно. Связность сети пересчитает OilCollector следующим тиком.
+func _delete_pipe_under_cursor() -> void:
+	var g: Vector3 = _hand.cursor_world_position()
+	g.y -= _hand.hand_height
+	var best: Node3D = null
+	var best_d: float = (oil_grid * 0.7) * (oil_grid * 0.7)
+	for n in get_tree().get_nodes_in_group(PipeSegment.GROUP):
+		if not is_instance_valid(n) or not (n is Node3D):
+			continue
+		var node := n as Node3D
+		var dx: float = node.global_position.x - g.x
+		var dz: float = node.global_position.z - g.z
+		var d: float = dx * dx + dz * dz
+		if d < best_d:
+			best_d = d
+			best = node
+	if best != null:
+		AoeVisual.spawn_dust(get_tree().current_scene, best.global_position)
+		best.queue_free()
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:PlaceAim] труба снесена (ПКМ)")
 
 
 func _finish() -> void:
 	_aiming = false
 	_clear_ghost()
+	_clear_grid()
 	_set_build_zones_visible(false)  # спрятать зоны-индикаторы (вне режима стройки)
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
 		_hand.pop_category()

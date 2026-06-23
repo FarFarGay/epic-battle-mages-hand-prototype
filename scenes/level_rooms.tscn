@@ -699,7 +699,7 @@ shape = SubResource("BoxShape3D_door")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 78.5, 0, 107)
 
 [node name="OilDepositR8" parent="Room8" unique_id=122949249 instance=ExtResource("41_mjs4f")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 79, 0, 90)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 78.5, 0, 91)
 
 [node name="Room9" type="Node3D" parent="." unique_id=960184648]
 
@@ -713,7 +713,7 @@ transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 92, 0, 48.625)
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 92, 0, 63.375)
 
 [node name="OilDepositR9" parent="Room9" unique_id=790238278 instance=ExtResource("41_mjs4f")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 68.5, 0, 80)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 68.5, 0, 81)
 
 [node name="Room10" type="Node3D" parent="." unique_id=427054087]
 
