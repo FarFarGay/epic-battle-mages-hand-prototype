@@ -220,7 +220,6 @@ func _spawn_one_rock(center: Vector3) -> void:
 	# не менять одиночного гиганта-каменщика.
 	stone.aoe_mask = (Layers.MASK_HOSTILE_PROJECTILE & ~Layers.TERRAIN) | Layers.ENEMIES
 	stone.gravity = rock_gravity
-	stone.speed = arrow_speed
 	stone.shake_amount = 0.0  # 30 шейков забили бы экран; трясёт только взрыв на смерти
 	stone.debug_log = false
 	var mesh := stone.get_node_or_null("MeshInstance3D") as Node3D
@@ -230,10 +229,16 @@ func _spawn_one_rock(center: Vector3) -> void:
 	var r: float = sqrt(randf()) * volley_scatter_radius
 	var aim := Vector3(center.x + cos(ang) * r, 0.0, center.z + sin(ang) * r)
 	var spawn: Vector3 = global_position + arrow_spawn_offset
+	# Гарантия долёта: на оптим. дуге дальность = speed²/gravity, поэтому скорость
+	# не ниже sqrt(gravity·d) с запасом. Иначе дальняя кромка россыпи (range+jitter+
+	# scatter до ~45м) при фикс. arrow_speed=24 падала раньше цели — BallisticUtil
+	# уходил в прямой выстрел (недолёт). Один путь: скорость растёт с дистанцией.
+	var d: float = spawn.distance_to(aim)
+	stone.speed = maxf(arrow_speed, sqrt(rock_gravity * d) * 1.06)
 	stone.setup(spawn, aim)
 	var root: Node = get_tree().current_scene
 	if is_instance_valid(root):
-		var flight: float = maxf(0.45, spawn.distance_to(aim) / maxf(arrow_speed, 1.0) * 1.3)
+		var flight: float = maxf(0.45, spawn.distance_to(aim) / maxf(stone.speed, 1.0) * 1.3)
 		AoeVisual.spawn_ground_ring(root, aim, rock_aoe_radius, flight, rock_marker_color)
 
 

@@ -144,7 +144,8 @@ func _commit(pos: Vector3) -> void:
 	if scene == null:
 		return
 	# Мгновенная постройка (трубы): ставим готовую сцену сразу, без стройплощадки и
-	# рабочих — длинную трассу не хочется хаулить. Снап-цель помечаем как у стен.
+	# рабочих — длинную трассу не хочется хаулить. Снап/связь у труб — по портам
+	# (PORT_HOST_GROUP, добавляется в их _ready), wall_snap им не нужен.
 	if _data.get("instant", false):
 		var ps := load(String(_data.get("scene", ""))) as PackedScene
 		if ps != null:
@@ -154,9 +155,6 @@ func _commit(pos: Vector3) -> void:
 				var bn := b as Node3D
 				bn.global_position = pos
 				bn.rotation.y = _rot_y
-				if _data.get("snap_target", false):
-					bn.add_to_group(WALL_SNAP_GROUP)
-					bn.set_meta(&"wall_half_len", _footprint.x * 0.5)
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:PlaceAim] %s @ (%.1f, %.1f) yaw %.0f° (мгновенно)" % [
 				_building, pos.x, pos.z, rad_to_deg(_rot_y)])

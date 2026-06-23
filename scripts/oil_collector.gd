@@ -4,8 +4,10 @@ extends StaticBody3D
 ## нефть со ВСЕХ буров по трубам (add_oil), копит = счётчик победы матча. Это цель
 ## обороны: при штурме враги ломятся к нему (HP/урон — слой обороны позже).
 ##
-## Буры подключаются к коллектору трубой ([HandPipeAim] → bur.set_collector(self)).
-## Коллектор пассивен: буры сами шлют ему add_oil каждый тик добычи.
+## Буры подключаются к коллектору трубопроводом из секций ([PipeSegment], ставятся
+## рукой как стены). Связность считает сам коллектор по совпадению концов-портов
+## (_recompute_network) и зовёт bur.set_collector(self). Коллектор пассивен: буры
+## сами шлют ему add_oil каждый тик добычи.
 
 const GROUP := &"oil_collector"
 ## Допуск совпадения КОНЦОВ (портов) труб/инлетов/буров. Снап ставит концы встык
@@ -41,7 +43,7 @@ func _ready() -> void:
 
 ## Трубчатый выступ-инлет (цилиндр вдоль Z + фланец на конце) спереди/сзади. Конец
 ## выступа = порт стыковки (см. pipe_ports).
-func _build_inlet_stub(sign: float) -> void:
+func _build_inlet_stub(dir_sign: float) -> void:
 	var mat := PipeSegment.material()
 	var z0: float = 2.0          # от края бака
 	var z1: float = inlet_dist   # до конца-порта
@@ -53,7 +55,7 @@ func _build_inlet_stub(sign: float) -> void:
 	stub.mesh = c
 	stub.material_override = mat
 	stub.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	stub.position = Vector3(0, PipeSegment.PIPE_Y, (z0 + z1) * 0.5 * sign)
+	stub.position = Vector3(0, PipeSegment.PIPE_Y, (z0 + z1) * 0.5 * dir_sign)
 	stub.rotation = Vector3(PI / 2, 0, 0)  # ось цилиндра вдоль Z
 	add_child(stub)
 	var fl := MeshInstance3D.new()
@@ -64,7 +66,7 @@ func _build_inlet_stub(sign: float) -> void:
 	fl.mesh = fc
 	fl.material_override = mat
 	fl.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	fl.position = Vector3(0, PipeSegment.PIPE_Y, z1 * sign)
+	fl.position = Vector3(0, PipeSegment.PIPE_Y, z1 * dir_sign)
 	fl.rotation = Vector3(PI / 2, 0, 0)
 	add_child(fl)
 

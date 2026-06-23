@@ -2020,8 +2020,6 @@ func _cancel_hand_aims(except: StringName = &"") -> void:
 		hand.bridge_aim.cancel_aim()
 	if except != &"place" and hand.place_aim != null:
 		hand.place_aim.cancel_aim()
-	if except != &"pipe" and hand.pipe_aim != null:
-		hand.pipe_aim.cancel_aim()
 
 
 ## Снять выделение: гасит ЛЮБОЙ активный aim-режим руки, рука возвращается к обычным

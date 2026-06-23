@@ -68,7 +68,6 @@ const RAY_DISTANCE := 1000.0
 @onready var build_aim: HandBuildAim = $BuildAim
 @onready var bridge_aim: HandBridgeAim = $BridgeAim
 @onready var place_aim: HandPlaceAim = $PlaceAim
-@onready var pipe_aim: HandPipeAim = $PipeAim
 
 var _velocity_history: Array[Vector3] = []
 var _previous_pos: Vector3
@@ -119,10 +118,8 @@ func _ready() -> void:
 	build_aim.setup(self)
 	# Планирование моста двумя кликами (комнатный режим) — на той же BUILD_AIM-оси.
 	bridge_aim.setup(self)
-	# Свободное размещение точечных построек одним кликом (стена и т.д.) — BUILD_AIM.
+	# Свободное размещение точечных построек одним кликом (стена/труба/бур) — BUILD_AIM.
 	place_aim.setup(self)
-	# Прокладка трубопровода двумя кликами (бур → цистерна) — на той же BUILD_AIM-оси.
-	pipe_aim.setup(self)
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.
 	# Локальные сигналы остаются для тесно-связанных слушателей.
 	grabbed.connect(func(item: Node3D) -> void: EventBus.hand_grabbed.emit(item))
