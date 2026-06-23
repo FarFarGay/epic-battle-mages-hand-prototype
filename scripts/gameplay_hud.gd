@@ -138,17 +138,21 @@ const BUILD_MENU_PIPE_STRAIGHT := 4
 const BUILD_MENU_PIPE_CORNER := 5
 const BUILD_MENU_PIPE_CROSS := 6
 const BUILD_MENU_PUMP := 11  # качалка-замок (центр грид-города)
+const BUILD_MENU_PAD_WALL1 := 12
+const BUILD_MENU_PAD_HOUSE := 13
+const BUILD_MENU_PAD_STORE := 14
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[OilGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
-const BUILD_MENU_PAD_CORNER := 9
 const BUILD_MENU_PAD_TOWER := 10
 ## Пункт меню площадки → id постройки в [RoomBuildings] (общая модель размещения).
 var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_MINE: RoomBuildings.PAD_MINE,
 	BUILD_MENU_PAD_WALL: RoomBuildings.PAD_WALL,
-	BUILD_MENU_PAD_CORNER: RoomBuildings.PAD_CORNER,
+	BUILD_MENU_PAD_WALL1: RoomBuildings.PAD_WALL1,
 	BUILD_MENU_PAD_TOWER: RoomBuildings.PAD_TOWER,
+	BUILD_MENU_PAD_HOUSE: RoomBuildings.PAD_HOUSE,
+	BUILD_MENU_PAD_STORE: RoomBuildings.PAD_STORE,
 }
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.

@@ -19,8 +19,10 @@ const PIPE_CROSS := &"pipe_cross"
 # Полимино-постройки площадки вокруг качалки (Фаза 1, см. [PadBuilding], [OilGrid]).
 const PAD_MINE := &"pad_mine"
 const PAD_WALL := &"pad_wall"
-const PAD_CORNER := &"pad_corner"
+const PAD_WALL1 := &"pad_wall1"
 const PAD_TOWER := &"pad_tower"
+const PAD_HOUSE := &"pad_house"   # население/гномы (роль housing)
+const PAD_STORE := &"pad_store"   # хранилище/экономика (роль storage)
 
 const CATALOG: Dictionary = {
 	WALL: {
@@ -135,21 +137,40 @@ const CATALOG: Dictionary = {
 		"instant": true,
 		"ghost_color": Color(0.5, 0.58, 0.72, 0.5),
 	},
-	PAD_CORNER: {
-		"name": "Угол-щит",
-		"menu_label": "∟ Угол-щит",
+	PAD_WALL1: {
+		"name": "Стенка (клетка)",
+		"menu_label": "▪ Стенка (1 клетка)",
 		"role": &"defend",
-		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
+		"cells": [Vector2i(0, 0)],
 		"instant": true,
 		"ghost_color": Color(0.5, 0.58, 0.72, 0.5),
 	},
 	PAD_TOWER: {
-		"name": "Турель-блок",
-		"menu_label": "⊞ Турель-блок (2×2)",
+		"name": "Сторожевая башня",
+		"menu_label": "🗼 Сторожевая башня",
 		"role": &"attack",
+		"cells": [Vector2i(0, 0)],
+		"instant": true,
+		"ghost_color": Color(0.55, 0.6, 0.62, 0.5),
+	},
+	# Население: дом гномов, L-форма (разные фигуры = пазл упаковки). Функция (прирост
+	# гномов) — Фаза 2.
+	PAD_HOUSE: {
+		"name": "Дом гномов",
+		"menu_label": "🏠 Дом гномов (L)",
+		"role": &"housing",
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
+		"instant": true,
+		"ghost_color": Color(0.6, 0.45, 0.3, 0.5),
+	},
+	# Хранилище: склад, квадрат 2×2. Функция (кап ресурсов/буфер) — Фаза 2.
+	PAD_STORE: {
+		"name": "Склад",
+		"menu_label": "📦 Склад (2×2)",
+		"role": &"storage",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
 		"instant": true,
-		"ghost_color": Color(0.82, 0.4, 0.34, 0.5),
+		"ghost_color": Color(0.55, 0.45, 0.3, 0.5),
 	},
 }
 

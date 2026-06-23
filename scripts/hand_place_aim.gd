@@ -183,6 +183,7 @@ func _commit(pos: Vector3) -> void:
 		scene.add_child(b)
 		b.global_position = pos
 		b.rotation.y = _rot_y
+		call_deferred(&"_refresh_walls")  # стены дотянутся до новой постройки
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:PlaceAim] фигура %s @ клетка %s, yaw %.0f°" % [
 				_building, OilGrid.world_to_cell(pos, get_tree()), rad_to_deg(_rot_y)])
@@ -502,8 +503,14 @@ func _delete_pipe_under_cursor() -> void:
 	if best != null:
 		AoeVisual.spawn_dust(get_tree().current_scene, best.global_position)
 		best.queue_free()
+		call_deferred(&"_refresh_walls")  # стены отвяжутся от снесённой постройки
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:PlaceAim] постройка снесена (ПКМ)")
+
+
+## Пересобрать все стены — дотянуть до новых соседей / отвязать от снесённых.
+func _refresh_walls() -> void:
+	PadBuilding.refresh_walls(get_tree())
 
 
 func _finish() -> void:

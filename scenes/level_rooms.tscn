@@ -43,7 +43,6 @@
 [ext_resource type="PackedScene" path="res://scenes/blueprint_machine.tscn" id="41_4w2r8"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton_stone_thrower.tscn" id="41_8brgo"]
 [ext_resource type="PackedScene" path="res://scenes/oil_deposit.tscn" id="41_mjs4f"]
-[ext_resource type="PackedScene" path="res://scenes/oil_collector.tscn" id="42_xhgmq"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -533,7 +532,7 @@ material_override = SubResource("Mat_foliage")
 mesh = SubResource("Sph_foliage")
 
 [node name="Tower" parent="." unique_id=1617488261 groups=["skeleton_target"] instance=ExtResource("1")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -58.3, 3, 0)
 
 [node name="CameraRig" parent="." unique_id=1454102563 instance=ExtResource("3")]
 target_path = NodePath("../Tower")
