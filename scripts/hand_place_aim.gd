@@ -23,9 +23,14 @@ const WALL_SNAP_GROUP := &"wall_snap"
 @export var ghost_color_valid: Color = Color(0.55, 0.85, 1.0, 0.5)
 ## Цвет силуэта, когда сработал магнит к соседней стене — игрок видит «прилипло».
 @export var ghost_color_snap: Color = Color(0.4, 1.0, 0.5, 0.6)
+## Цвет силуэта-ОШИБКИ: труба не пристыкована к порту (ставить в воздух нельзя).
+@export var ghost_color_invalid: Color = Color(1.0, 0.35, 0.3, 0.55)
 ## Радиус магнита (м): ближайшая snap-точка силуэта (центр/край) притягивается к
 ## ближайшей snap-точке соседней стены в пределах этого радиуса. 0 → магнит выкл.
 @export var snap_radius: float = 1.6
+## Радиус примагничивания КОНЦОВ труб к портам (больше стенового — концы стыковать
+## должно быть легко). Используется в _snap_pipe.
+@export var pipe_snap_radius: float = 2.8
 @export var debug_log: bool = true
 @export var effects_root_path: NodePath
 
@@ -35,7 +40,8 @@ var _aiming: bool = false
 var _building: StringName = &""
 var _data: Dictionary = {}
 var _footprint: Vector3 = Vector3(2.0, 1.5, 0.3)
-var _ghost: MeshInstance3D = null
+var _ghost: Node3D = null
+var _ghost_mat: StandardMaterial3D = null
 ## Текущий поворот силуэта (рад). Крутится кликом средней кнопки мыши, сохраняется
 ## между установками (sticky) — следующая стена встаёт под тем же углом.
 var _rot_y: float = 0.0
@@ -106,9 +112,16 @@ func _process(_delta: float) -> void:
 		return
 	# Силуэт следует за курсором, магнитясь к соседним стенам. ЛКМ — поставить
 	# (sticky, ставим следующую). Поворот — клик средней кнопки (см. _input).
-	var place: Vector3 = _snap_center(ground)
+	# Трубы снапятся ПО КОНЦАМ (порты) к трубам/коллектору/буру; прочее — по стенам.
+	var is_pipe: bool = _data.has("pipe_kind")
+	var place: Vector3 = _snap_pipe(ground) if is_pipe else _snap_center(ground)
 	_update_ghost(place)
 	if Input.is_action_just_pressed(ACTION_COMMIT) and not _hand.is_pointer_over_ui():
+		# Трубу в воздух нельзя — только встык к порту (бур/коллектор/другая труба).
+		if is_pipe and not _snapped:
+			if debug_log and LogConfig.master_enabled:
+				print("[Hand:PlaceAim] труба не у порта — стыкуй к буру/коллектору/трубе")
+			return
 		_commit(place)
 
 
@@ -130,6 +143,24 @@ func _commit(pos: Vector3) -> void:
 	var scene: Node = get_tree().current_scene
 	if scene == null:
 		return
+	# Мгновенная постройка (трубы): ставим готовую сцену сразу, без стройплощадки и
+	# рабочих — длинную трассу не хочется хаулить. Снап-цель помечаем как у стен.
+	if _data.get("instant", false):
+		var ps := load(String(_data.get("scene", ""))) as PackedScene
+		if ps != null:
+			var b := ps.instantiate()
+			scene.add_child(b)
+			if b is Node3D:
+				var bn := b as Node3D
+				bn.global_position = pos
+				bn.rotation.y = _rot_y
+				if _data.get("snap_target", false):
+					bn.add_to_group(WALL_SNAP_GROUP)
+					bn.set_meta(&"wall_half_len", _footprint.x * 0.5)
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:PlaceAim] %s @ (%.1f, %.1f) yaw %.0f° (мгновенно)" % [
+				_building, pos.x, pos.z, rad_to_deg(_rot_y)])
+		return
 	var site := StaticBody3D.new()
 	site.set_script(ROOM_BUILD_SITE)
 	site.building_id = _building
@@ -139,6 +170,36 @@ func _commit(pos: Vector3) -> void:
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:PlaceAim] площадка %s @ (%.1f, %.1f), yaw %.0f°" % [
 			_building, pos.x, pos.z, rad_to_deg(_rot_y)])
+
+
+## Снап трубы ПО КОНЦАМ: ближайший конец ставимого тайла притягивается к ближайшему
+## порту существующего хоста (труба/коллектор/бур, группа pipe_port_host) в пределах
+## snap_radius. Концы стыкуются как настоящие трубы — встык к выступу коллектора/бура.
+func _snap_pipe(raw: Vector3) -> Vector3:
+	_snapped = false
+	if pipe_snap_radius <= 0.0:
+		return raw
+	var kind: int = int(_data.get("pipe_kind", 0))
+	var bz := Basis(Vector3.UP, _rot_y)
+	var my_ports: Array = []
+	for lp in PipeSegment.local_ports(kind):
+		my_ports.append(raw + bz * (lp as Vector3))
+	var best_d: float = pipe_snap_radius
+	var best_delta: Vector3 = Vector3.ZERO
+	for host in get_tree().get_nodes_in_group(PipeSegment.PORT_HOST_GROUP):
+		if not is_instance_valid(host) or not host.has_method(&"pipe_ports"):
+			continue
+		for hp in host.call(&"pipe_ports"):
+			for mp in my_ports:
+				var dx: float = (mp as Vector3).x - (hp as Vector3).x
+				var dz: float = (mp as Vector3).z - (hp as Vector3).z
+				var d: float = sqrt(dx * dx + dz * dz)
+				if d < best_d:
+					best_d = d
+					best_delta = Vector3((hp as Vector3).x - (mp as Vector3).x, 0.0, (hp as Vector3).z - (mp as Vector3).z)
+	if best_delta != Vector3.ZERO:
+		_snapped = true
+	return raw + best_delta
 
 
 ## Магнит: притягивает ближайшую snap-точку силуэта (центр + два края по локальному X)
@@ -176,34 +237,49 @@ func _snap_center(raw: Vector3) -> Vector3:
 func _update_ghost(pos: Vector3) -> void:
 	if not is_instance_valid(_ghost):
 		return
-	_ghost.global_position = pos + Vector3.UP * (_footprint.y * 0.5)
-	_ghost.rotation.y = _rot_y
-	# Подсветка «прилипло»: зелёный при сработавшем магните, иначе цвет каталога.
-	var mat := _ghost.material_override as StandardMaterial3D
-	if mat != null:
-		var c: Color = ghost_color_snap if _snapped else Color(_data.get("ghost_color", ghost_color_valid))
-		mat.albedo_color = c
-		mat.emission = Color(c.r, c.g, c.b, 1.0)
+	# Трубы: корень на земле (тюбы строятся на своей высоте PIPE_Y). Бокс: поднимаем
+	# на пол-высоты футпринта.
+	var y_off: float = 0.0 if _data.has("pipe_kind") else _footprint.y * 0.5
+	_ghost.global_position = pos + Vector3.UP * y_off
+	_ghost.rotation.y = _rot_y  # поворот силуэта — игрок видит ориентацию (угол/крест)
+	if _ghost_mat != null:
+		var c: Color
+		if _data.has("pipe_kind") and not _snapped:
+			c = ghost_color_invalid  # труба не у порта — красный «нельзя»
+		elif _snapped:
+			c = ghost_color_snap
+		else:
+			c = Color(_data.get("ghost_color", ghost_color_valid))
+		_ghost_mat.albedo_color = c
+		_ghost_mat.emission = Color(c.r, c.g, c.b, 1.0)
 
 
+## Силуэт-призрак. Для труб — РЕАЛЬНАЯ форма (тюбы крест/угол/прямая, видно поворот);
+## для прочего — бокс по футпринту. Общий полупрозрачный материал перекрашиваем в
+## _update_ghost (валид/снап/ошибка).
 func _spawn_ghost() -> void:
 	_clear_ghost()
 	if _effects_root == null:
 		_effects_root = get_tree().current_scene
-	_ghost = MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = _footprint
-	_ghost.mesh = box
+	_ghost = Node3D.new()
 	var color: Color = _data.get("ghost_color", ghost_color_valid)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.emission_enabled = true
-	mat.emission = Color(color.r, color.g, color.b, 1.0)
-	mat.emission_energy_multiplier = 0.4
-	_ghost.material_override = mat
-	_ghost.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_ghost_mat = StandardMaterial3D.new()
+	_ghost_mat.albedo_color = color
+	_ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_ghost_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_ghost_mat.emission_enabled = true
+	_ghost_mat.emission = Color(color.r, color.g, color.b, 1.0)
+	_ghost_mat.emission_energy_multiplier = 0.4
+	if _data.has("pipe_kind"):
+		PipeSegment.build_ghost(_ghost, int(_data.get("pipe_kind", 0)), _ghost_mat)
+	else:
+		var mi := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = _footprint
+		mi.mesh = box
+		mi.material_override = _ghost_mat
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_ghost.add_child(mi)
 	if _effects_root != null:
 		_effects_root.add_child(_ghost)
 

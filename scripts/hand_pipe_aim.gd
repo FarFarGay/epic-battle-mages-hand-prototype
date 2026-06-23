@@ -1,8 +1,8 @@
 class_name HandPipeAim
 extends Node
-## Координатор прокладки ТРУБОПРОВОДА рукой — ДВА КЛИКА (бур → цистерна), по образцу
-## [HandBridgeAim], но проще: труба соединяет ближайший [OilRig] с ближайшей
-## [OilTank], и только ПОСЛЕ прокладки добыча идёт в цистерну (`rig.set_cistern`).
+## Координатор прокладки ТРУБОПРОВОДА рукой — ДВА КЛИКА (бур → коллектор), по образцу
+## [HandBridgeAim], но проще: труба соединяет ближайший [OilRig] с ближайшим
+## [OilCollector], и только ПОСЛЕ прокладки добыча идёт в коллектор (`rig.set_collector`).
 ## Без трубы бур крутится, но нефть никуда не копится.
 ##
 ## v1: труба кладётся сразу на 2-м клике (визуальный пролёт-короб), без рабочей
@@ -91,16 +91,16 @@ func _commit(end: Vector3) -> void:
 	if to.length() < MIN_SPAN:
 		return  # слишком коротко — ждём клик подальше
 	var rig := _nearest_in_group(&"oil_rig", _start, end)
-	var tank := _nearest_in_group(&"oil_tank", _start, end)
-	if rig == null or tank == null:
-		push_warning("[Hand:PipeAim] нужны и бур, и цистерна — труба не проложена")
+	var collector := _nearest_in_group(&"oil_collector", _start, end)
+	if rig == null or collector == null:
+		push_warning("[Hand:PipeAim] нужны и бур, и коллектор — труба не проложена")
 		_finish()
 		return
 	_spawn_pipe(_start, end)
-	if rig.has_method(&"set_cistern"):
-		rig.call(&"set_cistern", tank)
+	if rig.has_method(&"set_collector"):
+		rig.call(&"set_collector", collector)
 	if debug_log and LogConfig.master_enabled:
-		print("[Hand:PipeAim] труба проложена: бур → цистерна, добыча пошла")
+		print("[Hand:PipeAim] труба проложена: бур → коллектор, нефть пошла")
 	_finish()
 
 
