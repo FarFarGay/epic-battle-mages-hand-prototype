@@ -22,6 +22,11 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 ## по миру) и ориентацию через global_transform.basis.x. См. [[project_ebm_building_rework]].
 const WALL_SNAP_GROUP := &"wall_snap"
 
+## ВРЕМЕННО (тест): стройка БЕЗ ресурсов и БЕЗ ожидания — площадка достраивается сразу
+## при установке (хаул/гномы/стоимость подключим позже). Вернуть в false, когда вернём
+## экономику стройки.
+const TEMP_FREE_BUILD := true
+
 ## Тип здания из [RoomBuildings]. Задаётся HandPlaceAim'ом ДО add_child.
 @export var building_id: StringName = &""
 
@@ -52,6 +57,10 @@ func _ready() -> void:
 	if _data.get("snap_target", false):
 		add_to_group(WALL_SNAP_GROUP)
 		set_meta(&"wall_half_len", _footprint.x * 0.5)
+	# ВРЕМЕННО: достроить сразу (deferred — HandPlaceAim ставит трансформ ПОСЛЕ add_child,
+	# иначе здание появится в (0,0,0)).
+	if TEMP_FREE_BUILD:
+		call_deferred(&"_finish")
 
 
 ## Полупрозрачный силуэт будущего здания — растёт по Y с прогрессом доставок.

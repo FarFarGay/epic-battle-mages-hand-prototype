@@ -11,10 +11,16 @@ extends RefCounted
 
 const WALL := &"wall"
 const WATCHTOWER := &"watchtower"
+const PUMP := &"pump"  # качалка-замок: центр грид-города, строят гномы, ОДНА на отряд
 const OIL_DRILL := &"oil_drill"
 const PIPE_STRAIGHT := &"pipe_straight"
 const PIPE_CORNER := &"pipe_corner"
 const PIPE_CROSS := &"pipe_cross"
+# Полимино-постройки площадки вокруг качалки (Фаза 1, см. [PadBuilding], [OilGrid]).
+const PAD_MINE := &"pad_mine"
+const PAD_WALL := &"pad_wall"
+const PAD_CORNER := &"pad_corner"
+const PAD_TOWER := &"pad_tower"
 
 const CATALOG: Dictionary = {
 	WALL: {
@@ -54,6 +60,19 @@ const CATALOG: Dictionary = {
 		"resources_needed": 6,
 		"site_hp": 50.0,
 		"ghost_color": Color(0.7, 0.6, 1.0, 0.45),
+	},
+	# Качалка-замок — ЦЕНТР грид-города. Строят гномы (стройплощадка+хаул, НЕ instant).
+	# Ставится свободно (грида ещё нет — она его и задаёт); достроенная = OilCollector,
+	# якорь нефте-решётки ([OilGrid]). Гейт «одна на отряд» — в gameplay_hud.
+	PUMP: {
+		"name": "Качалка-замок",
+		"menu_label": "🏰 Качалка-замок (центр)",
+		"scene": "res://scenes/oil_collector.tscn",
+		"footprint": Vector3(4.6, 4.0, 4.6),  # ~ диаметр коллектора
+		"resource_type": ResourcePile.ResourceType.WOOD,
+		"resources_needed": 10,
+		"site_hp": 80.0,
+		"ghost_color": Color(0.92, 0.82, 0.45, 0.45),
 	},
 	OIL_DRILL: {
 		"name": "Бур",
@@ -96,6 +115,41 @@ const CATALOG: Dictionary = {
 		"footprint": Vector3(2.0, 0.5, 2.0),
 		"instant": true,
 		"ghost_color": Color(0.5, 0.7, 1.0, 0.5),
+	},
+	# Полимино-фигуры площадки (Фаза 1): ставятся мгновенно рукой, занимают клетки
+	# маски `cells` (offset'ы от якоря-клетки), `role` = защита/атака/добыча. Силуэт +
+	# поворот MMB, нельзя за площадку/внахлёст. Логику ролей добавим Фазой 2.
+	PAD_MINE: {
+		"name": "Добытчик",
+		"menu_label": "⛏ Добытчик (1)",
+		"role": &"mine",
+		"cells": [Vector2i(0, 0)],
+		"instant": true,
+		"ghost_color": Color(0.88, 0.68, 0.26, 0.5),
+	},
+	PAD_WALL: {
+		"name": "Стенка-брус",
+		"menu_label": "▮ Стенка ▮▮▮",
+		"role": &"defend",
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
+		"instant": true,
+		"ghost_color": Color(0.5, 0.58, 0.72, 0.5),
+	},
+	PAD_CORNER: {
+		"name": "Угол-щит",
+		"menu_label": "∟ Угол-щит",
+		"role": &"defend",
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
+		"instant": true,
+		"ghost_color": Color(0.5, 0.58, 0.72, 0.5),
+	},
+	PAD_TOWER: {
+		"name": "Турель-блок",
+		"menu_label": "⊞ Турель-блок (2×2)",
+		"role": &"attack",
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
+		"instant": true,
+		"ghost_color": Color(0.82, 0.4, 0.34, 0.5),
 	},
 }
 

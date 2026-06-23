@@ -48,6 +48,8 @@ var _grid: MeshInstance3D = null
 ## Заливка занимаемой КЛЕТКИ под силуэтом нефте-постройки — игрок видит «куб» сетки.
 var _cell: MeshInstance3D = null
 var _cell_mat: StandardMaterial3D = null
+## Подсветка площадки застройки (квадрат вокруг качалки) при укладке полимино-фигур.
+var _pad_floor: MeshInstance3D = null
 ## Текущий поворот силуэта (рад). Крутится кликом средней кнопки мыши, сохраняется
 ## между установками (sticky) — следующая стена встаёт под тем же углом.
 var _rot_y: float = 0.0
@@ -120,10 +122,16 @@ func _process(_delta: float) -> void:
 	# Силуэт следует за курсором. ЛКМ — поставить (sticky, ставим следующую). Поворот —
 	# клик средней кнопки (см. _input). Нефте-постройки (трубы И бур) притягивают порты
 	# к ЕДИНОЙ решётке (якорь — коллектор) → концы всегда совпадают; прочее — по стенам.
+	var is_pad: bool = _data.has("cells")
 	var is_pipe: bool = _data.has("pipe_kind")
 	var is_oil: bool = is_pipe or _building == RoomBuildings.OIL_DRILL
 	var place: Vector3
-	if is_oil:
+	if is_pad:
+		# Полимино: снап центра в клетку; _snapped = все клетки фигуры в площадке, не на
+		# качалке и не внахлёст (гейт + подсветка).
+		place = _snap_oil_grid(ground)
+		_snapped = _pad_valid(place)
+	elif is_oil:
 		place = _snap_oil_grid(ground)
 		# _snapped = порт примагниченной постройки совпал с портом существующего хоста
 		# (коллектор/бур/труба). Для труб это ГЕЙТ (в воздух нельзя), буру — лишь подсветка.
@@ -132,10 +140,10 @@ func _process(_delta: float) -> void:
 		place = _snap_center(ground)
 	_update_ghost(place)
 	if Input.is_action_just_pressed(ACTION_COMMIT) and not _hand.is_pointer_over_ui():
-		# Трубу в воздух нельзя — только встык к порту (бур/коллектор/другая труба).
-		if is_pipe and not _snapped:
+		# Нельзя невалидно: труба не у порта / фигура за площадкой / внахлёст.
+		if (is_pipe or is_pad) and not _snapped:
 			if debug_log and LogConfig.master_enabled:
-				print("[Hand:PlaceAim] труба не у порта — стыкуй к буру/коллектору/трубе")
+				print("[Hand:PlaceAim] нельзя сюда — стыкуй к порту либо держи фигуру в площадке без наложений")
 			return
 		_commit(place)
 
@@ -167,6 +175,17 @@ func _input(event: InputEvent) -> void:
 func _commit(pos: Vector3) -> void:
 	var scene: Node = get_tree().current_scene
 	if scene == null:
+		return
+	# Полимино-фигура площадки: строится КОДОМ по маске (без .tscn), мгновенно.
+	if _data.has("cells"):
+		var b := PadBuilding.new()
+		b.setup(_building)  # маска/роль ДО add_child (_ready строит по ним)
+		scene.add_child(b)
+		b.global_position = pos
+		b.rotation.y = _rot_y
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:PlaceAim] фигура %s @ клетка %s, yaw %.0f°" % [
+				_building, OilGrid.world_to_cell(pos, get_tree()), rad_to_deg(_rot_y)])
 		return
 	# Мгновенная постройка (трубы): ставим готовую сцену сразу, без стройплощадки и
 	# рабочих — длинную трассу не хочется хаулить. Снап/связь у труб — по портам
@@ -245,6 +264,28 @@ func _touches_host(ports: Array) -> bool:
 	return false
 
 
+## Все клетки полимино-фигуры (центр center, поворот _rot_y) лежат в площадке, НЕ на
+## ядре-качалке и НЕ заняты другой фигурой — иначе ставить нельзя.
+func _pad_valid(center: Vector3) -> bool:
+	var cells: Array = OilGrid.building_cells(center, _data.get("cells", []), _rot_y, get_tree())
+	var occ: Dictionary = _occupied_cells()
+	for c in cells:
+		var cell := c as Vector2i
+		if not OilGrid.in_pad(cell) or OilGrid.is_pump(cell) or occ.has(cell):
+			return false
+	return true
+
+
+## Множество занятых клеток (все уже поставленные фигуры). Дёшево — фигур немного.
+func _occupied_cells() -> Dictionary:
+	var out: Dictionary = {}
+	for b in get_tree().get_nodes_in_group(PadBuilding.GROUP):
+		if is_instance_valid(b) and b.has_method(&"occupied_cells"):
+			for c in b.call(&"occupied_cells"):
+				out[c] = true
+	return out
+
+
 ## Магнит: притягивает ближайшую snap-точку силуэта (центр + два края по локальному X)
 ## к ближайшей snap-точке соседней стены в пределах snap_radius. Чистая трансляция
 ## (поворот не трогаем). raw — желаемый центр; возвращает примагниченный центр.
@@ -282,12 +323,15 @@ func _update_ghost(pos: Vector3) -> void:
 		return
 	# Трубы: корень на земле (тюбы строятся на своей высоте PIPE_Y). Бокс: поднимаем
 	# на пол-высоты футпринта.
-	var y_off: float = 0.0 if _data.has("pipe_kind") else _footprint.y * 0.5
+	# Трубы/полимино несут свою высоту в локальной геометрии → y_off=0; бокс поднимаем.
+	var y_off: float = 0.0 if (_data.has("pipe_kind") or _data.has("cells")) else _footprint.y * 0.5
 	_ghost.global_position = pos + Vector3.UP * y_off
 	_ghost.rotation.y = _rot_y  # поворот силуэта — игрок видит ориентацию (угол/крест)
 	if _ghost_mat != null:
 		var c: Color
-		if _data.has("pipe_kind") and not _snapped:
+		if _data.has("cells"):
+			c = ghost_color_snap if _snapped else ghost_color_invalid  # фигура валидна/нет
+		elif _data.has("pipe_kind") and not _snapped:
 			c = ghost_color_invalid  # труба не у порта — красный «нельзя»
 		elif _snapped:
 			c = ghost_color_snap
@@ -318,7 +362,20 @@ func _spawn_ghost() -> void:
 	_ghost_mat.emission_enabled = true
 	_ghost_mat.emission = Color(color.r, color.g, color.b, 1.0)
 	_ghost_mat.emission_energy_multiplier = 0.4
-	if _data.has("pipe_kind"):
+	if _data.has("cells"):
+		# Полимино: куб-призрак на каждую клетку маски (узел повернём в _update_ghost).
+		var s: float = OilGrid.CELL
+		for off in _data.get("cells", []):
+			var o := off as Vector2i
+			var mc := MeshInstance3D.new()
+			var bx := BoxMesh.new()
+			bx.size = Vector3(s * 0.96, 1.4, s * 0.96)
+			mc.mesh = bx
+			mc.material_override = _ghost_mat
+			mc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			mc.position = Vector3(o.x * s, 0.7, o.y * s)
+			_ghost.add_child(mc)
+	elif _data.has("pipe_kind"):
 		PipeSegment.build_ghost(_ghost, int(_data.get("pipe_kind", 0)), _ghost_mat)
 	else:
 		var mi := MeshInstance3D.new()
@@ -355,11 +412,12 @@ func _clear_ghost() -> void:
 	_cell = null
 
 
-## Сетка пола для нефте-построек (труба/бур): полупрозрачные клетки шага oil_grid,
-## фаза — центр коллектора (та же решётка, что у снапа). Для прочих зданий скрыта.
+## Сетка пола для нефте-построек (труба/бур) и полимино-фигур: полупрозрачные клетки
+## шага oil_grid, фаза — центр коллектора (та же решётка, что у снапа). Для полимино
+## дополнительно подсвечиваем КВАДРАТ площадки застройки. Для прочих зданий скрыта.
 func _update_grid() -> void:
-	var is_oil: bool = _data.has("pipe_kind") or _building == RoomBuildings.OIL_DRILL
-	if not is_oil:
+	var is_grid: bool = _data.has("pipe_kind") or _data.has("cells") or _building == RoomBuildings.OIL_DRILL
+	if not is_grid:
 		_clear_grid()
 		return
 	if _effects_root == null:
@@ -380,36 +438,72 @@ func _update_grid() -> void:
 	if m != null:
 		m.set_shader_parameter(&"grid_anchor", Vector2(anchor.x, anchor.z))
 	_grid.global_position = Vector3(anchor.x, 0.06, anchor.z)  # поверх травы
+	_update_pad_floor(anchor)
+
+
+## Подсветка площадки (квадрат стороной (2·PAD_RADIUS+1)·клетка вокруг качалки) — только
+## при укладке полимино, чтобы было видно границу «куда можно». Иначе скрыта.
+func _update_pad_floor(anchor: Vector3) -> void:
+	if not _data.has("cells"):
+		if is_instance_valid(_pad_floor):
+			_pad_floor.queue_free()
+		_pad_floor = null
+		return
+	if not is_instance_valid(_pad_floor):
+		_pad_floor = MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		var side: float = (2.0 * OilGrid.PAD_RADIUS + 1.0) * OilGrid.CELL
+		pm.size = Vector2(side, side)
+		_pad_floor.mesh = pm
+		_pad_floor.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var mat := StandardMaterial3D.new()
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.albedo_color = Color(0.35, 0.9, 0.6, 0.12)  # лёгкая зелёная подложка площадки
+		_pad_floor.material_override = mat
+		_effects_root.add_child(_pad_floor)
+	_pad_floor.global_position = Vector3(anchor.x, 0.05, anchor.z)
 
 
 func _clear_grid() -> void:
 	if is_instance_valid(_grid):
 		_grid.queue_free()
 	_grid = null
+	if is_instance_valid(_pad_floor):
+		_pad_floor.queue_free()
+	_pad_floor = null
 
 
-## Снести ближайшую трубу к точке курсора (ПКМ). Радиус — чуть меньше клетки, чтобы
-## целить однозначно. Связность сети пересчитает OilCollector следующим тиком.
+## Снести ближайшую трубу ИЛИ полимино-фигуру к точке курсора (ПКМ) — поправить
+## ошибочную постройку. Радиус — чуть меньше клетки, чтобы целить однозначно. Связность
+## нефтесети пересчитает OilCollector следующим тиком; занятость клеток — по факту групп.
 func _delete_pipe_under_cursor() -> void:
 	var g: Vector3 = _hand.cursor_world_position()
 	g.y -= _hand.hand_height
 	var best: Node3D = null
 	var best_d: float = (oil_grid * 0.7) * (oil_grid * 0.7)
-	for n in get_tree().get_nodes_in_group(PipeSegment.GROUP):
-		if not is_instance_valid(n) or not (n is Node3D):
-			continue
-		var node := n as Node3D
-		var dx: float = node.global_position.x - g.x
-		var dz: float = node.global_position.z - g.z
-		var d: float = dx * dx + dz * dz
-		if d < best_d:
-			best_d = d
-			best = node
+	for grp in [PipeSegment.GROUP, PadBuilding.GROUP]:
+		for n in get_tree().get_nodes_in_group(grp):
+			if not is_instance_valid(n) or not (n is Node3D):
+				continue
+			var node := n as Node3D
+			# Полимино: меряем до ближайшей ЗАНЯТОЙ клетки (origin может быть в углу
+			# большой фигуры). Труба: до центра узла.
+			var d: float = best_d + 1.0
+			if node.has_method(&"occupied_cells"):
+				for c in node.call(&"occupied_cells"):
+					var w: Vector3 = OilGrid.cell_to_world(c as Vector2i, get_tree())
+					d = minf(d, (w.x - g.x) * (w.x - g.x) + (w.z - g.z) * (w.z - g.z))
+			else:
+				d = (node.global_position.x - g.x) * (node.global_position.x - g.x) + (node.global_position.z - g.z) * (node.global_position.z - g.z)
+			if d < best_d:
+				best_d = d
+				best = node
 	if best != null:
 		AoeVisual.spawn_dust(get_tree().current_scene, best.global_position)
 		best.queue_free()
 		if debug_log and LogConfig.master_enabled:
-			print("[Hand:PlaceAim] труба снесена (ПКМ)")
+			print("[Hand:PlaceAim] постройка снесена (ПКМ)")
 
 
 func _finish() -> void:

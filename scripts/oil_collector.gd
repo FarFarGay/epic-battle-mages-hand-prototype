@@ -20,10 +20,8 @@ signal filled
 ## Цель матча — накопить столько нефти со всех буров (победа). Подключим к
 ## WinOverlay следующим куском (HUD-счётчик + победа).
 @export var oil_goal: float = 200.0
-## Меш «уровень нефти» в баке коллектора — растёт по Y от 0 до полного.
-@export var fill_path: NodePath = NodePath("Fill")
-## Вынос конца инлета вперёд/назад (±Z локально) от центра — порты стыковки трубы
-## (на концах трубчатых выступов спереди/сзади).
+## Вынос порта стыковки трубы вперёд/назад (±Z) — ЛЕГАСИ нефтесети (трубы ретайрятся,
+## Фаза 3). Кратно клетке (3.0), pipe_ports() ещё считает по нему.
 @export var inlet_dist: float = 3.0
 
 var _oil: float = 0.0
@@ -35,40 +33,95 @@ var _net_timer: float = 0.0
 func _ready() -> void:
 	add_to_group(GROUP)
 	add_to_group(PipeSegment.PORT_HOST_GROUP)  # коллектор даёт порты для снапа/сети
-	_fill = get_node_or_null(fill_path) as Node3D
+	_build_castle()
 	_update_fill()
-	_build_inlet_stub(1.0)   # перёд (+Z)
-	_build_inlet_stub(-1.0)  # зад (−Z)
 
 
-## Трубчатый выступ-инлет (цилиндр вдоль Z + фланец на конце) спереди/сзади. Конец
-## выступа = порт стыковки (см. pipe_ports).
-func _build_inlet_stub(dir_sign: float) -> void:
-	var mat := PipeSegment.material()
-	var z0: float = 2.0          # от края бака
-	var z1: float = inlet_dist   # до конца-порта
-	var stub := MeshInstance3D.new()
+# --- Визуал: мини-замок (центр грид-города). Строится кодом, как трубы (один путь). ---
+
+const _STONE := Color(0.56, 0.55, 0.6)
+const _TRIM := Color(0.4, 0.38, 0.43)
+
+
+func _build_castle() -> void:
+	var stone := _mat(_STONE, 0.9)
+	var trim := _mat(_TRIM, 0.85)
+	# Донжон: квадратный корпус-стена.
+	_box(Vector3(3.4, 2.2, 3.4), Vector3(0, 1.1, 0), stone)
+	_battlements(1.7, 2.2, trim)  # зубцы по верху стен
+	# Угловые башенки — КВАДРАТНЫЕ короба выше стен + квадратные пирамидальные крыши.
+	for sx in [-1.0, 1.0]:
+		for sz in [-1.0, 1.0]:
+			var c := Vector3(sx * 1.7, 0, sz * 1.7)
+			_box(Vector3(1.0, 3.4, 1.0), c + Vector3(0, 1.7, 0), stone)
+			_pyramid(0.6, 0.9, c + Vector3(0, 3.85, 0), trim)
+	# Ворота (тёмный проём спереди).
+	_box(Vector3(1.1, 1.5, 0.25), Vector3(0, 0.75, 1.72), trim)
+	# Уровень нефти = светящийся столб в центре двора, растёт по Y (oil → победа).
+	_fill = Node3D.new()
+	add_child(_fill)
+	_fill.position = Vector3(0, 2.2, 0)  # от верха стен вверх
+	var glow := MeshInstance3D.new()
+	var gm := BoxMesh.new()
+	gm.size = Vector3(0.9, 2.0, 0.9)
+	glow.mesh = gm
+	var gmat := StandardMaterial3D.new()
+	gmat.albedo_color = Color(0.95, 0.55, 0.18)
+	gmat.emission_enabled = true
+	gmat.emission = Color(1.0, 0.6, 0.2)
+	gmat.emission_energy_multiplier = 1.6
+	glow.mesh.material = gmat
+	glow.position = Vector3(0, 1.0, 0)  # низ столба на верхе стен, растёт вверх
+	glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_fill.add_child(glow)
+
+
+## Зубцы (мерлоны) по периметру верха стен: ряд кубиков на каждой из 4 сторон.
+func _battlements(half: float, top_y: float, mat: StandardMaterial3D) -> void:
+	var n := 4
+	var mh := 0.5
+	var mw := 0.36
+	var step := (half * 2.0) / float(n)
+	for i in n:
+		var o: float = -half + step * (float(i) + 0.5)
+		var y: float = top_y + mh * 0.5
+		_box(Vector3(mw, mh, mw), Vector3(o, y, half), mat)
+		_box(Vector3(mw, mh, mw), Vector3(o, y, -half), mat)
+		_box(Vector3(mw, mh, mw), Vector3(half, y, o), mat)
+		_box(Vector3(mw, mh, mw), Vector3(-half, y, o), mat)
+
+
+func _mat(c: Color, rough: float) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = c
+	m.roughness = rough
+	return m
+
+
+func _box(size: Vector3, pos: Vector3, mat: StandardMaterial3D) -> void:
+	var mi := MeshInstance3D.new()
+	var b := BoxMesh.new()
+	b.size = size
+	mi.mesh = b
+	mi.material_override = mat
+	mi.position = pos
+	add_child(mi)
+
+
+## Квадратная пирамида (крыша башенки): CylinderMesh с 4 сегментами, повёрнут на 45°,
+## чтобы грани шли вдоль осей (как у короба башни). half — полуширина квадрата основания.
+func _pyramid(half: float, height: float, pos: Vector3, mat: StandardMaterial3D) -> void:
+	var mi := MeshInstance3D.new()
 	var c := CylinderMesh.new()
-	c.top_radius = 0.22
-	c.bottom_radius = 0.22
-	c.height = z1 - z0
-	stub.mesh = c
-	stub.material_override = mat
-	stub.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	stub.position = Vector3(0, PipeSegment.PIPE_Y, (z0 + z1) * 0.5 * dir_sign)
-	stub.rotation = Vector3(PI / 2, 0, 0)  # ось цилиндра вдоль Z
-	add_child(stub)
-	var fl := MeshInstance3D.new()
-	var fc := CylinderMesh.new()
-	fc.top_radius = 0.34
-	fc.bottom_radius = 0.34
-	fc.height = 0.12
-	fl.mesh = fc
-	fl.material_override = mat
-	fl.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	fl.position = Vector3(0, PipeSegment.PIPE_Y, z1 * dir_sign)
-	fl.rotation = Vector3(PI / 2, 0, 0)
-	add_child(fl)
+	c.top_radius = 0.0
+	c.bottom_radius = half * 1.4142  # описанный радиус квадрата стороной 2·half
+	c.height = height
+	c.radial_segments = 4
+	mi.mesh = c
+	mi.material_override = mat
+	mi.position = pos
+	mi.rotation.y = PI / 4.0
+	add_child(mi)
 
 
 ## Порты коллектора (мировые концы инлетов спереди/сзади) — контракт pipe_port_host.

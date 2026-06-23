@@ -695,9 +695,6 @@ mesh = SubResource("BoxMesh_door")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 shape = SubResource("BoxShape3D_door")
 
-[node name="OilCollector" parent="Room8" unique_id=1031773311 instance=ExtResource("42_xhgmq")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 78.5, 0, 107)
-
 [node name="OilDepositR8" parent="Room8" unique_id=122949249 instance=ExtResource("41_mjs4f")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 78.5, 0, 91)
 

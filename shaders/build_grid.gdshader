@@ -18,9 +18,10 @@ void vertex() {
 }
 
 void fragment() {
-	// Линии на границах клеток: центры клеток в anchor + cell*i, границы — на +cell/2.
+	// Линии по ГРАНИЦАМ клеток (полуцелые кратные cell). Центры клеток — куда снапятся
+	// здания (anchor + cell*i) — попадают в СЕРЕДИНУ квадрата, а не на пересечение линий.
 	vec2 p = world_pos.xz - grid_anchor;
-	vec2 g = abs(fract(p / cell + 0.5) - 0.5) * cell;  // расстояние до ближайшей линии по оси
+	vec2 g = abs(fract(p / cell) - 0.5) * cell;  // расстояние до ближайшей линии-границы
 	float d = min(g.x, g.y);
 	float line = 1.0 - smoothstep(0.0, line_width, d);
 	float dist = length(p);

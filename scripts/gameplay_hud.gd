@@ -137,6 +137,19 @@ const BUILD_MENU_OIL_DRILL := 3
 const BUILD_MENU_PIPE_STRAIGHT := 4
 const BUILD_MENU_PIPE_CORNER := 5
 const BUILD_MENU_PIPE_CROSS := 6
+const BUILD_MENU_PUMP := 11  # качалка-замок (центр грид-города)
+# Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[OilGrid]).
+const BUILD_MENU_PAD_MINE := 7
+const BUILD_MENU_PAD_WALL := 8
+const BUILD_MENU_PAD_CORNER := 9
+const BUILD_MENU_PAD_TOWER := 10
+## Пункт меню площадки → id постройки в [RoomBuildings] (общая модель размещения).
+var PAD_MENU_IDS := {
+	BUILD_MENU_PAD_MINE: RoomBuildings.PAD_MINE,
+	BUILD_MENU_PAD_WALL: RoomBuildings.PAD_WALL,
+	BUILD_MENU_PAD_CORNER: RoomBuildings.PAD_CORNER,
+	BUILD_MENU_PAD_TOWER: RoomBuildings.PAD_TOWER,
+}
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
 var _resource_labels: Dictionary = {}
@@ -1150,6 +1163,11 @@ func _ensure_build_menu() -> PopupMenu:
 	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.PIPE_STRAIGHT).get("menu_label", "Труба прямая")), BUILD_MENU_PIPE_STRAIGHT)
 	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.PIPE_CORNER).get("menu_label", "Труба угол")), BUILD_MENU_PIPE_CORNER)
 	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.PIPE_CROSS).get("menu_label", "Труба крест")), BUILD_MENU_PIPE_CROSS)
+	# Качалка-замок (центр) + полимино-город вокруг неё.
+	_build_menu.add_separator("Качалка и город")
+	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.PUMP).get("menu_label", "Качалка-замок")), BUILD_MENU_PUMP)
+	for mid in PAD_MENU_IDS:
+		_build_menu.add_item(String(RoomBuildings.get_data(PAD_MENU_IDS[mid]).get("menu_label", "Фигура")), mid)
 	_build_menu.id_pressed.connect(_on_build_menu_id)
 	add_child(_build_menu)
 	return _build_menu
@@ -1183,6 +1201,31 @@ func _open_build_menu(btn: Button) -> void:
 			var lbl: String = String(RoomBuildings.get_data(pipe_ids[mid]).get("menu_label", "Труба"))
 			menu.set_item_disabled(idx, not knows)
 			menu.set_item_text(idx, lbl if knows else lbl + " (знание гномов)")
+	# Качалка-замок: знание гномов И ещё не построена/не строится (ОДНА на отряд).
+	var pump_idx: int = menu.get_item_index(BUILD_MENU_PUMP)
+	var pump_exists: bool = _pump_exists_or_building()
+	var pump_built: bool = _pump_built()
+	if pump_idx >= 0:
+		var pump_lbl: String = String(RoomBuildings.get_data(RoomBuildings.PUMP).get("menu_label", "Качалка-замок"))
+		menu.set_item_disabled(pump_idx, not knows or pump_exists)
+		var psfx: String = ""
+		if not knows:
+			psfx = " (знание гномов)"
+		elif pump_exists:
+			psfx = " (уже есть)"
+		menu.set_item_text(pump_idx, pump_lbl + psfx)
+	# Фигуры города — знание гномов И построенная качалка (от неё растёт грид).
+	for mid in PAD_MENU_IDS:
+		var pidx: int = menu.get_item_index(mid)
+		if pidx >= 0:
+			var plbl: String = String(RoomBuildings.get_data(PAD_MENU_IDS[mid]).get("menu_label", "Фигура"))
+			menu.set_item_disabled(pidx, not (knows and pump_built))
+			var sfx: String = ""
+			if not knows:
+				sfx = " (знание гномов)"
+			elif not pump_built:
+				sfx = " (нужна качалка)"
+			menu.set_item_text(pidx, plbl + sfx)
 	# Сторожевая башня: знание гномов И отряд лучников.
 	var tower_idx: int = menu.get_item_index(BUILD_MENU_WATCHTOWER)
 	if tower_idx >= 0:
@@ -1200,9 +1243,16 @@ func _open_build_menu(btn: Button) -> void:
 	menu.popup()
 
 
+## ВРЕМЕННО (тест): стройка открыта с самого начала, без станка Room11. Вернуть в false,
+## когда подключим гейт знания обратно.
+const TEMP_BUILD_ALWAYS_UNLOCKED := true
+
+
 ## Знает ли игрок постройку стен/башен — флаг PlayerProfile.building_unlocked,
 ## ставится запуском станка гномов в Room11 ([BlueprintMachine]).
 func _building_unlocked() -> bool:
+	if TEMP_BUILD_ALWAYS_UNLOCKED:
+		return true
 	var p := get_tree().get_first_node_in_group(&"player_profile")
 	return p != null and p.get(&"building_unlocked") == true
 
@@ -1211,6 +1261,21 @@ func _building_unlocked() -> bool:
 func _has_archer_squad() -> bool:
 	for s in get_tree().get_nodes_in_group(&"soldier"):
 		if is_instance_valid(s) and s.get(&"soldier_type") == &"archer_squad":
+			return true
+	return false
+
+
+## Качалка-замок ПОСТРОЕНА (есть OilCollector) — от неё растёт грид-город.
+func _pump_built() -> bool:
+	return get_tree().get_first_node_in_group(OilCollector.GROUP) != null
+
+
+## Качалка есть ИЛИ строится (стройплощадка с building_id=PUMP) — гейт «одна на отряд».
+func _pump_exists_or_building() -> bool:
+	if _pump_built():
+		return true
+	for s in get_tree().get_nodes_in_group(Layers.BUILD_SITE_GROUP):
+		if is_instance_valid(s) and s.get(&"building_id") == RoomBuildings.PUMP:
 			return true
 	return false
 
@@ -1254,6 +1319,20 @@ func _on_build_menu_id(id: int) -> void:
 			elif id == BUILD_MENU_PIPE_CROSS:
 				bid = RoomBuildings.PIPE_CROSS
 			hand.place_aim.start_aim(bid)
+	elif id == BUILD_MENU_PUMP:
+		if not _building_unlocked() or _pump_exists_or_building():
+			return  # нет знания / качалка уже есть — пункт и так greyed
+		_cancel_hand_aims(&"place")
+		var hand := _resolve_hand()
+		if hand != null and hand.place_aim != null:
+			hand.place_aim.start_aim(RoomBuildings.PUMP)
+	elif PAD_MENU_IDS.has(id):
+		if not _building_unlocked() or not _pump_built():
+			return  # нет знания / нет качалки — пункт и так greyed
+		_cancel_hand_aims(&"place")
+		var hand := _resolve_hand()
+		if hand != null and hand.place_aim != null:
+			hand.place_aim.start_aim(PAD_MENU_IDS[id])
 
 
 ## Индикатор режима сбора. Под кнопкой журнала, программно. Зелёный при WORK,
