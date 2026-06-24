@@ -178,6 +178,9 @@ func _commit(pos: Vector3) -> void:
 		return
 	# Полимино-фигура площадки: строится КОДОМ по маске (без .tscn), мгновенно.
 	if _data.has("cells"):
+		# Ворота заменяют стену: снести стены под их клетками.
+		if _data.get("role", &"") == &"gate":
+			_remove_walls_under(OilGrid.building_cells(pos, _data.get("cells", []), _rot_y, get_tree()))
 		var b := PadBuilding.new()
 		b.setup(_building)  # маска/роль ДО add_child (_ready строит по ним)
 		scene.add_child(b)
@@ -268,8 +271,10 @@ func _touches_host(ports: Array) -> bool:
 ## Все клетки полимино-фигуры (центр center, поворот _rot_y) лежат в площадке, НЕ на
 ## ядре-качалке и НЕ заняты другой фигурой — иначе ставить нельзя.
 func _pad_valid(center: Vector3) -> bool:
+	# Ворота можно ставить ПОВЕРХ стен (заменяют участок) → стены не считаем занятыми.
+	var over_walls: bool = _data.get("role", &"") == &"gate"
 	var cells: Array = OilGrid.building_cells(center, _data.get("cells", []), _rot_y, get_tree())
-	var occ: Dictionary = _occupied_cells()
+	var occ: Dictionary = _occupied_cells(over_walls)
 	for c in cells:
 		var cell := c as Vector2i
 		if not OilGrid.in_pad(cell) or OilGrid.is_pump(cell) or occ.has(cell):
@@ -277,14 +282,32 @@ func _pad_valid(center: Vector3) -> bool:
 	return true
 
 
-## Множество занятых клеток (все уже поставленные фигуры). Дёшево — фигур немного.
-func _occupied_cells() -> Dictionary:
+## Множество занятых клеток (все поставленные фигуры). allow_over_walls — НЕ считать стены
+## занятыми (для ворот, которые их заменяют). Дёшево — фигур немного.
+func _occupied_cells(allow_over_walls: bool) -> Dictionary:
 	var out: Dictionary = {}
 	for b in get_tree().get_nodes_in_group(PadBuilding.GROUP):
-		if is_instance_valid(b) and b.has_method(&"occupied_cells"):
-			for c in b.call(&"occupied_cells"):
-				out[c] = true
+		if not is_instance_valid(b) or not b.has_method(&"occupied_cells"):
+			continue
+		if allow_over_walls and b.has_method(&"is_wall") and b.call(&"is_wall"):
+			continue
+		for c in b.call(&"occupied_cells"):
+			out[c] = true
 	return out
+
+
+## Снести стены, попавшие под клетки cells (ворота заменяют участок стены).
+func _remove_walls_under(cells: Array) -> void:
+	var cs: Dictionary = {}
+	for c in cells:
+		cs[c] = true
+	for b in get_tree().get_nodes_in_group(PadBuilding.GROUP):
+		if not is_instance_valid(b) or not b.has_method(&"is_wall") or not b.call(&"is_wall"):
+			continue
+		for c in b.call(&"occupied_cells"):
+			if cs.has(c):
+				b.queue_free()
+				break
 
 
 ## Магнит: притягивает ближайшую snap-точку силуэта (центр + два края по локальному X)

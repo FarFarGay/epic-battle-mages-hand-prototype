@@ -131,16 +131,13 @@ var _journal_badge: Label
 ## Меню стройки отряда рабочих (popup, ленивое создание). Пункт «Мост» = BUILD_MENU_BRIDGE.
 var _build_menu: PopupMenu
 const BUILD_MENU_BRIDGE := 0
-const BUILD_MENU_WALL := 1
-const BUILD_MENU_WATCHTOWER := 2
-const BUILD_MENU_OIL_DRILL := 3
-const BUILD_MENU_PIPE_STRAIGHT := 4
-const BUILD_MENU_PIPE_CORNER := 5
-const BUILD_MENU_PIPE_CROSS := 6
 const BUILD_MENU_PUMP := 11  # качалка-замок (центр грид-города)
 const BUILD_MENU_PAD_WALL1 := 12
 const BUILD_MENU_PAD_HOUSE := 13
 const BUILD_MENU_PAD_STORE := 14
+const BUILD_MENU_PAD_GATE := 15
+const BUILD_MENU_PAD_BARRACKS := 16
+const BUILD_MENU_PAD_SPEARMEN := 17
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[OilGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
@@ -153,6 +150,9 @@ var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_TOWER: RoomBuildings.PAD_TOWER,
 	BUILD_MENU_PAD_HOUSE: RoomBuildings.PAD_HOUSE,
 	BUILD_MENU_PAD_STORE: RoomBuildings.PAD_STORE,
+	BUILD_MENU_PAD_GATE: RoomBuildings.PAD_GATE,
+	BUILD_MENU_PAD_BARRACKS: RoomBuildings.PAD_BARRACKS,
+	BUILD_MENU_PAD_SPEARMEN: RoomBuildings.PAD_SPEARMEN,
 }
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
@@ -1192,13 +1192,8 @@ func _ensure_build_menu() -> PopupMenu:
 		return _build_menu
 	_build_menu = PopupMenu.new()
 	_build_menu.add_item("🌉 Мост через пропасть", BUILD_MENU_BRIDGE)
-	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.WALL).get("menu_label", "Стена")), BUILD_MENU_WALL)
-	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.WATCHTOWER).get("menu_label", "Сторожевая башня")), BUILD_MENU_WATCHTOWER)
-	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.OIL_DRILL).get("menu_label", "Бур")), BUILD_MENU_OIL_DRILL)
-	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.PIPE_STRAIGHT).get("menu_label", "Труба прямая")), BUILD_MENU_PIPE_STRAIGHT)
-	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.PIPE_CORNER).get("menu_label", "Труба угол")), BUILD_MENU_PIPE_CORNER)
-	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.PIPE_CROSS).get("menu_label", "Труба крест")), BUILD_MENU_PIPE_CROSS)
-	# Качалка-замок (центр) + полимино-город вокруг неё.
+	# Качалка-замок (центр) + полимино-город вокруг неё. Старые постройки (палисад/
+	# archer_post/бур/трубы) убраны из меню — заменены этой моделью.
 	_build_menu.add_separator("Качалка и город")
 	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.PUMP).get("menu_label", "Качалка-замок")), BUILD_MENU_PUMP)
 	for mid in PAD_MENU_IDS:
@@ -1211,31 +1206,8 @@ func _ensure_build_menu() -> PopupMenu:
 ## Открыть меню стройки под кнопкой «Стройка».
 func _open_build_menu(btn: Button) -> void:
 	var menu := _ensure_build_menu()
-	# Стена и башня — знание гномов-строителей (станок Room11 запущен). До этого
-	# оба пункта greyed с подсказкой. Мост — отдельная механика, не гейтится.
+	# Знание гномов-строителей (станок Room11). Мост — отдельная механика, не гейтится.
 	var knows: bool = _building_unlocked()
-	var wall_idx: int = menu.get_item_index(BUILD_MENU_WALL)
-	if wall_idx >= 0:
-		var wall_label: String = String(RoomBuildings.get_data(RoomBuildings.WALL).get("menu_label", "Стена"))
-		menu.set_item_disabled(wall_idx, not knows)
-		menu.set_item_text(wall_idx, wall_label if knows else wall_label + " (знание гномов)")
-	# Насос нефтекачалки — то же знание построек (ставится рядом с буром, §путь A).
-	var drill_idx: int = menu.get_item_index(BUILD_MENU_OIL_DRILL)
-	if drill_idx >= 0:
-		var drill_label: String = String(RoomBuildings.get_data(RoomBuildings.OIL_DRILL).get("menu_label", "Бур"))
-		menu.set_item_disabled(drill_idx, not knows)
-		menu.set_item_text(drill_idx, drill_label if knows else drill_label + " (знание гномов)")
-	var pipe_ids := {
-		BUILD_MENU_PIPE_STRAIGHT: RoomBuildings.PIPE_STRAIGHT,
-		BUILD_MENU_PIPE_CORNER: RoomBuildings.PIPE_CORNER,
-		BUILD_MENU_PIPE_CROSS: RoomBuildings.PIPE_CROSS,
-	}
-	for mid in pipe_ids:
-		var idx: int = menu.get_item_index(mid)
-		if idx >= 0:
-			var lbl: String = String(RoomBuildings.get_data(pipe_ids[mid]).get("menu_label", "Труба"))
-			menu.set_item_disabled(idx, not knows)
-			menu.set_item_text(idx, lbl if knows else lbl + " (знание гномов)")
 	# Качалка-замок: знание гномов И ещё не построена/не строится (ОДНА на отряд).
 	var pump_idx: int = menu.get_item_index(BUILD_MENU_PUMP)
 	var pump_exists: bool = _pump_exists_or_building()
@@ -1261,18 +1233,6 @@ func _open_build_menu(btn: Button) -> void:
 			elif not pump_built:
 				sfx = " (нужна качалка)"
 			menu.set_item_text(pidx, plbl + sfx)
-	# Сторожевая башня: знание гномов И отряд лучников.
-	var tower_idx: int = menu.get_item_index(BUILD_MENU_WATCHTOWER)
-	if tower_idx >= 0:
-		var has_archers: bool = _has_archer_squad()
-		var base_label: String = String(RoomBuildings.get_data(RoomBuildings.WATCHTOWER).get("menu_label", "Сторожевая башня"))
-		menu.set_item_disabled(tower_idx, not (knows and has_archers))
-		var suffix: String = ""
-		if not knows:
-			suffix = " (знание гномов)"
-		elif not has_archers:
-			suffix = " (нужны лучники)"
-		menu.set_item_text(tower_idx, base_label + suffix)
 	menu.reset_size()
 	menu.position = Vector2i(btn.get_screen_position()) + Vector2i(0, int(btn.size.y))
 	menu.popup()
@@ -1290,14 +1250,6 @@ func _building_unlocked() -> bool:
 		return true
 	var p := get_tree().get_first_node_in_group(&"player_profile")
 	return p != null and p.get(&"building_unlocked") == true
-
-
-## Есть ли живой лучник (отряд лучников куплен в доме). Гейт сторожевой башни.
-func _has_archer_squad() -> bool:
-	for s in get_tree().get_nodes_in_group(&"soldier"):
-		if is_instance_valid(s) and s.get(&"soldier_type") == &"archer_squad":
-			return true
-	return false
 
 
 ## Качалка-замок ПОСТРОЕНА (есть OilCollector) — от неё растёт грид-город.
@@ -1321,39 +1273,6 @@ func _on_build_menu_id(id: int) -> void:
 		var hand := _resolve_hand()
 		if hand != null and hand.bridge_aim != null:
 			hand.bridge_aim.start_aim()
-	elif id == BUILD_MENU_WALL:
-		if not _building_unlocked():
-			return  # нет знания гномов — пункт и так greyed, на всякий случай
-		_cancel_hand_aims(&"place")  # размещение гасит squad/build/bridge aim
-		var hand := _resolve_hand()
-		if hand != null and hand.place_aim != null:
-			hand.place_aim.start_aim(RoomBuildings.WALL)
-	elif id == BUILD_MENU_WATCHTOWER:
-		if not _building_unlocked() or not _has_archer_squad():
-			return  # нет знания/лучников — пункт и так greyed, на всякий случай
-		_cancel_hand_aims(&"place")
-		var hand := _resolve_hand()
-		if hand != null and hand.place_aim != null:
-			hand.place_aim.start_aim(RoomBuildings.WATCHTOWER)
-	elif id == BUILD_MENU_OIL_DRILL:
-		if not _building_unlocked():
-			return  # нет знания гномов — пункт и так greyed
-		_cancel_hand_aims(&"place")
-		var hand := _resolve_hand()
-		if hand != null and hand.place_aim != null:
-			hand.place_aim.start_aim(RoomBuildings.OIL_DRILL)
-	elif id == BUILD_MENU_PIPE_STRAIGHT or id == BUILD_MENU_PIPE_CORNER or id == BUILD_MENU_PIPE_CROSS:
-		if not _building_unlocked():
-			return  # нет знания гномов — пункт и так greyed
-		_cancel_hand_aims(&"place")
-		var hand := _resolve_hand()
-		if hand != null and hand.place_aim != null:
-			var bid: StringName = RoomBuildings.PIPE_STRAIGHT
-			if id == BUILD_MENU_PIPE_CORNER:
-				bid = RoomBuildings.PIPE_CORNER
-			elif id == BUILD_MENU_PIPE_CROSS:
-				bid = RoomBuildings.PIPE_CROSS
-			hand.place_aim.start_aim(bid)
 	elif id == BUILD_MENU_PUMP:
 		if not _building_unlocked() or _pump_exists_or_building():
 			return  # нет знания / качалка уже есть — пункт и так greyed

@@ -23,6 +23,9 @@ const PAD_WALL1 := &"pad_wall1"
 const PAD_TOWER := &"pad_tower"
 const PAD_HOUSE := &"pad_house"   # население/гномы (роль housing)
 const PAD_STORE := &"pad_store"   # хранилище/экономика (роль storage)
+const PAD_GATE := &"pad_gate"     # ворота: арка со створками в линии стены (роль gate)
+const PAD_BARRACKS := &"pad_barracks"  # угловая казарма лучников (роль barracks)
+const PAD_SPEARMEN := &"pad_spearmen"  # казарма копейщиков, T-форма (роль barracks)
 
 const CATALOG: Dictionary = {
 	WALL: {
@@ -171,6 +174,38 @@ const CATALOG: Dictionary = {
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
 		"instant": true,
 		"ghost_color": Color(0.55, 0.45, 0.3, 0.5),
+	},
+	# Ворота: арка со створками в линии стены (пилоны по ±X стыкуются со стенами, проём
+	# по Z для прохода). Поворот MMB. Проходимость гномов — Фаза 2 (вместе с барьером стен).
+	PAD_GATE: {
+		"name": "Ворота",
+		"menu_label": "🚪 Ворота (3)",
+		"role": &"gate",
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
+		"instant": true,
+		"ghost_color": Color(0.5, 0.58, 0.72, 0.5),
+	},
+	# Угловая казарма лучников: L-бастион периметра (стены стыкуются к концам), боевой
+	# ход с зубцами + стяг. Функция (плодит лучников / стрельба) — Фаза 2.
+	PAD_BARRACKS: {
+		"name": "Казарма лучников",
+		"menu_label": "🏹 Казарма лучников (угол)",
+		"role": &"barracks",
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
+		"instant": true,
+		"ghost_color": Color(0.5, 0.6, 0.7, 0.5),
+		"banner_color": Color(0.28, 0.46, 0.7),  # синий стяг — лучники
+		"corner_tower": true,  # башня венчает угол → лучники выходят на стены (Фаза 2)
+	},
+	# Казарма копейщиков: T-тетромино (4 клетки), красный стяг. Функция (копейщики) — Фаза 2.
+	PAD_SPEARMEN: {
+		"name": "Казарма копейщиков",
+		"menu_label": "🛡 Казарма копейщиков (Т)",
+		"role": &"barracks",
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(1, 1)],
+		"instant": true,
+		"ghost_color": Color(0.7, 0.55, 0.5, 0.5),
+		"banner_color": Color(0.72, 0.3, 0.26),  # красный стяг — копейщики
 	},
 }
 
