@@ -557,7 +557,19 @@ func _arch_box(parent: Node3D, size: Vector3, pos: Vector3, mat: StandardMateria
 # гравитацию (стены вне навмеша). «За башней» (escort) = снять и вести; F-возврат (мягкий
 # hold) = обратно на стены. Бой — тот же _try_fire_at_resolved_target (конус/точность/стрела).
 const GARRISON_REPATH := 0.6  # пересчёт маршрута (стены меняются на ходу)
+## Горизонтальный радиус «вошёл на пост»: пока дальше — лучник идёт по ЗЕМЛЕ к
+## основанию башни/стены (Y держим на земле), внутри — поднимается вертикально на
+## высоту поста. Две фазы вместо диагонального всплытия («заходит, потом встаёт»).
+const GARRISON_ASCENT_RADIUS := 1.4
+## Скорость возврата на стену (м/с): пока лучник дальше [GARRISON_ASCENT_RADIUS] от
+## точки поста — бежит этой скоростью (быстрее обычного шага, «не ползёт обратно»);
+## вблизи поста переходит на move_speed (спокойный патруль по боевому ходу).
+## Радиус наземного кольца вокруг центрального замка: куда отступают гарнизонные лучники,
+## когда их КАЗАРМА снесена (опоры нет → падают и бегут оборонять замок). Угол на кольце
+## стабилен по instance_id — три лучника не сваливаются в одну точку.
+const CASTLE_GARRISON_RADIUS := 5.0
 
+@export var wall_return_speed: float = 6.0  # бег к посту (см. GARRISON_ASCENT_RADIUS)
 var _grn_assigned: bool = false       # казарма назначила пост
 var _grn_home_cell: Vector2i = Vector2i.ZERO  # мировая клетка угла казармы
 var _grn_branch: Vector2i = Vector2i.ZERO     # направление рукава (ZERO = башенный)
@@ -568,6 +580,8 @@ var _grn_i: int = 0
 var _grn_dir: int = 1
 var _grn_t: float = 0.0
 var _grn_active: bool = false         # сейчас на стене/идём по ней (для плавного спуска)
+var _grn_walk: Dictionary = {}        # кэш walkable-клеток (опора под ногами) — снимок на recompute
+var _grn_falling: bool = false        # опору снесли под ногами → отвесно падаем на землю (one-shot)
 
 
 ## Казарма назначает пост: home_cell — угол казармы, branch — рукав (ZERO=башня),
@@ -629,8 +643,17 @@ func _garrison_move(delta: float) -> void:
 	var n: int = _grn_route.size()
 	_grn_i = clampi(_grn_i, 0, n - 1)
 	var target: Vector3 = _grn_route[_grn_i]
+	# Опору снесли под ногами (флаг из garrison_world_changed) → отвесно роняем на землю,
+	# горизонталь замираем. Приземлился — сброс флага, дальше штатный путь к новому посту.
+	if _grn_falling:
+		global_position.y = lerp(global_position.y, _grn_ground_y, 1.0 - exp(-12.0 * delta))
+		if global_position.y <= _grn_ground_y + 0.2:
+			global_position.y = _grn_ground_y
+			_grn_falling = false
+		return
 	var flat := Vector3(target.x - global_position.x, 0.0, target.z - global_position.z)
-	if flat.length() <= 0.12:
+	var flat_dist: float = flat.length()
+	if flat_dist <= 0.12:
 		if n > 1:
 			_grn_i += _grn_dir
 			if _grn_i >= n:
@@ -641,12 +664,18 @@ func _garrison_move(delta: float) -> void:
 				_grn_dir = 1
 			_grn_i = clampi(_grn_i, 0, n - 1)
 	else:
-		var dir := flat.normalized()
-		global_position += dir * move_speed * delta
+		var dir := flat / flat_dist
+		# Возврат к посту: ниже высоты поста (с земли/подъём) — быстрый wall_return_speed
+		# («не ползём»); на боевом ходу (Y ≈ поста) — ровный move_speed (без рывков).
+		var climbing: bool = global_position.y < target.y - 0.3
+		var speed: float = wall_return_speed if climbing else move_speed
+		global_position += dir * speed * delta
 		if foe == null:
 			_face_horizontal(dir, 1.0)
-	# Плавная высота под боевой ход (всходы/спуски на стыках стен/ворот).
-	global_position.y = lerp(global_position.y, target.y, 1.0 - exp(-8.0 * delta))
+	# Высота — две фазы: ДАЛЕКО по XZ держим текущий уровень (идём к основанию, не всплываем
+	# диагональю); у основания (≤ GARRISON_ASCENT_RADIUS) встаём на высоту поста.
+	if flat_dist <= GARRISON_ASCENT_RADIUS:
+		global_position.y = lerp(global_position.y, target.y, 1.0 - exp(-8.0 * delta))
 
 
 ## Маршрут поста: башенный (branch ZERO) → одна точка на башне; патрульный → ветка стены
@@ -655,6 +684,14 @@ func _grn_recompute() -> void:
 	var tree := get_tree()
 	if tree == null:
 		return
+	# Казарма снесена → отступаем гарнизонить ЦЕНТРАЛЬНЫЙ замок. Опоры нет (_grn_walk пуст):
+	# лучник падает с поста и бежит по земле к наземному кольцу вокруг замка.
+	if not _grn_barracks_alive(tree):
+		_grn_walk = {}
+		_grn_route = [_grn_castle_post(tree)]
+		return
+	# Казарма цела — кэш walkable-клеток для детекта падения (опора под ногами).
+	_grn_walk = PadBuilding.walkable_set(tree)
 	if _grn_branch == Vector2i.ZERO:
 		_grn_route = [_grn_tower]
 		return
@@ -672,6 +709,51 @@ func _grn_recompute() -> void:
 			var half: float = OilGrid.CELL * 0.32
 			r = [here - wdir * half, here + wdir * half]
 	_grn_route = r
+
+
+## Жив ли ДОМ этого лучника — казарма, накрывающая [_grn_home_cell]. Снос казармы (ПКМ →
+## queue_free) убирает её из группы → возвращаем false → гарнизон отступает к замку.
+func _grn_barracks_alive(tree: SceneTree) -> bool:
+	for b in tree.get_nodes_in_group(PadBuilding.GROUP):
+		if not is_instance_valid(b) or b.is_queued_for_deletion():
+			continue
+		if not (b.has_method(&"is_barracks") and b.call(&"is_barracks")):
+			continue
+		if not b.has_method(&"occupied_cells"):
+			continue
+		for c in b.call(&"occupied_cells"):
+			if (c as Vector2i) == _grn_home_cell:
+				return true
+	return false
+
+
+## Наземная точка на кольце вокруг центрального замка (group "tower") — пост отступления
+## при снесённой казарме. Угол стабилен по instance_id: 3 лучника не сходятся в одну точку.
+func _grn_castle_post(tree: SceneTree) -> Vector3:
+	var center := Vector3.ZERO
+	var castle := tree.get_first_node_in_group(Tower.GROUP)
+	if castle != null and castle is Node3D:
+		center = (castle as Node3D).global_position
+	var ang: float = float(get_instance_id() % 628) * 0.01
+	var post := center + Vector3(cos(ang), 0.0, sin(ang)) * CASTLE_GARRISON_RADIUS
+	post.y = _grn_ground_y
+	return post
+
+
+## Broad-phase «структура города изменилась» (стройка/снос → PadBuilding.refresh_walls).
+## Форсим немедленный пересчёт поста: лучник тут же падает со снесённой опоры / лезет на
+## достроенную стену, не дожидаясь GARRISON_REPATH-тика.
+func garrison_world_changed() -> void:
+	if not _grn_assigned:
+		return
+	_grn_recompute()
+	# Если стояли наверху, а под ногами клетка больше НЕ walkable (стену/казарму снесли) —
+	# роняем на землю one-shot'ом. Не поллим каждый кадр: иначе мерцание клетки на патруле/
+	# подъёме морозит лучника в воздухе (был баг с зависанием на казарме).
+	if global_position.y > _grn_ground_y + 0.3:
+		var cell := OilGrid.world_to_cell(global_position, get_tree())
+		if not _grn_walk.has(cell):
+			_grn_falling = true
 
 
 ## Ближайший враг в attack_range (XZ) — только для ОРИЕНТАЦИИ конуса на стене (выстрел

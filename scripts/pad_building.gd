@@ -59,6 +59,11 @@ static func refresh_walls(tree: SceneTree) -> void:
 		# Стены И ворота зависят от соседей (рукава/нахлёст) → пересобираем оба.
 		if (b.has_method(&"is_wall") and b.call(&"is_wall")) or (b.has_method(&"is_gate") and b.call(&"is_gate")):
 			b.call(&"_build")
+	# Структура изменилась (стройка/снос) → гарнизонные лучники пересчитывают пост сразу:
+	# падают со снесённой стены/казармы (→ плечо / замок) или лезут на достроенную стену.
+	for s in tree.get_nodes_in_group(&"soldier"):
+		if is_instance_valid(s) and s.has_method(&"garrison_world_changed"):
+			s.call(&"garrison_world_changed")
 
 
 ## Проходимые клетки боевого хода (стена/ворота/казарма) — по ним ходят лучники.
