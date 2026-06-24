@@ -505,3 +505,44 @@ func _fire_at(target: Node3D) -> void:
 		_squad.add_charge(1.0)
 	if debug_log and LogConfig.master_enabled:
 		print("[ArcherSoldier:%s] выстрел в %s (dmg=%.1f, shots=%d)" % [name, target.name, damage, _shots_fired])
+
+
+# --- Новая модель лучника (Фаза A): коробочный лучник вместо капсулы. Перекрашивает
+# ВСЕХ ArcherSoldier (наёмных и из казармы) — единый вид. Капсулу прячем (поза/флеш
+# анимируют её невидимо — безвредно), модель строим от ног со сдвигом под центр капсулы.
+var _archer_skinned := false
+
+
+func _apply_visual() -> void:
+	if _archer_skinned:
+		return
+	_archer_skinned = true
+	if _mesh != null:
+		_mesh.visible = false
+	var holder := Node3D.new()
+	holder.position = Vector3(0, -0.4, 0)  # капсула центрирована в origin — опускаем «ноги»
+	add_child(holder)
+	var cloth := _arch_mat(Color(0.28, 0.46, 0.7))  # синий — лучники
+	var skin := _arch_mat(Color(0.85, 0.7, 0.55))
+	var wood := _arch_mat(Color(0.3, 0.2, 0.12))
+	_arch_box(holder, Vector3(0.34, 0.5, 0.26), Vector3(0, 0.45, 0), cloth)   # тело
+	_arch_box(holder, Vector3(0.26, 0.26, 0.24), Vector3(0, 0.82, 0), skin)   # голова
+	_arch_box(holder, Vector3(0.06, 0.62, 0.06), Vector3(0.22, 0.55, 0), wood)  # лук
+
+
+func _arch_mat(c: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = c
+	m.roughness = 0.8
+	return m
+
+
+func _arch_box(parent: Node3D, size: Vector3, pos: Vector3, mat: StandardMaterial3D) -> void:
+	var mi := MeshInstance3D.new()
+	var b := BoxMesh.new()
+	b.size = size
+	mi.mesh = b
+	mi.material_override = mat
+	mi.position = pos
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(mi)

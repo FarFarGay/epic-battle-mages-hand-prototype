@@ -36,11 +36,24 @@ var _next_squad_id: int = 1000
 var _squads_by_type: Dictionary = {}
 
 
+const GROUP := &"squad_spawner"
+
+
 func _ready() -> void:
+	add_to_group(GROUP)  # чтобы постройки (казарма) могли заказать отряд
 	# Deferred: TradeUI мог ещё не войти в группу к нашему _ready (порядок детей).
 	call_deferred(&"_connect_trade")
 	# Стартовая артель рабочих (7) живёт в башне с самого начала.
 	_spawn_starting_workers()
+
+
+## Публичный заказ отряда из постройки (казармы): добавить count юнитов типа у позиции
+## pos в отряд-этого-типа (тот же путь, что покупка). Берётся с собой/командуется как
+## наёмный отряд.
+func request_squad(soldier_type: StringName, count: int, pos: Vector3) -> void:
+	if SoldierSystem == null or not SoldierSystem.has_soldier(soldier_type):
+		return
+	_spawn_squad(soldier_type, count, pos)
 
 
 func _connect_trade() -> void:

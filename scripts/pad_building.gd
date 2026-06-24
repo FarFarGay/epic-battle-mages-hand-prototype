@@ -402,34 +402,19 @@ func _build_barracks() -> void:
 		_spawn_archers(corner)
 
 
-## 3 лучника: башенный (стоит на углу-башне) + 2 патрульных по рукавам (направления к
-## другим клеткам казармы → дальше по стене/воротам). Лучники — top_level-дети казармы.
+## Казарма лучников = источник НАСТОЯЩЕГО отряда (Фаза A): заказывает 3 ArcherSoldier у
+## спавнера → командуемый/берётся-с-собой отряд, как наёмные. (Хождение по стене —
+## Фаза B/C через поднятый навмеш; `pad_archer.gd` пока в резерве под неё.)
 func _spawn_archers(corner_local: Vector2i) -> void:
 	var tree := get_tree()
 	if tree == null:
 		return
-	var maskset: Dictionary = {}
-	for off in _mask:
-		maskset[off as Vector2i] = true
 	var base := OilGrid.world_to_cell(global_position, tree)
 	var corner_world := base + OilGrid.rotate_offset(corner_local, rotation.y)
-	var tower_pos := OilGrid.cell_to_world(corner_world, tree)
-	tower_pos.y = _WALL_H + 1.9 + 0.22  # верх башни (площадка)
-	var arms: Array = []
-	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-		if maskset.has(corner_local + d):
-			arms.append(OilGrid.rotate_offset(d, rotation.y))
-	_make_archer(Vector2i.ZERO, corner_world, tower_pos)  # башенный
-	for i in 2:
-		var bd: Vector2i = arms[i % arms.size()] if arms.size() > 0 else Vector2i.ZERO
-		_make_archer(bd, corner_world, tower_pos)
-
-
-func _make_archer(branch_dir: Vector2i, home_cell: Vector2i, tower_pos: Vector3) -> void:
-	var a := PadArcher.new()
-	a.top_level = true  # ходит в МИРОВЫХ координатах по боевому ходу
-	a.setup(home_cell, branch_dir, tower_pos)  # ДО add_child — _ready считает стартовую точку
-	add_child(a)
+	var pos := OilGrid.cell_to_world(corner_world, tree)  # наземная точка у казармы
+	var spawner := tree.get_first_node_in_group(&"squad_spawner")
+	if spawner != null and spawner.has_method(&"request_squad"):
+		spawner.call(&"request_squad", &"archer_squad", 3, pos)
 
 
 ## СЛИТНЫЙ корпус по форме фигуры: на каждую клетку — корпус НА ВСЮ КЛЕТКУ (клетки
