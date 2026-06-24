@@ -11,6 +11,11 @@ const GROUP := &"pad_building"
 var building_id: StringName = &""
 var _mask: Array = []        # Array[Vector2i] — клетки фигуры (локальные offset'ы)
 var _role: StringName = &"defend"
+## Добыча: нефть/сек в замок (база). ×2, если добытчик примыкает к ядру-замку (модель
+## «добыча бустит замок соседством»). Высокий для теста — крутить балансом позже.
+const MINE_OIL_PER_SEC := 4.0
+var _oil_rate: float = 0.0
+var _collector: Node = null
 
 
 ## Задаётся ДО add_child (как RoomBuildSite) — _ready строит по маске.
@@ -23,6 +28,7 @@ func setup(id: StringName) -> void:
 
 func _ready() -> void:
 	add_to_group(GROUP)
+	set_process(false)  # тикает только добытчик (нефть в замок), см. _setup_mine
 	# Отложенно: HandPlaceAim ставит global-трансформ ПОСЛЕ add_child (нужен стене для
 	# мировых клеток и поиска соседей).
 	call_deferred(&"_build")
@@ -52,6 +58,7 @@ func _build() -> void:
 	match _role:
 		&"mine":
 			_build_tower()
+			_setup_mine()
 		&"defend":
 			_build_wall()
 		&"attack":
@@ -68,10 +75,16 @@ func _build() -> void:
 				_box(Vector3(s * 0.96, 1.4, s * 0.96), Vector3(o.x * s, 0.7, o.y * s), mat, true)
 
 
-const _WALL_STONE := Color(0.52, 0.52, 0.55)
-const _WALL_TRIM := Color(0.42, 0.42, 0.46)
+const _WALL_STONE := Color(0.56, 0.55, 0.52)  # тёплый камень
+const _WALL_TRIM := Color(0.4, 0.39, 0.38)
 const _WALL_TH := 0.5    # толщина тонкой стены
 const _WALL_H := 1.6     # высота стены
+
+# Общая палитра/метрики полировки визуала зданий.
+const _STONE_DARK := Color(0.33, 0.31, 0.3)   # цоколь/фундамент
+const _WOOD := Color(0.46, 0.3, 0.17)         # дерево (крыши/ящики)
+const _WOOD_DARK := Color(0.28, 0.18, 0.1)    # тёмное дерево (балки/двери)
+const _BASE_H := 0.28                          # высота цоколя-фундамента
 
 
 ## Крепостная стена (защита): ТОНКИЙ ряд по центру клетки. Каждая клетка = столб-узел +
@@ -82,14 +95,12 @@ func _build_wall() -> void:
 	var stone := _solid(_WALL_STONE, 0.05, 0.95)
 	var trim := _solid(_WALL_TRIM, 0.05, 0.95)
 	var half: float = OilGrid.CELL * 0.5
-	# Мои мировые клетки + клетки соседей. Рукав тянем к ЛЮБОЙ занятой соседней клетке:
-	# своя маска / другая стена → стык на границе; здание/ядро-замок → с нахлёстом внутрь.
 	var mine := OilGrid.building_cells(global_position, _mask, rotation.y, tree)
 	var mineset: Dictionary = {}
 	for c in mine:
 		mineset[c] = true
-	# Соединяемся со стенами (стык встык) и со сторожевыми башнями (нахлёст — башня = угол
-	# стены). К добытчику и замку НЕ тянемся (примыкаем лишь краем).
+	# Соединяемся со стенами (встык) и со сторожевыми башнями (нахлёст). К добыче/дому/
+	# складу/замку НЕ тянемся (примыкаем лишь краем).
 	var walls: Dictionary = {}
 	var towers: Dictionary = {}
 	for b in tree.get_nodes_in_group(GROUP):
@@ -113,8 +124,7 @@ func _build_wall() -> void:
 			var to_tower: bool = towers.has(nb)
 			if not (to_wall or to_tower):
 				continue
-			# К стене — рукав до границы (встык); к башне — с нахлёстом (стена входит в башню).
-			var ln: float = half if to_wall else half + 0.5
+			var ln: float = half if to_wall else half + 0.5  # к башне — с нахлёстом
 			var ac := ctr + Vector3(d.x * ln * 0.5, _WALL_H * 0.5, d.y * ln * 0.5)
 			var size := Vector3(ln, _WALL_H, _WALL_TH) if d.x != 0 else Vector3(_WALL_TH, _WALL_H, ln)
 			_wb(ac, size, stone)
@@ -139,65 +149,103 @@ func _wb(world_pos: Vector3, size: Vector3, mat: StandardMaterial3D) -> void:
 ## зубцами наверху (туда «сядет» лучник в Фазе 2). Цвет как у стены.
 func _build_watchtower() -> void:
 	var stone := _solid(_WALL_STONE, 0.05, 0.9)
+	var dark := _solid(_STONE_DARK, 0.1, 0.9)
 	var trim := _solid(_WALL_TRIM, 0.1, 0.9)
-	_box(Vector3(1.3, 2.8, 1.3), Vector3(0, 1.4, 0), stone, true)    # ствол башни
-	_box(Vector3(1.7, 0.25, 1.7), Vector3(0, 2.8, 0), stone, true)   # площадка наверху
-	_battlements(0.82, 2.9, trim)                                    # зубцы вокруг площадки
+	_layer(_BASE_H * 0.5, OilGrid.CELL * 0.72, _BASE_H, dark)          # цоколь
+	var bh := 2.6
+	_box(Vector3(1.3, bh, 1.3), Vector3(0, _BASE_H + bh * 0.5, 0), stone, true)   # ствол
+	_box(Vector3(1.72, 0.22, 1.72), Vector3(0, _BASE_H + bh, 0), stone, true)     # площадка
+	_battlements(0.82, _BASE_H + bh + 0.11, trim)                                 # зубцы
 
 
-## Дом гномов (население): на каждую клетку — каменный домик с КОРИЧНЕВОЙ скатной
-## крышей-пирамидой и дверью (деревянные акценты = гражданское, не серая фортификация).
+## СЛИТНЫЙ корпус по форме фигуры: на каждую клетку — корпус НА ВСЮ КЛЕТКУ (клетки
+## смыкаются в одну массу) + крыша-плита с лёгким свесом (плиты сливаются в одну крышу).
+## Так дом/склад выглядят единым зданием по полимино, а не набором модулей.
+func _build_compound(body: StandardMaterial3D, roof: StandardMaterial3D, body_h: float, roof_h: float) -> void:
+	var s: float = OilGrid.CELL
+	var dark := _solid(_STONE_DARK, 0.1, 0.92)
+	_layer(_BASE_H * 0.5, s + 0.18, _BASE_H, dark)                         # цоколь-фундамент
+	for off in _mask:
+		var o := off as Vector2i
+		var c := Vector3(o.x * s, 0.0, o.y * s)
+		_box(Vector3(s, body_h, s), c + Vector3(0, _BASE_H + body_h * 0.5, 0), body, true)
+	var top: float = _BASE_H + body_h
+	_layer(top + 0.04, s + 0.04, 0.08, dark)                              # карниз-поясок
+	_layer(top + 0.08 + roof_h * 0.5, s + 0.18, roof_h, roof)             # крыша-плита (свес)
+
+
+## Дом гномов (население): слитный каменный корпус + коричневая крыша; труба и дверь —
+## единичный декор на крайней клетке (не на каждую).
 func _build_house() -> void:
-	var stone := _solid(Color(0.55, 0.55, 0.58), 0.05, 0.9)
-	var roof := _solid(Color(0.45, 0.28, 0.16), 0.0, 0.95)
-	var dark := _solid(Color(0.2, 0.15, 0.1), 0.0, 0.9)
+	var stone := _solid(Color(0.6, 0.58, 0.55), 0.05, 0.9)
+	var roof := _solid(_WOOD, 0.0, 0.95)
+	var dark := _solid(_WOOD_DARK, 0.0, 0.9)
+	var body_h := 1.5
+	_build_compound(stone, roof, body_h, 0.4)
 	var s: float = OilGrid.CELL
+	var top: float = _BASE_H + body_h
+	var roof_top: float = top + 0.08 + 0.4
+	var f := _mask[0] as Vector2i
 	for off in _mask:
 		var o := off as Vector2i
 		var c := Vector3(o.x * s, 0.0, o.y * s)
-		_box(Vector3(1.5, 1.2, 1.5), c + Vector3(0, 0.6, 0), stone, true)     # стены
-		_pyramid(0.95, 0.9, c + Vector3(0, 1.65, 0), roof)                    # крыша
-		_box(Vector3(0.5, 0.7, 0.12), c + Vector3(0, 0.35, 0.75), dark, true) # дверь (+Z)
+		_box(Vector3(s * 0.92, 0.12, 0.26), c + Vector3(0, roof_top, 0), dark, true)        # конёк по крыше
+		if o != f:
+			_box(Vector3(0.5, 0.5, 0.14), c + Vector3(0, _BASE_H + 0.95, s * 0.5), dark, true)  # окно (+Z)
+	var fc := Vector3(f.x * s, 0.0, f.y * s)
+	_box(Vector3(0.42, 0.9, 0.42), fc + Vector3(0.45, roof_top + 0.4, 0.45), dark, true)    # труба
+	_box(Vector3(0.75, 1.0, 0.16), fc + Vector3(0, _BASE_H + 0.5, s * 0.5), dark, true)     # дверь
 
 
-## Склад (хранилище): на каждую клетку — каменный короб с дощатой крышкой и ящиками
-## сверху (деревянные акценты).
+## Склад (хранилище): слитный каменный корпус + дощатая крыша + ящики поверх.
 func _build_store() -> void:
-	var stone := _solid(Color(0.5, 0.5, 0.54), 0.05, 0.9)
-	var wood := _solid(Color(0.5, 0.34, 0.18), 0.0, 0.95)
+	var stone := _solid(Color(0.55, 0.54, 0.52), 0.05, 0.9)
+	var wood := _solid(_WOOD, 0.0, 0.95)
+	var dark := _solid(_WOOD_DARK, 0.0, 0.9)
+	var body_h := 1.4
+	_build_compound(stone, wood, body_h, 0.3)
 	var s: float = OilGrid.CELL
-	for off in _mask:
-		var o := off as Vector2i
+	var top: float = _BASE_H + body_h + 0.08 + 0.3  # верх крыши
+	var f := _mask[0] as Vector2i
+	var fc := Vector3(f.x * s, 0.0, f.y * s)
+	_box(Vector3(1.0, 1.1, 0.16), fc + Vector3(0, _BASE_H + 0.55, s * 0.5), dark, true)  # ворота склада
+	for i in _mask.size():
+		var o := _mask[i] as Vector2i
 		var c := Vector3(o.x * s, 0.0, o.y * s)
-		_box(Vector3(1.7, 1.4, 1.7), c + Vector3(0, 0.7, 0), stone, true)     # короб склада
-		_box(Vector3(1.8, 0.2, 1.8), c + Vector3(0, 1.5, 0), wood, true)      # дощатая крышка
-		_box(Vector3(0.6, 0.6, 0.6), c + Vector3(-0.4, 1.9, -0.3), wood, true)  # ящик
-		_box(Vector3(0.5, 0.5, 0.5), c + Vector3(0.45, 1.85, 0.35), wood, true) # ящик
-
-
-## Квадратная пирамида (скатная крыша): CylinderMesh 4 сегмента, повёрнут на 45° (грани
-## вдоль осей). half — полуширина квадрата основания.
-func _pyramid(half: float, height: float, pos: Vector3, mat: StandardMaterial3D) -> void:
-	var mi := MeshInstance3D.new()
-	var c := CylinderMesh.new()
-	c.top_radius = 0.0
-	c.bottom_radius = half * 1.4142
-	c.height = height
-	c.radial_segments = 4
-	mi.mesh = c
-	mi.material_override = mat
-	mi.position = pos
-	mi.rotation.y = PI / 4.0
-	add_child(mi)
+		# По ящику на клетку, со смещением — читается как разбросанный груз, не модули.
+		var off := Vector3(0.35 if i % 2 == 0 else -0.35, 0.3, -0.3 if i % 2 == 0 else 0.35)
+		_box(Vector3(0.6, 0.6, 0.6), c + off + Vector3(0, top, 0), wood, true)
 
 
 ## Квадратная башенка-замок (добытчик): каменный короб в цвет роли + зубцы по верху —
 ## стилистически как угловые башни качалки. Без коллайдера (Фаза 2).
 func _build_tower() -> void:
-	var body := _solid(_role_color(_role), 0.15, 0.8)
-	var trim := _solid(Color(0.32, 0.3, 0.34), 0.2, 0.85)
-	_box(Vector3(1.7, 2.2, 1.7), Vector3(0, 1.1, 0), body, true)  # короб башни
-	_battlements(0.85, 2.2, trim)                                  # зубцы по верху
+	var body := _solid(_role_color(_role), 0.12, 0.82)
+	var dark := _solid(_STONE_DARK, 0.1, 0.9)
+	var trim := _solid(Color(0.4, 0.38, 0.4), 0.2, 0.85)
+	_layer(_BASE_H * 0.5, OilGrid.CELL + 0.16, _BASE_H, dark)             # цоколь
+	var bh := 2.0
+	_box(Vector3(1.7, bh, 1.7), Vector3(0, _BASE_H + bh * 0.5, 0), body, true)        # короб
+	_box(Vector3(1.86, 0.14, 1.86), Vector3(0, _BASE_H + bh, 0), trim, true)          # карниз
+	_battlements(0.85, _BASE_H + bh + 0.07, trim)                                     # зубцы
+
+
+## Добыча: находим замок и ставим темп нефти (×2 при примыкании к ядру-замку).
+func _setup_mine() -> void:
+	var tree := get_tree()
+	_collector = tree.get_first_node_in_group(OilCollector.GROUP)
+	var adj := false
+	for wc in OilGrid.building_cells(global_position, _mask, rotation.y, tree):
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			if OilGrid.is_pump((wc as Vector2i) + d):
+				adj = true
+	_oil_rate = MINE_OIL_PER_SEC * (2.0 if adj else 1.0)
+	set_process(true)
+
+
+func _process(delta: float) -> void:
+	if _oil_rate > 0.0 and is_instance_valid(_collector) and _collector.has_method(&"add_oil"):
+		_collector.call(&"add_oil", _oil_rate * delta)
 
 
 ## Мировые клетки, занятые постройкой (для проверки наложения при размещении).
@@ -223,6 +271,15 @@ func _box(size: Vector3, pos: Vector3, mat: StandardMaterial3D, shadow: bool) ->
 	if not shadow:
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
+
+
+## Горизонтальный СЛОЙ по всем клеткам фигуры (цоколь / карниз): на каждую клетку плита
+## стороной side, высотой h, центром по Y = y. Плиты смыкаются в единый поясок здания.
+func _layer(y: float, side: float, h: float, mat: StandardMaterial3D) -> void:
+	var s: float = OilGrid.CELL
+	for off in _mask:
+		var o := off as Vector2i
+		_box(Vector3(side, h, side), Vector3(o.x * s, y, o.y * s), mat, true)
 
 
 ## Зубцы (мерлоны) по периметру верха башни — как у угловых башен качалки.

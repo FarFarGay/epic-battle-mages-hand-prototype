@@ -183,6 +183,8 @@ var _mode_label: Label
 ## отрядов перестают вылезать за экран, появляется вертикальный скролл.
 var _squad_panel: VBoxContainer
 var _squad_scroll: ScrollContainer
+## Счётчик нефти замка-качалки (виден, когда замок построен). Прогресс к победе.
+var _oil_label: Label = null
 ## squad_id → Control карточки. Используется для update/remove на squad_changed.
 var _squad_cards: Dictionary = {}
 ## squad_id → Squad. Реестр для резолва БЕЗ лагеря (комнатный отряд от гномов):
@@ -236,6 +238,7 @@ func _ready() -> void:
 	# _build_gold_goal()
 	_build_tower_stats()
 	_build_resources_rows()
+	_build_oil_label()
 	_build_journal_button()
 	_build_action_bar()
 	_build_gatherer_card()
@@ -1082,6 +1085,7 @@ func _process(delta: float) -> void:
 	_update_timer -= delta
 	if _update_timer <= 0.0:
 		_update_counts()
+		_update_oil_label()  # отдельно: _update_counts рано выходит без Camp (room-режим)
 		_update_squad_cards_dynamic()
 		_update_timer = UPDATE_INTERVAL
 	_action_bar_update_timer -= delta
@@ -1102,6 +1106,33 @@ func _update_counts() -> void:
 	# Скорость добычи / ETA меняются медленно (генераторы) — обновляем на таймере,
 	# а не на каждом начислении золота.
 	_refresh_gold_rate()
+
+
+## Счётчик нефти замка вверху-по центру. Виден только когда замок построен
+## (OilCollector в сцене). Обновляется на таймере из _process (см. _update_counts).
+func _build_oil_label() -> void:
+	_oil_label = Label.new()
+	# Ниже панели статов башни (верх-лево) и ресурсов (верх-право) — по центру, в
+	# свободной полосе. mouse_filter IGNORE — не перехватывать обзор мышью.
+	_oil_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_oil_label.offset_top = 64.0
+	_oil_label.offset_bottom = 92.0
+	_oil_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_oil_label.add_theme_font_size_override("font_size", 19)
+	_oil_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_oil_label.visible = false
+	add_child(_oil_label)
+
+
+func _update_oil_label() -> void:
+	if _oil_label == null:
+		return
+	var c := get_tree().get_first_node_in_group(OilCollector.GROUP)
+	if c != null and c.has_method(&"get_oil") and c.has_method(&"get_goal"):
+		_oil_label.visible = true
+		_oil_label.text = "🛢 Нефть замка:  %d / %d" % [int(c.call(&"get_oil")), int(c.call(&"get_goal"))]
+	else:
+		_oil_label.visible = false
 
 
 ## Обновление squad-бара. Вызывается на каждом инкременте XP (через
