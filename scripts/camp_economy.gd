@@ -23,10 +23,12 @@ var base_cap: int = 60
 var _cap_bonus: int = 0
 
 
-## GOLD не капится (валюта победы — потолок заблокировал бы выигрыш). Прочие
-## материалы — да.
+## Монеты (BRONZE/SILVER/GOLD) НЕ капятся — это валюта (потолок ломал бы накопление и
+## чеканку 100→1). Материалы (дерево/камень/железо/еда) — капятся складом.
 func _is_capped(type: int) -> bool:
-	return type != ResourcePile.ResourceType.GOLD
+	return type != ResourcePile.ResourceType.GOLD \
+		and type != ResourcePile.ResourceType.SILVER \
+		and type != ResourcePile.ResourceType.BRONZE
 
 
 ## Текущий потолок для типа. Для GOLD — практически бесконечность.

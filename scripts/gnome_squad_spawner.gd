@@ -53,13 +53,18 @@ func _ready() -> void:
 func request_squad(soldier_type: StringName, count: int, pos: Vector3) -> Array:
 	if SoldierSystem == null or not SoldierSystem.has_soldier(soldier_type):
 		return []
-	_spawn_squad(soldier_type, count, pos)
+	# Кламп по капу типа ЗДЕСЬ (единый путь для всех нанимателей — казарма/замок):
+	# спавнер держит ОДИН отряд на тип, добор лишь доливает павших до cap.
+	var add: int = _clamp_to_cap(soldier_type, maxi(count, 1))
+	if add <= 0:
+		return []
+	_spawn_squad(soldier_type, add, pos)
 	var sq: Squad = _squads_by_type.get(soldier_type)
 	if sq == null:
 		return []
 	var m: Array = sq.members
 	var out: Array = []
-	for i in range(maxi(m.size() - count, 0), m.size()):
+	for i in range(maxi(m.size() - add, 0), m.size()):
 		if i >= 0 and i < m.size() and is_instance_valid(m[i]):
 			out.append(m[i])
 	return out

@@ -185,6 +185,8 @@ var _squad_panel: VBoxContainer
 var _squad_scroll: ScrollContainer
 ## Счётчик нефти замка-качалки (виден, когда замок построен). Прогресс к победе.
 var _oil_label: Label = null
+## Счётчик казны: 🥉 бронза / 🥈 серебро / 🥇 золото (монетная экономика). Всегда виден.
+var _coins_label: Label = null
 ## squad_id → Control карточки. Используется для update/remove на squad_changed.
 var _squad_cards: Dictionary = {}
 ## squad_id → Squad. Реестр для резолва БЕЗ лагеря (комнатный отряд от гномов):
@@ -239,6 +241,7 @@ func _ready() -> void:
 	_build_tower_stats()
 	_build_resources_rows()
 	_build_oil_label()
+	_build_coins_label()
 	_build_journal_button()
 	_build_action_bar()
 	_build_gatherer_card()
@@ -1086,6 +1089,7 @@ func _process(delta: float) -> void:
 	if _update_timer <= 0.0:
 		_update_counts()
 		_update_oil_label()  # отдельно: _update_counts рано выходит без Camp (room-режим)
+		_update_coins_label()
 		_update_squad_cards_dynamic()
 		_update_timer = UPDATE_INTERVAL
 	_action_bar_update_timer -= delta
@@ -1133,6 +1137,33 @@ func _update_oil_label() -> void:
 		_oil_label.text = "🛢 Нефть замка:  %d / %d" % [int(c.call(&"get_oil")), int(c.call(&"get_goal"))]
 	else:
 		_oil_label.visible = false
+
+
+## Счётчик казны (3 номинала) вверху-по центру под нефтью. Цвета номиналов из
+## ResourcePile.color_for_type (единый источник). Постройки стоят составную цену.
+func _build_coins_label() -> void:
+	_coins_label = Label.new()
+	_coins_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_coins_label.offset_top = 92.0
+	_coins_label.offset_bottom = 118.0
+	_coins_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_coins_label.add_theme_font_size_override("font_size", 18)
+	_coins_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_coins_label)
+
+
+func _update_coins_label() -> void:
+	if _coins_label == null:
+		return
+	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	if bank == null or not bank.has_method(&"get_coin"):
+		_coins_label.visible = false
+		return
+	_coins_label.visible = true
+	var b: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.BRONZE))
+	var s: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.SILVER))
+	var g: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD))
+	_coins_label.text = "🥇 %d    🥈 %d    🥉 %d" % [g, s, b]  # монеты казны
 
 
 ## Обновление squad-бара. Вызывается на каждом инкременте XP (через

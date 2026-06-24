@@ -27,8 +27,6 @@ const DIALOGS := {
 		"choices": [
 			{ "label": "А вы, собственно, кто?", "next": &"who" },
 			{ "label": "Что за хартия?", "next": &"charter", "req": &"unsigned" },
-			{ "label": "Прикупить копейщиков, бэйби.", "next": &"", "effect": &"open_trade", "req": &"signed" },
-			{ "label": "Нанять артель рабочих.", "next": &"", "effect": &"open_trade_workers", "req": &"signed" },
 			{ "label": "Кхм. Я пойду.", "next": &"" },
 		],
 	},
@@ -36,8 +34,6 @@ const DIALOGS := {
 		"text": "«Кто я? Позволь представиться, {name} — мы вольные гномы, мужчины-загадки международного масштаба. Застряли в этом Великом Гномьем Городе на го-оды, и тут было ОЧЕНЬ одиноко, м-м-м. Осели в зальчике — бар, бархат, мягкий свет. А потом БАЦ — дырень в стене, повалила костлявая нечисть, и выход возьми да захлопнись. И вот мы тут. Заперты. Наедине. Зови меня просто... Загадочный. Йе-е.»",
 		"choices": [
 			{ "label": "Ясно. Так что за хартия?", "next": &"charter", "req": &"unsigned" },
-			{ "label": "Прикупить копейщиков?", "next": &"", "effect": &"open_trade", "req": &"signed" },
-			{ "label": "Нанять рабочих?", "next": &"", "effect": &"open_trade_workers", "req": &"signed" },
 			{ "label": "Эм. Ну, бывайте.", "next": &"" },
 		],
 	},
@@ -48,26 +44,17 @@ const DIALOGS := {
 			{ "label": "Я ещё подумаю.", "next": &"root" },
 		],
 	},
-	# Артель уже под завязку (кап рабочих). Гном отшивает с фирменным подтекстом.
-	&"workers_full": {
-		"text": "«Эй-эй, полегче, жеребец! У тебя уже СЕМЕРО таких крепких работяг — потные, мускулистые, на всё ради тебя готовы, м-м-м. Больше в одну артель при всём желании не втиснуть, как ни смазывай. Дай ребятам выдохнуть — они и так из кожи вон лезут, чтоб тебе угодить. Ненасытный котик. Йе-е.» (медленно обмахивается бархатным жилетом и закусывает губу)",
-		"choices": [
-			{ "label": "Ха. Ну ладно, что ещё есть?", "next": &"root" },
-			{ "label": "Понял-понял. Я пошёл.", "next": &"" },
-		],
-	},
 	},
 	&"b": { &"root": { "text": "[Гномий дом B — диалог наполним позже.]", "choices": [ { "label": "Бывай.", "next": &"" } ] } },
-	# Гномы-строители (Room6). Квест: убей камнеметателя → найм лучников; запусти
-	# станок в Room11 → знание о постройке стен/башен. Гейты веток через req
-	# (thrower_defeated/alive, building_locked/known) — см. DialogUI._req_met.
+	# Гномы-строители (Room6). Квест: запусти станок в Room11 → знание о постройке
+	# стен/башен/казарм (лицензия строителя). Гейты веток через req
+	# (building_locked/known) — см. DialogUI._req_met. Найм отрядов — НЕ здесь, а в
+	# казармах за золото (см. PadBuilding._open_hire).
 	&"builders": {
 		&"root": {
 			"text": "Коренастый гном в кожаном фартуке, весь в каменной пыли, отрывается от чертежа: «О, живой! А мы уж думали, тут одни костяки шастают. Мы — Гильдия Камня, строители. Когда-то весь этот город по нашим чертежам клали. Чем подсобить, {name}?»",
 			"choices": [
 				{ "label": "Кто вы и что строите?", "next": &"who" },
-				{ "label": "Нужны лучники.", "next": &"", "effect": &"open_trade_archers", "req": &"thrower_defeated" },
-				{ "label": "Что там с лучниками?", "next": &"archers_wait", "req": &"thrower_alive" },
 				{ "label": "Научите строить?", "next": &"teach_locked", "req": &"building_locked" },
 				{ "label": "Спасибо за чертежи!", "next": &"teach_done", "req": &"building_known" },
 				{ "label": "Пойду.", "next": &"" },
@@ -78,13 +65,6 @@ const DIALOGS := {
 			"choices": [
 				{ "label": "Как доказать?", "next": &"teach_locked", "req": &"building_locked" },
 				{ "label": "Понял. Вернусь.", "next": &"root" },
-			],
-		},
-		&"archers_wait": {
-			"text": "«Лучники? Дали бы, да наш арсенал на отшибе простреливает костяной камнемёт — здоровенный, что швыряет каменюки россыпью по дуге. Угробит любого, кого пошлём за луками. Снеси громилу — и вооружим тебе стрелков.»",
-			"choices": [
-				{ "label": "Сделаю.", "next": &"root" },
-				{ "label": "Ладно.", "next": &"" },
 			],
 		},
 		&"teach_locked": {
@@ -154,7 +134,9 @@ func _process(_delta: float) -> void:
 			dlg.call(&"open", _dialog(), &"root")
 
 
-## Обработка эффектов веток диалога (DialogUI.effect_selected).
+## Обработка эффектов веток диалога (DialogUI.effect_selected). Найм отрядов отсюда
+## убран (2026-06-25) — нанимают ТОЛЬКО казармы за золото (PadBuilding._open_hire).
+## Остался лишь open_charter (подпись Торговой Хартии).
 func _on_dialog_effect(effect_id: StringName) -> void:
 	if effect_id == &"open_charter":
 		# Награда = подпись Торговой Хартии. Deferred: диалог закроется этим же
@@ -162,37 +144,6 @@ func _on_dialog_effect(effect_id: StringName) -> void:
 		var charter := get_tree().get_first_node_in_group(&"charter_ui")
 		if charter != null and charter.has_method(&"open"):
 			charter.call_deferred(&"open")
-	elif effect_id == &"open_trade" or effect_id == &"open_trade_workers" or effect_id == &"open_trade_archers":
-		# Артель рабочих под завязку (кап) → гном отшивает флейвором, торг НЕ открываем
-		# (иначе пустой стол «Артель полна»). У копейщиков/лучников капа нет — торг как обычно.
-		if effect_id == &"open_trade_workers" and _workers_at_cap():
-			var dlg := get_tree().get_first_node_in_group(DIALOG_GROUP)
-			if dlg != null and dlg.has_method(&"open"):
-				dlg.call_deferred(&"open", _dialog(), &"workers_full")
-			return
-		# Покупка отряда — открываем торг (deferred, как Хартию). Тип юнита по ветке:
-		# копейщики (open_trade) / рабочие (open_trade_workers) / лучники (open_trade_archers).
-		var trade := get_tree().get_first_node_in_group(&"trade_ui")
-		if trade != null and trade.has_method(&"open"):
-			var unit_type: StringName = &"pikeman"
-			if effect_id == &"open_trade_workers":
-				unit_type = SoldierSystem.ROLE_WORKER
-			elif effect_id == &"open_trade_archers":
-				unit_type = &"archer_squad"
-			trade.call_deferred(&"open", unit_type)
-
-
-## Артель рабочих уже на потолке численности (squad_cap)? Считаем живых по группе
-## soldier (спрятанные в башне рабочие остаются в ней — учитываются).
-func _workers_at_cap() -> bool:
-	var cap: int = SoldierSystem.get_squad_cap(SoldierSystem.ROLE_WORKER)
-	if cap <= 0:
-		return false
-	var count: int = 0
-	for s in get_tree().get_nodes_in_group(&"soldier"):
-		if is_instance_valid(s) and s.get(&"soldier_type") == SoldierSystem.ROLE_WORKER:
-			count += 1
-	return count >= cap
 
 
 ## Диалог этого домика по dialog_id (fallback — «mysterious», если id неизвестен).

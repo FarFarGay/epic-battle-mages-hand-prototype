@@ -30,7 +30,10 @@ const GROUP := &"resource_pile"
 ## (или добываются — design-decision позже): тратятся на разблокировку и
 ## улучшение заклинаний башни через SpellSystem. Хранятся как обычный
 ## ресурс в Camp.economy.
-enum ResourceType { GENERIC, WOOD, STONE, IRON, FOOD, PAGE, GOLD }
+# Монетная экономика (2026-06-25): BRONZE/SILVER/GOLD — три номинала казны. GOLD =
+# золотая монета (был «золото-валюта»). Чеканка 100→1 вручную у плавильни; постройки
+# стоят составную цену. См. [[project_ebm_coin_economy]].
+enum ResourceType { GENERIC, WOOD, STONE, IRON, FOOD, PAGE, GOLD, BRONZE, SILVER }
 
 ## Форма pile'а — определяет PrimitiveMesh + CollisionShape3D. По умолчанию
 ## выбирается по resource_type (BOX для большинства, CYLINDER для дерева).
@@ -86,6 +89,10 @@ static func color_for_type(t: int) -> Color:
 			return Color(0.55, 0.35, 0.85)
 		ResourceType.GOLD:
 			return Color(0.95, 0.78, 0.18)
+		ResourceType.SILVER:
+			return Color(0.82, 0.84, 0.88)
+		ResourceType.BRONZE:
+			return Color(0.78, 0.49, 0.22)
 		_:
 			return Color(0.4, 0.75, 0.3)
 

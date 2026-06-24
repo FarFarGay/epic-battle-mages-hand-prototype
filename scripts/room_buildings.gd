@@ -130,6 +130,7 @@ const CATALOG: Dictionary = {
 		"role": &"mine",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
+		"cost": {ResourcePile.ResourceType.BRONZE: 30},
 		"ghost_color": Color(0.88, 0.68, 0.26, 0.5),
 	},
 	PAD_WALL: {
@@ -138,6 +139,7 @@ const CATALOG: Dictionary = {
 		"role": &"defend",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
 		"instant": true,
+		"cost": {ResourcePile.ResourceType.BRONZE: 18},
 		"ghost_color": Color(0.5, 0.58, 0.72, 0.5),
 	},
 	PAD_WALL1: {
@@ -146,6 +148,7 @@ const CATALOG: Dictionary = {
 		"role": &"defend",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
+		"cost": {ResourcePile.ResourceType.BRONZE: 6},
 		"ghost_color": Color(0.5, 0.58, 0.72, 0.5),
 	},
 	PAD_TOWER: {
@@ -154,6 +157,7 @@ const CATALOG: Dictionary = {
 		"role": &"attack",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
+		"cost": {ResourcePile.ResourceType.BRONZE: 40, ResourcePile.ResourceType.SILVER: 2},
 		"ghost_color": Color(0.55, 0.6, 0.62, 0.5),
 	},
 	# Население: дом гномов, L-форма (разные фигуры = пазл упаковки). Функция (прирост
@@ -164,6 +168,7 @@ const CATALOG: Dictionary = {
 		"role": &"housing",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
 		"instant": true,
+		"cost": {ResourcePile.ResourceType.BRONZE: 50, ResourcePile.ResourceType.SILVER: 3},
 		"ghost_color": Color(0.6, 0.45, 0.3, 0.5),
 	},
 	# Хранилище: склад, квадрат 2×2. Функция (кап ресурсов/буфер) — Фаза 2.
@@ -173,6 +178,7 @@ const CATALOG: Dictionary = {
 		"role": &"storage",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
 		"instant": true,
+		"cost": {ResourcePile.ResourceType.BRONZE: 50, ResourcePile.ResourceType.SILVER: 4},
 		"ghost_color": Color(0.55, 0.45, 0.3, 0.5),
 	},
 	# Ворота: арка со створками в линии стены (пилоны по ±X стыкуются со стенами, проём
@@ -183,6 +189,7 @@ const CATALOG: Dictionary = {
 		"role": &"gate",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
 		"instant": true,
+		"cost": {ResourcePile.ResourceType.BRONZE: 30, ResourcePile.ResourceType.SILVER: 2},
 		"ghost_color": Color(0.5, 0.58, 0.72, 0.5),
 	},
 	# Угловая казарма лучников: L-бастион периметра (стены стыкуются к концам), боевой
@@ -193,19 +200,25 @@ const CATALOG: Dictionary = {
 		"role": &"barracks",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
 		"instant": true,
+		"cost": {ResourcePile.ResourceType.BRONZE: 60, ResourcePile.ResourceType.SILVER: 5},
 		"ghost_color": Color(0.5, 0.6, 0.7, 0.5),
 		"banner_color": Color(0.28, 0.46, 0.7),  # синий стяг — лучники
-		"corner_tower": true,  # башня венчает угол → лучники выходят на стены (Фаза 2)
+		"corner_tower": true,  # башня венчает угол → лучники выходят на стены (гарнизон)
+		# Казарма = кнопка найма за золото: клик → стол торга под этот тип отряда.
+		# corner_tower → нанятые лучники гарнизонят стены; иначе мобильный отряд.
+		"squad_type": &"archer_squad",
 	},
-	# Казарма копейщиков: T-тетромино (4 клетки), красный стяг. Функция (копейщики) — Фаза 2.
+	# Казарма копейщиков: T-тетромино (4 клетки), красный стяг. Найм мобильного отряда.
 	PAD_SPEARMEN: {
 		"name": "Казарма копейщиков",
 		"menu_label": "🛡 Казарма копейщиков (Т)",
 		"role": &"barracks",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(1, 1)],
 		"instant": true,
+		"cost": {ResourcePile.ResourceType.BRONZE: 60, ResourcePile.ResourceType.SILVER: 5},
 		"ghost_color": Color(0.7, 0.55, 0.5, 0.5),
 		"banner_color": Color(0.72, 0.3, 0.26),  # красный стяг — копейщики
+		"squad_type": &"pikeman",  # мобильный отряд за башней (без гарнизона стен)
 	},
 }
 

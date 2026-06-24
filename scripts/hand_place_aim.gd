@@ -55,6 +55,9 @@ var _pad_floor: MeshInstance3D = null
 var _rot_y: float = 0.0
 ## Сработал ли магнит в этом кадре (для подсветки силуэта). Ставится в _snap_center.
 var _snapped: bool = false
+## Хватает ли монет на составную цену текущей постройки (см. _can_afford). Красит силуэт
+## и гейтит установку. Постройки без "cost" (трубы/мост/стройплощадка-на-дереве) — всегда true.
+var _affordable: bool = true
 
 
 func _ready() -> void:
@@ -138,12 +141,19 @@ func _process(_delta: float) -> void:
 		_snapped = _touches_host(_oil_ports_world(place, _rot_y))
 	else:
 		place = _snap_center(ground)
+	# Хватает ли монет на составную цену (постройки с "cost"; без неё — бесплатно).
+	_affordable = _can_afford()
 	_update_ghost(place)
 	if Input.is_action_just_pressed(ACTION_COMMIT) and not _hand.is_pointer_over_ui():
 		# Нельзя невалидно: труба не у порта / фигура за площадкой / внахлёст.
 		if (is_pipe or is_pad) and not _snapped:
 			if debug_log and LogConfig.master_enabled:
 				print("[Hand:PlaceAim] нельзя сюда — стыкуй к порту либо держи фигуру в площадке без наложений")
+			return
+		# Не хватает монет → не ставим (силуэт уже красный — см. _update_ghost).
+		if not _affordable:
+			if debug_log and LogConfig.master_enabled:
+				print("[Hand:PlaceAim] не хватает монет на %s" % String(_data.get("name", _building)))
 			return
 		_commit(place)
 
@@ -170,12 +180,31 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
+## Хватает ли в казне монет на составную цену текущей постройки. Нет "cost" → бесплатно.
+func _can_afford() -> bool:
+	var cost: Dictionary = _data.get("cost", {})
+	if cost.is_empty():
+		return true
+	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	if bank == null or not bank.has_method(&"can_afford"):
+		return true
+	return bank.call(&"can_afford", cost)
+
+
 ## Ставит RoomBuildSite на точке pos с текущим поворотом. Площадку строят рабочие
 ## командой «Идти сюда» (area-клик по ней → BUILD).
 func _commit(pos: Vector3) -> void:
 	var scene: Node = get_tree().current_scene
 	if scene == null:
 		return
+	# Оплата составной цены из казны (только постройки с "cost" — полимино; стройплощадка
+	# на дереве "cost" не имеет → бесплатна по монетам, держит свою wood-модель). Атомарно.
+	var cost: Dictionary = _data.get("cost", {})
+	if not cost.is_empty():
+		var bank := get_tree().get_first_node_in_group(&"gold_bank")
+		if bank != null and bank.has_method(&"spend_cost"):
+			if not bank.call(&"spend_cost", cost):
+				return  # не хватило (двойная защита — process уже гейтит _affordable)
 	# Полимино-фигура площадки: строится КОДОМ по маске (без .tscn), мгновенно.
 	if _data.has("cells"):
 		# Ворота заменяют стену: снести стены под их клетками.
@@ -354,7 +383,8 @@ func _update_ghost(pos: Vector3) -> void:
 	if _ghost_mat != null:
 		var c: Color
 		if _data.has("cells"):
-			c = ghost_color_snap if _snapped else ghost_color_invalid  # фигура валидна/нет
+			# Фигура: красный, если геометрия невалидна ИЛИ не хватает монет.
+			c = ghost_color_snap if (_snapped and _affordable) else ghost_color_invalid
 		elif _data.has("pipe_kind") and not _snapped:
 			c = ghost_color_invalid  # труба не у порта — красный «нельзя»
 		elif _snapped:

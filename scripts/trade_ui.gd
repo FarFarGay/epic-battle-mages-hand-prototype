@@ -34,6 +34,10 @@ var _applied: Dictionary = {}  # deed id (StringName) -> value (int)
 var _placed: int = 0  # золото, выложенное монетами на стол
 ## Тип покупаемого юнита (gnome_house задаёт через open). Спавнер маппит тип → сцена.
 var _unit_type: StringName = &"pikeman"
+## Адресный колбэк покупки. Если задан (открыл КАЗАРМА) — на «Купить» зовём его вместо
+## широковещательного purchased: казарма сама спавнит отряд + раздаёт посты гарнизона.
+## Пуст (открыл домик гномов) → broadcast purchased → спавнер ловит generic-путём.
+var _on_purchase: Callable = Callable()
 
 
 func _ready() -> void:
@@ -66,10 +70,11 @@ func _process(_delta: float) -> void:
 	_pay_zone.self_modulate = Color(1.25, 1.35, 1.2) if dragging else Color(1, 1, 1)
 
 
-func open(unit_type: StringName = &"pikeman") -> void:
+func open(unit_type: StringName = &"pikeman", on_purchase: Callable = Callable()) -> void:
 	if _open:
 		return
 	_unit_type = unit_type
+	_on_purchase = on_purchase
 	_open = true
 	_applied = {}
 	_placed = 0
@@ -82,6 +87,7 @@ func close() -> void:
 	if not _open:
 		return
 	_open = false
+	_on_purchase = Callable()
 	_root.visible = false
 	get_tree().paused = false
 
@@ -231,5 +237,11 @@ func _on_buy() -> void:
 		deeds_log.call(&"consume", _applied.keys())
 	# Размер отряда — ИЗ КАТАЛОГА по типу (копейщик 5, рабочий 3), а не локальный
 	# экспорт: каталог — единый источник истины, иначе покупаешь не то число.
-	purchased.emit(_unit_type, SoldierSystem.get_squad_size(_unit_type))
+	var size: int = SoldierSystem.get_squad_size(_unit_type)
+	# Адресный колбэк (казарма) перебивает broadcast: захватываем ДО close (он чистит _on_purchase).
+	var cb: Callable = _on_purchase
+	if cb.is_valid():
+		cb.call(_unit_type, size)
+	else:
+		purchased.emit(_unit_type, size)
 	close()

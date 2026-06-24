@@ -13,6 +13,10 @@ const GROUP := &"oil_collector"
 ## Допуск совпадения КОНЦОВ (портов) труб/инлетов/буров. Снап ставит концы встык
 ## (≈0), 0.6 — запас.
 const PORT_TOL := 0.6
+## ЛКМ-захват рукой — клик по замку = найм РАБОЧИХ за золото (тот же стол, что казармы).
+const ACTION_GRAB := &"hand_grab"
+## Радиус (XZ) вокруг замка, в котором рука «нанимает» по ЛКМ (замок крупный, ~4.6м).
+@export var hire_radius: float = 3.5
 
 signal oil_changed(oil: float, goal: float)
 signal filled
@@ -28,11 +32,13 @@ var _oil: float = 0.0
 var _full: bool = false
 var _fill: Node3D = null
 var _net_timer: float = 0.0
+var _hand: Hand = null
 
 
 func _ready() -> void:
 	add_to_group(GROUP)
 	add_to_group(PipeSegment.PORT_HOST_GROUP)  # коллектор даёт порты для снапа/сети
+	add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)  # замок = кнопка найма рабочих (hover + ЛКМ)
 	_build_castle()
 	_update_fill()
 
@@ -133,11 +139,72 @@ func pipe_ports() -> Array:
 ## Периодически пересчитываем связность сети и подключаем/отключаем буры. Дёшево
 ## (узлов мало), троттлим. Заливка от инлетов по смежным трубам до буров.
 func _process(delta: float) -> void:
+	_tick_hire_click()
 	_net_timer -= delta
 	if _net_timer > 0.0:
 		return
 	_net_timer = 0.7
 	_recompute_network()
+
+
+## ЛКМ вблизи замка (вне открытой модалки) → стол найма РАБОЧИХ. Зеркало
+## PadBuilding._tick_hire_click / GnomeHouse._process, но цель — рабочие (population).
+func _tick_hire_click() -> void:
+	var tree := get_tree()
+	var trade := tree.get_first_node_in_group(&"trade_ui")
+	if trade != null and trade.has_method(&"is_open") and trade.call(&"is_open"):
+		return  # стол торга уже открыт
+	if not Input.is_action_just_pressed(ACTION_GRAB):
+		return
+	var hand := _resolve_hand()
+	if hand == null or not hand.has_method(&"cursor_world_position"):
+		return
+	var hp: Vector3 = hand.call(&"cursor_world_position")
+	var dx: float = hp.x - global_position.x
+	var dz: float = hp.z - global_position.z
+	if dx * dx + dz * dz <= hire_radius * hire_radius:
+		_open_hire()
+
+
+## Открыть стол торга под РАБОЧИХ с адресным колбэком — замок сам спавнит/доливает
+## артель (cap 7 клампит request_squad), не дёргая broadcast.
+func _open_hire() -> void:
+	var trade := get_tree().get_first_node_in_group(&"trade_ui")
+	if trade != null and trade.has_method(&"open"):
+		trade.call(&"open", SoldierSystem.ROLE_WORKER, Callable(self, &"_on_hired_workers"))
+
+
+## Оплата прошла → заказываем рабочих у спавнера (request_squad клампит до cap 7).
+## Рабочие — мобильная утилитная артель (без гарнизона); спавнятся у замка.
+func _on_hired_workers(unit_type: StringName, want: int) -> void:
+	var spawner := get_tree().get_first_node_in_group(&"squad_spawner")
+	if spawner == null or not spawner.has_method(&"request_squad"):
+		return
+	var ground := Vector3(global_position.x, 0.5, global_position.z)
+	spawner.call(&"request_squad", unit_type, want, ground)
+
+
+## Контракт hover-подсветки (Hand._update_pickup_highlight): emission по коробам замка.
+## Светящийся столб-нефти (_fill / glow) — под Node3D-ребёнком, не direct MeshInstance →
+## не затрагивается (его собственный emission остаётся).
+func set_highlighted(value: bool) -> void:
+	for ch in get_children():
+		var mi := ch as MeshInstance3D
+		if mi == null:
+			continue
+		var mat := mi.material_override as StandardMaterial3D
+		if mat == null:
+			continue
+		mat.emission_enabled = value
+		mat.emission = Color(0.55, 0.7, 1.0)
+		mat.emission_energy_multiplier = 0.5 if value else 0.0
+
+
+func _resolve_hand() -> Hand:
+	if _hand != null and is_instance_valid(_hand):
+		return _hand
+	_hand = get_tree().get_first_node_in_group(Hand.HAND_GROUP)
+	return _hand
 
 
 ## Заливка по СОВПАДАЮЩИМ КОНЦАМ (портам): от портов коллектора по трубам, чьи концы

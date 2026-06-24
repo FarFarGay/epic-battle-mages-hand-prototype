@@ -7,6 +7,8 @@ extends Node3D
 ## ([HandPlaceAim]); ПКМ сносит.
 
 const GROUP := &"pad_building"
+## ЛКМ-захват рукой (то же действие, что у домика гномов) — клик по казарме = найм.
+const ACTION_GRAB := &"hand_grab"
 
 var building_id: StringName = &""
 var _mask: Array = []        # Array[Vector2i] — клетки фигуры (локальные offset'ы)
@@ -28,7 +30,11 @@ func setup(id: StringName) -> void:
 
 func _ready() -> void:
 	add_to_group(GROUP)
-	set_process(false)  # тикает только добытчик (нефть в замок), см. _setup_mine
+	set_process(false)  # тикает только добытчик (нефть) и казарма (клик найма)
+	# Казарма = кнопка найма за золото: hover-подсветка руки + ЛКМ-клик → стол торга.
+	if is_barracks():
+		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
+		set_process(true)
 	# Отложенно: HandPlaceAim ставит global-трансформ ПОСЛЕ add_child (нужен стене для
 	# мировых клеток и поиска соседей).
 	call_deferred(&"_build")
@@ -360,15 +366,7 @@ func _build_barracks() -> void:
 				if not maskset.has(o + Vector2i(int(cx), 0)) and not maskset.has(o + Vector2i(0, int(cz))):
 					_box(Vector3(_MERLON, _MERLON_H, _MERLON), c + Vector3(cx * edge, my, cz * edge), trim, true)
 	# Угловая клетка (≥2 соседа в маске) — древко со стягом.
-	var corner := _mask[0] as Vector2i
-	for off in _mask:
-		var o := off as Vector2i
-		var nb := 0
-		for d in dirs:
-			if maskset.has(o + d):
-				nb += 1
-		if nb >= 2:
-			corner = o
+	var corner := _corner_local()
 	var pole := _solid(_WOOD_DARK, 0.0, 0.9)
 	var cc := Vector3(corner.x * s, 0.0, corner.y * s)
 	var flag_base: float = top
@@ -385,20 +383,30 @@ func _build_barracks() -> void:
 	_box(Vector3(0.09, 1.3, 0.09), px + Vector3(0, 0.65, 0), pole, true)       # древко
 	_box(Vector3(0.5, 0.08, 0.08), px + Vector3(0, 1.2, 0), pole, true)        # поперечина
 	_box(Vector3(0.45, 0.6, 0.05), px + Vector3(0, 0.85, 0), banner, true)     # полотнище
-	# Казарма лучников (с башней) производит 3 лучников: 1 на башню, 2 на рукава-стены.
-	if RoomBuildings.get_data(building_id).get("corner_tower", false):
-		_spawn_archers(corner)
 
 
-## Казарма = НАСТОЯЩИЙ отряд (3 ArcherSoldier у спавнера → карточка HUD, hp/смерть,
-## точность, F-призыв, команды — всё из системы). Раздаём посты гарнизона: 0 → башня,
-## 1/2 → рукава-стены; отряд по дефолту в МЯГКОМ hold → лучники сразу на боевой ход
-## (ArcherSoldier._grn_should_garrison). «За башней» (escort) снимает и ведёт; F-возврат
-## (мягкий hold) ставит обратно на стены.
-func _spawn_archers(corner_local: Vector2i) -> void:
+## Угловая клетка фигуры (≥2 соседа в маске → изгиб L) — на ней стяг/башня + узел гарнизона.
+func _corner_local() -> Vector2i:
+	var maskset: Dictionary = {}
+	for off in _mask:
+		maskset[off as Vector2i] = true
+	var corner := _mask[0] as Vector2i
+	for off in _mask:
+		var o := off as Vector2i
+		var nb := 0
+		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			if maskset.has(o + d):
+				nb += 1
+		if nb >= 2:
+			corner = o
+	return corner
+
+
+## Геометрия постов гарнизона: мировой угол, наземная точка у казармы, верх башни и
+## мировые направления рукавов (плечи L). Один источник для спавна и раздачи постов.
+func _garrison_posts() -> Dictionary:
 	var tree := get_tree()
-	if tree == null:
-		return
+	var corner_local := _corner_local()
 	var maskset: Dictionary = {}
 	for off in _mask:
 		maskset[off as Vector2i] = true
@@ -411,10 +419,51 @@ func _spawn_archers(corner_local: Vector2i) -> void:
 	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 		if maskset.has(corner_local + d):
 			arms.append(OilGrid.rotate_offset(d, rotation.y))
+	return {&"corner_world": corner_world, &"ground": ground, &"tower_pos": tower_pos, &"arms": arms}
+
+
+## Клик по казарме → стол торга под её тип отряда (НАЙМ ЗА ЗОЛОТО). Колбэк адресный:
+## на оплату казарма САМА спавнит/доливает отряд (а не broadcast спавнеру), чтобы тут же
+## раздать посты гарнизона лучникам. Тип — из каталога (archer_squad / pikeman).
+func _open_hire() -> void:
+	var tree := get_tree()
+	var trade := tree.get_first_node_in_group(&"trade_ui")
+	if trade == null or not trade.has_method(&"open"):
+		return
+	var stype: StringName = RoomBuildings.get_data(building_id).get("squad_type", &"archer_squad")
+	trade.call(&"open", stype, Callable(self, &"_on_hired"))
+
+
+## Оплата прошла: заказываем у спавнера want юнитов типа у казармы. Лучники (corner_tower)
+## → раздаём посты гарнизона стен; копейщики → мобильный отряд за башней (спавнер сам escort).
+## Спавнер держит ОДИН отряд на тип → повторный найм доливает павших (cap гасит перебор).
+func _on_hired(unit_type: StringName, want: int) -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
 	var spawner := tree.get_first_node_in_group(&"squad_spawner")
 	if spawner == null or not spawner.has_method(&"request_squad"):
 		return
-	var archers: Array = spawner.call(&"request_squad", &"archer_squad", 3, ground)
+	# Добор до капа клампит сам request_squad (единый путь). Стол торга и так гасит
+	# «Купить» на full → сюда обычно приходим лишь при недоборе.
+	var posts: Dictionary = _garrison_posts()
+	var ground: Vector3 = posts[&"ground"]
+	var members: Array = spawner.call(&"request_squad", unit_type, want, ground)
+	if members.is_empty():
+		return
+	# Лучники с башней → гарнизон стен. Прочие (копейщики) остаются мобильным отрядом.
+	if RoomBuildings.get_data(building_id).get("corner_tower", false):
+		_assign_garrison(members, posts)
+
+
+## Раздаём свежим лучникам посты: 0 → башня (branch ZERO), 1/2 → рукава-стены; отряд в
+## МЯГКИЙ hold → гарнизон стен (ArcherSoldier._grn_should_garrison), перебивая escort
+## спавнера. «За башней» (escort) снимает; F-возврат ставит обратно. См. §5.22.10.
+func _assign_garrison(archers: Array, posts: Dictionary) -> void:
+	var corner_world: Vector2i = posts[&"corner_world"]
+	var ground: Vector3 = posts[&"ground"]
+	var tower_pos: Vector3 = posts[&"tower_pos"]
+	var arms: Array = posts[&"arms"]
 	for i in archers.size():
 		var a = archers[i]
 		if not is_instance_valid(a) or not a.has_method(&"assign_garrison"):
@@ -519,6 +568,42 @@ func _setup_mine() -> void:
 func _process(delta: float) -> void:
 	if _oil_rate > 0.0 and is_instance_valid(_collector) and _collector.has_method(&"add_oil"):
 		_collector.call(&"add_oil", _oil_rate * delta)
+	if is_barracks():
+		_tick_hire_click()
+
+
+## ЛКМ по футпринту казармы (вне стройки/удержания) → открыть стол найма. Зеркало
+## GnomeHouse._process: модалка уже открыта → пропускаем; иначе курсорная клетка в
+## occupied_cells → найм. Точность по клеткам (а не радиусу) — попадание именно в здание.
+func _tick_hire_click() -> void:
+	var tree := get_tree()
+	var trade := tree.get_first_node_in_group(&"trade_ui")
+	if trade != null and trade.has_method(&"is_open") and trade.call(&"is_open"):
+		return  # стол торга уже открыт
+	if not Input.is_action_just_pressed(ACTION_GRAB):
+		return
+	var hand := tree.get_first_node_in_group(Hand.HAND_GROUP)
+	if hand == null or not hand.has_method(&"cursor_world_position"):
+		return
+	var hp: Vector3 = hand.call(&"cursor_world_position")
+	var cell := OilGrid.world_to_cell(hp, tree)
+	if cell in occupied_cells():
+		_open_hire()
+
+
+## Контракт hover-подсветки (Hand._update_pickup_highlight): наводим руку → казарма
+## светится emission'ом. Тоггл по всем мешам фигуры (материалы per-instance из _build).
+func set_highlighted(value: bool) -> void:
+	for ch in get_children():
+		var mi := ch as MeshInstance3D
+		if mi == null:
+			continue
+		var mat := mi.material_override as StandardMaterial3D
+		if mat == null:
+			continue
+		mat.emission_enabled = value
+		mat.emission = Color(0.55, 0.7, 1.0)
+		mat.emission_energy_multiplier = 0.5 if value else 0.0
 
 
 ## Мировые клетки, занятые постройкой (для проверки наложения при размещении).
