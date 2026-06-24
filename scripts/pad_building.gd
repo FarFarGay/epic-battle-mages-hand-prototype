@@ -82,35 +82,18 @@ static func cell_top(cell: Vector2i, tree: SceneTree) -> Vector3:
 	return Vector3(w.x, _WALL_H, w.z)
 
 
-## Маршрут вдоль боевого хода от start в сторону first_dir (жадно: прямо, иначе поворот).
+## Маршрут вдоль боевого хода СТРОГО ПО ПРЯМОЙ от start в сторону first_dir. Без поворотов
+## на углах: лучник плеча ходит только по своей линии (плечо + соосная стена), не заворачивая
+## в кольцо стен и не пересекая башню/чужое плечо. Кончилась прямая walkable — стоп.
 static func wall_route(tree: SceneTree, start: Vector2i, first_dir: Vector2i, maxn: int = 24) -> Array:
 	var walk := walkable_set(tree)
 	var route: Array = []
 	var cur := start
-	var prev := start - first_dir
-	var visited: Dictionary = {}
-	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 	for _k in maxn:
-		if not walk.has(cur) or visited.has(cur):
+		if not walk.has(cur):
 			break
-		visited[cur] = true
 		route.append(cell_top(cur, tree))
-		var nxt := cur
-		var found := false
-		var sd: Vector2i = cur - prev  # прямое направление
-		if walk.has(cur + sd) and not visited.has(cur + sd):
-			nxt = cur + sd
-			found = true
-		else:
-			for d in dirs:
-				if walk.has(cur + d) and not visited.has(cur + d):
-					nxt = cur + d
-					found = true
-					break
-		if not found:
-			break
-		prev = cur
-		cur = nxt
+		cur += first_dir  # только прямо, никаких поворотов
 	return route
 
 
@@ -402,19 +385,45 @@ func _build_barracks() -> void:
 		_spawn_archers(corner)
 
 
-## Казарма лучников = источник НАСТОЯЩЕГО отряда: заказывает 3 ArcherSoldier у спавнера
-## → командуемый отряд с HUD-карточкой, призывом F (берёшь с собой), полным AI/скоростью —
-## всё из готовой системы. Меняется только модель (перекрашена в ArcherSoldier).
+## Казарма = НАСТОЯЩИЙ отряд (3 ArcherSoldier у спавнера → карточка HUD, hp/смерть,
+## точность, F-призыв, команды — всё из системы). Раздаём посты гарнизона: 0 → башня,
+## 1/2 → рукава-стены; отряд по дефолту в МЯГКОМ hold → лучники сразу на боевой ход
+## (ArcherSoldier._grn_should_garrison). «За башней» (escort) снимает и ведёт; F-возврат
+## (мягкий hold) ставит обратно на стены.
 func _spawn_archers(corner_local: Vector2i) -> void:
 	var tree := get_tree()
 	if tree == null:
 		return
+	var maskset: Dictionary = {}
+	for off in _mask:
+		maskset[off as Vector2i] = true
 	var base := OilGrid.world_to_cell(global_position, tree)
 	var corner_world := base + OilGrid.rotate_offset(corner_local, rotation.y)
-	var pos := OilGrid.cell_to_world(corner_world, tree)  # наземная точка у казармы
+	var ground := OilGrid.cell_to_world(corner_world, tree)  # наземная точка у казармы
+	var tower_pos := ground
+	tower_pos.y = _WALL_H + 1.9 + 0.22  # верх башни (площадка)
+	var arms: Array = []
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if maskset.has(corner_local + d):
+			arms.append(OilGrid.rotate_offset(d, rotation.y))
 	var spawner := tree.get_first_node_in_group(&"squad_spawner")
-	if spawner != null and spawner.has_method(&"request_squad"):
-		spawner.call(&"request_squad", &"archer_squad", 3, pos)
+	if spawner == null or not spawner.has_method(&"request_squad"):
+		return
+	var archers: Array = spawner.call(&"request_squad", &"archer_squad", 3, ground)
+	for i in archers.size():
+		var a = archers[i]
+		if not is_instance_valid(a) or not a.has_method(&"assign_garrison"):
+			continue
+		# 0 → башня (branch ZERO); 1/2 → рукава (если есть; иначе тоже башня).
+		var branch: Vector2i = Vector2i.ZERO
+		if i > 0 and arms.size() > 0:
+			branch = arms[(i - 1) % arms.size()]
+		a.call(&"assign_garrison", corner_world, branch, tower_pos, ground.y)
+	# Дефолт казармы — мягкий hold → гарнизон стен (перебивает escort спавнера).
+	if archers.size() > 0 and is_instance_valid(archers[0]):
+		var sq = archers[0].get(&"_squad")
+		if sq != null:
+			sq.command_hold(ground, false)
 
 
 ## СЛИТНЫЙ корпус по форме фигуры: на каждую клетку — корпус НА ВСЮ КЛЕТКУ (клетки

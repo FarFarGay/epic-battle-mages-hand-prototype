@@ -546,3 +546,147 @@ func _arch_box(parent: Node3D, size: Vector3, pos: Vector3, mat: StandardMateria
 	mi.position = pos
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
+
+
+# --- ГАРНИЗОН СТЕН (барачные лучники) ---------------------------------------------
+# Барачный лучник — НАСТОЯЩИЙ член отряда (карточка/hp/смерть/точность/команды даром).
+# Доп. режим: пока отряд в МЯГКОМ hold (дефолт казармы и возврат по F) и есть назначение
+# от казармы — лучник ходит по БОЕВОМУ ХОДУ (логика бывшего PadArcher, дословно):
+# башенный стоит на башне, патрульные пинг-понгом по рукаву-стене, тянешь стену → идёт
+# дальше. Координаты маршрута АБСОЛЮТНЫЕ → ставим global_position напрямую, минуя навмеш/
+# гравитацию (стены вне навмеша). «За башней» (escort) = снять и вести; F-возврат (мягкий
+# hold) = обратно на стены. Бой — тот же _try_fire_at_resolved_target (конус/точность/стрела).
+const GARRISON_REPATH := 0.6  # пересчёт маршрута (стены меняются на ходу)
+
+var _grn_assigned: bool = false       # казарма назначила пост
+var _grn_home_cell: Vector2i = Vector2i.ZERO  # мировая клетка угла казармы
+var _grn_branch: Vector2i = Vector2i.ZERO     # направление рукава (ZERO = башенный)
+var _grn_tower: Vector3 = Vector3.ZERO        # пост на верху башни (абсолютный)
+var _grn_ground_y: float = 0.0        # уровень земли у казармы (спуск при снятии)
+var _grn_route: Array = []            # Array[Vector3] точки боевого хода (абсолютные)
+var _grn_i: int = 0
+var _grn_dir: int = 1
+var _grn_t: float = 0.0
+var _grn_active: bool = false         # сейчас на стене/идём по ней (для плавного спуска)
+
+
+## Казарма назначает пост: home_cell — угол казармы, branch — рукав (ZERO=башня),
+## tower_pos — верх башни (абсолют), ground_y — земля у казармы (куда спускаемся).
+func assign_garrison(home_cell: Vector2i, branch: Vector2i, tower_pos: Vector3, ground_y: float) -> void:
+	_grn_assigned = true
+	_grn_home_cell = home_cell
+	_grn_branch = branch
+	_grn_tower = tower_pos
+	_grn_ground_y = ground_y
+	_grn_recompute()
+
+
+## Гарнизонить сейчас? Назначен казармой + отряд в МЯГКОМ hold (не strict «Идти сюда»,
+## не escort, не defend). escort = веду за башней; strict-hold = точечный приказ — оба
+## уводят со стен.
+func _grn_should_garrison() -> bool:
+	return _grn_assigned and _squad != null \
+		and _squad.state == Squad.State.HOLDING_POSITION and not _squad.is_strict_move()
+
+
+func _physics_process(delta: float) -> void:
+	if _grn_should_garrison():
+		_grn_active = true
+		_garrison_move(delta)
+		return
+	# Не гарнизоним (escort/strict-hold/defend). Если только что сошли со стены —
+	# плавно спускаемся к земле ПРЯМЫМ управлением (без физики, не зависаем в воздухе),
+	# и лишь на земле передаём ход штатной физике (навмеш-эскорт и т.п.).
+	if _grn_active:
+		if global_position.y > _grn_ground_y + 0.15:
+			global_position.y = lerp(global_position.y, _grn_ground_y, 1.0 - exp(-10.0 * delta))
+			velocity = Vector3.ZERO
+			return
+		_grn_active = false
+	super._physics_process(delta)
+
+
+## Движение по боевому ходу (бывший PadArcher._process). Абсолютные координаты, прямой
+## global_position. Стреляем тем же путём, что отряд; ориентируем конус на ближайшего врага.
+func _garrison_move(delta: float) -> void:
+	velocity = Vector3.ZERO
+	if _attack_cd > 0.0:
+		_attack_cd -= delta
+	# Ориентируем конус на ближайшего врага → штатный fire-путь (точность/стрела/cd).
+	var foe: Node3D = _grn_nearest_enemy()
+	if foe != null:
+		var tf := Vector3(foe.global_position.x - global_position.x, 0.0, foe.global_position.z - global_position.z)
+		_face_horizontal(tf, tf.length())
+		if _try_fire_at_resolved_target(delta):
+			return  # стоим стреляем
+	# Патруль боевого хода.
+	_grn_t -= delta
+	if _grn_t <= 0.0:
+		_grn_t = GARRISON_REPATH
+		_grn_recompute()
+	if _grn_route.is_empty():
+		return
+	var n: int = _grn_route.size()
+	_grn_i = clampi(_grn_i, 0, n - 1)
+	var target: Vector3 = _grn_route[_grn_i]
+	var flat := Vector3(target.x - global_position.x, 0.0, target.z - global_position.z)
+	if flat.length() <= 0.12:
+		if n > 1:
+			_grn_i += _grn_dir
+			if _grn_i >= n:
+				_grn_i = n - 2
+				_grn_dir = -1
+			elif _grn_i < 0:
+				_grn_i = 1
+				_grn_dir = 1
+			_grn_i = clampi(_grn_i, 0, n - 1)
+	else:
+		var dir := flat.normalized()
+		global_position += dir * move_speed * delta
+		if foe == null:
+			_face_horizontal(dir, 1.0)
+	# Плавная высота под боевой ход (всходы/спуски на стыках стен/ворот).
+	global_position.y = lerp(global_position.y, target.y, 1.0 - exp(-8.0 * delta))
+
+
+## Маршрут поста: башенный (branch ZERO) → одна точка на башне; патрульный → ветка стены
+## от казармы (если стен нет — топчемся у казармы). Бывший PadArcher._recompute.
+func _grn_recompute() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	if _grn_branch == Vector2i.ZERO:
+		_grn_route = [_grn_tower]
+		return
+	var r: Array = PadBuilding.wall_route(tree, _grn_home_cell + _grn_branch, _grn_branch)
+	if r.is_empty():
+		r = [PadBuilding.cell_top(_grn_home_cell, tree)]
+	# Одна клетка-плечо (стена ещё не пристроена) → патруль ВНУТРИ плеча вдоль его оси,
+	# чтобы лучник ходил по плечу, а не стоял. С пристроенной стеной точек уже >1.
+	if r.size() == 1:
+		var here: Vector3 = r[0]
+		var ahead: Vector3 = PadBuilding.cell_top(_grn_home_cell + _grn_branch + _grn_branch, tree)
+		var wdir := Vector3(ahead.x - here.x, 0.0, ahead.z - here.z)
+		if wdir.length() > 0.01:
+			wdir = wdir.normalized()
+			var half: float = OilGrid.CELL * 0.32
+			r = [here - wdir * half, here + wdir * half]
+	_grn_route = r
+
+
+## Ближайший враг в attack_range (XZ) — только для ОРИЕНТАЦИИ конуса на стене (выстрел
+## делает штатный _try_fire_at_resolved_target). Группа врагов — общая.
+func _grn_nearest_enemy() -> Node3D:
+	var best: Node3D = null
+	var bd: float = attack_range * attack_range
+	for e in get_tree().get_nodes_in_group(Enemy.ENEMY_GROUP):
+		if not is_instance_valid(e) or not (e is Node3D):
+			continue
+		var n := e as Node3D
+		var dx: float = n.global_position.x - global_position.x
+		var dz: float = n.global_position.z - global_position.z
+		var d: float = dx * dx + dz * dz
+		if d < bd:
+			bd = d
+			best = n
+	return best

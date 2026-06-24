@@ -48,12 +48,21 @@ func _ready() -> void:
 
 
 ## Публичный заказ отряда из постройки (казармы): добавить count юнитов типа у позиции
-## pos в отряд-этого-типа (тот же путь, что покупка). Берётся с собой/командуется как
-## наёмный отряд.
-func request_squad(soldier_type: StringName, count: int, pos: Vector3) -> void:
+## pos в отряд-этого-типа (тот же путь, что покупка). Возвращает созданных (последние N
+## членов отряда) — постройка раздаёт им посты гарнизона.
+func request_squad(soldier_type: StringName, count: int, pos: Vector3) -> Array:
 	if SoldierSystem == null or not SoldierSystem.has_soldier(soldier_type):
-		return
+		return []
 	_spawn_squad(soldier_type, count, pos)
+	var sq: Squad = _squads_by_type.get(soldier_type)
+	if sq == null:
+		return []
+	var m: Array = sq.members
+	var out: Array = []
+	for i in range(maxi(m.size() - count, 0), m.size()):
+		if i >= 0 and i < m.size() and is_instance_valid(m[i]):
+			out.append(m[i])
+	return out
 
 
 func _connect_trade() -> void:
