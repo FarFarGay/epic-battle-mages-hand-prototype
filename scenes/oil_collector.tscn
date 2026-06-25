@@ -1,7 +1,6 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=2 format=3]
 
 [ext_resource type="Script" path="res://scripts/oil_collector.gd" id="1"]
-[ext_resource type="Script" path="res://scripts/oil_grid_preview.gd" id="2"]
 
 [sub_resource type="CylinderShape3D" id="Shape_col"]
 radius = 2.3
@@ -16,6 +15,3 @@ oil_goal = 200.0
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
 shape = SubResource("Shape_col")
-
-[node name="GridPreview" type="MeshInstance3D" parent="."]
-script = ExtResource("2")

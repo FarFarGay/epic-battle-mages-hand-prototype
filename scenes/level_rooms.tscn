@@ -536,7 +536,7 @@ mesh = SubResource("Sph_foliage")
 script = ExtResource("42_grid")
 
 [node name="Tower" parent="." unique_id=1617488261 groups=["skeleton_target"] instance=ExtResource("1")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.299999, 3, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -71.3, 3, 0)
 
 [node name="CameraRig" parent="." unique_id=1454102563 instance=ExtResource("3")]
 target_path = NodePath("../Tower")
@@ -664,7 +664,7 @@ transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 92, 0, 112)
 transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 126)
 
 [node name="OilDepositR6" parent="Room6" unique_id=1023916198 instance=ExtResource("41_mjs4f")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 70.5, 0, 101)
+transform = Transform3D(0.38499996, 0, 0, 0, 1, 0, 0, 0, 0.38499996, -44.011497, 0, -3.9783483)
 
 [node name="Room8" type="Node3D" parent="." unique_id=1097619881]
 

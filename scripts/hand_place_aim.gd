@@ -146,6 +146,12 @@ func _process(_delta: float) -> void:
 	# Хватает ли монет на составную цену (постройки с "cost"; без неё — бесплатно).
 	_affordable = _can_afford()
 	_update_ghost(place)
+	# МАСКА-затухание (окно видимых клеток) едет за силуэтом — плоскость статична, двигаем
+	# только центр маски в шейдере. Клетки выровнены к фикс-лоттису (grid_anchor), не плывут.
+	if is_instance_valid(_grid):
+		var gm := _grid.material_override as ShaderMaterial
+		if gm != null:
+			gm.set_shader_parameter(&"fade_center", Vector2(place.x, place.z))
 	if Input.is_action_just_pressed(ACTION_COMMIT) and not _hand.is_pointer_over_ui():
 		# Нельзя невалидно: труба не у порта / фигура за площадкой / внахлёст.
 		if (is_pipe or is_pad) and not _snapped:
@@ -499,18 +505,21 @@ func _update_grid() -> void:
 	if not is_instance_valid(_grid):
 		_grid = MeshInstance3D.new()
 		var pm := PlaneMesh.new()
-		pm.size = Vector2(80.0, 80.0)
-		_grid.mesh = pm
+		pm.size = Vector2(320.0, 320.0)  # БОЛЬШАЯ статичная плоскость (вся карта); видимость
+		_grid.mesh = pm                  # ограничивает МАСКА-затухание (fade_center в _process)
 		_grid.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_grid.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 		var mat := ShaderMaterial.new()
 		mat.shader = load("res://shaders/build_grid.gdshader")
 		mat.set_shader_parameter(&"cell", oil_grid)
-		_grid.material_override = mat
+		_grid.material_override = mat  # затухание — дефолт шейдера (fade 16→38), центр — в _process
 		_effects_root.add_child(_grid)
+	# Фаза линий = ФИКС-якорь лоттиса (клетки не плывут). Плоскость статична у якоря; за
+	# силуэтом ездит МАСКА-затухание (fade_center, см. _process) — окно видимых клеток.
 	var m := _grid.material_override as ShaderMaterial
 	if m != null:
 		m.set_shader_parameter(&"grid_anchor", Vector2(anchor.x, anchor.z))
-	_grid.global_position = Vector3(anchor.x, 0.06, anchor.z)  # поверх травы
+	_grid.global_position = Vector3(anchor.x, 0.06, anchor.z)
 	_update_pad_floor(anchor)
 
 

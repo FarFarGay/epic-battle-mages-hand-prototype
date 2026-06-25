@@ -40,6 +40,9 @@ func _build_grid() -> void:
 	mi.mesh = pm
 	mi.position = Vector3(0, 0.06, 0)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Прозрачная плоскость 300×300 не должна лезть в SDFGI/освещение (иначе config-ворнинги
+	# про GI на сцене с sdfgi_enabled) — выключаем её участие в global illumination.
+	mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 	var sh := load(GRID_SHADER)
 	if sh != null:
 		var mat := ShaderMaterial.new()

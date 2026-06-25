@@ -4,11 +4,12 @@ shader_type spatial;
 // пока активна нефте-стройка ([HandPlaceAim]). Не пишет глубину — лежит поверх травы.
 render_mode unshaded, cull_disabled, depth_draw_never, shadows_disabled;
 
-uniform vec2 grid_anchor = vec2(0.0);            // мир XZ центра коллектора
+uniform vec2 grid_anchor = vec2(0.0);            // мир XZ — ФАЗА линий (фикс-якорь лоттиса)
+uniform vec2 fade_center = vec2(0.0);            // мир XZ — ЦЕНТР маски-затухания (силуэт)
 uniform float cell = 2.0;                        // шаг клетки (м)
 uniform float line_width = 0.05;                 // полуширина линии (м)
 uniform vec4 line_color : source_color = vec4(0.45, 0.85, 1.0, 0.55);
-uniform float fade_start = 16.0;                 // м от якоря — начало затухания
+uniform float fade_start = 16.0;                 // м от центра маски — начало затухания
 uniform float fade_end = 38.0;                   // м — полностью прозрачно
 
 varying vec3 world_pos;
@@ -24,7 +25,9 @@ void fragment() {
 	vec2 g = abs(fract(p / cell) - 0.5) * cell;  // расстояние до ближайшей линии-границы
 	float d = min(g.x, g.y);
 	float line = 1.0 - smoothstep(0.0, line_width, d);
-	float dist = length(p);
+	// Маска-затухание считается от ЦЕНТРА МАСКИ (силуэт), а не от фазы линий — окно видимых
+	// клеток ездит за силуэтом, а сами клетки остаются выровнены к фикс-лоттису.
+	float dist = length(world_pos.xz - fade_center);
 	float fade = 1.0 - smoothstep(fade_start, fade_end, dist);
 	float a = line * line_color.a * fade;
 	if (a < 0.003) {
