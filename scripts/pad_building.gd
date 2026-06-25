@@ -16,11 +16,15 @@ const MINT_RATIO := 100
 var building_id: StringName = &""
 var _mask: Array = []        # Array[Vector2i] — клетки фигуры (локальные offset'ы)
 var _role: StringName = &"defend"
-## Добыча: нефть/сек в замок (база). ×2, если добытчик примыкает к ядру-замку (модель
-## «добыча бустит замок соседством»). Высокий для теста — крутить балансом позже.
-const MINE_OIL_PER_SEC := 4.0
-var _oil_rate: float = 0.0
-var _collector: Node = null
+## Шахта (role mine): качает металл из жилы ([OilDeposit]) под собой в свой буфер до MINE_CAP.
+## Тип металла = тир жилы (coin_type). Сбросить некуда (нет линии к плавильне) → буфер
+## упирается в кап и шахта стоит. Слив по линии переработки — следующий шаг.
+const MINE_RATE := 2.0   # единиц металла/сек
+const MINE_CAP := 20     # макс в буфере шахты
+var _vein: OilDeposit = null      # жила под шахтой (источник металла)
+var _metal: int = 0               # накоплено в буфере (тип = _vein.coin_type())
+var _mine_accum: float = 0.0      # дробный накопитель (добыча плавная, единицы целые)
+var _metal_fill: MeshInstance3D = null  # визуал-индикатор заполнения буфера
 
 
 ## Задаётся ДО add_child (как RoomBuildSite) — _ready строит по маске.
@@ -66,6 +70,10 @@ func is_barracks() -> bool:
 
 func is_smelter() -> bool:
 	return _role == &"smelter"
+
+
+func is_line() -> bool:
+	return _role == &"line"
 
 
 ## Пересобрать все стены (защита) — зовётся при установке/сносе любой постройки, чтобы
@@ -143,6 +151,8 @@ func _build() -> void:
 			_build_barracks()
 		&"smelter":
 			_build_smelter()
+		&"line":
+			_build_line()
 		_:
 			var mat := _solid(_role_color(_role), 0.1, 0.7)
 			var s: float = CityGrid.CELL
@@ -425,6 +435,18 @@ func _build_smelter() -> void:
 	_box(Vector3(0.3, 0.22, 0.3), cc + Vector3(0, 2.55, 0), glow, true)              # тлеющий верх
 
 
+## Линия переработки: плоская «труба»-конвейер по форме фигуры — низкая металлическая плита
+## (клетки сливаются) + тёмный жёлоб по центру. Лежит на полу, по ней «течёт» металл.
+func _build_line() -> void:
+	var metal := _solid(Color(0.5, 0.52, 0.56), 0.6, 0.4)
+	var dark := _solid(Color(0.24, 0.25, 0.3), 0.3, 0.6)
+	_solid_shape(0.12, 0.22, metal, _STREET * 0.6)  # плоская плита по форме (клетки слиты)
+	var s: float = CityGrid.CELL
+	for off in _mask:
+		var o := off as Vector2i
+		_box(Vector3(s * 0.5, 0.06, s * 0.5), Vector3(o.x * s, 0.24, o.y * s), dark, true)  # жёлоб
+
+
 ## Угловая клетка фигуры (≥2 соседа в маске → изгиб L) — на ней стяг/башня + узел гарнизона.
 func _corner_local() -> Vector2i:
 	var maskset: Dictionary = {}
@@ -601,23 +623,124 @@ func _build_tower() -> void:
 ## Добыча: находим замок и ставим темп нефти (×2 при примыкании к ядру-замку).
 func _setup_mine() -> void:
 	var tree := get_tree()
-	_collector = tree.get_first_node_in_group(Castle.GROUP)
-	var adj := false
-	for wc in CityGrid.building_cells(global_position, _mask, rotation.y, tree):
-		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-			if CityGrid.is_pump((wc as Vector2i) + d, tree):
-				adj = true
-	_oil_rate = MINE_OIL_PER_SEC * (2.0 if adj else 1.0)
+	# Привязка к жиле под шахтой (гейт размещения уже гарантирует, что шахта на жиле).
+	var veins := OilDeposit.cell_map(tree)
+	for wc in occupied_cells():
+		if veins.has(wc as Vector2i):
+			_vein = veins[wc as Vector2i]
+			break
+	_build_metal_fill()
 	set_process(true)
 
 
+## Шаг добычи: качаем металл из жилы в буфер до MINE_CAP. Полный буфер (сбросить некуда) →
+## стоим на капе. Тип металла = тир жилы; слив в плавильню по линии — следующий шаг.
+func _tick_mine(delta: float) -> void:
+	if _vein == null or not is_instance_valid(_vein):
+		return
+	# Соединена цепочкой ЛИНИЙ с ПЛАВИЛЬНЕЙ → сливаем буфер в монеты по тиру (не копим до капа).
+	if _metal > 0 and _connected_smelter() != null:
+		var bank := get_tree().get_first_node_in_group(&"gold_bank")
+		if bank != null and bank.has_method(&"add_coin"):
+			bank.call(&"add_coin", _vein.coin_type(), _metal)  # 1 металл = 1 монета тира жилы
+		_metal = 0
+		_update_metal_fill()
+	# Качаем металл в буфер; полный (сбросить некуда) → стоим на капе.
+	if _metal >= MINE_CAP:
+		return
+	_mine_accum += MINE_RATE * delta
+	var whole := int(_mine_accum)
+	if whole < 1:
+		return
+	_mine_accum -= float(whole)
+	_metal = mini(_metal + whole, MINE_CAP)
+	_update_metal_fill()
+
+
+## Плавильня, до которой ШАХТА дотягивается цепочкой смежных клеток-линий (или стоит прямо
+## у плавильни). BFS по клеткам линий от шахты; дошли до клетки, смежной с плавильней → она.
+## null = не подключена. Дёшево (построек немного), считаем каждый тик.
+func _connected_smelter() -> Node:
+	var tree := get_tree()
+	var line_cells: Dictionary = {}
+	var sm_cells: Dictionary = {}  # клетка → плавильня
+	for b in tree.get_nodes_in_group(GROUP):
+		if not is_instance_valid(b) or b.is_queued_for_deletion() or not b.has_method(&"occupied_cells"):
+			continue
+		if b.has_method(&"is_line") and b.call(&"is_line"):
+			for c in b.call(&"occupied_cells"):
+				line_cells[c] = true
+		elif b.has_method(&"is_smelter") and b.call(&"is_smelter"):
+			for c in b.call(&"occupied_cells"):
+				sm_cells[c] = b
+	if sm_cells.is_empty():
+		return null
+	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	var visited: Dictionary = {}
+	var queue: Array = []
+	# Старт — от клеток самой шахты: прямо у плавильни ИЛИ на смежную линию.
+	for sc in occupied_cells():
+		for d in dirs:
+			var nb: Vector2i = (sc as Vector2i) + d
+			if sm_cells.has(nb):
+				return sm_cells[nb]
+			if line_cells.has(nb) and not visited.has(nb):
+				visited[nb] = true
+				queue.append(nb)
+	while not queue.is_empty():
+		var c: Vector2i = queue.pop_back()
+		for d in dirs:
+			var nb: Vector2i = c + d
+			if sm_cells.has(nb):
+				return sm_cells[nb]
+			if line_cells.has(nb) and not visited.has(nb):
+				visited[nb] = true
+				queue.append(nb)
+	return null
+
+
 func _process(delta: float) -> void:
-	if _oil_rate > 0.0 and is_instance_valid(_collector) and _collector.has_method(&"add_oil"):
-		_collector.call(&"add_oil", _oil_rate * delta)
+	if _role == &"mine":
+		_tick_mine(delta)
 	if is_barracks():
 		_tick_hire_click()
 	if is_smelter():
 		_tick_mint_click()
+
+
+## Индикатор заполнения буфера: столбик металла на верхушке шахты, растёт с _metal. Цвет —
+## по тиру жилы (видно, что и сколько накопано).
+func _build_metal_fill() -> void:
+	_metal_fill = MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.5, 1.0, 0.5)
+	_metal_fill.mesh = bm
+	var mat := StandardMaterial3D.new()
+	var col := Color(0.74, 0.46, 0.22)  # бронза по умолчанию
+	if _vein != null and is_instance_valid(_vein):
+		match _vein.coin_type():
+			ResourcePile.ResourceType.SILVER:
+				col = Color(0.82, 0.84, 0.9)
+			ResourcePile.ResourceType.GOLD:
+				col = Color(0.95, 0.78, 0.28)
+	mat.albedo_color = col
+	mat.metallic = 0.7
+	mat.roughness = 0.35
+	_metal_fill.material_override = mat
+	add_child(_metal_fill)
+	_update_metal_fill()
+
+
+## Высота столбика = доля заполнения буфера; пусто → скрыт.
+func _update_metal_fill() -> void:
+	if _metal_fill == null or not is_instance_valid(_metal_fill):
+		return
+	var frac: float = clampf(float(_metal) / float(MINE_CAP), 0.0, 1.0)
+	_metal_fill.visible = _metal > 0
+	var h: float = lerpf(0.05, 1.4, frac)
+	_metal_fill.scale = Vector3(1.0, h, 1.0)
+	# Верхушка шахты ~2.3 (см. _build_tower: цоколь+короб). Столбик стоит сверху, растёт вверх.
+	_metal_fill.position = Vector3(0.0, 2.4 + h * 0.5, 0.0)
 
 
 ## Валидный ЛКМ-клик по футпринту ЭТОГО здания. Единый гейт для найма/чеканки:

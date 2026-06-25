@@ -31,6 +31,22 @@ func _ready() -> void:
 	_apply_tint()
 
 
+## Клетка грида, на которой стоит жила (1 клетка).
+func deposit_cell(tree: SceneTree) -> Vector2i:
+	return CityGrid.world_to_cell(global_position, tree)
+
+
+## Карта {клетка: OilDeposit} по всем жилам сцены — для гейта размещения (на жилу только
+## шахту, шахту только на жилу) в [HandPlaceAim]._pad_valid и привязки шахты.
+static func cell_map(tree: SceneTree) -> Dictionary:
+	var out: Dictionary = {}
+	for n in tree.get_nodes_in_group(GROUP):
+		var d := n as OilDeposit
+		if d != null and is_instance_valid(d):
+			out[d.deposit_cell(tree)] = d
+	return out
+
+
 ## Номинал монеты, в который идёт добыча этой жилы (для казны / шахты).
 func coin_type() -> int:
 	match tier:

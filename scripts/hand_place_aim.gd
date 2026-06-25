@@ -309,12 +309,21 @@ func _touches_host(ports: Array) -> bool:
 func _pad_valid(center: Vector3) -> bool:
 	# Ворота можно ставить ПОВЕРХ стен (заменяют участок) → стены не считаем занятыми.
 	var over_walls: bool = _data.get("role", &"") == &"gate"
+	# Шахта (role mine) ставится ТОЛЬКО на клетку жилы ([OilDeposit]); прочее — НЕ на жилу
+	# (на жиле можно лишь шахту).
+	var is_mine: bool = _data.get("role", &"") == &"mine"
 	var cells: Array = CityGrid.building_cells(center, _data.get("cells", []), _rot_y, get_tree())
 	var occ: Dictionary = _occupied_cells(over_walls)
+	var veins: Dictionary = OilDeposit.cell_map(get_tree())
 	for c in cells:
 		var cell := c as Vector2i
 		if not CityGrid.in_pad(cell, get_tree()) or CityGrid.is_pump(cell, get_tree()) or occ.has(cell):
 			return false
+		var on_vein: bool = veins.has(cell)
+		if is_mine and not on_vein:
+			return false  # шахту — только на жилу
+		if not is_mine and on_vein:
+			return false  # на жилу — только шахту
 	return true
 
 
