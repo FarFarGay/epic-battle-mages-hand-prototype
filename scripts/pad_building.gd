@@ -605,7 +605,7 @@ func _setup_mine() -> void:
 	var adj := false
 	for wc in CityGrid.building_cells(global_position, _mask, rotation.y, tree):
 		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-			if CityGrid.is_pump((wc as Vector2i) + d):
+			if CityGrid.is_pump((wc as Vector2i) + d, tree):
 				adj = true
 	_oil_rate = MINE_OIL_PER_SEC * (2.0 if adj else 1.0)
 	set_process(true)

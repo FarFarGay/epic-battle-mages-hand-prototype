@@ -139,6 +139,8 @@ func _process(_delta: float) -> void:
 		# _snapped = порт примагниченной постройки совпал с портом существующего хоста
 		# (коллектор/бур/труба). Для труб это ГЕЙТ (в воздух нельзя), буру — лишь подсветка.
 		_snapped = _touches_host(_oil_ports_world(place, _rot_y))
+	elif _building == RoomBuildings.PUMP:
+		place = _snap_oil_grid(ground)  # замок ставится ПО единому гриду (как всё прочее)
 	else:
 		place = _snap_center(ground)
 	# Хватает ли монет на составную цену (постройки с "cost"; без неё — бесплатно).
@@ -251,8 +253,7 @@ func _commit(pos: Vector3) -> void:
 ## на решётку шага 2 → нечётное кратное полуклетки). Нет коллектора → мир-ноль (трубы
 ## всё равно лягут на общую решётку и сойдутся между собой).
 func _oil_anchor() -> Vector3:
-	var c := get_tree().get_first_node_in_group(Castle.GROUP)
-	return (c as Node3D).global_position if c is Node3D else Vector3.ZERO
+	return CityGrid.anchor(get_tree())  # единый фикс-якорь грида (нода-маркер), не замок
 
 
 ## Мировые порты нефте-постройки в точке center при повороте rot: труба — концы тайла
@@ -306,7 +307,7 @@ func _pad_valid(center: Vector3) -> bool:
 	var occ: Dictionary = _occupied_cells(over_walls)
 	for c in cells:
 		var cell := c as Vector2i
-		if not CityGrid.in_pad(cell) or CityGrid.is_pump(cell) or occ.has(cell):
+		if not CityGrid.in_pad(cell, get_tree()) or CityGrid.is_pump(cell, get_tree()) or occ.has(cell):
 			return false
 	return true
 
@@ -486,7 +487,9 @@ func _clear_ghost() -> void:
 ## шага oil_grid, фаза — центр коллектора (та же решётка, что у снапа). Для полимино
 ## дополнительно подсвечиваем КВАДРАТ площадки застройки. Для прочих зданий скрыта.
 func _update_grid() -> void:
-	var is_grid: bool = _data.has("pipe_kind") or _data.has("cells") or _building == RoomBuildings.OIL_DRILL
+	# Сетка видна при укладке полимино, труб, бура И самого замка (его тоже ставим по гриду).
+	var is_grid: bool = _data.has("pipe_kind") or _data.has("cells") \
+		or _building == RoomBuildings.OIL_DRILL or _building == RoomBuildings.PUMP
 	if not is_grid:
 		_clear_grid()
 		return
@@ -511,10 +514,12 @@ func _update_grid() -> void:
 	_update_pad_floor(anchor)
 
 
-## Подсветка площадки (квадрат стороной (2·PAD_RADIUS+1)·клетка вокруг качалки) — только
-## при укладке полимино, чтобы было видно границу «куда можно». Иначе скрыта.
-func _update_pad_floor(anchor: Vector3) -> void:
-	if not _data.has("cells"):
+## Зелёная зона застройки 9×9 (сторона (2·PAD_RADIUS+1)·клетка) — рисуется ВОКРУГ ЗАМКА
+## (замок в центре зоны), а НЕ вокруг центра грида. Показываем только при укладке полимино
+## и только если замок есть (нет замка → строить негде, зону прятать).
+func _update_pad_floor(_anchor: Vector3) -> void:
+	var cc = CityGrid.castle_cell(get_tree())
+	if not _data.has("cells") or cc == null:
 		if is_instance_valid(_pad_floor):
 			_pad_floor.queue_free()
 		_pad_floor = null
@@ -532,7 +537,9 @@ func _update_pad_floor(anchor: Vector3) -> void:
 		mat.albedo_color = Color(0.35, 0.9, 0.6, 0.12)  # лёгкая зелёная подложка площадки
 		_pad_floor.material_override = mat
 		_effects_root.add_child(_pad_floor)
-	_pad_floor.global_position = Vector3(anchor.x, 0.05, anchor.z)
+	# Центр зоны = клетка замка (выровнено по гриду) → замок ровно в середине 9×9.
+	var center: Vector3 = CityGrid.cell_to_world(cc, get_tree())
+	_pad_floor.global_position = Vector3(center.x, 0.05, center.z)
 
 
 func _clear_grid() -> void:

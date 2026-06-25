@@ -43,6 +43,7 @@
 [ext_resource type="PackedScene" path="res://scenes/blueprint_machine.tscn" id="41_4w2r8"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton_stone_thrower.tscn" id="41_8brgo"]
 [ext_resource type="PackedScene" path="res://scenes/oil_deposit.tscn" id="41_mjs4f"]
+[ext_resource type="Script" uid="uid://cbp2ajv0lxvky" path="res://scripts/grid_anchor.gd" id="42_grid"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -160,16 +161,6 @@ albedo_color = Color(0.24, 0.5, 0.22, 1)
 [sub_resource type="SphereMesh" id="Sph_foliage"]
 radius = 1.6
 height = 3.0
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_mjs4f"]
-albedo_color = Color(0.82, 0.84, 0.88, 1)
-metallic = 0.7
-roughness = 0.35
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_lhsvk"]
-albedo_color = Color(0.95, 0.78, 0.18, 1)
-metallic = 0.8
-roughness = 0.3
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_wq2ia"]
 albedo_color = Color(0.5, 0.51, 0.55, 1)
@@ -541,40 +532,11 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 16)
 material_override = SubResource("Mat_foliage")
 mesh = SubResource("Sph_foliage")
 
-[node name="SilverVein" type="Node3D" parent="Room5" unique_id=599328818]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18, 0, 106)
-script = ExtResource("39_wood")
-resource_type = 8
-wood_remaining = 6
-
-[node name="Trunk" type="MeshInstance3D" parent="Room5/SilverVein" unique_id=366827620]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 16)
-material_override = SubResource("Mat_trunk")
-mesh = SubResource("Cyl_trunk")
-
-[node name="Foliage" type="MeshInstance3D" parent="Room5/SilverVein" unique_id=1326373914]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 16)
-material_override = SubResource("StandardMaterial3D_mjs4f")
-mesh = SubResource("Sph_foliage")
-
-[node name="GoldVein" type="Node3D" parent="Room5" unique_id=1435278158]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 22, 0, 106)
-script = ExtResource("39_wood")
-resource_type = 6
-wood_remaining = 6
-
-[node name="Trunk" type="MeshInstance3D" parent="Room5/GoldVein" unique_id=1816825409]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 16)
-material_override = SubResource("Mat_trunk")
-mesh = SubResource("Cyl_trunk")
-
-[node name="Foliage" type="MeshInstance3D" parent="Room5/GoldVein" unique_id=890814564]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 16)
-material_override = SubResource("StandardMaterial3D_lhsvk")
-mesh = SubResource("Sph_foliage")
+[node name="GridAnchor" type="Node3D" parent="." unique_id=-74967295]
+script = ExtResource("42_grid")
 
 [node name="Tower" parent="." unique_id=1617488261 groups=["skeleton_target"] instance=ExtResource("1")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -58.3, 3, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.299999, 3, 0)
 
 [node name="CameraRig" parent="." unique_id=1454102563 instance=ExtResource("3")]
 target_path = NodePath("../Tower")
@@ -662,10 +624,10 @@ script = ExtResource("38_squadspawn")
 [node name="Pots" type="Node3D" parent="." unique_id=1345822434]
 
 [node name="Pot1" parent="Pots" unique_id=1225329674 instance=ExtResource("33_pot")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11, 0, -8)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0, 4)
 
 [node name="Pot2" parent="Pots" unique_id=634965278 instance=ExtResource("33_pot")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 0, 7)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0, 2)
 
 [node name="Pot3" parent="Pots" unique_id=1210794507 instance=ExtResource("33_pot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11, 0, 22)

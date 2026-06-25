@@ -1,20 +1,25 @@
 class_name CityGrid
 extends RefCounted
-## Единая математика нефте-СЕТКИ (якорь = центр коллектора-качалки). ОДИН источник
-## для снапа, клеток и полимино-построек ([HandPlaceAim], [PadBuilding]) — чтобы
-## grid-математика не расползлась копиями. Клетки — целочисленные, относительно якоря
-## (якорь = клетка (0,0)). Площадка застройки — квадрат радиуса PAD_RADIUS вокруг
-## качалки; центр (радиус PUMP_RADIUS) занят самой качалкой, строить нельзя.
+## ЕДИНАЯ математика грида уровня. ОДИН источник для снапа, клеток и полимино-построек
+## ([HandPlaceAim], [PadBuilding]) — чтобы grid-математика не расползлась копиями.
+##
+## ЛОТТИС (клетки) — фикс к уровню: якорь = НЕПОДВИЖНАЯ нода-маркер ([ANCHOR_GROUP], напр.
+## GridAnchor с превью на всю карту), НЕ замок. Клетки стабильны, видны по всей карте,
+## по ним ставят залежи/замок/постройки — ОДИН грид, не плавает.
+## ПЛОЩАДКА застройки 9×9 (in_pad/is_pump) считается ОТ ЗАМКА (поставил замок по гриду →
+## вокруг него зона), а НЕ от центра карты. Нет замка → строить негде.
 
+## Группа ноды-якоря грида (один маркер на уровень; нет → мир-ноль).
+const ANCHOR_GROUP := &"grid_anchor"
 const CELL := 2.0       # размер клетки (м) = PipeSegment.ARM_LEN * 2
-const PAD_RADIUS := 4   # клеток от качалки до края площадки (4 → пятно 9×9)
-const PUMP_RADIUS := 1  # ядро-качалка (1 → 3×3 центральных клетки заняты)
+const PAD_RADIUS := 4   # клеток от центра до края площадки (4 → пятно 9×9)
+const PUMP_RADIUS := 1  # ядро под замок (1 → 3×3 центральных клетки)
 
 
-## Мировая позиция якоря сетки = центр коллектора (нет коллектора → мир-ноль).
+## Мировая позиция якоря грида = нода-маркер уровня (фикс). Нет маркера → мир-ноль.
 static func anchor(tree: SceneTree) -> Vector3:
-	var c := tree.get_first_node_in_group(Castle.GROUP)
-	return (c as Node3D).global_position if c is Node3D else Vector3.ZERO
+	var a := tree.get_first_node_in_group(ANCHOR_GROUP)
+	return (a as Node3D).global_position if a is Node3D else Vector3.ZERO
 
 
 ## Мировая точка → клетка (целочисленная, относительно якоря).
@@ -55,11 +60,27 @@ static func building_cells(center: Vector3, mask: Array, rot: float, tree: Scene
 	return out
 
 
-## Клетка в пределах площадки застройки (квадрат радиуса PAD_RADIUS).
-static func in_pad(cell: Vector2i) -> bool:
-	return absi(cell.x) <= PAD_RADIUS and absi(cell.y) <= PAD_RADIUS
+## Клетка замка на гриде (центр площадки застройки), или null если замка ещё нет.
+## Площадка считается ОТ ЗАМКА — поставил замок по гриду, вокруг него 9×9.
+static func castle_cell(tree: SceneTree):
+	var c := tree.get_first_node_in_group(Castle.GROUP)
+	if c is Node3D:
+		return world_to_cell((c as Node3D).global_position, tree)
+	return null
 
 
-## Клетка занята ядром-качалкой (центр площадки) — строить нельзя.
-static func is_pump(cell: Vector2i) -> bool:
-	return absi(cell.x) <= PUMP_RADIUS and absi(cell.y) <= PUMP_RADIUS
+## Клетка в пределах площадки застройки (квадрат радиуса PAD_RADIUS ВОКРУГ ЗАМКА, НЕ
+## вокруг центра карты). Нет замка → строить негде (сперва поставь замок по гриду).
+static func in_pad(cell: Vector2i, tree: SceneTree) -> bool:
+	var cc = castle_cell(tree)
+	if cc == null:
+		return false
+	return absi(cell.x - cc.x) <= PAD_RADIUS and absi(cell.y - cc.y) <= PAD_RADIUS
+
+
+## Клетка под ядром-замком (центр площадки) — строить нельзя (там сам замок).
+static func is_pump(cell: Vector2i, tree: SceneTree) -> bool:
+	var cc = castle_cell(tree)
+	if cc == null:
+		return false
+	return absi(cell.x - cc.x) <= PUMP_RADIUS and absi(cell.y - cc.y) <= PUMP_RADIUS
