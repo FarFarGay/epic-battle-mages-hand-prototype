@@ -14,7 +14,7 @@ const RT := ResourcePile.ResourceType
 ## Крутить здесь; добыча/чеканка появятся следующими шагами.
 @export var start_bronze: int = 500
 @export var start_silver: int = 50
-@export var start_gold: int = 10
+@export var start_gold: int = 100
 
 var _econ := CampEconomy.new()
 

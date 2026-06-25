@@ -26,8 +26,15 @@ signal purchased(unit_type: StringName, squad_size: int)
 @onready var _buy_btn: Button = $Root/Panel/Margin/VBox/ButtonRow/BuyButton
 @onready var _cancel_btn: Button = $Root/Panel/Margin/VBox/ButtonRow/CancelButton
 
-## Цена отряда в золоте.
+## Цена отряда в золоте (дефолт для типов вне HIRE_PRICE).
 @export var base_price: int = 200
+## Цена найма по типу юнита (золото). Нет в карте → base_price. Лучники дёшевы (прототип).
+const HIRE_PRICE := { &"archer_squad": 10 }
+
+
+## Цена найма текущего типа.
+func _price() -> int:
+	return int(HIRE_PRICE.get(_unit_type, base_price))
 
 var _open: bool = false
 var _applied: Dictionary = {}  # deed id (StringName) -> value (int)
@@ -96,12 +103,12 @@ func _applied_value() -> int:
 	var s: int = 0
 	for v in _applied.values():
 		s += int(v)
-	return mini(s, base_price)
+	return mini(s, _price())
 
 
 ## Итоговая цена к оплате = цена минус скидка от поступков.
 func _remaining() -> int:
-	return maxi(0, base_price - _applied_value())
+	return maxi(0, _price() - _applied_value())
 
 
 func _gold() -> int:
