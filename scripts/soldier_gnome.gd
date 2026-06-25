@@ -393,7 +393,8 @@ func _tick_gather(_delta: float) -> void:
 			_tick_smelt_at(smelter)
 			return
 		var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
-		if store != null and store.is_full(_carried_type):
+		# Нет склада ИЛИ он полон → роняем орб (а не застреваем навсегда с грузом).
+		if store == null or store.is_full(_carried_type):
 			_drop_carried_as_orb()
 		else:
 			_tick_deposit_to_store()
@@ -704,10 +705,12 @@ func _tick_smelt_at(smelter: Node3D) -> void:
 		_move_toward(to, d)
 		return
 	velocity = Vector3.ZERO
-	var yield_pair: Array = _smelt_yield(_carried_type)
 	var bank := get_tree().get_first_node_in_group(&"gold_bank")
-	if bank != null and bank.has_method(&"add_coin"):
-		bank.call(&"add_coin", yield_pair[0], yield_pair[1])
+	if bank == null or not bank.has_method(&"add_coin"):
+		_drop_carried_as_orb()  # казны нет — не уничтожаем груз молча, роняем орбом
+		return
+	var yield_pair: Array = _smelt_yield(_carried_type)
+	bank.call(&"add_coin", yield_pair[0], yield_pair[1])
 	deliver_resource()
 
 

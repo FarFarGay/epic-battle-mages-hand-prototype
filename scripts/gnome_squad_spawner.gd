@@ -182,12 +182,9 @@ func _purchase_front() -> Vector3:
 		return Vector3.INF
 	var house := get_tree().get_first_node_in_group(&"gnome_settlement")
 	var anchor: Node3D = (house if house != null else tower) as Node3D
-	# Наземный Y якоря. У домика origin на полу; у башни origin приподнят (≈5) —
-	# тогда садим на ground_y, чтобы не спавнить в воздухе.
-	var anchor_y: float = anchor.global_position.y
-	if house == null:
-		anchor_y = ground_y
-	var base: Vector3 = Vector3(anchor.global_position.x, anchor_y, anchor.global_position.z)
+	# ВСЕГДА садим на наземный Y (ground_y), не доверяя origin якоря: и у башни (≈5), и у
+	# приподнятого домика-поселения спавн по их Y повесил бы отряд в воздух.
+	var base: Vector3 = Vector3(anchor.global_position.x, ground_y, anchor.global_position.z)
 	# Направление «в комнату» — от дома к башне (в открытое пространство, не в стену).
 	var to_tower: Vector3 = (tower as Node3D).global_position - base
 	to_tower.y = 0.0

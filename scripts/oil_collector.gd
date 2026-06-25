@@ -144,6 +144,9 @@ func _process(delta: float) -> void:
 	if _net_timer > 0.0:
 		return
 	_net_timer = 0.7
+	# Легаси нефтесеть (буры/трубы) в room-режиме отсутствует → не гоняем заливку впустую.
+	if get_tree().get_nodes_in_group(&"oil_rig").is_empty():
+		return
 	_recompute_network()
 
 
@@ -157,9 +160,12 @@ func _tick_hire_click() -> void:
 	if not Input.is_action_just_pressed(ACTION_GRAB):
 		return
 	var hand := _resolve_hand()
-	if hand == null or not hand.has_method(&"cursor_world_position"):
+	if hand == null:
 		return
-	var hp: Vector3 = hand.call(&"cursor_world_position")
+	# Не реагируем на клик-команды aim-режимов, клик по HUD и при удержании предмета.
+	if hand.is_in_aim_mode() or hand.is_pointer_over_ui() or hand.is_holding():
+		return
+	var hp: Vector3 = hand.cursor_world_position()
 	var dx: float = hp.x - global_position.x
 	var dz: float = hp.z - global_position.z
 	if dx * dx + dz * dz <= hire_radius * hire_radius:

@@ -124,6 +124,9 @@ func _process(_delta: float) -> void:
 	var hand := _resolve_hand()
 	if hand == null:
 		return
+	# Не реагируем на клик-команды aim-режимов, клик по HUD и при удержании предмета.
+	if hand.is_in_aim_mode() or hand.is_pointer_over_ui() or hand.is_holding():
+		return
 	var hp: Vector3 = hand.cursor_world_position()
 	var dx: float = hp.x - global_position.x
 	var dz: float = hp.z - global_position.z

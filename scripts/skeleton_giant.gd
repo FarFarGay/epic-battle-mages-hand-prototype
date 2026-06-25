@@ -167,9 +167,14 @@ func _scan_target() -> Node3D:
 ## башня внутри прямоугольника комнаты (по bounds, а не по дистанции — иначе
 ## агрился бы сквозь стену на близкую башню в соседней комнате). Без гейта —
 ## башня видна всегда (камповые волны).
+## Радиус пробуждения, когда room-гейт не задан (чит-спавн в room / камповые волны) —
+## вместо «видит через всю карту». Комнаты крупные, потому щедрый.
+const NO_ROOM_AGGRO_RADIUS := 60.0
+
 func _aggro_ok(tower: Node3D) -> bool:
 	if room_size.x <= 0.0 or room_size.y <= 0.0:
-		return true
+		# Гейта комнаты нет → будим лишь если башня в радиусе, а не гоним через всю карту.
+		return global_position.distance_to(tower.global_position) <= NO_ROOM_AGGRO_RADIUS
 	return _tower_in_room(tower, 0.0)
 
 

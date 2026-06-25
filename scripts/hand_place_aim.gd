@@ -335,8 +335,24 @@ func _remove_walls_under(cells: Array) -> void:
 			continue
 		for c in b.call(&"occupied_cells"):
 			if cs.has(c):
+				_refund_building(b)
 				b.queue_free()
 				break
+
+
+## Возврат составной цены постройки в казну при сносе (монеты — единственный ресурс, снос
+## не должен быть чистой потерей). Полный рефанд. Постройки без "cost" (трубы) — ноль.
+func _refund_building(b: Node) -> void:
+	if not (b is PadBuilding):
+		return
+	var cost: Dictionary = RoomBuildings.get_data((b as PadBuilding).building_id).get("cost", {})
+	if cost.is_empty():
+		return
+	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	if bank == null or not bank.has_method(&"add_coin"):
+		return
+	for type in cost:
+		bank.call(&"add_coin", type, int(cost[type]))
 
 
 ## Магнит: притягивает ближайшую snap-точку силуэта (центр + два края по локальному X)
@@ -555,6 +571,7 @@ func _delete_pipe_under_cursor() -> void:
 				best = node
 	if best != null:
 		AoeVisual.spawn_dust(get_tree().current_scene, best.global_position)
+		_refund_building(best)  # снос полимино возвращает монеты (трубы бесплатны → ноль)
 		best.queue_free()
 		call_deferred(&"_refresh_walls")  # стены отвяжутся от снесённой постройки
 		if debug_log and LogConfig.master_enabled:

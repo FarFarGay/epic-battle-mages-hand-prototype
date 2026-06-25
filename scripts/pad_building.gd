@@ -493,29 +493,35 @@ func _on_hired(unit_type: StringName, want: int) -> void:
 		return
 	# Лучники с башней → гарнизон стен. Прочие (копейщики) остаются мобильным отрядом.
 	if RoomBuildings.get_data(building_id).get("corner_tower", false):
-		_assign_garrison(members, posts)
+		# Раздаём посты ВСЕМУ отряду (не только новичкам-добору) — иначе при доливе павших
+		# новичок дублирует пост башни, а уцелевшие держат старые. Берём полный members отряда.
+		var sq = members[0].get(&"_squad")
+		var all: Array = sq.members if sq != null else members
+		_assign_garrison(all, posts)
 
 
-## Раздаём свежим лучникам посты: 0 → башня (branch ZERO), 1/2 → рукава-стены; отряд в
-## МЯГКИЙ hold → гарнизон стен (ArcherSoldier._grn_should_garrison), перебивая escort
-## спавнера. «За башней» (escort) снимает; F-возврат ставит обратно. См. §5.22.10.
-func _assign_garrison(archers: Array, posts: Dictionary) -> void:
+## Раздаём ВСЕМ живым лучникам отряда посты по индексу: 0 → башня (branch ZERO), 1/2 →
+## рукава-стены; отряд в МЯГКИЙ hold → гарнизон (ArcherSoldier._grn_should_garrison),
+## перебивая escort спавнера. «За башней» (escort) снимает; F-возврат ставит обратно.
+func _assign_garrison(members: Array, posts: Dictionary) -> void:
 	var corner_world: Vector2i = posts[&"corner_world"]
 	var ground: Vector3 = posts[&"ground"]
 	var tower_pos: Vector3 = posts[&"tower_pos"]
 	var arms: Array = posts[&"arms"]
-	for i in archers.size():
-		var a = archers[i]
-		if not is_instance_valid(a) or not a.has_method(&"assign_garrison"):
-			continue
+	# Чистый список живых — индекс поста = позиция в отряде (стабильно при доборе).
+	var living: Array = []
+	for a in members:
+		if is_instance_valid(a) and a.has_method(&"assign_garrison"):
+			living.append(a)
+	for i in living.size():
 		# 0 → башня (branch ZERO); 1/2 → рукава (если есть; иначе тоже башня).
 		var branch: Vector2i = Vector2i.ZERO
 		if i > 0 and arms.size() > 0:
 			branch = arms[(i - 1) % arms.size()]
-		a.call(&"assign_garrison", corner_world, branch, tower_pos, ground.y)
+		living[i].call(&"assign_garrison", corner_world, branch, tower_pos, ground.y)
 	# Дефолт казармы — мягкий hold → гарнизон стен (перебивает escort спавнера).
-	if archers.size() > 0 and is_instance_valid(archers[0]):
-		var sq = archers[0].get(&"_squad")
+	if living.size() > 0:
+		var sq = living[0].get(&"_squad")
 		if sq != null:
 			sq.command_hold(ground, false)
 
@@ -614,40 +620,35 @@ func _process(delta: float) -> void:
 		_tick_mint_click()
 
 
-## ЛКМ по футпринту казармы (вне стройки/удержания) → открыть стол найма. Зеркало
-## GnomeHouse._process: модалка уже открыта → пропускаем; иначе курсорная клетка в
-## occupied_cells → найм. Точность по клеткам (а не радиусу) — попадание именно в здание.
-func _tick_hire_click() -> void:
+## Валидный ЛКМ-клик по футпринту ЭТОГО здания. Единый гейт для найма/чеканки:
+## модалка закрыта, нажат hand_grab, рука НЕ в aim-режиме (команда/стройка/супер), НЕ над
+## HUD и ничего не держит, и курсорная клетка в occupied_cells. Иначе клик-команды aim'ов
+## и клики по HUD рядом со зданием паразитно дёргали бы стол. Точность по клеткам.
+func _clicked_on_self() -> bool:
 	var tree := get_tree()
 	var trade := tree.get_first_node_in_group(&"trade_ui")
 	if trade != null and trade.has_method(&"is_open") and trade.call(&"is_open"):
-		return  # стол торга уже открыт
+		return false
 	if not Input.is_action_just_pressed(ACTION_GRAB):
-		return
-	var hand := tree.get_first_node_in_group(Hand.HAND_GROUP)
-	if hand == null or not hand.has_method(&"cursor_world_position"):
-		return
-	var hp: Vector3 = hand.call(&"cursor_world_position")
-	var cell := CityGrid.world_to_cell(hp, tree)
-	if cell in occupied_cells():
+		return false
+	var hand := tree.get_first_node_in_group(Hand.HAND_GROUP) as Hand
+	if hand == null:
+		return false
+	if hand.is_in_aim_mode() or hand.is_pointer_over_ui() or hand.is_holding():
+		return false
+	var cell := CityGrid.world_to_cell(hand.cursor_world_position(), tree)
+	return cell in occupied_cells()
+
+
+## ЛКМ по футпринту казармы → открыть стол найма.
+func _tick_hire_click() -> void:
+	if _clicked_on_self():
 		_open_hire()
 
 
-## ЛКМ по футпринту плавильни (вне модалки) → РУЧНАЯ ЧЕКАНКА на ступень вверх. Зеркало
-## _tick_hire_click. «Вручную у плавильни»: клик = одна перечеканка 100→1.
+## ЛКМ по футпринту плавильни → РУЧНАЯ ЧЕКАНКА на ступень вверх (100→1).
 func _tick_mint_click() -> void:
-	var tree := get_tree()
-	var trade := tree.get_first_node_in_group(&"trade_ui")
-	if trade != null and trade.has_method(&"is_open") and trade.call(&"is_open"):
-		return  # модалка открыта
-	if not Input.is_action_just_pressed(ACTION_GRAB):
-		return
-	var hand := tree.get_first_node_in_group(Hand.HAND_GROUP)
-	if hand == null or not hand.has_method(&"cursor_world_position"):
-		return
-	var hp: Vector3 = hand.call(&"cursor_world_position")
-	var cell := CityGrid.world_to_cell(hp, tree)
-	if cell in occupied_cells():
+	if _clicked_on_self():
 		_mint_one_step()
 
 

@@ -373,6 +373,9 @@ func _finish_super(_success: bool) -> void:
 	# _commit_rain и _cancel_aim уже зовут _clear_aim_indicator явно, тут
 	# подстраховка для путей, которые могли бы пропустить.
 	_clear_aim_indicator()
+	# Страховка: slow-mo QTE не должен залипнуть глобально (краш/нестандартный выход
+	# из AIMING_PATTERN оставил бы Engine.time_scale=0.15 на всю игру).
+	Engine.time_scale = 1.0
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.SUPER:
 		_hand.pop_category()
 	if _state != State.CASTING:

@@ -109,7 +109,10 @@ func _process(_delta: float) -> void:
 	if hand == null:
 		return
 	var hp: Vector3 = hand.cursor_world_position()
-	var grabbing: bool = Input.is_action_pressed(ACTION_GRAB)
+	# Не хватать рычаг клик-командами aim-режимов (стройка/команда/супер), кликом по HUD
+	# и при удержании предмета — иначе commit-зажатие ЛКМ рядом перекидывает рычаг.
+	var grabbing: bool = Input.is_action_pressed(ACTION_GRAB) \
+		and not (hand.is_in_aim_mode() or hand.is_pointer_over_ui() or hand.is_holding())
 	if not _engaged:
 		var flat_d: float = Vector2(hp.x - global_position.x, hp.z - global_position.z).length()
 		if grabbing and flat_d <= engage_radius:

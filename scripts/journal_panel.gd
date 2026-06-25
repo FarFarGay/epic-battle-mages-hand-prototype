@@ -323,6 +323,13 @@ func _refresh() -> void:
 	_tab_switching = false
 	_scroll = null
 	var camp := _resolve_camp()
+	# В room-режиме лагеря нет → камп-вкладки (Юниты/Лагерь/Старая стройка/План/Армия) мертвы:
+	# прячем их, оставляя Заклинания/Задания/Читы. Текущую скрытую вкладку уводим на Заклинания.
+	var has_camp: bool = camp != null
+	for b in [_tab_units_btn, _tab_camp_btn, _tab_legacy_btn, _tab_plan_btn, _tab_army_btn]:
+		b.visible = has_camp
+	if not has_camp and _current_tab in [Tab.UNITS, Tab.CAMP, Tab.LEGACY, Tab.PLAN, Tab.ARMY]:
+		_current_tab = Tab.SPELLS
 	_tab_units_btn.button_pressed = (_current_tab == Tab.UNITS)
 	_tab_camp_btn.button_pressed = (_current_tab == Tab.CAMP)
 	_tab_legacy_btn.button_pressed = (_current_tab == Tab.LEGACY)
