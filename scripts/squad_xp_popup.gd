@@ -14,9 +14,15 @@ extends Label3D
 ## Стартовый y-offset над переданной позицией (метры). Чтобы текст не
 ## проседал в труп — поднимаемся над центром скелета.
 @export var spawn_height_offset: float = 1.5
+## Боковой «дымок»: 0 → строго вверх (XP-попапы как были). >0 → всплывашка вихляет вбок
+## (база-направление + синус-вобл) на ~drift м/с, всплывая хаотично как струйка дыма.
+@export var drift: float = 0.0
 
 var _life: float = 0.0
 var _start_modulate: Color
+var _dx: float = 0.0
+var _dz: float = 0.0
+var _phase: float = 0.0
 
 
 func _ready() -> void:
@@ -36,6 +42,12 @@ func _ready() -> void:
 	modulate = Color(1.0, 0.85, 0.2, 1.0)  # тёплое золото
 	_start_modulate = modulate
 	position.y += spawn_height_offset
+	# Случайное базовое направление сноса + фаза вобла (у каждой всплывашки своя траектория).
+	if drift > 0.0:
+		var ang: float = randf() * TAU
+		_dx = cos(ang)
+		_dz = sin(ang)
+		_phase = randf() * TAU
 
 
 func _process(delta: float) -> void:
@@ -46,6 +58,10 @@ func _process(delta: float) -> void:
 	# Подъём + плавный fade. fade — последняя 40% жизни, чтобы первое время
 	# текст «удерживался» полной непрозрачностью.
 	position.y += rise_speed * delta
+	# Боковой снос + вобл → хаотичный подъём «как дымок» (только если drift>0).
+	if drift > 0.0:
+		position.x += (_dx + sin(_life * 2.5 + _phase)) * drift * delta
+		position.z += (_dz + cos(_life * 2.0 + _phase)) * drift * delta
 	var fade_start: float = lifetime * 0.6
 	if _life > fade_start:
 		var t: float = (_life - fade_start) / (lifetime - fade_start)

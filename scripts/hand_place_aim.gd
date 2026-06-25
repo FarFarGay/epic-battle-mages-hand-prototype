@@ -58,6 +58,8 @@ var _snapped: bool = false
 ## Хватает ли монет на составную цену текущей постройки (см. _can_afford). Красит силуэт
 ## и гейтит установку. Постройки без "cost" (трубы/мост/стройплощадка-на-дереве) — всегда true.
 var _affordable: bool = true
+## Замок уже есть/строится → ставить второй нельзя (красный силуэт + гейт). См. _pump_blocked.
+var _blocked: bool = false
 
 
 func _ready() -> void:
@@ -145,7 +147,12 @@ func _process(_delta: float) -> void:
 		place = _snap_center(ground)
 	# Хватает ли монет на составную цену (постройки с "cost"; без неё — бесплатно).
 	_affordable = _can_afford()
+	# Замок — ОДИН на уровень: если уже есть/строится — ставить нельзя (силуэт красный).
+	_blocked = _pump_blocked()
 	_update_ghost(place)
+	# Зелёная зона стройки 9×9: при установке замка — вокруг силуэта (видно будущую зону);
+	# при укладке прочего — вокруг существующего замка. Ездит за силуэтом (per-frame).
+	_update_pad_floor(place)
 	# МАСКА-затухание (окно видимых клеток) едет за силуэтом — плоскость статична, двигаем
 	# только центр маски в шейдере. Клетки выровнены к фикс-лоттису (grid_anchor), не плывут.
 	if is_instance_valid(_grid):
@@ -157,6 +164,11 @@ func _process(_delta: float) -> void:
 		if (is_pipe or is_pad) and not _snapped:
 			if debug_log and LogConfig.master_enabled:
 				print("[Hand:PlaceAim] нельзя сюда — стыкуй к порту либо держи фигуру в площадке без наложений")
+			return
+		# Замок уже есть/строится — второй нельзя.
+		if _blocked:
+			if debug_log and LogConfig.master_enabled:
+				print("[Hand:PlaceAim] замок уже есть — второй нельзя")
 			return
 		# Не хватает монет → не ставим (силуэт уже красный — см. _update_ghost).
 		if not _affordable:
@@ -186,6 +198,20 @@ func _input(event: InputEvent) -> void:
 		if mb.pressed and not _hand.is_pointer_over_ui():
 			_delete_pipe_under_cursor()
 		get_viewport().set_input_as_handled()
+
+
+## Замок (PUMP) — ОДИН на уровень: уже построен (группа Castle) ИЛИ строится (стройплощадка
+## с building_id=PUMP). Для прочих построек всегда false. Зеркалит гейт меню в gameplay_hud.
+func _pump_blocked() -> bool:
+	if _building != RoomBuildings.PUMP:
+		return false
+	var tree := get_tree()
+	if tree.get_first_node_in_group(Castle.GROUP) != null:
+		return true
+	for s in tree.get_nodes_in_group(Layers.BUILD_SITE_GROUP):
+		if is_instance_valid(s) and s.get(&"building_id") == RoomBuildings.PUMP:
+			return true
+	return false
 
 
 ## Хватает ли в казне монет на составную цену текущей постройки. Нет "cost" → бесплатно.
@@ -414,7 +440,9 @@ func _update_ghost(pos: Vector3) -> void:
 	_ghost.rotation.y = _rot_y  # поворот силуэта — игрок видит ориентацию (угол/крест)
 	if _ghost_mat != null:
 		var c: Color
-		if _data.has("cells"):
+		if _blocked:
+			c = ghost_color_invalid  # замок уже есть — второй нельзя (красный)
+		elif _data.has("cells"):
 			# Фигура: красный, если геометрия невалидна ИЛИ не хватает монет.
 			c = ghost_color_snap if (_snapped and _affordable) else ghost_color_invalid
 		elif _data.has("pipe_kind") and not _snapped:
@@ -529,15 +557,23 @@ func _update_grid() -> void:
 	if m != null:
 		m.set_shader_parameter(&"grid_anchor", Vector2(anchor.x, anchor.z))
 	_grid.global_position = Vector3(anchor.x, 0.06, anchor.z)
-	_update_pad_floor(anchor)
+	# зелёную зону позиционируем per-frame в _process (ездит за силуэтом при установке замка)
 
 
-## Зелёная зона застройки 9×9 (сторона (2·PAD_RADIUS+1)·клетка) — рисуется ВОКРУГ ЗАМКА
-## (замок в центре зоны), а НЕ вокруг центра грида. Показываем только при укладке полимино
-## и только если замок есть (нет замка → строить негде, зону прятать).
-func _update_pad_floor(_anchor: Vector3) -> void:
-	var cc = CityGrid.castle_cell(get_tree())
-	if not _data.has("cells") or cc == null:
+## Зелёная зона застройки 9×9 (сторона (2·PAD_RADIUS+1)·клетка). Центр зоны:
+##  • ставим САМ ЗАМОК (PUMP) → вокруг СИЛУЭТА (place) — видно будущую зону, ездит за рукой;
+##  • прочее (замок уже есть) → вокруг КЛЕТКИ ЗАМКА.
+## Нет ни того ни другого → прячем. Зовётся per-frame из _process.
+func _update_pad_floor(place: Vector3) -> void:
+	var tree := get_tree()
+	var is_pump: bool = _building == RoomBuildings.PUMP
+	var cc = CityGrid.castle_cell(tree)
+	var center_cell: Vector2i
+	if is_pump:
+		center_cell = CityGrid.world_to_cell(place, tree)  # вокруг силуэта замка
+	elif _data.has("cells") and cc != null:
+		center_cell = cc  # вокруг существующего замка
+	else:
 		if is_instance_valid(_pad_floor):
 			_pad_floor.queue_free()
 		_pad_floor = null
@@ -549,14 +585,14 @@ func _update_pad_floor(_anchor: Vector3) -> void:
 		pm.size = Vector2(side, side)
 		_pad_floor.mesh = pm
 		_pad_floor.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_pad_floor.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 		var mat := StandardMaterial3D.new()
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		mat.albedo_color = Color(0.35, 0.9, 0.6, 0.12)  # лёгкая зелёная подложка площадки
 		_pad_floor.material_override = mat
 		_effects_root.add_child(_pad_floor)
-	# Центр зоны = клетка замка (выровнено по гриду) → замок ровно в середине 9×9.
-	var center: Vector3 = CityGrid.cell_to_world(cc, get_tree())
+	var center: Vector3 = CityGrid.cell_to_world(center_cell, tree)
 	_pad_floor.global_position = Vector3(center.x, 0.05, center.z)
 
 
