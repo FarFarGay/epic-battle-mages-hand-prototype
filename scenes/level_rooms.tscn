@@ -161,6 +161,16 @@ albedo_color = Color(0.24, 0.5, 0.22, 1)
 radius = 1.6
 height = 3.0
 
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_mjs4f"]
+albedo_color = Color(0.82, 0.84, 0.88, 1)
+metallic = 0.7
+roughness = 0.35
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_lhsvk"]
+albedo_color = Color(0.95, 0.78, 0.18, 1)
+metallic = 0.8
+roughness = 0.3
+
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_wq2ia"]
 albedo_color = Color(0.5, 0.51, 0.55, 1)
 roughness = 0.95
@@ -529,6 +539,38 @@ mesh = SubResource("Cyl_trunk")
 [node name="Foliage" type="MeshInstance3D" parent="Room5/WoodSource3" unique_id=1980433918]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 16)
 material_override = SubResource("Mat_foliage")
+mesh = SubResource("Sph_foliage")
+
+[node name="SilverVein" type="Node3D" parent="Room5" unique_id=599328818]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18, 0, 106)
+script = ExtResource("39_wood")
+resource_type = 8
+wood_remaining = 6
+
+[node name="Trunk" type="MeshInstance3D" parent="Room5/SilverVein" unique_id=366827620]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 16)
+material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
+
+[node name="Foliage" type="MeshInstance3D" parent="Room5/SilverVein" unique_id=1326373914]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 16)
+material_override = SubResource("StandardMaterial3D_mjs4f")
+mesh = SubResource("Sph_foliage")
+
+[node name="GoldVein" type="Node3D" parent="Room5" unique_id=1435278158]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 22, 0, 106)
+script = ExtResource("39_wood")
+resource_type = 6
+wood_remaining = 6
+
+[node name="Trunk" type="MeshInstance3D" parent="Room5/GoldVein" unique_id=1816825409]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 16)
+material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
+
+[node name="Foliage" type="MeshInstance3D" parent="Room5/GoldVein" unique_id=890814564]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 16)
+material_override = SubResource("StandardMaterial3D_lhsvk")
 mesh = SubResource("Sph_foliage")
 
 [node name="Tower" parent="." unique_id=1617488261 groups=["skeleton_target"] instance=ExtResource("1")]

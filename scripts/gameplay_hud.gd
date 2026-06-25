@@ -138,7 +138,8 @@ const BUILD_MENU_PAD_STORE := 14
 const BUILD_MENU_PAD_GATE := 15
 const BUILD_MENU_PAD_BARRACKS := 16
 const BUILD_MENU_PAD_SPEARMEN := 17
-# Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[OilGrid]).
+const BUILD_MENU_PAD_SMELTER := 18
+# Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[CityGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
 const BUILD_MENU_PAD_TOWER := 10
@@ -153,6 +154,7 @@ var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_GATE: RoomBuildings.PAD_GATE,
 	BUILD_MENU_PAD_BARRACKS: RoomBuildings.PAD_BARRACKS,
 	BUILD_MENU_PAD_SPEARMEN: RoomBuildings.PAD_SPEARMEN,
+	BUILD_MENU_PAD_SMELTER: RoomBuildings.PAD_SMELTER,
 }
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
@@ -1113,7 +1115,7 @@ func _update_counts() -> void:
 
 
 ## Счётчик нефти замка вверху-по центру. Виден только когда замок построен
-## (OilCollector в сцене). Обновляется на таймере из _process (см. _update_counts).
+## (Castle в сцене). Обновляется на таймере из _process (см. _update_counts).
 func _build_oil_label() -> void:
 	_oil_label = Label.new()
 	# Ниже панели статов башни (верх-лево) и ресурсов (верх-право) — по центру, в
@@ -1131,7 +1133,7 @@ func _build_oil_label() -> void:
 func _update_oil_label() -> void:
 	if _oil_label == null:
 		return
-	var c := get_tree().get_first_node_in_group(OilCollector.GROUP)
+	var c := get_tree().get_first_node_in_group(Castle.GROUP)
 	if c != null and c.has_method(&"get_oil") and c.has_method(&"get_goal"):
 		_oil_label.visible = true
 		_oil_label.text = "🛢 Нефть замка:  %d / %d" % [int(c.call(&"get_oil")), int(c.call(&"get_goal"))]
@@ -1283,9 +1285,9 @@ func _building_unlocked() -> bool:
 	return p != null and p.get(&"building_unlocked") == true
 
 
-## Качалка-замок ПОСТРОЕНА (есть OilCollector) — от неё растёт грид-город.
+## Качалка-замок ПОСТРОЕНА (есть Castle) — от неё растёт грид-город.
 func _pump_built() -> bool:
-	return get_tree().get_first_node_in_group(OilCollector.GROUP) != null
+	return get_tree().get_first_node_in_group(Castle.GROUP) != null
 
 
 ## Качалка есть ИЛИ строится (стройплощадка с building_id=PUMP) — гейт «одна на отряд».

@@ -1,4 +1,4 @@
-class_name OilGrid
+class_name CityGrid
 extends RefCounted
 ## Единая математика нефте-СЕТКИ (якорь = центр коллектора-качалки). ОДИН источник
 ## для снапа, клеток и полимино-построек ([HandPlaceAim], [PadBuilding]) — чтобы
@@ -13,7 +13,7 @@ const PUMP_RADIUS := 1  # ядро-качалка (1 → 3×3 центральн
 
 ## Мировая позиция якоря сетки = центр коллектора (нет коллектора → мир-ноль).
 static func anchor(tree: SceneTree) -> Vector3:
-	var c := tree.get_first_node_in_group(OilCollector.GROUP)
+	var c := tree.get_first_node_in_group(Castle.GROUP)
 	return (c as Node3D).global_position if c is Node3D else Vector3.ZERO
 
 

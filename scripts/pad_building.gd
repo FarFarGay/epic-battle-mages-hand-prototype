@@ -3,12 +3,15 @@ extends Node3D
 ## Полимино-постройка на площадке вокруг качалки (тетрис-фигура из клеток сетки). ОДНА
 ## модель для всех ролей: защита / атака / добыча — пока различаются только цветом
 ## (функции = Фаза 2: контур-стена + навмеш, радиус стрельбы, буст соседством). Снап и
-## занятость клеток — через [OilGrid]. group pad_building. Ставится мгновенно рукой
+## занятость клеток — через [CityGrid]. group pad_building. Ставится мгновенно рукой
 ## ([HandPlaceAim]); ПКМ сносит.
 
 const GROUP := &"pad_building"
-## ЛКМ-захват рукой (то же действие, что у домика гномов) — клик по казарме = найм.
+## ЛКМ-захват рукой (то же действие, что у домика гномов) — клик по казарме = найм,
+## клик по плавильне = ручная чеканка.
 const ACTION_GRAB := &"hand_grab"
+## Курс чеканки: столько монет младшего номинала = 1 старшего (100🥉→1🥈, 100🥈→1🥇).
+const MINT_RATIO := 100
 
 var building_id: StringName = &""
 var _mask: Array = []        # Array[Vector2i] — клетки фигуры (локальные offset'ы)
@@ -35,6 +38,11 @@ func _ready() -> void:
 	if is_barracks():
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
 		set_process(true)
+	# Плавильня — цель доставки руды гномами + кликабельна для ручной чеканки 100→1.
+	if is_smelter():
+		add_to_group(&"smelter")
+		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
+		set_process(true)
 	# Отложенно: HandPlaceAim ставит global-трансформ ПОСЛЕ add_child (нужен стене для
 	# мировых клеток и поиска соседей).
 	call_deferred(&"_build")
@@ -54,6 +62,10 @@ func is_gate() -> bool:
 
 func is_barracks() -> bool:
 	return _role == &"barracks"
+
+
+func is_smelter() -> bool:
+	return _role == &"smelter"
 
 
 ## Пересобрать все стены (защита) — зовётся при установке/сносе любой постройки, чтобы
@@ -89,7 +101,7 @@ static func walkable_set(tree: SceneTree) -> Dictionary:
 
 ## Мировая точка на ВЕРХУ боевого хода для клетки (туда встаёт/идёт лучник).
 static func cell_top(cell: Vector2i, tree: SceneTree) -> Vector3:
-	var w := OilGrid.cell_to_world(cell, tree)
+	var w := CityGrid.cell_to_world(cell, tree)
 	return Vector3(w.x, _WALL_H, w.z)
 
 
@@ -129,9 +141,11 @@ func _build() -> void:
 			_build_gate()
 		&"barracks":
 			_build_barracks()
+		&"smelter":
+			_build_smelter()
 		_:
 			var mat := _solid(_role_color(_role), 0.1, 0.7)
-			var s: float = OilGrid.CELL
+			var s: float = CityGrid.CELL
 			for off in _mask:
 				var o := off as Vector2i
 				_box(Vector3(s * 0.96, 1.4, s * 0.96), Vector3(o.x * s, 0.7, o.y * s), mat, true)
@@ -158,7 +172,7 @@ const _STREET := 0.4
 ## margin (где нет соседней клетки маски) → здание стоит с улицей вокруг, но цельным
 ## массивом внутри. y — центр по Y, h — высота.
 func _solid_shape(y: float, h: float, mat: StandardMaterial3D, margin: float) -> void:
-	var s: float = OilGrid.CELL
+	var s: float = CityGrid.CELL
 	var half: float = s * 0.5
 	var ms: Dictionary = {}
 	for off in _mask:
@@ -180,8 +194,8 @@ func _build_wall() -> void:
 	var tree := get_tree()
 	var stone := _solid(_WALL_STONE, 0.05, 0.95)
 	var trim := _solid(_WALL_TRIM, 0.05, 0.95)
-	var half: float = OilGrid.CELL * 0.5
-	var mine := OilGrid.building_cells(global_position, _mask, rotation.y, tree)
+	var half: float = CityGrid.CELL * 0.5
+	var mine := CityGrid.building_cells(global_position, _mask, rotation.y, tree)
 	var mineset: Dictionary = {}
 	for c in mine:
 		mineset[c] = true
@@ -204,7 +218,7 @@ func _build_wall() -> void:
 	var mtop: float = _WALL_H + _MERLON_H * 0.5
 	for wc in mine:
 		var cell := wc as Vector2i
-		var ctr := OilGrid.cell_to_world(cell, tree)
+		var ctr := CityGrid.cell_to_world(cell, tree)
 		# Узел-площадка (плоский верх = дорожка боевого хода).
 		_wb(ctr + Vector3(0, _WALL_H * 0.5, 0), Vector3(_WALL_TH, _WALL_H, _WALL_TH), stone)
 		var arms := 0
@@ -250,7 +264,7 @@ func _build_watchtower() -> void:
 	var stone := _solid(_WALL_STONE, 0.05, 0.9)
 	var dark := _solid(_STONE_DARK, 0.1, 0.9)
 	var trim := _solid(_WALL_TRIM, 0.1, 0.9)
-	var bw: float = OilGrid.CELL - 2.0 * _STREET  # ширина с отступом (улицы)
+	var bw: float = CityGrid.CELL - 2.0 * _STREET  # ширина с отступом (улицы)
 	_layer(_BASE_H * 0.5, bw, _BASE_H, dark)                                      # цоколь
 	var bh := 2.6
 	_box(Vector3(bw - 0.1, bh, bw - 0.1), Vector3(0, _BASE_H + bh * 0.5, 0), stone, true)  # ствол
@@ -265,7 +279,7 @@ func _build_gate() -> void:
 	var stone := _solid(_WALL_STONE, 0.05, 0.9)
 	var trim := _solid(_WALL_TRIM, 0.1, 0.9)
 	var wood := _solid(_WOOD, 0.0, 0.95)
-	var s: float = OilGrid.CELL
+	var s: float = CityGrid.CELL
 	var half: float = s * 0.5
 	var minx := 999
 	var maxx := -999
@@ -283,10 +297,10 @@ func _build_gate() -> void:
 	var eo: float = _WALL_TH * 0.5 - _MERLON * 0.5
 	# Концы ворот примыкают к зданиям как стены: к башне/казарме за краем — с нахлёстом.
 	var tree := get_tree()
-	var base := OilGrid.world_to_cell(global_position, tree)
+	var base := CityGrid.world_to_cell(global_position, tree)
 	var over := _overlap_cells(tree)
-	var ext_l := 0.5 if over.has(base + OilGrid.rotate_offset(Vector2i(minx - 1, 0), rotation.y)) else 0.0
-	var ext_r := 0.5 if over.has(base + OilGrid.rotate_offset(Vector2i(maxx + 1, 0), rotation.y)) else 0.0
+	var ext_l := 0.5 if over.has(base + CityGrid.rotate_offset(Vector2i(minx - 1, 0), rotation.y)) else 0.0
+	var ext_r := 0.5 if over.has(base + CityGrid.rotate_offset(Vector2i(maxx + 1, 0), rotation.y)) else 0.0
 	# Боковые отростки стены (широкие, с двусторонними зубцами) — от краёв к пилонам.
 	_gate_wall(x0 - ext_l, lp, _WALL_H, stone, trim)
 	_gate_wall(rp, x1 + ext_r, _WALL_H, stone, trim)
@@ -337,7 +351,7 @@ func _build_barracks() -> void:
 	var trim := _solid(_WALL_TRIM, 0.1, 0.9)  # зубцы в цвет стеновых — стена = продолжение
 	var bc: Color = RoomBuildings.get_data(building_id).get("banner_color", Color(0.28, 0.46, 0.7))
 	var banner := _solid(bc, 0.0, 0.8)  # цвет стяга = тип бойцов (лучники/копейщики)
-	var s: float = OilGrid.CELL
+	var s: float = CityGrid.CELL
 	var half: float = s * 0.5
 	var bh := _WALL_H  # высота как у стены → стена ровно продолжает казарму
 	var top: float = bh
@@ -385,6 +399,32 @@ func _build_barracks() -> void:
 	_box(Vector3(0.45, 0.6, 0.05), px + Vector3(0, 0.85, 0), banner, true)     # полотнище
 
 
+## Плавильня: каменная печь с раскалённым устьем (emission) + труба-дымоход. Клетка[0] —
+## корпус печи со светящимся зевом; клетка[1] — труба. Гном несёт сюда руду → монеты в
+## казну (см. SoldierGnome._tick_smelt_at). Анимация заброса/монет — косметика позже.
+func _build_smelter() -> void:
+	var stone := _solid(Color(0.5, 0.48, 0.46), 0.1, 0.85)
+	var dark := _solid(_STONE_DARK, 0.1, 0.9)
+	var glow := _solid(Color(1.0, 0.55, 0.15), 0.0, 0.6)
+	glow.emission_enabled = true
+	glow.emission = Color(1.0, 0.5, 0.12)
+	glow.emission_energy_multiplier = 2.0
+	var s: float = CityGrid.CELL
+	var bw: float = s - 2.0 * _STREET
+	var body_cell := _mask[0] as Vector2i
+	var bc := Vector3(body_cell.x * s, 0.0, body_cell.y * s)
+	_box(Vector3(bw, 1.8, bw), bc + Vector3(0, 0.9, 0), stone, true)                 # корпус
+	_box(Vector3(bw + 0.1, 0.16, bw + 0.1), bc + Vector3(0, 1.8, 0), dark, true)     # карниз
+	_box(Vector3(bw * 0.5, 0.7, 0.22), bc + Vector3(0, 0.6, bw * 0.5), glow, true)   # раскалённый зев (спереди)
+	var chim_cell := body_cell
+	if _mask.size() > 1:
+		chim_cell = _mask[1] as Vector2i
+	var cc := Vector3(chim_cell.x * s, 0.0, chim_cell.y * s)
+	_box(Vector3(0.5, 2.4, 0.5), cc + Vector3(0, 1.2, 0), dark, true)                # труба
+	_box(Vector3(0.62, 0.2, 0.62), cc + Vector3(0, 2.4, 0), stone, true)             # оголовок
+	_box(Vector3(0.3, 0.22, 0.3), cc + Vector3(0, 2.55, 0), glow, true)              # тлеющий верх
+
+
 ## Угловая клетка фигуры (≥2 соседа в маске → изгиб L) — на ней стяг/башня + узел гарнизона.
 func _corner_local() -> Vector2i:
 	var maskset: Dictionary = {}
@@ -410,15 +450,15 @@ func _garrison_posts() -> Dictionary:
 	var maskset: Dictionary = {}
 	for off in _mask:
 		maskset[off as Vector2i] = true
-	var base := OilGrid.world_to_cell(global_position, tree)
-	var corner_world := base + OilGrid.rotate_offset(corner_local, rotation.y)
-	var ground := OilGrid.cell_to_world(corner_world, tree)  # наземная точка у казармы
+	var base := CityGrid.world_to_cell(global_position, tree)
+	var corner_world := base + CityGrid.rotate_offset(corner_local, rotation.y)
+	var ground := CityGrid.cell_to_world(corner_world, tree)  # наземная точка у казармы
 	var tower_pos := ground
 	tower_pos.y = _WALL_H + 1.9 + 0.22  # верх башни (площадка)
 	var arms: Array = []
 	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 		if maskset.has(corner_local + d):
-			arms.append(OilGrid.rotate_offset(d, rotation.y))
+			arms.append(CityGrid.rotate_offset(d, rotation.y))
 	return {&"corner_world": corner_world, &"ground": ground, &"tower_pos": tower_pos, &"arms": arms}
 
 
@@ -501,7 +541,7 @@ func _build_house() -> void:
 	var dark := _solid(_WOOD_DARK, 0.0, 0.9)
 	var body_h := 1.5
 	_build_compound(stone, roof, body_h, 0.4)
-	var s: float = OilGrid.CELL
+	var s: float = CityGrid.CELL
 	var top: float = _BASE_H + body_h
 	var roof_top: float = top + 0.08 + 0.4
 	var face: float = s * 0.5 - _STREET  # внешняя грань (инсет)
@@ -525,7 +565,7 @@ func _build_store() -> void:
 	var dark := _solid(_WOOD_DARK, 0.0, 0.9)
 	var body_h := 1.4
 	_build_compound(stone, wood, body_h, 0.3)
-	var s: float = OilGrid.CELL
+	var s: float = CityGrid.CELL
 	var top: float = _BASE_H + body_h + 0.08 + 0.3  # верх крыши
 	var f := _mask[0] as Vector2i
 	var fc := Vector3(f.x * s, 0.0, f.y * s)
@@ -544,7 +584,7 @@ func _build_tower() -> void:
 	var body := _solid(_role_color(_role), 0.12, 0.82)
 	var dark := _solid(_STONE_DARK, 0.1, 0.9)
 	var trim := _solid(Color(0.4, 0.38, 0.4), 0.2, 0.85)
-	var bw: float = OilGrid.CELL - 2.0 * _STREET  # ширина с отступом (улицы)
+	var bw: float = CityGrid.CELL - 2.0 * _STREET  # ширина с отступом (улицы)
 	_layer(_BASE_H * 0.5, bw + 0.06, _BASE_H, dark)                                   # цоколь
 	var bh := 2.0
 	_box(Vector3(bw, bh, bw), Vector3(0, _BASE_H + bh * 0.5, 0), body, true)          # короб
@@ -555,11 +595,11 @@ func _build_tower() -> void:
 ## Добыча: находим замок и ставим темп нефти (×2 при примыкании к ядру-замку).
 func _setup_mine() -> void:
 	var tree := get_tree()
-	_collector = tree.get_first_node_in_group(OilCollector.GROUP)
+	_collector = tree.get_first_node_in_group(Castle.GROUP)
 	var adj := false
-	for wc in OilGrid.building_cells(global_position, _mask, rotation.y, tree):
+	for wc in CityGrid.building_cells(global_position, _mask, rotation.y, tree):
 		for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-			if OilGrid.is_pump((wc as Vector2i) + d):
+			if CityGrid.is_pump((wc as Vector2i) + d):
 				adj = true
 	_oil_rate = MINE_OIL_PER_SEC * (2.0 if adj else 1.0)
 	set_process(true)
@@ -570,6 +610,8 @@ func _process(delta: float) -> void:
 		_collector.call(&"add_oil", _oil_rate * delta)
 	if is_barracks():
 		_tick_hire_click()
+	if is_smelter():
+		_tick_mint_click()
 
 
 ## ЛКМ по футпринту казармы (вне стройки/удержания) → открыть стол найма. Зеркало
@@ -586,9 +628,42 @@ func _tick_hire_click() -> void:
 	if hand == null or not hand.has_method(&"cursor_world_position"):
 		return
 	var hp: Vector3 = hand.call(&"cursor_world_position")
-	var cell := OilGrid.world_to_cell(hp, tree)
+	var cell := CityGrid.world_to_cell(hp, tree)
 	if cell in occupied_cells():
 		_open_hire()
+
+
+## ЛКМ по футпринту плавильни (вне модалки) → РУЧНАЯ ЧЕКАНКА на ступень вверх. Зеркало
+## _tick_hire_click. «Вручную у плавильни»: клик = одна перечеканка 100→1.
+func _tick_mint_click() -> void:
+	var tree := get_tree()
+	var trade := tree.get_first_node_in_group(&"trade_ui")
+	if trade != null and trade.has_method(&"is_open") and trade.call(&"is_open"):
+		return  # модалка открыта
+	if not Input.is_action_just_pressed(ACTION_GRAB):
+		return
+	var hand := tree.get_first_node_in_group(Hand.HAND_GROUP)
+	if hand == null or not hand.has_method(&"cursor_world_position"):
+		return
+	var hp: Vector3 = hand.call(&"cursor_world_position")
+	var cell := CityGrid.world_to_cell(hp, tree)
+	if cell in occupied_cells():
+		_mint_one_step()
+
+
+## Одна перечеканка 100→1: приоритет серебро→золото (если набралось 100🥈), иначе
+## бронза→серебро. Атомарно через казну. Выбор-попап (что чеканить) — можно позже.
+func _mint_one_step() -> void:
+	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	if bank == null or not bank.has_method(&"spend_cost"):
+		return
+	var RT := ResourcePile.ResourceType
+	if int(bank.call(&"get_coin", RT.SILVER)) >= MINT_RATIO:
+		if bank.call(&"spend_cost", {RT.SILVER: MINT_RATIO}):
+			bank.call(&"add_coin", RT.GOLD, 1)
+	elif int(bank.call(&"get_coin", RT.BRONZE)) >= MINT_RATIO:
+		if bank.call(&"spend_cost", {RT.BRONZE: MINT_RATIO}):
+			bank.call(&"add_coin", RT.SILVER, 1)
 
 
 ## Контракт hover-подсветки (Hand._update_pickup_highlight): наводим руку → казарма
@@ -608,7 +683,7 @@ func set_highlighted(value: bool) -> void:
 
 ## Мировые клетки, занятые постройкой (для проверки наложения при размещении).
 func occupied_cells() -> Array:
-	return OilGrid.building_cells(global_position, _mask, rotation.y, get_tree())
+	return CityGrid.building_cells(global_position, _mask, rotation.y, get_tree())
 
 
 func _solid(c: Color, metallic: float, rough: float) -> StandardMaterial3D:
@@ -634,7 +709,7 @@ func _box(size: Vector3, pos: Vector3, mat: StandardMaterial3D, shadow: bool) ->
 ## Горизонтальный СЛОЙ по всем клеткам фигуры (цоколь / карниз): на каждую клетку плита
 ## стороной side, высотой h, центром по Y = y. Плиты смыкаются в единый поясок здания.
 func _layer(y: float, side: float, h: float, mat: StandardMaterial3D) -> void:
-	var s: float = OilGrid.CELL
+	var s: float = CityGrid.CELL
 	for off in _mask:
 		var o := off as Vector2i
 		_box(Vector3(side, h, side), Vector3(o.x * s, y, o.y * s), mat, true)

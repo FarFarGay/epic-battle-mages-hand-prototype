@@ -203,12 +203,17 @@ func _grant_mana() -> void:
 		_tower.restore_mana(mana_amount)
 
 
-## Кладёт золото в GoldBank на arrival (монеты из горшков). 0 = пропуск.
+## Кладёт БРОНЗУ в казну на arrival (монеты из горшков/убийств — «всё → бронза»,
+## монетная экономика). Серебро/золото — только с богатых жил и ручной чеканкой. 0 = пропуск.
 func _grant_gold() -> void:
 	if gold_amount <= 0:
 		return
 	var bank := get_tree().get_first_node_in_group(&"gold_bank")
-	if bank != null and bank.has_method(&"add_gold"):
+	if bank == null:
+		return
+	if bank.has_method(&"add_coin"):
+		bank.call(&"add_coin", ResourcePile.ResourceType.BRONZE, gold_amount)
+	elif bank.has_method(&"add_gold"):
 		bank.call(&"add_gold", gold_amount)
 
 

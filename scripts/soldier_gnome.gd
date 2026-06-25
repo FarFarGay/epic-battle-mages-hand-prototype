@@ -357,6 +357,9 @@ func deliver_resource() -> int:
 const GATHER_AREA_RADIUS := 8.0
 ## Ресурс, которым строится мост (берётся со склада башни при BUILD).
 const BUILD_RESOURCE := ResourcePile.ResourceType.WOOD
+## Монетная экономика: один доставленный груз добычи = столько БРОНЗЫ в казну
+## (деньги — единственный ресурс; дерево/камень схлопнуты в монеты). Тюнится.
+const HARVEST_BRONZE_PER_LOAD := 5
 
 
 ## Направленная работа рабочего по area-клику (work_kind отряда). Единая модель:
@@ -383,6 +386,12 @@ func _tick_worker_order(delta: float) -> void:
 ## (башня заберёт магнитом, когда освободится место). Не таскаем к башне впустую.
 func _tick_gather(_delta: float) -> void:
 	if is_carrying():
+		# Монетная экономика: руду несём в ПЛАВИЛЬНЮ → сразу монеты в казну. Плавильни нет
+		# — старый путь (склад), чтобы гном не застревал с грузом до её постройки.
+		var smelter := _nearest_in_group_near(&"smelter", global_position, 9999.0)
+		if smelter != null:
+			_tick_smelt_at(smelter)
+			return
 		var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
 		if store != null and store.is_full(_carried_type):
 			_drop_carried_as_orb()
@@ -684,6 +693,36 @@ func _compute_repair_angle() -> float:
 
 ## Нести ресурс на склад башни и сдать. Точка сдачи = центр башни (склад логически
 ## «башни»). Дошёл → сдаём 1 единицу; склад полон по типу → встаём, краснеет кольцо.
+## Несём руду к ПЛАВИЛЬНЕ → на месте СРАЗУ переплавляем в монеты (монетная экономика).
+## Тир монеты — по типу руды (богатство жилы): дерево→бронза, железная жила→серебро,
+## каменная/золотая жила→золото. См. _smelt_yield.
+func _tick_smelt_at(smelter: Node3D) -> void:
+	var dest: Vector3 = smelter.global_position
+	var to := Vector3(dest.x - global_position.x, 0.0, dest.z - global_position.z)
+	var d: float = to.length()
+	if d > attack_range:
+		_move_toward(to, d)
+		return
+	velocity = Vector3.ZERO
+	var yield_pair: Array = _smelt_yield(_carried_type)
+	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	if bank != null and bank.has_method(&"add_coin"):
+		bank.call(&"add_coin", yield_pair[0], yield_pair[1])
+	deliver_resource()
+
+
+## Что даёт переплавка единицы руды типа material: [coin_type, amount]. Богатство жилы =
+## достоинство. Богатые жилы дают мало штук дорогого номинала (1🥈/🥇 ≈ много бронзы).
+func _smelt_yield(material: int) -> Array:
+	match material:
+		ResourcePile.ResourceType.IRON, ResourcePile.ResourceType.SILVER:
+			return [ResourcePile.ResourceType.SILVER, 1]
+		ResourcePile.ResourceType.STONE, ResourcePile.ResourceType.GOLD:
+			return [ResourcePile.ResourceType.GOLD, 1]
+		_:
+			return [ResourcePile.ResourceType.BRONZE, HARVEST_BRONZE_PER_LOAD]
+
+
 func _tick_deposit_to_store() -> void:
 	var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
 	if store == null:

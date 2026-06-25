@@ -1,4 +1,4 @@
-class_name OilCollector
+class_name Castle
 extends StaticBody3D
 ## Коллектор — центральный хаб нефтесети (Room8, на месте бывшего бура). Принимает
 ## нефть со ВСЕХ буров по трубам (add_oil), копит = счётчик победы матча. Это цель
@@ -9,7 +9,7 @@ extends StaticBody3D
 ## (_recompute_network) и зовёт bur.set_collector(self). Коллектор пассивен: буры
 ## сами шлют ему add_oil каждый тик добычи.
 
-const GROUP := &"oil_collector"
+const GROUP := &"castle"
 ## Допуск совпадения КОНЦОВ (портов) труб/инлетов/буров. Снап ставит концы встык
 ## (≈0), 0.6 — запас.
 const PORT_TOL := 0.6
@@ -268,7 +268,7 @@ func add_oil(amount: float) -> void:
 		filled.emit()
 		EventBus.match_won.emit()  # замок наполнен нефтью → победа (WinOverlay слушает)
 		if LogConfig.master_enabled:
-			print("[OilCollector] ★ КОЛЛЕКТОР ПОЛОН (%.0f) — цель добычи достигнута" % oil_goal)
+			print("[Castle] ★ КОЛЛЕКТОР ПОЛОН (%.0f) — цель добычи достигнута" % oil_goal)
 
 
 func get_oil() -> float:

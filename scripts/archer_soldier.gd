@@ -706,7 +706,7 @@ func _grn_recompute() -> void:
 		var wdir := Vector3(ahead.x - here.x, 0.0, ahead.z - here.z)
 		if wdir.length() > 0.01:
 			wdir = wdir.normalized()
-			var half: float = OilGrid.CELL * 0.32
+			var half: float = CityGrid.CELL * 0.32
 			r = [here - wdir * half, here + wdir * half]
 	_grn_route = r
 
@@ -751,7 +751,7 @@ func garrison_world_changed() -> void:
 	# роняем на землю one-shot'ом. Не поллим каждый кадр: иначе мерцание клетки на патруле/
 	# подъёме морозит лучника в воздухе (был баг с зависанием на казарме).
 	if global_position.y > _grn_ground_y + 0.3:
-		var cell := OilGrid.world_to_cell(global_position, get_tree())
+		var cell := CityGrid.world_to_cell(global_position, get_tree())
 		if not _grn_walk.has(cell):
 			_grn_falling = true
 

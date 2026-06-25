@@ -209,7 +209,7 @@ func _commit(pos: Vector3) -> void:
 	if _data.has("cells"):
 		# Ворота заменяют стену: снести стены под их клетками.
 		if _data.get("role", &"") == &"gate":
-			_remove_walls_under(OilGrid.building_cells(pos, _data.get("cells", []), _rot_y, get_tree()))
+			_remove_walls_under(CityGrid.building_cells(pos, _data.get("cells", []), _rot_y, get_tree()))
 		var b := PadBuilding.new()
 		b.setup(_building)  # маска/роль ДО add_child (_ready строит по ним)
 		scene.add_child(b)
@@ -218,7 +218,7 @@ func _commit(pos: Vector3) -> void:
 		call_deferred(&"_refresh_walls")  # стены дотянутся до новой постройки
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:PlaceAim] фигура %s @ клетка %s, yaw %.0f°" % [
-				_building, OilGrid.world_to_cell(pos, get_tree()), rad_to_deg(_rot_y)])
+				_building, CityGrid.world_to_cell(pos, get_tree()), rad_to_deg(_rot_y)])
 		return
 	# Мгновенная постройка (трубы): ставим готовую сцену сразу, без стройплощадки и
 	# рабочих — длинную трассу не хочется хаулить. Снап/связь у труб — по портам
@@ -251,7 +251,7 @@ func _commit(pos: Vector3) -> void:
 ## на решётку шага 2 → нечётное кратное полуклетки). Нет коллектора → мир-ноль (трубы
 ## всё равно лягут на общую решётку и сойдутся между собой).
 func _oil_anchor() -> Vector3:
-	var c := get_tree().get_first_node_in_group(OilCollector.GROUP)
+	var c := get_tree().get_first_node_in_group(Castle.GROUP)
 	return (c as Node3D).global_position if c is Node3D else Vector3.ZERO
 
 
@@ -282,9 +282,9 @@ func _snap_oil_grid(raw: Vector3) -> Vector3:
 
 
 ## Совпал ли хоть один порт постройки (ports) с портом существующего хоста — для гейта
-## труб (в воздух нельзя) и подсветки силуэта. Допуск — [OilCollector.PORT_TOL].
+## труб (в воздух нельзя) и подсветки силуэта. Допуск — [Castle.PORT_TOL].
 func _touches_host(ports: Array) -> bool:
-	var tol2: float = OilCollector.PORT_TOL * OilCollector.PORT_TOL
+	var tol2: float = Castle.PORT_TOL * Castle.PORT_TOL
 	for host in get_tree().get_nodes_in_group(PipeSegment.PORT_HOST_GROUP):
 		if not is_instance_valid(host) or not host.has_method(&"pipe_ports"):
 			continue
@@ -302,11 +302,11 @@ func _touches_host(ports: Array) -> bool:
 func _pad_valid(center: Vector3) -> bool:
 	# Ворота можно ставить ПОВЕРХ стен (заменяют участок) → стены не считаем занятыми.
 	var over_walls: bool = _data.get("role", &"") == &"gate"
-	var cells: Array = OilGrid.building_cells(center, _data.get("cells", []), _rot_y, get_tree())
+	var cells: Array = CityGrid.building_cells(center, _data.get("cells", []), _rot_y, get_tree())
 	var occ: Dictionary = _occupied_cells(over_walls)
 	for c in cells:
 		var cell := c as Vector2i
-		if not OilGrid.in_pad(cell) or OilGrid.is_pump(cell) or occ.has(cell):
+		if not CityGrid.in_pad(cell) or CityGrid.is_pump(cell) or occ.has(cell):
 			return false
 	return true
 
@@ -418,7 +418,7 @@ func _spawn_ghost() -> void:
 	_ghost_mat.emission_energy_multiplier = 0.4
 	if _data.has("cells"):
 		# Полимино: куб-призрак на каждую клетку маски (узел повернём в _update_ghost).
-		var s: float = OilGrid.CELL
+		var s: float = CityGrid.CELL
 		for off in _data.get("cells", []):
 			var o := off as Vector2i
 			var mc := MeshInstance3D.new()
@@ -506,7 +506,7 @@ func _update_pad_floor(anchor: Vector3) -> void:
 	if not is_instance_valid(_pad_floor):
 		_pad_floor = MeshInstance3D.new()
 		var pm := PlaneMesh.new()
-		var side: float = (2.0 * OilGrid.PAD_RADIUS + 1.0) * OilGrid.CELL
+		var side: float = (2.0 * CityGrid.PAD_RADIUS + 1.0) * CityGrid.CELL
 		pm.size = Vector2(side, side)
 		_pad_floor.mesh = pm
 		_pad_floor.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -530,7 +530,7 @@ func _clear_grid() -> void:
 
 ## Снести ближайшую трубу ИЛИ полимино-фигуру к точке курсора (ПКМ) — поправить
 ## ошибочную постройку. Радиус — чуть меньше клетки, чтобы целить однозначно. Связность
-## нефтесети пересчитает OilCollector следующим тиком; занятость клеток — по факту групп.
+## нефтесети пересчитает Castle следующим тиком; занятость клеток — по факту групп.
 func _delete_pipe_under_cursor() -> void:
 	var g: Vector3 = _hand.cursor_world_position()
 	g.y -= _hand.hand_height
@@ -546,7 +546,7 @@ func _delete_pipe_under_cursor() -> void:
 			var d: float = best_d + 1.0
 			if node.has_method(&"occupied_cells"):
 				for c in node.call(&"occupied_cells"):
-					var w: Vector3 = OilGrid.cell_to_world(c as Vector2i, get_tree())
+					var w: Vector3 = CityGrid.cell_to_world(c as Vector2i, get_tree())
 					d = minf(d, (w.x - g.x) * (w.x - g.x) + (w.z - g.z) * (w.z - g.z))
 			else:
 				d = (node.global_position.x - g.x) * (node.global_position.x - g.x) + (node.global_position.z - g.z) * (node.global_position.z - g.z)
