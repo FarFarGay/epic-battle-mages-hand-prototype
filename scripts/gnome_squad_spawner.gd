@@ -23,8 +23,9 @@ const RECALL_ACTION := &"caravan_halt_toggle"
 ## Рабочий радиус для артели: больше боевого — чтобы охватить и дерево, и стройку,
 ## когда отряд припаркован между ними (рабочие сами курсируют руб↔стройка).
 @export var work_leash_radius: float = 16.0
-## Радиус визуального кольца волны вызова от башни.
-@export var recall_radius: float = 30.0
+## Радиус кольца призыва от башни (и визуал, и гейт «кто откликается на F»). Узкий —
+## чтобы F цеплял только ближайшую группу солдат, а не всех на карте.
+@export var recall_radius: float = 7.0
 ## Скорость расширения кольца (м/с) — задаёт длительность визуала.
 @export var recall_wave_speed: float = 45.0
 
@@ -104,8 +105,9 @@ func _connect_trade() -> void:
 		trade.purchased.connect(_on_purchased)
 
 
-## Клавиша вызова (F): волна от башни + toggle всех room-отрядов escort⇄hold —
-## комнатный аналог кампового recall (Camp._handle_halt_input), но без Camp.
+## Клавиша вызова (F): ПРИЗЫВ боевых отрядов за башню. Снимает лучников со стен и ведёт
+## за башней. НЕ вытаскивает спрятанных в башне; рабочих не трогает; зовёт только тех, у
+## кого есть живой боец в кольце призыва. Возврат на стену — кнопкой в карточке (не F).
 func _process(_delta: float) -> void:
 	if Input.is_action_just_pressed(RECALL_ACTION):
 		_recall_squads()
@@ -118,37 +120,34 @@ func _recall_squads() -> void:
 	var origin: Vector3 = (tower as Node3D).global_position
 	# Кольцо-волну пульсим всегда (даже без отрядов — видно границу/обратную связь).
 	EventBus.recall_zone_pulsed.emit(origin, recall_radius, recall_radius / maxf(recall_wave_speed, 0.001))
-	# Живые отряды собираем из солдат (уникальные Squad-ссылки).
-	var squads: Array = []
+	# Уникальные живые отряды из солдат.
 	var seen: Dictionary = {}
 	for s in get_tree().get_nodes_in_group(&"soldier"):
-		if is_instance_valid(s) and s._squad != null and not seen.has(s._squad):
-			seen[s._squad] = true
-			squads.append(s._squad)
-	if squads.is_empty():
-		return
-	# Toggle: хоть один в эскорте → все встают (HOLD-soft); иначе → все к башне.
-	var any_escort: bool = false
-	for sq in squads:
-		if sq.state == Squad.State.ESCORTING_TOWER:
-			any_escort = true
-			break
-	for sq in squads:
-		if any_escort:
-			sq.command_hold(_squad_center(sq, origin), false)
-		else:
-			sq.command_escort()
+		if not is_instance_valid(s) or s._squad == null or seen.has(s._squad):
+			continue
+		seen[s._squad] = true
+		var sq: Squad = s._squad
+		# Рабочих F не трогает (контроль — через карточку артели).
+		if sq.soldier_type == SoldierSystem.ROLE_WORKER:
+			continue
+		# Спрятанных в башне НЕ вытаскиваем (F не вынимает из башни).
+		if sq.state == Squad.State.ESCORTING_TOWER and sq.hide_in_tower:
+			continue
+		# Зовём, только если есть живой боец в кольце призыва (на стенах/в поле).
+		if _squad_has_member_in_ring(sq, origin, recall_radius):
+			sq.command_escort()  # снимает лучников со стен → за башней
 
 
-## Средняя позиция живых членов отряда (fallback — точка башни).
-func _squad_center(sq: Squad, fallback: Vector3) -> Vector3:
-	var sum: Vector3 = Vector3.ZERO
-	var n: int = 0
+## Есть ли у отряда живой боец в кольце призыва (XZ-радиус от башни).
+func _squad_has_member_in_ring(sq: Squad, origin: Vector3, radius: float) -> bool:
+	var r2: float = radius * radius
 	for m in sq.members:
 		if is_instance_valid(m):
-			sum += m.global_position
-			n += 1
-	return sum / float(n) if n > 0 else fallback
+			var d: Vector3 = m.global_position - origin
+			d.y = 0.0
+			if d.length_squared() <= r2:
+				return true
+	return false
 
 
 func _on_purchased(unit_type: StringName, squad_size: int) -> void:

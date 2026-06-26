@@ -1754,6 +1754,7 @@ func _on_squad_created(squad: RefCounted) -> void:
 	_squad_panel.add_child(card)
 	_squad_cards[s.id] = card
 	_squads_by_id[s.id] = s
+	card.visible = _squad_card_should_show(s)
 
 
 func _on_squad_changed(squad: RefCounted) -> void:
@@ -1764,6 +1765,20 @@ func _on_squad_changed(squad: RefCounted) -> void:
 	if card == null or not is_instance_valid(card):
 		return
 	_refresh_squad_card(card, s)
+	card.visible = _squad_card_should_show(s)
+
+
+## Карточку показываем только когда отряд «призван»/активен. Боевой отряд, пассивно стоящий
+## (гарнизон лучников на стенах = мягкий hold, не призван) — прячем, чтобы не засорять экран
+## (особенно при нескольких казармах). Артель рабочих — всегда видна (через неё деплоят).
+func _squad_card_should_show(squad: Squad) -> bool:
+	if squad == null:
+		return true
+	if squad.soldier_type == SoldierSystem.ROLE_WORKER:
+		return true
+	if squad.state == Squad.State.HOLDING_POSITION and not squad.is_strict_move():
+		return false
+	return true
 
 
 func _on_squad_disbanded(squad: RefCounted) -> void:
@@ -1855,11 +1870,77 @@ func _build_squad_card(squad: Squad) -> Control:
 	title.set_meta(&"squad_title", true)
 	header.add_child(title)
 
-	# Кнопки команд. Назначаем bind через squad-id, в callback резолвим
-	# Camp.get_squads().find(id) — squad-объект мог быть disbanded между
-	# spawn-ом карточки и кликом.
-	# Сетка 2×N вместо одного ряда: кнопки переносятся на новую строку, а не вылезают
-	# вправо за край панели — карточка влезает в ЛЮБУЮ заданную ширину SquadScroll.
+	# Кнопки команд. В КОМНАТНОМ режиме (без лагеря) — упрощённый набор (см.
+	# _add_squad_buttons_rooms). В КАМПЕ (main.tscn, _camp валиден) — полный старый
+	# набор с «Защищать»/«Распустить», чтобы не ломать запаркованный камповый режим.
+	if is_instance_valid(_camp):
+		_add_squad_buttons_camp(vbox, squad)
+	else:
+		_add_squad_buttons_rooms(vbox, squad)
+
+	_refresh_squad_card(card, squad)
+	return card
+
+
+## Унифицированная squad-кнопка: focus NONE (иначе Space триггерит pressed), растяжка,
+## мелкий шрифт. Текст/коллбэк/мету вешает caller.
+func _mk_squad_btn(text: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.focus_mode = Control.FOCUS_NONE
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.add_theme_font_size_override("font_size", 11)
+	return b
+
+
+## Чистый набор команд для КОМНАТНОГО режима. Артель: Идти сюда · В башню · Стройка ·
+## Ремонт. Лучники: Идти сюда · В башню · На стену. Копейщики: Идти сюда · В башню · За
+## башней (стен нет). «Идти сюда» — toggle (повторный клик снимает aim), поэтому «Снять»
+## не нужна. Призыв со стен за башню — на клавише F (см. GnomeSquadSpawner).
+func _add_squad_buttons_rooms(vbox: VBoxContainer, squad: Squad) -> void:
+	var row := GridContainer.new()
+	row.columns = 2
+	row.add_theme_constant_override("h_separation", 4)
+	row.add_theme_constant_override("v_separation", 4)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(row)
+
+	var btn_aim := _mk_squad_btn("Идти сюда")
+	btn_aim.pressed.connect(_on_squad_aim_pressed.bind(squad.id))
+	btn_aim.set_meta(&"squad_btn_aim", true)
+	row.add_child(btn_aim)
+
+	var btn_hide := _mk_squad_btn("🏰 В башню")
+	btn_hide.tooltip_text = "Спрятать отряд ВНУТРЬ башни (неуязвимы). «Идти сюда» — выйдут обратно."
+	btn_hide.pressed.connect(_on_squad_hide_pressed.bind(squad.id))
+	row.add_child(btn_hide)
+
+	if squad.soldier_type == SoldierSystem.ROLE_WORKER:
+		var btn_build := _mk_squad_btn("🔨 Стройка")
+		btn_build.tooltip_text = "Выбрать, что построить (мост и пр.), потом отправить рабочих"
+		btn_build.pressed.connect(_on_squad_build_pressed.bind(btn_build))
+		row.add_child(btn_build)
+		var btn_repair := _mk_squad_btn("🔧 Ремонт")
+		btn_repair.tooltip_text = "Рабочие выходят из башни и чинят её, потом прячутся обратно"
+		btn_repair.pressed.connect(_on_squad_repair_pressed.bind(squad.id))
+		row.add_child(btn_repair)
+	elif squad.soldier_type == &"archer_squad":
+		var btn_wall := _mk_squad_btn("🧱 На стену")
+		btn_wall.tooltip_text = "Лучники возвращаются на городские стены (гарнизон)"
+		btn_wall.pressed.connect(_on_squad_wall_pressed.bind(squad.id))
+		row.add_child(btn_wall)
+	else:
+		var btn_escort := _mk_squad_btn("⚔ За башней")
+		btn_escort.tooltip_text = "Отряд следует за башней"
+		btn_escort.pressed.connect(_on_squad_escort_pressed.bind(squad.id))
+		btn_escort.set_meta(&"squad_btn_escort", true)
+		row.add_child(btn_escort)
+
+
+## Полный старый набор команд для КАМПА (main.tscn). Не трогаем — камповый режим
+## запаркован (см. memory legacy_cleanup). Вынесено дословно из прежнего _build_squad_card.
+func _add_squad_buttons_camp(vbox: VBoxContainer, squad: Squad) -> void:
 	var btn_row := GridContainer.new()
 	btn_row.columns = 2
 	btn_row.add_theme_constant_override("h_separation", 4)
@@ -1868,11 +1949,6 @@ func _build_squad_card(squad: Squad) -> Control:
 	btn_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(btn_row)
 
-	# focus_mode = NONE на всех squad-кнопках. Без этого Godot Button
-	# по дефолту имеет FOCUS_ALL, и нажатие Space на сфокусированной
-	# (последней кликнутой) кнопке триггерит её pressed-сигнал. То есть
-	# Space — суперудар по дизайну — параллельно «нажимал» «Идти сюда»,
-	# и поверх голотого aim'а супера появлялся голубой ring squad-aim'а.
 	var btn_aim := Button.new()
 	btn_aim.text = "Идти сюда"
 	btn_aim.focus_mode = Control.FOCUS_NONE
@@ -1883,9 +1959,6 @@ func _build_squad_card(squad: Squad) -> Control:
 	btn_row.add_child(btn_aim)
 
 	var btn_escort := Button.new()
-	# Рабочие не воюют → их «эскорт» = спрятаться ВНУТРЬ башни (безопасность),
-	# а не вставать рядом. Та же command_escort, но SoldierGnome для worker'а
-	# уводит в прятку. Копейщикам — обычное «За башней».
 	var is_worker_squad: bool = squad.soldier_type == SoldierSystem.ROLE_WORKER
 	btn_escort.text = "В башню" if is_worker_squad else "За башней"
 	if is_worker_squad:
@@ -1906,11 +1979,6 @@ func _build_squad_card(squad: Squad) -> Control:
 	btn_defend.set_meta(&"squad_btn_defend", true)
 	btn_row.add_child(btn_defend)
 
-	# Вторая строка: «Распустить» — конвертит солдат обратно в gatherer'ов.
-	# Disabled когда не все юниты в proximity лагеря (Camp.can_dismiss_squad).
-	# Tooltip объясняет, что нужно вернуть в лагерь. Refresh state — в
-	# `_refresh_squad_card` (статика на event-ах) и в `_update_squad_cards_dynamic`
-	# (раз в 0.25с — пока юниты идут к лагерю, кнопка переключится сама).
 	var btn_row2 := GridContainer.new()
 	btn_row2.columns = 2
 	btn_row2.add_theme_constant_override("h_separation", 4)
@@ -1927,8 +1995,6 @@ func _build_squad_card(squad: Squad) -> Control:
 	btn_dismiss.set_meta(&"squad_btn_dismiss", true)
 	btn_row2.add_child(btn_dismiss)
 
-	# «Снять выделение» — отменяет sticky-aim «Идти сюда», рука возвращается к
-	# обычным действиям (каст/захват). Без него aim-режим залипал в руке.
 	var btn_deselect := Button.new()
 	btn_deselect.text = "✕ Снять"
 	btn_deselect.focus_mode = Control.FOCUS_NONE
@@ -1938,8 +2004,6 @@ func _build_squad_card(squad: Squad) -> Control:
 	btn_deselect.pressed.connect(_on_squad_deselect_pressed)
 	btn_row2.add_child(btn_deselect)
 
-	# Вкладка «Стройка» — только у рабочих. Открывает меню «что построить» (мост и
-	# т.д.), вместо постоянной кнопки на экране. После выбора — планирование рукой.
 	if is_worker_squad:
 		var btn_build := Button.new()
 		btn_build.text = "🔨 Стройка"
@@ -1959,9 +2023,6 @@ func _build_squad_card(squad: Squad) -> Control:
 		btn_repair.pressed.connect(_on_squad_repair_pressed.bind(squad.id))
 		btn_row2.add_child(btn_repair)
 	else:
-		# Копейщики: «В башню» — спрятаться ВНУТРЬ (неуязвимы), отдельно от боевого
-		# «За башней». Увести отряд в укрытие на опасный момент (босс/AOE), потом
-		# снова «За башней» / «Идти сюда» — выйдут в бой.
 		var btn_hide := Button.new()
 		btn_hide.text = "🏰 В башню"
 		btn_hide.focus_mode = Control.FOCUS_NONE
@@ -1970,9 +2031,6 @@ func _build_squad_card(squad: Squad) -> Control:
 		btn_hide.tooltip_text = "Спрятать отряд ВНУТРЬ башни (неуязвимы). «За башней» / «Идти сюда» — выйдут обратно."
 		btn_hide.pressed.connect(_on_squad_hide_pressed.bind(squad.id))
 		btn_row2.add_child(btn_hide)
-
-	_refresh_squad_card(card, squad)
-	return card
 
 
 func _refresh_squad_card(card: Control, squad: Squad) -> void:
@@ -2170,6 +2228,17 @@ func _on_squad_hide_pressed(squad_id: int) -> void:
 		return
 	_cancel_hand_aims()  # команда отменяет активный aim-режим
 	squad.command_escort(false, true)
+
+
+## «На стену» (лучники) — вернуть отряд в гарнизон городских стен. Мягкий hold → лучники
+## с назначенным постом (_grn_assigned) сами пути возвращаются на стены. Карточка после
+## этого скрывается (Шаг 2: пассивный гарнизон не показывается).
+func _on_squad_wall_pressed(squad_id: int) -> void:
+	var squad: Squad = _resolve_squad_by_id(squad_id)
+	if squad == null:
+		return
+	_cancel_hand_aims()  # команда отменяет активный aim-режим
+	squad.command_hold(_squad_alive_center_or_tower(squad), false)
 
 
 ## Среднее живых членов squad'а; fallback на башню если членов нет.
