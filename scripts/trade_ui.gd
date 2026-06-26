@@ -45,6 +45,9 @@ var _unit_type: StringName = &"pikeman"
 ## широковещательного purchased: казарма сама спавнит отряд + раздаёт посты гарнизона.
 ## Пуст (открыл домик гномов) → broadcast purchased → спавнер ловит generic-путём.
 var _on_purchase: Callable = Callable()
+## Счётчик живых бойцов для гейта «Артель полна». Задаёт КАЗАРМА (свои бойцы — per-barracks);
+## пуст → глобальный счёт по типу (_count_of_type, для покупки в домике).
+var _count_fn: Callable = Callable()
 
 
 func _ready() -> void:
@@ -77,11 +80,12 @@ func _process(_delta: float) -> void:
 	_pay_zone.self_modulate = Color(1.25, 1.35, 1.2) if dragging else Color(1, 1, 1)
 
 
-func open(unit_type: StringName = &"pikeman", on_purchase: Callable = Callable()) -> void:
+func open(unit_type: StringName = &"pikeman", on_purchase: Callable = Callable(), count_fn: Callable = Callable()) -> void:
 	if _open:
 		return
 	_unit_type = unit_type
 	_on_purchase = on_purchase
+	_count_fn = count_fn
 	_open = true
 	_applied = {}
 	_placed = 0
@@ -95,6 +99,7 @@ func close() -> void:
 		return
 	_open = false
 	_on_purchase = Callable()
+	_count_fn = Callable()
 	_root.visible = false
 	get_tree().paused = false
 
@@ -126,6 +131,14 @@ func _count_of_type(unit_type: StringName) -> int:
 		if is_instance_valid(s) and s.get(&"soldier_type") == unit_type:
 			c += 1
 	return c
+
+
+## Текущий счёт для гейта «Артель полна»: per-barracks (через _count_fn от казармы) либо
+## глобально по типу (покупка в домике).
+func _current_count() -> int:
+	if _count_fn.is_valid():
+		return int(_count_fn.call())
+	return _count_of_type(_unit_type)
 
 
 func _get_deeds() -> Array:
@@ -213,7 +226,7 @@ func _rebuild() -> void:
 	_buy_btn.text = ("Купить: %s" % unit_name) if rem > 0 else ("Купить даром: %s" % unit_name)
 	# Потолок артели (рабочие — 7): полно → купить нельзя (иначе платил бы зря).
 	var cap: int = SoldierSystem.get_squad_cap(_unit_type) if SoldierSystem != null else 0
-	if cap > 0 and _count_of_type(_unit_type) >= cap:
+	if cap > 0 and _current_count() >= cap:
 		_buy_btn.disabled = true
 		_buy_btn.text = "Артель полна (%d/%d)" % [cap, cap]
 		_price_label.text = "Артель уже полна — больше не нанять"

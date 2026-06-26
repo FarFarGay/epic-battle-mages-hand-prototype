@@ -662,24 +662,33 @@ func _open_hire() -> void:
 	if trade == null or not trade.has_method(&"open"):
 		return
 	var stype: StringName = RoomBuildings.get_data(building_id).get("squad_type", &"archer_squad")
-	trade.call(&"open", stype, Callable(self, &"_on_hired"))
+	# count_fn — счёт живых ИМЕННО этой казармы → гейт «Артель полна» per-barracks, не глобально.
+	trade.call(&"open", stype, Callable(self, &"_on_hired"), Callable(self, &"_my_squad_count"))
+
+
+## Сколько живых бойцов уже в отряде ЭТОЙ казармы (для гейта найма в торге).
+func _my_squad_count() -> int:
+	var sp := get_tree().get_first_node_in_group(&"squad_spawner")
+	if sp != null and sp.has_method(&"owner_squad_count"):
+		return int(sp.call(&"owner_squad_count", self))
+	return 0
 
 
 ## Оплата прошла: заказываем у спавнера want юнитов типа у казармы. Лучники (corner_tower)
 ## → раздаём посты гарнизона стен; копейщики → мобильный отряд за башней (спавнер сам escort).
-## Спавнер держит ОДИН отряд на тип → повторный найм доливает павших (cap гасит перебор).
+## Спавнер держит отряд НА КАЗАРМУ → повторный найм доливает павших ЭТОЙ казармы (cap гасит перебор).
 func _on_hired(unit_type: StringName, want: int) -> void:
 	var tree := get_tree()
 	if tree == null:
 		return
 	var spawner := tree.get_first_node_in_group(&"squad_spawner")
-	if spawner == null or not spawner.has_method(&"request_squad"):
+	if spawner == null or not spawner.has_method(&"request_squad_for"):
 		return
-	# Добор до капа клампит сам request_squad (единый путь). Стол торга и так гасит
+	# Добор до капа клампит сам request_squad_for (per-barracks). Стол торга и так гасит
 	# «Купить» на full → сюда обычно приходим лишь при недоборе.
 	var posts: Dictionary = _garrison_posts()
 	var ground: Vector3 = posts[&"ground"]
-	var members: Array = spawner.call(&"request_squad", unit_type, want, ground)
+	var members: Array = spawner.call(&"request_squad_for", self, unit_type, want, ground)
 	if members.is_empty():
 		return
 	# Лучники с башней → гарнизон стен. Прочие (копейщики) остаются мобильным отрядом.

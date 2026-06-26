@@ -31,9 +31,10 @@ const RECALL_ACTION := &"caravan_halt_toggle"
 ## Счётчик уникальных id отрядов (для squad-карточек HUD'а). Со смещением 1000,
 ## чтобы не пересекаться с лагерными id (на случай гибридных сцен).
 var _next_squad_id: int = 1000
-## Один отряд НА ТИП (soldier_type → Squad). Найм доливает в существующий отряд
-## своего типа, а не плодит дубликаты. На disband — чистим.
-var _squads_by_type: Dictionary = {}
+## Реестр отрядов по КЛЮЧУ → Squad. Ключ = soldier_type (рабочие/покупка в домике —
+## один отряд на тип) ИЛИ instance_id казармы (КАЖДАЯ казарма держит СВОЙ отряд, своя
+## тройка, добор только своих павших). Найм доливает в отряд этого ключа. На disband — чистим.
+var _squads: Dictionary = {}
 
 
 const GROUP := &"squad_spawner"
@@ -47,19 +48,46 @@ func _ready() -> void:
 	_spawn_starting_workers()
 
 
-## Публичный заказ отряда из постройки (казармы): добавить count юнитов типа у позиции
-## pos в отряд-этого-типа (тот же путь, что покупка). Возвращает созданных (последние N
-## членов отряда) — постройка раздаёт им посты гарнизона.
+## Публичный заказ отряда ОТ КОНКРЕТНОЙ КАЗАРМЫ: добавить count юнитов типа у позиции pos
+## в отряд ЭТОЙ казармы (ключ = её instance_id → своя тройка независимо от других казарм).
+## Добор клампится к cap типа по живым ЭТОЙ казармы. Возвращает новых членов (для постов).
+func request_squad_for(owner: Node, soldier_type: StringName, count: int, pos: Vector3) -> Array:
+	if owner == null or SoldierSystem == null or not SoldierSystem.has_soldier(soldier_type):
+		return []
+	var key: int = owner.get_instance_id()
+	var add: int = _clamp_to_cap(key, soldier_type, maxi(count, 1))
+	if add <= 0:
+		return []
+	_spawn_squad(key, soldier_type, add, pos)
+	var sq: Squad = _squads.get(key)
+	if sq == null:
+		return []
+	var m: Array = sq.members
+	var out: Array = []
+	for i in range(maxi(m.size() - add, 0), m.size()):
+		if i >= 0 and i < m.size() and is_instance_valid(m[i]):
+			out.append(m[i])
+	return out
+
+
+## Живых членов отряда ЭТОЙ казармы (гейт «Артель полна» в торге — per-barracks, не глобально).
+func owner_squad_count(owner: Node) -> int:
+	if owner == null:
+		return 0
+	return _count_in(owner.get_instance_id())
+
+
+## Заказ отряда ПО ТИПУ (ключ = soldier_type) — ОДИН общий отряд на тип. Для рабочих-артели
+## из замка (oil_collector): та же артель, что стартовые рабочие, общий cap. НЕ для казарм
+## (у них per-barracks через request_squad_for). Возвращает новых членов.
 func request_squad(soldier_type: StringName, count: int, pos: Vector3) -> Array:
 	if SoldierSystem == null or not SoldierSystem.has_soldier(soldier_type):
 		return []
-	# Кламп по капу типа ЗДЕСЬ (единый путь для всех нанимателей — казарма/замок):
-	# спавнер держит ОДИН отряд на тип, добор лишь доливает павших до cap.
-	var add: int = _clamp_to_cap(soldier_type, maxi(count, 1))
+	var add: int = _clamp_to_cap(soldier_type, soldier_type, maxi(count, 1))
 	if add <= 0:
 		return []
-	_spawn_squad(soldier_type, add, pos)
-	var sq: Squad = _squads_by_type.get(soldier_type)
+	_spawn_squad(soldier_type, soldier_type, add, pos)
+	var sq: Squad = _squads.get(soldier_type)
 	if sq == null:
 		return []
 	var m: Array = sq.members
@@ -128,13 +156,14 @@ func _on_purchased(unit_type: StringName, squad_size: int) -> void:
 		return
 	var soldier_type: StringName = unit_type if SoldierSystem.has_soldier(unit_type) else SOLDIER_TYPE
 	# Кап артели (рабочие — 7): докупка доливает только до потолка. Уже полно → ничего.
-	var add: int = _clamp_to_cap(soldier_type, maxi(squad_size, 1))
+	# Покупка в домике гномов — отряд НА ТИП (ключ = тип), не per-barracks.
+	var add: int = _clamp_to_cap(soldier_type, soldier_type, maxi(squad_size, 1))
 	if add <= 0:
 		return
 	var front: Vector3 = _purchase_front()
 	if front == Vector3.INF:
 		return
-	_spawn_squad(soldier_type, add, front)
+	_spawn_squad(soldier_type, soldier_type, add, front)
 
 
 ## Стартовая артель рабочих — появляется У БАШНИ и сразу прячется внутрь (они в ней
@@ -151,20 +180,20 @@ func _spawn_starting_workers() -> void:
 	if tower == null or not is_instance_valid(tower):
 		return
 	var t: Vector3 = (tower as Node3D).global_position
-	_spawn_squad(soldier_type, count, Vector3(t.x, ground_y, t.z))
+	_spawn_squad(soldier_type, soldier_type, count, Vector3(t.x, ground_y, t.z))
 
 
-## Сколько добавить с учётом потолка типа: cap<=0 → без потолка (вернёт want).
-func _clamp_to_cap(soldier_type: StringName, want: int) -> int:
+## Сколько добавить с учётом потолка типа по отряду ЭТОГО КЛЮЧА: cap<=0 → без потолка.
+func _clamp_to_cap(key, soldier_type: StringName, want: int) -> int:
 	var cap: int = SoldierSystem.get_squad_cap(soldier_type)
 	if cap <= 0:
 		return want
-	return clampi(want, 0, maxi(cap - _count_of_type(soldier_type), 0))
+	return clampi(want, 0, maxi(cap - _count_in(key), 0))
 
 
-## Живых членов отряда этого типа (для капа). Реестр _squads_by_type — один на тип.
-func _count_of_type(soldier_type: StringName) -> int:
-	var sq: Squad = _squads_by_type.get(soldier_type)
+## Живых членов отряда по ключу (тип ИЛИ казарма) — для капа/гейта.
+func _count_in(key) -> int:
+	var sq: Squad = _squads.get(key)
 	if sq == null:
 		return 0
 	var c: int = 0
@@ -194,7 +223,7 @@ func _purchase_front() -> Vector3:
 
 ## Спавнит count юнитов типа кучкой у front, доливая в отряд-этого-типа (один на тип)
 ## или создавая новый (тогда — карточка HUD + эскорт). Общий путь покупки и старта.
-func _spawn_squad(soldier_type: StringName, count: int, front: Vector3) -> void:
+func _spawn_squad(key, soldier_type: StringName, count: int, front: Vector3) -> void:
 	var tower := get_tree().get_first_node_in_group(&"tower")
 	if tower == null or not is_instance_valid(tower):
 		return
@@ -208,8 +237,8 @@ func _spawn_squad(soldier_type: StringName, count: int, front: Vector3) -> void:
 	if scene_root == null:
 		return
 	var stats: Dictionary = data.get("stats", {})
-	# Один отряд на тип: доливаем в существующий или создаём новый.
-	var squad: Squad = _squads_by_type.get(soldier_type)
+	# Один отряд на КЛЮЧ (тип или казарма): доливаем в существующий или создаём новый.
+	var squad: Squad = _squads.get(key)
 	var is_new: bool = squad == null
 	if is_new:
 		squad = Squad.new()
@@ -217,7 +246,7 @@ func _spawn_squad(soldier_type: StringName, count: int, front: Vector3) -> void:
 		squad.id = _next_squad_id
 		squad.soldier_type = soldier_type
 		squad.icon_color = data.get("icon_color", Color.WHITE)
-		_squads_by_type[soldier_type] = squad
+		_squads[key] = squad
 	var n: int = maxi(count, 1)
 	var spawned: int = 0
 	for i in range(n):
@@ -235,7 +264,7 @@ func _spawn_squad(soldier_type: StringName, count: int, front: Vector3) -> void:
 		spawned += 1
 	if spawned == 0:
 		if is_new:
-			_squads_by_type.erase(soldier_type)
+			_squads.erase(key)
 		return
 	# Новый отряд-тип → карточка в HUD (squad_created + проброс сигналов) + эскорт.
 	# Донайм в существующий — карточка уже есть, обновится через members_changed.
@@ -268,5 +297,8 @@ func _emit_squad_disbanded(wr: WeakRef) -> void:
 ## этого типа создаст новый отряд).
 func _on_squad_disbanded(squad: Squad) -> void:
 	EventBus.squad_disbanded.emit(squad)
-	if _squads_by_type.get(squad.soldier_type) == squad:
-		_squads_by_type.erase(squad.soldier_type)
+	# Чистим по значению — ключ может быть типом ИЛИ казармой.
+	for k in _squads.keys():
+		if _squads[k] == squad:
+			_squads.erase(k)
+			break
