@@ -206,6 +206,38 @@ func set_highlighted(value: bool) -> void:
 		mat.emission_energy_multiplier = 0.5 if value else 0.0
 
 
+## Превью-стыковки (как у PadBuilding.set_connection_hint): 0=off / 1=соединится(зелёный) /
+## 2=нет(красный). Замок ни с чем не сочетается → всегда 2. Отдельный оверлей над ядром —
+## НЕ трогаем материалы замка (иначе сбили бы его свечение). Гард по смене состояния.
+var _conn_overlay: Node3D = null
+var _conn_state: int = 0
+
+func set_connection_hint(state: int) -> void:
+	if state == _conn_state:
+		return
+	_conn_state = state
+	if _conn_overlay != null and is_instance_valid(_conn_overlay):
+		_conn_overlay.queue_free()
+	_conn_overlay = null
+	if state == 0:
+		return
+	var col := Color(0.3, 1.0, 0.4, 0.4) if state == 1 else Color(1.0, 0.35, 0.3, 0.4)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = col
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_conn_overlay = MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	var side: float = CityGrid.CELL * 3.0  # ядро замка ~3×3
+	bm.size = Vector3(side, 3.0, side)
+	_conn_overlay.mesh = bm
+	_conn_overlay.material_override = mat
+	_conn_overlay.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_conn_overlay.position = Vector3(0, 1.5, 0)
+	add_child(_conn_overlay)
+
+
 func _resolve_hand() -> Hand:
 	if _hand != null and is_instance_valid(_hand):
 		return _hand

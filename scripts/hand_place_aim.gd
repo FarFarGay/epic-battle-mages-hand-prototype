@@ -50,6 +50,9 @@ var _cell: MeshInstance3D = null
 var _cell_mat: StandardMaterial3D = null
 ## Подсветка площадки застройки (квадрат вокруг качалки) при укладке полимино-фигур.
 var _pad_floor: MeshInstance3D = null
+## Соседние здания, подсвеченные превью-стыковки (зелёный=соединится/красный=нет). Чистим
+## при сдвиге силуэта и выходе из aim. См. _update_connection_hints / PadBuilding.connects.
+var _conn_hinted: Array = []
 ## Текущий поворот силуэта (рад). Крутится кликом средней кнопки мыши, сохраняется
 ## между установками (sticky) — следующая стена встаёт под тем же углом.
 var _rot_y: float = 0.0
@@ -153,6 +156,9 @@ func _process(_delta: float) -> void:
 	# Зелёная зона стройки 9×9: при установке замка — вокруг силуэта (видно будущую зону);
 	# при укладке прочего — вокруг существующего замка. Ездит за силуэтом (per-frame).
 	_update_pad_floor(place)
+	# Превью стыковки: соседние здания зелёным (соединится) / красным (касается, но нет).
+	if is_pad:
+		_update_connection_hints(place)
 	# МАСКА-затухание (окно видимых клеток) едет за силуэтом — плоскость статична, двигаем
 	# только центр маски в шейдере. Клетки выровнены к фикс-лоттису (grid_anchor), не плывут.
 	if is_instance_valid(_grid):
@@ -524,6 +530,64 @@ func _clear_ghost() -> void:
 	if is_instance_valid(_cell):
 		_cell.queue_free()
 	_cell = null
+	_clear_connection_hints()
+
+
+## Превью стыковки: подсветить соседей силуэта зелёным (роль соединится по PadBuilding.connects)
+## или красным (касается, но не соединится — напр. стена↔замок). Соседи — здания на клетках,
+## смежных с силуэтом. Замок (ядро is_pump) — отдельный сосед-несоединимый для structural.
+func _update_connection_hints(place: Vector3) -> void:
+	var tree := get_tree()
+	var my_role: StringName = _data.get("role", &"")
+	var cells: Array = CityGrid.building_cells(place, _data.get("cells", []), _rot_y, tree)
+	var cellset: Dictionary = {}
+	for c in cells:
+		cellset[c] = true
+	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	var nbset: Dictionary = {}
+	for c in cells:
+		for d in dirs:
+			var nb: Vector2i = (c as Vector2i) + d
+			if not cellset.has(nb):
+				nbset[nb] = true
+	var new_hinted: Array = []
+	# Пад-постройки на смежных клетках.
+	for b in tree.get_nodes_in_group(PadBuilding.GROUP):
+		if not is_instance_valid(b) or not b.has_method(&"occupied_cells") or not b.has_method(&"set_connection_hint"):
+			continue
+		var adj := false
+		for oc in b.call(&"occupied_cells"):
+			if nbset.has(oc):
+				adj = true
+				break
+		if not adj:
+			continue
+		var their_role: StringName = b.call(&"get_role") if b.has_method(&"get_role") else &""
+		b.call(&"set_connection_hint", 1 if PadBuilding.connects(my_role, their_role) else 2)
+		new_hinted.append(b)
+	# Замок (ядро is_pump) — сосед без сочетаемости (его клетки не в pad_building).
+	var castle_adj := false
+	for nb in nbset:
+		if CityGrid.is_pump(nb as Vector2i, tree):
+			castle_adj = true
+			break
+	if castle_adj:
+		var castle := tree.get_first_node_in_group(&"castle")
+		if castle != null and is_instance_valid(castle) and castle.has_method(&"set_connection_hint"):
+			castle.call(&"set_connection_hint", 1 if PadBuilding.connects(my_role, &"pump") else 2)
+			new_hinted.append(castle)
+	# Снять подсветку с тех, кто перестал быть соседом.
+	for b in _conn_hinted:
+		if is_instance_valid(b) and not new_hinted.has(b) and b.has_method(&"set_connection_hint"):
+			b.call(&"set_connection_hint", 0)
+	_conn_hinted = new_hinted
+
+
+func _clear_connection_hints() -> void:
+	for b in _conn_hinted:
+		if is_instance_valid(b) and b.has_method(&"set_connection_hint"):
+			b.call(&"set_connection_hint", 0)
+	_conn_hinted = []
 
 
 ## Сетка пола для нефте-построек (труба/бур) и полимино-фигур: полупрозрачные клетки

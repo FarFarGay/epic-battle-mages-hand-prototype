@@ -17,9 +17,9 @@ const SILVER_PER_GOLD := 25
 const BRONZE_PER_GOLD := BRONZE_PER_SILVER * SILVER_PER_GOLD  # 250
 
 ## Стартовый капитал (DEBUG) — задаётся по номиналам, суммируется в общий кошелёк.
-@export var start_bronze: int = 200
+@export var start_bronze: int = 0
 @export var start_silver: int = 0
-@export var start_gold: int = 0
+@export var start_gold: int = 100
 
 var _value: int = 0  # всего денег в бронза-эквиваленте
 

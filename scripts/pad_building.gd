@@ -1331,6 +1331,65 @@ func occupied_cells() -> Array:
 	return CityGrid.building_cells(global_position, _mask, rotation.y, get_tree())
 
 
+# --- Сочетаемость зданий (стыковка) — единое правило для превью и логики ---
+
+## Класс связи роли: STRUCTURAL (стены сшиваются в рампары), CONVEYOR (поток металла),
+## NONE (стоит особняком). Здания «сочетаются» ⇔ один и тот же НЕнулевой класс.
+enum ConnClass { NONE, STRUCTURAL, CONVEYOR }
+
+static func connection_class(role: StringName) -> int:
+	match role:
+		&"defend", &"gate", &"attack", &"barracks":
+			return ConnClass.STRUCTURAL
+		&"mine", &"line", &"smelter", &"mint", &"bank":
+			return ConnClass.CONVEYOR
+		_:
+			return ConnClass.NONE  # housing / storage / pump(замок) / прочее
+
+
+## Соединятся ли две роли при соседстве (для превью стыковки и единой логики).
+static func connects(role_a: StringName, role_b: StringName) -> bool:
+	var ca := connection_class(role_a)
+	return ca != ConnClass.NONE and ca == connection_class(role_b)
+
+
+## Превью-подсветка стыковки соседа при наведении силуэта: 0=off, 1=соединится (зелёный),
+## 2=касается, но не соединится (красный). Отдельный полупрозрачный ОВЕРЛЕЙ по футпринту —
+## НЕ трогаем материалы здания (иначе сброс убил бы собственное свечение плавильни/двора/
+## банка). Гард по смене состояния — не пере-создаём оверлей каждый кадр.
+var _conn_overlay: Node3D = null
+var _conn_state: int = 0
+
+func set_connection_hint(state: int) -> void:
+	if state == _conn_state:
+		return
+	_conn_state = state
+	if _conn_overlay != null and is_instance_valid(_conn_overlay):
+		_conn_overlay.queue_free()
+	_conn_overlay = null
+	if state == 0:
+		return
+	var col := Color(0.3, 1.0, 0.4, 0.4) if state == 1 else Color(1.0, 0.35, 0.3, 0.4)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = col
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_conn_overlay = Node3D.new()
+	add_child(_conn_overlay)
+	var s: float = CityGrid.CELL
+	for off in _mask:
+		var o := off as Vector2i
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(s * 0.9, 2.8, s * 0.9)
+		mi.mesh = bm
+		mi.material_override = mat
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.position = Vector3(o.x * s, 1.4, o.y * s)
+		_conn_overlay.add_child(mi)
+
+
 func _solid(c: Color, metallic: float, rough: float) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_color = c
