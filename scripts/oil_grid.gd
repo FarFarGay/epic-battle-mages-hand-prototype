@@ -12,7 +12,7 @@ extends RefCounted
 ## Группа ноды-якоря грида (один маркер на уровень; нет → мир-ноль).
 const ANCHOR_GROUP := &"grid_anchor"
 const CELL := 2.0       # размер клетки (м) = PipeSegment.ARM_LEN * 2
-const PAD_RADIUS := 4   # клеток от центра до края площадки (4 → пятно 9×9)
+const PAD_RADIUS := 6   # клеток от центра до края площадки (6 → пятно 13×13)
 const PUMP_RADIUS := 1  # ядро под замок (1 → 3×3 центральных клетки)
 
 
