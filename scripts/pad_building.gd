@@ -1,5 +1,5 @@
 class_name PadBuilding
-extends Node3D
+extends StaticBody3D
 ## Полимино-постройка на площадке вокруг качалки (тетрис-фигура из клеток сетки). ОДНА
 ## модель для всех ролей: защита / атака / добыча — пока различаются только цветом
 ## (функции = Фаза 2: контур-стена + навмеш, радиус стрельбы, буст соседством). Снап и
@@ -45,6 +45,14 @@ var _recv_amount: int = 0
 var _recv_tier: int = -1
 var _popup_cd: float = 0.0
 
+## Damageable-контракт (Фаза 2): постройку можно атаковать. Скелеты бьют по группе
+## skeleton_target (по ноде), магия/слэм игрока — по коллайдеру (StaticBody=сам). HP по роли;
+## смерть → шаттер + снос с грида + пересборка стен/гарнизона. См. [[feedback_enemy_fx_universal]].
+signal damaged(amount: float)
+signal destroyed
+var _hp: float = 0.0
+var _dead: bool = false
+
 
 ## Задаётся ДО add_child (как RoomBuildSite) — _ready строит по маске.
 func setup(id: StringName) -> void:
@@ -56,6 +64,15 @@ func setup(id: StringName) -> void:
 
 func _ready() -> void:
 	add_to_group(GROUP)
+	# Физика+урон: постройка = препятствие на CAMP_OBSTACLE (блокирует скелетов И башню,
+	# ловит магию/слэм игрока) + цель скелетов. Damageable-нода = сам StaticBody (коллайдер).
+	collision_layer = Layers.CAMP_OBSTACLE
+	collision_mask = 0
+	Damageable.register(self)
+	add_to_group(Enemy.TARGET_GROUP)
+	if is_wall() or is_gate():
+		add_to_group(Enemy.MELEE_ONLY_TARGET_GROUP)  # стена/ворота — щит: дальники целят экономику/башню
+	_hp = _role_hp()
 	set_process(false)  # тикает только добытчик (нефть) и казарма (клик найма)
 	# Казарма = кнопка найма за золото: hover-подсветка руки + ЛКМ-клик → стол торга.
 	if is_barracks():
@@ -201,6 +218,101 @@ func _build() -> void:
 			for off in _mask:
 				var o := off as Vector2i
 				_box(Vector3(s * 0.96, 1.4, s * 0.96), Vector3(o.x * s, 0.7, o.y * s), mat, true)
+	_build_collider()  # коллайдер по футпринту (после очистки детей в начале _build)
+
+
+## Коллайдер-бокс на каждую клетку футпринта (StaticBody = сам узел). Локальные позиции по
+## маске → следуют за rotation узла, совпадают с occupied_cells и визуалом. Высота с запасом,
+## чтобы башня/скелеты упирались. Зовётся из _build (пересобирается при каждой перестройке).
+func _build_collider() -> void:
+	var s: float = CityGrid.CELL
+	var h := 2.4
+	for off in _mask:
+		var o := off as Vector2i
+		var cs := CollisionShape3D.new()
+		var box := BoxShape3D.new()
+		box.size = Vector3(s * 0.96, h, s * 0.96)
+		cs.shape = box
+		cs.position = Vector3(o.x * s, h * 0.5, o.y * s)
+		add_child(cs)
+
+
+## HP по роли: стены/ворота толще (барьер), казарма/банк крепкие, экономика мягче. Каталог
+## может переопределить полем "hp". Баланс — плейсхолдер.
+func _role_hp() -> float:
+	var by_catalog = RoomBuildings.get_data(building_id).get("hp", 0)
+	if int(by_catalog) > 0:
+		return float(by_catalog)
+	match _role:
+		&"defend", &"gate":
+			return 140.0
+		&"barracks", &"bank":
+			return 100.0
+		&"attack", &"smelter":
+			return 80.0
+		&"mine", &"mint":
+			return 60.0
+		_:
+			return 60.0
+
+
+## Damageable-контракт: приём урона (скелеты — по группе, магия/слэм — по коллайдеру).
+func take_damage(amount: float) -> void:
+	if _dead or amount <= 0.0:
+		return
+	_hp -= amount
+	damaged.emit(amount)
+	_flash_hit()
+	if _hp <= 0.0:
+		_die()
+
+
+## Hit-flash на приём урона (универсальный FX, как у врагов): кратко подсветить меши.
+func _flash_hit() -> void:
+	for ch in get_children():
+		var mi := ch as MeshInstance3D
+		if mi == null:
+			continue
+		var mat := mi.material_override as StandardMaterial3D
+		if mat == null:
+			continue
+		mat.emission_enabled = true
+		mat.emission = Color(1.0, 0.4, 0.3)
+		mat.emission_energy_multiplier = 0.9
+	var tw := create_tween()
+	tw.tween_interval(0.08)
+	tw.tween_callback(func() -> void:
+		if not is_instance_valid(self) or _dead:
+			return
+		for ch in get_children():
+			var mi := ch as MeshInstance3D
+			if mi == null:
+				continue
+			var mat := mi.material_override as StandardMaterial3D
+			if mat != null:
+				mat.emission_energy_multiplier = 0.0)
+
+
+## Смерть: СРАЗУ выходим из групп цели/Damageable (queue_free отложен — иначе скелеты/AOE
+## ещё кадр целят труп), эмитим destroyed, шаттер, сносим, пересобираем стены/гарнизон.
+func _die() -> void:
+	if _dead:
+		return
+	_dead = true
+	remove_from_group(Enemy.TARGET_GROUP)
+	remove_from_group(Enemy.MELEE_ONLY_TARGET_GROUP)
+	remove_from_group(Damageable.GROUP)
+	remove_from_group(GROUP)
+	destroyed.emit()
+	var tree := get_tree()
+	var scene := tree.current_scene if tree != null else null
+	if scene != null and is_instance_valid(scene):
+		ShatterEffect.spawn(scene, to_global(_mask_center()) + Vector3(0, 0.6, 0), _role_color(_role), 12, 1.5)
+	queue_free()
+	# Структура изменилась → стены/ворота пересобираются, гарнизон пересчитывает пост.
+	# Этот узел уже вышел из GROUP выше, так что refresh_walls его не трогает.
+	if tree != null:
+		PadBuilding.refresh_walls(tree)
 
 
 const _WALL_STONE := Color(0.56, 0.55, 0.52)  # тёплый камень
