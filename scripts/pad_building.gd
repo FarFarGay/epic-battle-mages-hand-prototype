@@ -14,35 +14,20 @@ const ACTION_GRAB := &"hand_grab"
 var building_id: StringName = &""
 var _mask: Array = []        # Array[Vector2i] — клетки фигуры (локальные offset'ы)
 var _role: StringName = &"defend"
-## КОНВЕЙЕР БУФЕРОВ. Каждая стадия — буфер на MINE_CAP единиц; каждая ТЯНЕТ из предыдущей по
-## цепочке линий (find_via_lines), пока есть место. Сток — гномий банк (в казну, без лимита).
-## Цепочка: жила → ШАХТА(mine) → ПЛАВИЛЬНЯ(smelter) → ЧЕКАННЫЙ ДВОР(mint) → ГНОМИЙ БАНК(bank).
-## Так каждая стадия наполняется и видна «движуха», даже если дальше ещё не достроено.
-const MINE_RATE := 2.0   # добыча из жилы, ед/сек (шахта)
-const FLOW_RATE := 4.0   # перекачка между стадиями, ед/сек (быстрее добычи → не бутылочное горло)
-const MINE_CAP := 20     # ёмкость буфера любой стадии
-var _vein: OilDeposit = null      # жила под шахтой (источник металла)
-var _metal: int = 0               # буфер ШАХТЫ (тип = _vein.coin_type())
-var _mine_accum: float = 0.0      # дробный накопитель добычи (единицы целые)
-var _metal_fill: MeshInstance3D = null  # индикатор буфера шахты
-## Промежуточный буфер стадий (плавильня/двор): сколько накоплено + тир + дробный накопитель.
-var _buf: int = 0
-var _buf_tier: int = -1
-var _flow_accum: float = 0.0
-var _buf_fill: MeshInstance3D = null    # индикатор буфера: столб металла (плавильня) / стопка монет (двор)
-## Плавильня: дым из шпиля, пока недавно переплавляла (_smelt_cd>0).
-const SMOKE_LINGER := 0.7
+## ЭКОНОМИКА-КВАРТАЛ (2026-06-28). ШАХТА (active, role mine) сама капает деньги в казну,
+## медленно. Рядом стоящие САПОРТЫ (плавильня/чеканка, 1 клетка) ускоряют её:
+## rate = MINE_RATE × (1 + N_соседних_сапортов × SUPPORT_BONUS). Линий/конвейера НЕТ; снос
+## сапорта = минус его бонус, не рушит всё. Банк → сапорт ЗАМКА (отдельно, pending).
+const MINE_RATE := 1.0        # базовая добыча шахты соло, монет(бронза)/сек (медленно)
+const SUPPORT_BONUS := 0.6    # каждый соседний сапорт (плавильня/чеканка) = +60% к скорости
+var _vein: OilDeposit = null  # жила под шахтой
+var _mine_accum: float = 0.0  # дробный накопитель добычи (единицы целые)
+## Плавильня-сапорт: ровный дым (флавор «работает»).
 var _smoke: GPUParticles3D = null
-var _smelt_cd: float = 0.0
-## Эндпоинты (двор/банк): _work_cd>0 → индикатор светится ярче («работает»).
-var _work_glow: MeshInstance3D = null
-var _work_cd: float = 0.0
-## Гномий банк: накапливает поступившую прибыль и всплывает «+N» с иконкой номинала над
-## крышей не чаще POPUP_INTERVAL (иначе по монете в тик = спам). Реюз [SquadXpPopup].
-const POPUP_INTERVAL := 0.7   # шаг между всплывашками (меньше времени жизни → видно 3-4 разом)
-const POPUP_LIFETIME := 2.8   # сколько живёт «+N» (дольше → столбик из нескольких сразу)
+## Всплывашка «+N» прибыли над шахтой + салют на каждую золотую (агрегируем, не чаще INTERVAL).
+const POPUP_INTERVAL := 0.7
+const POPUP_LIFETIME := 2.8
 var _recv_amount: int = 0
-var _recv_tier: int = -1
 var _popup_cd: float = 0.0
 
 ## Damageable-контракт (Фаза 2): постройку можно атаковать. Скелеты бьют по группе
@@ -126,7 +111,7 @@ func is_bank() -> bool:
 	return _role == &"bank"
 
 
-## Роль постройки — для обобщённого поиска по цепочке линий (find_via_lines).
+## Роль постройки — для правил сочетаемости (connects) и поиска сапортов.
 func get_role() -> StringName:
 	return _role
 
@@ -588,12 +573,11 @@ func _build_smelter() -> void:
 	var spire_h := 1.5
 	_cone(bw * 0.5, spire_h, ctr + Vector3(0, bh + spire_h * 0.5 + 0.16, 0), dark)  # шпиль
 	_box(Vector3(bw * 0.45, 0.7, 0.22), ctr + Vector3(0, 0.6, bw * 0.4), glow, true)  # зев
-	# Дым из вершины шпиля — включается, пока плавильня недавно переплавляла (_smelt_cd). Реюз
-	# эффекта костра POI (smoke_material/smoke_mesh). Стоит выключенным, пока буфер не пошёл.
+	# Дым из вершины шпиля — РОВНЫЙ (сапорт работает, пока стоит). Реюз эффекта костра POI.
 	_smoke = _build_smoke()
 	_smoke.position = ctr + Vector3(0, bh + spire_h + 0.36, 0)
+	_smoke.emitting = true
 	add_child(_smoke)
-	_build_buf_fill()                                                # столб раскалённого металла (буфер)
 
 
 ## Конус (остриё шпиля) — CylinderMesh с нулевым верхом.
@@ -610,7 +594,7 @@ func _cone(radius: float, height: float, pos: Vector3, mat: StandardMaterial3D) 
 
 
 ## Дым плавильни — GPUParticles3D на тех же ресурсах, что костёр POI (smoke_material/mesh).
-## Возвращается ВЫКЛЮЧЕННЫМ (emitting=false); включается в _process по _smelt_cd (note_smelt).
+## Плавильня-сапорт дымит ровно (emitting ставит вызывающий _build_smelter).
 func _build_smoke() -> GPUParticles3D:
 	var p := GPUParticles3D.new()
 	p.amount = 12
@@ -639,17 +623,28 @@ func _build_smoke() -> GPUParticles3D:
 	return p
 
 
-## Чеканный двор: единое здание-двор + РАСТУЩАЯ СТОПКА МОНЕТ на крыше (буфер _buf до 20).
+## Чеканный двор-САПОРТ: каменный двор + статичная золотая монета на крыше (ускоряет шахту
+## рядом, см. _count_support_neighbors). 1 клетка.
 func _build_mint() -> void:
 	var stone := _solid(Color(0.55, 0.5, 0.42), 0.1, 0.8)     # каменный двор
-	var gold := _solid(Color(0.95, 0.78, 0.25), 0.5, 0.35)    # золото карниза
+	var gold := _solid(Color(0.95, 0.78, 0.25), 0.5, 0.35)    # золото карниза/монеты
 	gold.emission_enabled = true
 	gold.emission = Color(1.0, 0.82, 0.3)
 	gold.emission_energy_multiplier = 0.6
 	var bh := 1.7
 	_solid_shape(bh * 0.5, bh, stone, _STREET)               # тело-двор (единый массив)
 	_solid_shape(bh + 0.08, 0.16, gold, _STREET)             # золотой карниз
-	_build_buf_fill()                                        # стопка монет на крыше
+	# Статичная монета-эмблема на крыше.
+	var bw: float = CityGrid.CELL - 2.0 * _STREET
+	var coin := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = bw * 0.3
+	cm.bottom_radius = bw * 0.3
+	cm.height = 0.18
+	coin.mesh = cm
+	coin.material_override = gold
+	coin.position = _mask_center() + Vector3(0, bh + 0.2, 0)
+	add_child(coin)
 
 
 ## Центр фигуры в локальных координатах (над ним ставим шпиль/купол/индикатор).
@@ -699,7 +694,6 @@ func _build_bank() -> void:
 	dome.material_override = gold
 	dome.position = ctr + Vector3(0, _BASE_H + bh + 0.2 + bw * 0.16, 0)
 	add_child(dome)
-	_work_glow = dome
 
 
 ## Линия переработки: плоская «труба»-конвейер по форме фигуры — низкая металлическая плита
@@ -906,276 +900,82 @@ func _build_tower() -> void:
 	_battlements(bw * 0.5, _BASE_H + bh + 0.07, trim)                                # зубцы
 
 
-## Добыча: находим замок и ставим темп нефти (×2 при примыкании к ядру-замку).
+## Добыча: привязка к жиле под шахтой (гейт размещения гарантирует, что шахта на жиле).
 func _setup_mine() -> void:
 	var tree := get_tree()
-	# Привязка к жиле под шахтой (гейт размещения уже гарантирует, что шахта на жиле).
 	var veins := OilDeposit.cell_map(tree)
 	for wc in occupied_cells():
 		if veins.has(wc as Vector2i):
 			_vein = veins[wc as Vector2i]
 			break
-	_build_metal_fill()
 	set_process(true)
 
 
-## Шаг добычи: качаем металл из жилы в буфер шахты до MINE_CAP. Дальше по конвейеру буфер
-## ТЯНЕТ плавильня (см. _pull). Полный буфер (плавильни нет/она полна) → шахта стоит на капе.
+## Шаг добычи: шахта сама капает деньги в казну, скорость растёт от соседних САПОРТОВ
+## (плавильня/чеканка): rate = MINE_RATE × (1 + N × SUPPORT_BONUS). Бронза → казна (одометр
+## сам копит в серебро/золото). +N всплывашка и салют на золотую — над шахтой.
 func _tick_mine(delta: float) -> void:
 	if _vein == null or not is_instance_valid(_vein):
 		return
-	if _metal >= MINE_CAP:
-		return
-	_mine_accum += MINE_RATE * delta
+	var rate: float = MINE_RATE * (1.0 + float(_count_support_neighbors()) * SUPPORT_BONUS)
+	_mine_accum += rate * delta
 	var whole := int(_mine_accum)
 	if whole < 1:
 		return
 	_mine_accum -= float(whole)
-	_metal = mini(_metal + whole, MINE_CAP)
-	_update_metal_fill()
-
-
-## --- Интерфейс конвейера (одна стадия) ---
-## Сколько единиц можно ОТДАТЬ вниз по конвейеру (выходной буфер стадии).
-func _out_amount() -> int:
-	if _role == &"mine":
-		return _metal
-	if _role == &"smelter" or _role == &"mint":
-		return _buf
-	return 0
-
-
-## Тир выдаваемых единиц (для зачисления монет нужного номинала в казну).
-func _out_tier() -> int:
-	if _role == &"mine":
-		return _vein.coin_type() if _vein != null and is_instance_valid(_vein) else -1
-	return _buf_tier
-
-
-## Забрать n единиц из выходного буфера стадии (зовёт нижняя стадия при перекачке).
-func _out_remove(n: int) -> void:
-	if _role == &"mine":
-		_metal = maxi(0, _metal - n)
-		_update_metal_fill()
-	elif _role == &"smelter" or _role == &"mint":
-		_buf = maxi(0, _buf - n)
-		_update_buf_fill()
-
-
-## Свободное место во входном буфере стадии. Банк — бездонный сток (в казну).
-func _in_room() -> int:
-	if _role == &"smelter" or _role == &"mint":
-		return MINE_CAP - _buf
-	if _role == &"bank":
-		return 1 << 30
-	return 0
-
-
-## Принять n единиц тира tier. Плавильня/двор копят в _buf; банк зачисляет в казну игрока.
-func _in_add(n: int, tier: int) -> void:
-	if _role == &"smelter" or _role == &"mint":
-		if _buf == 0:
-			_buf_tier = tier
-		_buf = mini(MINE_CAP, _buf + n)
-		_update_buf_fill()
-	elif _role == &"bank":
-		var bank := get_tree().get_first_node_in_group(&"gold_bank")
-		if bank != null and bank.has_method(&"add_coin") and tier >= 0:
-			var gold_before: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD)) if bank.has_method(&"get_coin") else 0
-			bank.call(&"add_coin", tier, n)  # зачисляем в общий кошелёк (одометр сам копит вверх)
-			_recv_amount += n                # копим для всплывашки «+N»
-			_recv_tier = tier
-			# Салют-веха: на КАЖДУЮ новую ЗОЛОТУЮ монету в казне (надёжно к золоту, не к курсу).
-			if bank.has_method(&"get_coin"):
-				var gold_after: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD))
-				for _i in range(gold_after - gold_before):
-					_spawn_firework(ResourcePile.ResourceType.GOLD)
-
-
-## Тянем единицы из верхней стадии (роль upstream_role, по цепочке линий) в свой буфер, пока
-## есть место. Симметрично для всех стадий: плавильня←шахта, двор←плавильня, банк←двор.
-func _pull(delta: float, upstream_role: StringName) -> void:
-	var room := _in_room()
-	if room <= 0:
+	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	if bank == null or not bank.has_method(&"add_coin"):
 		return
-	var up := find_via_lines(upstream_role)
-	if up == null or not up.has_method(&"_out_amount"):
-		return
-	var avail: int = up.call(&"_out_amount")
-	if avail <= 0:
-		return
-	_flow_accum += FLOW_RATE * delta
-	var n: int = mini(mini(int(_flow_accum), room), avail)
-	if n < 1:
-		return
-	_flow_accum -= float(n)
-	var tier: int = up.call(&"_out_tier")
-	up.call(&"_out_remove", n)
-	_in_add(n, tier)
-	# Индикатор работы: плавильня дымит, двор/банк светятся.
-	if is_smelter():
-		_smelt_cd = SMOKE_LINGER
-	else:
-		_work_cd = SMOKE_LINGER
+	var gold_before: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD)) if bank.has_method(&"get_coin") else 0
+	bank.call(&"add_coin", _vein.coin_type(), whole)  # бронза в казну
+	_recv_amount += whole                              # копим для всплывашки «+N»
+	if bank.has_method(&"get_coin"):
+		var gold_after: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD))
+		for _i in range(gold_after - gold_before):
+			_spawn_firework(ResourcePile.ResourceType.GOLD)  # салют на каждую новую золотую
 
 
-## Ближайшая постройка роли `role`, до которой ЭТО здание дотягивается цепочкой смежных
-## клеток-линий (или стоит прямо рядом). BFS по клеткам линий от своих клеток. null = не
-## подключена. Дёшево (построек немного). Общий движок для шахта→плавильня и плавильня→двор.
-func find_via_lines(role: StringName) -> Node:
+## Сколько САПОРТОВ (плавильня/чеканка) стоит вплотную к шахте (4-соседство) — каждый ускоряет.
+func _count_support_neighbors() -> int:
 	var tree := get_tree()
-	var line_cells: Dictionary = {}
-	var target_cells: Dictionary = {}  # клетка → постройка роли role
-	for b in tree.get_nodes_in_group(GROUP):
-		if b == self or not is_instance_valid(b) or b.is_queued_for_deletion() or not b.has_method(&"occupied_cells"):
-			continue
-		if b.has_method(&"is_line") and b.call(&"is_line"):
-			for c in b.call(&"occupied_cells"):
-				line_cells[c] = true
-		elif b.has_method(&"get_role") and b.call(&"get_role") == role:
-			for c in b.call(&"occupied_cells"):
-				target_cells[c] = b
-	if target_cells.is_empty():
-		return null
 	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-	var visited: Dictionary = {}
-	var queue: Array = []
-	# Старт — от собственных клеток: прямо у цели ИЛИ на смежную линию.
-	for sc in occupied_cells():
+	var mine := occupied_cells()
+	var myset: Dictionary = {}
+	for c in mine:
+		myset[c] = true
+	var nbset: Dictionary = {}
+	for c in mine:
 		for d in dirs:
-			var nb: Vector2i = (sc as Vector2i) + d
-			if target_cells.has(nb):
-				return target_cells[nb]
-			if line_cells.has(nb) and not visited.has(nb):
-				visited[nb] = true
-				queue.append(nb)
-	while not queue.is_empty():
-		var c: Vector2i = queue.pop_back()
-		for d in dirs:
-			var nb: Vector2i = c + d
-			if target_cells.has(nb):
-				return target_cells[nb]
-			if line_cells.has(nb) and not visited.has(nb):
-				visited[nb] = true
-				queue.append(nb)
-	return null
+			var nb: Vector2i = (c as Vector2i) + d
+			if not myset.has(nb):
+				nbset[nb] = true
+	var count := 0
+	var seen: Dictionary = {}
+	for b in tree.get_nodes_in_group(GROUP):
+		if b == self or not is_instance_valid(b) or seen.has(b) or not b.has_method(&"occupied_cells"):
+			continue
+		if not ((b.has_method(&"is_smelter") and b.call(&"is_smelter")) or (b.has_method(&"is_mint") and b.call(&"is_mint"))):
+			continue
+		for oc in b.call(&"occupied_cells"):
+			if nbset.has(oc):
+				count += 1
+				seen[b] = true
+				break
+	return count
 
 
 func _process(delta: float) -> void:
 	if _role == &"mine":
 		_tick_mine(delta)
-	if is_barracks():
-		_tick_hire_click()
-	if is_smelter():
-		_pull(delta, &"mine")    # тянет металл из шахты по линии в свой буфер
-		# Дым, пока плавильня недавно переплавляла (_smelt_cd, ставится в _pull).
-		if _smelt_cd > 0.0:
-			_smelt_cd -= delta
-		if _smoke != null and is_instance_valid(_smoke):
-			_smoke.emitting = _smelt_cd > 0.0
-	if is_mint():
-		_pull(delta, &"smelter")  # тянет металл из плавильни → стопка монет растёт
-	if is_bank():
-		_pull(delta, &"mint")     # тянет монеты из двора → в казну игрока
-		# Всплывашка «+прибыль» с иконкой номинала над крышей (агрегируем, не чаще интервала).
+		# Всплывашка «+прибыль» над шахтой (агрегируем добытое, не чаще интервала).
 		if _popup_cd > 0.0:
 			_popup_cd -= delta
 		if _recv_amount > 0 and _popup_cd <= 0.0:
-			_spawn_profit_popup(_recv_tier, _recv_amount)
+			_spawn_profit_popup(_vein.coin_type() if _vein != null and is_instance_valid(_vein) else ResourcePile.ResourceType.BRONZE, _recv_amount)
 			_recv_amount = 0
 			_popup_cd = POPUP_INTERVAL
-	# Эндпоинт (двор/банк): индикатор светится ярче, пока недавно работал (_work_cd).
-	if is_mint() or is_bank():
-		if _work_cd > 0.0:
-			_work_cd -= delta
-		if _work_glow != null and is_instance_valid(_work_glow):
-			var gm := _work_glow.material_override as StandardMaterial3D
-			if gm != null:
-				gm.emission_energy_multiplier = 2.4 if _work_cd > 0.0 else 0.6
-
-
-## Индикатор заполнения буфера: столбик металла на верхушке шахты, растёт с _metal. Цвет —
-## по тиру жилы (видно, что и сколько накопано).
-func _build_metal_fill() -> void:
-	_metal_fill = MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(0.5, 1.0, 0.5)
-	_metal_fill.mesh = bm
-	var mat := StandardMaterial3D.new()
-	var col := Color(0.74, 0.46, 0.22)  # бронза по умолчанию
-	if _vein != null and is_instance_valid(_vein):
-		match _vein.coin_type():
-			ResourcePile.ResourceType.SILVER:
-				col = Color(0.82, 0.84, 0.9)
-			ResourcePile.ResourceType.GOLD:
-				col = Color(0.95, 0.78, 0.28)
-	mat.albedo_color = col
-	mat.metallic = 0.7
-	mat.roughness = 0.35
-	_metal_fill.material_override = mat
-	add_child(_metal_fill)
-	_update_metal_fill()
-
-
-## Высота столбика = доля заполнения буфера; пусто → скрыт.
-func _update_metal_fill() -> void:
-	if _metal_fill == null or not is_instance_valid(_metal_fill):
-		return
-	var frac: float = clampf(float(_metal) / float(MINE_CAP), 0.0, 1.0)
-	_metal_fill.visible = _metal > 0
-	var h: float = lerpf(0.05, 1.4, frac)
-	_metal_fill.scale = Vector3(1.0, h, 1.0)
-	# Верхушка шахты ~2.3 (см. _build_tower: цоколь+короб). Столбик стоит сверху, растёт вверх.
-	_metal_fill.position = Vector3(0.0, 2.4 + h * 0.5, 0.0)
-
-
-## Индикатор буфера стадии (_buf): плавильня — раскалённый столб металла у зева; чеканный
-## двор — растущая стопка золотых монет на крыше. Высота = доля заполнения (_buf/MINE_CAP).
-func _build_buf_fill() -> void:
-	var bw: float = CityGrid.CELL - 2.0 * _STREET
-	_buf_fill = MeshInstance3D.new()
-	if is_smelter():
-		var bm := BoxMesh.new()
-		bm.size = Vector3(0.5, 1.0, 0.5)
-		_buf_fill.mesh = bm
-		var mat := _solid(Color(1.0, 0.5, 0.15), 0.2, 0.4)  # раскалённый металл
-		mat.emission_enabled = true
-		mat.emission = Color(1.0, 0.45, 0.1)
-		mat.emission_energy_multiplier = 1.6
-		_buf_fill.material_override = mat
-	else:  # чеканный двор — золотая стопка монет
-		var cm := CylinderMesh.new()
-		cm.top_radius = bw * 0.3
-		cm.bottom_radius = bw * 0.3
-		cm.height = 1.0
-		_buf_fill.mesh = cm
-		var mat := _solid(Color(0.95, 0.78, 0.25), 0.6, 0.3)
-		mat.emission_enabled = true
-		mat.emission = Color(1.0, 0.82, 0.3)
-		mat.emission_energy_multiplier = 0.6
-		_buf_fill.material_override = mat
-		_work_glow = _buf_fill  # та же стопка пульсирует, пока двор чеканит
-	add_child(_buf_fill)
-	_update_buf_fill()
-
-
-## Высота индикатора буфера = доля заполнения; пусто → скрыт. Сидит на верхушке стадии.
-func _update_buf_fill() -> void:
-	if _buf_fill == null or not is_instance_valid(_buf_fill):
-		return
-	var frac: float = clampf(float(_buf) / float(MINE_CAP), 0.0, 1.0)
-	_buf_fill.visible = _buf > 0
-	var c := _mask_center()
-	var bw: float = CityGrid.CELL - 2.0 * _STREET
-	if is_smelter():
-		var h: float = lerpf(0.1, 1.6, frac)
-		_buf_fill.scale = Vector3(1.0, h, 1.0)
-		# У зева печи (перед телом), растёт вверх от земли.
-		_buf_fill.position = Vector3(c.x, 0.1 + h * 0.5, c.z + bw * 0.4)
-	else:  # двор — стопка на крыше (тело bh=1.7 + карниз)
-		var h: float = lerpf(0.06, 1.3, frac)
-		_buf_fill.scale = Vector3(1.0, h, 1.0)
-		_buf_fill.position = Vector3(c.x, 1.78 + h * 0.5, c.z)
+	if is_barracks():
+		_tick_hire_click()
 
 
 ## Цвет номинала монеты (бронза/серебро/золото) — единый для индикаторов и всплывашек.
