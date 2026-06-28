@@ -133,8 +133,6 @@ var _build_menu: PopupMenu
 const BUILD_MENU_BRIDGE := 0
 const BUILD_MENU_PUMP := 11  # качалка-замок (центр грид-города)
 const BUILD_MENU_PAD_WALL1 := 12
-const BUILD_MENU_PAD_HOUSE := 13
-const BUILD_MENU_PAD_STORE := 14
 const BUILD_MENU_PAD_GATE := 15
 const BUILD_MENU_PAD_BARRACKS := 16
 const BUILD_MENU_PAD_SPEARMEN := 17
@@ -145,15 +143,11 @@ const BUILD_MENU_PAD_BANK := 21
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[CityGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
-const BUILD_MENU_PAD_TOWER := 10
 ## Пункт меню площадки → id постройки в [RoomBuildings] (общая модель размещения).
 var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_MINE: RoomBuildings.PAD_MINE,
 	BUILD_MENU_PAD_WALL: RoomBuildings.PAD_WALL,
 	BUILD_MENU_PAD_WALL1: RoomBuildings.PAD_WALL1,
-	BUILD_MENU_PAD_TOWER: RoomBuildings.PAD_TOWER,
-	BUILD_MENU_PAD_HOUSE: RoomBuildings.PAD_HOUSE,
-	BUILD_MENU_PAD_STORE: RoomBuildings.PAD_STORE,
 	BUILD_MENU_PAD_GATE: RoomBuildings.PAD_GATE,
 	BUILD_MENU_PAD_BARRACKS: RoomBuildings.PAD_BARRACKS,
 	BUILD_MENU_PAD_SPEARMEN: RoomBuildings.PAD_SPEARMEN,
