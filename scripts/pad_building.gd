@@ -10,8 +10,6 @@ const GROUP := &"pad_building"
 ## ЛКМ-захват рукой (то же действие, что у домика гномов) — клик по казарме = найм,
 ## клик по плавильне = ручная чеканка.
 const ACTION_GRAB := &"hand_grab"
-## Курс чеканки: столько монет младшего номинала = 1 старшего (100🥉→1🥈, 100🥈→1🥇).
-const MINT_RATIO := 100
 
 var building_id: StringName = &""
 var _mask: Array = []        # Array[Vector2i] — клетки фигуры (локальные offset'ы)
@@ -43,11 +41,9 @@ var _work_cd: float = 0.0
 ## крышей не чаще POPUP_INTERVAL (иначе по монете в тик = спам). Реюз [SquadXpPopup].
 const POPUP_INTERVAL := 0.7   # шаг между всплывашками (меньше времени жизни → видно 3-4 разом)
 const POPUP_LIFETIME := 2.8   # сколько живёт «+N» (дольше → столбик из нескольких сразу)
-const FIREWORK_EVERY := 100   # каждые N зачисленных монет — небольшой фейерверк над банком
 var _recv_amount: int = 0
 var _recv_tier: int = -1
 var _popup_cd: float = 0.0
-var _firework_accum: int = 0  # счётчик монет до следующего фейерверка
 
 
 ## Задаётся ДО add_child (как RoomBuildSite) — _ready строит по маске.
@@ -69,9 +65,9 @@ func _ready() -> void:
 	if is_smelter():
 		add_to_group(&"smelter")
 		set_process(true)
-	# Чеканный двор — кликабелен для ручной чеканки 100→1 + тикает (свечение).
+	# Чеканный двор — стадия конвейера: тикает (тянет металл, свечение). Ручной чеканки нет
+	# (валюта единая, бронза сама копится в серебро/золото — см. GoldBank).
 	if is_mint():
-		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
 		set_process(true)
 	# Гномий банк — финальный эндпоинт: тикает ради свечения, пока принимает монеты.
 	if is_bank():
@@ -873,13 +869,15 @@ func _in_add(n: int, tier: int) -> void:
 	elif _role == &"bank":
 		var bank := get_tree().get_first_node_in_group(&"gold_bank")
 		if bank != null and bank.has_method(&"add_coin") and tier >= 0:
-			bank.call(&"add_coin", tier, n)  # 1 единица = 1 монета тира жилы
+			var gold_before: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD)) if bank.has_method(&"get_coin") else 0
+			bank.call(&"add_coin", tier, n)  # зачисляем в общий кошелёк (одометр сам копит вверх)
 			_recv_amount += n                # копим для всплывашки «+N»
 			_recv_tier = tier
-			_firework_accum += n             # каждые FIREWORK_EVERY монет — фейерверк
-			while _firework_accum >= FIREWORK_EVERY:
-				_firework_accum -= FIREWORK_EVERY
-				_spawn_firework(tier)
+			# Салют-веха: на КАЖДУЮ новую ЗОЛОТУЮ монету в казне (надёжно к золоту, не к курсу).
+			if bank.has_method(&"get_coin"):
+				var gold_after: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD))
+				for _i in range(gold_after - gold_before):
+					_spawn_firework(ResourcePile.ResourceType.GOLD)
 
 
 ## Тянем единицы из верхней стадии (роль upstream_role, по цепочке линий) в свой буфер, пока
@@ -965,7 +963,6 @@ func _process(delta: float) -> void:
 			_smoke.emitting = _smelt_cd > 0.0
 	if is_mint():
 		_pull(delta, &"smelter")  # тянет металл из плавильни → стопка монет растёт
-		_tick_mint_click()        # ЛКМ по двору → ручная перечеканка 100→1
 	if is_bank():
 		_pull(delta, &"mint")     # тянет монеты из двора → в казну игрока
 		# Всплывашка «+прибыль» с иконкой номинала над крышей (агрегируем, не чаще интервала).
@@ -1114,8 +1111,8 @@ func _spawn_profit_popup(coin_type: int, amount: int) -> void:
 
 
 ## Небольшой фейерверк над банком: одноразовый GPUParticles3D-залп — мелкие РАЗНОЦВЕТНЫЕ
-## искры (радуга по hue) с ТРЕЙЛАМИ разлетаются шаром и опадают. Зовётся каждые
-## FIREWORK_EVERY монет; сам себя освобождает по таймеру. Параметр coin_type не используем
+## искры (радуга по hue) с ТРЕЙЛАМИ разлетаются шаром и опадают. Зовётся на КАЖДУЮ новую
+## золотую монету в казне; сам себя освобождает по таймеру. Параметр coin_type не используем
 ## (фейерверк нарочно радужный — праздник, не номинал).
 func _spawn_firework(_coin_type: int) -> void:
 	var tree := get_tree()
@@ -1200,27 +1197,6 @@ func _clicked_on_self() -> bool:
 func _tick_hire_click() -> void:
 	if _clicked_on_self():
 		_open_hire()
-
-
-## ЛКМ по футпринту чеканного двора → РУЧНАЯ ЧЕКАНКА на ступень вверх (100→1).
-func _tick_mint_click() -> void:
-	if _clicked_on_self():
-		_mint_one_step()
-
-
-## Одна перечеканка 100→1: приоритет серебро→золото (если набралось 100🥈), иначе
-## бронза→серебро. Атомарно через казну. Выбор-попап (что чеканить) — можно позже.
-func _mint_one_step() -> void:
-	var bank := get_tree().get_first_node_in_group(&"gold_bank")
-	if bank == null or not bank.has_method(&"spend_cost"):
-		return
-	var RT := ResourcePile.ResourceType
-	if int(bank.call(&"get_coin", RT.SILVER)) >= MINT_RATIO:
-		if bank.call(&"spend_cost", {RT.SILVER: MINT_RATIO}):
-			bank.call(&"add_coin", RT.GOLD, 1)
-	elif int(bank.call(&"get_coin", RT.BRONZE)) >= MINT_RATIO:
-		if bank.call(&"spend_cost", {RT.BRONZE: MINT_RATIO}):
-			bank.call(&"add_coin", RT.SILVER, 1)
 
 
 ## Контракт hover-подсветки (Hand._update_pickup_highlight): наводим руку → казарма

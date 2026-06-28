@@ -47,26 +47,16 @@ static func cell_map(tree: SceneTree) -> Dictionary:
 	return out
 
 
-## Номинал монеты, в который идёт добыча этой жилы (для казны / шахты).
+## Номинал добычи. ЕДИНАЯ валюта (2026-06-28): все жилы дают БРОНЗУ, она сама копится в
+## серебро/золото в казне (одометр, [[project_ebm_coin_economy]]). `tier` оставлен как
+## легаси-поле (не влияет) — чтобы не ломать сцены с уже расставленными жилами.
 func coin_type() -> int:
-	match tier:
-		Tier.GOLD:
-			return ResourcePile.ResourceType.GOLD
-		Tier.SILVER:
-			return ResourcePile.ResourceType.SILVER
-		_:
-			return ResourcePile.ResourceType.BRONZE
+	return ResourcePile.ResourceType.BRONZE
 
 
-## Цвет жилы по тиру (металл руды).
+## Цвет жилы — единый (1 тип жил). Бронза/медь.
 func _tier_color() -> Color:
-	match tier:
-		Tier.SILVER:
-			return Color(0.82, 0.84, 0.9)
-		Tier.GOLD:
-			return Color(0.95, 0.78, 0.28)
-		_:
-			return Color(0.74, 0.46, 0.22)  # бронза/медь
+	return Color(0.74, 0.46, 0.22)
 
 
 ## Перекрасить диск «Seep» под тир (металлический блеск + свечение). Материал создаём в

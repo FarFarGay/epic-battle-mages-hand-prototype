@@ -1,77 +1,103 @@
 extends Node
-## Казна монет для room-режима (монетная экономика, 2026-06-25). Три номинала:
-## BRONZE / SILVER / GOLD (см. [ResourcePile.ResourceType]). Держим через [CampEconomy]
-## (standalone), который шлёт EventBus.resources_changed(type, amount) — HUD-счётчики
-## обновляются реактивно. Постройки стоят СОСТАВНУЮ цену (Dictionary{type:int}),
-## проверяется can_afford / списывается spend_cost при установке. Один на сцену.
+## Казна room-режима (монетная экономика). **Одна валюта внутри** — целое `_value` в
+## БРОНЗА-ЭКВИВАЛЕНТЕ; три номинала (🥉/🥈/🥇) — лишь ОТОБРАЖЕНИЕ (одометр). Размена как
+## проблемы не существует: покупка вычитает из общего числа, дисплей сам пересобирает монеты.
+## Курсы: 1🥈 = 10🥉, 1🥇 = 25🥈 → 🥇 = 250🥉. Бронза с добычи сама «копится» в серебро/золото
+## (визуально), ручная чеканка не нужна. Один на сцену. См. [[project_ebm_coin_economy]].
 ##
-## Старые add_gold/try_spend(int)/get_gold (GOLD) сохранены для trade_ui (найм за золото).
+## Публичный API сохранён: add_coin/get_coin (номинал↔значение), can_afford/spend_cost
+## (составная цена-словарь), add_gold/try_spend/get_gold (trade_ui — «золото» = весь кошелёк).
 
 const GROUP := &"gold_bank"
 const RT := ResourcePile.ResourceType
 
-## Стартовый капитал (DEBUG — щедро, чтобы тестить стройку до готовой добычи монет).
-## Крутить здесь; добыча/чеканка появятся следующими шагами.
-@export var start_bronze: int = 500
-@export var start_silver: int = 50
-@export var start_gold: int = 100
+## Курсы номиналов (сколько мелких в одной крупной).
+const BRONZE_PER_SILVER := 10
+const SILVER_PER_GOLD := 25
+const BRONZE_PER_GOLD := BRONZE_PER_SILVER * SILVER_PER_GOLD  # 250
 
-var _econ := CampEconomy.new()
+## Стартовый капитал (DEBUG) — задаётся по номиналам, суммируется в общий кошелёк.
+@export var start_bronze: int = 200
+@export var start_silver: int = 0
+@export var start_gold: int = 0
+
+var _value: int = 0  # всего денег в бронза-эквиваленте
 
 
 func _ready() -> void:
 	add_to_group(GROUP)
-	# Deferred: HUD-счётчики подписываются на resources_changed в своём _ready — выдаём
-	# стартовые монеты следующим кадром, чтобы em'ит не ушёл в пустоту.
-	call_deferred(&"_grant_start")
+	_value = start_bronze + start_silver * BRONZE_PER_SILVER + start_gold * BRONZE_PER_GOLD
 
 
-func _grant_start() -> void:
-	if start_bronze > 0:
-		_econ.add_resource(RT.BRONZE, start_bronze)
-	if start_silver > 0:
-		_econ.add_resource(RT.SILVER, start_silver)
-	if start_gold > 0:
-		_econ.add_resource(RT.GOLD, start_gold)
+## Ценность номинала в бронза-эквиваленте.
+func _unit(type: int) -> int:
+	match type:
+		RT.SILVER:
+			return BRONZE_PER_SILVER
+		RT.GOLD:
+			return BRONZE_PER_GOLD
+		_:
+			return 1  # бронза (и всё прочее)
+
+
+## Стоимость составной цены в бронза-эквиваленте.
+func _cost_value(cost: Dictionary) -> int:
+	var v: int = 0
+	for t in cost:
+		v += int(cost[t]) * _unit(int(t))
+	return v
 
 
 # --- Составная цена (постройки) ---
 
 ## Хватает ли на составную цену cost = {ResourceType: int}.
 func can_afford(cost: Dictionary) -> bool:
-	return _econ.can_afford(cost)
+	return _value >= _cost_value(cost)
 
 
-## Списать составную цену (атомарно — CampEconomy не спишет, если не хватает). true = оплачено.
+## Списать составную цену (атомарно). true = оплачено.
 func spend_cost(cost: Dictionary) -> bool:
-	return _econ.try_spend(cost)
+	var c: int = _cost_value(cost)
+	if _value < c:
+		return false
+	_value -= c
+	return true
 
 
 # --- Произвольный номинал ---
 
+## Зачислить amount монет номинала type (по курсу в общий кошелёк).
 func add_coin(type: int, amount: int) -> void:
 	if amount > 0:
-		_econ.add_resource(type, amount)
+		_value += amount * _unit(type)
 
 
+## Сколько монет номинала ПОКАЗАТЬ (одометр): золото = value/250, остаток → серебро, остаток → бронза.
 func get_coin(type: int) -> int:
-	return _econ.get_resource(type)
+	match type:
+		RT.GOLD:
+			return _value / BRONZE_PER_GOLD
+		RT.SILVER:
+			return (_value % BRONZE_PER_GOLD) / BRONZE_PER_SILVER
+		_:
+			return _value % BRONZE_PER_SILVER  # бронза
 
 
-# --- GOLD-совместимость (trade_ui: найм за золото) ---
+# --- Совместимость trade_ui (найм): «золото» = весь кошелёк (единая валюта) ---
 
 func add_gold(amount: int) -> void:
-	if amount <= 0:
-		return
-	_econ.add_resource(RT.GOLD, amount)
+	if amount > 0:
+		_value += amount
 
 
 func try_spend(amount: int) -> bool:
 	if amount <= 0:
 		return true
-	return _econ.try_spend({RT.GOLD: amount})
+	if _value < amount:
+		return false
+	_value -= amount
+	return true
 
 
 func get_gold() -> int:
-	return _econ.get_resource(RT.GOLD)
-# монетная экономика — см. [[project_ebm_coin_economy]]
+	return _value
