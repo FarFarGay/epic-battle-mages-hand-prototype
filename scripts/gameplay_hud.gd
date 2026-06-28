@@ -138,6 +138,7 @@ const BUILD_MENU_PAD_BARRACKS := 16
 const BUILD_MENU_PAD_SPEARMEN := 17
 const BUILD_MENU_PAD_SMELTER := 18
 const BUILD_MENU_PAD_MINT := 20
+const BUILD_MENU_PAD_HOUSE := 13  # дом гномов — социальный сапорт-универсал
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[CityGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
@@ -151,6 +152,7 @@ var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_SPEARMEN: RoomBuildings.PAD_SPEARMEN,
 	BUILD_MENU_PAD_SMELTER: RoomBuildings.PAD_SMELTER,
 	BUILD_MENU_PAD_MINT: RoomBuildings.PAD_MINT,
+	BUILD_MENU_PAD_HOUSE: RoomBuildings.PAD_HOUSE,
 }
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.

@@ -166,13 +166,13 @@ const CATALOG: Dictionary = {
 		"cost": {ResourcePile.ResourceType.BRONZE: 40, ResourcePile.ResourceType.SILVER: 2},
 		"ghost_color": Color(0.55, 0.6, 0.62, 0.5),
 	},
-	# Население: дом гномов, L-форма (разные фигуры = пазл упаковки). Функция (прирост
-	# гномов) — Фаза 2.
+	# Дом гномов — СОЦИАЛЬНЫЙ сапорт-универсал (прямой, 3 клетки): входит в ЛЮБОЙ квартал и
+	# ускоряет активное здание (закрывает квартал). Сочетается со всеми категориями.
 	PAD_HOUSE: {
 		"name": "Дом гномов",
-		"menu_label": "🏠 Дом гномов (L)",
+		"menu_label": "🏠 Дом гномов (+любой квартал)",
 		"role": &"housing",
-		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
 		"instant": true,
 		"cost": {ResourcePile.ResourceType.BRONZE: 50, ResourcePile.ResourceType.SILVER: 3},
 		"ghost_color": Color(0.6, 0.45, 0.3, 0.5),
@@ -237,13 +237,13 @@ const CATALOG: Dictionary = {
 		"cost": {ResourcePile.ResourceType.BRONZE: 12},
 		"ghost_color": Color(0.6, 0.7, 0.85, 0.5),
 	},
-	# Плавильня-САПОРТ (Г-форма, 3 клетки): вплотную к ШАХТЕ → ускоряет добычу (квартал
-	# обнимает шахту). Один сапорт = один бонус; форма лишь занимает площадь. Снос = минус бонус.
+	# Плавильня-САПОРТ (1 клетка): вплотную к ШАХТЕ → ускоряет добычу. Один сапорт = один
+	# бонус; снос = минус бонус. Компактная — чтобы квартал можно было закрыть.
 	PAD_SMELTER: {
 		"name": "Плавильня",
 		"menu_label": "🔥 Плавильня (+добыча)",
 		"role": &"smelter",
-		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(1, 1)],
+		"cells": [Vector2i(0, 0)],
 		"instant": true,
 		"cost": {ResourcePile.ResourceType.BRONZE: 25},
 		"ghost_color": Color(0.95, 0.55, 0.25, 0.5),

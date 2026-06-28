@@ -935,7 +935,9 @@ func _tick_mine(delta: float) -> void:
 			_spawn_firework(ResourcePile.ResourceType.GOLD)  # салют на каждую новую золотую
 
 
-## Сколько САПОРТОВ (плавильня/чеканка) стоит вплотную к шахте (4-соседство) — каждый ускоряет.
+## Сколько САПОРТОВ стоит вплотную к шахте (4-соседство) — каждый ускоряет. Сапорт = соседнее
+## здание категории PRODUCTION (плавильня/двор; НЕ другая шахта) ИЛИ SOCIAL (дом гномов —
+## универсал, закрывает любой квартал). Один сапорт = +1 независимо от формы (dedup по зданию).
 func _count_support_neighbors() -> int:
 	var tree := get_tree()
 	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
@@ -952,9 +954,13 @@ func _count_support_neighbors() -> int:
 	var count := 0
 	var seen: Dictionary = {}
 	for b in tree.get_nodes_in_group(GROUP):
-		if b == self or not is_instance_valid(b) or seen.has(b) or not b.has_method(&"occupied_cells"):
+		if b == self or not is_instance_valid(b) or seen.has(b) or not b.has_method(&"occupied_cells") or not b.has_method(&"get_role"):
 			continue
-		if not ((b.has_method(&"is_smelter") and b.call(&"is_smelter")) or (b.has_method(&"is_mint") and b.call(&"is_mint"))):
+		var r: StringName = b.call(&"get_role")
+		if r == &"mine":
+			continue  # другая шахта — актив, не сапорт
+		var cat := PadBuilding.category(r)
+		if cat != Category.PRODUCTION and cat != Category.SOCIAL:
 			continue
 		for oc in b.call(&"occupied_cells"):
 			if nbset.has(oc):
@@ -1131,26 +1137,34 @@ func occupied_cells() -> Array:
 	return CityGrid.building_cells(global_position, _mask, rotation.y, get_tree())
 
 
-# --- Сочетаемость зданий (стыковка) — единое правило для превью и логики ---
+# --- Категории зданий + сочетаемость (единая таксономия для превью и квартала-баффа) ---
 
-## Класс связи роли: STRUCTURAL (стены сшиваются в рампары), CONVEYOR (поток металла),
-## NONE (стоит особняком). Здания «сочетаются» ⇔ один и тот же НЕнулевой класс.
-enum ConnClass { NONE, STRUCTURAL, CONVEYOR }
+## Категория роли: PRODUCTION (шахта/плавильня/двор), DEFENSE (стены/ворота/казармы),
+## STATE (замок/банк), SOCIAL (дом гномов — универсал), NONE (прочее). Здания «сочетаются»
+## (часть одного квартала) ⇔ одна категория ИЛИ одно из них SOCIAL.
+enum Category { NONE, PRODUCTION, DEFENSE, STATE, SOCIAL }
 
-static func connection_class(role: StringName) -> int:
+static func category(role: StringName) -> int:
 	match role:
+		&"mine", &"smelter", &"mint":
+			return Category.PRODUCTION
 		&"defend", &"gate", &"attack", &"barracks":
-			return ConnClass.STRUCTURAL
-		&"mine", &"line", &"smelter", &"mint", &"bank":
-			return ConnClass.CONVEYOR
+			return Category.DEFENSE
+		&"bank", &"pump":
+			return Category.STATE
+		&"housing":
+			return Category.SOCIAL
 		_:
-			return ConnClass.NONE  # housing / storage / pump(замок) / прочее
+			return Category.NONE
 
 
-## Соединятся ли две роли при соседстве (для превью стыковки и единой логики).
+## Сочетаются ли две роли (часть одного квартала): одна категория, либо одно SOCIAL (универсал).
 static func connects(role_a: StringName, role_b: StringName) -> bool:
-	var ca := connection_class(role_a)
-	return ca != ConnClass.NONE and ca == connection_class(role_b)
+	var ca := category(role_a)
+	var cb := category(role_b)
+	if ca == Category.NONE or cb == Category.NONE:
+		return false
+	return ca == cb or ca == Category.SOCIAL or cb == Category.SOCIAL
 
 
 ## Превью-подсветка стыковки соседа при наведении силуэта: 0=off, 1=соединится (зелёный),
