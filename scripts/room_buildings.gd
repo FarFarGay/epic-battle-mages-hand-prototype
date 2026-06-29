@@ -76,6 +76,7 @@ const CATALOG: Dictionary = {
 	PUMP: {
 		"name": "Качалка-замок",
 		"menu_label": "🏰 Качалка-замок (центр)",
+		"hint": "Центр города. Одна на отряд — от неё растёт площадка.",
 		"scene": "res://scenes/oil_collector.tscn",
 		"footprint": Vector3(4.6, 4.0, 4.6),  # ~ диаметр коллектора
 		"resource_type": ResourcePile.ResourceType.WOOD,
@@ -133,6 +134,7 @@ const CATALOG: Dictionary = {
 	PAD_MINE: {
 		"name": "Шахта",
 		"menu_label": "⛏ Шахта (на жилу)",
+		"hint": "Ставь на жилу — сама капает деньги. Ядро квартала.",
 		"role": &"mine",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
@@ -142,6 +144,7 @@ const CATALOG: Dictionary = {
 	PAD_WALL: {
 		"name": "Стенка-брус",
 		"menu_label": "▮ Стенка ▮▮▮",
+		"hint": "Преграда для скелетов, 3 клетки. Стройте лабиринт.",
 		"role": &"defend",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
 		"instant": true,
@@ -151,6 +154,7 @@ const CATALOG: Dictionary = {
 	PAD_WALL1: {
 		"name": "Стенка (клетка)",
 		"menu_label": "▪ Стенка (1 клетка)",
+		"hint": "Преграда, 1 клетка — затыкать щели в стене.",
 		"role": &"defend",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
@@ -171,6 +175,7 @@ const CATALOG: Dictionary = {
 	PAD_HOUSE: {
 		"name": "Дом гномов",
 		"menu_label": "🏠 Дом гномов (+любой квартал)",
+		"hint": "Соц-универсал: входит в ЛЮБОЙ квартал и ускоряет.",
 		"role": &"housing",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
 		"instant": true,
@@ -192,6 +197,7 @@ const CATALOG: Dictionary = {
 	PAD_GATE: {
 		"name": "Ворота",
 		"menu_label": "🚪 Ворота (3)",
+		"hint": "Проём в линии стены для прохода своих.",
 		"role": &"gate",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
 		"instant": true,
@@ -203,6 +209,7 @@ const CATALOG: Dictionary = {
 	PAD_BARRACKS: {
 		"name": "Казарма лучников",
 		"menu_label": "🏹 Казарма лучников (угол)",
+		"hint": "Найм лучников за золото — гарнизонят стены.",
 		"role": &"barracks",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
 		"instant": true,
@@ -218,6 +225,7 @@ const CATALOG: Dictionary = {
 	PAD_SPEARMEN: {
 		"name": "Казарма копейщиков",
 		"menu_label": "🛡 Казарма копейщиков (Т)",
+		"hint": "Найм копейщиков за золото — мобильный отряд.",
 		"role": &"barracks",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(1, 1)],
 		"instant": true,
@@ -237,11 +245,12 @@ const CATALOG: Dictionary = {
 		"cost": {ResourcePile.ResourceType.BRONZE: 12},
 		"ghost_color": Color(0.6, 0.7, 0.85, 0.5),
 	},
-	# Плавильня-САПОРТ (1 клетка): вплотную к ШАХТЕ → ускоряет добычу. Один сапорт = один
-	# бонус; снос = минус бонус. Компактная — чтобы квартал можно было закрыть.
+	# Плавильня-САПОРТ (1 клетка): кладётся в ПЛОТ-силуэт квартала шахты. Бонус — за РАЗНЫЕ типы в
+	# плоте × заполнение (см. pad_building), размер сапорта свободен → компактная, как была.
 	PAD_SMELTER: {
 		"name": "Плавильня",
 		"menu_label": "🔥 Плавильня (+добыча)",
+		"hint": "Сапорт: +60% добыче. В силуэт квартала, нужны РАЗНЫЕ.",
 		"role": &"smelter",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
@@ -253,6 +262,7 @@ const CATALOG: Dictionary = {
 	PAD_MINT: {
 		"name": "Чеканный двор",
 		"menu_label": "🪙 Чеканный двор (+добыча)",
+		"hint": "Сапорт: +60% добыче. Бонус — за РАЗНЫЕ типы.",
 		"role": &"mint",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(0, 1)],
 		"instant": true,

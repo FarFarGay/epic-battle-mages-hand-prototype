@@ -128,8 +128,12 @@ var _super_label: Label
 ## расположение, и счётчик заводить новой ноды в .tscn ради этого нет смысла.
 var _journal_button: Button
 var _journal_badge: Label
-## Меню стройки отряда рабочих (popup, ленивое создание). Пункт «Мост» = BUILD_MENU_BRIDGE.
-var _build_menu: PopupMenu
+## Палитра стройки (узлы в gameplay_hud.tscn, код только наполняет). Карточки группируются
+## по СЕКЦИЯМ-категориям (что к чему относится) и показывают цену + эффект (что за что даётся).
+## Тоггл по кнопке «🔨 Стройка». _build_cards — для live-обновления оплатимости при смене казны.
+@onready var _build_palette: Panel = $BuildPalette
+@onready var _build_sections: VBoxContainer = $BuildPalette/Margin/VBox/Scroll/Sections
+var _build_cards: Array = []  # [{cost_label: Label, cost: Dictionary}] — для _refresh_build_affordability
 const BUILD_MENU_BRIDGE := 0
 const BUILD_MENU_PUMP := 11  # качалка-замок (центр грид-города)
 const BUILD_MENU_PAD_WALL1 := 12
@@ -154,6 +158,16 @@ var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_MINT: RoomBuildings.PAD_MINT,
 	BUILD_MENU_PAD_HOUSE: RoomBuildings.PAD_HOUSE,
 }
+## Секции палитры стройки: заголовок-категория + список пунктов (BUILD_MENU_* id). Порядок
+## внутри = порядок карточек. Группировка по той же таксономии, что и квартал-баффы — игрок
+## видит «что к чему относится» (добыча/оборона/замок). Шахта первой в «Добыче» (ядро), сапорты
+## следом; Мост — отдельная инженерная механика.
+const BUILD_SECTIONS := [
+	{"title": "⛏  ДОБЫЧА — квартал", "ids": [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_SMELTER, BUILD_MENU_PAD_MINT]},
+	{"title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN]},
+	{"title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE]},
+	{"title": "🌉  ИНЖЕНЕРИЯ", "ids": [BUILD_MENU_BRIDGE]},
+]
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
 var _resource_labels: Dictionary = {}
@@ -1215,58 +1229,177 @@ func _on_journal_button_pressed() -> void:
 	JournalPanel.toggle()
 
 
-## Меню стройки (popup) для отряда рабочих — открывается из вкладки «Стройка» в
-## карточке. Пункты = что можно построить (пока Мост; дальше добавим). Создаётся
-## лениво один раз, переиспользуется всеми карточками.
-func _ensure_build_menu() -> PopupMenu:
-	if _build_menu != null and is_instance_valid(_build_menu):
-		return _build_menu
-	_build_menu = PopupMenu.new()
-	_build_menu.add_item("🌉 Мост через пропасть", BUILD_MENU_BRIDGE)
-	# Качалка-замок (центр) + полимино-город вокруг неё. Старые постройки (палисад/
-	# archer_post/бур/трубы) убраны из меню — заменены этой моделью.
-	_build_menu.add_separator("Качалка и город")
-	_build_menu.add_item(String(RoomBuildings.get_data(RoomBuildings.PUMP).get("menu_label", "Качалка-замок")), BUILD_MENU_PUMP)
-	for mid in PAD_MENU_IDS:
-		_build_menu.add_item(String(RoomBuildings.get_data(PAD_MENU_IDS[mid]).get("menu_label", "Фигура")), mid)
-	_build_menu.id_pressed.connect(_on_build_menu_id)
-	add_child(_build_menu)
-	return _build_menu
+## Тоггл палитры стройки (узлы в .tscn). Открытие гасит активные aim-режимы и пере-наполняет
+## секции (гейтинг/оплатимость на момент открытия), закрытие — просто прячет.
+func _toggle_build_palette() -> void:
+	if _build_palette == null or not is_instance_valid(_build_palette):
+		return
+	if _build_palette.visible:
+		_build_palette.hide()
+		return
+	_cancel_hand_aims()  # вход в стройку отменяет «Идти сюда» и пр.
+	_populate_build_palette()
+	_build_palette.show()
 
 
-## Открыть меню стройки под кнопкой «Стройка».
-func _open_build_menu(btn: Button) -> void:
-	var menu := _ensure_build_menu()
-	# Знание гномов-строителей (станок Room11). Мост — отдельная механика, не гейтится.
+## Наполнить палитру карточками по СЕКЦИЯМ (BUILD_SECTIONS). Каждый заголовок — категория,
+## под ним сетка карточек (иконка+имя, цена, эффект). Пере-собирается при каждом открытии —
+## так подхватывается смена гейтинга (построена ли качалка) без слежения за событиями.
+func _populate_build_palette() -> void:
+	if _build_sections == null or not is_instance_valid(_build_sections):
+		return
+	for child in _build_sections.get_children():
+		child.queue_free()
+	_build_cards.clear()
+	for section in BUILD_SECTIONS:
+		var header := Label.new()
+		header.text = String(section["title"])
+		header.add_theme_font_size_override("font_size", 13)
+		header.add_theme_color_override("font_color", Color(0.78, 0.82, 0.9, 0.9))
+		_build_sections.add_child(header)
+		# Карточки секции — в GridContainer (1 колонка): легко расширить до 2 колонок позже.
+		var grid := GridContainer.new()
+		grid.columns = 1
+		grid.add_theme_constant_override("v_separation", 4)
+		grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_build_sections.add_child(grid)
+		for id in section["ids"]:
+			grid.add_child(_make_build_card(int(id)))
+	_refresh_build_affordability()
+
+
+## Одна карточка постройки = Button (даёт hover/pressed/disabled даром) с детьми-лейблами
+## (mouse IGNORE → клик ловит кнопка). Верх: иконка+имя слева, цена справа. Низ: эффект ИЛИ
+## причина блокировки. Гейтинг (знание гномов / нужна качалка / уже есть) → disabled+серый.
+func _make_build_card(id: int) -> Button:
+	var info := _build_item_info(id)
+	var card := Button.new()
+	card.custom_minimum_size = Vector2(0, 60)  # имя (1 стр.) + эффект (до 2 стр.); Button не растёт под детей
+	card.clip_contents = true  # длинный эффект не вылезет в соседнюю карточку
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.focus_mode = Control.FOCUS_NONE
+	card.disabled = info["disabled"]
+	card.pressed.connect(_on_build_card_pressed.bind(id))
+	var inner := VBoxContainer.new()
+	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	inner.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	inner.offset_left = 9
+	inner.offset_top = 4
+	inner.offset_right = -9
+	inner.offset_bottom = -4
+	inner.add_theme_constant_override("separation", 1)
+	if info["disabled"]:
+		inner.modulate = Color(1, 1, 1, 0.45)  # заглушённая карточка читается как недоступная
+	card.add_child(inner)
+	var top := HBoxContainer.new()
+	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	inner.add_child(top)
+	var name_lbl := Label.new()
+	name_lbl.text = "%s %s" % [info["emoji"], info["name"]]
+	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	top.add_child(name_lbl)
+	var cost_lbl := Label.new()
+	cost_lbl.text = String(info["cost_text"])
+	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	top.add_child(cost_lbl)
+	var eff := Label.new()
+	eff.text = String(info["sub_text"])
+	eff.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	eff.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	eff.add_theme_font_size_override("font_size", 11)
+	eff.modulate = Color(1, 1, 1, 0.62)
+	inner.add_child(eff)
+	# Оплатимость (только монетные «cost») обновляется live при смене казны — красный = не хватает.
+	_build_cards.append({"cost_label": cost_lbl, "cost": info["cost"]})
+	return card
+
+
+## Метаданные карточки: имя/иконка/цена/эффект + гейтинг. Спецслучаи: Мост (не гейтится),
+## Качалка (одна на отряд, гном-строит за дерево), фигуры площадки (нужна качалка + знание).
+func _build_item_info(id: int) -> Dictionary:
 	var knows: bool = _building_unlocked()
-	# Качалка-замок: знание гномов И ещё не построена/не строится (ОДНА на отряд).
-	var pump_idx: int = menu.get_item_index(BUILD_MENU_PUMP)
-	var pump_exists: bool = _pump_exists_or_building()
-	var pump_built: bool = _pump_built()
-	if pump_idx >= 0:
-		var pump_lbl: String = String(RoomBuildings.get_data(RoomBuildings.PUMP).get("menu_label", "Качалка-замок"))
-		menu.set_item_disabled(pump_idx, not knows or pump_exists)
-		var psfx: String = ""
+	if id == BUILD_MENU_BRIDGE:
+		return {"emoji": "🌉", "name": "Мост через пропасть", "cost_text": "", "cost": {},
+			"sub_text": "Перекинуть мост через пропасть к вратам.", "disabled": false}
+	if id == BUILD_MENU_PUMP:
+		var data: Dictionary = RoomBuildings.get_data(RoomBuildings.PUMP)
+		var pump_exists: bool = _pump_exists_or_building()
+		var disabled: bool = not knows or pump_exists
+		var sub: String = String(data.get("hint", ""))
 		if not knows:
-			psfx = " (знание гномов)"
+			sub = "🔒 нужно знание гномов-строителей"
 		elif pump_exists:
-			psfx = " (уже есть)"
-		menu.set_item_text(pump_idx, pump_lbl + psfx)
-	# Фигуры города — знание гномов И построенная качалка (от неё растёт грид).
-	for mid in PAD_MENU_IDS:
-		var pidx: int = menu.get_item_index(mid)
-		if pidx >= 0:
-			var plbl: String = String(RoomBuildings.get_data(PAD_MENU_IDS[mid]).get("menu_label", "Фигура"))
-			menu.set_item_disabled(pidx, not (knows and pump_built))
-			var sfx: String = ""
-			if not knows:
-				sfx = " (знание гномов)"
-			elif not pump_built:
-				sfx = " (нужна качалка)"
-			menu.set_item_text(pidx, plbl + sfx)
-	menu.reset_size()
-	menu.position = Vector2i(btn.get_screen_position()) + Vector2i(0, int(btn.size.y))
-	menu.popup()
+			sub = "✓ уже построена (одна на отряд)"
+		return {"emoji": _emoji_of(data), "name": String(data.get("name", "Качалка")),
+			"cost_text": _format_cost(data), "cost": {}, "sub_text": sub, "disabled": disabled}
+	# Фигуры площадки: знание гномов И построенная качалка (от неё растёт грид).
+	var bid: StringName = PAD_MENU_IDS.get(id, &"")
+	var pdata: Dictionary = RoomBuildings.get_data(bid)
+	var pump_built: bool = _pump_built()
+	var pdisabled: bool = not (knows and pump_built)
+	var psub: String = String(pdata.get("hint", ""))
+	if not knows:
+		psub = "🔒 нужно знание гномов-строителей"
+	elif not pump_built:
+		psub = "🔒 нужна качалка-замок"
+	return {"emoji": _emoji_of(pdata), "name": String(pdata.get("name", "Фигура")),
+		"cost_text": _format_cost(pdata), "cost": pdata.get("cost", {}),
+		"sub_text": psub, "disabled": pdisabled}
+
+
+## Иконка постройки = первый «токен» menu_label (эмодзи перед пробелом). Дублировать поле
+## не нужно — menu_label уже несёт иконку.
+func _emoji_of(data: Dictionary) -> String:
+	var lbl: String = String(data.get("menu_label", ""))
+	var sp: int = lbl.find(" ")
+	return lbl.substr(0, sp) if sp > 0 else "▪"
+
+
+## Строка цены карточки: монетная «cost» (🥇🥈🥉) ИЛИ доставки рабочих (🪵×N) ИЛИ пусто.
+func _format_cost(data: Dictionary) -> String:
+	var cost: Dictionary = data.get("cost", {})
+	if not cost.is_empty():
+		var parts: Array = []
+		for t in [ResourcePile.ResourceType.GOLD, ResourcePile.ResourceType.SILVER, ResourcePile.ResourceType.BRONZE]:
+			if cost.has(t):
+				parts.append("%d%s" % [int(cost[t]), _coin_emoji(t)])
+		return "  ".join(parts)
+	if data.has("resources_needed"):
+		var rt: int = int(data.get("resource_type", ResourcePile.ResourceType.WOOD))
+		return "%d%s" % [int(data["resources_needed"]), _coin_emoji(rt)]
+	return ""
+
+
+func _coin_emoji(t: int) -> String:
+	match t:
+		ResourcePile.ResourceType.GOLD: return "🥇"
+		ResourcePile.ResourceType.SILVER: return "🥈"
+		ResourcePile.ResourceType.BRONZE: return "🥉"
+		ResourcePile.ResourceType.WOOD: return "🪵"
+		_: return ""
+
+
+## Покрасить цену красным на карточках, чью монетную стоимость казна сейчас не тянет.
+## Зовётся при наполнении и при смене ресурсов (_on_resource_changed), пока палитра видна.
+func _refresh_build_affordability() -> void:
+	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	for entry in _build_cards:
+		var lbl: Label = entry["cost_label"]
+		if lbl == null or not is_instance_valid(lbl):
+			continue
+		var cost: Dictionary = entry["cost"]
+		var afford: bool = true
+		if not cost.is_empty() and bank != null and bank.has_method(&"can_afford"):
+			afford = bool(bank.call(&"can_afford", cost))
+		lbl.modulate = Color(1, 1, 1) if afford else Color(1.0, 0.45, 0.4)
+
+
+## Клик по карточке: спрятать палитру и запустить выбранную постройку (дисп. _on_build_menu_id).
+func _on_build_card_pressed(id: int) -> void:
+	if _build_palette != null and is_instance_valid(_build_palette):
+		_build_palette.hide()
+	_on_build_menu_id(id)
 
 
 ## ВРЕМЕННО (тест): стройка открыта с самого начала, без станка Room11. Вернуть в false,
@@ -1421,6 +1554,9 @@ func _on_resource_changed(type: int, amount: int) -> void:
 	# Золото — главный ресурс победы: обновляем баннер прогресса + pop на приросте.
 	if type == int(ResourcePile.ResourceType.GOLD):
 		_refresh_gold_goal()
+	# Палитра открыта → пере-красить цены под текущую казну (красный = не хватает).
+	if _build_palette != null and is_instance_valid(_build_palette) and _build_palette.visible:
+		_refresh_build_affordability()
 
 
 ## Показ «X / cap»: cap — потолок склада (CampEconomy.cap_for). Цвет: серый при 0,
@@ -2150,11 +2286,10 @@ func _on_squad_deselect_pressed() -> void:
 	_cancel_hand_aims()
 
 
-## Вкладка «Стройка» (рабочие) — открыть меню выбора постройки под кнопкой. Сначала
-## гасим активные aim'ы (squad «Идти сюда» и пр.) — вход в режим стройки отменяет их.
-func _on_squad_build_pressed(btn: Button) -> void:
-	_cancel_hand_aims()
-	_open_build_menu(btn)
+## Вкладка «Стройка» (рабочие) — тоггл палитры построек. Гашение активных aim'ов и наполнение
+## делает _toggle_build_palette при открытии. btn не нужен — палитра фиксирована в .tscn.
+func _on_squad_build_pressed(_btn: Button) -> void:
+	_toggle_build_palette()
 
 
 func _on_squad_aim_pressed(squad_id: int) -> void:

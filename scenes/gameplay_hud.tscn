@@ -1,13 +1,13 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene format=3 uid="uid://d4hv8aomel3ft"]
 
-[ext_resource type="Script" path="res://scripts/gameplay_hud.gd" id="1"]
+[ext_resource type="Script" uid="uid://dgvhd8f32iw5l" path="res://scripts/gameplay_hud.gd" id="1"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
-bg_color = Color(0, 0, 0, 0.55)
 content_margin_left = 8.0
 content_margin_top = 6.0
 content_margin_right = 8.0
 content_margin_bottom = 6.0
+bg_color = Color(0, 0, 0, 0.55)
 
 [sub_resource type="StyleBoxFlat" id="SB_bar_bg"]
 bg_color = Color(0, 0, 0, 0.55)
@@ -37,11 +37,10 @@ corner_radius_top_right = 2
 corner_radius_bottom_right = 2
 corner_radius_bottom_left = 2
 
-[node name="GameplayHud" type="CanvasLayer"]
+[node name="GameplayHud" type="CanvasLayer" unique_id=701292815]
 script = ExtResource("1")
 
-; --- Правая панель: статус лагеря ---
-[node name="RightPanel" type="PanelContainer" parent="."]
+[node name="RightPanel" type="PanelContainer" parent="." unique_id=414711718]
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
@@ -52,31 +51,30 @@ offset_bottom = 240.0
 grow_horizontal = 0
 theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
 
-[node name="Margin" type="MarginContainer" parent="RightPanel"]
+[node name="Margin" type="MarginContainer" parent="RightPanel" unique_id=945357062]
 layout_mode = 2
 
-[node name="VBox" type="VBoxContainer" parent="RightPanel/Margin"]
+[node name="VBox" type="VBoxContainer" parent="RightPanel/Margin" unique_id=547780254]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-; Уровень = количество палаток
-[node name="TentRow" type="HBoxContainer" parent="RightPanel/Margin/VBox"]
+[node name="TentRow" type="HBoxContainer" parent="RightPanel/Margin/VBox" unique_id=648950482]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="Icon" type="ColorRect" parent="RightPanel/Margin/VBox/TentRow"]
+[node name="Icon" type="ColorRect" parent="RightPanel/Margin/VBox/TentRow" unique_id=1365156187]
 custom_minimum_size = Vector2(20, 20)
 layout_mode = 2
 color = Color(0.45, 0.3, 0.18, 1)
 
-[node name="Name" type="Label" parent="RightPanel/Margin/VBox/TentRow"]
+[node name="Name" type="Label" parent="RightPanel/Margin/VBox/TentRow" unique_id=443046010]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_font_sizes/font_size = 14
 text = "уровень"
 
-[node name="CountLabel" type="Label" parent="RightPanel/Margin/VBox/TentRow"]
+[node name="CountLabel" type="Label" parent="RightPanel/Margin/VBox/TentRow" unique_id=1802330496]
 custom_minimum_size = Vector2(40, 0)
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
@@ -84,11 +82,9 @@ theme_override_font_sizes/font_size = 14
 text = "0"
 horizontal_alignment = 2
 
-; --- Панель отрядов (юниты). Двигай/растягивай ЭТОТ узел в редакторе — gameplay_hud.gd
-; кладёт карточки внутрь SquadList. Дефолт: правый столбец под ресурсами/журналом. ---
-[node name="SquadScroll" type="ScrollContainer" parent="."]
+[node name="SquadScroll" type="ScrollContainer" parent="." unique_id=1146509463]
+anchors_preset = 11
 anchor_left = 1.0
-anchor_top = 0.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = -300.0
@@ -99,18 +95,15 @@ grow_horizontal = 0
 mouse_filter = 2
 horizontal_scroll_mode = 0
 
-[node name="SquadList" type="VBoxContainer" parent="SquadScroll"]
+[node name="SquadList" type="VBoxContainer" parent="SquadScroll" unique_id=712238082]
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
 theme_override_constants/separation = 6
 
-; --- Якоря панелей HUD. Двигай/растягивай ЭТИ узлы в редакторе — gameplay_hud.gd
-; кладёт соответствующий виджет внутрь, заполняя якорь. Так весь HUD позиционируется
-; мышкой, без правок кода. ---
-
-; Бар заклинаний (низ по центру). Полоса во всю ширину снизу, бар центрируется внутри.
-[node name="ActionBarAnchor" type="Control" parent="."]
+[node name="ActionBarAnchor" type="Control" parent="." unique_id=531977725]
+layout_mode = 3
+anchors_preset = 12
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -118,9 +111,8 @@ offset_top = -84.0
 offset_bottom = -16.0
 mouse_filter = 2
 
-; HP/MP/сила башни (верх по центру). Бары — реальные узлы (видно/двигаешь в редакторе),
-; код только обновляет value/текст. SuperBar прячется кодом, если великий удар закрыт.
-[node name="TowerStats" type="VBoxContainer" parent="."]
+[node name="TowerStats" type="VBoxContainer" parent="." unique_id=1844699240]
+anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
 offset_left = -120.0
@@ -129,62 +121,65 @@ offset_right = 120.0
 offset_bottom = 54.0
 theme_override_constants/separation = 4
 
-[node name="HPBar" type="ProgressBar" parent="TowerStats"]
+[node name="HPBar" type="ProgressBar" parent="TowerStats" unique_id=1314671945]
 custom_minimum_size = Vector2(240, 18)
+layout_mode = 2
 theme_override_styles/background = SubResource("SB_bar_bg")
 theme_override_styles/fill = SubResource("SB_hp_fill")
 max_value = 1.0
 value = 1.0
 show_percentage = false
 
-[node name="Label" type="Label" parent="TowerStats/HPBar"]
+[node name="Label" type="Label" parent="TowerStats/HPBar" unique_id=2003139144]
+layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
-mouse_filter = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_font_sizes/font_size = 12
 text = "HP 0/0"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="ManaBar" type="ProgressBar" parent="TowerStats"]
+[node name="ManaBar" type="ProgressBar" parent="TowerStats" unique_id=1924067616]
 custom_minimum_size = Vector2(240, 18)
+layout_mode = 2
 theme_override_styles/background = SubResource("SB_bar_bg")
 theme_override_styles/fill = SubResource("SB_mana_fill")
 max_value = 1.0
 value = 1.0
 show_percentage = false
 
-[node name="Label" type="Label" parent="TowerStats/ManaBar"]
+[node name="Label" type="Label" parent="TowerStats/ManaBar" unique_id=1158740871]
+layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
-mouse_filter = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_font_sizes/font_size = 12
 text = "MP 0/0"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="SuperBar" type="ProgressBar" parent="TowerStats"]
+[node name="SuperBar" type="ProgressBar" parent="TowerStats" unique_id=919138455]
 custom_minimum_size = Vector2(240, 12)
+layout_mode = 2
 theme_override_styles/background = SubResource("SB_bar_bg")
 theme_override_styles/fill = SubResource("SB_super_fill")
 max_value = 1.0
-value = 0.0
 show_percentage = false
 
-[node name="Label" type="Label" parent="TowerStats/SuperBar"]
+[node name="Label" type="Label" parent="TowerStats/SuperBar" unique_id=1278711087]
+layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
-mouse_filter = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_font_sizes/font_size = 10
 text = "ВЕЛИКАЯ СИЛА"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-; Цель по золоту (верх по центру).
-[node name="GoldGoalAnchor" type="Control" parent="."]
+[node name="GoldGoalAnchor" type="Control" parent="." unique_id=1130350802]
+layout_mode = 3
+anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
 offset_left = -160.0
@@ -193,8 +188,8 @@ offset_right = 160.0
 offset_bottom = 100.0
 mouse_filter = 2
 
-; Кнопка журнала (верх справа, под ресурсами). Реальная кнопка — видно/двигаешь в редакторе.
-[node name="JournalButton" type="Button" parent="."]
+[node name="JournalButton" type="Button" parent="." unique_id=544323005]
+anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
 offset_left = -160.0
@@ -205,30 +200,32 @@ focus_mode = 0
 theme_override_font_sizes/font_size = 14
 text = "📔 журнал [J]"
 
-[node name="Badge" type="Label" parent="JournalButton"]
+[node name="Badge" type="Label" parent="JournalButton" unique_id=705419413]
+visible = false
+layout_mode = 0
 anchor_left = 1.0
 anchor_right = 1.0
 offset_left = -22.0
 offset_top = -8.0
 offset_right = -2.0
 offset_bottom = 12.0
-mouse_filter = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_font_sizes/font_size = 12
 text = "0"
 horizontal_alignment = 1
 vertical_alignment = 1
-visible = false
 
-[node name="BG" type="ColorRect" parent="JournalButton/Badge"]
+[node name="BG" type="ColorRect" parent="JournalButton/Badge" unique_id=1025278190]
 show_behind_parent = true
+layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
-color = Color(0.85, 0.15, 0.15, 1)
 mouse_filter = 2
+color = Color(0.85, 0.15, 0.15, 1)
 
-; Индикатор тревоги (верх справа, под журналом).
-[node name="ModeLabelAnchor" type="Control" parent="."]
+[node name="ModeLabelAnchor" type="Control" parent="." unique_id=1124366829]
+layout_mode = 3
+anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
 offset_left = -160.0
@@ -236,3 +233,38 @@ offset_top = 296.0
 offset_right = -10.0
 offset_bottom = 322.0
 mouse_filter = 2
+
+[node name="BuildPalette" type="Panel" parent="." unique_id=1385123434]
+visible = false
+offset_left = 20.0
+offset_top = 90.0
+offset_right = 360.0
+offset_bottom = 570.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+
+[node name="Margin" type="MarginContainer" parent="BuildPalette" unique_id=1737876372]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="VBox" type="VBoxContainer" parent="BuildPalette/Margin" unique_id=179600797]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Title" type="Label" parent="BuildPalette/Margin/VBox" unique_id=2114416163]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "🔨  СТРОЙКА"
+
+[node name="Scroll" type="ScrollContainer" parent="BuildPalette/Margin/VBox" unique_id=1449441308]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="Sections" type="VBoxContainer" parent="BuildPalette/Margin/VBox/Scroll" unique_id=1017910173]
+layout_mode = 2
+size_flags_horizontal = 3

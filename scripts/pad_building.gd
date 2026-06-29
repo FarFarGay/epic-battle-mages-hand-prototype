@@ -14,17 +14,30 @@ const ACTION_GRAB := &"hand_grab"
 var building_id: StringName = &""
 var _mask: Array = []        # Array[Vector2i] — клетки фигуры (локальные offset'ы)
 var _role: StringName = &"defend"
-## ЭКОНОМИКА-КВАРТАЛ (2026-06-28). ШАХТА (active, role mine) сама капает деньги в казну,
-## медленно. Рядом стоящие САПОРТЫ (плавильня/чеканка, 1 клетка) ускоряют её:
-## rate = MINE_RATE × (1 + N_соседних_сапортов × SUPPORT_BONUS). Линий/конвейера НЕТ; снос
-## сапорта = минус его бонус, не рушит всё. Банк → сапорт ЗАМКА (отдельно, pending).
+## ЭКОНОМИКА-КВАРТАЛ как СИЛУЭТ (2026-06-30). ШАХТА (active, role mine) проецирует ПЛОТ —
+## целевой контур квартала (MINE_PLOT_CELLS). Игрок заполняет его САПОРТАМИ; бонус добычи
+## = (РАЗНЫЕ типы в плоте) × SUPPORT_BONUS × (доля заполнения плота): разнообразие И заполнение
+## вместе. ПРАВИЛО КАТЕГОРИЙ: в плот шахты считаются только PRODUCTION/SOCIAL (казарма — нет,
+## это другой квартал). rate = MINE_RATE × (1 + N_разных × SUPPORT_BONUS × fill). Снос сапорта =
+## минус его вклад, не рушит всё. Банк → сапорт ЗАМКА (отдельно, pending).
 const MINE_RATE := 1.0        # базовая добыча шахты соло, монет(бронза)/сек (медленно)
-const SUPPORT_BONUS := 0.6    # каждый соседний сапорт (плавильня/чеканка) = +60% к скорости
+const SUPPORT_BONUS := 0.6    # каждый РАЗНЫЙ тип сапорта в полном плоте = +60% (× доля заполнения)
+## Плот-силуэт квартала шахты: offset'ы клеток ОТ клетки шахты (без неё). Заполняешь сапортами —
+## форма квартала. 4×3 «двор» сбоку от шахты (11 клеток ≈ 2×2 + L + I = полный набор разных).
+## DATA — дизайнер крутит форму/размер. Шахта мономино без поворота, offset'ы локальные = мировые.
+const MINE_PLOT_CELLS: Array = [
+	Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0),
+	Vector2i(0, 1), Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1),
+	Vector2i(0, 2), Vector2i(1, 2), Vector2i(2, 2), Vector2i(3, 2),
+]
 var _vein: OilDeposit = null  # жила под шахтой
 var _mine_accum: float = 0.0  # дробный накопитель добычи (единицы целые)
-var _prev_supports: int = 0   # сколько сапортов было в прошлый тик (для фидбэка «квартал собран/растёт»)
+var _quarter_was_full: bool = false  # был ли плот полностью заполнен в прошлый тик (вспышка единожды на завершение)
 ## Плавильня-сапорт: ровный дым (флавор «работает»).
 var _smoke: GPUParticles3D = null
+## Ghost-силуэт плота квартала (только у шахты). Лениво, показывается по требованию при взятии
+## сапорт-здания (см. set_plot_ghost_visible), а не перманентно.
+var _plot_ghost: Node3D = null
 ## Всплывашка «+N» прибыли над шахтой + салют на каждую золотую (агрегируем, не чаще INTERVAL).
 const POPUP_INTERVAL := 0.7
 const POPUP_LIFETIME := 2.8
@@ -912,20 +925,92 @@ func _setup_mine() -> void:
 	set_process(true)
 
 
-## Шаг добычи: шахта сама капает деньги в казну, скорость растёт от соседних САПОРТОВ
-## (плавильня/чеканка): rate = MINE_RATE × (1 + N × SUPPORT_BONUS). Бронза → казна (одометр
-## сам копит в серебро/золото). +N всплывашка и салют на золотую — над шахтой.
+## Цвета плитки плота: пустая (бледно-голубая) / закрытая сапортом (зелёная). Подсветка показывает
+## заполнение — видно, где дыры до 100% (и почему «собран» ещё не мигнул).
+const PLOT_EMPTY_COLOR := Color(0.55, 0.8, 1.0, 0.16)
+const PLOT_FILLED_COLOR := Color(0.35, 1.0, 0.45, 0.5)
+
+## Показать/скрыть ghost-СИЛУЭТ плота квартала. Зовётся HandPlaceAim при взятии сапорт-здания
+## (плавильня/двор/дом) — игрок видит, в какие силуэты класть, и понимает «что к чему». Не
+## перманентно. Только у шахты-ядра; строится лениво при первом показе, при показе — перекраска.
+func set_plot_ghost_visible(v: bool) -> void:
+	if _role != &"mine":
+		return  # силуэт-плот есть только у шахты-ядра
+	if v and (_plot_ghost == null or not is_instance_valid(_plot_ghost)):
+		_build_plot_ghost()
+	if _plot_ghost != null and is_instance_valid(_plot_ghost):
+		_plot_ghost.visible = v
+		if v:
+			_refresh_plot_ghost_fill()
+
+
+## Ghost-СИЛУЭТ плота квартала: полупрозрачные плитки по каждой клетке MINE_PLOT_CELLS вокруг
+## шахты — видимая цель «вот сюда умести сапорты». СЕТКА-АБСОЛЮТ: ghost top_level + плитки по
+## CityGrid.cell_to_world, чтобы НЕ наследовать поворот шахты (иначе силуэт разъехался бы с
+## клетками, что считаются). У КАЖДОЙ плитки свой материал (красим по заполнению).
+func _build_plot_ghost() -> void:
+	var tree := get_tree()
+	var cells := _plot_cells_ordered()
+	if cells.is_empty():
+		return
+	var s: float = CityGrid.CELL
+	var tile: float = s - 2.0 * _STREET
+	_plot_ghost = Node3D.new()
+	_plot_ghost.name = "PlotGhost"
+	_plot_ghost.top_level = true  # игнорировать трансформ шахты (поворот!) — плитки строго по гриду
+	add_child(_plot_ghost)
+	for c in cells:
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = PLOT_EMPTY_COLOR
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		var plane := MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(tile, tile)
+		plane.mesh = pm
+		plane.material_override = mat
+		var wpos: Vector3 = CityGrid.cell_to_world(c as Vector2i, tree)
+		plane.position = Vector3(wpos.x, wpos.y + 0.06, wpos.z)
+		_plot_ghost.add_child(plane)
+
+
+## Перекрасить плитки плота по текущему заполнению: закрытая сапортом клетка → зелёная, пустая →
+## бледная. Плитки идут в порядке MINE_PLOT_CELLS, так что i-я плитка = origin + offset[i].
+func _refresh_plot_ghost_fill() -> void:
+	if _plot_ghost == null or not is_instance_valid(_plot_ghost):
+		return
+	var cells := _plot_cells_ordered()
+	var covered: Dictionary = _quarter_status().get("covered", {})
+	var kids := _plot_ghost.get_children()
+	for i in range(min(kids.size(), cells.size())):
+		var tile := kids[i] as MeshInstance3D
+		if tile == null:
+			continue
+		var m := tile.material_override as StandardMaterial3D
+		if m == null:
+			continue
+		m.albedo_color = PLOT_FILLED_COLOR if covered.has(cells[i]) else PLOT_EMPTY_COLOR
+
+
+## Шаг добычи: шахта сама капает деньги в казну, скорость растёт от заполнения ПЛОТА-СИЛУЭТА
+## квартала РАЗНЫМИ сапортами: rate = MINE_RATE × (1 + N_разных_типов × SUPPORT_BONUS × fill).
+## Разнообразие И заполнение считаются вместе (см. _quarter_status). Бронза → казна (одометр сам
+## копит в серебро/золото). +N всплывашка и салют на золотую — над шахтой.
 func _tick_mine(delta: float) -> void:
 	if _vein == null or not is_instance_valid(_vein):
 		return
-	var n := _count_support_neighbors()
-	# Фидбэк «квартал собран»: сапортов стало больше → ВЕСЬ квартал (все здания + площадка
-	# под ними) ярко мигает разом. На убыль не реагируем.
-	if n > _prev_supports:
+	# Квартал-СИЛУЭТ: бонус = (РАЗНЫЕ типы в плоте) × SUPPORT_BONUS × (доля заполнения плота).
+	var st := _quarter_status()
+	var d: int = st["distinct"]
+	var fill: float = st["fill"]
+	# Фидбэк «квартал СОБРАН»: вспышка ЕДИНОЖДЫ в момент, когда плот заполнен ЦЕЛИКОМ (доля = 1.0).
+	# Частичное заполнение не мигает — мигает только готовый квартал (по всей зоне).
+	var full: bool = fill >= 0.999
+	if full and not _quarter_was_full:
 		_play_quarter_fx()
-	if n != _prev_supports:
-		_prev_supports = n
-	var rate: float = MINE_RATE * (1.0 + float(n) * SUPPORT_BONUS)
+	_quarter_was_full = full
+	var rate: float = MINE_RATE * (1.0 + float(d) * SUPPORT_BONUS * fill)
 	_mine_accum += rate * delta
 	var whole := int(_mine_accum)
 	if whole < 1:
@@ -943,78 +1028,63 @@ func _tick_mine(delta: float) -> void:
 			_spawn_firework(ResourcePile.ResourceType.GOLD)  # салют на каждую новую золотую
 
 
-## Сколько САПОРТОВ стоит вплотную к шахте (4-соседство) — каждый ускоряет. Сапорт = соседнее
-## здание категории PRODUCTION (плавильня/двор; НЕ другая шахта) ИЛИ SOCIAL (дом гномов —
-## универсал, закрывает любой квартал). Один сапорт = +1 независимо от формы (dedup по зданию).
-func _count_support_neighbors() -> int:
-	var tree := get_tree()
-	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-	var mine := occupied_cells()
-	var myset: Dictionary = {}
-	for c in mine:
-		myset[c] = true
-	var nbset: Dictionary = {}
-	for c in mine:
-		for d in dirs:
-			var nb: Vector2i = (c as Vector2i) + d
-			if not myset.has(nb):
-				nbset[nb] = true
-	var count := 0
-	var seen: Dictionary = {}
-	for b in tree.get_nodes_in_group(GROUP):
-		if b == self or not is_instance_valid(b) or seen.has(b) or not b.has_method(&"occupied_cells") or not b.has_method(&"get_role"):
-			continue
-		var r: StringName = b.call(&"get_role")
-		if r == &"mine":
-			continue  # другая шахта — актив, не сапорт
-		var cat := PadBuilding.category(r)
-		if cat != Category.PRODUCTION and cat != Category.SOCIAL:
-			continue
-		for oc in b.call(&"occupied_cells"):
-			if nbset.has(oc):
-				count += 1
-				seen[b] = true
-				break
-	return count
-
-
-## Клетки всего квартала: свои (шахта) + полные футпринты всех соседних сапортов.
-func _quarter_cells() -> Array:
-	var tree := get_tree()
-	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-	var minecells := occupied_cells()
-	var myset: Dictionary = {}
-	for c in minecells:
-		myset[c] = true
-	var nbset: Dictionary = {}
-	for c in minecells:
-		for d in dirs:
-			var nb: Vector2i = (c as Vector2i) + d
-			if not myset.has(nb):
-				nbset[nb] = true
+## Клетки ПЛОТА-СИЛУЭТА (упорядоченно, как MINE_PLOT_CELLS), ПОВЁРНУТЫЕ на ориентацию шахты —
+## квартал «смотрит» в ту сторону, куда повёрнута шахта при установке. Origin = клетка шахты.
+func _plot_cells_ordered() -> Array:
 	var out: Array = []
-	for c in minecells:
-		out.append(c)
-	var seen: Dictionary = {}
-	for b in tree.get_nodes_in_group(GROUP):
-		if b == self or not is_instance_valid(b) or seen.has(b) or not b.has_method(&"occupied_cells") or not b.has_method(&"get_role"):
+	var mine_cells := occupied_cells()
+	if mine_cells.is_empty():
+		return out
+	var origin: Vector2i = mine_cells[0]  # шахта — мономино, одна клетка-якорь
+	for off in MINE_PLOT_CELLS:
+		out.append(origin + CityGrid.rotate_offset(off as Vector2i, rotation.y))
+	return out
+
+
+## Set клеток плота-силуэта (для проверки попадания сапорта в зону).
+func _plot_world_cells() -> Dictionary:
+	var out: Dictionary = {}
+	for c in _plot_cells_ordered():
+		out[c] = true
+	return out
+
+
+## Статус квартала-силуэта: сколько РАЗНЫХ типов сапортов попало В ПЛОТ и какая доля плота
+## заполнена. ПРАВИЛО КАТЕГОРИЙ держится: в плот шахты идут только PRODUCTION/SOCIAL (плавильня/
+## двор/дом) — казарма/стена (DEFENSE) лежат в плоте, но НЕ считаются (это чужой квартал). Бонус
+## считает _tick_mine как (distinct × SUPPORT_BONUS × fill): разнообразие И заполнение вместе.
+func _quarter_status() -> Dictionary:
+	var plot := _plot_world_cells()
+	var capacity: int = plot.size()
+	if capacity == 0:
+		return {"distinct": 0, "fill": 0.0, "covered": {}}
+	var covered: Dictionary = {}  # клетки плота, закрытые совместимыми сапортами
+	var roles: Dictionary = {}    # set уникальных ролей сапортов, попавших в плот
+	for b in get_tree().get_nodes_in_group(GROUP):
+		if b == self or not is_instance_valid(b) or not b.has_method(&"occupied_cells") or not b.has_method(&"get_role"):
 			continue
 		var r: StringName = b.call(&"get_role")
 		if r == &"mine":
 			continue
 		var cat := PadBuilding.category(r)
 		if cat != Category.PRODUCTION and cat != Category.SOCIAL:
-			continue
-		var bc: Array = b.call(&"occupied_cells")
-		var adj := false
-		for oc in bc:
-			if nbset.has(oc):
-				adj = true
-				break
-		if adj:
-			seen[b] = true
-			for oc in bc:
-				out.append(oc)
+			continue  # правило категорий: только производственный/соц-сапорт закрывает этот квартал
+		var in_plot := false
+		for c in b.call(&"occupied_cells"):
+			if plot.has(c):
+				covered[c] = true
+				in_plot = true
+		if in_plot:
+			roles[r] = true
+	return {"distinct": roles.size(), "fill": float(covered.size()) / float(capacity), "covered": covered}
+
+
+## Клетки для FX-вспышки = шахта + ЗАКРЫТЫЕ сапортами клетки плота (реально собранный квартал),
+## а НЕ весь пустой силуэт — иначе вспышка моргала большой пустой областью на каждый новый тип.
+func _quarter_cells() -> Array:
+	var out: Array = occupied_cells()  # шахта
+	for c in _quarter_status().get("covered", {}):
+		out.append(c)
 	return out
 
 
@@ -1056,6 +1126,9 @@ func _play_quarter_fx() -> void:
 func _process(delta: float) -> void:
 	if _role == &"mine":
 		_tick_mine(delta)
+		# Live-подсветка заполнения плота, пока силуэт показан (рука с сапортом) — видно дыры.
+		if _plot_ghost != null and is_instance_valid(_plot_ghost) and _plot_ghost.visible:
+			_refresh_plot_ghost_fill()
 		# Всплывашка «+прибыль» над шахтой (агрегируем добытое, не чаще интервала).
 		if _popup_cd > 0.0:
 			_popup_cd -= delta
