@@ -22,6 +22,7 @@ const MINE_RATE := 1.0        # базовая добыча шахты соло,
 const SUPPORT_BONUS := 0.6    # каждый соседний сапорт (плавильня/чеканка) = +60% к скорости
 var _vein: OilDeposit = null  # жила под шахтой
 var _mine_accum: float = 0.0  # дробный накопитель добычи (единицы целые)
+var _prev_supports: int = 0   # сколько сапортов было в прошлый тик (для фидбэка «квартал собран/растёт»)
 ## Плавильня-сапорт: ровный дым (флавор «работает»).
 var _smoke: GPUParticles3D = null
 ## Всплывашка «+N» прибыли над шахтой + салют на каждую золотую (агрегируем, не чаще INTERVAL).
@@ -917,7 +918,14 @@ func _setup_mine() -> void:
 func _tick_mine(delta: float) -> void:
 	if _vein == null or not is_instance_valid(_vein):
 		return
-	var rate: float = MINE_RATE * (1.0 + float(_count_support_neighbors()) * SUPPORT_BONUS)
+	var n := _count_support_neighbors()
+	# Фидбэк «квартал собран»: сапортов стало больше → ВЕСЬ квартал (все здания + площадка
+	# под ними) ярко мигает разом. На убыль не реагируем.
+	if n > _prev_supports:
+		_play_quarter_fx()
+	if n != _prev_supports:
+		_prev_supports = n
+	var rate: float = MINE_RATE * (1.0 + float(n) * SUPPORT_BONUS)
 	_mine_accum += rate * delta
 	var whole := int(_mine_accum)
 	if whole < 1:
@@ -968,6 +976,81 @@ func _count_support_neighbors() -> int:
 				seen[b] = true
 				break
 	return count
+
+
+## Клетки всего квартала: свои (шахта) + полные футпринты всех соседних сапортов.
+func _quarter_cells() -> Array:
+	var tree := get_tree()
+	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	var minecells := occupied_cells()
+	var myset: Dictionary = {}
+	for c in minecells:
+		myset[c] = true
+	var nbset: Dictionary = {}
+	for c in minecells:
+		for d in dirs:
+			var nb: Vector2i = (c as Vector2i) + d
+			if not myset.has(nb):
+				nbset[nb] = true
+	var out: Array = []
+	for c in minecells:
+		out.append(c)
+	var seen: Dictionary = {}
+	for b in tree.get_nodes_in_group(GROUP):
+		if b == self or not is_instance_valid(b) or seen.has(b) or not b.has_method(&"occupied_cells") or not b.has_method(&"get_role"):
+			continue
+		var r: StringName = b.call(&"get_role")
+		if r == &"mine":
+			continue
+		var cat := PadBuilding.category(r)
+		if cat != Category.PRODUCTION and cat != Category.SOCIAL:
+			continue
+		var bc: Array = b.call(&"occupied_cells")
+		var adj := false
+		for oc in bc:
+			if nbset.has(oc):
+				adj = true
+				break
+		if adj:
+			seen[b] = true
+			for oc in bc:
+				out.append(oc)
+	return out
+
+
+## Фидбэк «квартал собран»: ВЕСЬ квартал (все здания + площадка под ними) ярко мигает разом —
+## жёлтый полупрозрачный столб по каждой клетке квартала, гаснет тваном. Зовётся при росте
+## числа сапортов (см. _tick_mine).
+func _play_quarter_fx() -> void:
+	var tree := get_tree()
+	var scene := tree.current_scene if tree != null else null
+	if scene == null or not is_instance_valid(scene):
+		return
+	var cells := _quarter_cells()
+	if cells.is_empty():
+		return
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 0.92, 0.45, 0.85)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var flash := Node3D.new()
+	scene.add_child(flash)
+	var s: float = CityGrid.CELL
+	for cell in cells:
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(s * 0.98, 3.4, s * 0.98)
+		mi.mesh = bm
+		mi.material_override = mat
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.top_level = true
+		flash.add_child(mi)
+		mi.global_position = CityGrid.cell_to_world(cell as Vector2i, tree) + Vector3(0, 1.7, 0)
+	# Яркая вспышка → гаснет за 0.5с, затем самоудаление.
+	var tw := flash.create_tween()
+	tw.tween_property(mat, "albedo_color:a", 0.0, 0.5)
+	tw.tween_callback(flash.queue_free)
 
 
 func _process(delta: float) -> void:

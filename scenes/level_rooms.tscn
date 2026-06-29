@@ -667,6 +667,9 @@ transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 126)
 [node name="OilDepositR6" parent="Room6" unique_id=1023916198 instance=ExtResource("41_mjs4f")]
 transform = Transform3D(0.38499996, 0, 0, 0, 1, 0, 0, 0, 0.38499996, -40.0075, 0, -3.9783483)
 
+[node name="OilDepositR7" parent="Room6" unique_id=175426567 instance=ExtResource("41_mjs4f")]
+transform = Transform3D(0.38499996, 0, 0, 0, 1, 0, 0, 0, 0.38499996, -43.8575, 0, 6.0316505)
+
 [node name="Room8" type="Node3D" parent="." unique_id=1097619881]
 
 [node name="WallEast" parent="Room8" unique_id=1747620114 instance=ExtResource("6_wall")]
