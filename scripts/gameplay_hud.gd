@@ -143,7 +143,7 @@ const BUILD_MENU_PAD_SPEARMEN := 17
 const BUILD_MENU_PAD_SMELTER := 18
 const BUILD_MENU_PAD_MINT := 20
 const BUILD_MENU_PAD_HOUSE := 13  # дом гномов — социальный сапорт-универсал
-const BUILD_MENU_PAD_BARRACK := 21  # барак — сапорт казармы (+кап найма)
+const BUILD_MENU_PAD_BARRACK := 21  # барак — социальное здание (+население)
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[CityGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
@@ -201,9 +201,10 @@ var _mode_label: Label
 var _squad_panel: VBoxContainer
 var _squad_scroll: ScrollContainer
 ## Счётчик нефти замка-качалки (виден, когда замок построен). Прогресс к победе.
-var _oil_label: Label = null
 ## Счётчик казны: 🥉 бронза / 🥈 серебро / 🥇 золото (монетная экономика). Всегда виден.
 var _coins_label: Label = null
+## Счётчик НАСЕЛЕНИЯ (used/cap общего supply-пула, автолоад Population) — под монетами.
+var _population_label: Label = null
 ## squad_id → Control карточки. Используется для update/remove на squad_changed.
 var _squad_cards: Dictionary = {}
 ## squad_id → Squad. Реестр для резолва БЕЗ лагеря (комнатный отряд от гномов):
@@ -257,8 +258,8 @@ func _ready() -> void:
 	# _build_gold_goal()
 	_build_tower_stats()
 	_build_resources_rows()
-	_build_oil_label()
 	_build_coins_label()
+	_build_population_label()
 	_build_journal_button()
 	_build_action_bar()
 	_build_gatherer_card()
@@ -1105,8 +1106,8 @@ func _process(delta: float) -> void:
 	_update_timer -= delta
 	if _update_timer <= 0.0:
 		_update_counts()
-		_update_oil_label()  # отдельно: _update_counts рано выходит без Camp (room-режим)
 		_update_coins_label()
+		_update_population_label()
 		_update_squad_cards_dynamic()
 		_update_timer = UPDATE_INTERVAL
 	_action_bar_update_timer -= delta
@@ -1127,33 +1128,6 @@ func _update_counts() -> void:
 	# Скорость добычи / ETA меняются медленно (генераторы) — обновляем на таймере,
 	# а не на каждом начислении золота.
 	_refresh_gold_rate()
-
-
-## Счётчик нефти замка вверху-по центру. Виден только когда замок построен
-## (Castle в сцене). Обновляется на таймере из _process (см. _update_counts).
-func _build_oil_label() -> void:
-	_oil_label = Label.new()
-	# Ниже панели статов башни (верх-лево) и ресурсов (верх-право) — по центру, в
-	# свободной полосе. mouse_filter IGNORE — не перехватывать обзор мышью.
-	_oil_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	_oil_label.offset_top = 64.0
-	_oil_label.offset_bottom = 92.0
-	_oil_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_oil_label.add_theme_font_size_override("font_size", 19)
-	_oil_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_oil_label.visible = false
-	add_child(_oil_label)
-
-
-func _update_oil_label() -> void:
-	if _oil_label == null:
-		return
-	var c := get_tree().get_first_node_in_group(Castle.GROUP)
-	if c != null and c.has_method(&"get_oil") and c.has_method(&"get_goal"):
-		_oil_label.visible = true
-		_oil_label.text = "🛢 Нефть замка:  %d / %d" % [int(c.call(&"get_oil")), int(c.call(&"get_goal"))]
-	else:
-		_oil_label.visible = false
 
 
 ## Счётчик казны (3 номинала) вверху-по центру под нефтью. Цвета номиналов из
@@ -1181,6 +1155,33 @@ func _update_coins_label() -> void:
 	var s: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.SILVER))
 	var g: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD))
 	_coins_label.text = "🥇 %d    🥈 %d    🥉 %d" % [g, s, b]  # монеты казны
+
+
+## Счётчик СВОБОДНОГО населения (cap − занятое) под монетами. Янтарным при 0 (строить социалку).
+func _build_population_label() -> void:
+	_population_label = Label.new()
+	_population_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_population_label.offset_top = 118.0
+	_population_label.offset_bottom = 142.0
+	_population_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_population_label.add_theme_font_size_override("font_size", 16)
+	_population_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_population_label)
+
+
+func _update_population_label() -> void:
+	if _population_label == null:
+		return
+	# Население — система замка: до его установки параметр не показываем (cap=0, нечего считать).
+	if Population == null or not Population.has_castle():
+		_population_label.visible = false
+		return
+	var free: int = int(Population.free_slots())
+	_population_label.visible = true
+	_population_label.text = "👥 Свободное население  %d" % free
+	# Янтарным, когда свободных слотов нет (строй социалку — иначе шахты простаивают / не нанять).
+	var col: Color = Color(1.0, 0.8, 0.3) if free <= 0 else Color(1, 1, 1)
+	_population_label.add_theme_color_override(&"font_color", col)
 
 
 ## Обновление squad-бара. Вызывается на каждом инкременте XP (через
@@ -1306,6 +1307,23 @@ func _make_build_card(id: int) -> Button:
 	cost_lbl.text = String(info["cost_text"])
 	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top.add_child(cost_lbl)
+	# Цена/выгода в НАСЕЛЕНИИ — иконкой 👥±N рядом с золотом: PRODUCTION берёт гнома (−, голубым),
+	# SOCIAL даёт слоты (+, зелёным). Своя метка → не красится affordability'ю казны.
+	var pop: int = int(info.get("pop", 0))
+	if pop != 0:
+		var pop_lbl := Label.new()
+		pop_lbl.text = "  👥 %s%d" % ["+" if pop > 0 else "-", abs(pop)]
+		pop_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pop_lbl.add_theme_color_override(&"font_color", Color(0.55, 1.0, 0.6) if pop > 0 else Color(0.78, 0.85, 1.0))
+		top.add_child(pop_lbl)
+	# Ёмкость казармы (барак) — иконкой 🛡+N рядом: вместимость гарнизона, НЕ население.
+	var cap_bonus: int = int(info.get("cap", 0))
+	if cap_bonus != 0:
+		var cap_lbl := Label.new()
+		cap_lbl.text = "  🛡 +%d" % cap_bonus
+		cap_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cap_lbl.add_theme_color_override(&"font_color", Color(0.7, 0.8, 1.0))
+		top.add_child(cap_lbl)
 	var eff := Label.new()
 	eff.text = String(info["sub_text"])
 	eff.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1323,7 +1341,7 @@ func _make_build_card(id: int) -> Button:
 func _build_item_info(id: int) -> Dictionary:
 	var knows: bool = _building_unlocked()
 	if id == BUILD_MENU_BRIDGE:
-		return {"emoji": "🌉", "name": "Мост через пропасть", "cost_text": "", "cost": {},
+		return {"emoji": "🌉", "name": "Мост через пропасть", "cost_text": "", "cost": {}, "pop": 0, "cap": 0,
 			"sub_text": "Перекинуть мост через пропасть к вратам.", "disabled": false}
 	if id == BUILD_MENU_PUMP:
 		var data: Dictionary = RoomBuildings.get_data(RoomBuildings.PUMP)
@@ -1335,7 +1353,7 @@ func _build_item_info(id: int) -> Dictionary:
 		elif pump_exists:
 			sub = "✓ уже построена (одна на отряд)"
 		return {"emoji": _emoji_of(data), "name": String(data.get("name", "Качалка")),
-			"cost_text": _format_cost(data), "cost": {}, "sub_text": sub, "disabled": disabled}
+			"cost_text": _format_cost(data), "cost": {}, "pop": 0, "cap": 0, "sub_text": sub, "disabled": disabled}
 	# Фигуры площадки: знание гномов И построенная качалка (от неё растёт грид).
 	var bid: StringName = PAD_MENU_IDS.get(id, &"")
 	var pdata: Dictionary = RoomBuildings.get_data(bid)
@@ -1348,6 +1366,8 @@ func _build_item_info(id: int) -> Dictionary:
 		psub = "🔒 нужна качалка-замок"
 	return {"emoji": _emoji_of(pdata), "name": String(pdata.get("name", "Фигура")),
 		"cost_text": _format_cost(pdata), "cost": pdata.get("cost", {}),
+		"pop": PadBuilding.pop_for_role(pdata.get("role", &"")),
+		"cap": PadBuilding.garrison_for_role(pdata.get("role", &"")),
 		"sub_text": psub, "disabled": pdisabled}
 
 

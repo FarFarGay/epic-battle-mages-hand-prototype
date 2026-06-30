@@ -14,7 +14,7 @@
 [ext_resource type="Texture2D" uid="uid://4c6g0nlssgah" path="res://textures/ground_05/ground_05_1k/ground_05_ambientOcclusion_1k.png" id="12_gao"]
 [ext_resource type="Texture2D" uid="uid://n70qvixmgm0p" path="res://textures/sky_121/sky_121_2k.png" id="13_skypano"]
 [ext_resource type="PackedScene" path="res://scenes/perf_hud.tscn" id="14_perf"]
-[ext_resource type="PackedScene" path="res://scenes/gameplay_hud.tscn" id="15_hud"]
+[ext_resource type="PackedScene" uid="uid://d4hv8aomel3ft" path="res://scenes/gameplay_hud.tscn" id="15_hud"]
 [ext_resource type="PackedScene" path="res://scenes/win_overlay.tscn" id="16_win"]
 [ext_resource type="PackedScene" path="res://scenes/defeat_overlay.tscn" id="17_defeat"]
 [ext_resource type="PackedScene" path="res://scenes/boss_warning_overlay.tscn" id="18_boss"]

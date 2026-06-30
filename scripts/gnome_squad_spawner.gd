@@ -56,9 +56,11 @@ func request_squad_for(owner: Node, soldier_type: StringName, count: int, pos: V
 	if owner == null or SoldierSystem == null or not SoldierSystem.has_soldier(soldier_type):
 		return []
 	var key: int = owner.get_instance_id()
-	# Кап ЭТОЙ казармы = база типа + бараки в её зоне (оборонный квартал, PadBuilding.hire_cap_bonus).
+	# ДВА предела: ось ГАРНИЗОНА этой казармы (база типа + бараки рядом, hire_cap_bonus) И глобальное
+	# НАСЕЛЕНИЕ (Population) — общий пул армия+добыча. Нанять можно лишь в пределах обоих.
 	var cap_bonus: int = int(owner.call(&"hire_cap_bonus")) if owner.has_method(&"hire_cap_bonus") else 0
 	var add: int = _clamp_to_cap(key, soldier_type, maxi(count, 1), cap_bonus)
+	add = _clamp_to_population(soldier_type, add)
 	if add <= 0:
 		return []
 	_spawn_squad(key, soldier_type, add, pos)
@@ -159,6 +161,7 @@ func _on_purchased(unit_type: StringName, squad_size: int) -> void:
 	# Кап артели (рабочие — 7): докупка доливает только до потолка. Уже полно → ничего.
 	# Покупка в домике гномов — отряд НА ТИП (ключ = тип), не per-barracks.
 	var add: int = _clamp_to_cap(soldier_type, soldier_type, maxi(squad_size, 1))
+	add = _clamp_to_population(soldier_type, add)  # поверх типа — глобальное население (рабочих не трогает)
 	if add <= 0:
 		return
 	var front: Vector3 = _purchase_front()
@@ -184,13 +187,25 @@ func _spawn_starting_workers() -> void:
 	_spawn_squad(soldier_type, soldier_type, count, Vector3(t.x, ground_y, t.z))
 
 
-## Сколько добавить с учётом потолка типа по отряду ЭТОГО КЛЮЧА: cap<=0 → без потолка. cap_bonus —
-## прибавка к капу от квартала (бараки у казармы поднимают кап именно этой казармы).
+## Сколько добавить с учётом потолка ТИПА по отряду ЭТОГО КЛЮЧА: cap<=0 → без потолка. cap_bonus —
+## ось гарнизона (бараки в зоне казармы поднимают кап ИМЕННО этой казармы, PadBuilding.hire_cap_bonus).
 func _clamp_to_cap(key, soldier_type: StringName, want: int, cap_bonus: int = 0) -> int:
 	var cap: int = SoldierSystem.get_squad_cap(soldier_type)
 	if cap <= 0:
 		return want  # тип без потолка — бараки ни при чём
 	return clampi(want, 0, maxi(cap + cap_bonus - _count_in(key), 0))
+
+
+## Поверх типа — глобальное НАСЕЛЕНИЕ (Population): нанять не больше свободных военных слотов общего
+## пула. Рабочие-артель НЕ тратят население (базовая бригада башни) → их не клампим. Нет Population → как было.
+func _clamp_to_population(soldier_type: StringName, want: int) -> int:
+	if want <= 0:
+		return want
+	if SoldierSystem != null and soldier_type == SoldierSystem.ROLE_WORKER:
+		return want
+	if Population == null:
+		return want
+	return clampi(want, 0, maxi(int(Population.military_room()), 0))
 
 
 ## Живых членов отряда по ключу (тип ИЛИ казарма) — для капа/гейта.
