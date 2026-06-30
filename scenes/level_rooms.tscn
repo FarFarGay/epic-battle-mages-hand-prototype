@@ -279,9 +279,6 @@ coverage_target_path = NodePath("../Ground/GroundMesh")
 [node name="WallEast" parent="Room1" unique_id=1661610944 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, 18, 0, 0)
 
-[node name="WallWest" parent="Room1" unique_id=489123191 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, -18, 0, 0)
-
 [node name="WallSouthLeft" parent="Room1" unique_id=38677418 instance=ExtResource("6_wall")]
 transform = Transform3D(3.625, 0, 0, 0, 1, 0, 0, 0, 1, -11.25, 0, 14)
 
