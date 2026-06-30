@@ -56,7 +56,9 @@ func request_squad_for(owner: Node, soldier_type: StringName, count: int, pos: V
 	if owner == null or SoldierSystem == null or not SoldierSystem.has_soldier(soldier_type):
 		return []
 	var key: int = owner.get_instance_id()
-	var add: int = _clamp_to_cap(key, soldier_type, maxi(count, 1))
+	# Кап ЭТОЙ казармы = база типа + бараки в её зоне (оборонный квартал, PadBuilding.hire_cap_bonus).
+	var cap_bonus: int = int(owner.call(&"hire_cap_bonus")) if owner.has_method(&"hire_cap_bonus") else 0
+	var add: int = _clamp_to_cap(key, soldier_type, maxi(count, 1), cap_bonus)
 	if add <= 0:
 		return []
 	_spawn_squad(key, soldier_type, add, pos)
@@ -182,12 +184,13 @@ func _spawn_starting_workers() -> void:
 	_spawn_squad(soldier_type, soldier_type, count, Vector3(t.x, ground_y, t.z))
 
 
-## Сколько добавить с учётом потолка типа по отряду ЭТОГО КЛЮЧА: cap<=0 → без потолка.
-func _clamp_to_cap(key, soldier_type: StringName, want: int) -> int:
+## Сколько добавить с учётом потолка типа по отряду ЭТОГО КЛЮЧА: cap<=0 → без потолка. cap_bonus —
+## прибавка к капу от квартала (бараки у казармы поднимают кап именно этой казармы).
+func _clamp_to_cap(key, soldier_type: StringName, want: int, cap_bonus: int = 0) -> int:
 	var cap: int = SoldierSystem.get_squad_cap(soldier_type)
 	if cap <= 0:
-		return want
-	return clampi(want, 0, maxi(cap - _count_in(key), 0))
+		return want  # тип без потолка — бараки ни при чём
+	return clampi(want, 0, maxi(cap + cap_bonus - _count_in(key), 0))
 
 
 ## Живых членов отряда по ключу (тип ИЛИ казарма) — для капа/гейта.

@@ -143,6 +143,7 @@ const BUILD_MENU_PAD_SPEARMEN := 17
 const BUILD_MENU_PAD_SMELTER := 18
 const BUILD_MENU_PAD_MINT := 20
 const BUILD_MENU_PAD_HOUSE := 13  # дом гномов — социальный сапорт-универсал
+const BUILD_MENU_PAD_BARRACK := 21  # барак — сапорт казармы (+кап найма)
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[CityGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
@@ -157,6 +158,7 @@ var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_SMELTER: RoomBuildings.PAD_SMELTER,
 	BUILD_MENU_PAD_MINT: RoomBuildings.PAD_MINT,
 	BUILD_MENU_PAD_HOUSE: RoomBuildings.PAD_HOUSE,
+	BUILD_MENU_PAD_BARRACK: RoomBuildings.PAD_BARRACK,
 }
 ## Секции палитры стройки: заголовок-категория + список пунктов (BUILD_MENU_* id). Порядок
 ## внутри = порядок карточек. Группировка по той же таксономии, что и квартал-баффы — игрок
@@ -164,7 +166,7 @@ var PAD_MENU_IDS := {
 ## следом; Мост — отдельная инженерная механика.
 const BUILD_SECTIONS := [
 	{"title": "⛏  ДОБЫЧА — квартал", "ids": [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_SMELTER, BUILD_MENU_PAD_MINT]},
-	{"title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN]},
+	{"title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
 	{"title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE]},
 	{"title": "🌉  ИНЖЕНЕРИЯ", "ids": [BUILD_MENU_BRIDGE]},
 ]
