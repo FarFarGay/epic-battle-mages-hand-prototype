@@ -56,6 +56,8 @@ var _conn_hinted: Array = []
 ## Превью зоны квартала при установке ШАХТЫ (силуэт-плот вокруг курсора, крутится с _rot_y) —
 ## видно, в какую сторону «смотрит» квартал до постройки. Только пока в руке шахта.
 var _plot_preview: Node3D = null
+## Цвет НЕПРИГОДНОЙ клетки превью-зоны (за падом / на замке / занята зданием) — красный, ставить нельзя.
+const _PLOT_OUT_COLOR := Color(1.0, 0.35, 0.3, 0.5)
 ## Текущий поворот силуэта (рад). Крутится кликом средней кнопки мыши, сохраняется
 ## между установками (sticky) — следующая стена встаёт под тем же углом.
 var _rot_y: float = 0.0
@@ -366,6 +368,23 @@ func _pad_valid(center: Vector3) -> bool:
 			return false  # шахту — только на жилу
 		if not is_mine and on_vein:
 			return false  # на жилу — только шахту
+	# Шахта: вся ЗОНА-СИЛУЭТ квартала (повёрнутая на _rot_y) должна быть СВОБОДНА под застройку —
+	# в площадке, не на замке, не занята другим зданием. Иначе те клетки не застроить, квартал не
+	# добить до 100%. Не влезает/занято → ставить нельзя (силуэт красный, торчащие клетки красные).
+	if is_mine and not _mine_plot_clear(center, occ):
+		return false
+	return true
+
+
+## Свободна ли ЗОНА квартала шахты (MINE_PLOT_CELLS, повёрнутые на _rot_y) под застройку: КАЖДАЯ
+## клетка в площадке, НЕ на ядре-замке и НЕ занята другим зданием (occ — снимок занятых клеток).
+func _mine_plot_clear(center: Vector3, occ: Dictionary) -> bool:
+	var tree := get_tree()
+	var base: Vector2i = CityGrid.world_to_cell(center, tree)
+	for off in PadBuilding.MINE_PLOT_CELLS:
+		var cell: Vector2i = base + CityGrid.rotate_offset(off, _rot_y)
+		if not CityGrid.in_pad(cell, tree) or CityGrid.is_pump(cell, tree) or occ.has(cell):
+			return false
 	return true
 
 
@@ -743,14 +762,21 @@ func _update_mine_plot_preview(place: Vector3) -> void:
 	_plot_preview.visible = true
 	var tree := get_tree()
 	var base: Vector2i = CityGrid.world_to_cell(place, tree)
+	var occ: Dictionary = _occupied_cells(false)  # снимок занятых клеток — занятая клетка зоны красная
 	var kids := _plot_preview.get_children()
 	for i in range(min(kids.size(), PadBuilding.MINE_PLOT_CELLS.size())):
-		var tile := kids[i] as Node3D
+		var tile := kids[i] as MeshInstance3D
 		if tile == null:
 			continue
 		var cell: Vector2i = base + CityGrid.rotate_offset(PadBuilding.MINE_PLOT_CELLS[i], _rot_y)
 		var w: Vector3 = CityGrid.cell_to_world(cell, tree)
 		tile.position = Vector3(w.x, w.y + 0.07, w.z)
+		# Клетка зоны непригодна (за падом / на замке / занята зданием) → КРАСНАЯ; свободная →
+		# бледно-голубая. Видно, где зона упирается — крути/двигай, пока все клетки голубые.
+		var ok: bool = CityGrid.in_pad(cell, tree) and not CityGrid.is_pump(cell, tree) and not occ.has(cell)
+		var m := tile.material_override as StandardMaterial3D
+		if m != null:
+			m.albedo_color = PadBuilding.PLOT_EMPTY_COLOR if ok else _PLOT_OUT_COLOR
 
 
 ## Ленивая постройка плиток превью зоны (по числу клеток MINE_PLOT_CELLS). В current_scene —
