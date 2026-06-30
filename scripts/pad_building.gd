@@ -14,13 +14,12 @@ const ACTION_GRAB := &"hand_grab"
 var building_id: StringName = &""
 var _mask: Array = []        # Array[Vector2i] — клетки фигуры (локальные offset'ы)
 var _role: StringName = &"defend"
-## ЭКОНОМИКА-КВАРТАЛ как СИЛУЭТ (2026-06-30). ШАХТА (active, role mine) проецирует ПЛОТ —
-## целевой контур квартала (MINE_PLOT_CELLS). Игрок заполняет его САПОРТАМИ. Каждый ТИП сапорта
+## ЭКОНОМИКА-КВАРТАЛ по СОСЕДСТВУ (2026-06-30, контур-силуэт убран). ШАХТА (active, role mine)
+## образует квартал, когда ВСЕ её грани (орто-соседние клетки) заняты САПОРТАМИ. Каждый ТИП сапорта
 ## крутит СВОЮ ось добычи (не общий множитель — разные параметры): ПЛАВИЛЬНЯ → СКОРОСТЬ (×темп),
 ## ЧЕКАННЫЙ ДВОР → НОМИНАЛ (платит монетой на тир выше: бронза→серебро→золото), ДОМ ГНОМОВ →
-## ОБЪЁМ (×монет за выплату). Оси бинарны (тип есть/нет — зона вмещает по одному). ПРАВИЛО
-## КАТЕГОРИЙ: в плот шахты считаются только PRODUCTION/SOCIAL. Полный квартал (все 3 типа) = все
-## оси; не хватает типа → проседает его ось. Заполнение зоны на 100% → вспышка «собран».
+## ОБЪЁМ (×монет за выплату). Оси бинарны (тип есть/нет среди соседей). ПРАВИЛО КАТЕГОРИЙ: считаются
+## только PRODUCTION/SOCIAL-сапорты. Все грани заняты → вспышка «собран» (fill 100%).
 const MINE_RATE := 1.0          # базовая добыча шахты соло, монет/сек (без сапортов)
 const MINE_SPEED_MULT := 2.0    # ПЛАВИЛЬНЯ (скорость): ×темп добычи, пока есть в зоне
 const MINE_VOLUME_MULT := 2     # ДОМ ГНОМОВ (объём): ×монет за выплату, пока есть в зоне
@@ -32,24 +31,23 @@ const MINE_POP_DEMAND := 1  # работающая шахта на жиле за
 ## Ось «Гарнизон»: барак в зоне-соседстве казармы поднимает ВМЕСТИМОСТЬ ИМЕННО этой казармы. НАСЕЛЕНИЕ
 ## барак НЕ даёт — солдат всё равно надо «заселить» из общего пула (т.е. построить дома). Ёмкость ≠ снабжение.
 const HIRE_CAP_PER_BARRACK := 3
-## Плот-силуэт квартала шахты: offset'ы клеток ОТ клетки шахты (без неё). Заполняешь сапортами —
-## форма квартала. ШАХТА В ЦЕНТРЕ 3×3 → КОЛЬЦО из 8 клеток вокруг неё = ровно чеканный двор (L,4)
-## + плавильня (1) + дом гномов (I,3) (дом=верхний ряд + двор-L + плавильня замощают кольцо).
-## DATA — дизайнер крутит форму/размер; offset'ы поворачиваются на ориентацию шахты, но центр-
-## кольцо симметрично → поворот без видимого эффекта.
-const MINE_PLOT_CELLS: Array = [
-	Vector2i(-1, -1), Vector2i(0, -1), Vector2i(1, -1),
-	Vector2i(-1, 0),                   Vector2i(1, 0),
-	Vector2i(-1, 1), Vector2i(0, 1), Vector2i(1, 1),
-]
+## Институт магии (role magic): тикает ману в башню (restore_mana) и открывает магические постройки.
+## Это ПРОДЮСЕР квартала (как шахта): сапорты на гранях ускоряют ману (множители перемножаются).
+const MANA_INSTITUTE_RATE := 3.0  # базовая мана/сек в башню (соло, без сапортов). Тюнится.
+const MANA_MULT_CRYSTAL := 1.5    # Кафедра Волшебных свитков в зоне → ×темп
+const MANA_MULT_RUNE := 2.0       # Осколок звёздной руды в зоне → ×темп (сильнее/дороже)
+const MANA_MULT_HOUSE := 1.5      # Дом гномов в зоне → ×темп (соц-универсал, как «Объём» у шахты)
 var _vein: OilDeposit = null  # жила под шахтой
 var _mine_accum: float = 0.0  # дробный накопитель добычи (единицы целые)
 var _quarter_was_full: bool = false  # был ли плот полностью заполнен в прошлый тик (вспышка единожды на завершение)
 ## Плавильня-сапорт: ровный дым (флавор «работает»).
 var _smoke: GPUParticles3D = null
-## Ghost-силуэт плота квартала (только у шахты). Лениво, показывается по требованию при взятии
-## сапорт-здания (см. set_plot_ghost_visible), а не перманентно.
-var _plot_ghost: Node3D = null
+## Маркеры buff-слотов квартала (грани продюсера) — показываются в РЕЖИМЕ СТРОЙКИ (HandPlaceAim):
+## пустая грань = открытый слот «займи для баффа», занятая сапортом = зелёная. Лениво, top_level,
+## перекраска live в _process. Только у продюсеров (есть _plot_support_roles).
+var _slot_ghost: Node3D = null
+const SLOT_OPEN_COLOR := Color(0.55, 0.8, 1.0, 0.22)    # открытый слот — занять для баффа
+const SLOT_FILLED_COLOR := Color(0.4, 1.0, 0.5, 0.5)    # занят сапортом — буфает
 ## Индикатор осей квартала над шахтой (плашка) — показывается при наведении руки (hover, см.
 ## set_highlighted). Видно, какие оси активны: скорость/номинал/объём. Реализован как 2D-панель
 ## (StyleBox + emoji-иконки) в SubViewport → Sprite3D-билборд (иконки в 2D рендерятся надёжно).
@@ -108,6 +106,11 @@ func _ready() -> void:
 	# Гномий банк — финальный эндпоинт: тикает ради свечения, пока принимает монеты.
 	if is_bank():
 		set_process(true)
+	# Институт магии — тикает ману в башню + метит «магия открыта» (анлок) + hover-индикатор маны.
+	if is_magic():
+		add_to_group(&"magic_institute")
+		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)  # наведение руки → плашка маны/множителей
+		set_process(true)
 	# Отложенно: HandPlaceAim ставит global-трансформ ПОСЛЕ add_child (нужен стене для
 	# мировых клеток и поиска соседей).
 	call_deferred(&"_build")
@@ -127,6 +130,10 @@ func is_gate() -> bool:
 
 func is_stakes() -> bool:
 	return _role == &"stakes"
+
+
+func is_magic() -> bool:
+	return _role == &"magic"
 
 
 func is_barracks() -> bool:
@@ -239,6 +246,12 @@ func _build() -> void:
 			_build_mint()
 		&"bank":
 			_build_bank()
+		&"magic":
+			_build_institute()
+		&"mana_crystal":
+			_build_mana_crystal()
+		&"mana_rune":
+			_build_mana_rune()
 		_:
 			var mat := _solid(_role_color(_role), 0.1, 0.7)
 			var s: float = CityGrid.CELL
@@ -653,6 +666,100 @@ func _build_stakes() -> void:
 		add_child(stake)
 
 
+## Институт магии: ЗАМКОВАЯ БАШНЯ как у шахты (_build_tower, цвет из _role_color magic) + парящий
+## волшебный кристалл-ромб наверху (emission). Тикает ману в башню, открывает магические постройки.
+func _build_institute() -> void:
+	_build_tower()  # тот же замковый турель, что у шахты, но синевато-серый камень мага
+	# Парящий кристалл-ромб над зубцами (две пирамидки основаниями): верх остриём вверх, низ — вниз.
+	var crystal := _solid(Color(0.6, 0.5, 1.0), 0.0, 0.35)
+	crystal.emission_enabled = true
+	crystal.emission = Color(0.5, 0.4, 1.0)
+	crystal.emission_energy_multiplier = 2.6
+	var cy: float = _BASE_H + 2.0 + 1.15  # над коробом (bh=2.0) и зубцами
+	var ch := 0.6
+	var cr := 0.3
+	_cone(cr, ch, Vector3(0.0, cy + ch * 0.5, 0.0), crystal)          # верхняя половина (остриё вверх)
+	var lower := MeshInstance3D.new()                                 # нижняя половина (остриё вниз)
+	var lcm := CylinderMesh.new()
+	lcm.top_radius = 0.0
+	lcm.bottom_radius = cr
+	lcm.height = ch
+	lower.mesh = lcm
+	lower.material_override = crystal
+	lower.position = Vector3(0.0, cy - ch * 0.5, 0.0)
+	lower.rotation.x = deg_to_rad(180.0)
+	add_child(lower)
+
+
+## Кафедра Волшебных свитков (сапорт института, ×темп), L-форма: каменный зал по всей фигуре +
+## рулоны-свитки (горизонтальные цилиндры пергамента) на клетках + светящаяся руна по центру.
+func _build_mana_crystal() -> void:
+	var s: float = CityGrid.CELL
+	var stone := _solid(Color(0.47, 0.46, 0.58), 0.1, 0.8)      # светлый камень кафедры
+	var dark := _solid(Color(0.28, 0.28, 0.4), 0.1, 0.85)
+	var parch := _solid(Color(0.86, 0.8, 0.62), 0.0, 0.7)       # пергамент свитков
+	var glow := _solid(Color(0.55, 0.6, 1.0), 0.0, 0.4)
+	glow.emission_enabled = true
+	glow.emission = Color(0.45, 0.5, 1.0)
+	glow.emission_energy_multiplier = 2.2
+	_solid_shape(_BASE_H * 0.5, _BASE_H, dark, _STREET)          # цоколь по всей L
+	var bh := 0.85
+	_solid_shape(_BASE_H + bh * 0.5, bh, stone, _STREET)         # тело-зал по всей L
+	var top: float = _BASE_H + bh
+	# Свитки-рулоны (горизонтальные пергаментные цилиндры) поверх каждой клетки L.
+	for off in _mask:
+		var o := off as Vector2i
+		var scroll := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.1
+		cm.bottom_radius = 0.1
+		cm.height = s - 2.0 * _STREET - 0.25
+		scroll.mesh = cm
+		scroll.material_override = parch
+		scroll.position = Vector3(float(o.x) * s, top + 0.12, float(o.y) * s)
+		scroll.rotation.z = deg_to_rad(90.0)  # лежит горизонтально
+		add_child(scroll)
+	# Светящаяся руна-кристалл (конус) по центру фигуры — флавор магии.
+	var ctr := Vector3.ZERO
+	for off in _mask:
+		ctr += Vector3(float((off as Vector2i).x) * s, 0.0, float((off as Vector2i).y) * s)
+	ctr /= float(_mask.size())
+	_cone(0.16, 0.6, ctr + Vector3(0.0, top + 0.45, 0.0), glow)
+
+
+## Осколок звёздной руды (сапорт института, ×темп сильнее): гранёный сияющий шард на каменной БАШЕНКЕ
+## (цоколь + столб + карниз + зубцы). Шард бело-голубой с сильным emission — «звёздная руда».
+func _build_mana_rune() -> void:
+	var stone := _solid(Color(0.34, 0.34, 0.46), 0.1, 0.8)
+	var dark := _solid(Color(0.24, 0.24, 0.34), 0.1, 0.85)
+	var shard := _solid(Color(0.78, 0.82, 1.0), 0.0, 0.3)        # звёздная руда — бело-голубое сияние
+	shard.emission_enabled = true
+	shard.emission = Color(0.66, 0.73, 1.0)
+	shard.emission_energy_multiplier = 3.2
+	# Башенка: цоколь + узкий столб + карниз + зубцы.
+	var bw := 0.78
+	_box(Vector3(bw + 0.14, _BASE_H, bw + 0.14), Vector3(0.0, _BASE_H * 0.5, 0.0), dark, true)  # цоколь
+	var bh := 1.4
+	_box(Vector3(bw, bh, bw), Vector3(0.0, _BASE_H + bh * 0.5, 0.0), stone, true)               # столб
+	_box(Vector3(bw + 0.1, 0.12, bw + 0.1), Vector3(0.0, _BASE_H + bh, 0.0), dark, true)        # карниз
+	_battlements(bw * 0.5, _BASE_H + bh + 0.06, dark)                                           # зубцы
+	# Осколок-шард над башенкой (ромб: верхнее длинное остриё + короткое нижнее), сильное сияние.
+	var cy: float = _BASE_H + bh + 0.62
+	var sh := 0.78
+	var sr := 0.22
+	_cone(sr, sh, Vector3(0.0, cy + sh * 0.5, 0.0), shard)        # длинное верхнее остриё
+	var low := MeshInstance3D.new()                              # короткое нижнее остриё
+	var lcm := CylinderMesh.new()
+	lcm.top_radius = 0.0
+	lcm.bottom_radius = sr
+	lcm.height = sh * 0.6
+	low.mesh = lcm
+	low.material_override = shard
+	low.position = Vector3(0.0, cy - sh * 0.3, 0.0)
+	low.rotation.x = deg_to_rad(180.0)
+	add_child(low)
+
+
 ## Плавильня: каменная печь с раскалённым устьем (emission) + труба-дымоход. Клетка[0] —
 ## корпус печи со светящимся зевом; клетка[1] — труба. Гном несёт сюда руду → монеты в
 ## казну (см. SoldierGnome._tick_smelt_at). Анимация заброса/монет — косметика позже.
@@ -1038,11 +1145,6 @@ func _setup_mine() -> void:
 	set_process(true)
 
 
-## Цвета плитки плота: пустая (бледно-голубая) / закрытая сапортом (зелёная). Подсветка показывает
-## заполнение — видно, где дыры до 100% (и почему «собран» ещё не мигнул).
-const PLOT_EMPTY_COLOR := Color(0.55, 0.8, 1.0, 0.16)
-const PLOT_FILLED_COLOR := Color(0.35, 1.0, 0.45, 0.5)
-
 ## Роли сапортов, которые закрывают квартал ЭТОГО продюсера (обобщённо). Шахта (PRODUCTION-ядро) →
 ## плавильня/двор/дом; казарма (DEFENSE-ядро) → барак. Пусто → здание не продюсер (нет квартала).
 func _plot_support_roles() -> Dictionary:
@@ -1051,13 +1153,11 @@ func _plot_support_roles() -> Dictionary:
 			return {&"smelter": true, &"mint": true, &"housing": true}
 		&"barracks":
 			return {&"barrack": true}  # ось «Гарнизон»: барак в зоне-соседстве → +кап этой казармы
+		&"magic":
+			# сапорты ускоряют ману; дом гномов (соц-универсал) работает на магию так же, как на шахту
+			return {&"mana_crystal": true, &"mana_rune": true, &"housing": true}
 		_:
 			return {}
-
-
-## Принимает ли этот продюсер сапорт роли role в свой квартал (для подсветки силуэта по руке).
-func accepts_support(role: StringName) -> bool:
-	return _plot_support_roles().has(role)
 
 
 ## Вклад в кап НАСЕЛЕНИЯ (supply-пул, автолоад Population): соц-постройки дают слоты. Прочее — 0.
@@ -1078,77 +1178,42 @@ func pop_demand() -> int:
 			return MINE_POP_DEMAND if (_vein != null and is_instance_valid(_vein)) else 0
 		&"smelter", &"mint":
 			return 1
+		&"magic", &"mana_crystal", &"mana_rune":
+			return 1  # магия не исключение: институт + сапорты берут гнома (как шахта/плавильня)
 		_:
 			return 0
 
 
-## Приоритет комплектования гномами при нехватке: 0 = раньше (ШАХТА — базовое производство держим),
-## 1 = позже (плавильня/двор — лишь усиление; их ось гаснет первой). Population сортирует по нему.
+## Приоритет комплектования гномами при нехватке: 0 = раньше (ПРОДЮСЕР — шахта/институт держим),
+## 1 = позже (сапорты — лишь усиление; их ось гаснет первой). Population сортирует по нему.
 func pop_priority() -> int:
-	return 0 if _role == &"mine" else 1
+	return 0 if (_role == &"mine" or _role == &"magic") else 1
 
 
-## Показать/скрыть ghost-СИЛУЭТ плота квартала. Зовётся HandPlaceAim при взятии сапорт-здания —
-## игрок видит, в какие силуэты класть, и понимает «что к чему». Не перманентно. Только у
-## ПРОДЮСЕРОВ (шахта/казарма); строится лениво при первом показе, при показе — перекраска.
-func set_plot_ghost_visible(v: bool) -> void:
-	if _plot_support_roles().is_empty():
-		return  # не продюсер — квартала-силуэта нет
-	if v and (_plot_ghost == null or not is_instance_valid(_plot_ghost)):
-		_build_plot_ghost()
-	if _plot_ghost != null and is_instance_valid(_plot_ghost):
-		_plot_ghost.visible = v
-		if v:
-			_refresh_plot_ghost_fill()
-
-
-## Ghost-СИЛУЭТ плота квартала: полупрозрачные плитки по каждой клетке MINE_PLOT_CELLS вокруг
-## шахты — видимая цель «вот сюда умести сапорты». СЕТКА-АБСОЛЮТ: ghost top_level + плитки по
-## CityGrid.cell_to_world, чтобы НЕ наследовать поворот шахты (иначе силуэт разъехался бы с
-## клетками, что считаются). У КАЖДОЙ плитки свой материал (красим по заполнению).
-func _build_plot_ghost() -> void:
-	var tree := get_tree()
-	var cells := _plot_cells_ordered()
-	if cells.is_empty():
+## Институт магии: льёт ману в башню (restore_mana капится на max). Глобально — башня где угодно.
+## Сапорты на гранях (Кристалл маны / Рунный обелиск) перемножают темп — по примеру квартала шахты.
+func _tick_institute(delta: float) -> void:
+	var tower := get_tree().get_first_node_in_group(&"tower")
+	if tower == null or not is_instance_valid(tower) or not tower.has_method(&"restore_mana"):
 		return
-	var s: float = CityGrid.CELL
-	var tile: float = s - 2.0 * _STREET
-	_plot_ghost = Node3D.new()
-	_plot_ghost.name = "PlotGhost"
-	_plot_ghost.top_level = true  # игнорировать трансформ шахты (поворот!) — плитки строго по гриду
-	add_child(_plot_ghost)
-	for c in cells:
-		var mat := StandardMaterial3D.new()
-		mat.albedo_color = PLOT_EMPTY_COLOR
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-		var plane := MeshInstance3D.new()
-		var pm := PlaneMesh.new()
-		pm.size = Vector2(tile, tile)
-		plane.mesh = pm
-		plane.material_override = mat
-		var wpos: Vector3 = CityGrid.cell_to_world(c as Vector2i, tree)
-		plane.position = Vector3(wpos.x, wpos.y + 0.06, wpos.z)
-		_plot_ghost.add_child(plane)
-
-
-## Перекрасить плитки плота по текущему заполнению: закрытая сапортом клетка → зелёная, пустая →
-## бледная. Плитки идут в порядке MINE_PLOT_CELLS, так что i-я плитка = origin + offset[i].
-func _refresh_plot_ghost_fill() -> void:
-	if _plot_ghost == null or not is_instance_valid(_plot_ghost):
+	# НАСЕЛЕНИЕ: без укомплектованного гнома институт ПРОСТАИВАЕТ — как шахта (магия не исключение).
+	if Population != null and not Population.is_staffed(self):
 		return
-	var cells := _plot_cells_ordered()
-	var covered: Dictionary = _quarter_status().get("covered", {})
-	var kids := _plot_ghost.get_children()
-	for i in range(min(kids.size(), cells.size())):
-		var tile := kids[i] as MeshInstance3D
-		if tile == null:
-			continue
-		var m := tile.material_override as StandardMaterial3D
-		if m == null:
-			continue
-		m.albedo_color = PLOT_FILLED_COLOR if covered.has(cells[i]) else PLOT_EMPTY_COLOR
+	tower.call(&"restore_mana", MANA_INSTITUTE_RATE * _mana_mult() * delta)
+
+
+## Множитель темпа маны от сапортов в зоне института (перемножение, как оси шахты). Соло → 1.0.
+## Кафедра/Осколок дают ось только УКОМПЛЕКТОВАННЫЕ гномом (staffed_roles); дом гномов — соц, без гнома.
+func _mana_mult() -> float:
+	var roles: Dictionary = _quarter_status()["staffed_roles"]
+	var mult := 1.0
+	if roles.has(&"mana_crystal"):
+		mult *= MANA_MULT_CRYSTAL
+	if roles.has(&"mana_rune"):
+		mult *= MANA_MULT_RUNE
+	if roles.has(&"housing"):
+		mult *= MANA_MULT_HOUSE
+	return mult
 
 
 ## Шаг добычи: шахта сама капает деньги в казну. Каждый ТИП сапорта в зоне крутит СВОЮ ось:
@@ -1194,20 +1259,10 @@ func _tick_mine(delta: float) -> void:
 			_spawn_firework(ResourcePile.ResourceType.GOLD)  # салют на каждую новую золотую
 
 
-## Клетки ПЛОТА-СИЛУЭТА продюсера (упорядоченно). ШАХТА — фикс-кольцо MINE_PLOT_CELLS от её клетки,
-## повёрнутое на ориентацию. КАЗАРМА (многоклеточная) — клетки ВОКРУГ её футпринта (орто-соседство
-## в паде): барак ставится рядом, с внутренней стороны. Прочее — пусто.
+## Клетки квартала продюсера = ВСЕ грани (орто-соседство футпринта в паде). Контур-силуэт убран —
+## квартал = заполни соседние клетки сапортами; каждый ТИП сапорта баффает продюсера по-своему.
 func _plot_cells_ordered() -> Array:
-	if _role == &"barracks":
-		return _adjacent_free_cells()
-	var out: Array = []
-	var mine_cells := occupied_cells()
-	if mine_cells.is_empty():
-		return out
-	var origin: Vector2i = mine_cells[0]  # шахта — мономино, одна клетка-якорь
-	for off in MINE_PLOT_CELLS:
-		out.append(origin + CityGrid.rotate_offset(off as Vector2i, rotation.y))
-	return out
+	return _adjacent_free_cells()
 
 
 ## Клетки орто-соседства футпринта (в паде, не свои) — зона квартала для многоклеточного продюсера
@@ -1233,12 +1288,71 @@ func _adjacent_free_cells() -> Array:
 	return out
 
 
-## Set клеток плота-силуэта (для проверки попадания сапорта в зону).
+## Set клеток квартала (грани продюсера) — для проверки попадания сапорта в зону.
 func _plot_world_cells() -> Dictionary:
 	var out: Dictionary = {}
 	for c in _plot_cells_ordered():
 		out[c] = true
 	return out
+
+
+## Показать/скрыть маркеры buff-слотов квартала (граней продюсера). Зовётся HandPlaceAim в режиме
+## стройки — игрок видит, какие грани занять для макс. баффа. Только у продюсеров; лениво, перекраска.
+func set_quarter_slots_visible(v: bool) -> void:
+	if _plot_support_roles().is_empty():
+		return  # не продюсер — слотов нет
+	if v and (_slot_ghost == null or not is_instance_valid(_slot_ghost)):
+		_build_slot_ghost()
+	if _slot_ghost != null and is_instance_valid(_slot_ghost):
+		_slot_ghost.visible = v
+		if v:
+			_refresh_slot_ghost()
+
+
+## Маркеры-плитки по клеткам-граням квартала. top_level + позиции по CityGrid.cell_to_world (грид-
+## абсолют, не наследует трансформ продюсера). У каждой плитки свой материал (красим по заполнению).
+func _build_slot_ghost() -> void:
+	var tree := get_tree()
+	var cells := _plot_cells_ordered()
+	if cells.is_empty():
+		return
+	var s: float = CityGrid.CELL
+	var tile: float = s - 2.0 * _STREET
+	_slot_ghost = Node3D.new()
+	_slot_ghost.name = "QuarterSlots"
+	_slot_ghost.top_level = true
+	add_child(_slot_ghost)
+	for c in cells:
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = SLOT_OPEN_COLOR
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		var plane := MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(tile, tile)
+		plane.mesh = pm
+		plane.material_override = mat
+		var wpos: Vector3 = CityGrid.cell_to_world(c as Vector2i, tree)
+		plane.position = Vector3(wpos.x, wpos.y + 0.06, wpos.z)
+		_slot_ghost.add_child(plane)
+
+
+## Перекрасить маркеры по заполнению: занятая сапортом грань → зелёная, свободная → открытый слот.
+func _refresh_slot_ghost() -> void:
+	if _slot_ghost == null or not is_instance_valid(_slot_ghost):
+		return
+	var cells := _plot_cells_ordered()
+	var covered: Dictionary = _quarter_status().get("covered", {})
+	var kids := _slot_ghost.get_children()
+	for i in range(min(kids.size(), cells.size())):
+		var tile := kids[i] as MeshInstance3D
+		if tile == null:
+			continue
+		var m := tile.material_override as StandardMaterial3D
+		if m == null:
+			continue
+		m.albedo_color = SLOT_FILLED_COLOR if covered.has(cells[i]) else SLOT_OPEN_COLOR
 
 
 ## Статус квартала-силуэта (обобщён по продюсеру через _plot_support_roles): `roles` = set ролей
@@ -1323,11 +1437,13 @@ func _play_quarter_fx() -> void:
 
 
 func _process(delta: float) -> void:
+	# Маркеры buff-слотов (грани продюсера) — live-перекраска, пока показаны (режим стройки).
+	if _slot_ghost != null and is_instance_valid(_slot_ghost) and _slot_ghost.visible:
+		_refresh_slot_ghost()
+	if is_magic():
+		_tick_institute(delta)
 	if _role == &"mine":
 		_tick_mine(delta)
-		# Live-подсветка заполнения плота, пока силуэт показан (рука с сапортом) — видно дыры.
-		if _plot_ghost != null and is_instance_valid(_plot_ghost) and _plot_ghost.visible:
-			_refresh_plot_ghost_fill()
 		# Live-обновление индикатора осей, пока наведено (hover) — поспел за достройкой сапорта.
 		if _quarter_indicator != null and is_instance_valid(_quarter_indicator) and _quarter_indicator.visible:
 			_refresh_quarter_indicator()
@@ -1525,8 +1641,8 @@ func set_highlighted(value: bool) -> void:
 		mat.emission_enabled = value
 		mat.emission = Color(0.55, 0.7, 1.0)
 		mat.emission_energy_multiplier = 0.5 if value else 0.0
-	if _role == &"mine" or _role == &"barracks":
-		_set_quarter_indicator_visible(value)  # шахта → оси; казарма → гарнизон/кап
+	if _role == &"mine" or _role == &"barracks" or _role == &"magic":
+		_set_quarter_indicator_visible(value)  # шахта → оси; казарма → гарнизон; институт → мана
 
 
 ## Показать/скрыть индикатор осей квартала над шахтой (при наведении руки). Лениво строится.
@@ -1597,8 +1713,36 @@ func _refresh_quarter_indicator() -> void:
 		return
 	if _role == &"barracks":
 		_refresh_barracks_indicator()
+	elif _role == &"magic":
+		_refresh_magic_indicator()
 	else:
 		_refresh_mine_indicator()
+
+
+## Строки плашки ИНСТИТУТА МАГИИ: оси-сапорты (×темп) + дом + итоговая мана/сек. Состояния как у шахты:
+## ×N работает / ⏸ нет гнома (построено, смены нет) / — не построено; сам институт без гнома → простой.
+func _refresh_magic_indicator() -> void:
+	_ind_title.text = "ИНСТИТУТ МАГИИ"
+	var st := _quarter_status()
+	var roles: Dictionary = st["roles"]            # построено в зоне
+	var on: Dictionary = st["staffed_roles"]       # реально работает (есть гном; дом — без гнома)
+	var crystal_val: String = "×%s" % MANA_MULT_CRYSTAL if on.has(&"mana_crystal") else ("⏸ нет гнома" if roles.has(&"mana_crystal") else "—  (кафедра свитков)")
+	var rune_val: String = "×%s" % MANA_MULT_RUNE if on.has(&"mana_rune") else ("⏸ нет гнома" if roles.has(&"mana_rune") else "—  (осколок зв. руды)")
+	var house_val: String = "×%s" % MANA_MULT_HOUSE if on.has(&"housing") else "—  (дом гномов)"
+	var staffed: bool = Population == null or Population.is_staffed(self)
+	var rate: float = MANA_INSTITUTE_RATE * _mana_mult()
+	var last: String = "✨ %s маны/сек" % String.num(rate, 1)
+	if not staffed:
+		last = "⏸ Нет населения — простой"
+	_apply_indicator_rows([
+		"📜 Кафедра    %s" % crystal_val,
+		"🌟 Осколок    %s" % rune_val,
+		"🏠 Дом          %s" % house_val,
+		last,
+	])
+	if _ind_rows.size() >= 4 and is_instance_valid(_ind_rows[3]):
+		var col: Color = Color(1.0, 0.5, 0.4) if not staffed else Color(0.7, 0.7, 1.0)
+		(_ind_rows[3] as Label).add_theme_color_override(&"font_color", col)
 
 
 ## Строки плашки ШАХТЫ: каждая ось — значение или «—  (что построить)»; внизу итоговая добыча.
@@ -1677,12 +1821,6 @@ func occupied_cells() -> Array:
 # --- Категории зданий + сочетаемость (единая таксономия для превью и квартала-баффа) ---
 
 ## Роль-ФИЛЛЕР квартала (сапорт любого продюсера): плавильня/двор/дом — шахте; барак — казарме.
-## Единый список для UI: превью-стыковку (connects) для филлеров ГАСИМ — их сигнал = силуэт
-## продюсера (иначе барак подсвечивал бы стены зелёным как «сочетается»). Синк с _plot_support_roles.
-static func is_filler_role(role: StringName) -> bool:
-	return role == &"smelter" or role == &"mint" or role == &"housing" or role == &"barrack"
-
-
 ## Номинальный эффект роли на НАСЕЛЕНИЕ для подписи в палитре (иконка 👥±N): ДОМ даёт слоты (+),
 ## PRODUCTION БЕРЁТ гнома на смену (−). Барак — 0 (он ёмкость, не население, см. garrison_for_role).
 static func pop_for_role(role: StringName) -> int:
@@ -1691,8 +1829,8 @@ static func pop_for_role(role: StringName) -> int:
 			return HOUSING_POP
 		&"mine":
 			return -MINE_POP_DEMAND
-		&"smelter", &"mint":
-			return -1
+		&"smelter", &"mint", &"magic", &"mana_crystal", &"mana_rune":
+			return -1  # магия берёт гнома (как добыча) → 👥 -1 на карточке
 		_:
 			return 0
 
@@ -1705,7 +1843,7 @@ static func garrison_for_role(role: StringName) -> int:
 ## Категория роли: PRODUCTION (шахта/плавильня/двор), DEFENSE (стены/ворота/казармы),
 ## STATE (замок/банк), SOCIAL (дом гномов — универсал), NONE (прочее). Здания «сочетаются»
 ## (часть одного квартала) ⇔ одна категория ИЛИ одно из них SOCIAL.
-enum Category { NONE, PRODUCTION, DEFENSE, STATE, SOCIAL }
+enum Category { NONE, PRODUCTION, DEFENSE, STATE, SOCIAL, MAGIC }
 
 static func category(role: StringName) -> int:
 	match role:
@@ -1717,6 +1855,8 @@ static func category(role: StringName) -> int:
 			return Category.STATE
 		&"housing":
 			return Category.SOCIAL
+		&"magic", &"mana_crystal", &"mana_rune":
+			return Category.MAGIC  # институт магии + его сапорты (квартал маны)
 		_:
 			return Category.NONE
 
@@ -1817,6 +1957,8 @@ func _role_color(r: StringName) -> Color:
 			return Color(0.82, 0.4, 0.34)   # атака — красноватый
 		&"mine":
 			return Color(0.88, 0.68, 0.26)  # добыча — охра
+		&"magic":
+			return Color(0.42, 0.44, 0.6)   # институт — синевато-серый камень мага
 		&"stakes":
 			return _WOOD                    # колья — дерево (шаттер коричневый)
 	return Color(0.5, 0.58, 0.72)           # защита — серо-синий

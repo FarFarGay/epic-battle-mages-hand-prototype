@@ -53,11 +53,6 @@ var _pad_floor: MeshInstance3D = null
 ## Соседние здания, подсвеченные превью-стыковки (зелёный=соединится/красный=нет). Чистим
 ## при сдвиге силуэта и выходе из aim. См. _update_connection_hints / PadBuilding.connects.
 var _conn_hinted: Array = []
-## Превью зоны квартала при установке ШАХТЫ (силуэт-плот вокруг курсора, крутится с _rot_y) —
-## видно, в какую сторону «смотрит» квартал до постройки. Только пока в руке шахта.
-var _plot_preview: Node3D = null
-## Цвет НЕПРИГОДНОЙ клетки превью-зоны (за падом / на замке / занята зданием) — красный, ставить нельзя.
-const _PLOT_OUT_COLOR := Color(1.0, 0.35, 0.3, 0.5)
 ## Текущий поворот силуэта (рад). Крутится кликом средней кнопки мыши, сохраняется
 ## между установками (sticky) — следующая стена встаёт под тем же углом.
 var _rot_y: float = 0.0
@@ -106,15 +101,13 @@ func start_aim(building_id: StringName) -> void:
 	_building = building_id
 	_data = data
 	_footprint = data.get("footprint", _footprint)
-	# Силуэты кварталов-плотов показываем у продюсеров, чей квартал принимает этот сапорт (рука с
-	# плавильней/двором/домом → шахты; с бараком → казармы). Прочее → прячем. И при переключении.
-	_set_producer_plots_visible(data.get("role", &""))
 	if not _aiming:
 		_aiming = true
 		_hand.push_category(Hand.Category.BUILD_AIM)
 	_spawn_ghost()
 	_update_grid()  # сетка пола — только для труб/бура (нефте-решётка)
 	_set_build_zones_visible(true)  # показать зоны-индикаторы (напр. кольцо бура)
+	_set_producer_slots_visible(true)  # маркеры buff-слотов продюсеров (что занять для макс. баффа)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:PlaceAim] старт размещения: %s" % String(_data.get("name", building_id)))
 
@@ -161,9 +154,6 @@ func _process(_delta: float) -> void:
 	# Замок — ОДИН на уровень: если уже есть/строится — ставить нельзя (силуэт красный).
 	_blocked = _pump_blocked()
 	_update_ghost(place)
-	# Превью зоны квартала при установке ПРОДЮСЕРА (шахта/казарма): силуэт вокруг курсора — видно,
-	# где будет квартал и куда потом ставить сапорты (бараки/плавильни). Крутится средней кнопкой.
-	_update_producer_plot_preview(place)
 	# Зелёная зона стройки 9×9: при установке замка — вокруг силуэта (видно будущую зону);
 	# при укладке прочего — вокруг существующего замка. Ездит за силуэтом (per-frame).
 	_update_pad_floor(place)
@@ -267,6 +257,8 @@ func _commit(pos: Vector3) -> void:
 		b.global_position = pos
 		b.rotation.y = _rot_y
 		call_deferred(&"_refresh_walls")  # стены дотянутся до новой постройки
+		# Обновить маркеры buff-слотов: НОВЫЙ продюсер получит свои слоты, у задетых — перекрасится филл.
+		_set_producer_slots_visible(true)
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:PlaceAim] фигура %s @ клетка %s, yaw %.0f°" % [
 				_building, CityGrid.world_to_cell(pos, get_tree()), rad_to_deg(_rot_y)])
@@ -553,14 +545,8 @@ func _clear_ghost() -> void:
 func _update_connection_hints(place: Vector3) -> void:
 	var tree := get_tree()
 	var my_role: StringName = _data.get("role", &"")
-	# Филлер квартала (плавильня/двор/дом/барак) НЕ показывает стыковку: его сигнал = силуэт
-	# продюсера (барак не «дополняет стены», хоть и одной категории DEFENSE). Гасим хинты.
-	if PadBuilding.is_filler_role(my_role):
-		for b in _conn_hinted:
-			if is_instance_valid(b) and b.has_method(&"set_connection_hint"):
-				b.call(&"set_connection_hint", 0)
-		_conn_hinted = []
-		return
+	# Силуэт-контур убран — стыковка по СОСЕДСТВУ работает для ВСЕХ, включая филлеры: рука с
+	# плавильней/двором/домом у грани шахты подсветит её зелёным (connects, одна категория/SOCIAL).
 	var cells: Array = CityGrid.building_cells(place, _data.get("cells", []), _rot_y, tree)
 	var cellset: Dictionary = {}
 	for c in cells:
@@ -735,110 +721,9 @@ func _finish() -> void:
 	_clear_ghost()
 	_clear_grid()
 	_set_build_zones_visible(false)  # спрятать зоны-индикаторы (вне режима стройки)
-	_set_producer_plots_visible(&"")  # спрятать силуэты кварталов (вышли из стройки)
-	if _plot_preview != null and is_instance_valid(_plot_preview):
-		_plot_preview.queue_free()  # убрать превью зоны шахты
-	_plot_preview = null
+	_set_producer_slots_visible(false)  # спрятать маркеры buff-слотов (вышли из стройки)
 	if is_instance_valid(_hand) and _hand.active_category == Hand.Category.BUILD_AIM:
 		_hand.pop_category()
-
-
-## Превью зоны квартала при установке ПРОДЮСЕРА (шахта/казарма): плитки силуэта вокруг курсора —
-## видно, где будет квартал и куда потом ставить сапорты. Шахта — фикс-кольцо (повёрнутое на _rot_y);
-## казарма — соседство её футпринта (куда встанут бараки, ось «Гарнизон»). Не продюсер → прячем.
-## Клетка непригодна (за падом/на замке/занята) → красная, иначе голубая.
-func _update_producer_plot_preview(place: Vector3) -> void:
-	var role: StringName = _data.get("role", &"")
-	if role != &"mine" and role != &"barracks":
-		if _plot_preview != null and is_instance_valid(_plot_preview):
-			_plot_preview.visible = false
-		return
-	_ensure_plot_preview()
-	_plot_preview.visible = true
-	var tree := get_tree()
-	var cells: Array = _producer_zone_preview_cells(place)
-	var occ: Dictionary = _occupied_cells(false)  # занятая клетка зоны красная
-	while _plot_preview.get_child_count() < cells.size():
-		_plot_preview.add_child(_make_preview_tile())
-	var kids := _plot_preview.get_children()
-	for i in range(kids.size()):
-		var tile := kids[i] as MeshInstance3D
-		if tile == null:
-			continue
-		if i >= cells.size():
-			tile.visible = false  # лишние плитки из прошлого продюсера — прячем
-			continue
-		tile.visible = true
-		var cell: Vector2i = cells[i]
-		var w: Vector3 = CityGrid.cell_to_world(cell, tree)
-		tile.position = Vector3(w.x, w.y + 0.07, w.z)
-		var ok: bool = CityGrid.in_pad(cell, tree) and not CityGrid.is_pump(cell, tree) and not occ.has(cell)
-		var m := tile.material_override as StandardMaterial3D
-		if m != null:
-			m.albedo_color = PadBuilding.PLOT_EMPTY_COLOR if ok else _PLOT_OUT_COLOR
-
-
-## Клетки зоны квартала ПРОДЮСЕРА при установке (мировые): шахта — фикс-кольцо MINE_PLOT_CELLS
-## (повёрнутое на _rot_y); казарма — орто-соседство её футпринта в этой позиции/повороте.
-func _producer_zone_preview_cells(place: Vector3) -> Array:
-	var tree := get_tree()
-	var role: StringName = _data.get("role", &"")
-	if role == &"mine":
-		var base: Vector2i = CityGrid.world_to_cell(place, tree)
-		var out: Array = []
-		for off in PadBuilding.MINE_PLOT_CELLS:
-			out.append(base + CityGrid.rotate_offset(off, _rot_y))
-		return out
-	var own: Array = CityGrid.building_cells(place, _data.get("cells", []), _rot_y, tree)
-	var ownset: Dictionary = {}
-	for c in own:
-		ownset[c as Vector2i] = true
-	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-	var seen: Dictionary = {}
-	var cells: Array = []
-	for c in own:
-		for d in dirs:
-			var nb: Vector2i = (c as Vector2i) + d
-			if ownset.has(nb) or seen.has(nb):
-				continue
-			seen[nb] = true
-			cells.append(nb)
-	return cells
-
-
-## Ленивая постройка узла превью зоны (плитки добираются динамически в _update_producer_plot_preview).
-func _ensure_plot_preview() -> void:
-	if _plot_preview != null and is_instance_valid(_plot_preview):
-		return
-	_plot_preview = Node3D.new()
-	_plot_preview.name = "ProducerPlotPreview"
-	get_tree().current_scene.add_child(_plot_preview)
-
-
-## Одна плитка превью (плоский полупрозрачный квадрат), мировая позиция/цвет ставятся per-frame.
-func _make_preview_tile() -> MeshInstance3D:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = PadBuilding.PLOT_EMPTY_COLOR
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	var plane := MeshInstance3D.new()
-	var pm := PlaneMesh.new()
-	var t: float = CityGrid.CELL - 0.3
-	pm.size = Vector2(t, t)
-	plane.mesh = pm
-	plane.material_override = mat
-	return plane
-
-
-## Показать силуэты-плоты у тех ПРОДЮСЕРОВ, чей квартал принимает сапорт роли support_role (рука
-## с плавильней/двором/домом → шахты; с бараком → казармы). Прочее (стена/мост/продюсер) или
-## support_role="" → все силуэты прячем. Обобщённо через PadBuilding.accepts_support.
-func _set_producer_plots_visible(support_role: StringName) -> void:
-	for b in get_tree().get_nodes_in_group(PadBuilding.GROUP):
-		if b is PadBuilding and b.has_method(&"accepts_support") and b.has_method(&"set_plot_ghost_visible"):
-			var show: bool = support_role != &"" and (b as PadBuilding).accepts_support(support_role)
-			(b as PadBuilding).set_plot_ghost_visible(show)
 
 
 ## Показать/спрятать наземные зоны-индикаторы стройки (группа build_zone_indicator).
@@ -847,3 +732,12 @@ func _set_build_zones_visible(v: bool) -> void:
 	for n in get_tree().get_nodes_in_group(&"build_zone_indicator"):
 		if n is Node3D:
 			(n as Node3D).visible = v
+
+
+## Показать/спрятать маркеры buff-слотов у ВСЕХ продюсеров (шахты/казармы) — в режиме стройки игрок
+## видит, какие грани занять для макс. баффа. Делегирует PadBuilding.set_quarter_slots_visible (гард
+## внутри: не продюсер → no-op).
+func _set_producer_slots_visible(v: bool) -> void:
+	for b in get_tree().get_nodes_in_group(PadBuilding.GROUP):
+		if b is PadBuilding and b.has_method(&"set_quarter_slots_visible"):
+			(b as PadBuilding).set_quarter_slots_visible(v)

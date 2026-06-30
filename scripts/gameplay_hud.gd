@@ -145,6 +145,9 @@ const BUILD_MENU_PAD_MINT := 20
 const BUILD_MENU_PAD_HOUSE := 13  # дом гномов — социальный сапорт-универсал
 const BUILD_MENU_PAD_BARRACK := 21  # барак — ёмкость казармы (ось «Гарнизон»)
 const BUILD_MENU_PAD_STAKES := 22   # колья — дешёвый заслон перед стеной (DEFENSE)
+const BUILD_MENU_PAD_INSTITUTE := 23  # институт магии — мана башне + анлок магических построек
+const BUILD_MENU_PAD_MANA_CRYSTAL := 24  # сапорт института: ×темп маны
+const BUILD_MENU_PAD_MANA_RUNE := 25     # сапорт института: ×темп маны (сильнее)
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[CityGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
@@ -161,6 +164,9 @@ var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_MINT: RoomBuildings.PAD_MINT,
 	BUILD_MENU_PAD_HOUSE: RoomBuildings.PAD_HOUSE,
 	BUILD_MENU_PAD_BARRACK: RoomBuildings.PAD_BARRACK,
+	BUILD_MENU_PAD_INSTITUTE: RoomBuildings.PAD_INSTITUTE,
+	BUILD_MENU_PAD_MANA_CRYSTAL: RoomBuildings.PAD_MANA_CRYSTAL,
+	BUILD_MENU_PAD_MANA_RUNE: RoomBuildings.PAD_MANA_RUNE,
 }
 ## Секции палитры стройки: заголовок-категория + список пунктов (BUILD_MENU_* id). Порядок
 ## внутри = порядок карточек. Группировка по той же таксономии, что и квартал-баффы — игрок
@@ -171,6 +177,7 @@ const BUILD_SECTIONS := [
 	{"title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_STAKES]},
 	{"title": "⚔  ГАРНИЗОН — квартал", "ids": [BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
 	{"title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE]},
+	{"title": "🔮  МАГИЯ — квартал", "ids": [BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_MANA_CRYSTAL, BUILD_MENU_PAD_MANA_RUNE]},
 	{"title": "🌉  ИНЖЕНЕРИЯ", "ids": [BUILD_MENU_BRIDGE]},
 ]
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
@@ -1356,16 +1363,22 @@ func _build_item_info(id: int) -> Dictionary:
 			sub = "✓ уже построена (одна на отряд)"
 		return {"emoji": _emoji_of(data), "name": String(data.get("name", "Качалка")),
 			"cost_text": _format_cost(data), "cost": {}, "pop": 0, "cap": 0, "sub_text": sub, "disabled": disabled}
-	# Фигуры площадки: знание гномов И построенная качалка (от неё растёт грид).
+	# Фигуры площадки: знание гномов И построенная качалка (от неё растёт грид). Магические сапорты
+	# (роли mana_*) дополнительно требуют Институт магии (_magic_unlocked).
 	var bid: StringName = PAD_MENU_IDS.get(id, &"")
 	var pdata: Dictionary = RoomBuildings.get_data(bid)
+	var prole: StringName = pdata.get("role", &"")
+	var needs_magic: bool = prole == &"mana_crystal" or prole == &"mana_rune"
 	var pump_built: bool = _pump_built()
-	var pdisabled: bool = not (knows and pump_built)
+	var magic_ok: bool = not needs_magic or _magic_unlocked()
+	var pdisabled: bool = not (knows and pump_built and magic_ok)
 	var psub: String = String(pdata.get("hint", ""))
 	if not knows:
 		psub = "🔒 нужно знание гномов-строителей"
 	elif not pump_built:
 		psub = "🔒 нужна качалка-замок"
+	elif needs_magic and not _magic_unlocked():
+		psub = "🔒 нужен Институт магии"
 	return {"emoji": _emoji_of(pdata), "name": String(pdata.get("name", "Фигура")),
 		"cost_text": _format_cost(pdata), "cost": pdata.get("cost", {}),
 		"pop": PadBuilding.pop_for_role(pdata.get("role", &"")),
@@ -1446,6 +1459,12 @@ func _pump_built() -> bool:
 	return get_tree().get_first_node_in_group(Castle.GROUP) != null
 
 
+## Построен ли Институт магии — гейт для будущих МАГИЧЕСКИХ построек (и сапорт-построек магии): пока
+## института нет, такие пункты серые («🔒 нужен Институт магии»). Сам институт этого гейта НЕ требует.
+func _magic_unlocked() -> bool:
+	return get_tree().get_first_node_in_group(&"magic_institute") != null
+
+
 ## Качалка есть ИЛИ строится (стройплощадка с building_id=PUMP) — гейт «одна на отряд».
 func _pump_exists_or_building() -> bool:
 	if _pump_built():
@@ -1472,6 +1491,10 @@ func _on_build_menu_id(id: int) -> void:
 	elif PAD_MENU_IDS.has(id):
 		if not _building_unlocked() or not _pump_built():
 			return  # нет знания / нет качалки — пункт и так greyed
+		# Магические сапорты — только при построенном Институте магии (пункт и так greyed).
+		var role: StringName = RoomBuildings.get_data(PAD_MENU_IDS[id]).get("role", &"")
+		if (role == &"mana_crystal" or role == &"mana_rune") and not _magic_unlocked():
+			return
 		_cancel_hand_aims(&"place")
 		var hand := _resolve_hand()
 		if hand != null and hand.place_aim != null:

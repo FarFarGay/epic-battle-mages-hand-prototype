@@ -32,6 +32,9 @@ const PAD_SMELTER := &"pad_smelter"    # плавильня: гном несёт
 const PAD_LINE := &"pad_line"          # линия переработки: Z-тетромино, металл шахты→плавильня (роль line)
 const PAD_MINT := &"pad_mint"          # чеканный двор: чеканит монеты из металла (роль mint)
 const PAD_BANK := &"pad_bank"          # гномий банк: помпезная крепость, монеты идут в казну (роль bank)
+const PAD_INSTITUTE := &"pad_institute" # институт магии: льёт ману в башню + открывает магию (роль magic)
+const PAD_MANA_CRYSTAL := &"pad_mana_crystal" # сапорт института: ×темп маны (роль mana_crystal)
+const PAD_MANA_RUNE := &"pad_mana_rune"       # сапорт института: ×темп маны сильнее (роль mana_rune)
 
 const CATALOG: Dictionary = {
 	WALL: {
@@ -307,6 +310,43 @@ const CATALOG: Dictionary = {
 		"instant": true,
 		"cost": {ResourcePile.ResourceType.BRONZE: 40},
 		"ghost_color": Color(1.0, 0.85, 0.35, 0.5),
+	},
+	# Институт магии (1 кл., роль magic): башня мага с кристаллом. Льёт ману в башню (MANA_INSTITUTE_RATE)
+	# И открывает доступ к магическим/сапорт-постройкам (группа magic_institute, см. _magic_unlocked).
+	PAD_INSTITUTE: {
+		"name": "Институт магии",
+		"menu_label": "🔮 Институт магии (+мана)",
+		"hint": "Льёт ману в башню и открывает магические постройки.",
+		"role": &"magic",
+		"cells": [Vector2i(0, 0)],
+		"instant": true,
+		"hp": 120,
+		"cost": {ResourcePile.ResourceType.BRONZE: 60, ResourcePile.ResourceType.SILVER: 4},
+		"ghost_color": Color(0.6, 0.5, 1.0, 0.5),
+	},
+	# Кафедра Волшебных свитков — САПОРТ Института магии, L-форма (4 кл.): в его зону-соседство →
+	# ×темп добычи маны (PadBuilding.MANA_MULT_CRYSTAL). Анлок: нужен институт (_magic_unlocked).
+	PAD_MANA_CRYSTAL: {
+		"name": "Кафедра Волшебных свитков",
+		"menu_label": "📜 Кафедра свитков (×темп)",
+		"hint": "Сапорт института: ×темп маны. Ставь в зону института магии.",
+		"role": &"mana_crystal",
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(2, 1)],
+		"instant": true,
+		"cost": {ResourcePile.ResourceType.BRONZE: 30, ResourcePile.ResourceType.SILVER: 2},
+		"ghost_color": Color(0.5, 0.7, 1.0, 0.5),
+	},
+	# Осколок звёздной руды — САПОРТ Института магии (1 кл., на башенке): ×темп маны сильнее
+	# (MANA_MULT_RUNE), дороже. Анлок: нужен институт.
+	PAD_MANA_RUNE: {
+		"name": "Осколок звёздной руды",
+		"menu_label": "🌟 Осколок звёздной руды (×темп)",
+		"hint": "Сапорт института: ×темп маны (сильнее). Ставь в зону института магии.",
+		"role": &"mana_rune",
+		"cells": [Vector2i(0, 0)],
+		"instant": true,
+		"cost": {ResourcePile.ResourceType.BRONZE: 45, ResourcePile.ResourceType.SILVER: 3},
+		"ghost_color": Color(0.6, 0.45, 1.0, 0.5),
 	},
 }
 

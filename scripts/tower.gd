@@ -47,6 +47,9 @@ signal mana_changed(current: float, maximum: float)
 ## после 4 кастов фаербола (cost=25 каждый) — выстрелы очень дорогие, каждый каст
 ## на счету.
 @export var mana_regen_rate: float = 0.8
+## Пассивный авто-реген маны. Выключи (false) → мана идёт ТОЛЬКО за смерть скелетов (XP-орбы) +
+## от ИНСТИТУТА МАГИИ (он тикает restore_mana). Включён по умолчанию (флипни в редакторе под институт).
+@export var passive_mana_regen: bool = true
 
 @export_group("Push Items")
 @export var push_strength: float = 1.0
@@ -812,9 +815,10 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.y = 0.0
 
-	# Регенерация маны: только до max_mana, эмитим только когда реально
-	# изменилось (внутри cap), чтобы не дёргать HUD каждый кадр на full mana.
-	if not _dying and mana < max_mana:
+	# Регенерация маны: только до max_mana, эмитим только когда реально изменилось (внутри cap),
+	# чтобы не дёргать HUD каждый кадр на full mana. Гейт passive_mana_regen — можно выключить
+	# (тогда мана только за скелетов + Институт магии).
+	if passive_mana_regen and not _dying and mana < max_mana:
 		var prev: float = mana
 		mana = minf(mana + mana_regen_rate * delta, max_mana)
 		if mana != prev:
