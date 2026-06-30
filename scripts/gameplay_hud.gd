@@ -166,7 +166,8 @@ var PAD_MENU_IDS := {
 ## следом; Мост — отдельная инженерная механика.
 const BUILD_SECTIONS := [
 	{"title": "⛏  ДОБЫЧА — квартал", "ids": [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_SMELTER, BUILD_MENU_PAD_MINT]},
-	{"title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
+	{"title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE]},
+	{"title": "⚔  ГАРНИЗОН — квартал", "ids": [BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
 	{"title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE]},
 	{"title": "🌉  ИНЖЕНЕРИЯ", "ids": [BUILD_MENU_BRIDGE]},
 ]

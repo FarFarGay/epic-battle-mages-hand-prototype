@@ -553,6 +553,14 @@ func _clear_ghost() -> void:
 func _update_connection_hints(place: Vector3) -> void:
 	var tree := get_tree()
 	var my_role: StringName = _data.get("role", &"")
+	# Филлер квартала (плавильня/двор/дом/барак) НЕ показывает стыковку: его сигнал = силуэт
+	# продюсера (барак не «дополняет стены», хоть и одной категории DEFENSE). Гасим хинты.
+	if PadBuilding.is_filler_role(my_role):
+		for b in _conn_hinted:
+			if is_instance_valid(b) and b.has_method(&"set_connection_hint"):
+				b.call(&"set_connection_hint", 0)
+		_conn_hinted = []
+		return
 	var cells: Array = CityGrid.building_cells(place, _data.get("cells", []), _rot_y, tree)
 	var cellset: Dictionary = {}
 	for c in cells:
