@@ -15,13 +15,16 @@ var building_id: StringName = &""
 var _mask: Array = []        # Array[Vector2i] — клетки фигуры (локальные offset'ы)
 var _role: StringName = &"defend"
 ## ЭКОНОМИКА-КВАРТАЛ как СИЛУЭТ (2026-06-30). ШАХТА (active, role mine) проецирует ПЛОТ —
-## целевой контур квартала (MINE_PLOT_CELLS). Игрок заполняет его САПОРТАМИ; бонус добычи
-## = (РАЗНЫЕ типы в плоте) × SUPPORT_BONUS × (доля заполнения плота): разнообразие И заполнение
-## вместе. ПРАВИЛО КАТЕГОРИЙ: в плот шахты считаются только PRODUCTION/SOCIAL (казарма — нет,
-## это другой квартал). rate = MINE_RATE × (1 + N_разных × SUPPORT_BONUS × fill). Снос сапорта =
-## минус его вклад, не рушит всё. Банк → сапорт ЗАМКА (отдельно, pending).
-const MINE_RATE := 1.0        # базовая добыча шахты соло, монет(бронза)/сек (медленно)
-const SUPPORT_BONUS := 0.6    # каждый РАЗНЫЙ тип сапорта в полном плоте = +60% (× доля заполнения)
+## целевой контур квартала (MINE_PLOT_CELLS). Игрок заполняет его САПОРТАМИ. Каждый ТИП сапорта
+## крутит СВОЮ ось добычи (не общий множитель — разные параметры): ПЛАВИЛЬНЯ → СКОРОСТЬ (×темп),
+## ЧЕКАННЫЙ ДВОР → НОМИНАЛ (платит монетой на тир выше: бронза→серебро→золото), ДОМ ГНОМОВ →
+## ОБЪЁМ (×монет за выплату). Оси бинарны (тип есть/нет — зона вмещает по одному). ПРАВИЛО
+## КАТЕГОРИЙ: в плот шахты считаются только PRODUCTION/SOCIAL. Полный квартал (все 3 типа) = все
+## оси; не хватает типа → проседает его ось. Заполнение зоны на 100% → вспышка «собран».
+const MINE_RATE := 1.0          # базовая добыча шахты соло, монет/сек (без сапортов)
+const MINE_SPEED_MULT := 2.0    # ПЛАВИЛЬНЯ (скорость): ×темп добычи, пока есть в зоне
+const MINE_VOLUME_MULT := 2     # ДОМ ГНОМОВ (объём): ×монет за выплату, пока есть в зоне
+                                # ЧЕКАННЫЙ ДВОР (номинал): монета на тир выше — см. _upgraded_coin
 ## Плот-силуэт квартала шахты: offset'ы клеток ОТ клетки шахты (без неё). Заполняешь сапортами —
 ## форма квартала. ШАХТА В ЦЕНТРЕ 3×3 → КОЛЬЦО из 8 клеток вокруг неё = ровно чеканный двор (L,4)
 ## + плавильня (1) + дом гномов (I,3) (дом=верхний ряд + двор-L + плавильня замощают кольцо).
@@ -40,10 +43,20 @@ var _smoke: GPUParticles3D = null
 ## Ghost-силуэт плота квартала (только у шахты). Лениво, показывается по требованию при взятии
 ## сапорт-здания (см. set_plot_ghost_visible), а не перманентно.
 var _plot_ghost: Node3D = null
+## Индикатор осей квартала над шахтой (плашка) — показывается при наведении руки (hover, см.
+## set_highlighted). Видно, какие оси активны: скорость/номинал/объём. Реализован как 2D-панель
+## (StyleBox + emoji-иконки) в SubViewport → Sprite3D-билборд (иконки в 2D рендерятся надёжно).
+var _quarter_indicator: Sprite3D = null
+var _quarter_indicator_vp: SubViewport = null
+var _ind_speed: Label = null
+var _ind_mint: Label = null
+var _ind_vol: Label = null
+var _ind_rate: Label = null
 ## Всплывашка «+N» прибыли над шахтой + салют на каждую золотую (агрегируем, не чаще INTERVAL).
 const POPUP_INTERVAL := 0.7
 const POPUP_LIFETIME := 2.8
 var _recv_amount: int = 0
+var _recv_coin: int = ResourcePile.ResourceType.BRONZE  # каким номиналом платит шахта (двор поднимает тир)
 var _popup_cd: float = 0.0
 
 ## Damageable-контракт (Фаза 2): постройку можно атаковать. Скелеты бьют по группе
@@ -924,6 +937,7 @@ func _setup_mine() -> void:
 		if veins.has(wc as Vector2i):
 			_vein = veins[wc as Vector2i]
 			break
+	add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)  # наведение руки → индикатор осей квартала (set_highlighted)
 	set_process(true)
 
 
@@ -995,35 +1009,37 @@ func _refresh_plot_ghost_fill() -> void:
 		m.albedo_color = PLOT_FILLED_COLOR if covered.has(cells[i]) else PLOT_EMPTY_COLOR
 
 
-## Шаг добычи: шахта сама капает деньги в казну, скорость растёт от заполнения ПЛОТА-СИЛУЭТА
-## квартала РАЗНЫМИ сапортами: rate = MINE_RATE × (1 + N_разных_типов × SUPPORT_BONUS × fill).
-## Разнообразие И заполнение считаются вместе (см. _quarter_status). Бронза → казна (одометр сам
-## копит в серебро/золото). +N всплывашка и салют на золотую — над шахтой.
+## Шаг добычи: шахта сама капает деньги в казну. Каждый ТИП сапорта в зоне крутит СВОЮ ось:
+## ПЛАВИЛЬНЯ → ×СКОРОСТЬ темпа; ДОМ → ×ОБЪЁМ монет за выплату; ДВОР → НОМИНАЛ монеты на тир выше.
+## Заполнение зоны на 100% → вспышка «собран». +N всплывашка и салют на золотую — над шахтой.
 func _tick_mine(delta: float) -> void:
 	if _vein == null or not is_instance_valid(_vein):
 		return
-	# Квартал-СИЛУЭТ: бонус = (РАЗНЫЕ типы в плоте) × SUPPORT_BONUS × (доля заполнения плота).
 	var st := _quarter_status()
-	var d: int = st["distinct"]
+	var roles: Dictionary = st["roles"]
 	var fill: float = st["fill"]
-	# Фидбэк «квартал СОБРАН»: вспышка ЕДИНОЖДЫ в момент, когда плот заполнен ЦЕЛИКОМ (доля = 1.0).
-	# Частичное заполнение не мигает — мигает только готовый квартал (по всей зоне).
+	# Оси сапортов (бинарно — тип есть/нет в зоне; зона вмещает по одному каждого):
+	var speed: float = MINE_SPEED_MULT if roles.has(&"smelter") else 1.0   # плавильня → скорость
+	var volume: int = MINE_VOLUME_MULT if roles.has(&"housing") else 1     # дом → объём
+	var coin: int = _upgraded_coin(_vein.coin_type()) if roles.has(&"mint") else _vein.coin_type()  # двор → номинал
+	# Фидбэк «квартал СОБРАН»: вспышка ЕДИНОЖДЫ при 100% заполнения зоны (по всей зоне).
 	var full: bool = fill >= 0.999
 	if full and not _quarter_was_full:
 		_play_quarter_fx()
 	_quarter_was_full = full
-	var rate: float = MINE_RATE * (1.0 + float(d) * SUPPORT_BONUS * fill)
-	_mine_accum += rate * delta
+	_mine_accum += MINE_RATE * speed * delta
 	var whole := int(_mine_accum)
 	if whole < 1:
 		return
 	_mine_accum -= float(whole)
+	var pay: int = whole * volume
 	var bank := get_tree().get_first_node_in_group(&"gold_bank")
 	if bank == null or not bank.has_method(&"add_coin"):
 		return
 	var gold_before: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD)) if bank.has_method(&"get_coin") else 0
-	bank.call(&"add_coin", _vein.coin_type(), whole)  # бронза в казну
-	_recv_amount += whole                              # копим для всплывашки «+N»
+	bank.call(&"add_coin", coin, pay)  # монета выбранного номинала в казну
+	_recv_amount += pay                # копим для всплывашки «+N»
+	_recv_coin = coin                  # каким номиналом платим (для всплывашки)
 	if bank.has_method(&"get_coin"):
 		var gold_after: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD))
 		for _i in range(gold_after - gold_before):
@@ -1051,17 +1067,17 @@ func _plot_world_cells() -> Dictionary:
 	return out
 
 
-## Статус квартала-силуэта: сколько РАЗНЫХ типов сапортов попало В ПЛОТ и какая доля плота
-## заполнена. ПРАВИЛО КАТЕГОРИЙ держится: в плот шахты идут только PRODUCTION/SOCIAL (плавильня/
-## двор/дом) — казарма/стена (DEFENSE) лежат в плоте, но НЕ считаются (это чужой квартал). Бонус
-## считает _tick_mine как (distinct × SUPPORT_BONUS × fill): разнообразие И заполнение вместе.
+## Статус квартала-силуэта: какие РОЛИ сапортов попали В ПЛОТ (set `roles` — по ним _tick_mine
+## включает оси: smelter/mint/housing) и какая доля плота заполнена (`fill` — для вспышки/подсветки).
+## ПРАВИЛО КАТЕГОРИЙ держится: в плот шахты идут только PRODUCTION/SOCIAL (плавильня/двор/дом) —
+## казарма/стена (DEFENSE) лежат в плоте, но НЕ считаются (это чужой квартал).
 func _quarter_status() -> Dictionary:
 	var plot := _plot_world_cells()
 	var capacity: int = plot.size()
 	if capacity == 0:
-		return {"distinct": 0, "fill": 0.0, "covered": {}}
+		return {"roles": {}, "fill": 0.0, "covered": {}}
 	var covered: Dictionary = {}  # клетки плота, закрытые совместимыми сапортами
-	var roles: Dictionary = {}    # set уникальных ролей сапортов, попавших в плот
+	var roles: Dictionary = {}    # set ролей сапортов, попавших в плот
 	for b in get_tree().get_nodes_in_group(GROUP):
 		if b == self or not is_instance_valid(b) or not b.has_method(&"occupied_cells") or not b.has_method(&"get_role"):
 			continue
@@ -1078,7 +1094,7 @@ func _quarter_status() -> Dictionary:
 				in_plot = true
 		if in_plot:
 			roles[r] = true
-	return {"distinct": roles.size(), "fill": float(covered.size()) / float(capacity), "covered": covered}
+	return {"roles": roles, "fill": float(covered.size()) / float(capacity), "covered": covered}
 
 
 ## Клетки для FX-вспышки = шахта + ЗАКРЫТЫЕ сапортами клетки плота (реально собранный квартал),
@@ -1131,15 +1147,51 @@ func _process(delta: float) -> void:
 		# Live-подсветка заполнения плота, пока силуэт показан (рука с сапортом) — видно дыры.
 		if _plot_ghost != null and is_instance_valid(_plot_ghost) and _plot_ghost.visible:
 			_refresh_plot_ghost_fill()
+		# Live-обновление индикатора осей, пока наведено (hover) — поспел за достройкой сапорта.
+		if _quarter_indicator != null and is_instance_valid(_quarter_indicator) and _quarter_indicator.visible:
+			_refresh_quarter_indicator()
 		# Всплывашка «+прибыль» над шахтой (агрегируем добытое, не чаще интервала).
 		if _popup_cd > 0.0:
 			_popup_cd -= delta
 		if _recv_amount > 0 and _popup_cd <= 0.0:
-			_spawn_profit_popup(_vein.coin_type() if _vein != null and is_instance_valid(_vein) else ResourcePile.ResourceType.BRONZE, _recv_amount)
+			_spawn_profit_popup(_recv_coin, _recv_amount)  # номинал = чем реально платили (двор поднимает)
 			_recv_amount = 0
 			_popup_cd = POPUP_INTERVAL
 	if is_barracks():
 		_tick_hire_click()
+
+
+## Номинал на тир выше (чеканный двор-сапорт): бронза→серебро→золото. Золото — потолок.
+func _upgraded_coin(coin_type: int) -> int:
+	match coin_type:
+		ResourcePile.ResourceType.BRONZE:
+			return ResourcePile.ResourceType.SILVER
+		ResourcePile.ResourceType.SILVER:
+			return ResourcePile.ResourceType.GOLD
+		_:
+			return coin_type  # золото — выше некуда
+
+
+## Emoji-иконка номинала монеты (для плашки-индикатора).
+func _coin_emoji(coin_type: int) -> String:
+	match coin_type:
+		ResourcePile.ResourceType.SILVER:
+			return "🥈"
+		ResourcePile.ResourceType.GOLD:
+			return "🥇"
+		_:
+			return "🥉"
+
+
+## Имя номинала монеты для UI-индикаторов.
+func _coin_name(coin_type: int) -> String:
+	match coin_type:
+		ResourcePile.ResourceType.SILVER:
+			return "серебро"
+		ResourcePile.ResourceType.GOLD:
+			return "золото"
+		_:
+			return "бронза"
 
 
 ## Цвет номинала монеты (бронза/серебро/золото) — единый для индикаторов и всплывашек.
@@ -1275,8 +1327,9 @@ func _tick_hire_click() -> void:
 		_open_hire()
 
 
-## Контракт hover-подсветки (Hand._update_pickup_highlight): наводим руку → казарма
+## Контракт hover-подсветки (Hand._update_pickup_highlight): наводим руку → казарма/шахта
 ## светится emission'ом. Тоггл по всем мешам фигуры (материалы per-instance из _build).
+## Для ШАХТЫ дополнительно показываем/скрываем индикатор осей квартала.
 func set_highlighted(value: bool) -> void:
 	for ch in get_children():
 		var mi := ch as MeshInstance3D
@@ -1288,6 +1341,94 @@ func set_highlighted(value: bool) -> void:
 		mat.emission_enabled = value
 		mat.emission = Color(0.55, 0.7, 1.0)
 		mat.emission_energy_multiplier = 0.5 if value else 0.0
+	if _role == &"mine":
+		_set_quarter_indicator_visible(value)
+
+
+## Показать/скрыть индикатор осей квартала над шахтой (при наведении руки). Лениво строится.
+## SubViewport рендерит только пока видно (UPDATE_ALWAYS), иначе DISABLED — не жрёт кадр впустую.
+func _set_quarter_indicator_visible(v: bool) -> void:
+	if v and (_quarter_indicator == null or not is_instance_valid(_quarter_indicator)):
+		_build_quarter_indicator()
+	if _quarter_indicator != null and is_instance_valid(_quarter_indicator):
+		_quarter_indicator.visible = v
+		if _quarter_indicator_vp != null and is_instance_valid(_quarter_indicator_vp):
+			_quarter_indicator_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS if v else SubViewport.UPDATE_DISABLED
+		if v:
+			_refresh_quarter_indicator()
+
+
+## Плашка-индикатор = 2D-панель (StyleBox чёрный α + строки осей с emoji-иконками) в SubViewport,
+## показанная на Sprite3D-билборде над шахтой. Строки-значения хранятся в _ind_* для _refresh.
+func _build_quarter_indicator() -> void:
+	var vp := SubViewport.new()
+	vp.size = Vector2i(470, 196)  # широкая — влезает самая длинная строка (номинал + подсказка)
+	vp.transparent_bg = true
+	vp.disable_3d = true
+	vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(vp)
+	_quarter_indicator_vp = vp
+	# Плашка: PanelContainer на весь вьюпорт, чёрный полупрозрачный StyleBox со скруглением.
+	var panel := PanelContainer.new()
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0, 0, 0, 0.62)
+	sb.set_corner_radius_all(12)
+	sb.set_content_margin_all(14)
+	panel.add_theme_stylebox_override(&"panel", sb)
+	vp.add_child(panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override(&"separation", 4)
+	panel.add_child(vb)
+	var title := Label.new()
+	title.text = "КВАРТАЛ ШАХТЫ"
+	title.add_theme_font_size_override(&"font_size", 26)
+	title.add_theme_color_override(&"font_color", Color(0.85, 0.9, 1.0))
+	vb.add_child(title)
+	_ind_speed = _make_indicator_row(vb)
+	_ind_mint = _make_indicator_row(vb)
+	_ind_vol = _make_indicator_row(vb)
+	_ind_rate = _make_indicator_row(vb)
+	_ind_rate.add_theme_color_override(&"font_color", Color(1.0, 0.9, 0.4))
+	# Sprite3D-билборд с текстурой вьюпорта над шахтой.
+	_quarter_indicator = Sprite3D.new()
+	_quarter_indicator.texture = vp.get_texture()
+	_quarter_indicator.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_quarter_indicator.no_depth_test = true
+	_quarter_indicator.shaded = false
+	_quarter_indicator.pixel_size = 0.005  # 470×0.005 ≈ 2.35 м ширина плашки над шахтой
+	_quarter_indicator.position = Vector3(0, 3.6, 0)
+	add_child(_quarter_indicator)
+
+
+## Строка индикатора (Label, 24pt, белая) в VBox — возвращает её для наполнения в _refresh.
+func _make_indicator_row(vb: VBoxContainer) -> Label:
+	var l := Label.new()
+	l.add_theme_font_size_override(&"font_size", 24)
+	l.add_theme_color_override(&"font_color", Color.WHITE)
+	vb.add_child(l)
+	return l
+
+
+## Наполнить плашку: каждая ось — активна (значение) или «—  (что построить)». Внизу — итоговая
+## добыча нужным номиналом. Иконки — emoji (надёжны в 2D).
+func _refresh_quarter_indicator() -> void:
+	if _ind_rate == null or not is_instance_valid(_ind_rate):
+		return
+	var roles: Dictionary = _quarter_status()["roles"]
+	var speed_on: bool = roles.has(&"smelter")
+	var vol_on: bool = roles.has(&"housing")
+	var mint_on: bool = roles.has(&"mint")
+	var base_coin: int = _vein.coin_type() if (_vein != null and is_instance_valid(_vein)) else ResourcePile.ResourceType.BRONZE
+	var coin: int = _upgraded_coin(base_coin) if mint_on else base_coin
+	var rate: float = MINE_RATE * (MINE_SPEED_MULT if speed_on else 1.0) * float(MINE_VOLUME_MULT if vol_on else 1)
+	var mint_val: String = "%s %s" % [_coin_emoji(coin), _coin_name(coin)]
+	if not mint_on:
+		mint_val += "  (двор +тир)"
+	_ind_speed.text = "🔥 Скорость   %s" % ("×%s" % MINE_SPEED_MULT if speed_on else "—  (плавильня)")
+	_ind_mint.text = "🪙 Номинал    %s" % mint_val
+	_ind_vol.text = "🏠 Объём       %s" % ("×%d" % MINE_VOLUME_MULT if vol_on else "—  (дом гномов)")
+	_ind_rate.text = "≈ %s %s/сек" % [String.num(rate, 1), _coin_emoji(coin)]
 
 
 ## Мировые клетки, занятые постройкой (для проверки наложения при размещении).
