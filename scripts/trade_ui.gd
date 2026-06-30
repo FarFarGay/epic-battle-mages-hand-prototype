@@ -48,6 +48,9 @@ var _on_purchase: Callable = Callable()
 ## Счётчик живых бойцов для гейта «Артель полна». Задаёт КАЗАРМА (свои бойцы — per-barracks);
 ## пуст → глобальный счёт по типу (_count_of_type, для покупки в домике).
 var _count_fn: Callable = Callable()
+## Эффективный КАП найма (база типа + бараки квартала). Задаёт КАЗАРМА; пуст → базовый
+## SoldierSystem.get_squad_cap. Без него гейт «Артель полна» игнорировал бы бараки.
+var _cap_fn: Callable = Callable()
 
 
 func _ready() -> void:
@@ -80,12 +83,13 @@ func _process(_delta: float) -> void:
 	_pay_zone.self_modulate = Color(1.25, 1.35, 1.2) if dragging else Color(1, 1, 1)
 
 
-func open(unit_type: StringName = &"pikeman", on_purchase: Callable = Callable(), count_fn: Callable = Callable()) -> void:
+func open(unit_type: StringName = &"pikeman", on_purchase: Callable = Callable(), count_fn: Callable = Callable(), cap_fn: Callable = Callable()) -> void:
 	if _open:
 		return
 	_unit_type = unit_type
 	_on_purchase = on_purchase
 	_count_fn = count_fn
+	_cap_fn = cap_fn
 	_open = true
 	_applied = {}
 	_placed = 0
@@ -224,8 +228,13 @@ func _rebuild() -> void:
 	if SoldierSystem != null and SoldierSystem.has_soldier(_unit_type):
 		unit_name = String(SoldierSystem.get_soldier_data(_unit_type).get("name", "отряд"))
 	_buy_btn.text = ("Купить: %s" % unit_name) if rem > 0 else ("Купить даром: %s" % unit_name)
-	# Потолок артели (рабочие — 7): полно → купить нельзя (иначе платил бы зря).
-	var cap: int = SoldierSystem.get_squad_cap(_unit_type) if SoldierSystem != null else 0
+	# Потолок артели: эффективный кап (база + бараки квартала, через _cap_fn от казармы); пуст →
+	# базовый SoldierSystem.get_squad_cap. Полно → купить нельзя (иначе платил бы зря).
+	var cap: int = 0
+	if _cap_fn.is_valid():
+		cap = int(_cap_fn.call())
+	elif SoldierSystem != null:
+		cap = SoldierSystem.get_squad_cap(_unit_type)
 	if cap > 0 and _current_count() >= cap:
 		_buy_btn.disabled = true
 		_buy_btn.text = "Артель полна (%d/%d)" % [cap, cap]
