@@ -143,7 +143,8 @@ const BUILD_MENU_PAD_SPEARMEN := 17
 const BUILD_MENU_PAD_SMELTER := 18
 const BUILD_MENU_PAD_MINT := 20
 const BUILD_MENU_PAD_HOUSE := 13  # дом гномов — социальный сапорт-универсал
-const BUILD_MENU_PAD_BARRACK := 21  # барак — социальное здание (+население)
+const BUILD_MENU_PAD_BARRACK := 21  # барак — ёмкость казармы (ось «Гарнизон»)
+const BUILD_MENU_PAD_STAKES := 22   # колья — дешёвый заслон перед стеной (DEFENSE)
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[CityGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
@@ -153,6 +154,7 @@ var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_WALL: RoomBuildings.PAD_WALL,
 	BUILD_MENU_PAD_WALL1: RoomBuildings.PAD_WALL1,
 	BUILD_MENU_PAD_GATE: RoomBuildings.PAD_GATE,
+	BUILD_MENU_PAD_STAKES: RoomBuildings.PAD_STAKES,
 	BUILD_MENU_PAD_BARRACKS: RoomBuildings.PAD_BARRACKS,
 	BUILD_MENU_PAD_SPEARMEN: RoomBuildings.PAD_SPEARMEN,
 	BUILD_MENU_PAD_SMELTER: RoomBuildings.PAD_SMELTER,
@@ -166,7 +168,7 @@ var PAD_MENU_IDS := {
 ## следом; Мост — отдельная инженерная механика.
 const BUILD_SECTIONS := [
 	{"title": "⛏  ДОБЫЧА — квартал", "ids": [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_SMELTER, BUILD_MENU_PAD_MINT]},
-	{"title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE]},
+	{"title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_STAKES]},
 	{"title": "⚔  ГАРНИЗОН — квартал", "ids": [BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
 	{"title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE]},
 	{"title": "🌉  ИНЖЕНЕРИЯ", "ids": [BUILD_MENU_BRIDGE]},

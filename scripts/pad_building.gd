@@ -89,8 +89,8 @@ func _ready() -> void:
 	collision_mask = 0
 	Damageable.register(self)
 	add_to_group(Enemy.TARGET_GROUP)
-	if is_wall() or is_gate():
-		add_to_group(Enemy.MELEE_ONLY_TARGET_GROUP)  # стена/ворота — щит: дальники целят экономику/башню
+	if is_wall() or is_gate() or is_stakes():
+		add_to_group(Enemy.MELEE_ONLY_TARGET_GROUP)  # стена/ворота/колья — щит: дальники целят экономику/башню
 	_hp = _role_hp()
 	set_process(false)  # тикает только добытчик (нефть) и казарма (клик найма)
 	# Казарма = кнопка найма за золото: hover-подсветка руки + ЛКМ-клик → стол торга.
@@ -123,6 +123,10 @@ func is_attack() -> bool:
 
 func is_gate() -> bool:
 	return _role == &"gate"
+
+
+func is_stakes() -> bool:
+	return _role == &"stakes"
 
 
 func is_barracks() -> bool:
@@ -221,6 +225,8 @@ func _build() -> void:
 			_build_store()
 		&"gate":
 			_build_gate()
+		&"stakes":
+			_build_stakes()
 		&"barracks":
 			_build_barracks()
 		&"barrack":
@@ -617,6 +623,34 @@ func _build_barrack() -> void:
 	# Дверь (тёмное дерево) на фронте (+Z) под зубцами.
 	_box(Vector3(0.42, 0.7, 0.08), Vector3(0.0, _BASE_H + 0.35, bw * 0.5 + 0.02),
 		_solid(_WOOD_DARK, 0.0, 0.8), true)
+
+
+## Колья — ряд заострённых деревянных кольев на низком земляном валу. Заслон перед стеной: дёшево,
+## мало HP. Колья наклонены остриём наружу (к +Z) и разной высоты — грубый частокол.
+func _build_stakes() -> void:
+	var s: float = CityGrid.CELL
+	var wood := _solid(_WOOD, 0.0, 0.85)
+	var dark := _solid(_WOOD_DARK, 0.0, 0.9)
+	var span: float = s - 2.0 * _STREET
+	# Низкий земляной/деревянный вал-основание.
+	_box(Vector3(span, 0.2, 0.55), Vector3(0.0, 0.1, 0.0), dark, true)
+	# Ряд кольев: заострённые цилиндры (top_radius=0), наклон остриём наружу, чередуем высоту/смещение.
+	var n := 5
+	for i in range(n):
+		var t: float = float(i) / float(maxi(n - 1, 1))
+		var fx: float = -span * 0.5 + 0.18 + (span - 0.36) * t
+		var h: float = 0.85 + (0.18 if i % 2 == 0 else 0.0)
+		var stake := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.0
+		cm.bottom_radius = 0.085
+		cm.height = h
+		cm.radial_segments = 6
+		stake.mesh = cm
+		stake.material_override = wood if i % 2 == 0 else dark
+		stake.position = Vector3(fx, 0.2 + h * 0.42, 0.06)
+		stake.rotation.x = deg_to_rad(-26.0)  # остриём наружу (к врагу, +Z)
+		add_child(stake)
 
 
 ## Плавильня: каменная печь с раскалённым устьем (emission) + труба-дымоход. Клетка[0] —
@@ -1677,8 +1711,8 @@ static func category(role: StringName) -> int:
 	match role:
 		&"mine", &"smelter", &"mint":
 			return Category.PRODUCTION
-		&"defend", &"gate", &"attack", &"barracks", &"barrack":
-			return Category.DEFENSE  # барак — ёмкость казармы (военное), не социалка
+		&"defend", &"gate", &"attack", &"barracks", &"barrack", &"stakes":
+			return Category.DEFENSE  # барак — ёмкость казармы; колья — заслон (оба военные)
 		&"bank", &"pump":
 			return Category.STATE
 		&"housing":
@@ -1783,4 +1817,6 @@ func _role_color(r: StringName) -> Color:
 			return Color(0.82, 0.4, 0.34)   # атака — красноватый
 		&"mine":
 			return Color(0.88, 0.68, 0.26)  # добыча — охра
+		&"stakes":
+			return _WOOD                    # колья — дерево (шаттер коричневый)
 	return Color(0.5, 0.58, 0.72)           # защита — серо-синий

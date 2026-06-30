@@ -24,6 +24,7 @@ const PAD_TOWER := &"pad_tower"
 const PAD_HOUSE := &"pad_house"   # население/гномы (роль housing)
 const PAD_STORE := &"pad_store"   # хранилище/экономика (роль storage)
 const PAD_GATE := &"pad_gate"     # ворота: арка со створками в линии стены (роль gate)
+const PAD_STAKES := &"pad_stakes" # колья: дешёвый 1-кл. заслон перед стеной (роль stakes)
 const PAD_BARRACKS := &"pad_barracks"  # угловая казарма лучников (роль barracks)
 const PAD_SPEARMEN := &"pad_spearmen"  # казарма копейщиков, T-форма (роль barracks)
 const PAD_BARRACK := &"pad_barrack"    # барак: ёмкость казармы (ось «Гарнизон», +кап), роль barrack
@@ -204,6 +205,20 @@ const CATALOG: Dictionary = {
 		"instant": true,
 		"cost": {ResourcePile.ResourceType.BRONZE: 30, ResourcePile.ResourceType.SILVER: 2},
 		"ghost_color": Color(0.5, 0.58, 0.72, 0.5),
+	},
+	# Колья — дешёвый 1-клеточный ЗАСЛОН перед стеной: низкие деревянные колья-препятствие. Как стена
+	# (DEFENSE, melee_only-щит → дальники целят дальше), но мало HP и дёшево — сакрифициальная первая
+	# линия: melee-натиск ломает колья ПЕРЕД стеной, выигрываешь время. Ставится свободно (перед стеной).
+	PAD_STAKES: {
+		"name": "Колья",
+		"menu_label": "🔻 Колья (заслон)",
+		"hint": "Дешёвый заслон перед стеной: melee ломает колья первыми. Низкое HP.",
+		"role": &"stakes",
+		"cells": [Vector2i(0, 0)],
+		"instant": true,
+		"hp": 40,
+		"cost": {ResourcePile.ResourceType.BRONZE: 15},
+		"ghost_color": Color(0.6, 0.45, 0.28, 0.5),
 	},
 	# Угловая казарма лучников: L-бастион периметра (стены стыкуются к концам), боевой
 	# ход с зубцами + стяг. Функция (плодит лучников / стрельба) — Фаза 2.
