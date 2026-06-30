@@ -28,9 +28,9 @@ const MINE_VOLUME_MULT := 2     # ДОМ ГНОМОВ (объём): ×монет
 ## солдаты, шахты); армия и работающие шахты слоты занимают. Дом дополнительно = ось «Объём» у шахты.
 const HOUSING_POP := 4  # дом гномов → +слотов населения (он же ось «Объём» шахты — двойная роль)
 const MINE_POP_DEMAND := 1  # работающая шахта на жиле занимает столько слотов (иначе простой)
-## Ось «Гарнизон»: барак в зоне-соседстве казармы поднимает ВМЕСТИМОСТЬ ИМЕННО этой казармы. НАСЕЛЕНИЕ
-## барак НЕ даёт — солдат всё равно надо «заселить» из общего пула (т.е. построить дома). Ёмкость ≠ снабжение.
-const HIRE_CAP_PER_BARRACK := 3
+## Ось «Гарнизон»: каждый барак в зоне-соседстве казармы даёт +1 БОЙЦА в её гарнизон (лучник ИЛИ
+## копейщик — идентично, обе role barracks). НАСЕЛЕНИЕ барак НЕ даёт — бойца надо «заселить» из домов.
+const HIRE_CAP_PER_BARRACK := 1
 ## Институт магии (role magic): тикает ману в башню (restore_mana) и открывает магические постройки.
 ## Это ПРОДЮСЕР квартала (как шахта): сапорты на гранях ускоряют ману (множители перемножаются).
 const MANA_INSTITUTE_RATE := 3.0  # базовая мана/сек в башню (соло, без сапортов). Тюнится.
@@ -111,6 +111,10 @@ func _ready() -> void:
 		add_to_group(&"magic_institute")
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)  # наведение руки → плашка маны/множителей
 		set_process(true)
+	# Кафедра Волшебных свитков — кликабельна: ЛКМ открывает магазин заклинаний (покупка за монеты).
+	if is_scroll_dept():
+		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
+		set_process(true)
 	# Отложенно: HandPlaceAim ставит global-трансформ ПОСЛЕ add_child (нужен стене для
 	# мировых клеток и поиска соседей).
 	call_deferred(&"_build")
@@ -154,6 +158,10 @@ func is_mint() -> bool:
 
 func is_bank() -> bool:
 	return _role == &"bank"
+
+
+func is_scroll_dept() -> bool:
+	return _role == &"mana_crystal"  # Кафедра Волшебных свитков (сапорт института + магазин заклинаний)
 
 
 ## Роль постройки — для правил сочетаемости (connects) и поиска сапортов.
@@ -551,6 +559,10 @@ func _gate_wall(xa: float, xb: float, h: float, stone: StandardMaterial3D, trim:
 ## Угловая казарма лучников: L-тело (слитное), боевой ход с зубцами по ВНЕШНЕМУ периметру
 ## и стяг на угловой клетке. Серый камень (фортификация) + синий стяг = лучники.
 func _build_barracks() -> void:
+	# Казарма копейщиков — прямой стеновой отрезок (продолжение стены): чистый боевой ход + стяг.
+	if RoomBuildings.get_data(building_id).get("spear_garrison", false):
+		_build_spear_barracks()
+		return
 	var stone := _solid(_WALL_STONE, 0.05, 0.9)
 	var trim := _solid(_WALL_TRIM, 0.1, 0.9)  # зубцы в цвет стеновых — стена = продолжение
 	var bc: Color = RoomBuildings.get_data(building_id).get("banner_color", Color(0.28, 0.46, 0.7))
@@ -1021,18 +1033,21 @@ func _on_hired(unit_type: StringName, want: int) -> void:
 		return
 	# Добор до капа клампит сам request_squad_for (per-barracks). Стол торга и так гасит
 	# «Купить» на full → сюда обычно приходим лишь при недоборе.
-	var posts: Dictionary = _garrison_posts()
-	var ground: Vector3 = posts[&"ground"]
+	var data: Dictionary = RoomBuildings.get_data(building_id)
+	var spear: bool = data.get("spear_garrison", false)
+	# Точка спавна: копейщики — у самой казармы-стены; лучники — у угла бастиона.
+	var ground: Vector3 = _spear_ground() if spear else _garrison_posts()[&"ground"]
 	var members: Array = spawner.call(&"request_squad_for", self, unit_type, want, ground)
 	if members.is_empty():
 		return
-	# Лучники с башней → гарнизон стен. Прочие (копейщики) остаются мобильным отрядом.
-	if RoomBuildings.get_data(building_id).get("corner_tower", false):
-		# Раздаём посты ВСЕМУ отряду (не только новичкам-добору) — иначе при доливе павших
-		# новичок дублирует пост башни, а уцелевшие держат старые. Берём полный members отряда.
-		var sq = members[0].get(&"_squad")
-		var all: Array = sq.members if sq != null else members
-		_assign_garrison(all, posts)
+	# Раздаём посты ВСЕМУ отряду (не только новичкам-добору) — иначе при доливе павших новичок
+	# дублирует пост, а уцелевшие держат старые. Лучники → бастион (угол+рукава); копейщики → клетки-стена.
+	var sq = members[0].get(&"_squad")
+	var all: Array = sq.members if sq != null else members
+	if data.get("corner_tower", false):
+		_assign_garrison(all, _garrison_posts())
+	elif spear:
+		_assign_spear_garrison(all)
 
 
 ## Раздаём ВСЕМ живым лучникам отряда посты по индексу: 0 → башня (branch ZERO), 1/2 →
@@ -1059,6 +1074,66 @@ func _assign_garrison(members: Array, posts: Dictionary) -> void:
 		var sq = living[0].get(&"_squad")
 		if sq != null:
 			sq.command_hold(ground, false)
+
+
+## Казарма копейщиков = стеновой отрезок: визуал = чистая стена (боевой ход + зубцы + стыковка со
+## стенами встык, walkable-верх для маршрута лучников) + красный стяг на центральной клетке.
+func _build_spear_barracks() -> void:
+	_build_wall()  # переиспускаем стену: продолжение линии, боевой ход, зубцы, коннект к соседям
+	var s: float = CityGrid.CELL
+	var bc: Color = RoomBuildings.get_data(building_id).get("banner_color", Color(0.72, 0.3, 0.26))
+	var pole := _solid(_WOOD_DARK, 0.0, 0.85)
+	var flag := _solid(bc, 0.0, 0.7)
+	# Центр фигуры (локально) — туда стяг.
+	var c := Vector2.ZERO
+	for off in _mask:
+		c += Vector2(float((off as Vector2i).x), float((off as Vector2i).y))
+	c /= float(maxi(_mask.size(), 1))
+	var cx: float = c.x * s
+	var cz: float = c.y * s
+	var ph := 1.4
+	var base_y: float = _WALL_H + _MERLON_H
+	_box(Vector3(0.08, ph, 0.08), Vector3(cx, base_y + ph * 0.5, cz), pole, false)            # древко
+	_box(Vector3(0.5, 0.34, 0.04), Vector3(cx + 0.29, base_y + ph - 0.25, cz), flag, false)   # полотнище
+
+
+## Посты копейщиков = верх боевого хода КАЖДОЙ клетки казармы (PadBuilding.cell_top, высота _WALL_H).
+func _spear_posts() -> Array:
+	var tree := get_tree()
+	var out: Array = []
+	for c in occupied_cells():
+		out.append(PadBuilding.cell_top(c as Vector2i, tree))
+	return out
+
+
+## Наземная точка у казармы копейщиков (спавн отряда; копейщики потом взлетают на посты).
+func _spear_ground() -> Vector3:
+	var tree := get_tree()
+	var cells := occupied_cells()
+	if cells.is_empty():
+		return global_position
+	return CityGrid.cell_to_world(cells[0] as Vector2i, tree)
+
+
+## Раздаём копейщикам посты — по 1 на клетку (cells[i]→posts[i]); перебор (барак) циклит. Отряд в
+## МЯГКИЙ hold → гарнизон (SpearmanSoldier._grn_should_garrison), перебивая escort спавнера.
+func _assign_spear_garrison(members: Array) -> void:
+	var posts: Array = _spear_posts()
+	var cells: Array = occupied_cells()
+	if posts.is_empty():
+		return
+	var ground: Vector3 = _spear_ground()
+	var living: Array = []
+	for a in members:
+		if is_instance_valid(a) and a.has_method(&"assign_post"):
+			living.append(a)
+	for i in living.size():
+		var idx: int = i % posts.size()
+		living[i].call(&"assign_post", posts[idx], cells[idx] as Vector2i, ground.y)
+	if living.size() > 0:
+		var sq = living[0].get(&"_squad")
+		if sq != null:
+			sq.command_hold(ground, false)  # мягкий hold → гарнизон на постах
 
 
 ## СЛИТНЫЙ корпус по форме фигуры: на каждую клетку — корпус НА ВСЮ КЛЕТКУ (клетки
@@ -1459,6 +1534,8 @@ func _process(delta: float) -> void:
 		# Live-обновление плашки-индикатора казармы (гарнизон/кап), пока наведено.
 		if _quarter_indicator != null and is_instance_valid(_quarter_indicator) and _quarter_indicator.visible:
 			_refresh_quarter_indicator()
+	if is_scroll_dept():
+		_tick_scroll_click()
 
 
 ## Номинал на тир выше (чеканный двор-сапорт): бронза→серебро→золото. Золото — потолок.
@@ -1625,6 +1702,12 @@ func _clicked_on_self() -> bool:
 func _tick_hire_click() -> void:
 	if _clicked_on_self():
 		_open_hire()
+
+
+## ЛКМ по Кафедре Волшебных свитков → HUD открывает магазин заклинаний (ловит spell_shop_requested).
+func _tick_scroll_click() -> void:
+	if _clicked_on_self():
+		EventBus.spell_shop_requested.emit()
 
 
 ## Контракт hover-подсветки (Hand._update_pickup_highlight): наводим руку → казарма/шахта

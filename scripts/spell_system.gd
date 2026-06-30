@@ -252,6 +252,21 @@ func try_unlock(id: StringName) -> bool:
 	return true
 
 
+## Принудительно разблокировать заклинание БЕЗ камп-цены (магазин заклинаний у Кафедры платит
+## монетами сам через GoldBank, потом зовёт это). Идемпотентно. Эмитит spell_unlocked.
+func unlock(id: StringName) -> void:
+	if is_unlocked(id) or not SPELL_CATALOG.has(id):
+		return
+	_unlocked[id] = true
+	_levels[id] = 0
+	EventBus.spell_unlocked.emit(id)
+
+
+## Запись каталога заклинания (имя/иконка/уровни) или пусто. Для UI магазина/журнала.
+func spell_data(id: StringName) -> Dictionary:
+	return SPELL_CATALOG.get(id, {})
+
+
 ## Пытается прокачать заклинание на следующий уровень. Возвращает true если
 ## получилось. Списывает upgrade_costs[level] через Camp.try_spend.
 func try_upgrade(id: StringName) -> bool:

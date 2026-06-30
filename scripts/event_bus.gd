@@ -40,6 +40,8 @@ signal tower_mana_changed(current: float, maximum: float)
 signal spell_unlocked(id: StringName)
 ## Заклинание прокачано на новый уровень. level — уже актуальный (после апгрейда).
 signal spell_upgraded(id: StringName, level: int)
+## Клик по Кафедре Волшебных свитков → HUD открывает магазин заклинаний (покупка за монеты).
+signal spell_shop_requested
 ## Из башни вылетел снаряд — на КАЖДЫЙ выстрел, не на каст: шквал/мины эмитят
 ## per-shot (по снаряду), одиночные — раз. target — точка цели снаряда. Башня
 ## использует для отдачи-тильта (направление = башня→target). Честная серия отдач.

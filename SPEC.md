@@ -2360,6 +2360,15 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 - **ТУМБЛЕР ПАССИВНОЙ МАНЫ** (`tower.gd @export passive_mana_regen`, дефолт ON): выключи → мана ТОЛЬКО за смерть скелетов (XP-орбы) + от института. Гейтит блок регена в `_physics_process`.
 - Связано: [[project_ebm_magic_institute]], [[project_ebm_population_supply]], [[project_ebm_quarter_variety_todo]].
 
+**КАЗАРМА КОПЕЙЩИКОВ = СТЕНА-ГАРНИЗОН + МАГАЗИН ЗАКЛИНАНИЙ (2026-07-01).**
+- **Казарма копейщиков — стеновой отрезок** (`PAD_SPEARMEN`, прямая 3 кл., role `barracks`, флаг `spear_garrison`): визуал = `_build_wall` (боевой ход + зубцы + стыковка со стенами встык) + красный стяг (`_build_spear_barracks`). Верх ХОДИБЕЛЬНЫЙ — `walkable_set` уже включает `is_barracks`, лучники с соседнего плеча проходят по отрезку. Высота `_WALL_H` (продолжение стены).
+- **Гарнизон копейщиков** (`SpearmanSoldier extends SoldierGnome`, `scenes/soldier_pikeman.tscn` → новый скрипт): 3 копейщика, по 1 на клетку-пост (`_spear_posts` = `cell_top` каждой клетки; `_assign_spear_garrison`; cap pikeman 5→3, `attack_range` 2.2→2.8). Стоят на боевом ходу, **колят с места** ближайшего скелета у основания (переиспуск `_find_target_in_leash`+`_strike_at`), не гонятся. **За башней (F) = обычный копейщик** (`super._physics_process`). Возврат на пост — БЫСТРО (`GARRISON_RETURN_SPEED`=6, как лучник), не плетутся. Прятались в башне → `_garrison_stab`/`_garrison_move` зовут `_exit_hidden()` (иначе остаются `visible=false` — «закисают в башне»; пофикшено и лучнику).
+- **Моделька копейщика** (`_apply_visual` override, как у лучника): блочный гном — красная одежда (стяг) + КОПЬЁ (древко+стальной наконечник) вместо лука.
+- **Кнопки карточки = лучниковским** (`_add_squad_buttons_rooms`): копейщики (`pikeman`) идут по ветке лучников — Идти сюда · 🏰 В башню · 🧱 На стену (`_on_squad_wall_pressed` = мягкий hold, любой гарнизонный с постом возвращается). Карточка скрыта в гарнизоне, видна при призыве (общий `_squad_card_should_show`).
+- **БАРАК → +1 БОЕЦ** (`HIRE_CAP_PER_BARRACK` 3→1): барак в зоне-соседстве ЛЮБОЙ казармы (лучники И копейщики, role barracks) даёт +1 в гарнизон через `hire_cap_bonus`. Идентично. Карточка барака: `⛺ Барак (+1 боец)`, бейдж 🛡+1.
+- **МАГАЗИН ЗАКЛИНАНИЙ** — клик по 📜 Кафедре свитков (`mana_crystal`, `_tick_scroll_click` → `EventBus.spell_shop_requested`) → HUD-окно (программно, `_build_spell_shop`/`_populate_spell_shop`). 3 заклинания: Огненный шар(5🥇)/Огненный шквал(8🥇)/Минное рассеивание(6🥇). **Купить за монеты** (`GoldBank.spend_cost`) → `SpellSystem.unlock(id)` (force-анлок без камп-цены) → «✓ Куплено». Не хватает → серая/красная. v1 единоразово; PENDING: производство заклинаний ПАТРОНАМИ (карточка → «Заряды: N»). `SpellSystem.spell_data(id)` — геттер каталога.
+- Связано: [[project_ebm_spearmen_garrison]], [[project_ebm_spell_shop]], [[project_ebm_magic_institute]].
+
 ---
 
 ### 5.25 Ревью-пасс: фиксы багов/рисков (2026-06-26)

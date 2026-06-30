@@ -623,6 +623,8 @@ func _physics_process(delta: float) -> void:
 ## Движение по боевому ходу (бывший PadArcher._process). Абсолютные координаты, прямой
 ## global_position. Стреляем тем же путём, что отряд; ориентируем конус на ближайшего врага.
 func _garrison_move(delta: float) -> void:
+	# Прятались в башне? Выходим (иначе остаёмся visible=false на посту — «закис в башне»).
+	_exit_hidden()
 	velocity = Vector3.ZERO
 	if _attack_cd > 0.0:
 		_attack_cd -= delta

@@ -269,6 +269,7 @@ func _ready() -> void:
 	_build_resources_rows()
 	_build_coins_label()
 	_build_population_label()
+	_build_spell_shop()
 	_build_journal_button()
 	_build_action_bar()
 	_build_gatherer_card()
@@ -288,6 +289,7 @@ func _ready() -> void:
 	EventBus.squad_leveled_up.connect(_on_level_up)
 	EventBus.pending_upgrade_choices_changed.connect(_refresh_journal_badge)
 	EventBus.resources_changed.connect(_on_resource_changed)
+	EventBus.spell_shop_requested.connect(_on_spell_shop_requested)
 	# Набор зданий изменился → мог измениться потолок склада: перечитать X/cap.
 	EventBus.camp_buildings_changed.connect(_sync_all_resources)
 	EventBus.collection_mode_changed.connect(_refresh_mode_label)
@@ -1440,6 +1442,122 @@ func _on_build_card_pressed(id: int) -> void:
 	_on_build_menu_id(id)
 
 
+# --- МАГАЗИН ЗАКЛИНАНИЙ (Кафедра Волшебных свитков) -------------------------------------------
+## v1: единоразовая покупка за монеты (GoldBank) → SpellSystem.unlock. Открывается кликом по Кафедре
+## (EventBus.spell_shop_requested). PENDING: производство заклинаний как ПАТРОНЫ (заряды/боезапас) —
+## место оставлено (карточка покажет «заряды: N» вместо «Куплено»). Числа-заглушки.
+const SPELL_SHOP_ITEMS := [
+	{"id": &"fireball", "cost": {ResourcePile.ResourceType.GOLD: 5}},
+	{"id": &"firestorm", "cost": {ResourcePile.ResourceType.GOLD: 8}},
+	{"id": &"mine_scatter", "cost": {ResourcePile.ResourceType.GOLD: 6}},
+]
+var _spell_shop: Panel = null
+var _spell_shop_list: VBoxContainer = null
+
+
+## Окно магазина (по центру экрана, скрыто). Программно — без .tscn.
+func _build_spell_shop() -> void:
+	_spell_shop = Panel.new()
+	_spell_shop.anchor_left = 0.5
+	_spell_shop.anchor_right = 0.5
+	_spell_shop.anchor_top = 0.5
+	_spell_shop.anchor_bottom = 0.5
+	_spell_shop.offset_left = -190.0
+	_spell_shop.offset_right = 190.0
+	_spell_shop.offset_top = -150.0
+	_spell_shop.offset_bottom = 150.0
+	_spell_shop.visible = false
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.08, 0.07, 0.12, 0.96)
+	sb.border_color = Color(0.55, 0.45, 0.95, 0.9)
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(10)
+	sb.set_content_margin_all(14)
+	_spell_shop.add_theme_stylebox_override(&"panel", sb)
+	add_child(_spell_shop)
+	var vbox := VBoxContainer.new()
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vbox.offset_left = 14
+	vbox.offset_top = 14
+	vbox.offset_right = -14
+	vbox.offset_bottom = -14
+	vbox.add_theme_constant_override(&"separation", 8)
+	_spell_shop.add_child(vbox)
+	var title := Label.new()
+	title.text = "📜 Кафедра свитков — заклинания"
+	title.add_theme_font_size_override(&"font_size", 17)
+	title.add_theme_color_override(&"font_color", Color(0.82, 0.78, 1.0))
+	vbox.add_child(title)
+	_spell_shop_list = VBoxContainer.new()
+	_spell_shop_list.add_theme_constant_override(&"separation", 6)
+	_spell_shop_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_child(_spell_shop_list)
+	var close := Button.new()
+	close.text = "Закрыть"
+	close.focus_mode = Control.FOCUS_NONE
+	close.pressed.connect(func() -> void: _spell_shop.visible = false)
+	vbox.add_child(close)
+
+
+func _on_spell_shop_requested() -> void:
+	if _spell_shop == null or not is_instance_valid(_spell_shop):
+		return
+	_populate_spell_shop()
+	_spell_shop.visible = true
+
+
+## Перестроить карточки (отражает «куплено» и оплатимость). Зовётся при открытии и после покупки.
+func _populate_spell_shop() -> void:
+	if _spell_shop_list == null or not is_instance_valid(_spell_shop_list):
+		return
+	for c in _spell_shop_list.get_children():
+		c.queue_free()
+	for item in SPELL_SHOP_ITEMS:
+		_spell_shop_list.add_child(_make_spell_card(item["id"], item["cost"]))
+
+
+func _make_spell_card(id: StringName, cost: Dictionary) -> Control:
+	var data: Dictionary = SpellSystem.spell_data(id) if SpellSystem != null else {}
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override(&"separation", 8)
+	var sw := ColorRect.new()
+	sw.color = data.get("icon_color", Color.WHITE)
+	sw.custom_minimum_size = Vector2(22, 22)
+	row.add_child(sw)
+	var name_lbl := Label.new()
+	name_lbl.text = String(data.get("name", id))
+	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(name_lbl)
+	var owned: bool = SpellSystem != null and SpellSystem.is_unlocked(id)
+	var btn := Button.new()
+	btn.focus_mode = Control.FOCUS_NONE
+	if owned:
+		btn.text = "✓ Куплено"   # PENDING: тут будет «Заряды: N» при производстве патронами
+		btn.disabled = true
+	else:
+		var bank := get_tree().get_first_node_in_group(&"gold_bank")
+		var afford: bool = bank != null and bank.has_method(&"can_afford") and bool(bank.call(&"can_afford", cost))
+		btn.text = "Купить  %s" % _format_cost({"cost": cost})
+		btn.disabled = not afford
+		if not afford:
+			btn.modulate = Color(1.0, 0.6, 0.55)
+		btn.pressed.connect(_on_spell_buy.bind(id, cost))
+	row.add_child(btn)
+	return row
+
+
+## Покупка заклинания: списать монеты (GoldBank) атомарно → SpellSystem.unlock → перерисовать.
+func _on_spell_buy(id: StringName, cost: Dictionary) -> void:
+	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	if bank == null or not bank.has_method(&"spend_cost"):
+		return
+	if not bool(bank.call(&"spend_cost", cost)):
+		return  # не хватило монет
+	if SpellSystem != null:
+		SpellSystem.unlock(id)
+	_populate_spell_shop()
+
+
 ## ВРЕМЕННО (тест): стройка открыта с самого начала, без станка Room11. Вернуть в false,
 ## когда подключим гейт знания обратно.
 const TEMP_BUILD_ALWAYS_UNLOCKED := true
@@ -2070,8 +2188,8 @@ func _mk_squad_btn(text: String) -> Button:
 
 
 ## Чистый набор команд для КОМНАТНОГО режима. Артель: Идти сюда · В башню · Стройка ·
-## Ремонт. Лучники: Идти сюда · В башню · На стену. Копейщики: Идти сюда · В башню · За
-## башней (стен нет). «Идти сюда» — toggle (повторный клик снимает aim), поэтому «Снять»
+## Ремонт. Лучники И копейщики (оба гарнизонные): Идти сюда · В башню · На стену. Прочие:
+## Идти сюда · В башню · За башней. «Идти сюда» — toggle (повторный клик снимает aim), поэтому «Снять»
 ## не нужна. Призыв со стен за башню — на клавише F (см. GnomeSquadSpawner).
 func _add_squad_buttons_rooms(vbox: VBoxContainer, squad: Squad) -> void:
 	var row := GridContainer.new()
@@ -2101,9 +2219,10 @@ func _add_squad_buttons_rooms(vbox: VBoxContainer, squad: Squad) -> void:
 		btn_repair.tooltip_text = "Рабочие выходят из башни и чинят её, потом прячутся обратно"
 		btn_repair.pressed.connect(_on_squad_repair_pressed.bind(squad.id))
 		row.add_child(btn_repair)
-	elif squad.soldier_type == &"archer_squad":
+	elif squad.soldier_type == &"archer_squad" or squad.soldier_type == &"pikeman":
+		# Лучники И копейщики — гарнизонные (на стене/казарме-стене): «На стену» = вернуть в гарнизон.
 		var btn_wall := _mk_squad_btn("🧱 На стену")
-		btn_wall.tooltip_text = "Лучники возвращаются на городские стены (гарнизон)"
+		btn_wall.tooltip_text = "Вернуть бойцов в гарнизон (стена / казарма-стена)"
 		btn_wall.pressed.connect(_on_squad_wall_pressed.bind(squad.id))
 		row.add_child(btn_wall)
 	else:

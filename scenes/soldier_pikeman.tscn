@@ -1,6 +1,6 @@
 [gd_scene load_steps=6 format=3]
 
-[ext_resource type="Script" path="res://scripts/soldier_gnome.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/spearman_soldier.gd" id="1"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_soldier"]
 radius = 0.28
