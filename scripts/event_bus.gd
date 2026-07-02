@@ -160,6 +160,10 @@ signal day_phase_changed(is_night: bool, duration_seconds: float)
 ## Слушают QuestActor (для перекраса) и потенциально HUD.
 signal quest_advanced(new_index: int)
 
+## ТРЕВОГА населения (rooms, Population.set_alarm, клавиша V): рабочие прячутся
+## в убежище (замок/башня), добыча и мана встают. HUD рисует баннер.
+signal alarm_changed(active: bool)
+
 ## Гномы-строители (Room6): станок-чертёжник в Room11 запущен ([BlueprintMachine])
 ## → игрок получил знание о постройке стен/башен. HUD слушает, чтобы
 ## разблокировать меню построек. Идемпотентно (флаг живёт в PlayerProfile).

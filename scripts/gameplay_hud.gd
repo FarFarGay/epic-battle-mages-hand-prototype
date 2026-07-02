@@ -195,6 +195,8 @@ var _gold_goal_icon: ColorRect
 ## Ссылки для баннера: цель матча и харвестер (для скорости добычи). Lookup по
 ## группам в _ready (могут ready'ться раньше/позже HUD).
 var _match_goal: MatchGoal
+## Баннер тревоги населения (V): виден только пока Population.alarm_active.
+var _alarm_banner: Label
 var _harvester: Harvester
 ## Кэш последнего показанного золота — чтобы pop-анимацию играть только на
 ## реальном приросте (не на каждом sync'е).
@@ -292,6 +294,8 @@ func _ready() -> void:
 	EventBus.spell_shop_requested.connect(_on_spell_shop_requested)
 	# Разблокировали заклинание (магазин у Кафедры) → пересобрать трей: новый слот, equip'абельно клавишей.
 	EventBus.spell_unlocked.connect(_on_spell_unlocked)
+	_build_alarm_banner()
+	EventBus.alarm_changed.connect(_on_alarm_changed)
 	# Набор зданий изменился → мог измениться потолок склада: перечитать X/cap.
 	EventBus.camp_buildings_changed.connect(_sync_all_resources)
 	EventBus.collection_mode_changed.connect(_refresh_mode_label)
@@ -325,6 +329,27 @@ func _ready() -> void:
 		_refresh_super_charge(_camp.get_super_charge(), _camp.get_super_charge_max())
 
 
+## Баннер тревоги (V): красная строка по центру под рядом монет. Скрыт до тревоги.
+## mouse_filter IGNORE — центр-экранные элементы HUD не должны перехватывать мышь.
+func _build_alarm_banner() -> void:
+	_alarm_banner = Label.new()
+	_alarm_banner.text = "🚨 ТРЕВОГА — население в укрытии, добыча стоит  [V]"
+	_alarm_banner.add_theme_font_size_override(&"font_size", 20)
+	_alarm_banner.add_theme_color_override(&"font_color", Color(1.0, 0.35, 0.3))
+	_alarm_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_alarm_banner.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_alarm_banner.offset_top = 120.0
+	_alarm_banner.offset_bottom = 146.0
+	_alarm_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_alarm_banner.visible = false
+	add_child(_alarm_banner)
+
+
+func _on_alarm_changed(active: bool) -> void:
+	if _alarm_banner != null and is_instance_valid(_alarm_banner):
+		_alarm_banner.visible = active
+
+
 ## Чистка EventBus-подписок на tree_exiting. Все Callable'ы парные с _ready —
 ## порядок добавления здесь должен совпадать (для отслеживания глазом, не для
 ## функциональности — disconnect идемпотентен). Object-to-Object Godot чистит
@@ -337,6 +362,7 @@ func _disconnect_eventbus() -> void:
 	EventBus.resources_changed.disconnect(_on_resource_changed)
 	EventBus.spell_shop_requested.disconnect(_on_spell_shop_requested)
 	EventBus.spell_unlocked.disconnect(_on_spell_unlocked)
+	EventBus.alarm_changed.disconnect(_on_alarm_changed)
 	EventBus.camp_buildings_changed.disconnect(_sync_all_resources)
 	EventBus.collection_mode_changed.disconnect(_refresh_mode_label)
 	EventBus.collection_mode_changed.disconnect(_refresh_gatherer_mode_buttons)

@@ -1839,7 +1839,7 @@ func _refresh_magic_indicator() -> void:
 	var rate: float = MANA_INSTITUTE_RATE * _mana_mult(st)
 	var last: String = "✨ %s маны/сек" % String.num(rate, 1)
 	if not staffed:
-		last = "⏸ Нет населения — простой"
+		last = "🚨 ТРЕВОГА — простой" if (Population != null and Population.alarm_active) else "⏸ Нет населения — простой"
 	_apply_indicator_rows([
 		"📜 Кафедра    %s" % crystal_val,
 		"🌟 Осколок    %s" % rune_val,
@@ -1881,7 +1881,7 @@ func _refresh_mine_indicator() -> void:
 	var staffed: bool = Population == null or Population.is_staffed(self)
 	var last_row: String = "≈ %s %s/сек" % [String.num(rate, 1), _coin_emoji(coin)]
 	if not staffed:
-		last_row = "⏸ Нет населения — простой"
+		last_row = "🚨 ТРЕВОГА — простой" if (Population != null and Population.alarm_active) else "⏸ Нет населения — простой"
 	_apply_indicator_rows([
 		"🔥 Скорость   %s" % speed_val,
 		"🪙 Номинал    %s" % mint_val,

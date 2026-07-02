@@ -748,25 +748,37 @@ func _tick_deposit_to_store() -> void:
 		deliver_resource()
 
 
-## Шаг «спрятаться в башню» (рабочий в ESCORT). Бежит к центру башни; добежал —
-## прячется (невидим/неуязвим/приклеен к башне), как гном IN_TENT в палатке. Уже
-## спрятан → остаётся приклеенным к башне (та его «возит»).
+## Шаг «спрятаться в башню» (рабочий в ESCORT). Обёртка над _tick_hide_at.
 func _tick_hide_in_tower() -> void:
-	var tower: Vector3 = _tower_center()
+	_tick_hide_at(_tower_center())
+
+
+## Центр убежища ТРЕВОГИ: ЗАМОК (соц-ядро, группа castle), пока замка нет — башня.
+func _shelter_center() -> Vector3:
+	var castle := get_tree().get_first_node_in_group(&"castle") as Node3D
+	if castle != null and is_instance_valid(castle):
+		return castle.global_position
+	return _tower_center()
+
+
+## Шаг «спрятаться в точке dest». Бежит к центру; добежал — прячется
+## (невидим/неуязвим/приклеен), как гном IN_TENT в палатке. Уже спрятан →
+## остаётся приклеенным к dest (мобильное убежище-башня его «возит»).
+func _tick_hide_at(dest: Vector3) -> void:
 	if _hidden_in_tower:
-		# Приклеены к башне ТОЛЬКО по XZ — origin башни приподнят (y≈3), тянуть
+		# Приклеены ТОЛЬКО по XZ — origin башни приподнят (y≈3), тянуть
 		# рабочего по Y нельзя (повисал бы в воздухе на высоте башни). Y держим
 		# наземный (свой текущий) — на выходе из прятки рабочий стоит на полу.
 		velocity = Vector3.ZERO
-		global_position = Vector3(tower.x, global_position.y, tower.z)
+		global_position = Vector3(dest.x, global_position.y, dest.z)
 		return
-	var to := Vector3(tower.x - global_position.x, 0.0, tower.z - global_position.z)
+	var to := Vector3(dest.x - global_position.x, 0.0, dest.z - global_position.z)
 	var d: float = to.length()
 	if d <= HIDE_ENTER_RADIUS:
 		_enter_hidden()
 		velocity = Vector3.ZERO
 	else:
-		_move_toward(to, d)  # бежим к башне (sprint-догон)
+		_move_toward(to, d)  # бежим к убежищу (sprint-догон)
 
 
 ## Спрятался в башню: невидим, вне целей скелетов, неуязвим (см. take_damage),
@@ -834,6 +846,12 @@ func _active_tick(delta: float) -> void:
 	# IN_TENT, наведённой на башню. Команда «Идти сюда» (HOLD) выводит из
 	# башни на стройку. См. _tick_hide_in_tower / _enter_hidden / _exit_hidden.
 	if is_worker():
+		# ТРЕВОГА (Population.alarm_active, клавиша V): рабочий бросает любой
+		# приказ и прячется в убежище — замок, пока замка нет — башня. Той же
+		# IN_TENT-механикой; отбой тревоги → обычные ветки выведут наружу.
+		if Population != null and Population.alarm_active:
+			_tick_hide_at(_shelter_center())
+			return
 		if _squad != null and _squad.state == Squad.State.ESCORTING_TOWER:
 			# «Ремонт башни» (кнопка): вместо прятки ВЫХОДИМ ИЗ башни наружу, встаём
 			# в кольцо вокруг неё (физически видны рядом) и бьём-чиним внутрь.

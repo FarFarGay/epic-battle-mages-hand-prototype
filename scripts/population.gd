@@ -30,6 +30,29 @@ var _used_production: int = 0
 var _staffed: Dictionary = {}
 var _timer: float = 0.0
 
+## ТРЕВОГА (клавиша V / дизайн 2026-07-02): население попряталось — пересчёт никого
+## не комплектует (вся добыча/мана простаивает), рабочие-артель бегут в убежище
+## (SoldierGnome._active_tick). Военных НЕ трогает — солдаты воюют.
+var alarm_active: bool = false
+
+
+func set_alarm(active: bool) -> void:
+	if alarm_active == active:
+		return
+	alarm_active = active
+	_timer = 0.0  # мгновенный пересчёт: простой/возврат без ожидания интервала
+	EventBus.alarm_changed.emit(active)
+
+
+## V — тумблер тревоги. В main.tscn клавишей владеет Camp (режим ALARM
+## сборщиков) — там не перехватываем, чтобы не раздваивать смысл клавиши.
+func _unhandled_input(event: InputEvent) -> void:
+	if not event.is_action_pressed(&"gnome_alarm"):
+		return
+	if get_tree().get_first_node_in_group(&"camp") != null:
+		return
+	set_alarm(not alarm_active)
+
 
 func _process(delta: float) -> void:
 	_timer -= delta
@@ -102,11 +125,13 @@ func _recompute() -> void:
 	var room: int = maxi(_cap - _used_military, 0)
 	var staffed: Dictionary = {}
 	var prod: int = 0
-	for p in producers:
-		var need: int = int(p.call(&"pop_demand"))
-		if prod + need <= room:
-			staffed[p.get_instance_id()] = true
-			prod += need
+	# ТРЕВОГА: население в укрытии — производственные слоты не комплектуются вовсе.
+	if not alarm_active:
+		for p in producers:
+			var need: int = int(p.call(&"pop_demand"))
+			if prod + need <= room:
+				staffed[p.get_instance_id()] = true
+				prod += need
 	_staffed = staffed
 	_used_production = prod
 
