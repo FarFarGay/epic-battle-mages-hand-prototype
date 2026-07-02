@@ -257,8 +257,10 @@ func _commit(pos: Vector3) -> void:
 		b.global_position = pos
 		b.rotation.y = _rot_y
 		b.flash_quarter_links()  # закрыл грань квартала → импульс к продюсеру + его плашка
-		b.play_place_impact()    # «печать»: падение+сквош+пыль+рябь по гриду+тряска
 		call_deferred(&"_refresh_walls")  # стены дотянутся до новой постройки
+		# «Печать» СТРОГО ПОСЛЕ refresh_walls (порядок deferred-очереди): он пересобирает
+		# top_level-чанки стен — импакт до него анимировал бы меши, freed в конце кадра.
+		b.call_deferred(&"play_place_impact")
 		# Обновить маркеры buff-слотов: НОВЫЙ продюсер получит свои слоты, у задетых — перекрасится филл.
 		_set_producer_slots_visible(true)
 		if debug_log and LogConfig.master_enabled:
