@@ -55,7 +55,6 @@ hand_gameplay_prot/
 │   ├── skeleton_stone_thrower.tscn — каменщик-бомбардир, россыпь ~30 камней по дуге + взрыв на смерти
 │   ├── giant_stone.tscn       — снаряд каменщика
 │   ├── archer_group.tscn      — координатор группы из 4 лучников (волейный залп по точке)
-│   ├── enemy_arrow.tscn       — стрела вражеского лучника
 │   ├── aoe_arrow.tscn         — стрела с AOE-импактом (групповой залп)
 │   ├── camp.tscn              — лагерь (палатки + спавн гномов + центральный mount-slot + ring-формация развёртки)
 │   ├── tent.tscn              — палатка (CampPart, RigidBody3D с freeze=true)
@@ -753,13 +752,12 @@ enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 - `apply_knockback(impulse, duration)` — внешний толчок. Через `KnockbackState.compose(velocity, impulse)` (x/z заменяются, y берётся как `max`) сливает impulse в текущую velocity, взводит таймер через `_knockback.start(duration)`, затем зовёт виртуальный `_on_knockback()` (хук подкласса для «сбить замах» и т.п.).
 - `_apply_velocity_change(impulse, duration)` — низкоуровневая запись velocity + взвод таймера, **без** хука `_on_knockback`. Используется самим базовым классом (внутри `apply_knockback`) и подклассами для self-knockback (Skeleton lunge): свой же удар не должен дёргать хук «отмены состояний» и сбивать собственное FSM.
 - `apply_freeze(duration_sec, slow_factor)` (2026-06-01) — frost-эффект (см. заклинание Мороз §5.12). `slow_factor`: 0.0 = hard freeze (стой), 0.4 = 60% slow, 1.0 = нет эффекта. **Stacking:** более сильный эффект (меньший factor) перекрывает существующий; более слабый игнорируется (frost-patch не «снимает» прямой хит). Длительность всегда продлевается до `max(существующий, новый)`.
-- `is_frozen() -> bool` — true если на врага сейчас действует frost-эффект.
 
 **Freeze-механика:** state — `_freeze_until_msec: int`, `_freeze_slow_factor: float`. В `_physics_process` ПОСЛЕ AI-step (и только если не в knockback'е) XZ-velocity масштабируется на `_freeze_velocity_factor()`. Y (gravity) и knockback (внешняя сила) **не** масштабируются — заморозка не отменяет физику и не защищает от отталкивания. AI/FSM-таймеры идут в real-time — игрок видит «враг шевелится, замахивается, но шагает медленно».
 
 **Состояние knockback'а:**
 - `_knockback: KnockbackState = KnockbackState.new()` — общий helper для всех kinematic-knockback'ов (Enemy, Gnome). Раньше код таймера и lerp-затухания дублировался; вынесен в один RefCounted-объект. Поля: `friction` (выставляется в `_ready` из `knockback_friction`), внутренний `_timer`. Методы: `is_active()`, `start(duration)`, `tick(delta)`, `apply_friction(velocity, delta)`, статический `compose(current_v, impulse)`.
-- `set_target(target)` / `set_targets(array)` — назначить кандидата(ов) в цели. Поле `_targets: Array[Node3D]`, AI каждый кадр через `get_active_target()` выбирает ближайшую живую (мёртвые `is_instance_valid → false` пропускаются автоматически, ручная чистка не нужна).
+- `set_target(target)` — назначить цель. Поле `_targets: Array[Node3D]`, AI каждый кадр через `get_active_target()` выбирает ближайшую живую (мёртвые `is_instance_valid → false` пропускаются автоматически, ручная чистка не нужна).
 - `get_active_target() -> Node3D` — ближайшая валидная цель или `null`.
 
 **`_ready` и обязательная регистрация контрактов:**
@@ -2445,7 +2443,7 @@ Slam — utility «оглушил → добил» (2-shot скелета hp=30 
 | Модуль | Что экспортирует наружу | Что слушает |
 |---|---|---|
 | Tower | сигналы `damaged/destroyed/health_changed/mana_changed`, методы `take_damage/restore_mana/try_consume_mana/apply_knockback/apply_movement_slow/is_movement_slowed` (через `Damageable.register`) | Input WASD + `dash`(Space, таран скелетов `dash_damage`) + `parry`(Q, отражение + урон щита по скелетам); `Pushable.try_push` для kinematic; `_push_item` для Item; `Reflectable.try_reflect` снарядов в окне парирования |
-| Enemy (база) | сигналы `damaged/destroyed`, методы `take_damage(float)`/`apply_push(Vector3, float)` (Pushable)/`apply_knockback(Vector3, float)`/`set_target(Node3D)`/`set_targets(Array[Node3D])`; виртуальные `_perform_strike(target)`, `_on_state_enter/_on_state_exit`, `_on_knockback`, `_on_destroyed`. Регистрируется в `Damageable` и `Pushable` группах в `_ready` | физика, наследники |
+| Enemy (база) | сигналы `damaged/destroyed`, методы `take_damage(float)`/`apply_push(Vector3, float)` (Pushable)/`apply_knockback(Vector3, float)`/`set_target(Node3D)`; виртуальные `_perform_strike(target)`, `_on_state_enter/_on_state_exit`, `_on_knockback`, `_on_destroyed`. Регистрируется в `Damageable` и `Pushable` группах в `_ready` | физика, наследники |
 | Skeleton | (наследует Enemy) | `_target.take_damage(...)` через `Damageable.try_damage`; `ShatterEffect.spawn` на смерть |
 | EnemyMech | (наследует SkeletonArcher) апекс-враг башни (целит только Tower); супер-залп ракет, снаряды `Reflectable.register`, `note_reflected_damage()`, AOE по `MECH_AOE_MASK` (+скелеты) | `Reflectable.try_reflect` (через башню), `Tower.apply_knockback/is_movement_slowed`; спавн читом. См. §5.16.1 |
 | EnemySpawner | публичные `spawn_at/spawn_group/spawn_uniform/kill_all_skeletons/get_zones`, поле `spawn_y` | вызывается из `WaveDirector` (включая cheat-методы из вкладки «Читы»); `Array[PackedScene]` + `target_path` + `spawn_root_path` из `main.tscn` |
@@ -2722,7 +2720,7 @@ API: `pulse(world_position: Vector3, color: Color)`. Программно соз
 - `retreat_speed_factor: float = 0.8` — множитель `move_speed` при отступе. <1 чтобы melee-преследователь догонял.
 
 **Экспорты (Projectile):**
-- `arrow_scene: PackedScene` — стандартно `scenes/enemy_arrow.tscn`.
+- `arrow_scene: PackedScene` — стандартно `scenes/aoe_arrow.tscn` (AoeArrow).
 - `arrow_damage_min/max: 12/18` — randf_range на каждый выстрел.
 - `arrow_speed: 22.0` — то же что у DefenderGnome.
 - `arrow_spawn_offset: Vector3(0, 0.6, 0)` — над головой, чтобы не родиться внутри своего CollisionShape3D.
@@ -2760,14 +2758,14 @@ API: `pulse(world_position: Vector3, color: Color)`. Программно соз
 
 **Смерть — `_on_destroyed` override** (2026-05-14): прячет `_mesh` (через `$MeshInstance3D`) и спавнит `ShatterEffect` в `_effects_root` (тот же модуль что у Skeleton'а). Параметры: `shatter_fragment_count=5` (меньше чем 7 у melee — тушка тоньше), `shatter_lifetime=2.0`, `shatter_color = Color(0.45, 0.2, 0.65)` (под фиолетовый albedo тушки). Без этого override'а archer тихо queue_free'ался — не читалось как «убил».
 
-**Зависимости:** `Enemy` (база), `Arrow` (тип стрелы), `ShatterEffect`, `EventBus`, `LogConfig`. `arrow_scene` должна инстанцироваться как `Arrow`-наследник — иначе `push_warning` и стрела не спавнится.
+**Зависимости:** `Enemy` (база), `AoeArrow` (тип снаряда — наследник `GiantStone`, НЕ `Arrow`), `ShatterEffect`, `EventBus`, `LogConfig`. `arrow_scene` должна инстанцироваться как `AoeArrow` — иначе `push_warning` и стрела не спавнится.
 
-#### 5.5.3.1 EnemyArrow — `scenes/enemy_arrow.tscn`
+#### 5.5.3.1 EnemyArrow — ВЫПИЛЕН (2026-07-02)
 
-Зеркало `arrow.tscn` для враждебных снарядов. Тот же скрипт `arrow.gd`, тот же баллистический solver, **другая маска и цвет**:
-- `HitArea.collision_mask = 869 (MASK_HOSTILE_PROJECTILE)` — TERRAIN | ACTORS | CAMP_OBSTACLE | MOUNTED_MODULE | FRIENDLY_UNIT | PALISADE_OBSTACLE.
-- Material: тёмно-красный (`Color(0.7, 0.15, 0.2)`) с тёмно-красной emission. Визуально отличимо от оранжевой дружественной стрелы.
-- **Палисад блокирует стрелу** через PALISADE_OBSTACLE в маске — стена работает как укрытие. Высокие баллистические дуги могут перелетать через `palisade_segment.height = 1.5м` — это by design.
+`scenes/enemy_arrow.tscn` удалён как сирота: с перехода лучника на AOE-залпы
+(2026-05-22) он стрелял `aoe_arrow.tscn`, инстансов enemy_arrow не осталось
+(grep = только собственные sub-resources). Хостильная маска и «палисад-укрытие»
+живут в `aoe_arrow.tscn`.
 
 #### 5.5.3.3 SkeletonGiantThrower — `scenes/skeleton_giant_thrower.tscn`, `scripts/skeleton_giant_thrower.gd` (2026-05-21)
 

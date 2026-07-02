@@ -16,9 +16,9 @@ extends CharacterBody3D
 ## - apply_push(velocity_change, duration) — общий «pushable»-интерфейс.
 ## - apply_knockback(impulse, duration) — внешний толчок, на время отключает AI.
 ##   Подклассы могут реагировать через _on_knockback().
-## - set_target(node) / set_targets(array) — цель → набор целей; AI выбирает
-##   ближайшую валидную через get_active_target() (мёртвые автоматически
-##   пропускаются, ручная чистка не нужна).
+## - set_target(node) — назначить цель; AI выбирает ближайшую валидную через
+##   get_active_target() (мёртвые автоматически пропускаются, ручная чистка
+##   не нужна).
 ##
 ## Сигналы:
 ## - damaged(amount), destroyed — для UI / эффектов / счётчиков.
@@ -213,12 +213,7 @@ func _ready() -> void:
 
 # --- Публичный API ---
 
-## Назначить набор кандидатов в цели. Самая близкая из живых выбирается каждый кадр.
-func set_targets(targets: Array[Node3D]) -> void:
-	_targets = targets
-
-
-## Удобная обёртка для случая «одна цель» — оборачивает в массив.
+## Назначить цель (кладётся в набор кандидатов; ближайшая живая выбирается каждый кадр).
 func set_target(target: Node3D) -> void:
 	var new_targets: Array[Node3D] = []
 	if target:
@@ -301,11 +296,6 @@ func apply_freeze(duration_sec: float, slow_factor: float) -> void:
 		return
 	_freeze_slow_factor = clampf(slow_factor, 0.0, 1.0)
 	_freeze_until_msec = maxi(_freeze_until_msec, new_until)
-
-
-## True если на этого врага сейчас действует frost-эффект.
-func is_frozen() -> bool:
-	return _freeze_until_msec > Time.get_ticks_msec()
 
 
 ## Хитстоп (зовёт HitStop на удачном попадании «весомого» удара): оглушение на

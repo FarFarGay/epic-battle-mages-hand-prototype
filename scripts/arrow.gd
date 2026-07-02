@@ -27,8 +27,7 @@ signal hit(target: Node, position: Vector3)
 ## Секунды до автоматического queue_free, если стрела не попала.
 @export var lifetime: float = 4.0
 ## Логирует трассу стрелы (setup-параметры + что и где зацепилось). Дефолт
-## false — включается на конкретной сцене (например, enemy_arrow.tscn) для
-## диагностики проблем с попаданием.
+## false — включается на конкретной сцене для диагностики проблем с попаданием.
 @export var debug_log: bool = false
 
 @onready var _hit_area: Area3D = $HitArea

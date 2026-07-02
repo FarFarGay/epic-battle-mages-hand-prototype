@@ -226,6 +226,10 @@ static func wall_route(tree: SceneTree, start: Vector2i, first_dir: Vector2i, ma
 func _build() -> void:
 	for ch in get_children():
 		ch.free()  # перестройка: чистим прежний визуал
+	# Оверлей хинта стыковки ушёл вместе с детьми; без сброса state
+	# set_connection_hint(тот же state) молча не пересоздаст его.
+	_conn_overlay = null
+	_conn_state = 0
 	match _role:
 		&"mine":
 			_build_tower()

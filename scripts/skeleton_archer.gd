@@ -20,8 +20,10 @@ extends Enemy
 ##   из базы (Tower от EnemySpawner).
 ##
 ## Снаряд:
-## - arrow_scene должен инстанцироваться как Arrow. Mask = MASK_HOSTILE_PROJECTILE
-##   в .tscn — стрела бьёт дружественных + блокируется палисадом.
+## - arrow_scene должен инстанцироваться как AoeArrow (aoe_arrow.tscn) — код
+##   кастует к AoeArrow; сцена с обычным Arrow даст null и молча не стреляющего
+##   лучника. Mask = MASK_HOSTILE_PROJECTILE в .tscn — стрела бьёт дружественных
+##   + блокируется палисадом.
 ##
 ## Не входит в SKELETON_GROUP (это группа melee-скелетов: target_load,
 ## skel_grid для boids-avoidance). Archer не нуждается в soft-cap «не больше

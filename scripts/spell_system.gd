@@ -262,11 +262,6 @@ func unlock(id: StringName) -> void:
 	EventBus.spell_unlocked.emit(id)
 
 
-## Запись каталога заклинания (имя/иконка/уровни) или пусто. Для UI магазина/журнала.
-func spell_data(id: StringName) -> Dictionary:
-	return SPELL_CATALOG.get(id, {})
-
-
 ## Пытается прокачать заклинание на следующий уровень. Возвращает true если
 ## получилось. Списывает upgrade_costs[level] через Camp.try_spend.
 func try_upgrade(id: StringName) -> bool:

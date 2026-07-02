@@ -63,14 +63,19 @@ func request_squad_for(owner: Node, soldier_type: StringName, count: int, pos: V
 	add = _clamp_to_population(soldier_type, add)
 	if add <= 0:
 		return []
+	var pre: Squad = _squads.get(key)
+	var before: int = pre.members.size() if pre != null else 0
 	_spawn_squad(key, soldier_type, add, pos)
 	var sq: Squad = _squads.get(key)
 	if sq == null:
 		return []
+	# Срез строго от прежнего размера: _spawn_squad мог заспавнить МЕНЬШЕ add
+	# (instantiate == null → continue), и срез «последние add» захватил бы
+	# старых бойцов — их бы переназначили на посты как «новых».
 	var m: Array = sq.members
 	var out: Array = []
-	for i in range(maxi(m.size() - add, 0), m.size()):
-		if i >= 0 and i < m.size() and is_instance_valid(m[i]):
+	for i in range(before, m.size()):
+		if is_instance_valid(m[i]):
 			out.append(m[i])
 	return out
 
@@ -91,14 +96,17 @@ func request_squad(soldier_type: StringName, count: int, pos: Vector3) -> Array:
 	var add: int = _clamp_to_cap(soldier_type, soldier_type, maxi(count, 1))
 	if add <= 0:
 		return []
+	var pre: Squad = _squads.get(soldier_type)
+	var before: int = pre.members.size() if pre != null else 0
 	_spawn_squad(soldier_type, soldier_type, add, pos)
 	var sq: Squad = _squads.get(soldier_type)
 	if sq == null:
 		return []
+	# Срез от прежнего размера — та же защита от недоспавна, что в request_squad_for.
 	var m: Array = sq.members
 	var out: Array = []
-	for i in range(maxi(m.size() - add, 0), m.size()):
-		if i >= 0 and i < m.size() and is_instance_valid(m[i]):
+	for i in range(before, m.size()):
+		if is_instance_valid(m[i]):
 			out.append(m[i])
 	return out
 

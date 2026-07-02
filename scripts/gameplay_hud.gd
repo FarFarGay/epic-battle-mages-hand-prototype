@@ -335,6 +335,8 @@ func _disconnect_eventbus() -> void:
 	EventBus.squad_leveled_up.disconnect(_on_level_up)
 	EventBus.pending_upgrade_choices_changed.disconnect(_refresh_journal_badge)
 	EventBus.resources_changed.disconnect(_on_resource_changed)
+	EventBus.spell_shop_requested.disconnect(_on_spell_shop_requested)
+	EventBus.spell_unlocked.disconnect(_on_spell_unlocked)
 	EventBus.camp_buildings_changed.disconnect(_sync_all_resources)
 	EventBus.collection_mode_changed.disconnect(_refresh_mode_label)
 	EventBus.collection_mode_changed.disconnect(_refresh_gatherer_mode_buttons)
@@ -1540,7 +1542,7 @@ func _populate_spell_shop() -> void:
 
 
 func _make_spell_card(id: StringName, cost: Dictionary) -> Control:
-	var data: Dictionary = SpellSystem.spell_data(id) if SpellSystem != null else {}
+	var data: Dictionary = SpellSystem.get_spell_data(id) if SpellSystem != null else {}
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override(&"separation", 8)
 	var sw := ColorRect.new()
