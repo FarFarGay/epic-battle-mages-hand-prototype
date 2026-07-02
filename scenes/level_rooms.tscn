@@ -44,6 +44,9 @@
 [ext_resource type="PackedScene" path="res://scenes/skeleton_stone_thrower.tscn" id="41_8brgo"]
 [ext_resource type="PackedScene" path="res://scenes/oil_deposit.tscn" id="41_mjs4f"]
 [ext_resource type="Script" uid="uid://cbp2ajv0lxvky" path="res://scripts/grid_anchor.gd" id="42_grid"]
+[ext_resource type="PackedScene" path="res://scenes/spawn_zone.tscn" id="43_spawnzone"]
+[ext_resource type="Script" path="res://scripts/enemy_spawner.gd" id="44_espawner"]
+[ext_resource type="Script" path="res://scripts/wave_director.gd" id="45_wavedir"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -619,6 +622,34 @@ script = ExtResource("36_deeds")
 
 [node name="GnomeSquadSpawner" type="Node" parent="." unique_id=1793913173]
 script = ExtResource("38_squadspawn")
+
+[node name="SpawnZones" type="Node3D" parent="." unique_id=911000001]
+
+[node name="SpawnZoneRoom1" parent="SpawnZones" unique_id=911000002 instance=ExtResource("43_spawnzone")]
+size = Vector2(30, 22)
+wave_count = 999
+
+[node name="SpawnZoneRoom2" parent="SpawnZones" unique_id=911000003 instance=ExtResource("43_spawnzone")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 28)
+size = Vector2(30, 22)
+wave_count = 999
+
+[node name="EnemySpawner" type="Node3D" parent="." unique_id=911000004]
+script = ExtResource("44_espawner")
+target_path = NodePath("../Tower")
+zone_root_path = NodePath("../SpawnZones")
+map_half_extent = 150.0
+
+[node name="WaveDirector" type="Node" parent="." unique_id=911000005]
+script = ExtResource("45_wavedir")
+spawner_path = NodePath("../EnemySpawner")
+skeleton_scene = ExtResource("22_skel")
+giant_scene = ExtResource("30_giant")
+autostart_on_match = false
+background_initial_count = 0
+day_warband_count = 1
+day_warband_size = 12
+night_assault_size = 40
 
 [node name="Pots" type="Node3D" parent="." unique_id=1345822434]
 

@@ -150,6 +150,12 @@ enum DayNight { DAY, NIGHT }
 @export var telegraph_thickness: float = 0.6
 @export var telegraph_half_angle_deg: float = 26.0
 @export var telegraph_color: Color = Color(1.0, 0.12, 0.08, 0.75)
+## Радиус кольца-телеграфа вокруг ЗАМКА (rooms-сцена, где нет Camp.build_radius).
+## Зона строительства замка = PAD_RADIUS 6 клеток × 2м + запас на стены.
+@export var castle_zone_radius: float = 14.0
+## Автостарт кампании по MatchConfig.match_started («Начать игру» в меню).
+## false (rooms-сцена): волны включаются только читом «Старт/рестарт волн».
+@export var autostart_on_match: bool = true
 @export_group("")
 
 ## Активные банды (прунятся когда queue_free сами по гибели всех членов).
@@ -321,7 +327,7 @@ func _ready() -> void:
 	# через add_child тут падает («Parent node is busy setting up children»),
 	# инстансы текут (RID-leak на выходе). Откладываем старт на конец кадра,
 	# когда сцена полностью в дереве.
-	if MatchConfig.match_started:
+	if autostart_on_match and MatchConfig.match_started:
 		_start_campaign.call_deferred()
 
 
@@ -601,14 +607,11 @@ func _do_assault(size: int, label: String) -> void:
 		return
 	if debug_log and LogConfig.master_enabled:
 		print("[WaveDirector] %s: штурм-банда (%d) с фронта" % [label, size])
-	var camp := get_tree().get_first_node_in_group(&"camp") as Camp
-	if camp == null:
-		return
-	var center: Vector3 = camp.build_zone_center()
+	var center: Vector3 = _assault_zone_center()
 	if center == Vector3.INF:
 		return
 	# Своя дуга на ЭТУ банду — не трогаем дуги других фронтов.
-	var mesh := _spawn_assault_telegraph(center, camp.build_radius, origin)
+	var mesh := _spawn_assault_telegraph(center, _assault_zone_radius(), origin)
 	if mesh != null:
 		_telegraphs.append({
 			"warband": wb,
@@ -641,9 +644,8 @@ func _spawn_assault_telegraph(center: Vector3, radius: float, origin: Vector3) -
 func _tick_assault_telegraph(delta: float) -> void:
 	if _telegraphs.is_empty():
 		return
-	var camp := get_tree().get_first_node_in_group(&"camp") as Camp
-	var center: Vector3 = camp.build_zone_center() if camp != null else Vector3.INF
-	var radius: float = camp.build_radius if camp != null else 0.0
+	var center: Vector3 = _assault_zone_center()
+	var radius: float = _assault_zone_radius() if center != Vector3.INF else 0.0
 	_telegraph_pulse_t += delta
 	var blink: float = 0.5 + 0.5 * sin(_telegraph_pulse_t * TAU * 2.0)
 	var emission: float = lerpf(2.0, 6.0, blink)
@@ -690,17 +692,58 @@ func cheat_toggle_phase() -> void:
 		print("[WaveDirector] cheat: фаза → %s" % ("НОЧЬ" if is_night() else "ДЕНЬ"))
 
 
-## Цель штурма: ближайшая к центру лагеря СТРУКТУРА из группы skeleton_target
-## (ядро/палатка/здание). ВАЖНО: forced_target скелета обязан быть в этой группе
-## (Skeleton._scan_target отвергает иначе) — поэтому башня (НЕ в группе) не годится,
-## и её используем лишь как точку «центра». Гномов пропускаем (двигаются). К цели
+## Чит: остановить кампанию — день/ночь и все спавны замирают, живые враги
+## остаются. Обратно — «Старт/рестарт волн» (он же чистит живых скелетов).
+func cheat_stop_campaign() -> void:
+	_phase = Phase.IDLE
+	_clear_assault_telegraph()
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] cheat: кампания остановлена")
+
+
+## Якорь центра базы для штурма: лагерь (main-сцена; позиция его башни) или
+## ЗАМОК (rooms, группа "castle"). Vector3.INF — обороняемой базы нет вообще,
+## штурм не запускается: в rooms это естественный гейт «замок ещё не построен».
+func _assault_anchor_center() -> Vector3:
+	var camp := get_tree().get_first_node_in_group(&"camp") as Camp
+	if camp != null:
+		var tower: Node3D = camp.get_tower()
+		return tower.global_position if (tower != null and is_instance_valid(tower)) else Vector3.ZERO
+	var castle := get_tree().get_first_node_in_group(&"castle") as Node3D
+	if castle != null and is_instance_valid(castle):
+		return castle.global_position
+	return Vector3.INF
+
+
+## Центр кольца-телеграфа: зона строительства лагеря (INF пока не DEPLOYED)
+## или позиция замка (rooms).
+func _assault_zone_center() -> Vector3:
+	var camp := get_tree().get_first_node_in_group(&"camp") as Camp
+	if camp != null:
+		return camp.build_zone_center()
+	var castle := get_tree().get_first_node_in_group(&"castle") as Node3D
+	if castle != null and is_instance_valid(castle):
+		return castle.global_position
+	return Vector3.INF
+
+
+## Радиус кольца-телеграфа: build_radius лагеря или castle_zone_radius (rooms).
+func _assault_zone_radius() -> float:
+	var camp := get_tree().get_first_node_in_group(&"camp") as Camp
+	if camp != null:
+		return camp.build_radius
+	return castle_zone_radius
+
+
+## Цель штурма: ближайшая к якорю базы (лагерь или замок, см. _assault_anchor_center)
+## СТРУКТУРА из группы skeleton_target (ядро/палатка/здание). ВАЖНО: forced_target
+## скелета обязан быть в этой группе (Skeleton._scan_target отвергает иначе) — якорь
+## используем лишь как точку «центра». Гномов пропускаем (двигаются). К цели
 ## штурм марширует когезивно, стены по пути грызёт сам через vision-аггро.
 func _resolve_assault_target() -> Node3D:
-	var camp := get_tree().get_first_node_in_group(&"camp") as Camp
-	if camp == null:
+	var center := _assault_anchor_center()
+	if center == Vector3.INF:
 		return null
-	var tower: Node3D = camp.get_tower()
-	var center: Vector3 = tower.global_position if (tower != null and is_instance_valid(tower)) else Vector3.ZERO
 	var best: Node3D = null
 	var best_d: float = INF
 	for n in get_tree().get_nodes_in_group(Enemy.TARGET_GROUP):

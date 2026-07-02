@@ -1308,6 +1308,13 @@ func _build_debug_tab(camp: Node) -> void:
 		func(): wd.cheat_start_campaign(),
 	))
 	list.add_child(_build_cheat_card(
+		"Стоп волны",
+		"Останавливает кампанию: день/ночь и спавны замирают, живые враги остаются. Обратно — «Старт/рестарт волн».",
+		"стоп",
+		wd,
+		func(): wd.cheat_stop_campaign(),
+	))
+	list.add_child(_build_cheat_card(
 		"Немедленная волна",
 		"Спавн POI-волны на активный лагерь, сброс таймера. Без активного POI — лог-предупреждение.",
 		"волна",
@@ -1426,6 +1433,30 @@ func _build_debug_tab(camp: Node) -> void:
 		QuestProgress,
 		func(): QuestProgress.advance(),
 	))
+	# Тумблер бесплатной стройки — static var, target self (карточка всегда активна).
+	var fb_label: String = "выключить (вкл. цену)" if RoomBuildSite.free_build else "включить (бесплатно)"
+	list.add_child(_build_cheat_card(
+		"Бесплатная стройка",
+		"Toggle: ВКЛ — площадки достраиваются мгновенно и бесплатно; ВЫКЛ — призрак ждёт экономику стройки. Действует на НОВЫЕ установки, уже стоящие призраки не трогает.",
+		fb_label,
+		self,
+		func(): _cheat_toggle_free_build(),
+	))
+	var bank: Node = get_tree().get_first_node_in_group(&"gold_bank")
+	list.add_child(_build_cheat_card(
+		"+10 золотых (казна rooms)",
+		"Накидывает 10 золотых монет в монетную казну GoldBank (room-экономика, не лагерь).",
+		"+10",
+		bank,
+		func(): bank.add_coin(int(ResourcePile.ResourceType.GOLD), 10),
+	))
+
+
+## Чит: тумблер бесплатной стройки (RoomBuildSite.free_build). _refresh
+## пересобирает вкладку — подпись кнопки обновляется под новое состояние.
+func _cheat_toggle_free_build() -> void:
+	RoomBuildSite.free_build = not RoomBuildSite.free_build
+	_refresh()
 
 
 ## Универсальная карточка чита: заголовок + описание + кнопка. Если target
