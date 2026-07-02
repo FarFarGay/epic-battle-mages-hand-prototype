@@ -34,6 +34,9 @@ const HIRE_CAP_PER_BARRACK := 1
 ## Институт магии (role magic): тикает ману в башню (restore_mana) и открывает магические постройки.
 ## Это ПРОДЮСЕР квартала (как шахта): сапорты на гранях ускоряют ману (множители перемножаются).
 const MANA_INSTITUTE_RATE := 3.0  # базовая мана/сек в башню (соло, без сапортов). Тюнится.
+## «Защёлк» полного квартала: ВСЕ грани продюсера закрыты сапортами → комбо-множитель
+## ТЕМПА поверх осей (шахта — монет/сек, институт — маны/сек). Один на всех продюсеров.
+const FULL_QUARTER_BONUS := 1.5
 const MANA_MULT_CRYSTAL := 1.5    # Кафедра Волшебных свитков в зоне → ×темп
 const MANA_MULT_RUNE := 2.0       # Осколок звёздной руды в зоне → ×темп (сильнее/дороже)
 const MANA_MULT_HOUSE := 1.5      # Дом гномов в зоне → ×темп (соц-универсал, как «Объём» у шахты)
@@ -1278,13 +1281,20 @@ func _tick_institute(delta: float) -> void:
 	# НАСЕЛЕНИЕ: без укомплектованного гнома институт ПРОСТАИВАЕТ — как шахта (магия не исключение).
 	if Population != null and not Population.is_staffed(self):
 		return
-	tower.call(&"restore_mana", MANA_INSTITUTE_RATE * _mana_mult() * delta)
+	var st := _quarter_status()
+	# Фидбэк «квартал СОБРАН» — симметрично шахте: вспышка единожды на переходе к 100%.
+	var full: bool = float(st["fill"]) >= 0.999
+	if full and not _quarter_was_full:
+		_play_quarter_fx()
+	_quarter_was_full = full
+	tower.call(&"restore_mana", MANA_INSTITUTE_RATE * _mana_mult(st) * delta)
 
 
 ## Множитель темпа маны от сапортов в зоне института (перемножение, как оси шахты). Соло → 1.0.
 ## Кафедра/Осколок дают ось только УКОМПЛЕКТОВАННЫЕ гномом (staffed_roles); дом гномов — соц, без гнома.
-func _mana_mult() -> float:
-	var roles: Dictionary = _quarter_status()["staffed_roles"]
+## Принимает готовый _quarter_status (не пересчитывает) + «защёлк» полного квартала сверху.
+func _mana_mult(st: Dictionary) -> float:
+	var roles: Dictionary = st["staffed_roles"]
 	var mult := 1.0
 	if roles.has(&"mana_crystal"):
 		mult *= MANA_MULT_CRYSTAL
@@ -1292,7 +1302,7 @@ func _mana_mult() -> float:
 		mult *= MANA_MULT_RUNE
 	if roles.has(&"housing"):
 		mult *= MANA_MULT_HOUSE
-	return mult
+	return mult * _full_quarter_mult(st)
 
 
 ## Шаг добычи: шахта сама капает деньги в казну. Каждый ТИП сапорта в зоне крутит СВОЮ ось:
@@ -1319,7 +1329,8 @@ func _tick_mine(delta: float) -> void:
 	if full and not _quarter_was_full:
 		_play_quarter_fx()
 	_quarter_was_full = full
-	_mine_accum += MINE_RATE * speed * delta
+	# «Защёлк»: полный квартал крутит темп сверх осей — комбо за полный сет.
+	_mine_accum += MINE_RATE * speed * _full_quarter_mult(st) * delta
 	var whole := int(_mine_accum)
 	if whole < 1:
 		return
@@ -1469,6 +1480,11 @@ func _quarter_status() -> Dictionary:
 			if (not needs_gnome) or (Population != null and Population.is_staffed(b)):
 				staffed_roles[r] = true
 	return {"roles": roles, "staffed_roles": staffed_roles, "fill": float(covered.size()) / float(capacity), "covered": covered, "support_count": count}
+
+
+## Множитель «защёлка»: полный квартал (fill=100%) → FULL_QUARTER_BONUS, иначе 1.0.
+func _full_quarter_mult(st: Dictionary) -> float:
+	return FULL_QUARTER_BONUS if float(st["fill"]) >= 0.999 else 1.0
 
 
 ## Клетки для FX-вспышки = шахта + ЗАКРЫТЫЕ сапортами клетки плота (реально собранный квартал),
@@ -1772,7 +1788,7 @@ func _build_quarter_indicator() -> void:
 	_ind_title.add_theme_color_override(&"font_color", Color(0.85, 0.9, 1.0))
 	vb.add_child(_ind_title)
 	_ind_rows = []
-	for _i in range(4):  # хватает на оси шахты (4) и гарнизон казармы (≤2, лишние прячем)
+	for _i in range(5):  # хватает на оси шахты + защёлк (5) и гарнизон казармы (≤2, лишние прячем)
 		_ind_rows.append(_make_indicator_row(vb))
 	# Sprite3D-билборд с текстурой вьюпорта над шахтой.
 	_quarter_indicator = Sprite3D.new()
@@ -1817,7 +1833,10 @@ func _refresh_magic_indicator() -> void:
 	var rune_val: String = "×%s" % MANA_MULT_RUNE if on.has(&"mana_rune") else ("⏸ нет гнома" if roles.has(&"mana_rune") else "—  (осколок зв. руды)")
 	var house_val: String = "×%s" % MANA_MULT_HOUSE if on.has(&"housing") else "—  (дом гномов)"
 	var staffed: bool = Population == null or Population.is_staffed(self)
-	var rate: float = MANA_INSTITUTE_RATE * _mana_mult()
+	# _mana_mult уже включает «защёлк» полного квартала.
+	var quarter_on: bool = _full_quarter_mult(st) > 1.0
+	var quarter_val: String = "×%s  СОБРАН!" % FULL_QUARTER_BONUS if quarter_on else "—  (заполни все грани)"
+	var rate: float = MANA_INSTITUTE_RATE * _mana_mult(st)
 	var last: String = "✨ %s маны/сек" % String.num(rate, 1)
 	if not staffed:
 		last = "⏸ Нет населения — простой"
@@ -1825,11 +1844,12 @@ func _refresh_magic_indicator() -> void:
 		"📜 Кафедра    %s" % crystal_val,
 		"🌟 Осколок    %s" % rune_val,
 		"🏠 Дом          %s" % house_val,
+		"⚡ Квартал     %s" % quarter_val,
 		last,
 	])
-	if _ind_rows.size() >= 4 and is_instance_valid(_ind_rows[3]):
+	if _ind_rows.size() >= 5 and is_instance_valid(_ind_rows[4]):
 		var col: Color = Color(1.0, 0.5, 0.4) if not staffed else Color(0.7, 0.7, 1.0)
-		(_ind_rows[3] as Label).add_theme_color_override(&"font_color", col)
+		(_ind_rows[4] as Label).add_theme_color_override(&"font_color", col)
 
 
 ## Строки плашки ШАХТЫ: каждая ось — значение или «—  (что построить)»; внизу итоговая добыча.
@@ -1853,6 +1873,10 @@ func _refresh_mine_indicator() -> void:
 		mint_val = "%s %s  (⏸ нет гнома)" % [_coin_emoji(coin), _coin_name(coin)]
 	else:
 		mint_val = "%s %s  (двор +тир)" % [_coin_emoji(coin), _coin_name(coin)]
+	# «Защёлк»: полный квартал крутит темп сверх осей (учтён в rate ниже).
+	var quarter_mult: float = _full_quarter_mult(st)
+	rate *= quarter_mult
+	var quarter_val: String = "×%s  СОБРАН!" % FULL_QUARTER_BONUS if quarter_mult > 1.0 else "—  (заполни все грани)"
 	# Укомплектована ли САМА шахта: без слота простаивает (Population, военный приоритет).
 	var staffed: bool = Population == null or Population.is_staffed(self)
 	var last_row: String = "≈ %s %s/сек" % [String.num(rate, 1), _coin_emoji(coin)]
@@ -1862,11 +1886,12 @@ func _refresh_mine_indicator() -> void:
 		"🔥 Скорость   %s" % speed_val,
 		"🪙 Номинал    %s" % mint_val,
 		"🏠 Объём       %s" % ("×%d" % MINE_VOLUME_MULT if vol_on else "—  (дом гномов)"),
+		"⚡ Квартал     %s" % quarter_val,
 		last_row,
 	])
-	if _ind_rows.size() >= 4 and is_instance_valid(_ind_rows[3]):
+	if _ind_rows.size() >= 5 and is_instance_valid(_ind_rows[4]):
 		var col: Color = Color(1.0, 0.5, 0.4) if not staffed else Color(1.0, 0.9, 0.4)
-		(_ind_rows[3] as Label).add_theme_color_override(&"font_color", col)
+		(_ind_rows[4] as Label).add_theme_color_override(&"font_color", col)
 
 
 ## Строки плашки КАЗАРМЫ: «Гарнизон живых/кап» + разбивка оси гарнизона (база+бараки) + снабжение пула.
