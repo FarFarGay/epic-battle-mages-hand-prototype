@@ -296,6 +296,7 @@ func _ready() -> void:
 	EventBus.spell_unlocked.connect(_on_spell_unlocked)
 	_build_alarm_banner()
 	EventBus.alarm_changed.connect(_on_alarm_changed)
+	EventBus.coins_spent.connect(_on_coins_spent)
 	# Набор зданий изменился → мог измениться потолок склада: перечитать X/cap.
 	EventBus.camp_buildings_changed.connect(_sync_all_resources)
 	EventBus.collection_mode_changed.connect(_refresh_mode_label)
@@ -350,6 +351,49 @@ func _on_alarm_changed(active: bool) -> void:
 		_alarm_banner.visible = active
 
 
+## Трата монет (любая покупка: стройка/найм/спеллы): панч счётчика казны +
+## красная всплывашка «−N» по номиналам, уплывает вниз и тает.
+func _on_coins_spent(value: int) -> void:
+	if _coins_label == null or not is_instance_valid(_coins_label):
+		return
+	_coins_label.pivot_offset = _coins_label.size * 0.5
+	var tw := _coins_label.create_tween()
+	tw.tween_property(_coins_label, "scale", Vector2(1.1, 1.1), 0.06)
+	tw.tween_property(_coins_label, "scale", Vector2.ONE, 0.14)
+	var pop := Label.new()
+	pop.text = "−" + _fmt_coin_value(value)
+	pop.add_theme_font_size_override(&"font_size", 16)
+	pop.add_theme_color_override(&"font_color", Color(1.0, 0.45, 0.35))
+	pop.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pop.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	pop.offset_top = 118.0
+	pop.offset_bottom = 140.0
+	pop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(pop)
+	var pt := pop.create_tween()
+	pt.set_parallel(true)
+	pt.tween_property(pop, "offset_top", 138.0, 0.7)
+	pt.tween_property(pop, "modulate:a", 0.0, 0.7)
+	pt.set_parallel(false)
+	pt.tween_callback(pop.queue_free)
+
+
+## Бронза-эквивалент → строка по номиналам одометра («2🥇 3🥈 6🥉»). Курсы
+## дублируют gold_bank.gd (1🥇=250🥉, 1🥈=10🥉) — без импорта, как HEAVY_GROUPS в HitStop.
+func _fmt_coin_value(value: int) -> String:
+	var g: int = value / 250
+	var s: int = (value % 250) / 10
+	var b: int = value % 10
+	var parts: Array = []
+	if g > 0:
+		parts.append("%d🥇" % g)
+	if s > 0:
+		parts.append("%d🥈" % s)
+	if b > 0 or parts.is_empty():
+		parts.append("%d🥉" % b)
+	return " ".join(parts)
+
+
 ## Чистка EventBus-подписок на tree_exiting. Все Callable'ы парные с _ready —
 ## порядок добавления здесь должен совпадать (для отслеживания глазом, не для
 ## функциональности — disconnect идемпотентен). Object-to-Object Godot чистит
@@ -363,6 +407,7 @@ func _disconnect_eventbus() -> void:
 	EventBus.spell_shop_requested.disconnect(_on_spell_shop_requested)
 	EventBus.spell_unlocked.disconnect(_on_spell_unlocked)
 	EventBus.alarm_changed.disconnect(_on_alarm_changed)
+	EventBus.coins_spent.disconnect(_on_coins_spent)
 	EventBus.camp_buildings_changed.disconnect(_sync_all_resources)
 	EventBus.collection_mode_changed.disconnect(_refresh_mode_label)
 	EventBus.collection_mode_changed.disconnect(_refresh_gatherer_mode_buttons)

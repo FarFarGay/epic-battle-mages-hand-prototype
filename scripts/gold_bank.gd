@@ -61,6 +61,8 @@ func spend_cost(cost: Dictionary) -> bool:
 	if _value < c:
 		return false
 	_value -= c
+	if c > 0:
+		EventBus.coins_spent.emit(c)
 	return true
 
 
@@ -96,6 +98,7 @@ func try_spend(amount: int) -> bool:
 	if _value < amount:
 		return false
 	_value -= amount
+	EventBus.coins_spent.emit(amount)
 	return true
 
 

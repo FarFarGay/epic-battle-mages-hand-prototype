@@ -22,6 +22,9 @@ const SKELETON_TARGET_GROUP := &"skeleton_target"
 ## по миру) и ориентацию через global_transform.basis.x. См. [[project_ebm_building_rework]].
 const WALL_SNAP_GROUP := &"wall_snap"
 
+## FX «печати» установки достроенного здания (падение+сквош+пыль+рябь+тряска).
+const PlaceFx = preload("res://scripts/place_impact_fx.gd")
+
 ## Рантайм-тумблер (чит «Бесплатная стройка» в Журнале): true — площадка достраивается
 ## сразу при установке, БЕЗ ресурсов и ожидания; false — обычная экономика (призрак ждёт
 ## доставки). Действует на МОМЕНТ установки: уже поставленные призраки не достраиваются
@@ -123,6 +126,7 @@ func _finish() -> void:
 	remove_from_group(SKELETON_TARGET_GROUP)
 	var root: Node = get_tree().current_scene
 	var scene_path: String = _data.get("scene", "")
+	var impact_played := false
 	if scene_path != "" and root != null:
 		var ps := load(scene_path) as PackedScene
 		if ps != null:
@@ -140,7 +144,11 @@ func _finish() -> void:
 				if _data.get("snap_target", false):
 					b.add_to_group(WALL_SNAP_GROUP)
 					b.set_meta(&"wall_half_len", _footprint.x * 0.5)
-	if root != null:
+				# «Печать» установки: пыль/рябь/тряску даёт она (scale стены захватывается
+				# КАК базовый — восстановление в растянутый, не в ONE).
+				PlaceFx.play(b, _footprint.x * 0.5 + 0.7)
+				impact_played = true
+	if root != null and not impact_played:
 		AoeVisual.spawn_dust(root, global_position)
 	_rebake_nav()
 	queue_free()

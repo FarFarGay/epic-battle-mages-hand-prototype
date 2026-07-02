@@ -37,12 +37,15 @@ const MANA_INSTITUTE_RATE := 3.0  # базовая мана/сек в башню
 ## «Защёлк» полного квартала: ВСЕ грани продюсера закрыты сапортами → комбо-множитель
 ## ТЕМПА поверх осей (шахта — монет/сек, институт — маны/сек). Один на всех продюсеров.
 const FULL_QUARTER_BONUS := 1.5
+## FX «печати» установки: падение+сквош+пыль+рябь+тряска (см. play_place_impact).
+const PlaceFx = preload("res://scripts/place_impact_fx.gd")
 const MANA_MULT_CRYSTAL := 1.5    # Кафедра Волшебных свитков в зоне → ×темп
 const MANA_MULT_RUNE := 2.0       # Осколок звёздной руды в зоне → ×темп (сильнее/дороже)
 const MANA_MULT_HOUSE := 1.5      # Дом гномов в зоне → ×темп (соц-универсал, как «Объём» у шахты)
 var _vein: OilDeposit = null  # жила под шахтой
 var _mine_accum: float = 0.0  # дробный накопитель добычи (единицы целые)
 var _quarter_was_full: bool = false  # был ли плот полностью заполнен в прошлый тик (вспышка единожды на завершение)
+var _ind_flash_tween: Tween = null   # авто-скрытие плашки после flash_indicator (kill при повторе)
 ## Плавильня-сапорт: ровный дым (флавор «работает»).
 var _smoke: GPUParticles3D = null
 ## Маркеры buff-слотов квартала (грани продюсера) — показываются в РЕЖИМЕ СТРОЙКИ (HandPlaceAim):
@@ -1485,6 +1488,64 @@ func _quarter_status() -> Dictionary:
 ## Множитель «защёлка»: полный квартал (fill=100%) → FULL_QUARTER_BONUS, иначе 1.0.
 func _full_quarter_mult(st: Dictionary) -> float:
 	return FULL_QUARTER_BONUS if float(st["fill"]) >= 0.999 else 1.0
+
+
+## «Печать» установки (зовёт HandPlaceAim после финального трансформа): падение+сквош+
+## пыль+рябь+тряска. Радиус — по дальней клетке маски. refresh_walls этот метод НЕ зовёт:
+## перестройка соседа ≠ новая постройка (иначе стены прыгали бы от каждой установки рядом).
+func play_place_impact() -> void:
+	var r: float = 0.0
+	for off in _mask:
+		r = maxf(r, Vector2(off as Vector2i).length())
+	PlaceFx.play(self, r * CityGrid.CELL + CityGrid.CELL * 0.7)
+
+
+## Линк-пульсы кварталов после установки ЭТОГО здания (обе стороны):
+## - я САПОРТ, закрывший грань продюсера → импульс от меня к нему + его плашка на 2.5с;
+## - я ПРОДЮСЕР, и сапорты уже стоят на моих гранях → импульс от каждого ко мне.
+## Зовётся ДО play_place_impact (позиции ещё наземные, не поднятые падением).
+func flash_quarter_links() -> void:
+	var my_cells: Dictionary = {}
+	for c in occupied_cells():
+		my_cells[c] = true
+	var root: Node = get_tree().current_scene
+	for p in get_tree().get_nodes_in_group(GROUP):
+		if p == self or not is_instance_valid(p) or not (p is PadBuilding):
+			continue
+		var other := p as PadBuilding
+		if other._plot_support_roles().has(_role) and _cells_hit(other._plot_world_cells(), my_cells):
+			PlaceFx.link_pulse(root, global_position, other.global_position, _role_color(_role))
+			other.flash_indicator()
+		elif _plot_support_roles().has(other._role) and _cells_hit(_plot_world_cells(), _cells_set_of(other)):
+			PlaceFx.link_pulse(root, other.global_position, global_position, _role_color(other._role))
+			flash_indicator()
+
+
+func _cells_hit(zone: Dictionary, cells: Dictionary) -> bool:
+	for c in cells:
+		if zone.has(c):
+			return true
+	return false
+
+
+func _cells_set_of(b: PadBuilding) -> Dictionary:
+	var out: Dictionary = {}
+	for c in b.occupied_cells():
+		out[c] = true
+	return out
+
+
+## Показать плашку осей на sec секунд БЕЗ наведения руки (фидбэк «грань закрыта»).
+## Повторный вызов продлевает: прежний таймер убивается (паттерн _pose_tween).
+func flash_indicator(sec: float = 2.5) -> void:
+	if not (_role == &"mine" or _role == &"barracks" or _role == &"magic"):
+		return
+	_set_quarter_indicator_visible(true)
+	if _ind_flash_tween != null and _ind_flash_tween.is_valid():
+		_ind_flash_tween.kill()
+	_ind_flash_tween = create_tween()
+	_ind_flash_tween.tween_interval(sec)
+	_ind_flash_tween.tween_callback(_set_quarter_indicator_visible.bind(false))
 
 
 ## Клетки для FX-вспышки = шахта + ЗАКРЫТЫЕ сапортами клетки плота (реально собранный квартал),
