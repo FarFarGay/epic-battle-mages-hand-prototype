@@ -290,6 +290,8 @@ func _ready() -> void:
 	EventBus.pending_upgrade_choices_changed.connect(_refresh_journal_badge)
 	EventBus.resources_changed.connect(_on_resource_changed)
 	EventBus.spell_shop_requested.connect(_on_spell_shop_requested)
+	# Разблокировали заклинание (магазин у Кафедры) → пересобрать трей: новый слот, equip'абельно клавишей.
+	EventBus.spell_unlocked.connect(_on_spell_unlocked)
 	# Набор зданий изменился → мог измениться потолок склада: перечитать X/cap.
 	EventBus.camp_buildings_changed.connect(_sync_all_resources)
 	EventBus.collection_mode_changed.connect(_refresh_mode_label)
@@ -531,6 +533,15 @@ func _build_action_bar() -> void:
 	_slot_assignments = ACTION_BAR_DEFAULT_ASSIGNMENT.filter(
 		func(id: StringName) -> bool: return SpellSystem.is_unlocked(id))
 
+	# ПЕРЕСБОРКА (разблокировали заклинание в магазине у Кафедры): трей уже построен → чистим слоты
+	# и наполняем заново, чтобы новое заклинание появилось слотом (и стало equip'абельно клавишей).
+	if _action_bar != null and is_instance_valid(_action_bar):
+		for ch in _action_bar.get_children():
+			_action_bar.remove_child(ch)
+			ch.queue_free()
+		_populate_action_slots()
+		return
+
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	center.offset_bottom = -16  # отступ от низа экрана
@@ -562,6 +573,12 @@ func _build_action_bar() -> void:
 	_action_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar_panel.add_child(_action_bar)
 
+	_populate_action_slots()
+
+
+## Наполнить трей слотами (разблокированные заклинания + Super если открыт + Щит всегда). Вынесено,
+## чтобы звать и при первой сборке, и при ПЕРЕСБОРКЕ (разблокировка заклинания) без дубля контейнера.
+func _populate_action_slots() -> void:
 	_action_slots.clear()
 	# Draggable слоты — ability_id из _slot_assignments (только разблокированные).
 	for i in range(_slot_assignments.size()):
@@ -571,6 +588,12 @@ func _build_action_bar() -> void:
 		_action_slots.append(_build_action_slot(_action_slots.size(), false, ACTION_BAR_FIXED_SUPER))
 	# Щит (parry) — фиксированный слот, всегда (клавиша Q). Заряды/кулдаун из Tower.
 	_action_slots.append(_build_action_slot(_action_slots.size(), false, ACTION_BAR_FIXED_SHIELD))
+
+
+## Заклинание разблокировано (покупка в магазине у Кафедры) → пересобрать трей: новый слот появляется,
+## заклинание становится доступным для equip'а клавишей. Ловит EventBus.spell_unlocked.
+func _on_spell_unlocked(_id: StringName) -> void:
+	_build_action_bar()
 
 
 ## Один слот action bar'а. slot_idx — место в _action_slots; draggable=true
