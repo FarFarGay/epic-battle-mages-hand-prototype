@@ -1395,7 +1395,29 @@ func _tick_unload(delta: float) -> void:
 		if int(store.call(&"get_amount", type)) > 0 and bool(store.call(&"take", type, 1)):
 			var pair: Array = bank.call(&"smelt_yield", type)
 			bank.call(&"add_coin", pair[0], pair[1])
+			# Импакт разгрузки: единица улетает ЧАНКОМ цвета материала от башни к
+			# ЗАМКУ (казна = замок), у цели гаснет кольцом (переиспользуем link_pulse).
+			# Y башни игнорируем (origin y≈5 — [[reference_ebm_tower_origin_y5]]).
+			var castle := get_tree().get_first_node_in_group(&"castle") as Node3D
+			var to: Vector3 = castle.global_position if (castle != null and is_instance_valid(castle)) else global_position
+			var from := Vector3(tower.global_position.x, 0.0, tower.global_position.z)
+			PlaceFx.link_pulse(get_tree().current_scene, from, to, _cargo_chunk_color(type))
 			return  # одна единица за тик — разгрузка «ссыпается», не мгновенный дамп
+
+
+## Цвет чанка разгрузки по материалу (язык материала, не боя).
+func _cargo_chunk_color(type: int) -> Color:
+	match type:
+		ResourcePile.ResourceType.WOOD:
+			return Color(0.6, 0.4, 0.22)
+		ResourcePile.ResourceType.STONE:
+			return Color(0.66, 0.66, 0.66)
+		ResourcePile.ResourceType.IRON:
+			return Color(0.55, 0.62, 0.75)
+		ResourcePile.ResourceType.SILVER:
+			return Color(0.85, 0.88, 0.95)
+		_:
+			return Color(0.98, 0.82, 0.3)  # золото
 
 
 ## Визуал разгрузочной платформы: плоская плита на весь футпринт 2×2 + светящийся
