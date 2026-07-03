@@ -51,8 +51,9 @@ const CATALOG: Dictionary = {
 		# Нативная длина сцены по X (palisade_segment = 2м). RoomBuildSite тянет
 		# построенную стену scale.x = footprint.x / native, чтобы совпасть с силуэтом.
 		"native_scene_length": 2.0,
-		# Чем и сколько «доставок» строит рабочий. WOOD для тестируемости (деревья
-		# в сцене есть); тип/количество/стоимость дизайнер крутит здесь.
+		# ЛЕГАСИ доставки (2026-07-03): стройка теперь САМОвозводится за build_time
+		# (RoomBuildSite.build_time_for; опциональный ключ "build_time" — явное время).
+		# resource_type/resources_needed НЕ читаются нигде — оставлены до чистки каталога.
 		"resource_type": ResourcePile.ResourceType.WOOD,
 		"resources_needed": 4,
 		# Прочность стройплощадки (скелеты могут сорвать стройку).

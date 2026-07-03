@@ -1492,19 +1492,18 @@ func _emoji_of(data: Dictionary) -> String:
 	return lbl.substr(0, sp) if sp > 0 else "▪"
 
 
-## Строка цены карточки: монетная «cost» (🥇🥈🥉) ИЛИ доставки рабочих (🪵×N) ИЛИ пусто.
+## Строка цены карточки: монеты «cost» (🥇🥈🥉) + время самостройки «⏱Nс»
+## (для площадочных построек; instant-трубы и мост — без времени). Доставка
+## ресурсов вырезана (2026-07-03) — «N🪵» больше не показываем.
 func _format_cost(data: Dictionary) -> String:
+	var parts: Array = []
 	var cost: Dictionary = data.get("cost", {})
-	if not cost.is_empty():
-		var parts: Array = []
-		for t in [ResourcePile.ResourceType.GOLD, ResourcePile.ResourceType.SILVER, ResourcePile.ResourceType.BRONZE]:
-			if cost.has(t):
-				parts.append("%d%s" % [int(cost[t]), _coin_emoji(t)])
-		return "  ".join(parts)
-	if data.has("resources_needed"):
-		var rt: int = int(data.get("resource_type", ResourcePile.ResourceType.WOOD))
-		return "%d%s" % [int(data["resources_needed"]), _coin_emoji(rt)]
-	return ""
+	for t in [ResourcePile.ResourceType.GOLD, ResourcePile.ResourceType.SILVER, ResourcePile.ResourceType.BRONZE]:
+		if cost.has(t):
+			parts.append("%d%s" % [int(cost[t]), _coin_emoji(t)])
+	if not data.get("instant", false) and (data.has("cells") or data.has("scene")):
+		parts.append("⏱%dс" % int(ceil(RoomBuildSite.build_time_for(data))))
+	return "  ".join(parts)
 
 
 func _coin_emoji(t: int) -> String:

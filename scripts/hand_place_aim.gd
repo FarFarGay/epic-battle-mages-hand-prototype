@@ -246,25 +246,26 @@ func _commit(pos: Vector3) -> void:
 		if bank != null and bank.has_method(&"spend_cost"):
 			if not bank.call(&"spend_cost", cost):
 				return  # не хватило (двойная защита — process уже гейтит _affordable)
-	# Полимино-фигура площадки: строится КОДОМ по маске (без .tscn), мгновенно.
+	# Полимино-фигура: ЕДИНЫЙ путь стройки через площадку (2026-07-03) — самостройка
+	# за build_time, призрак-кубы по маске; free_build достраивает мгновенно.
+	# PadBuilding собирает RoomBuildSite._finish (там же линк-пульс и «печать»).
 	if _data.has("cells"):
-		# Ворота заменяют стену: снести стены под их клетками.
+		# Ворота заменяют стену: снести стены под их клетками СРАЗУ (не ждать
+		# достройки — иначе призрак ворот стоит внутри стены).
 		if _data.get("role", &"") == &"gate":
 			_remove_walls_under(CityGrid.building_cells(pos, _data.get("cells", []), _rot_y, get_tree()))
-		var b := PadBuilding.new()
-		b.setup(_building)  # маска/роль ДО add_child (_ready строит по ним)
-		scene.add_child(b)
-		b.global_position = pos
-		b.rotation.y = _rot_y
-		b.flash_quarter_links()  # закрыл грань квартала → импульс к продюсеру + его плашка
-		call_deferred(&"_refresh_walls")  # стены дотянутся до новой постройки
-		# «Печать» СТРОГО ПОСЛЕ refresh_walls (порядок deferred-очереди): он пересобирает
-		# top_level-чанки стен — импакт до него анимировал бы меши, freed в конце кадра.
-		b.call_deferred(&"play_place_impact")
-		# Обновить маркеры buff-слотов: НОВЫЙ продюсер получит свои слоты, у задетых — перекрасится филл.
+			call_deferred(&"_refresh_walls")  # соседние стены пересоберут рукава у дыры
+		var psite := StaticBody3D.new()
+		psite.set_script(ROOM_BUILD_SITE)
+		psite.building_id = _building
+		scene.add_child(psite)
+		psite.global_position = pos
+		psite.rotation.y = _rot_y
+		# Маркеры buff-слотов: у задетых продюсеров перекрасится филл. Сам недострой
+		# гранью квартала НЕ считается — закроет её только достроенное здание.
 		_set_producer_slots_visible(true)
 		if debug_log and LogConfig.master_enabled:
-			print("[Hand:PlaceAim] фигура %s @ клетка %s, yaw %.0f°" % [
+			print("[Hand:PlaceAim] площадка-фигура %s @ клетка %s, yaw %.0f°" % [
 				_building, CityGrid.world_to_cell(pos, get_tree()), rad_to_deg(_rot_y)])
 		return
 	# Мгновенная постройка (трубы): ставим готовую сцену сразу, без стройплощадки и
@@ -379,6 +380,13 @@ func _occupied_cells(allow_over_walls: bool) -> Dictionary:
 		if allow_over_walls and b.has_method(&"is_wall") and b.call(&"is_wall"):
 			continue
 		for c in b.call(&"occupied_cells"):
+			out[c] = true
+	# Строящиеся полимино ТОЖЕ резервируют клетки (RoomBuildSite.occupied_cells) —
+	# второй силуэт нельзя наложить на недострой.
+	for s in get_tree().get_nodes_in_group(Layers.BUILD_SITE_GROUP):
+		if not is_instance_valid(s) or not s.has_method(&"occupied_cells"):
+			continue
+		for c in s.call(&"occupied_cells"):
 			out[c] = true
 	return out
 
