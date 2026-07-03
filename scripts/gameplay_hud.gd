@@ -248,14 +248,12 @@ var _gatherer_alarm_btn: Button
 ## Сама карточка собирателей (PanelContainer). Скрывается когда 0 gatherer'ов.
 var _gatherer_card: PanelContainer
 
-## Порядок и метаданные отображения ресурсов в правой панели. Пять типов из
-## ResourcePile.ResourceType, кроме GENERIC (legacy-ящик, не геймплейный).
-const RESOURCE_DISPLAY: Array = [
-	{"type": ResourcePile.ResourceType.GOLD, "label": "золото", "color": Color(0.95, 0.78, 0.18)},
-	{"type": ResourcePile.ResourceType.WOOD, "label": "дерево", "color": Color(0.45, 0.28, 0.15)},
-	{"type": ResourcePile.ResourceType.STONE, "label": "камень", "color": Color(0.55, 0.55, 0.55)},
-	{"type": ResourcePile.ResourceType.IRON, "label": "железо", "color": Color(0.45, 0.48, 0.55)},
-]
+## Материальные счётчики в правой панели ВЫРЕЗАНЫ (решение 2026-07-03): игрок видит
+## ТРИ валюты — монеты (одометр), ману и население. Материя внутри осталась техникой:
+## руда → плавильня → монеты (без плавильни ноша роняется орбом), дерево → мост/блюпринт
+## напрямую в руках, склад башни — невидимый буфер. Пустой список = строки не строятся,
+## _sync_all_resources — no-op; вернуть счётчик = добавить запись обратно.
+const RESOURCE_DISPLAY: Array = []
 
 
 func _ready() -> void:
