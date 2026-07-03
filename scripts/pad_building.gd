@@ -128,9 +128,10 @@ func _ready() -> void:
 	if is_scroll_dept():
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
 		set_process(true)
-	# Верфь башни — кликабельна: ЛКМ открывает окно срезов башни (TowerUpgrades).
+	# Верфь башни: платформа-док, башня ЗАЕЗЖАЕТ (без коллизии, как разгрузочная).
+	# Тикаем парковку: заехал → меню срезов (tower_dock_requested), уехал → закрыть.
 	if is_dock():
-		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
+		collision_layer = 0
 		set_process(true)
 	# Разгрузочная платформа: тикает конверсию трюма, пока башня припаркована рядом.
 	# КОЛЛИЗИИ НЕТ (плита не должна блокировать заезд башни — та ходит физикой);
@@ -1455,26 +1456,35 @@ func _cargo_chunk_color(type: int) -> Color:
 			return Color(0.98, 0.82, 0.3)  # золото
 
 
-## Визуал верфи башни (1×2): мастерская-ангар + кран-стапель с подвешенным блоком —
-## «здесь башне навешивают ярусы». Тёплое дерево + металл, стойка крана со свечением.
+## Визуал верфи башни: стальная плита на весь футпринт 2×2 (башня заезжает — без
+## коллизии, см. _ready) + янтарный посадочный квадрат + 4 угловых крана-стойки с
+## фонарями. Тот же язык, что разгрузочная платформа, но металл/выше — «стапель».
 func _build_dock() -> void:
 	var s: float = CityGrid.CELL
-	var wood := _solid(Color(0.52, 0.4, 0.26), 0.05, 0.85)
-	var metal := _solid(Color(0.55, 0.6, 0.68), 0.5, 0.45)
+	var metal := _solid(Color(0.48, 0.53, 0.6), 0.5, 0.45)
 	var glow := _solid(Color(0.95, 0.75, 0.35), 0.3, 0.4)
 	glow.emission_enabled = true
 	glow.emission = Color(0.95, 0.75, 0.35)
 	glow.emission_energy_multiplier = 1.1
-	# Клетка 0: мастерская — корпус + плоская крыша + верстак у входа.
-	_box(Vector3(s * 0.92, 1.5, s * 0.92), Vector3(0, 0.75, 0), wood, true)
-	_box(Vector3(s * 1.04, 0.16, s * 1.04), Vector3(0, 1.58, 0), metal, true)
-	_box(Vector3(0.7, 0.5, 0.4), Vector3(0, 0.25, s * 0.62), wood, true)
-	# Клетка 1: кран-стапель — стойка, стрела над площадкой, подвешенный блок-«срез».
-	_box(Vector3(0.3, 2.6, 0.3), Vector3(s, 1.3, -s * 0.3), metal, true)
-	_box(Vector3(0.24, 0.24, s * 0.9), Vector3(s, 2.5, s * 0.15), metal, true)
-	_box(Vector3(0.5, 0.5, 0.5), Vector3(s, 1.9, s * 0.45), glow, true)
-	# Плита-подиум под краном (место «примерки» срезов).
-	_box(Vector3(s * 0.9, 0.12, s * 0.9), Vector3(s, 0.06, 0), metal, false)
+	# Центроид маски (2×2 → центр между клетками): плита кроет весь футпринт.
+	var cx: float = 0.0
+	var cz: float = 0.0
+	for off in _mask:
+		cx += float((off as Vector2i).x)
+		cz += float((off as Vector2i).y)
+	cx = cx / float(maxi(_mask.size(), 1)) * s
+	cz = cz / float(maxi(_mask.size(), 1)) * s
+	_box(Vector3(s * 2.0, 0.14, s * 2.0), Vector3(cx, 0.07, cz), metal, false)
+	_box(Vector3(s * 1.2, 0.05, s * 1.2), Vector3(cx, 0.17, cz), glow, false)
+	# Угловые краны-стойки: высокая мачта + стрела к центру + фонарь на верхушке.
+	for dx in [-1.0, 1.0]:
+		for dz in [-1.0, 1.0]:
+			var px: float = cx + dx * (s - 0.2)
+			var pz: float = cz + dz * (s - 0.2)
+			_box(Vector3(0.26, 2.4, 0.26), Vector3(px, 1.2, pz), metal, true)
+			_box(Vector3(0.8, 0.18, 0.18) if absf(dx) > 0.0 else Vector3(0.18, 0.18, 0.8),
+				Vector3(px - dx * 0.45, 2.3, pz), metal, true)
+			_box(Vector3(0.3, 0.3, 0.3), Vector3(px, 2.55, pz), glow, true)
 
 
 ## Визуал разгрузочной платформы: плоская плита на весь футпринт 2×2 + светящийся
@@ -1767,7 +1777,7 @@ func _process(delta: float) -> void:
 	if is_scroll_dept():
 		_tick_scroll_click()
 	if is_dock():
-		_tick_dock_click()
+		_tick_dock(delta)
 	if is_unload():
 		_tick_unload(delta)
 
@@ -1944,10 +1954,35 @@ func _tick_scroll_click() -> void:
 		EventBus.spell_shop_requested.emit()
 
 
-## ЛКМ по Верфи башни → HUD открывает окно срезов башни (ловит tower_dock_requested).
-func _tick_dock_click() -> void:
-	if _clicked_on_self():
+## Верфь: радиус парковки башни (XZ от центра платформы) и частота опроса —
+## те же, что у разгрузочной платформы (единый язык «заехал на плиту»).
+const DOCK_RADIUS := 6.0
+const DOCK_CHECK_INTERVAL := 0.25
+var _dock_cd: float = 0.0
+## Башня сейчас припаркована на ЭТОЙ верфи (фронт заезда/выезда, не уровень).
+var _tower_docked: bool = false
+
+
+## Парковка на верфи: башня ВЪЕХАЛА в радиус → открыть меню срезов (один раз на
+## заезд — закрыл окно, стоя на плите, не спамим); ВЫЕХАЛА → HUD закрывает окно.
+func _tick_dock(delta: float) -> void:
+	_dock_cd -= delta
+	if _dock_cd > 0.0:
+		return
+	_dock_cd = DOCK_CHECK_INTERVAL
+	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
+	var inside: bool = false
+	if tower != null and is_instance_valid(tower):
+		var center: Vector3 = to_global(_mask_center())
+		var dx: float = tower.global_position.x - center.x
+		var dz: float = tower.global_position.z - center.z
+		inside = dx * dx + dz * dz <= DOCK_RADIUS * DOCK_RADIUS
+	if inside and not _tower_docked:
+		_tower_docked = true
 		EventBus.tower_dock_requested.emit()
+	elif not inside and _tower_docked:
+		_tower_docked = false
+		EventBus.tower_dock_left.emit()
 
 
 ## Контракт hover-подсветки (Hand._update_pickup_highlight): наводим руку → казарма/шахта

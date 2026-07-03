@@ -200,14 +200,15 @@ const CATALOG: Dictionary = {
 		"cost": {ResourcePile.ResourceType.SILVER: 3},
 		"ghost_color": Color(0.95, 0.8, 0.35, 0.4),
 	},
-	# Верфь башни: мастерская у разгрузочной платформы. Клик → окно СРЕЗОВ башни
-	# (TowerUpgrades.SLICE_CATALOG): грузовой ярус / арбалетные окна / броня — за монеты.
+	# Верфь башни: платформа 2×2 (как разгрузочная — без коллизии, башня ЗАЕЗЖАЕТ).
+	# Паркуешь башню на плите → открывается меню СРЕЗОВ (TowerUpgrades.SLICE_CATALOG):
+	# грузовой ярус / арбалетные окна / броня — за монеты. Уехал — меню закрывается.
 	PAD_DOCK: {
 		"name": "Верфь башни",
 		"menu_label": "🛠 Верфь башни",
-		"hint": "Клик по верфи — окно срезов: трюм, арбалетные окна, броня башни.",
+		"hint": "Заезжай башней на плиту — откроется меню модификаций (срезы башни).",
 		"role": &"dock",
-		"cells": [Vector2i(0, 0), Vector2i(1, 0)],
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
 		"instant": true,
 		"hp": 120,
 		"cost": {ResourcePile.ResourceType.BRONZE: 60, ResourcePile.ResourceType.SILVER: 4},

@@ -296,6 +296,7 @@ func _ready() -> void:
 	EventBus.resources_changed.connect(_on_resource_changed)
 	EventBus.spell_shop_requested.connect(_on_spell_shop_requested)
 	EventBus.tower_dock_requested.connect(_on_tower_dock_requested)
+	EventBus.tower_dock_left.connect(_on_tower_dock_left)
 	# Разблокировали заклинание (магазин у Кафедры) → пересобрать трей: новый слот, equip'абельно клавишей.
 	EventBus.spell_unlocked.connect(_on_spell_unlocked)
 	_build_alarm_banner()
@@ -410,6 +411,7 @@ func _disconnect_eventbus() -> void:
 	EventBus.resources_changed.disconnect(_on_resource_changed)
 	EventBus.spell_shop_requested.disconnect(_on_spell_shop_requested)
 	EventBus.tower_dock_requested.disconnect(_on_tower_dock_requested)
+	EventBus.tower_dock_left.disconnect(_on_tower_dock_left)
 	EventBus.spell_unlocked.disconnect(_on_spell_unlocked)
 	EventBus.alarm_changed.disconnect(_on_alarm_changed)
 	EventBus.coins_spent.disconnect(_on_coins_spent)
@@ -1719,6 +1721,12 @@ func _on_tower_dock_requested() -> void:
 		return
 	_populate_dock_shop()
 	_dock_shop.visible = true
+
+
+## Башня уехала с платформы-верфи — меню модификаций закрывается само.
+func _on_tower_dock_left() -> void:
+	if _dock_shop != null and is_instance_valid(_dock_shop):
+		_dock_shop.visible = false
 
 
 ## Нода срезов башни (Upgrades в tower.tscn) — через группу, как остальной discovery.

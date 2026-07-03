@@ -74,8 +74,8 @@ const RING_COLOR := Color(0.4, 0.85, 1.0, 0.45)
 const RING_COLOR_LOCKED := Color(1.0, 0.25, 0.25, 0.95)
 ## Период пересчёта экипажа (скан группы soldier) — не каждый кадр.
 const CREW_SCAN_INTERVAL := 0.3
-## Радиус вылета болта от оси башни (чуть за гранью корпуса r≈1.24).
-const MUZZLE_RADIUS := 1.35
+## Радиус вылета болта от оси башни (за гранью яруса-среза SLICE_RADIUS).
+const MUZZLE_RADIUS := 1.6
 
 var _installed: Dictionary = {}          # slice id → true
 var _windows: int = 0                    # стволов всего (срез арбалета куплен → 2)
@@ -268,8 +268,15 @@ func _exit_tree() -> void:
 
 # --- Визуал срезов (ярусы на корпусе) ---
 
-## Ярус на корпусе башни: кольцевой пояс + деталь по типу среза. Кладём в VisualRoot —
-## наследует bob/крен/отдачу корпуса и исчезает вместе с ним при смерти башни.
+## Радиус яруса-среза: чуть шире корпуса (r≈1.24 у выпеченной модели) — срез «надет»
+## на башню и читается кольцом, не квадратной полкой.
+const SLICE_RADIUS := 1.42
+## Граней у яруса — как у корпуса башни (16-гранный цилиндр): срез ПО ФОРМЕ башни.
+const SLICE_FACETS := 16
+
+## Ярус на корпусе башни: гранёный цилиндр в форме корпуса + цветной обод-метка типа
+## + деталь по типу среза. Кладём в VisualRoot — наследует bob/крен/отдачу корпуса и
+## исчезает вместе с ним при смерти башни.
 func _build_slice_visual(id: StringName, data: Dictionary) -> void:
 	if _visual_root == null:
 		return
@@ -280,36 +287,80 @@ func _build_slice_visual(id: StringName, data: Dictionary) -> void:
 	var color: Color = data.get("icon_color", Color.GRAY)
 	match id:
 		&"hold":
-			# Пояс-обруч + ящики по четырём сторонам («навесной груз»).
-			_slice_box(root, Vector3(2.9, 0.16, 2.9), Vector3(0, y, 0), Color(0.45, 0.35, 0.22))
-			for a in range(4):
-				var ang: float = float(a) * TAU / 4.0
-				var off := Vector3(cos(ang), 0.0, sin(ang)) * 1.35
-				_slice_box(root, Vector3(0.55, 0.5, 0.55), Vector3(off.x, y + 0.32, off.z), color)
+			# Деревянный грузовой ярус: бочковатое кольцо + два обруча-стяжки.
+			_slice_tier(root, y, 0.8, Color(0.5, 0.4, 0.26))
+			_slice_band(root, y - 0.28, Color(0.36, 0.28, 0.18), false)
+			_slice_band(root, y + 0.28, Color(0.36, 0.28, 0.18), false)
+			_slice_band(root, y, color, true)  # цветная метка типа
 		&"arbalest":
-			# Пояс + 4 бойницы-окна (тёмная прорезь в светлой раме) по сторонам света.
-			_slice_box(root, Vector3(2.75, 0.14, 2.75), Vector3(0, y - 0.35, 0), Color(0.5, 0.52, 0.58))
+			# Каменный ярус в цвет корпуса + 4 бойницы-окна по сторонам света.
+			_slice_tier(root, y, 0.75, Color(0.52, 0.54, 0.6))
+			_slice_band(root, y - 0.32, color, true)
 			for a in range(4):
 				var ang: float = float(a) * TAU / 4.0
-				var off := Vector3(cos(ang), 0.0, sin(ang)) * 1.28
-				_slice_box(root, Vector3(0.5, 0.44, 0.5), Vector3(off.x, y, off.z), color)
-				_slice_box(root, Vector3(0.34, 0.14, 0.34), Vector3(off.x * 1.08, y, off.z * 1.08), Color(0.08, 0.08, 0.1))
+				var dir := Vector3(cos(ang), 0.0, sin(ang))
+				# Тёмная прорезь чуть утоплена в грань + узкий козырёк над ней.
+				var slot := _slice_box(root, Vector3(0.42, 0.4, 0.16),
+					dir * (SLICE_RADIUS - 0.02) + Vector3(0, y, 0), Color(0.07, 0.07, 0.09))
+				slot.rotation.y = -ang + PI * 0.5  # плоскостью наружу, по грани
+				var visor := _slice_box(root, Vector3(0.5, 0.08, 0.22),
+					dir * (SLICE_RADIUS + 0.02) + Vector3(0, y + 0.26, 0), Color(0.4, 0.42, 0.48))
+				visor.rotation.y = -ang + PI * 0.5
 		&"hull":
-			# Стальной пояс из плит внахлёст — «бронирование» верхнего яруса.
-			_slice_box(root, Vector3(2.95, 0.7, 2.95), Vector3(0, y, 0), color)
-			_slice_box(root, Vector3(3.1, 0.14, 3.1), Vector3(0, y - 0.34, 0), Color(0.4, 0.44, 0.52))
-			_slice_box(root, Vector3(3.1, 0.14, 3.1), Vector3(0, y + 0.34, 0), Color(0.4, 0.44, 0.52))
+			# Броневой ярус: стальное кольцо потолще + тёмные канты сверху/снизу.
+			_slice_tier(root, y, 0.85, color)
+			_slice_band(root, y - 0.36, Color(0.32, 0.35, 0.42), false)
+			_slice_band(root, y + 0.36, Color(0.32, 0.35, 0.42), false)
 
 
-func _slice_box(parent: Node3D, size: Vector3, pos: Vector3, color: Color) -> void:
+## Гранёное кольцо-ярус по форме корпуса (16-гранный цилиндр радиуса SLICE_RADIUS).
+func _slice_tier(parent: Node3D, y: float, h: float, color: Color) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = SLICE_RADIUS
+	cm.bottom_radius = SLICE_RADIUS
+	cm.height = h
+	cm.radial_segments = SLICE_FACETS
+	mi.mesh = cm
+	mi.material_override = _slice_mat(color, false)
+	parent.add_child(mi)
+	mi.position = Vector3(0, y, 0)
+	return mi
+
+
+## Тонкий обод поверх яруса: цветная метка типа среза (glow) или тёмный кант (без).
+func _slice_band(parent: Node3D, y: float, color: Color, glow: bool) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = SLICE_RADIUS + 0.05
+	cm.bottom_radius = SLICE_RADIUS + 0.05
+	cm.height = 0.1
+	cm.radial_segments = SLICE_FACETS
+	mi.mesh = cm
+	mi.material_override = _slice_mat(color, glow)
+	parent.add_child(mi)
+	mi.position = Vector3(0, y, 0)
+	return mi
+
+
+func _slice_box(parent: Node3D, size: Vector3, pos: Vector3, color: Color) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	var bm := BoxMesh.new()
 	bm.size = size
 	mi.mesh = bm
+	mi.material_override = _slice_mat(color, false)
+	parent.add_child(mi)
+	mi.position = pos
+	return mi
+
+
+func _slice_mat(color: Color, glow: bool) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color
 	mat.metallic = 0.2
 	mat.roughness = 0.7
-	mi.material_override = mat
-	parent.add_child(mi)
-	mi.position = pos
+	if glow:
+		mat.emission_enabled = true
+		mat.emission = color
+		mat.emission_energy_multiplier = 0.9
+	return mat
