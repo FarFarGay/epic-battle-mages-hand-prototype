@@ -40,13 +40,14 @@ const ACTION_ACTION := &"hand_action"
 @export_subgroup("Haul")
 ## Волочение (Layers.HAND_HAUL_GROUP): предмет не замораживается, рука тянет его
 ## пружиной за точку хвата. Жёсткость пружины (ускорение на метр отставания).
-@export var haul_stiffness: float = 40.0
+## Подтянуто 40→80 (юзер 2026-07-03: «меньше болтает, покрепче»).
+@export var haul_stiffness: float = 80.0
 ## Демпфер скорости точки хвата (гасит раскачку; больше — «вязче» тащится).
-@export var haul_damping: float = 7.0
+@export var haul_damping: float = 13.0
 ## Потолок ускорения пружины (m/s²) — рывок руки не выстреливает предмет.
-@export var haul_max_accel: float = 60.0
+@export var haul_max_accel: float = 110.0
 ## angular_damp предмета НА ВРЕМЯ волочения (длинная доска иначе крутится юлой).
-@export var haul_angular_damp: float = 2.0
+@export var haul_angular_damp: float = 4.0
 @export_subgroup("")
 
 @export_subgroup("Magnet")
