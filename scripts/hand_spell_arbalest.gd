@@ -17,13 +17,14 @@ signal spell_cast(spell_name: StringName, position: Vector3)
 const SPELL_ID := &"arbalest_volley"
 
 @export_group("Balance")
-## Пауза между залпами (сек). Каждый клик = залп всех активных стволов.
-@export var cooldown: float = 0.5
+## Пауза между ОЧЕРЕДЯМИ (сек). Клик = очередь из burst_count залпов
+## (TowerUpgrades.fire_burst); кулдаун должен перекрывать длину очереди.
+@export var cooldown: float = 1.2
 
 @export_group("Telegraph")
-## Кольцо в точке залпа: короткое, стальное — отлично от жёлтой Искры и
-## оранжевого фаербола.
-@export var warning_duration: float = 0.45
+## Кольцо в точке очереди: живёт, пока идёт очередь (~0.5с) — стальное,
+## отлично от жёлтой Искры и оранжевого фаербола.
+@export var warning_duration: float = 0.6
 @export var warning_color: Color = Color(0.7, 0.78, 0.9, 0.85)
 
 @export_group("")
@@ -78,9 +79,10 @@ func _perform_cast() -> void:
 	var p_cooldown: float = float(lvl.get("cooldown", cooldown))
 	var target_pos: Vector3 = _hand.cursor_world_position()
 	target_pos.y -= _hand.hand_height
-	# Залп стреляет сама башня (TowerUpgrades): цель у точки / промах в точку.
-	# false = стрелять нечем (экипаж вышел между can_trigger и кастом) — без кулдауна.
-	if not up.fire_volley(target_pos):
+	# ОЧЕРЕДЬ стреляет сама башня (TowerUpgrades): burst_count быстрых залпов, цель
+	# у точки / промах в точку. false = стрелять нечем (экипаж вышел между
+	# can_trigger и кастом) — без кулдауна.
+	if not up.fire_burst(target_pos):
 		return
 	_cooldown_remaining = p_cooldown
 	if _effects_root != null:

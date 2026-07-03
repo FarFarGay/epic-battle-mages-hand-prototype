@@ -59,6 +59,10 @@ const SLICE_CATALOG: Dictionary = {
 @export var bolt_gravity: float = 3.0
 ## Разброс точек прицела болтов залпа (м) — залп «веером», не в одну точку.
 @export var volley_scatter: float = 0.5
+## Очередь: сколько быстрых залпов на один каст (клик → burst_count залпов).
+@export var burst_count: int = 4
+## Пауза между залпами очереди (сек). 4 × 0.12с ≈ очередь за треть секунды.
+@export var burst_interval: float = 0.12
 @export_group("")
 @export var debug_log: bool = true
 ## ЧИТ (тест): поставить ВСЕ срезы бесплатно на старте — смотреть визуал/стрельбу
@@ -156,6 +160,22 @@ func can_volley() -> bool:
 	return _windows > 0 and crew_count() > 0
 
 
+## ОЧЕРЕДЬ: burst_count быстрых залпов по точке. Первый сразу (false = стрелять
+## нечем, каст отменяется), остальные по таймерам. Каждый залп заново ищет цель
+## у точки — очередь «ведёт» врага, пока он крутится возле клика. WeakRef в
+## лямбдах — без «Lambda capture freed», если башня погибнет посреди очереди.
+func fire_burst(point: Vector3) -> bool:
+	if not fire_volley(point):
+		return false
+	var ref: WeakRef = weakref(self)
+	for i in range(1, maxi(burst_count, 1)):
+		get_tree().create_timer(burst_interval * float(i)).timeout.connect(func() -> void:
+			var me: TowerUpgrades = ref.get_ref() as TowerUpgrades
+			if me != null and me.is_inside_tree():
+				me.fire_volley(point))
+	return true
+
+
 ## Залп по точке клика: ближайший враг в designate_radius от точки (и в fire_range
 ## от башни) — цель; врага нет → болты в саму точку (читаемый промах, как у Искры).
 ## Стволов в залпе = min(окон, экипажа), каждый болт с разбросом volley_scatter.
@@ -235,15 +255,18 @@ func _fire_bolt(aim: Vector3) -> void:
 
 # --- Визуал срезов (ярусы на корпусе) ---
 
-## Радиус яруса-среза: чуть шире корпуса (r≈1.24 у выпеченной модели) — срез «надет»
-## на башню и читается кольцом, не квадратной полкой.
-const SLICE_RADIUS := 1.42
+## Радиус яруса-среза: вплотную к корпусу (r≈1.24 у выпеченной модели) с лёгким
+## выступом — ярус читается ЧАСТЬЮ башни, а не надетым обручем.
+const SLICE_RADIUS := 1.3
 ## Граней у яруса — как у корпуса башни (16-гранный цилиндр): срез ПО ФОРМЕ башни.
 const SLICE_FACETS := 16
+## Родной каменный материал башни (кирпич, triplanar — ложится на любую форму без
+## UV). Ярусы из него сливаются с корпусом: «башня построена из срезов».
+const STONE_MAT: Material = preload("res://models/materials/tower_stone.tres")
 
-## Ярус на корпусе башни: гранёный цилиндр в форме корпуса + цветной обод-метка типа
-## + деталь по типу среза. Кладём в VisualRoot — наследует bob/крен/отдачу корпуса и
-## исчезает вместе с ним при смерти башни.
+## Ярус на корпусе башни: гранёный цилиндр в форме корпуса (родной камень) + декор
+## по ГРАНЯМ (обшивка/бойницы/бронеплиты) + тонкий цветной обод-метка типа. Кладём
+## в VisualRoot — наследует bob/крен/отдачу корпуса и гибнет вместе с ним.
 func _build_slice_visual(id: StringName, data: Dictionary) -> void:
 	if _visual_root == null:
 		return
@@ -254,34 +277,38 @@ func _build_slice_visual(id: StringName, data: Dictionary) -> void:
 	var color: Color = data.get("icon_color", Color.GRAY)
 	match id:
 		&"hold":
-			# Деревянный грузовой ярус: бочковатое кольцо + два обруча-стяжки.
-			_slice_tier(root, y, 0.8, Color(0.5, 0.4, 0.26))
-			_slice_band(root, y - 0.28, Color(0.36, 0.28, 0.18), false)
-			_slice_band(root, y + 0.28, Color(0.36, 0.28, 0.18), false)
-			_slice_band(root, y, color, true)  # цветная метка типа
+			# Грузовой ярус: каменное тело + деревянная обшивка-доска на каждой грани,
+			# стянутая двумя тёмными обручами. Дерево поверх родного камня.
+			_slice_tier(root, y, 0.8, null)
+			for f in range(SLICE_FACETS):
+				_facet_box(root, f, y, Vector3(0.42, 0.66, 0.07), Color(0.5, 0.4, 0.26), 0.04)
+			_slice_band(root, y - 0.3, Color(0.32, 0.26, 0.17), false)
+			_slice_band(root, y + 0.3, Color(0.32, 0.26, 0.17), false)
+			_slice_band(root, y - 0.44, color, true)  # цветная метка типа
 		&"arbalest":
-			# Каменный ярус в цвет корпуса + 4 бойницы-окна по сторонам света.
-			_slice_tier(root, y, 0.75, Color(0.52, 0.54, 0.6))
-			_slice_band(root, y - 0.32, color, true)
+			# Арбалетный ярус: родной камень + бойница-щель со стальной рамой и
+			# козырьком на 4 гранях по сторонам света (грани 0/4/8/12).
+			_slice_tier(root, y, 0.75, null)
 			for a in range(4):
-				var ang: float = float(a) * TAU / 4.0
-				var dir := Vector3(cos(ang), 0.0, sin(ang))
-				# Тёмная прорезь чуть утоплена в грань + узкий козырёк над ней.
-				var slot := _slice_box(root, Vector3(0.42, 0.4, 0.16),
-					dir * (SLICE_RADIUS - 0.02) + Vector3(0, y, 0), Color(0.07, 0.07, 0.09))
-				slot.rotation.y = -ang + PI * 0.5  # плоскостью наружу, по грани
-				var visor := _slice_box(root, Vector3(0.5, 0.08, 0.22),
-					dir * (SLICE_RADIUS + 0.02) + Vector3(0, y + 0.26, 0), Color(0.4, 0.42, 0.48))
-				visor.rotation.y = -ang + PI * 0.5
+				var f: int = a * 4
+				_facet_box(root, f, y, Vector3(0.3, 0.5, 0.06), Color(0.42, 0.45, 0.52), 0.03)   # рама
+				_facet_box(root, f, y, Vector3(0.14, 0.4, 0.08), Color(0.06, 0.06, 0.08), 0.05)  # щель
+				_facet_box(root, f, y + 0.3, Vector3(0.4, 0.07, 0.16), Color(0.42, 0.45, 0.52), 0.1)  # козырёк
+			_slice_band(root, y - 0.42, color, true)
 		&"hull":
-			# Броневой ярус: стальное кольцо потолще + тёмные канты сверху/снизу.
-			_slice_tier(root, y, 0.85, color)
-			_slice_band(root, y - 0.36, Color(0.32, 0.35, 0.42), false)
-			_slice_band(root, y + 0.36, Color(0.32, 0.35, 0.42), false)
+			# Броневой ярус: каменное тело, обшитое стальной ПЛИТОЙ на каждой грани
+			# с заклёпками по углам; тёмные канты сверху/снизу.
+			_slice_tier(root, y, 0.85, null)
+			for f in range(SLICE_FACETS):
+				_facet_box(root, f, y, Vector3(0.44, 0.6, 0.06), color, 0.04)
+				for dy in [-0.22, 0.22]:
+					_facet_box(root, f, y + dy, Vector3(0.3, 0.05, 0.05), Color(0.3, 0.33, 0.4), 0.08)
+			_slice_band(root, y - 0.4, Color(0.3, 0.33, 0.4), false)
+			_slice_band(root, y + 0.4, Color(0.3, 0.33, 0.4), false)
 
 
-## Гранёное кольцо-ярус по форме корпуса (16-гранный цилиндр радиуса SLICE_RADIUS).
-func _slice_tier(parent: Node3D, y: float, h: float, color: Color) -> MeshInstance3D:
+## Гранёное кольцо-ярус по форме корпуса. mat=null → родной камень башни (STONE_MAT).
+func _slice_tier(parent: Node3D, y: float, h: float, mat: Material) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	var cm := CylinderMesh.new()
 	cm.top_radius = SLICE_RADIUS
@@ -289,9 +316,21 @@ func _slice_tier(parent: Node3D, y: float, h: float, color: Color) -> MeshInstan
 	cm.height = h
 	cm.radial_segments = SLICE_FACETS
 	mi.mesh = cm
-	mi.material_override = _slice_mat(color, false)
+	mi.material_override = mat if mat != null else STONE_MAT
 	parent.add_child(mi)
 	mi.position = Vector3(0, y, 0)
+	return mi
+
+
+## Декор-бокс НА ГРАНИ яруса: плоскостью наружу, по центру грани facet (0..15).
+## proud — насколько выступает из плоскости грани (м). Грани CylinderMesh идут от
+## угла 0 с шагом 22.5°, центр грани — на полшага; плоскость грани на r·cos(11.25°).
+func _facet_box(parent: Node3D, facet: int, y: float, size: Vector3, color: Color, proud: float) -> MeshInstance3D:
+	var ang: float = (float(facet) + 0.5) * TAU / float(SLICE_FACETS)
+	var dir := Vector3(sin(ang), 0.0, cos(ang))
+	var dist: float = SLICE_RADIUS * cos(PI / float(SLICE_FACETS)) - size.z * 0.5 + proud
+	var mi := _slice_box(parent, size, dir * dist + Vector3(0, y, 0), color)
+	mi.rotation.y = atan2(dir.x, dir.z)
 	return mi
 
 
