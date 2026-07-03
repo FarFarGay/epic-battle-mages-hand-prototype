@@ -58,6 +58,12 @@ const ABILITY_META: Dictionary = {
 		"name": "Искра", "color": Color(1.0, 0.95, 0.3),
 		"category_str": "MAGIC", "type": 4,
 	},
+	# Арбалетный залп — физическое оружие башни в трее магии. Анлочится покупкой
+	# среза «Арбалетные окна» на верфи; тусклый, пока в башне нет лучников.
+	&"arbalest_volley": {
+		"name": "Залп", "color": Color(0.62, 0.68, 0.78),
+		"category_str": "MAGIC", "type": 5,
+	},
 }
 
 ## Названия equip-actions в InputMap, в порядке слотов 1..5. Используется
@@ -74,7 +80,7 @@ const SLOT_EQUIP_ACTIONS: Array[StringName] = [
 ## Стартовая раскладка слотов. Игрок может пересобрать через drag-and-drop.
 ## Сохранение в файл — TODO (пока сбрасывается на дефолт при рестарте).
 const ACTION_BAR_DEFAULT_ASSIGNMENT: Array[StringName] = [
-	&"fireball", &"firestorm", &"mine_scatter", &"frost", &"spark",
+	&"fireball", &"firestorm", &"mine_scatter", &"frost", &"spark", &"arbalest_volley",
 ]
 
 ## Super — фиксированный 6-й слот, не draggable. Имеет свою клавишу (E,
@@ -296,7 +302,6 @@ func _ready() -> void:
 	EventBus.resources_changed.connect(_on_resource_changed)
 	EventBus.spell_shop_requested.connect(_on_spell_shop_requested)
 	EventBus.tower_dock_requested.connect(_on_tower_dock_requested)
-	EventBus.tower_dock_left.connect(_on_tower_dock_left)
 	# Разблокировали заклинание (магазин у Кафедры) → пересобрать трей: новый слот, equip'абельно клавишей.
 	EventBus.spell_unlocked.connect(_on_spell_unlocked)
 	_build_alarm_banner()
@@ -411,7 +416,6 @@ func _disconnect_eventbus() -> void:
 	EventBus.resources_changed.disconnect(_on_resource_changed)
 	EventBus.spell_shop_requested.disconnect(_on_spell_shop_requested)
 	EventBus.tower_dock_requested.disconnect(_on_tower_dock_requested)
-	EventBus.tower_dock_left.disconnect(_on_tower_dock_left)
 	EventBus.spell_unlocked.disconnect(_on_spell_unlocked)
 	EventBus.alarm_changed.disconnect(_on_alarm_changed)
 	EventBus.coins_spent.disconnect(_on_coins_spent)
@@ -1721,12 +1725,6 @@ func _on_tower_dock_requested() -> void:
 		return
 	_populate_dock_shop()
 	_dock_shop.visible = true
-
-
-## Башня уехала с платформы-верфи — меню модификаций закрывается само.
-func _on_tower_dock_left() -> void:
-	if _dock_shop != null and is_instance_valid(_dock_shop):
-		_dock_shop.visible = false
 
 
 ## Нода срезов башни (Upgrades в tower.tscn) — через группу, как остальной discovery.

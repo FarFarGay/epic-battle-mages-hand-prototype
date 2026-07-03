@@ -8,9 +8,10 @@ extends Node3D
 ##
 ## АРБАЛЕТНЫЕ ОКНА — железо без экипажа: стреляют только пока внутри башни спрятаны
 ## лучники (карточка отряда → «🏰 В башню», существующий hide_in_tower; F спрятанных
-## не вытаскивает). Активных стволов = min(окон, лучников внутри). Огонь — ПО УКАЗУ
-## РУКИ: враг в кольце DESIGNATE_RADIUS вокруг курсора → окна поливают болтами
-## (пулемётный темп), курсор ушёл с врагов → тишина. Никакого своего AI-прицела.
+## не вытаскивает). Активных стволов = min(окон, лучников внутри). Огонь — СПЕЛЛ
+## «Арбалетный залп» ([HandSpellArbalest]): покупка среза анлочит карточку в трее
+## (SpellSystem.unlock), выбирается цифрой как магия, ПКМ-клик → fire_volley(точка).
+## Своего AI-прицела нет: залп идёт по ближайшему врагу у точки клика.
 
 const GROUP := &"tower_upgrades"
 
@@ -29,7 +30,7 @@ const SLICE_CATALOG: Dictionary = {
 	},
 	&"arbalest": {
 		"name": "Арбалетные окна",
-		"hint": "2 ствола. Стреляют, пока в башне спрятаны лучники («В башню»), по врагу у курсора руки.",
+		"hint": "2 ствола + карточка «Залп» в трее магии (выбор цифрой, клик — залп). Стреляют, пока в башне спрятаны лучники («В башню»).",
 		"icon_color": Color(0.55, 0.6, 0.72, 1.0),
 		"cost": {ResourcePile.ResourceType.SILVER: 8},
 		"windows": 2,
@@ -45,19 +46,19 @@ const SLICE_CATALOG: Dictionary = {
 	},
 }
 
-@export_group("Arbalest fire (по указу руки)")
-## Радиус «указки» вокруг курсора руки: враг в этом кольце = цель окон. Тот же
-## масштаб, что кольцо squad-aim (3.5) — единый язык «рука указывает область».
+@export_group("Arbalest volley (спелл по клику)")
+## Радиус поиска цели вокруг точки клика: ближайший враг в кольце = цель залпа.
+## Нет врага — болты ложатся в саму точку (промах читаем, как у Искры).
 @export var designate_radius: float = 3.0
 ## Дальше этого от башни окна не достают (чуть выше лучника, 22.5 — это же башня).
 @export var fire_range: float = 28.0
-## Темп ОДНОГО ствола (сек между болтами). 2 ствола × 0.45с ≈ 4.4 болта/сек — «пулемёт».
-@export var bolt_cooldown: float = 0.45
 @export var bolt_damage_min: float = 10.0
 @export var bolt_damage_max: float = 16.0
 ## Болт быстрее и настильнее стрелы лучника (22 м/с, грав. 6) — читается как арбалет.
 @export var bolt_speed: float = 30.0
 @export var bolt_gravity: float = 3.0
+## Разброс точек прицела болтов залпа (м) — залп «веером», не в одну точку.
+@export var volley_scatter: float = 0.5
 @export_group("")
 @export var debug_log: bool = true
 ## ЧИТ (тест): поставить ВСЕ срезы бесплатно на старте — смотреть визуал/стрельбу
@@ -68,22 +69,18 @@ const SLICE_CATALOG: Dictionary = {
 @export var debug_fake_crew: int = 0
 
 const BOLT_SCENE: PackedScene = preload("res://scenes/arrow.tscn")
-## Цвета кольца-указки: нейтральное (арбалеты слушают руку) / цель захвачена.
-## Язык HandSquadAim (голубой/красный) — «указ руки» везде выглядит одинаково.
-const RING_COLOR := Color(0.4, 0.85, 1.0, 0.45)
-const RING_COLOR_LOCKED := Color(1.0, 0.25, 0.25, 0.95)
-## Период пересчёта экипажа (скан группы soldier) — не каждый кадр.
-const CREW_SCAN_INTERVAL := 0.3
+## Id спелла в SpellSystem/трее — анлочится покупкой среза арбалета.
+const VOLLEY_SPELL_ID := &"arbalest_volley"
+## Период пересчёта экипажа (скан группы soldier) — HUD-трей опрашивает
+## can_volley каждые ~0.1с, скан троттлим кэшем по msec.
+const CREW_SCAN_INTERVAL_MSEC := 300
 ## Радиус вылета болта от оси башни (за гранью яруса-среза SLICE_RADIUS).
 const MUZZLE_RADIUS := 1.6
 
 var _installed: Dictionary = {}          # slice id → true
 var _windows: int = 0                    # стволов всего (срез арбалета куплен → 2)
-var _bolt_cd: Array[float] = []          # личный кулдаун каждого ствола
 var _crew: int = 0                       # лучников спрятано в башне (кэш скана)
-var _crew_scan_t: float = 0.0
-var _hand: Hand = null
-var _aim_ring: MeshInstance3D = null
+var _crew_scan_msec: int = 0             # когда кэш _crew считался (0 = никогда)
 
 @onready var _tower: Tower = get_parent() as Tower
 @onready var _visual_root: Node3D = get_node_or_null("../VisualRoot") as Node3D
@@ -128,16 +125,22 @@ func install(id: StringName) -> void:
 				_tower.add_max_hp(float(data.get("hp_bonus", 0.0)))
 		&"arbalest":
 			_windows += int(data.get("windows", 0))
-			_bolt_cd.resize(_windows)
-			for i in range(_windows):
-				_bolt_cd[i] = float(i) * 0.15  # стартовый разнос стволов
+			# Карточка «Арбалетный залп» появляется в трее заклинаний (выбор цифрой,
+			# каст ПКМ). Идемпотентно; spell_unlocked сам пересоберёт трей HUD'а.
+			if SpellSystem != null:
+				SpellSystem.unlock(VOLLEY_SPELL_ID)
 	_build_slice_visual(id, data)
 	if debug_log and LogConfig.master_enabled:
 		print("[TowerUpgrades] установлен срез %s" % id)
 
 
-## Лучников спрятано в башне сейчас (для строки «экипаж N» в верфи).
+## Лучников спрятано в башне сейчас (экипаж). Скан троттлится кэшем — HUD-трей
+## дёргает can_volley каждые ~0.1с. debug_fake_crew добавляется поверх реальных.
 func crew_count() -> int:
+	var now: int = Time.get_ticks_msec()
+	if _crew_scan_msec == 0 or now - _crew_scan_msec >= CREW_SCAN_INTERVAL_MSEC:
+		_crew_scan_msec = now
+		_crew = _count_hidden_archers() + debug_fake_crew
 	return _crew
 
 
@@ -145,33 +148,32 @@ func window_count() -> int:
 	return _windows
 
 
-# --- Арбалеты: огонь по указу руки ---
+# --- Арбалетный залп (дёргает HandSpellArbalest по ПКМ-касту) ---
 
-func _physics_process(delta: float) -> void:
-	if _windows <= 0 or _tower == null:
-		return
-	_crew_scan_t -= delta
-	if _crew_scan_t <= 0.0:
-		_crew_scan_t = CREW_SCAN_INTERVAL
-		_crew = _count_hidden_archers() + debug_fake_crew
-	var active: int = mini(_windows, _crew)
-	for i in range(_bolt_cd.size()):
-		_bolt_cd[i] = maxf(_bolt_cd[i] - delta, 0.0)
-	if active <= 0:
-		_clear_ring()
-		return
-	var cursor: Vector3 = _cursor_ground()
-	if cursor == Vector3.INF:
-		_clear_ring()
-		return
-	var target: Node3D = _pick_target(cursor)
-	_update_ring(cursor, target != null)
-	if target == null:
-		return
-	for i in range(active):
-		if _bolt_cd[i] <= 0.0:
-			_fire_bolt(target)
-			_bolt_cd[i] = bolt_cooldown * randf_range(0.9, 1.15)
+## Готовы ли окна стрелять: срез куплен И есть экипаж внутри. Слот трея тусклый,
+## пока false (лучников надо спрятать в башню командой «В башню»).
+func can_volley() -> bool:
+	return _windows > 0 and crew_count() > 0
+
+
+## Залп по точке клика: ближайший враг в designate_radius от точки (и в fire_range
+## от башни) — цель; врага нет → болты в саму точку (читаемый промах, как у Искры).
+## Стволов в залпе = min(окон, экипажа), каждый болт с разбросом volley_scatter.
+## Возвращает false, если стрелять нечем (нет окон/экипажа) — каст отменяется.
+func fire_volley(point: Vector3) -> bool:
+	if _tower == null or not can_volley():
+		return false
+	var active: int = mini(_windows, crew_count())
+	var target: Node3D = _pick_target(point)
+	var aim: Vector3 = point
+	if target != null:
+		aim = target.global_position + Vector3.UP * 0.4
+	for _i in range(active):
+		var jitter := Vector3(randf_range(-volley_scatter, volley_scatter), 0.0,
+			randf_range(-volley_scatter, volley_scatter))
+		_fire_bolt(aim + jitter)
+	EventBus.tower_fired.emit(aim)  # отдача башни — залп как выстрел
+	return true
 
 
 ## Экипаж = лучники со статусом «спрятан в башне» (команда «В башню»). Любой отряд.
@@ -184,20 +186,9 @@ func _count_hidden_archers() -> int:
 	return n
 
 
-## Наземная точка курсора руки (как в HandSquadAim). Vector3.INF если руки нет.
-func _cursor_ground() -> Vector3:
-	if _hand == null or not is_instance_valid(_hand):
-		_hand = get_tree().get_first_node_in_group(Hand.HAND_GROUP) as Hand
-	if _hand == null:
-		return Vector3.INF
-	var p: Vector3 = _hand.cursor_world_position()
-	p.y -= _hand.hand_height
-	return p
-
-
-## Цель: ближайший к КУРСОРУ враг в designate_radius, при этом в fire_range от башни.
-## Через Enemy.ENEMY_GROUP — все типы одинаково ([[feedback_symmetric_interactions]]).
-func _pick_target(cursor: Vector3) -> Node3D:
+## Цель залпа: ближайший к точке клика враг в designate_radius, при этом в fire_range
+## от башни. Через Enemy.ENEMY_GROUP — все типы одинаково ([[feedback_symmetric_interactions]]).
+func _pick_target(point: Vector3) -> Node3D:
 	var best: Node3D = null
 	var best_d: float = designate_radius * designate_radius
 	var range_sq: float = fire_range * fire_range
@@ -208,8 +199,8 @@ func _pick_target(cursor: Vector3) -> Node3D:
 		var node := n as Node3D
 		if node == null:
 			continue
-		var dx: float = node.global_position.x - cursor.x
-		var dz: float = node.global_position.z - cursor.z
+		var dx: float = node.global_position.x - point.x
+		var dz: float = node.global_position.z - point.z
 		var d: float = dx * dx + dz * dz
 		if d >= best_d:
 			continue
@@ -224,7 +215,7 @@ func _pick_target(cursor: Vector3) -> Node3D:
 
 ## Болт из окна: вылет с грани корпуса на стороне цели, высота — ярус арбалета.
 ## Переиспользуем Arrow (баллистика/урон/трейл), только быстрее и настильнее.
-func _fire_bolt(target: Node3D) -> void:
+func _fire_bolt(aim: Vector3) -> void:
 	var arrow := BOLT_SCENE.instantiate() as Arrow
 	if arrow == null:
 		return
@@ -233,37 +224,13 @@ func _fire_bolt(target: Node3D) -> void:
 	arrow.speed = bolt_speed
 	arrow.gravity = bolt_gravity
 	var h: float = float((SLICE_CATALOG[&"arbalest"] as Dictionary).get("height", 0.3))
-	var dir: Vector3 = target.global_position - _tower.global_position
+	var dir: Vector3 = aim - _tower.global_position
 	dir.y = 0.0
 	if dir.length_squared() < 0.0001:
 		dir = Vector3.FORWARD
 	dir = dir.normalized()
 	var muzzle: Vector3 = _tower.global_position + Vector3(0.0, h, 0.0) + dir * MUZZLE_RADIUS
-	var aim: Vector3 = target.global_position + Vector3.UP * 0.4
 	arrow.setup(muzzle, aim)
-
-
-## Кольцо-указка у курсора: видно, пока арбалеты слушают руку; краснеет на захвате.
-func _update_ring(cursor: Vector3, locked: bool) -> void:
-	if _aim_ring == null or not is_instance_valid(_aim_ring):
-		_aim_ring = AoeVisual.spawn_ground_ring(
-			get_tree().current_scene, cursor, designate_radius, 0.0, RING_COLOR)
-	_aim_ring.global_position = cursor + Vector3.UP * 0.05
-	var mat := _aim_ring.material_override as StandardMaterial3D
-	if mat != null:
-		var c: Color = RING_COLOR_LOCKED if locked else RING_COLOR
-		mat.albedo_color = c
-		mat.emission = Color(c.r, c.g, c.b, 1.0)
-
-
-func _clear_ring() -> void:
-	if is_instance_valid(_aim_ring):
-		_aim_ring.queue_free()
-	_aim_ring = null
-
-
-func _exit_tree() -> void:
-	_clear_ring()
 
 
 # --- Визуал срезов (ярусы на корпусе) ---

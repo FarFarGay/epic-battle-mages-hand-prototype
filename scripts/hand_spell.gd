@@ -19,7 +19,7 @@ extends Node
 
 signal spell_cast(spell_name: StringName, position: Vector3)
 
-enum SpellType { FIREBALL, FIRESTORM, MINE_SCATTER, FROST, SPARK }
+enum SpellType { FIREBALL, FIRESTORM, MINE_SCATTER, FROST, SPARK, ARBALEST }
 
 const ACTION_ACTION := &"hand_action"
 
@@ -46,6 +46,7 @@ var _tower_cache: Node3D = null
 @onready var _mine_scatter: HandSpellMineScatter = $MineScatter
 @onready var _frost: HandSpellFrost = $Frost
 @onready var _spark: HandSpellSpark = $Spark
+@onready var _arbalest: HandSpellArbalest = $Arbalest
 
 
 ## Готово ли заклинание к кастy. ActionBar дёргает для тусклой подсветки
@@ -62,6 +63,8 @@ func is_spell_ready(type: int) -> bool:
 			return _frost.can_trigger()
 		SpellType.SPARK:
 			return _spark.can_trigger()
+		SpellType.ARBALEST:
+			return _arbalest.can_trigger()
 	return true
 
 
@@ -71,6 +74,7 @@ func _ready() -> void:
 	_mine_scatter.spell_cast.connect(spell_cast.emit)
 	_frost.spell_cast.connect(spell_cast.emit)
 	_spark.spell_cast.connect(spell_cast.emit)
+	_arbalest.spell_cast.connect(spell_cast.emit)
 	EventBus.tower_destroyed.connect(_on_tower_destroyed)
 
 
@@ -122,6 +126,7 @@ func setup(hand: Hand) -> void:
 	_mine_scatter.setup(_hand, self)
 	_frost.setup(_hand, self)
 	_spark.setup(_hand, self)
+	_arbalest.setup(_hand, self)
 
 
 func _process(delta: float) -> void:
@@ -132,6 +137,7 @@ func _process(delta: float) -> void:
 	_mine_scatter.tick(delta)
 	_frost.tick(delta)
 	_spark.tick(delta)
+	_arbalest.tick(delta)
 	_handle_input()
 
 
@@ -188,3 +194,8 @@ func _dispatch_cast() -> void:
 				_spark.on_press()
 			elif debug_log and LogConfig.master_enabled:
 				print("[Hand:Spell] искра на кулдауне")
+		SpellType.ARBALEST:
+			if _arbalest.can_trigger():
+				_arbalest.on_press()
+			elif debug_log and LogConfig.master_enabled:
+				print("[Hand:Spell] арбалеты не готовы (кулдаун/нет экипажа в башне)")

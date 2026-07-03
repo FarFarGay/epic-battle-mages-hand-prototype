@@ -128,10 +128,11 @@ func _ready() -> void:
 	if is_scroll_dept():
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
 		set_process(true)
-	# Верфь башни: платформа-док, башня ЗАЕЗЖАЕТ (без коллизии, как разгрузочная).
-	# Тикаем парковку: заехал → меню срезов (tower_dock_requested), уехал → закрыть.
+	# Верфь башни: платформа без коллизии (башня может заезжать на плиту), но меню
+	# срезов открывается ЛКМ-КЛИКОМ по плите (заезд-триггер пробовали — неудобно).
 	if is_dock():
 		collision_layer = 0
+		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
 		set_process(true)
 	# Разгрузочная платформа: тикает конверсию трюма, пока башня припаркована рядом.
 	# КОЛЛИЗИИ НЕТ (плита не должна блокировать заезд башни — та ходит физикой);
@@ -1777,7 +1778,7 @@ func _process(delta: float) -> void:
 	if is_scroll_dept():
 		_tick_scroll_click()
 	if is_dock():
-		_tick_dock(delta)
+		_tick_dock_click()
 	if is_unload():
 		_tick_unload(delta)
 
@@ -1954,35 +1955,10 @@ func _tick_scroll_click() -> void:
 		EventBus.spell_shop_requested.emit()
 
 
-## Верфь: радиус парковки башни (XZ от центра платформы) и частота опроса —
-## те же, что у разгрузочной платформы (единый язык «заехал на плиту»).
-const DOCK_RADIUS := 6.0
-const DOCK_CHECK_INTERVAL := 0.25
-var _dock_cd: float = 0.0
-## Башня сейчас припаркована на ЭТОЙ верфи (фронт заезда/выезда, не уровень).
-var _tower_docked: bool = false
-
-
-## Парковка на верфи: башня ВЪЕХАЛА в радиус → открыть меню срезов (один раз на
-## заезд — закрыл окно, стоя на плите, не спамим); ВЫЕХАЛА → HUD закрывает окно.
-func _tick_dock(delta: float) -> void:
-	_dock_cd -= delta
-	if _dock_cd > 0.0:
-		return
-	_dock_cd = DOCK_CHECK_INTERVAL
-	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
-	var inside: bool = false
-	if tower != null and is_instance_valid(tower):
-		var center: Vector3 = to_global(_mask_center())
-		var dx: float = tower.global_position.x - center.x
-		var dz: float = tower.global_position.z - center.z
-		inside = dx * dx + dz * dz <= DOCK_RADIUS * DOCK_RADIUS
-	if inside and not _tower_docked:
-		_tower_docked = true
+## ЛКМ по плите верфи → HUD открывает окно срезов башни (ловит tower_dock_requested).
+func _tick_dock_click() -> void:
+	if _clicked_on_self():
 		EventBus.tower_dock_requested.emit()
-	elif not inside and _tower_docked:
-		_tower_docked = false
-		EventBus.tower_dock_left.emit()
 
 
 ## Контракт hover-подсветки (Hand._update_pickup_highlight): наводим руку → казарма/шахта

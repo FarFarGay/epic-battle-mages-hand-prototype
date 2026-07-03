@@ -1,4 +1,4 @@
-[gd_scene load_steps=27 format=3]
+[gd_scene load_steps=28 format=3]
 
 [ext_resource type="Script" path="res://scripts/hand.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hand_physical.gd" id="2"]
@@ -23,6 +23,7 @@
 [ext_resource type="PackedScene" path="res://scenes/frost_patch.tscn" id="20_frost_patch"]
 [ext_resource type="Script" path="res://scripts/hand_spell_spark.gd" id="21_spark_spell"]
 [ext_resource type="PackedScene" path="res://scenes/spark_bolt.tscn" id="22_spark_bolt"]
+[ext_resource type="Script" path="res://scripts/hand_spell_arbalest.gd" id="23_arbalest_spell"]
 
 [sub_resource type="SphereMesh" id="SphereMesh_hand"]
 radius = 0.5
@@ -93,6 +94,9 @@ frost_patch_scene = ExtResource("20_frost_patch")
 [node name="Spark" type="Node" parent="SpellActions"]
 script = ExtResource("21_spark_spell")
 spark_scene = ExtResource("22_spark_bolt")
+
+[node name="Arbalest" type="Node" parent="SpellActions"]
+script = ExtResource("23_arbalest_spell")
 
 [node name="SuperActions" type="Node" parent="."]
 script = ExtResource("10")
