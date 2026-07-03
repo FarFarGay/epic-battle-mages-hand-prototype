@@ -39,10 +39,12 @@ const MANA_INSTITUTE_RATE := 3.0  # базовая мана/сек в башню
 const FULL_QUARTER_BONUS := 1.5
 ## FX «печати» установки: падение+сквош+пыль+рябь+тряска (см. play_place_impact).
 const PlaceFx = preload("res://scripts/place_impact_fx.gd")
-## Разгрузочная платформа: радиус парковки башни (XZ от центра платформы) и темп
-## разгрузки — одна единица трюма за интервал («ссыпается струйкой», не разом).
+## Разгрузочная платформа: радиус парковки башни (XZ от центра платформы).
+## Сдача ОДНОМОМЕНТНАЯ (заехал-сдал-поехал): монеты в казну сразу всей суммой,
+## чанки-визуал вылетают волной, растянутой на UNLOAD_WAVE_SPREAD секунд.
 const UNLOAD_RADIUS := 6.0
-const UNLOAD_INTERVAL := 0.22
+const UNLOAD_CHECK_INTERVAL := 0.25  # частота опроса «башня рядом и трюм не пуст?»
+const UNLOAD_WAVE_SPREAD := 1.0      # разброс задержек чанков волны, сек
 const MANA_MULT_CRYSTAL := 1.5    # Кафедра Волшебных свитков в зоне → ×темп
 const MANA_MULT_RUNE := 2.0       # Осколок звёздной руды в зоне → ×темп (сильнее/дороже)
 const MANA_MULT_HOUSE := 1.5      # Дом гномов в зоне → ×темп (соц-универсал, как «Объём» у шахты)
@@ -1370,14 +1372,17 @@ func _tick_mine(delta: float) -> void:
 			_spawn_firework(ResourcePile.ResourceType.GOLD)  # салют на каждую новую золотую
 
 
-## Разгрузка трюма: башня в радиусе → раз в UNLOAD_INTERVAL одна единица склада
-## конвертится в монеты (GoldBank.smelt_yield: дерево→бронза, камень→серебро,
-## железо→золото). Салют на золотые — штатный банковский. Пусто/башня уехала — ждём.
+## Разгрузка трюма: башня в радиусе и трюм не пуст → сдаём ВСЁ ОДНОМОМЕНТНО.
+## Монеты падают в казну сразу всей суммой (GoldBank.smelt_yield: дерево→бронза,
+## камень→серебро, железо→золото; салюты на золотые — штатные банковские), а
+## визуал — ВОЛНА чанков от башни к замку: каждый со случайной задержкой в окне
+## UNLOAD_WAVE_SPREAD и разбросом точек вылета/прилёта («растянутая куча»).
+## Игрок может уезжать сразу — деньги уже в казне, чанки долетят сами.
 func _tick_unload(delta: float) -> void:
 	_unload_cd -= delta
 	if _unload_cd > 0.0:
 		return
-	_unload_cd = UNLOAD_INTERVAL
+	_unload_cd = UNLOAD_CHECK_INTERVAL
 	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
 	if tower == null or not is_instance_valid(tower):
 		return
@@ -1389,20 +1394,39 @@ func _tick_unload(delta: float) -> void:
 	var bank: Node = get_tree().get_first_node_in_group(&"gold_bank")
 	if store == null or bank == null or not bank.has_method(&"smelt_yield"):
 		return
+	# Забираем всё и сразу платим; чанки копим списком по единице (для волны).
+	var chunks: Array = []
 	for type in [ResourcePile.ResourceType.WOOD, ResourcePile.ResourceType.STONE,
 			ResourcePile.ResourceType.IRON, ResourcePile.ResourceType.SILVER,
 			ResourcePile.ResourceType.GOLD]:
-		if int(store.call(&"get_amount", type)) > 0 and bool(store.call(&"take", type, 1)):
-			var pair: Array = bank.call(&"smelt_yield", type)
-			bank.call(&"add_coin", pair[0], pair[1])
-			# Импакт разгрузки: единица улетает ЧАНКОМ цвета материала от башни к
-			# ЗАМКУ (казна = замок), у цели гаснет кольцом (переиспользуем link_pulse).
-			# Y башни игнорируем (origin y≈5 — [[reference_ebm_tower_origin_y5]]).
-			var castle := get_tree().get_first_node_in_group(&"castle") as Node3D
-			var to: Vector3 = castle.global_position if (castle != null and is_instance_valid(castle)) else global_position
-			var from := Vector3(tower.global_position.x, 0.0, tower.global_position.z)
-			PlaceFx.link_pulse(get_tree().current_scene, from, to, _cargo_chunk_color(type))
-			return  # одна единица за тик — разгрузка «ссыпается», не мгновенный дамп
+		var n: int = int(store.call(&"get_amount", type))
+		if n <= 0 or not bool(store.call(&"take", type, n)):
+			continue
+		var pair: Array = bank.call(&"smelt_yield", type)
+		bank.call(&"add_coin", pair[0], int(pair[1]) * n)
+		for _i in range(n):
+			chunks.append(type)
+	if chunks.is_empty():
+		return
+	chunks.shuffle()  # цвета волны вперемешку, не «сначала всё дерево»
+	# Y башни игнорируем (origin y≈5 — [[reference_ebm_tower_origin_y5]]).
+	var from := Vector3(tower.global_position.x, 0.0, tower.global_position.z)
+	var castle := get_tree().get_first_node_in_group(&"castle") as Node3D
+	var to: Vector3 = castle.global_position if (castle != null and is_instance_valid(castle)) else global_position
+	for type in chunks:
+		var tw := create_tween()  # node-bound: платформа снесена → волна гаснет
+		tw.tween_interval(randf() * UNLOAD_WAVE_SPREAD + 0.02)
+		tw.tween_callback(_spawn_cargo_chunk.bind(int(type), from, to))
+
+
+## Один чанк волны разгрузки: link_pulse от точки у башни (случайный разброс —
+## «куча», не струна) к замку, цвет материала.
+func _spawn_cargo_chunk(type: int, from: Vector3, to: Vector3) -> void:
+	if not is_inside_tree():
+		return
+	var f := from + Vector3(randf_range(-1.3, 1.3), 0.0, randf_range(-1.3, 1.3))
+	var t := to + Vector3(randf_range(-0.9, 0.9), 0.0, randf_range(-0.9, 0.9))
+	PlaceFx.link_pulse(get_tree().current_scene, f, t, _cargo_chunk_color(type))
 
 
 ## Цвет чанка разгрузки по материалу (язык материала, не боя).
