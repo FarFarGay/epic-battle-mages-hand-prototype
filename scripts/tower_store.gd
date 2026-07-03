@@ -22,6 +22,9 @@ const GROUP := Layers.TOWER_STORE_GROUP
 @export var debug_start_amount: int = 30
 
 var _econ := CampEconomy.new()
+## Суммарная прибавка к капу от срезов башни (верфь: «Грузовой ярус»). set_cap_bonus
+## в CampEconomy абсолютный — копим здесь и переустанавливаем целиком.
+var _cap_bonus: int = 0
 
 
 func _ready() -> void:
@@ -35,6 +38,18 @@ func _ready() -> void:
 			ResourcePile.ResourceType.IRON,
 		]:
 			_econ.add_resource(type, debug_start_amount)  # эмитит resources_changed → HUD
+
+
+## Поднять кап трюма (срез «Грузовой ярус» с верфи, TowerUpgrades.install). Кап общий
+## на каждый материал, как base_cap. Пингуем HUD через resources_changed — «📦 трюм»
+## пересчитает ⚠-порог под новый потолок.
+func add_cap_bonus(amount: int) -> void:
+	if amount <= 0:
+		return
+	_cap_bonus += amount
+	_econ.set_cap_bonus(_cap_bonus)
+	EventBus.resources_changed.emit(ResourcePile.ResourceType.WOOD,
+		_econ.get_resource(ResourcePile.ResourceType.WOOD))
 
 
 ## Сдать на склад до капа. Возвращает СКОЛЬКО реально приняли (0 = склад полон по

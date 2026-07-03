@@ -36,6 +36,7 @@ const PAD_INSTITUTE := &"pad_institute" # институт магии: льёт 
 const PAD_MANA_CRYSTAL := &"pad_mana_crystal" # сапорт института: ×темп маны (роль mana_crystal)
 const PAD_MANA_RUNE := &"pad_mana_rune"       # сапорт института: ×темп маны сильнее (роль mana_rune)
 const PAD_UNLOAD := &"pad_unload"             # разгрузочная платформа 2×2: паркуй башню → трюм в казну (роль unload)
+const PAD_DOCK := &"pad_dock"                 # верфь башни: клик → окно срезов-слоёв башни (роль dock)
 
 const CATALOG: Dictionary = {
 	WALL: {
@@ -198,6 +199,19 @@ const CATALOG: Dictionary = {
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
 		"cost": {ResourcePile.ResourceType.SILVER: 3},
 		"ghost_color": Color(0.95, 0.8, 0.35, 0.4),
+	},
+	# Верфь башни: мастерская у разгрузочной платформы. Клик → окно СРЕЗОВ башни
+	# (TowerUpgrades.SLICE_CATALOG): грузовой ярус / арбалетные окна / броня — за монеты.
+	PAD_DOCK: {
+		"name": "Верфь башни",
+		"menu_label": "🛠 Верфь башни",
+		"hint": "Клик по верфи — окно срезов: трюм, арбалетные окна, броня башни.",
+		"role": &"dock",
+		"cells": [Vector2i(0, 0), Vector2i(1, 0)],
+		"instant": true,
+		"hp": 120,
+		"cost": {ResourcePile.ResourceType.BRONZE: 60, ResourcePile.ResourceType.SILVER: 4},
+		"ghost_color": Color(0.85, 0.7, 0.4, 0.5),
 	},
 	PAD_STORE: {
 		"name": "Склад",

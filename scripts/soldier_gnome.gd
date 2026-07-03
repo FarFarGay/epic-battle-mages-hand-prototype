@@ -763,6 +763,12 @@ func _exit_hidden() -> void:
 		add_to_group(SKELETON_TARGET_GROUP)
 
 
+## Спрятан ли солдат внутри башни сейчас. Публичный контракт для TowerUpgrades:
+## лучники внутри = экипаж арбалетных окон (активных стволов = min(окон, экипажа)).
+func is_hidden_in_tower() -> bool:
+	return _hidden_in_tower
+
+
 ## Спрятанный в башне рабочий неуязвим (как гном IN_TENT). Иначе — обычный урон.
 func take_damage(amount: float) -> void:
 	if _hidden_in_tower:

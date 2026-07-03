@@ -42,6 +42,8 @@ signal spell_unlocked(id: StringName)
 signal spell_upgraded(id: StringName, level: int)
 ## Клик по Кафедре Волшебных свитков → HUD открывает магазин заклинаний (покупка за монеты).
 signal spell_shop_requested
+## Клик по Верфи башни → HUD открывает окно срезов башни (TowerUpgrades, покупка за монеты).
+signal tower_dock_requested
 ## Из башни вылетел снаряд — на КАЖДЫЙ выстрел, не на каст: шквал/мины эмитят
 ## per-shot (по снаряду), одиночные — раз. target — точка цели снаряда. Башня
 ## использует для отдачи-тильта (направление = башня→target). Честная серия отдач.

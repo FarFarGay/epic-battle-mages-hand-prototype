@@ -128,6 +128,10 @@ func _ready() -> void:
 	if is_scroll_dept():
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
 		set_process(true)
+	# Верфь башни — кликабельна: ЛКМ открывает окно срезов башни (TowerUpgrades).
+	if is_dock():
+		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
+		set_process(true)
 	# Разгрузочная платформа: тикает конверсию трюма, пока башня припаркована рядом.
 	# КОЛЛИЗИИ НЕТ (плита не должна блокировать заезд башни — та ходит физикой);
 	# урон/цель скелетов работают через группы, как у RoomBuildSite без коллайдера.
@@ -186,6 +190,11 @@ func is_bank() -> bool:
 
 func is_scroll_dept() -> bool:
 	return _role == &"mana_crystal"  # Кафедра Волшебных свитков (сапорт института + магазин заклинаний)
+
+
+## Верфь башни: клик → окно срезов-слоёв башни (TowerUpgrades, покупка за монеты).
+func is_dock() -> bool:
+	return _role == &"dock"
 
 
 ## Роль постройки — для правил сочетаемости (connects) и поиска сапортов.
@@ -257,6 +266,8 @@ func _build() -> void:
 	match _role:
 		&"unload":
 			_build_unload_pad()
+		&"dock":
+			_build_dock()
 		&"mine":
 			_build_tower()
 			_setup_mine()
@@ -1444,6 +1455,28 @@ func _cargo_chunk_color(type: int) -> Color:
 			return Color(0.98, 0.82, 0.3)  # золото
 
 
+## Визуал верфи башни (1×2): мастерская-ангар + кран-стапель с подвешенным блоком —
+## «здесь башне навешивают ярусы». Тёплое дерево + металл, стойка крана со свечением.
+func _build_dock() -> void:
+	var s: float = CityGrid.CELL
+	var wood := _solid(Color(0.52, 0.4, 0.26), 0.05, 0.85)
+	var metal := _solid(Color(0.55, 0.6, 0.68), 0.5, 0.45)
+	var glow := _solid(Color(0.95, 0.75, 0.35), 0.3, 0.4)
+	glow.emission_enabled = true
+	glow.emission = Color(0.95, 0.75, 0.35)
+	glow.emission_energy_multiplier = 1.1
+	# Клетка 0: мастерская — корпус + плоская крыша + верстак у входа.
+	_box(Vector3(s * 0.92, 1.5, s * 0.92), Vector3(0, 0.75, 0), wood, true)
+	_box(Vector3(s * 1.04, 0.16, s * 1.04), Vector3(0, 1.58, 0), metal, true)
+	_box(Vector3(0.7, 0.5, 0.4), Vector3(0, 0.25, s * 0.62), wood, true)
+	# Клетка 1: кран-стапель — стойка, стрела над площадкой, подвешенный блок-«срез».
+	_box(Vector3(0.3, 2.6, 0.3), Vector3(s, 1.3, -s * 0.3), metal, true)
+	_box(Vector3(0.24, 0.24, s * 0.9), Vector3(s, 2.5, s * 0.15), metal, true)
+	_box(Vector3(0.5, 0.5, 0.5), Vector3(s, 1.9, s * 0.45), glow, true)
+	# Плита-подиум под краном (место «примерки» срезов).
+	_box(Vector3(s * 0.9, 0.12, s * 0.9), Vector3(s, 0.06, 0), metal, false)
+
+
 ## Визуал разгрузочной платформы: плоская плита на весь футпринт 2×2 + светящийся
 ## посадочный квадрат + угловые маячки. Без коллизии (см. _ready) — башня заезжает.
 func _build_unload_pad() -> void:
@@ -1733,6 +1766,8 @@ func _process(delta: float) -> void:
 			_refresh_quarter_indicator()
 	if is_scroll_dept():
 		_tick_scroll_click()
+	if is_dock():
+		_tick_dock_click()
 	if is_unload():
 		_tick_unload(delta)
 
@@ -1907,6 +1942,12 @@ func _tick_hire_click() -> void:
 func _tick_scroll_click() -> void:
 	if _clicked_on_self():
 		EventBus.spell_shop_requested.emit()
+
+
+## ЛКМ по Верфи башни → HUD открывает окно срезов башни (ловит tower_dock_requested).
+func _tick_dock_click() -> void:
+	if _clicked_on_self():
+		EventBus.tower_dock_requested.emit()
 
 
 ## Контракт hover-подсветки (Hand._update_pickup_highlight): наводим руку → казарма/шахта

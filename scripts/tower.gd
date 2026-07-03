@@ -457,6 +457,16 @@ func restore_mana(amount: float) -> void:
 		mana_changed.emit(mana, max_mana)
 
 
+## Срез «Бронированный корпус» (верфь, TowerUpgrades): поднять потолок HP и долить
+## разницу текущим — купил броню → башня сразу крепче, не «пустой» новый потолок.
+func add_max_hp(bonus: float) -> void:
+	if _dying or bonus <= 0.0:
+		return
+	max_hp += bonus
+	hp += bonus
+	health_changed.emit(hp, max_hp)
+
+
 ## Замедление от вражеского темпорального поля (SlowField зовёт каждый тик, пока
 ## башня внутри). factor: 1 = норма, 0.45 ≈ «вдвое медленнее». Сильнейшее (меньший
 ## factor) перекрывает, пока активно; until продлевается. Скейлит ходьбу И рывок

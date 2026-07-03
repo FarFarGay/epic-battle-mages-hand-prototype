@@ -148,6 +148,7 @@ const BUILD_MENU_PAD_INSTITUTE := 23  # институт магии — мана
 const BUILD_MENU_PAD_MANA_CRYSTAL := 24  # сапорт института: ×темп маны
 const BUILD_MENU_PAD_MANA_RUNE := 25     # сапорт института: ×темп маны (сильнее)
 const BUILD_MENU_PAD_UNLOAD := 26        # разгрузочная платформа: паркуй башню → трюм в казну
+const BUILD_MENU_PAD_DOCK := 27          # верфь башни: клик по ней → окно срезов-слоёв башни
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[CityGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
@@ -168,6 +169,7 @@ var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_MANA_CRYSTAL: RoomBuildings.PAD_MANA_CRYSTAL,
 	BUILD_MENU_PAD_MANA_RUNE: RoomBuildings.PAD_MANA_RUNE,
 	BUILD_MENU_PAD_UNLOAD: RoomBuildings.PAD_UNLOAD,
+	BUILD_MENU_PAD_DOCK: RoomBuildings.PAD_DOCK,
 }
 ## Секции палитры стройки: заголовок-категория + список пунктов (BUILD_MENU_* id). Порядок
 ## внутри = порядок карточек. Группировка по той же таксономии, что и квартал-баффы — игрок
@@ -177,7 +179,7 @@ const BUILD_SECTIONS := [
 	{"title": "⛏  ДОБЫЧА — квартал", "ids": [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_SMELTER, BUILD_MENU_PAD_MINT]},
 	{"title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_STAKES]},
 	{"title": "⚔  ГАРНИЗОН — квартал", "ids": [BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
-	{"title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE, BUILD_MENU_PAD_UNLOAD]},
+	{"title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE, BUILD_MENU_PAD_UNLOAD, BUILD_MENU_PAD_DOCK]},
 	{"title": "🔮  МАГИЯ — квартал", "ids": [BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_MANA_CRYSTAL, BUILD_MENU_PAD_MANA_RUNE]},
 ]
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
@@ -272,6 +274,7 @@ func _ready() -> void:
 	_build_coins_label()
 	_build_population_label()
 	_build_spell_shop()
+	_build_dock_shop()
 	_build_journal_button()
 	_build_action_bar()
 	_build_gatherer_card()
@@ -292,6 +295,7 @@ func _ready() -> void:
 	EventBus.pending_upgrade_choices_changed.connect(_refresh_journal_badge)
 	EventBus.resources_changed.connect(_on_resource_changed)
 	EventBus.spell_shop_requested.connect(_on_spell_shop_requested)
+	EventBus.tower_dock_requested.connect(_on_tower_dock_requested)
 	# Разблокировали заклинание (магазин у Кафедры) → пересобрать трей: новый слот, equip'абельно клавишей.
 	EventBus.spell_unlocked.connect(_on_spell_unlocked)
 	_build_alarm_banner()
@@ -405,6 +409,7 @@ func _disconnect_eventbus() -> void:
 	EventBus.pending_upgrade_choices_changed.disconnect(_refresh_journal_badge)
 	EventBus.resources_changed.disconnect(_on_resource_changed)
 	EventBus.spell_shop_requested.disconnect(_on_spell_shop_requested)
+	EventBus.tower_dock_requested.disconnect(_on_tower_dock_requested)
 	EventBus.spell_unlocked.disconnect(_on_spell_unlocked)
 	EventBus.alarm_changed.disconnect(_on_alarm_changed)
 	EventBus.coins_spent.disconnect(_on_coins_spent)
@@ -1648,6 +1653,148 @@ func _on_spell_buy(id: StringName, cost: Dictionary) -> void:
 	if SpellSystem != null:
 		SpellSystem.unlock(id)
 	_populate_spell_shop()
+
+
+# --- ВЕРФЬ БАШНИ (срезы-слои, TowerUpgrades) ---------------------------------------------------
+## Окно покупки срезов башни. Открывается кликом по Верфи (EventBus.tower_dock_requested).
+## Каталог и установка — в TowerUpgrades (нода Upgrades в tower.tscn); тут только карточки
+## и списание монет. v1 — каждый срез единоразово (зеркало магазина заклинаний).
+var _dock_shop: Panel = null
+var _dock_shop_list: VBoxContainer = null
+var _dock_crew_label: Label = null
+
+
+## Окно верфи (по центру экрана, скрыто). Программно — как _build_spell_shop.
+func _build_dock_shop() -> void:
+	_dock_shop = Panel.new()
+	_dock_shop.anchor_left = 0.5
+	_dock_shop.anchor_right = 0.5
+	_dock_shop.anchor_top = 0.5
+	_dock_shop.anchor_bottom = 0.5
+	_dock_shop.offset_left = -230.0
+	_dock_shop.offset_right = 230.0
+	_dock_shop.offset_top = -170.0
+	_dock_shop.offset_bottom = 170.0
+	_dock_shop.visible = false
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.1, 0.08, 0.06, 0.96)
+	sb.border_color = Color(0.85, 0.68, 0.35, 0.9)
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(10)
+	sb.set_content_margin_all(14)
+	_dock_shop.add_theme_stylebox_override(&"panel", sb)
+	add_child(_dock_shop)
+	var vbox := VBoxContainer.new()
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vbox.offset_left = 14
+	vbox.offset_top = 14
+	vbox.offset_right = -14
+	vbox.offset_bottom = -14
+	vbox.add_theme_constant_override(&"separation", 8)
+	_dock_shop.add_child(vbox)
+	var title := Label.new()
+	title.text = "🛠 Верфь башни — срезы"
+	title.add_theme_font_size_override(&"font_size", 17)
+	title.add_theme_color_override(&"font_color", Color(1.0, 0.85, 0.6))
+	vbox.add_child(title)
+	_dock_shop_list = VBoxContainer.new()
+	_dock_shop_list.add_theme_constant_override(&"separation", 6)
+	_dock_shop_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_child(_dock_shop_list)
+	# Строка экипажа арбалетов: видна при установленных окнах (обновляется при открытии/покупке).
+	_dock_crew_label = Label.new()
+	_dock_crew_label.add_theme_font_size_override(&"font_size", 12)
+	_dock_crew_label.add_theme_color_override(&"font_color", Color(0.75, 0.72, 0.65))
+	_dock_crew_label.visible = false
+	vbox.add_child(_dock_crew_label)
+	var close := Button.new()
+	close.text = "Закрыть"
+	close.focus_mode = Control.FOCUS_NONE
+	close.pressed.connect(func() -> void: _dock_shop.visible = false)
+	vbox.add_child(close)
+
+
+func _on_tower_dock_requested() -> void:
+	if _dock_shop == null or not is_instance_valid(_dock_shop):
+		return
+	_populate_dock_shop()
+	_dock_shop.visible = true
+
+
+## Нода срезов башни (Upgrades в tower.tscn) — через группу, как остальной discovery.
+func _tower_upgrades() -> TowerUpgrades:
+	return get_tree().get_first_node_in_group(TowerUpgrades.GROUP) as TowerUpgrades
+
+
+## Перестроить карточки срезов (установлено/оплатимость) + строку экипажа арбалетов.
+func _populate_dock_shop() -> void:
+	if _dock_shop_list == null or not is_instance_valid(_dock_shop_list):
+		return
+	for c in _dock_shop_list.get_children():
+		c.queue_free()
+	var up := _tower_upgrades()
+	for id in TowerUpgrades.SLICE_CATALOG:
+		_dock_shop_list.add_child(_make_dock_card(id, TowerUpgrades.SLICE_CATALOG[id], up))
+	# Экипаж: подсказка «как заставить окна стрелять», пока арбалеты куплены.
+	if _dock_crew_label != null and is_instance_valid(_dock_crew_label):
+		var has_windows: bool = up != null and up.window_count() > 0
+		_dock_crew_label.visible = has_windows
+		if has_windows:
+			_dock_crew_label.text = "Экипаж: %d лучников внутри · стволов %d. Прячь лучников: карточка отряда → «🏰 В башню»." \
+				% [up.crew_count(), up.window_count()]
+
+
+func _make_dock_card(id: StringName, data: Dictionary, up: TowerUpgrades) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override(&"separation", 8)
+	var sw := ColorRect.new()
+	sw.color = data.get("icon_color", Color.WHITE)
+	sw.custom_minimum_size = Vector2(22, 22)
+	row.add_child(sw)
+	var text_col := VBoxContainer.new()
+	text_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text_col.add_theme_constant_override(&"separation", 0)
+	row.add_child(text_col)
+	var name_lbl := Label.new()
+	name_lbl.text = String(data.get("name", id))
+	text_col.add_child(name_lbl)
+	var hint_lbl := Label.new()
+	hint_lbl.text = String(data.get("hint", ""))
+	hint_lbl.add_theme_font_size_override(&"font_size", 11)
+	hint_lbl.add_theme_color_override(&"font_color", Color(0.7, 0.68, 0.62))
+	hint_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	text_col.add_child(hint_lbl)
+	var owned: bool = up != null and up.is_installed(id)
+	var btn := Button.new()
+	btn.focus_mode = Control.FOCUS_NONE
+	var cost: Dictionary = data.get("cost", {})
+	if owned:
+		btn.text = "✓ Установлено"
+		btn.disabled = true
+	else:
+		var bank := get_tree().get_first_node_in_group(&"gold_bank")
+		var afford: bool = bank != null and bank.has_method(&"can_afford") and bool(bank.call(&"can_afford", cost))
+		btn.text = "Купить  %s" % _format_cost({"cost": cost})
+		btn.disabled = not afford or up == null
+		if not afford:
+			btn.modulate = Color(1.0, 0.6, 0.55)
+		btn.pressed.connect(_on_dock_buy.bind(id, cost))
+	row.add_child(btn)
+	return row
+
+
+## Покупка среза: списать монеты атомарно → TowerUpgrades.install → перерисовать.
+func _on_dock_buy(id: StringName, cost: Dictionary) -> void:
+	var up := _tower_upgrades()
+	if up == null or up.is_installed(id):
+		return
+	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	if bank == null or not bank.has_method(&"spend_cost"):
+		return
+	if not bool(bank.call(&"spend_cost", cost)):
+		return  # не хватило монет
+	up.install(id)
+	_populate_dock_shop()
 
 
 ## ВРЕМЕННО (тест): стройка открыта с самого начала, без станка Room11. Вернуть в false,
