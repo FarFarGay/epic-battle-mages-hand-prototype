@@ -39,6 +39,8 @@ var _barrier_layer: int = Layers.CAMP_OBSTACLE | Layers.PALISADE_OBSTACLE
 var _barrier_parent: Node = null
 var _segments: Array[StaticBody3D] = []
 var _mats: Array[StandardMaterial3D] = []
+## Твин доводки защёлка — глушим, если доску перехватили, пока она летела на место.
+var _snap_tween: Tween = null
 
 
 func _ready() -> void:
@@ -47,8 +49,10 @@ func _ready() -> void:
 	collision_mask = Layers.MASK_ALL_GAMEPLAY
 	_build_visual()
 	Grabbable.register(self)
-	# «Ставится, не бросается»: мягкий релиз кладёт доску под рукой без броска.
-	add_to_group(Layers.HAND_SOFT_RELEASE_GROUP)
+	# ВОЛОЧЕНИЕ (юзер 2026-07-03 «чтобы не приклеивалась к руке»): рука не морозит
+	# доску, а тянет пружиной за точку хвата — провисает, скребёт землю, можно
+	# волочь за конец. Реализация в HandPhysicalActions._apply_haul_force.
+	add_to_group(Layers.HAND_HAUL_GROUP)
 	EventBus.hand_grabbed.connect(_on_hand_grabbed)
 	EventBus.hand_released.connect(_on_hand_released)
 
@@ -95,11 +99,16 @@ func set_highlighted(value: bool) -> void:
 			mat.emission_enabled = false
 
 
-## Схватили защёлкнутую доску → пропасть закрывается обратно.
+## Схватили защёлкнутую доску → пропасть закрывается обратно. freeze снимаем САМИ:
+## haul-режим руки не морозит предмет (заморозка защёлка — наша, наша и разморозка).
 func _on_hand_grabbed(item: Node3D) -> void:
 	if item != self or not _snapped:
 		return
 	_snapped = false
+	if _snap_tween != null and _snap_tween.is_valid():
+		_snap_tween.kill()  # перехватили в полёте доводки — твин не должен бороться с пружиной
+	_snap_tween = null
+	freeze = false
 	collision_layer = Layers.ITEMS
 	_rebuild_barrier(NAN, NAN)
 	_schedule_rebake()
@@ -131,10 +140,10 @@ func _try_snap() -> void:
 	linear_velocity = Vector3.ZERO
 	angular_velocity = Vector3.ZERO
 	var target := Transform3D(Basis.IDENTITY, Vector3(_wall_cx, plank_size.y * 0.5 + 0.02, cz))
-	var tw := create_tween()
-	tw.tween_property(self, "global_transform", target, 0.16) \
+	_snap_tween = create_tween()
+	_snap_tween.tween_property(self, "global_transform", target, 0.16) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tw.tween_callback(_snap_land)
+	_snap_tween.tween_callback(_snap_land)
 	if LogConfig.master_enabled:
 		print("[BridgePlank] защёлк через пропасть, z=%.1f" % cz)
 

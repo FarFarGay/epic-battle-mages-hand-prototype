@@ -37,6 +37,18 @@ const ACTION_ACTION := &"hand_action"
 ## за миг до release. Threshold — стенка между «поставил» и «бросил».
 @export var soft_release_velocity_threshold: float = 8.0
 
+@export_subgroup("Haul")
+## Волочение (Layers.HAND_HAUL_GROUP): предмет не замораживается, рука тянет его
+## пружиной за точку хвата. Жёсткость пружины (ускорение на метр отставания).
+@export var haul_stiffness: float = 40.0
+## Демпфер скорости точки хвата (гасит раскачку; больше — «вязче» тащится).
+@export var haul_damping: float = 7.0
+## Потолок ускорения пружины (m/s²) — рывок руки не выстреливает предмет.
+@export var haul_max_accel: float = 60.0
+## angular_damp предмета НА ВРЕМЯ волочения (длинная доска иначе крутится юлой).
+@export var haul_angular_damp: float = 2.0
+@export_subgroup("")
+
 @export_subgroup("Magnet")
 ## Базовая сила магнита. Фактически прикладывается min(magnet_force, mass*max_accel).
 @export var magnet_force: float = 30.0
@@ -72,6 +84,11 @@ var _hand: Hand
 var _held: RigidBody3D = null
 var _is_grabbing: bool = false
 var _current_candidate: RigidBody3D = null
+## Точка хвата haul-предмета в ЕГО локальных координатах (за что «взялась» рука —
+## угол/конец доски). Пружина тянет именно её → предмет разворачивается за рукой.
+var _haul_local_point: Vector3 = Vector3.ZERO
+## angular_damp предмета до волочения — восстанавливаем на release/clear_held.
+var _haul_prev_angular_damp: float = 0.0
 
 # Логирование (фронт-триггеры)
 var _was_magnetizing: bool = false
@@ -153,6 +170,10 @@ func _physics_process(_delta: float) -> void:
 		elif debug_log and LogConfig.master_enabled and _was_magnetizing:
 			_was_magnetizing = false
 			_magnet_target_name = ""
+	# Волочение: haul-предмет не заморожен — каждый физкадр тянем пружиной за
+	# точку хвата (обычный held ведётся телепортом в _update_held_position).
+	if _held != null and not _held.freeze and Layers.is_hand_haul(_held):
+		_apply_haul_force()
 
 
 # --- Публичный API ---
@@ -357,7 +378,14 @@ func _attach(body: RigidBody3D) -> void:
 	_held = body
 	_held.linear_velocity = Vector3.ZERO
 	_held.angular_velocity = Vector3.ZERO
-	_held.freeze = true
+	if Layers.is_hand_haul(_held):
+		# ВОЛОЧЕНИЕ: не замораживаем — физика живёт, пружина тянет за точку хвата
+		# (_apply_haul_force). Запоминаем, ЗА ЧТО взялись (конец доски и т.п.).
+		_haul_local_point = _haul_grab_point(_held)
+		_haul_prev_angular_damp = _held.angular_damp
+		_held.angular_damp = haul_angular_damp
+	else:
+		_held.freeze = true
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Physical] схвачен %s (mass=%.1f)" % [body.name, body.mass])
 	grabbed.emit(_held)
@@ -368,6 +396,16 @@ func _release() -> void:
 		_held = null
 		return
 	var item_name := str(_held.name)
+	if Layers.is_hand_haul(_held):
+		# Волочение: freeze не трогали, импульс броска не применяем — предмет
+		# просто отцепляется и едет по инерции (момент от пружины сохраняется).
+		_held.angular_damp = _haul_prev_angular_damp
+		var hv: Vector3 = _held.linear_velocity
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:Physical] отпущен (haul) %s, |v|=%.2f" % [item_name, hv.length()])
+		released.emit(_held, hv)
+		_held = null
+		return
 	_held.freeze = false
 	var raw_v := _hand.smoothed_velocity()
 	var v: Vector3
@@ -393,7 +431,10 @@ func _release() -> void:
 ## Судьбу тела решает вызвавший (грид удаляет неоплаченную болванку).
 func clear_held() -> void:
 	if _held != null and is_instance_valid(_held):
-		_held.freeze = false
+		if Layers.is_hand_haul(_held):
+			_held.angular_damp = _haul_prev_angular_damp
+		else:
+			_held.freeze = false
 	_held = null
 
 
@@ -414,7 +455,44 @@ func _update_held_position() -> void:
 	if _held == null or not is_instance_valid(_held) or _held.is_queued_for_deletion():
 		_held = null
 		return
+	if Layers.is_hand_haul(_held):
+		return  # волочение: предмет ведёт пружина в _physics_process, не телепорт
 	_held.global_position = _hand.global_position + hold_offset
+
+
+# --- Волочение (haul) ---
+
+## Пружина-демпфер: тянет ТОЧКУ ХВАТА haul-предмета к руке. Force через offset от
+## центра масс → предмет разворачивается вокруг точки, дальний конец волочится по
+## земле. Ускорение (не сила) масштабируется массой и клампится — рывок руки не
+## выстреливает предмет, тяжёлое ощущается тяжёлым за счёт гравитации и трения.
+func _apply_haul_force() -> void:
+	var target: Vector3 = _hand.global_position + hold_offset
+	var world_point: Vector3 = _held.to_global(_haul_local_point)
+	var offset: Vector3 = world_point - _held.global_position
+	var point_vel: Vector3 = _held.linear_velocity + _held.angular_velocity.cross(offset)
+	var accel: Vector3 = (target - world_point) * haul_stiffness - point_vel * haul_damping
+	var mag: float = accel.length()
+	if mag > haul_max_accel:
+		accel = accel * (haul_max_accel / mag)
+	_held.apply_force(accel * _held.mass, offset)
+
+
+## Точка хвата в локальных координатах предмета: проекция позиции руки на короб
+## коллайдера (BoxShape3D) — взялся у конца доски → тянешь за конец. Нет бокса —
+## фоллбэк на центр (обычное волочение без рычага).
+func _haul_grab_point(body: RigidBody3D) -> Vector3:
+	var local: Vector3 = body.to_local(_hand.global_position)
+	for c in body.get_children():
+		var cs := c as CollisionShape3D
+		if cs == null:
+			continue
+		var box := cs.shape as BoxShape3D
+		if box == null:
+			break
+		var h: Vector3 = box.size * 0.5
+		return Vector3(clampf(local.x, -h.x, h.x), clampf(local.y, -h.y, h.y), clampf(local.z, -h.z, h.z))
+	return Vector3.ZERO
 
 
 # --- Подсветка кандидата ---

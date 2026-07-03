@@ -223,6 +223,19 @@ static func is_hand_soft_release(target: Object) -> bool:
 	return target is Node and (target as Node).is_in_group(HAND_SOFT_RELEASE_GROUP)
 
 
+## Группа-маркер: «громоздкие» предметы, которые рука ВОЛОЧЁТ, а не приклеивает.
+## Обычный grab = freeze + телепорт к руке каждый кадр; haul-предмет НЕ замораживается —
+## рука тянет его пружиной за точку хвата (`HandPhysicalActions._apply_haul_force`):
+## предмет провисает под гравитацией, цепляет землю дальним концом, разворачивается
+## за рукой. Семантика: «тащишь бревно, а не держишь ящик». (Плашка-мост.)
+const HAND_HAUL_GROUP := &"hand_haul"
+
+
+## True, если объект — Node, помеченный как haul («волочение» вместо приклеивания).
+static func is_hand_haul(target: Object) -> bool:
+	return target is Node and (target as Node).is_in_group(HAND_HAUL_GROUP)
+
+
 ## Контракт-группы, которые ОДИН файл регистрирует, а ДРУГОЙ читает — единый
 ## источник имени, иначе опечатка в литерале тихо рвёт связь register↔read.
 ##   gnome_strike_target — цели удара гнома (горшок/рычаг/дерево/мост) ⇄ SoldierGnome скан.
