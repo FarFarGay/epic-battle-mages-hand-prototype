@@ -26,7 +26,7 @@ const SLICE_CATALOG: Dictionary = {
 		"icon_color": Color(0.85, 0.66, 0.32, 1.0),
 		"cost": {ResourcePile.ResourceType.SILVER: 5},
 		"cap_bonus": 30,
-		"height": -2.55,  # локальный Y (тело башни: −3…+3): цоколь у самой земли
+		"height": -2.75,  # локальный Y (тело башни: −3…+3): центр конуса-цоколя у земли
 	},
 	&"arbalest": {
 		"name": "Арбалетные окна",
@@ -255,24 +255,32 @@ func _fire_bolt(aim: Vector3) -> void:
 
 # --- Визуал срезов: СИЛУЭТ БАШНИ НЕ МЕНЯЕТСЯ (декор заподлицо на корпусе) ---
 
-## Корпус выпеченной модели (tower_visual.tscn): 32-гранник радиуса ≈1.16 (по
-## вершинам меша — шаг 11.25°). Декор срезов сидит ЗАПОДЛИЦО на его гранях;
-## единственное исключение силуэта — расширенное ОСНОВАНИЕ грузового среза (у земли).
-const BODY_RADIUS := 1.16
+## Башня — ЛАДЬЯ: тело вращения по профилю «радиус-по-высоте» (юбка → ствол с
+## сужением → перехват шеи → воротник). Декор обязан считать радиус НА СВОЕЙ
+## высоте — иначе висит в воздухе у сужений. КОПИЯ tools/bake_tower.gd::_profile();
+## при перевыпечке модели синхронизировать. (x = локальный Y, y = радиус.)
+const BODY_PROFILE: Array = [
+	Vector2(-3.00, 1.16), Vector2(-2.60, 1.16), Vector2(-2.42, 0.96),
+	Vector2(-2.30, 0.92), Vector2(0.55, 0.80), Vector2(1.25, 0.86),
+	Vector2(1.45, 0.76), Vector2(1.72, 1.02), Vector2(2.25, 1.22),
+	Vector2(2.48, 1.20),
+]
+## Граней тела вращения (bake_tower.LATHE_SIDES) — грань-центры на (i+0.5)·11.25°.
 const BODY_FACETS := 32
 ## Родной каменный материал башни (кирпич, triplanar — ложится на любую форму без
 ## UV). Цоколь основания из него сливается с корпусом.
 const STONE_MAT: Material = preload("res://models/materials/tower_stone.tres")
 
-## Заплатки брони: (грань 0..31, локальный Y, ширина, высота) — вразнобой по всему
-## корпусу, вперемешку с открытым камнем. Фиксированный список — детерминированный
-## вид (не пересобирается случайно при каждом запуске).
+## Заплатки брони: (грань 0..31, локальный Y, ширина, высота) — вразнобой по стволу,
+## вперемешку с открытым камнем. Y держим на пологих участках профиля (ствол,
+## −2.2…+1.3) — на крутых (юбка/шея/воротник) пластина отрывалась бы от стены.
+## Фиксированный список — детерминированный вид.
 const HULL_PATCHES: Array = [
 	[1, -1.9, 0.46, 0.56], [4, 0.6, 0.4, 0.5], [6, -0.5, 0.5, 0.62],
-	[9, 1.4, 0.38, 0.44], [11, -1.3, 0.42, 0.52], [14, 0.1, 0.48, 0.58],
+	[9, 1.0, 0.38, 0.44], [11, -1.3, 0.42, 0.52], [14, 0.1, 0.48, 0.58],
 	[17, -2.1, 0.4, 0.48], [19, 0.9, 0.44, 0.56], [22, -0.9, 0.38, 0.46],
-	[25, 1.6, 0.42, 0.5], [27, -1.6, 0.48, 0.6], [30, 0.35, 0.4, 0.52],
-	[2, 1.1, 0.36, 0.42], [12, -2.3, 0.44, 0.5],
+	[25, 0.75, 0.42, 0.5], [27, -1.6, 0.48, 0.6], [30, 0.35, 0.4, 0.52],
+	[2, 1.2, 0.36, 0.42], [12, -2.0, 0.44, 0.5],
 ]
 
 ## Декор среза на корпусе башни. Кладём в VisualRoot — наследует bob/крен/отдачу
@@ -286,14 +294,15 @@ func _build_slice_visual(id: StringName, data: Dictionary) -> void:
 	var y: float = float(data.get("height", 0.0))
 	match id:
 		&"hold":
-			# ОСНОВАНИЕ ЧУТЬ ПОШИРЕ: расширяющийся каменный цоколь у земли (родной
-			# камень, силуэт меняется только внизу) + деревянные ворота-люки складов
-			# на 4 сторонах корпуса над ним.
+			# ОСНОВАНИЕ ЧУТЬ ПОШИРЕ: конус-цоколь поверх юбки ладьи (юбка: r=1.16 до
+			# y=−2.6; цоколь низ 1.42 → верх 1.19, накрывает её целиком). Родной
+			# камень — силуэт меняется только у земли. Ворота-люки складов — на
+			# стволе над юбкой.
 			var plinth := MeshInstance3D.new()
 			var cm := CylinderMesh.new()
-			cm.top_radius = BODY_RADIUS + 0.06
-			cm.bottom_radius = BODY_RADIUS + 0.34
-			cm.height = 1.0
+			cm.top_radius = 1.19
+			cm.bottom_radius = 1.42
+			cm.height = 0.55
 			cm.radial_segments = BODY_FACETS
 			plinth.mesh = cm
 			plinth.material_override = STONE_MAT
@@ -301,8 +310,8 @@ func _build_slice_visual(id: StringName, data: Dictionary) -> void:
 			plinth.position = Vector3(0, y, 0)
 			for a in range(4):
 				var f: int = a * 8 + 4  # между окнами арбалета (те на a*8)
-				_body_facet_box(root, f, y + 0.85, Vector3(0.5, 0.56, 0.05), Color(0.5, 0.4, 0.26), 0.02)
-				_body_facet_box(root, f, y + 0.85, Vector3(0.5, 0.07, 0.05), Color(0.34, 0.27, 0.18), 0.035)
+				_body_facet_box(root, f, -2.0, Vector3(0.46, 0.5, 0.05), Color(0.5, 0.4, 0.26), 0.02)
+				_body_facet_box(root, f, -2.0, Vector3(0.46, 0.06, 0.05), Color(0.34, 0.27, 0.18), 0.035)
 		&"arbalest":
 			# ТОЛЬКО ОКНА: бойница-щель со стальной рамой заподлицо на гранях корпуса
 			# по 4 сторонам света. Никаких колец/ярусов — силуэт нетронут.
@@ -326,14 +335,29 @@ func _build_slice_visual(id: StringName, data: Dictionary) -> void:
 						_body_facet_box(root, f, py + dy, Vector3(0.07, 0.07, 0.05), Color(0.3, 0.33, 0.4), 0.035)
 
 
+## Радиус корпуса-ладьи на высоте y (lerp по BODY_PROFILE). Ниже юбки/выше
+## воротника — крайние значения.
+func _body_radius_at(y: float) -> float:
+	var prev: Vector2 = BODY_PROFILE[0]
+	if y <= prev.x:
+		return prev.y
+	for i in range(1, BODY_PROFILE.size()):
+		var cur: Vector2 = BODY_PROFILE[i]
+		if y <= cur.x:
+			var t: float = (y - prev.x) / maxf(cur.x - prev.x, 0.0001)
+			return lerpf(prev.y, cur.y, t)
+		prev = cur
+	return prev.y
+
+
 ## Декор-бокс НА ГРАНИ КОРПУСА башни: плоскостью наружу, по центру грани facet
-## (0..31). proud — выступ из плоскости грани (м); маленький (≈0.02-0.04) = заподлицо.
-## Вершины корпуса идут с шагом 11.25° от угла 0, центр грани — на полшага;
-## плоскость грани на r·cos(π/32).
+## (0..31), на радиусе профиля ДЛЯ ЭТОЙ ВЫСОТЫ (ладья сужается — константный радиус
+## вешал декор в воздух). proud — выступ из плоскости грани (≈0.02-0.04 = заподлицо).
+## Угловая конвенция как у пекаря (x=cos, z=sin); центр грани — на полшага 11.25°.
 func _body_facet_box(parent: Node3D, facet: int, y: float, size: Vector3, color: Color, proud: float) -> MeshInstance3D:
 	var ang: float = (float(facet) + 0.5) * TAU / float(BODY_FACETS)
-	var dir := Vector3(sin(ang), 0.0, cos(ang))
-	var dist: float = BODY_RADIUS * cos(PI / float(BODY_FACETS)) - size.z * 0.5 + proud
+	var dir := Vector3(cos(ang), 0.0, sin(ang))
+	var dist: float = _body_radius_at(y) * cos(PI / float(BODY_FACETS)) - size.z * 0.5 + proud
 	var mi := _slice_box(parent, size, dir * dist + Vector3(0, y, 0), color)
 	mi.rotation.y = atan2(dir.x, dir.z)
 	return mi
