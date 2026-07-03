@@ -134,7 +134,6 @@ var _journal_badge: Label
 @onready var _build_palette: Panel = $BuildPalette
 @onready var _build_sections: VBoxContainer = $BuildPalette/Margin/VBox/Scroll/Sections
 var _build_cards: Array = []  # [{cost_label: Label, cost: Dictionary}] — для _refresh_build_affordability
-const BUILD_MENU_BRIDGE := 0
 const BUILD_MENU_PUMP := 11  # качалка-замок (центр грид-города)
 const BUILD_MENU_PAD_WALL1 := 12
 const BUILD_MENU_PAD_GATE := 15
@@ -173,14 +172,13 @@ var PAD_MENU_IDS := {
 ## Секции палитры стройки: заголовок-категория + список пунктов (BUILD_MENU_* id). Порядок
 ## внутри = порядок карточек. Группировка по той же таксономии, что и квартал-баффы — игрок
 ## видит «что к чему относится» (добыча/оборона/замок). Шахта первой в «Добыче» (ядро), сапорты
-## следом; Мост — отдельная инженерная механика.
+## следом. Мост через пропасть — НЕ стройка: физическая плашка-предмет ([bridge_plank.gd]).
 const BUILD_SECTIONS := [
 	{"title": "⛏  ДОБЫЧА — квартал", "ids": [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_SMELTER, BUILD_MENU_PAD_MINT]},
 	{"title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_STAKES]},
 	{"title": "⚔  ГАРНИЗОН — квартал", "ids": [BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
 	{"title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE, BUILD_MENU_PAD_UNLOAD]},
 	{"title": "🔮  МАГИЯ — квартал", "ids": [BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_MANA_CRYSTAL, BUILD_MENU_PAD_MANA_RUNE]},
-	{"title": "🌉  ИНЖЕНЕРИЯ", "ids": [BUILD_MENU_BRIDGE]},
 ]
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
@@ -254,7 +252,7 @@ var _gatherer_card: PanelContainer
 
 ## Материальные счётчики в правой панели ВЫРЕЗАНЫ (решение 2026-07-03): игрок видит
 ## ТРИ валюты — монеты (одометр), ману и население. Материя внутри осталась техникой:
-## руда → плавильня → монеты (без плавильни ноша роняется орбом), дерево → мост/блюпринт
+## руда → плавильня → монеты (без плавильни ноша роняется орбом), дерево → блюпринт
 ## напрямую в руках, склад башни — невидимый буфер. Пустой список = строки не строятся,
 ## _sync_all_resources — no-op; вернуть счётчик = добавить запись обратно.
 const RESOURCE_DISPLAY: Array = []
@@ -1445,13 +1443,10 @@ func _make_build_card(id: int) -> Button:
 	return card
 
 
-## Метаданные карточки: имя/иконка/цена/эффект + гейтинг. Спецслучаи: Мост (не гейтится),
-## Качалка (одна на отряд, гном-строит за дерево), фигуры площадки (нужна качалка + знание).
+## Метаданные карточки: имя/иконка/цена/эффект + гейтинг. Спецслучаи: Качалка (одна на
+## отряд), фигуры площадки (нужна качалка + знание).
 func _build_item_info(id: int) -> Dictionary:
 	var knows: bool = _building_unlocked()
-	if id == BUILD_MENU_BRIDGE:
-		return {"emoji": "🌉", "name": "Мост через пропасть", "cost_text": "", "cost": {}, "pop": 0, "cap": 0,
-			"sub_text": "Перекинуть мост через пропасть к вратам.", "disabled": false}
 	if id == BUILD_MENU_PUMP:
 		var data: Dictionary = RoomBuildings.get_data(RoomBuildings.PUMP)
 		var pump_exists: bool = _pump_exists_or_building()
@@ -1495,7 +1490,7 @@ func _emoji_of(data: Dictionary) -> String:
 
 
 ## Строка цены карточки: монеты «cost» (🥇🥈🥉) + время самостройки «⏱Nс»
-## (для площадочных построек; instant-трубы и мост — без времени). Доставка
+## (для площадочных построек; instant-трубы — без времени). Доставка
 ## ресурсов вырезана (2026-07-03) — «N🪵» больше не показываем.
 func _format_cost(data: Dictionary) -> String:
 	var parts: Array = []
@@ -1691,12 +1686,7 @@ func _pump_exists_or_building() -> bool:
 
 
 func _on_build_menu_id(id: int) -> void:
-	if id == BUILD_MENU_BRIDGE:
-		_cancel_hand_aims(&"bridge")  # вход в планирование моста гасит squad/build aim
-		var hand := _resolve_hand()
-		if hand != null and hand.bridge_aim != null:
-			hand.bridge_aim.start_aim()
-	elif id == BUILD_MENU_PUMP:
+	if id == BUILD_MENU_PUMP:
 		if not _building_unlocked() or _pump_exists_or_building():
 			return  # нет знания / качалка уже есть — пункт и так greyed
 		_cancel_hand_aims(&"place")
@@ -2351,7 +2341,7 @@ func _add_squad_buttons_rooms(vbox: VBoxContainer, squad: Squad) -> void:
 
 	if squad.soldier_type == SoldierSystem.ROLE_WORKER:
 		var btn_build := _mk_squad_btn("🔨 Стройка")
-		btn_build.tooltip_text = "Выбрать, что построить (мост и пр.), потом отправить рабочих"
+		btn_build.tooltip_text = "Выбрать, что построить, потом отправить рабочих"
 		btn_build.pressed.connect(_on_squad_build_pressed.bind(btn_build))
 		row.add_child(btn_build)
 		var btn_repair := _mk_squad_btn("🔧 Ремонт")
@@ -2444,7 +2434,7 @@ func _add_squad_buttons_camp(vbox: VBoxContainer, squad: Squad) -> void:
 		btn_build.focus_mode = Control.FOCUS_NONE
 		btn_build.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn_build.add_theme_font_size_override("font_size", 11)
-		btn_build.tooltip_text = "Выбрать, что построить (мост и пр.), потом отправить сюда рабочих"
+		btn_build.tooltip_text = "Выбрать, что построить, потом отправить сюда рабочих"
 		btn_build.pressed.connect(_on_squad_build_pressed.bind(btn_build))
 		btn_row2.add_child(btn_build)
 
@@ -2568,10 +2558,10 @@ func _update_squad_cards_dynamic() -> void:
 				_apply_defend_state(btn, squad)
 
 
-## Сбросить активные aim-режимы руки (squad/build/bridge/place), КРОМЕ указанного.
+## Сбросить активные aim-режимы руки (squad/build/place), КРОМЕ указанного.
 ## Новый режим всегда отменяет предыдущий — нельзя одновременно «Идти сюда» и «Стройка».
 ## cancel_aim идемпотентен (no-op если режим не активен), потому зовём без проверок.
-## `except`: "squad"|"build"|"bridge"|"place" — не трогать этот (для toggle-кнопок).
+## `except`: "squad"|"build"|"place" — не трогать этот (для toggle-кнопок).
 func _cancel_hand_aims(except: StringName = &"") -> void:
 	var hand := _resolve_hand()
 	if hand == null:
@@ -2580,8 +2570,6 @@ func _cancel_hand_aims(except: StringName = &"") -> void:
 		hand.squad_aim.cancel_aim()
 	if except != &"build" and hand.build_aim != null:
 		hand.build_aim.cancel_aim()
-	if except != &"bridge" and hand.bridge_aim != null:
-		hand.bridge_aim.cancel_aim()
 	if except != &"place" and hand.place_aim != null:
 		hand.place_aim.cancel_aim()
 

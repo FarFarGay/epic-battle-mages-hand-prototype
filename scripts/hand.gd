@@ -66,7 +66,6 @@ const RAY_DISTANCE := 1000.0
 @onready var super_actions: HandSuper = $SuperActions
 @onready var squad_aim: HandSquadAim = $SquadAim
 @onready var build_aim: HandBuildAim = $BuildAim
-@onready var bridge_aim: HandBridgeAim = $BridgeAim
 @onready var place_aim: HandPlaceAim = $PlaceAim
 
 var _velocity_history: Array[Vector3] = []
@@ -116,8 +115,6 @@ func _ready() -> void:
 	squad_aim.setup(self)
 	# BUILD_AIM — пятая ось (интерактивное размещение построек: колокол и т.д.).
 	build_aim.setup(self)
-	# Планирование моста двумя кликами (комнатный режим) — на той же BUILD_AIM-оси.
-	bridge_aim.setup(self)
 	# Свободное размещение точечных построек одним кликом (стена/труба/бур) — BUILD_AIM.
 	place_aim.setup(self)
 	# Re-emit на глобальный EventBus — для UI / звука / статистики.

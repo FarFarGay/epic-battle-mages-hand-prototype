@@ -6,7 +6,7 @@ extends Node
 ## Без грида/колец/секторов. Sticky: после установки aim остаётся — ставь ещё
 ## (стены кирпичиками). Esc / повторный вызов того же id — выход.
 ##
-## По образцу [HandBridgeAim]: на время aim'а Hand-категория = BUILD_AIM (остальной
+## По образцу [HandSquadAim]: на время aim'а Hand-категория = BUILD_AIM (остальной
 ## ввод гасится ранним return). НЕ завязан на Camp. UI (gameplay_hud, меню «Стройка»)
 ## запускает start_aim(building_id).
 

@@ -130,7 +130,7 @@ var _squad: Squad = null
 var _escort_target: Node3D = null
 ## Рабочий (роль &"worker") несёт ЕДИНИЦУ РЕСУРСА (тип ∈ ResourcePile.ResourceType).
 ## -1 = руки пусты. Тип переключает, какая strike-цель его примет: пусто → источник
-## (WoodSource), гружён → стройка (BridgeSite) либо склад башни (TowerStore). Единая
+## (WoodSource), гружён → склад башни (TowerStore). Единая
 ## модель «гном → точка → действие» даёт курьерский цикл добыл-донёс без отдельного
 ## FSM. Воины (копейщик) ресурс не носят — тип всегда -1.
 var _carried_type: int = -1
@@ -339,7 +339,7 @@ func receive_resource(type: int) -> void:
 	_worker_carry_visual.visible = true
 
 
-## Рабочий сдал единицу (BridgeSite/TowerStore). Возвращает ТИП сданного (-1 если рук
+## Рабочий сдал единицу (TowerStore). Возвращает ТИП сданного (-1 если рук
 ## не было — рассинхрон). Вызывающий сверяет тип, если ему нужен конкретный материал.
 func deliver_resource() -> int:
 	if _carried_type < 0:

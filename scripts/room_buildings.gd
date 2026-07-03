@@ -6,8 +6,8 @@ extends RefCounted
 ## из [CampBuildings]. См. [[project_ebm_building_rework]].
 ##
 ## ID-константы зданий. Spawn/размещение — generic: [HandPlaceAim] читает footprint
-## для силуэта, [RoomBuildSite] читает resource/needed/scene для стройки. Мост —
-## отдельный span-flow ([HandBridgeAim]), в этот каталог не входит.
+## для силуэта, [RoomBuildSite] читает resource/needed/scene для стройки. Мост через
+## пропасть — НЕ стройка: физическая плашка-предмет ([bridge_plank.gd]), в каталог не входит.
 
 const WALL := &"wall"
 const WATCHTOWER := &"watchtower"

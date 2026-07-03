@@ -47,6 +47,7 @@
 [ext_resource type="PackedScene" path="res://scenes/spawn_zone.tscn" id="43_spawnzone"]
 [ext_resource type="Script" path="res://scripts/enemy_spawner.gd" id="44_espawner"]
 [ext_resource type="Script" path="res://scripts/wave_director.gd" id="45_wavedir"]
+[ext_resource type="Script" path="res://scripts/bridge_plank.gd" id="46_plank"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -492,6 +493,12 @@ shape = SubResource("BoxShape3D_chasm")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 112)
 script = ExtResource("39_wood")
 wood_remaining = 6
+
+[node name="BridgePlank" type="RigidBody3D" parent="Room5" unique_id=1415507207]
+transform = Transform3D(0.9659258, 0, 0.258819, 0, 1, 0, -0.258819, 0, 0.9659258, 16, 0.5, 103)
+collision_layer = 2
+collision_mask = 31
+script = ExtResource("46_plank")
 
 [node name="Trunk" type="MeshInstance3D" parent="Room5/WoodSource" unique_id=1597788968]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 7)
