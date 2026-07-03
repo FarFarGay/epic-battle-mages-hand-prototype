@@ -74,6 +74,21 @@ func add_coin(type: int, amount: int) -> void:
 		_value += amount * _unit(type)
 
 
+## Переплавка единицы материала в монету: [coin_type, amount]. ЕДИНАЯ точка конверсии
+## (2026-07-03) — зовёт разгрузочная платформа, когда башня паркуется с трюмом.
+## Тир интуитивен: дерево→бронза×N, камень→серебро, железо→золото (было камень→золото —
+## поправлено); редкие серебряная/золотая руда — свой номинал.
+const SMELT_BRONZE_PER_WOOD := 5
+func smelt_yield(material: int) -> Array:
+	match material:
+		ResourcePile.ResourceType.IRON, ResourcePile.ResourceType.GOLD:
+			return [ResourcePile.ResourceType.GOLD, 1]
+		ResourcePile.ResourceType.STONE, ResourcePile.ResourceType.SILVER:
+			return [ResourcePile.ResourceType.SILVER, 1]
+		_:
+			return [ResourcePile.ResourceType.BRONZE, SMELT_BRONZE_PER_WOOD]
+
+
 ## Сколько монет номинала ПОКАЗАТЬ (одометр): золото = value/250, остаток → серебро, остаток → бронза.
 func get_coin(type: int) -> int:
 	match type:

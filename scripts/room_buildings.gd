@@ -35,6 +35,7 @@ const PAD_BANK := &"pad_bank"          # гномий банк: помпезна
 const PAD_INSTITUTE := &"pad_institute" # институт магии: льёт ману в башню + открывает магию (роль magic)
 const PAD_MANA_CRYSTAL := &"pad_mana_crystal" # сапорт института: ×темп маны (роль mana_crystal)
 const PAD_MANA_RUNE := &"pad_mana_rune"       # сапорт института: ×темп маны сильнее (роль mana_rune)
+const PAD_UNLOAD := &"pad_unload"             # разгрузочная платформа 2×2: паркуй башню → трюм в казну (роль unload)
 
 const CATALOG: Dictionary = {
 	WALL: {
@@ -189,6 +190,15 @@ const CATALOG: Dictionary = {
 		"ghost_color": Color(0.6, 0.45, 0.3, 0.5),
 	},
 	# Хранилище: склад, квадрат 2×2. Функция (кап ресурсов/буфер) — Фаза 2.
+	PAD_UNLOAD: {
+		"name": "Разгрузочная платформа",
+		"menu_label": "📦 Разгрузочная платформа",
+		"hint": "Паркуй башню на плите — трюм ссыпается монетами в казну.",
+		"role": &"unload",
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
+		"cost": {ResourcePile.ResourceType.SILVER: 3},
+		"ghost_color": Color(0.95, 0.8, 0.35, 0.4),
+	},
 	PAD_STORE: {
 		"name": "Склад",
 		"menu_label": "📦 Склад (2×2)",

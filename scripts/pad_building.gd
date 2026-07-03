@@ -39,6 +39,10 @@ const MANA_INSTITUTE_RATE := 3.0  # базовая мана/сек в башню
 const FULL_QUARTER_BONUS := 1.5
 ## FX «печати» установки: падение+сквош+пыль+рябь+тряска (см. play_place_impact).
 const PlaceFx = preload("res://scripts/place_impact_fx.gd")
+## Разгрузочная платформа: радиус парковки башни (XZ от центра платформы) и темп
+## разгрузки — одна единица трюма за интервал («ссыпается струйкой», не разом).
+const UNLOAD_RADIUS := 6.0
+const UNLOAD_INTERVAL := 0.22
 const MANA_MULT_CRYSTAL := 1.5    # Кафедра Волшебных свитков в зоне → ×темп
 const MANA_MULT_RUNE := 2.0       # Осколок звёздной руды в зоне → ×темп (сильнее/дороже)
 const MANA_MULT_HOUSE := 1.5      # Дом гномов в зоне → ×темп (соц-универсал, как «Объём» у шахты)
@@ -46,6 +50,7 @@ var _vein: OilDeposit = null  # жила под шахтой
 var _mine_accum: float = 0.0  # дробный накопитель добычи (единицы целые)
 var _quarter_was_full: bool = false  # был ли плот полностью заполнен в прошлый тик (вспышка единожды на завершение)
 var _ind_flash_tween: Tween = null   # авто-скрытие плашки после flash_indicator (kill при повторе)
+var _unload_cd: float = 0.0          # кулдаун очередной единицы разгрузки (платформа)
 ## Плавильня-сапорт: ровный дым (флавор «работает»).
 var _smoke: GPUParticles3D = null
 ## Маркеры buff-слотов квартала (грани продюсера) — показываются в РЕЖИМЕ СТРОЙКИ (HandPlaceAim):
@@ -121,6 +126,12 @@ func _ready() -> void:
 	if is_scroll_dept():
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
 		set_process(true)
+	# Разгрузочная платформа: тикает конверсию трюма, пока башня припаркована рядом.
+	# КОЛЛИЗИИ НЕТ (плита не должна блокировать заезд башни — та ходит физикой);
+	# урон/цель скелетов работают через группы, как у RoomBuildSite без коллайдера.
+	if is_unload():
+		collision_layer = 0
+		set_process(true)
 	# Отложенно: HandPlaceAim ставит global-трансформ ПОСЛЕ add_child (нужен стене для
 	# мировых клеток и поиска соседей).
 	call_deferred(&"_build")
@@ -132,6 +143,11 @@ func is_wall() -> bool:
 
 func is_attack() -> bool:
 	return _role == &"attack"
+
+
+## Разгрузочная платформа 2×2: башня паркуется рядом → трюм (склад) конвертится в монеты.
+func is_unload() -> bool:
+	return _role == &"unload"
 
 
 func is_gate() -> bool:
@@ -237,6 +253,8 @@ func _build() -> void:
 	_conn_overlay = null
 	_conn_state = 0
 	match _role:
+		&"unload":
+			_build_unload_pad()
 		&"mine":
 			_build_tower()
 			_setup_mine()
@@ -1352,6 +1370,58 @@ func _tick_mine(delta: float) -> void:
 			_spawn_firework(ResourcePile.ResourceType.GOLD)  # салют на каждую новую золотую
 
 
+## Разгрузка трюма: башня в радиусе → раз в UNLOAD_INTERVAL одна единица склада
+## конвертится в монеты (GoldBank.smelt_yield: дерево→бронза, камень→серебро,
+## железо→золото). Салют на золотые — штатный банковский. Пусто/башня уехала — ждём.
+func _tick_unload(delta: float) -> void:
+	_unload_cd -= delta
+	if _unload_cd > 0.0:
+		return
+	_unload_cd = UNLOAD_INTERVAL
+	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
+	if tower == null or not is_instance_valid(tower):
+		return
+	var dx: float = tower.global_position.x - global_position.x
+	var dz: float = tower.global_position.z - global_position.z
+	if dx * dx + dz * dz > UNLOAD_RADIUS * UNLOAD_RADIUS:
+		return
+	var store: Node = get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
+	var bank: Node = get_tree().get_first_node_in_group(&"gold_bank")
+	if store == null or bank == null or not bank.has_method(&"smelt_yield"):
+		return
+	for type in [ResourcePile.ResourceType.WOOD, ResourcePile.ResourceType.STONE,
+			ResourcePile.ResourceType.IRON, ResourcePile.ResourceType.SILVER,
+			ResourcePile.ResourceType.GOLD]:
+		if int(store.call(&"get_amount", type)) > 0 and bool(store.call(&"take", type, 1)):
+			var pair: Array = bank.call(&"smelt_yield", type)
+			bank.call(&"add_coin", pair[0], pair[1])
+			return  # одна единица за тик — разгрузка «ссыпается», не мгновенный дамп
+
+
+## Визуал разгрузочной платформы: плоская плита на весь футпринт 2×2 + светящийся
+## посадочный квадрат + угловые маячки. Без коллизии (см. _ready) — башня заезжает.
+func _build_unload_pad() -> void:
+	var s: float = CityGrid.CELL
+	var plate := _solid(Color(0.5, 0.42, 0.3), 0.1, 0.8)
+	var glow := _solid(Color(0.95, 0.8, 0.35), 0.3, 0.4)
+	glow.emission_enabled = true
+	glow.emission = Color(0.95, 0.8, 0.35)
+	glow.emission_energy_multiplier = 1.2
+	# Центроид маски (2×2 → центр между клетками): плита кроет весь футпринт.
+	var cx: float = 0.0
+	var cz: float = 0.0
+	for off in _mask:
+		cx += float((off as Vector2i).x)
+		cz += float((off as Vector2i).y)
+	cx = cx / float(maxi(_mask.size(), 1)) * s
+	cz = cz / float(maxi(_mask.size(), 1)) * s
+	_box(Vector3(s * 2.0, 0.14, s * 2.0), Vector3(cx, 0.07, cz), plate, false)
+	_box(Vector3(s * 1.2, 0.05, s * 1.2), Vector3(cx, 0.17, cz), glow, false)
+	for dx in [-1.0, 1.0]:
+		for dz in [-1.0, 1.0]:
+			_box(Vector3(0.22, 1.1, 0.22), Vector3(cx + dx * (s - 0.2), 0.55, cz + dz * (s - 0.2)), glow, true)
+
+
 ## Клетки квартала продюсера = ВСЕ грани (орто-соседство футпринта в паде). Контур-силуэт убран —
 ## квартал = заполни соседние клетки сапортами; каждый ТИП сапорта баффает продюсера по-своему.
 func _plot_cells_ordered() -> Array:
@@ -1617,6 +1687,8 @@ func _process(delta: float) -> void:
 			_refresh_quarter_indicator()
 	if is_scroll_dept():
 		_tick_scroll_click()
+	if is_unload():
+		_tick_unload(delta)
 
 
 ## Номинал на тир выше (чеканный двор-сапорт): бронза→серебро→золото. Золото — потолок.
@@ -2024,7 +2096,7 @@ static func category(role: StringName) -> int:
 			return Category.PRODUCTION
 		&"defend", &"gate", &"attack", &"barracks", &"barrack", &"stakes":
 			return Category.DEFENSE  # барак — ёмкость казармы; колья — заслон (оба военные)
-		&"bank", &"pump":
+		&"bank", &"pump", &"unload":
 			return Category.STATE
 		&"housing":
 			return Category.SOCIAL

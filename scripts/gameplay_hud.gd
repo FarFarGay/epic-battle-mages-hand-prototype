@@ -148,6 +148,7 @@ const BUILD_MENU_PAD_STAKES := 22   # колья — дешёвый заслон
 const BUILD_MENU_PAD_INSTITUTE := 23  # институт магии — мана башне + анлок магических построек
 const BUILD_MENU_PAD_MANA_CRYSTAL := 24  # сапорт института: ×темп маны
 const BUILD_MENU_PAD_MANA_RUNE := 25     # сапорт института: ×темп маны (сильнее)
+const BUILD_MENU_PAD_UNLOAD := 26        # разгрузочная платформа: паркуй башню → трюм в казну
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[CityGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
@@ -167,6 +168,7 @@ var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_INSTITUTE: RoomBuildings.PAD_INSTITUTE,
 	BUILD_MENU_PAD_MANA_CRYSTAL: RoomBuildings.PAD_MANA_CRYSTAL,
 	BUILD_MENU_PAD_MANA_RUNE: RoomBuildings.PAD_MANA_RUNE,
+	BUILD_MENU_PAD_UNLOAD: RoomBuildings.PAD_UNLOAD,
 }
 ## Секции палитры стройки: заголовок-категория + список пунктов (BUILD_MENU_* id). Порядок
 ## внутри = порядок карточек. Группировка по той же таксономии, что и квартал-баффы — игрок
@@ -176,7 +178,7 @@ const BUILD_SECTIONS := [
 	{"title": "⛏  ДОБЫЧА — квартал", "ids": [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_SMELTER, BUILD_MENU_PAD_MINT]},
 	{"title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_STAKES]},
 	{"title": "⚔  ГАРНИЗОН — квартал", "ids": [BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
-	{"title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE]},
+	{"title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE, BUILD_MENU_PAD_UNLOAD]},
 	{"title": "🔮  МАГИЯ — квартал", "ids": [BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_MANA_CRYSTAL, BUILD_MENU_PAD_MANA_RUNE]},
 	{"title": "🌉  ИНЖЕНЕРИЯ", "ids": [BUILD_MENU_BRIDGE]},
 ]
@@ -216,6 +218,8 @@ var _squad_scroll: ScrollContainer
 var _coins_label: Label = null
 ## Счётчик НАСЕЛЕНИЯ (used/cap общего supply-пула, автолоад Population) — под монетами.
 var _population_label: Label = null
+## «📦 Трюм» башни: сумма материалов склада; ⚠ при полном капе (пора на разгрузку).
+var _cargo_label: Label = null
 ## squad_id → Control карточки. Используется для update/remove на squad_changed.
 var _squad_cards: Dictionary = {}
 ## squad_id → Squad. Реестр для резолва БЕЗ лагеря (комнатный отряд от гномов):
@@ -1785,8 +1789,27 @@ func _build_resources_rows() -> void:
 
 		_resource_labels[int(entry["type"])] = count_label
 
+	# «📦 Трюм» башни: единый агрегат материалов склада (руда/дерево с выездов).
+	# Желтеет с ⚠, когда любой тип упёрся в кап — орбы не всасываются, пора на
+	# разгрузочную платформу в город.
+	var crow := HBoxContainer.new()
+	crow.add_theme_constant_override("separation", 8)
+	_vbox.add_child(crow)
+	var cname := Label.new()
+	cname.text = "📦 трюм"
+	cname.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cname.add_theme_font_size_override("font_size", 14)
+	crow.add_child(cname)
+	_cargo_label = Label.new()
+	_cargo_label.text = "0"
+	_cargo_label.custom_minimum_size = Vector2(64, 0)
+	_cargo_label.add_theme_font_size_override("font_size", 14)
+	_cargo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	crow.add_child(_cargo_label)
+
 
 func _sync_all_resources() -> void:
+	_refresh_cargo()
 	if is_instance_valid(_camp):
 		for entry in RESOURCE_DISPLAY:
 			var type: int = int(entry["type"])
@@ -1808,8 +1831,31 @@ func _tower_store() -> Node:
 	return get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
 
 
+## «📦 Трюм»: сумма всех материалов склада башни. ⚠ янтарным — любой тип упёрся
+## в кап (добыча/орбы встали) → вези на разгрузочную платформу.
+func _refresh_cargo() -> void:
+	if _cargo_label == null or not is_instance_valid(_cargo_label):
+		return
+	var store := _tower_store()
+	if store == null:
+		_cargo_label.text = "—"
+		return
+	var total: int = 0
+	var full: bool = false
+	for type in [ResourcePile.ResourceType.WOOD, ResourcePile.ResourceType.STONE,
+			ResourcePile.ResourceType.IRON, ResourcePile.ResourceType.SILVER,
+			ResourcePile.ResourceType.GOLD]:
+		total += int(store.call(&"get_amount", type))
+		if bool(store.call(&"is_full", type)):
+			full = true
+	_cargo_label.text = ("%d ⚠" % total) if full else str(total)
+	var col := Color(1.0, 0.75, 0.3) if full else (Color(1, 1, 1) if total > 0 else Color(0.6, 0.6, 0.6))
+	_cargo_label.add_theme_color_override(&"font_color", col)
+
+
 func _on_resource_changed(type: int, amount: int) -> void:
 	_refresh_resource_label(type, amount)
+	_refresh_cargo()
 	# Золото — главный ресурс победы: обновляем баннер прогресса + pop на приросте.
 	if type == int(ResourcePile.ResourceType.GOLD):
 		_refresh_gold_goal()
