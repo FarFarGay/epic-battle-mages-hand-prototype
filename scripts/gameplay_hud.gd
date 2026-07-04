@@ -1380,7 +1380,10 @@ func _populate_build_palette() -> void:
 	if _build_sections == null or not is_instance_valid(_build_sections):
 		return
 	_rebuild_build_tabs()
+	# remove_child СРАЗУ (не только queue_free): иначе старые карточки до конца кадра
+	# сидят в min-size контейнера и _fit_palette_height мерит двойную высоту.
 	for child in _build_sections.get_children():
+		_build_sections.remove_child(child)
 		child.queue_free()
 	_build_cards.clear()
 	var section: Dictionary = BUILD_SECTIONS[clampi(_build_active_tab, 0, BUILD_SECTIONS.size() - 1)]
@@ -1392,6 +1395,19 @@ func _populate_build_palette() -> void:
 	for id in section["ids"]:
 		grid.add_child(_make_build_card(int(id)))
 	_refresh_build_affordability()
+	_fit_palette_height()
+
+
+## АВТОВЫСОТА палитры: панель в .tscn фиксирована (480), но контент вкладки обычно
+## меньше — низ подрезаем по факту (заголовок+табы+карточки+отступы), длинные
+## вкладки капятся исходной высотой (скролл). Пустой «хвост» панели — хреновый масштаб.
+func _fit_palette_height() -> void:
+	if _build_palette == null or not is_instance_valid(_build_palette):
+		return
+	var cards_h: float = _build_sections.get_combined_minimum_size().y
+	var head_h: float = 34.0 + 34.0  # Title + Tabs (с сепараторами VBox)
+	var margins: float = 24.0 + 16.0
+	_build_palette.size.y = minf(480.0, cards_h + head_h + margins)
 
 
 ## Пересобрать кнопки-вкладки (активная — нажата/ярче). Полный титул секции — в tooltip.
@@ -1427,12 +1443,21 @@ func _on_build_tab_pressed(idx: int) -> void:
 func _make_build_card(id: int) -> Button:
 	var info := _build_item_info(id)
 	var card := Button.new()
-	card.custom_minimum_size = Vector2(0, 60)  # имя (1 стр.) + эффект (до 2 стр.); Button не растёт под детей
+	card.custom_minimum_size = Vector2(0, 54)  # имя (1 стр.) + эффект (до 2 стр.); Button не растёт под детей
 	card.clip_contents = true  # длинный эффект не вылезет в соседнюю карточку
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.focus_mode = Control.FOCUS_NONE
 	card.disabled = info["disabled"]
 	card.pressed.connect(_on_build_card_pressed.bind(id))
+	# Заблокированная карточка в дефолтной теме почти прозрачна → «висящий текст».
+	# Явный стиль: лёгкий фон + рамка, границы карточки видны и в disabled.
+	if info["disabled"]:
+		var dsb := StyleBoxFlat.new()
+		dsb.bg_color = Color(1, 1, 1, 0.045)
+		dsb.border_color = Color(1, 1, 1, 0.12)
+		dsb.set_border_width_all(1)
+		dsb.set_corner_radius_all(4)
+		card.add_theme_stylebox_override(&"disabled", dsb)
 	var inner := VBoxContainer.new()
 	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	inner.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1776,6 +1801,16 @@ func _make_side_panel(title_text: String, height: float, accent: Color) -> Dicti
 	return {"panel": panel, "vbox": vbox, "title": title}
 
 
+## Подогнать высоту боковой панели по контенту (зов после наполнения): высота из
+## _make_side_panel — стартовая, реальная = min-size VBox + отступы. Без пустых хвостов.
+func _fit_side_panel(panel: Panel, vbox: VBoxContainer) -> void:
+	if panel == null or vbox == null or not is_instance_valid(panel) or not is_instance_valid(vbox):
+		return
+	var h: float = vbox.get_combined_minimum_size().y + 20.0
+	panel.offset_top = -h * 0.5
+	panel.offset_bottom = h * 0.5
+
+
 # --- ПАНЕЛЬ КАЗАРМЫ (клик по казарме: нанять / призвать за башню / вернуть на стену) -----------
 var _barracks_panel: Panel = null
 var _barracks_title: Label = null
@@ -1811,6 +1846,7 @@ func _build_barracks_panel() -> void:
 	_barracks_btn_wall.focus_mode = Control.FOCUS_NONE
 	_barracks_btn_wall.pressed.connect(_on_barracks_wall_pressed)
 	vbox.add_child(_barracks_btn_wall)
+	_fit_side_panel(_barracks_panel, vbox)
 
 
 ## Казарма, чья панель открыта (или null — снесена/не выбрана).
@@ -1927,7 +1963,9 @@ func _tower_upgrades() -> TowerUpgrades:
 func _populate_dock_shop() -> void:
 	if _dock_shop_list == null or not is_instance_valid(_dock_shop_list):
 		return
+	# remove_child сразу — иначе _fit_side_panel мерит и старые, и новые строки.
 	for c in _dock_shop_list.get_children():
+		_dock_shop_list.remove_child(c)
 		c.queue_free()
 	var up := _tower_upgrades()
 	for id in TowerUpgrades.SLICE_CATALOG:
@@ -1939,6 +1977,7 @@ func _populate_dock_shop() -> void:
 		if has_windows:
 			_dock_crew_label.text = "Экипаж %d · стволов %d — прячь лучников: «🏰 В башню»" \
 				% [up.crew_count(), up.window_count()]
+	_fit_side_panel(_dock_shop, _dock_shop_list.get_parent() as VBoxContainer)
 
 
 ## Компактная строка среза: свотч + имя (подсказка — в tooltip) + кнопка-цена/✓.
