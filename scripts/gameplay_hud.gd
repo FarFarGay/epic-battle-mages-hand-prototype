@@ -1480,6 +1480,12 @@ func _make_build_card(id: int) -> Button:
 	name_lbl.text = "%s %s" % [info["emoji"], info["name"]]
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Длинное имя УЖИМАЕТСЯ с многоточием, а не выталкивает цену/население за край
+	# карточки («вылет» правых меток). Min width 0 — только так expand-метка отдаёт
+	# место соседям при переполнении строки.
+	name_lbl.clip_text = true
+	name_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_lbl.custom_minimum_size = Vector2(60, 0)
 	top.add_child(name_lbl)
 	var cost_lbl := Label.new()
 	cost_lbl.text = String(info["cost_text"])
@@ -1561,7 +1567,7 @@ func _build_item_info(id: int) -> Dictionary:
 ## одна клетка. Ручное позиционирование ColorRect'ов внутри голого Control —
 ## он не контейнер, размеры фиксируем custom_minimum_size по границам фигуры.
 func _make_shape_preview(cells: Array, color: Color) -> Control:
-	const PX := 9.0
+	const PX := 7.0
 	var c := Control.new()
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
