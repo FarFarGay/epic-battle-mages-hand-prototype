@@ -87,6 +87,14 @@ func owner_squad_count(owner: Node) -> int:
 	return _count_in(owner.get_instance_id())
 
 
+## Отряд ЭТОЙ казармы (ключ = instance_id) или null, если ещё не нанимали.
+## Панель казармы (HUD) управляет им: призвать за башню / вернуть на стену.
+func owner_squad(owner: Node) -> Squad:
+	if owner == null:
+		return null
+	return _squads.get(owner.get_instance_id())
+
+
 ## Заказ отряда ПО ТИПУ (ключ = soldier_type) — ОДИН общий отряд на тип. Для рабочих-артели
 ## из замка (oil_collector): та же артель, что стартовые рабочие, общий cap. НЕ для казарм
 ## (у них per-barracks через request_squad_for). Возвращает новых членов.

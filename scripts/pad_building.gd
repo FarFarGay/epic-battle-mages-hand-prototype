@@ -1943,10 +1943,29 @@ func _clicked_on_self() -> bool:
 	return cell in occupied_cells()
 
 
-## ЛКМ по футпринту казармы → открыть стол найма.
+## ЛКМ по футпринту казармы → ПАНЕЛЬ КАЗАРМЫ в HUD (нанять / призвать / на стену).
+## Стол найма открывается из панели (open_hire), не напрямую.
 func _tick_hire_click() -> void:
 	if _clicked_on_self():
-		_open_hire()
+		EventBus.barracks_panel_requested.emit(self)
+
+
+## Открыть стол найма этой казармы (зовёт кнопка «Нанять» панели казармы в HUD).
+func open_hire() -> void:
+	_open_hire()
+
+
+## Отряд этой казармы (или null, если ещё не нанимали) — для панели казармы.
+func my_squad() -> Squad:
+	var sp := get_tree().get_first_node_in_group(&"squad_spawner")
+	if sp != null and sp.has_method(&"owner_squad"):
+		return sp.call(&"owner_squad", self)
+	return null
+
+
+## Эффективный кап гарнизона этой казармы (публично для панели казармы в HUD).
+func hire_cap() -> int:
+	return _my_hire_cap()
 
 
 ## ЛКМ по Кафедре Волшебных свитков → HUD открывает магазин заклинаний (ловит spell_shop_requested).

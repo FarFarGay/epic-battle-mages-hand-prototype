@@ -138,7 +138,10 @@ var _journal_badge: Label
 ## по СЕКЦИЯМ-категориям (что к чему относится) и показывают цену + эффект (что за что даётся).
 ## Тоггл по кнопке «🔨 Стройка». _build_cards — для live-обновления оплатимости при смене казны.
 @onready var _build_palette: Panel = $BuildPalette
+@onready var _build_tabs: HBoxContainer = $BuildPalette/Margin/VBox/Tabs
 @onready var _build_sections: VBoxContainer = $BuildPalette/Margin/VBox/Scroll/Sections
+## Активная вкладка палитры (индекс в BUILD_SECTIONS). Помнится между открытиями.
+var _build_active_tab: int = 0
 var _build_cards: Array = []  # [{cost_label: Label, cost: Dictionary}] — для _refresh_build_affordability
 const BUILD_MENU_PUMP := 11  # качалка-замок (центр грид-города)
 const BUILD_MENU_PAD_WALL1 := 12
@@ -181,12 +184,14 @@ var PAD_MENU_IDS := {
 ## внутри = порядок карточек. Группировка по той же таксономии, что и квартал-баффы — игрок
 ## видит «что к чему относится» (добыча/оборона/замок). Шахта первой в «Добыче» (ядро), сапорты
 ## следом. Мост через пропасть — НЕ стройка: физическая плашка-предмет ([bridge_plank.gd]).
+## Секции = ВКЛАДКИ палитры («tab» — короткий лейбл кнопки-таба, «title» — полный,
+## идёт в tooltip). За раз видна одна категория — ничего не перемешивается.
 const BUILD_SECTIONS := [
-	{"title": "⛏  ДОБЫЧА — квартал", "ids": [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_SMELTER, BUILD_MENU_PAD_MINT]},
-	{"title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_STAKES]},
-	{"title": "⚔  ГАРНИЗОН — квартал", "ids": [BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
-	{"title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE, BUILD_MENU_PAD_UNLOAD, BUILD_MENU_PAD_DOCK]},
-	{"title": "🔮  МАГИЯ — квартал", "ids": [BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_MANA_CRYSTAL, BUILD_MENU_PAD_MANA_RUNE]},
+	{"tab": "⛏ Добыча", "title": "⛏  ДОБЫЧА — квартал", "ids": [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_SMELTER, BUILD_MENU_PAD_MINT]},
+	{"tab": "🛡 Оборона", "title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_STAKES]},
+	{"tab": "⚔ Войско", "title": "⚔  ГАРНИЗОН — квартал", "ids": [BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
+	{"tab": "🏰 Замок", "title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE, BUILD_MENU_PAD_UNLOAD, BUILD_MENU_PAD_DOCK]},
+	{"tab": "🔮 Магия", "title": "🔮  МАГИЯ — квартал", "ids": [BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_MANA_CRYSTAL, BUILD_MENU_PAD_MANA_RUNE]},
 ]
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
@@ -302,6 +307,7 @@ func _ready() -> void:
 	EventBus.resources_changed.connect(_on_resource_changed)
 	EventBus.spell_shop_requested.connect(_on_spell_shop_requested)
 	EventBus.tower_dock_requested.connect(_on_tower_dock_requested)
+	EventBus.barracks_panel_requested.connect(_on_barracks_panel_requested)
 	# Разблокировали заклинание (магазин у Кафедры) → пересобрать трей: новый слот, equip'абельно клавишей.
 	EventBus.spell_unlocked.connect(_on_spell_unlocked)
 	_build_alarm_banner()
@@ -416,6 +422,7 @@ func _disconnect_eventbus() -> void:
 	EventBus.resources_changed.disconnect(_on_resource_changed)
 	EventBus.spell_shop_requested.disconnect(_on_spell_shop_requested)
 	EventBus.tower_dock_requested.disconnect(_on_tower_dock_requested)
+	EventBus.barracks_panel_requested.disconnect(_on_barracks_panel_requested)
 	EventBus.spell_unlocked.disconnect(_on_spell_unlocked)
 	EventBus.alarm_changed.disconnect(_on_alarm_changed)
 	EventBus.coins_spent.disconnect(_on_coins_spent)
@@ -771,8 +778,10 @@ func _refresh_slot_visuals(slot: Dictionary) -> void:
 
 
 ## Tick-обновление: highlight активного + cooldown-dim. Дёргается каждые
-## ACTION_BAR_UPDATE_INTERVAL.
+## ACTION_BAR_UPDATE_INTERVAL. Заодно освежает панель казармы (живые/статус),
+## пока она открыта — тот же дешёвый тик.
 func _update_action_bar() -> void:
+	_refresh_barracks_panel()
 	var hand := _resolve_hand()
 	for slot in _action_slots:
 		var meta: Dictionary = _slot_meta(slot)
@@ -1364,30 +1373,52 @@ func _toggle_build_palette() -> void:
 	_build_palette.show()
 
 
-## Наполнить палитру карточками по СЕКЦИЯМ (BUILD_SECTIONS). Каждый заголовок — категория,
-## под ним сетка карточек (иконка+имя, цена, эффект). Пере-собирается при каждом открытии —
-## так подхватывается смена гейтинга (построена ли качалка) без слежения за событиями.
+## Наполнить палитру: ряд ВКЛАДОК-категорий + карточки ТОЛЬКО активной вкладки
+## (иконка+имя+превью формы, цена, эффект). Пере-собирается при каждом открытии/смене
+## вкладки — так подхватывается смена гейтинга (построена ли качалка) без событий.
 func _populate_build_palette() -> void:
 	if _build_sections == null or not is_instance_valid(_build_sections):
 		return
+	_rebuild_build_tabs()
 	for child in _build_sections.get_children():
 		child.queue_free()
 	_build_cards.clear()
-	for section in BUILD_SECTIONS:
-		var header := Label.new()
-		header.text = String(section["title"])
-		header.add_theme_font_size_override("font_size", 13)
-		header.add_theme_color_override("font_color", Color(0.78, 0.82, 0.9, 0.9))
-		_build_sections.add_child(header)
-		# Карточки секции — в GridContainer (1 колонка): легко расширить до 2 колонок позже.
-		var grid := GridContainer.new()
-		grid.columns = 1
-		grid.add_theme_constant_override("v_separation", 4)
-		grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_build_sections.add_child(grid)
-		for id in section["ids"]:
-			grid.add_child(_make_build_card(int(id)))
+	var section: Dictionary = BUILD_SECTIONS[clampi(_build_active_tab, 0, BUILD_SECTIONS.size() - 1)]
+	var grid := GridContainer.new()
+	grid.columns = 1
+	grid.add_theme_constant_override("v_separation", 4)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_build_sections.add_child(grid)
+	for id in section["ids"]:
+		grid.add_child(_make_build_card(int(id)))
 	_refresh_build_affordability()
+
+
+## Пересобрать кнопки-вкладки (активная — нажата/ярче). Полный титул секции — в tooltip.
+func _rebuild_build_tabs() -> void:
+	if _build_tabs == null or not is_instance_valid(_build_tabs):
+		return
+	for c in _build_tabs.get_children():
+		c.queue_free()
+	for i in range(BUILD_SECTIONS.size()):
+		var s: Dictionary = BUILD_SECTIONS[i]
+		var btn := Button.new()
+		btn.text = String(s.get("tab", "?"))
+		btn.tooltip_text = String(s.get("title", ""))
+		btn.toggle_mode = true
+		btn.button_pressed = (i == _build_active_tab)
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.add_theme_font_size_override(&"font_size", 11)
+		if i != _build_active_tab:
+			btn.modulate = Color(1, 1, 1, 0.62)
+		btn.pressed.connect(_on_build_tab_pressed.bind(i))
+		_build_tabs.add_child(btn)
+
+
+func _on_build_tab_pressed(idx: int) -> void:
+	_build_active_tab = idx
+	_populate_build_palette()
 
 
 ## Одна карточка постройки = Button (даёт hover/pressed/disabled даром) с детьми-лейблами
@@ -1415,7 +1446,11 @@ func _make_build_card(id: int) -> Button:
 	card.add_child(inner)
 	var top := HBoxContainer.new()
 	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	top.add_theme_constant_override(&"separation", 7)
 	inner.add_child(top)
+	# Мини-превью ФОРМЫ фигуры (полимино из cells каталога) — видно, что ставишь,
+	# ДО выбора: шахта — точка, стена — палка, двор — «Г», склад — квадрат.
+	top.add_child(_make_shape_preview(info.get("cells", []), info.get("shape_color", Color.GRAY)))
 	var name_lbl := Label.new()
 	name_lbl.text = "%s %s" % [info["emoji"], info["name"]]
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1468,7 +1503,9 @@ func _build_item_info(id: int) -> Dictionary:
 		elif pump_exists:
 			sub = "✓ уже построена (одна на отряд)"
 		return {"emoji": _emoji_of(data), "name": String(data.get("name", "Качалка")),
-			"cost_text": _format_cost(data), "cost": {}, "pop": 0, "cap": 0, "sub_text": sub, "disabled": disabled}
+			"cost_text": _format_cost(data), "cost": {}, "pop": 0, "cap": 0, "sub_text": sub, "disabled": disabled,
+			"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],  # ≈футпринт 4.6м
+			"shape_color": data.get("ghost_color", Color.GRAY)}
 	# Фигуры площадки: знание гномов И построенная качалка (от неё растёт грид). Магические сапорты
 	# (роли mana_*) дополнительно требуют Институт магии (_magic_unlocked).
 	var bid: StringName = PAD_MENU_IDS.get(id, &"")
@@ -1489,7 +1526,38 @@ func _build_item_info(id: int) -> Dictionary:
 		"cost_text": _format_cost(pdata), "cost": pdata.get("cost", {}),
 		"pop": PadBuilding.pop_for_role(pdata.get("role", &"")),
 		"cap": PadBuilding.garrison_for_role(pdata.get("role", &"")),
-		"sub_text": psub, "disabled": pdisabled}
+		"sub_text": psub, "disabled": pdisabled,
+		"cells": pdata.get("cells", []),
+		"shape_color": pdata.get("ghost_color", Color.GRAY)}
+
+
+## Мини-превью формы постройки: полимино из клеток `cells` каталога, клетка 9px,
+## цвет — ghost_color фигуры (непрозрачный). Нет cells (качалка/легаси-сцены) —
+## одна клетка. Ручное позиционирование ColorRect'ов внутри голого Control —
+## он не контейнер, размеры фиксируем custom_minimum_size по границам фигуры.
+func _make_shape_preview(cells: Array, color: Color) -> Control:
+	const PX := 9.0
+	var c := Control.new()
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var use_cells: Array = cells if not cells.is_empty() else [Vector2i(0, 0)]
+	var mn := Vector2i(9999, 9999)
+	var mx := Vector2i(-9999, -9999)
+	for cell in use_cells:
+		var v := cell as Vector2i
+		mn = Vector2i(mini(mn.x, v.x), mini(mn.y, v.y))
+		mx = Vector2i(maxi(mx.x, v.x), maxi(mx.y, v.y))
+	c.custom_minimum_size = Vector2(float(mx.x - mn.x + 1) * PX, float(mx.y - mn.y + 1) * PX)
+	var solid := Color(color.r, color.g, color.b, 0.95)
+	for cell in use_cells:
+		var v := cell as Vector2i
+		var r := ColorRect.new()
+		r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		r.color = solid
+		r.position = Vector2(float(v.x - mn.x) * PX + 1.0, float(v.y - mn.y) * PX + 1.0)
+		r.size = Vector2(PX - 2.0, PX - 2.0)
+		c.add_child(r)
+	return c
 
 
 ## Иконка постройки = первый «токен» menu_label (эмодзи перед пробелом). Дублировать поле
@@ -1661,6 +1729,160 @@ func _on_spell_buy(id: StringName, cost: Dictionary) -> void:
 	_populate_spell_shop()
 
 
+# --- БОКОВЫЕ КОНТЕКСТНЫЕ ПАНЕЛИ (единый каркас: казарма, верфь) --------------------------------
+## Компактная панель у ПРАВОГО края экрана вместо центральной модалки: не паузит,
+## не перекрывает поле боя, закрывается ✕ в заголовке. Высота фиксирована по контенту.
+func _make_side_panel(title_text: String, height: float, accent: Color) -> Dictionary:
+	var panel := Panel.new()
+	panel.anchor_left = 1.0
+	panel.anchor_right = 1.0
+	panel.anchor_top = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -276.0
+	panel.offset_right = -12.0
+	panel.offset_top = -height * 0.5
+	panel.offset_bottom = height * 0.5
+	panel.visible = false
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.09, 0.08, 0.1, 0.95)
+	sb.border_color = accent
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(8)
+	sb.set_content_margin_all(10)
+	panel.add_theme_stylebox_override(&"panel", sb)
+	add_child(panel)
+	var vbox := VBoxContainer.new()
+	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	vbox.offset_left = 10
+	vbox.offset_top = 8
+	vbox.offset_right = -10
+	vbox.offset_bottom = -8
+	vbox.add_theme_constant_override(&"separation", 5)
+	panel.add_child(vbox)
+	var title_row := HBoxContainer.new()
+	vbox.add_child(title_row)
+	var title := Label.new()
+	title.text = title_text
+	title.add_theme_font_size_override(&"font_size", 14)
+	title.add_theme_color_override(&"font_color", accent)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(title)
+	var close := Button.new()
+	close.text = "✕"
+	close.focus_mode = Control.FOCUS_NONE
+	close.custom_minimum_size = Vector2(24, 24)
+	close.pressed.connect(func() -> void: panel.visible = false)
+	title_row.add_child(close)
+	return {"panel": panel, "vbox": vbox, "title": title}
+
+
+# --- ПАНЕЛЬ КАЗАРМЫ (клик по казарме: нанять / призвать за башню / вернуть на стену) -----------
+var _barracks_panel: Panel = null
+var _barracks_title: Label = null
+var _barracks_status: Label = null
+var _barracks_btn_summon: Button = null
+var _barracks_btn_wall: Button = null
+var _barracks_ref: WeakRef = null  # казарма (PadBuilding), чья панель открыта
+
+
+func _build_barracks_panel() -> void:
+	var parts: Dictionary = _make_side_panel("Казарма", 168.0, Color(0.55, 0.7, 0.9))
+	_barracks_panel = parts["panel"]
+	_barracks_title = parts["title"]
+	var vbox: VBoxContainer = parts["vbox"]
+	_barracks_status = Label.new()
+	_barracks_status.add_theme_font_size_override(&"font_size", 12)
+	_barracks_status.add_theme_color_override(&"font_color", Color(0.75, 0.75, 0.7))
+	vbox.add_child(_barracks_status)
+	var btn_hire := Button.new()
+	btn_hire.text = "💰 Нанять"
+	btn_hire.focus_mode = Control.FOCUS_NONE
+	btn_hire.pressed.connect(_on_barracks_hire_pressed)
+	vbox.add_child(btn_hire)
+	_barracks_btn_summon = Button.new()
+	_barracks_btn_summon.text = "⚔ Призвать за башню"
+	_barracks_btn_summon.tooltip_text = "Гарнизон сходит со стены и следует за башней"
+	_barracks_btn_summon.focus_mode = Control.FOCUS_NONE
+	_barracks_btn_summon.pressed.connect(_on_barracks_summon_pressed)
+	vbox.add_child(_barracks_btn_summon)
+	_barracks_btn_wall = Button.new()
+	_barracks_btn_wall.text = "🧱 Вернуть на стену"
+	_barracks_btn_wall.tooltip_text = "Бойцы возвращаются на посты гарнизона"
+	_barracks_btn_wall.focus_mode = Control.FOCUS_NONE
+	_barracks_btn_wall.pressed.connect(_on_barracks_wall_pressed)
+	vbox.add_child(_barracks_btn_wall)
+
+
+## Казарма, чья панель открыта (или null — снесена/не выбрана).
+func _panel_barracks() -> Node:
+	if _barracks_ref == null:
+		return null
+	var b = _barracks_ref.get_ref()
+	return b if b != null and is_instance_valid(b) else null
+
+
+func _on_barracks_panel_requested(barracks: Node3D) -> void:
+	if _barracks_panel == null or not is_instance_valid(_barracks_panel):
+		_build_barracks_panel()
+	_barracks_ref = weakref(barracks)
+	_refresh_barracks_panel()
+	_barracks_panel.visible = true
+
+
+## Обновить заголовок/статус/доступность кнопок. Зовётся при открытии и периодически
+## (_update_action_bar), пока панель видна — счёт живых и статус меняются в бою.
+func _refresh_barracks_panel() -> void:
+	if _barracks_panel == null or not is_instance_valid(_barracks_panel) or not _barracks_panel.visible:
+		return
+	var b := _panel_barracks()
+	if b == null:
+		_barracks_panel.visible = false  # казарму снесли — панель гаснет
+		return
+	var data: Dictionary = RoomBuildings.get_data(b.get(&"building_id"))
+	_barracks_title.text = String(data.get("menu_label", data.get("name", "Казарма")))
+	var squad: Squad = b.call(&"my_squad")
+	var living: int = squad.count_alive() if squad != null else 0
+	var cap: int = int(b.call(&"hire_cap"))
+	var where: String = ""
+	if living > 0 and squad != null:
+		where = " · за башней" if squad.state == Squad.State.ESCORTING_TOWER else " · на постах"
+	_barracks_status.text = "🛡 Гарнизон  %d / %d%s" % [living, cap, where]
+	_barracks_btn_summon.disabled = living <= 0
+	_barracks_btn_wall.disabled = living <= 0
+
+
+## «Нанять» — открыть стол торга ЭТОЙ казармы (он паузит игру; панель прячем).
+func _on_barracks_hire_pressed() -> void:
+	var b := _panel_barracks()
+	if b == null:
+		return
+	_barracks_panel.visible = false
+	b.call(&"open_hire")
+
+
+## «Призвать за башню» — гарнизон этой казармы сходит со стены и эскортирует башню.
+func _on_barracks_summon_pressed() -> void:
+	var b := _panel_barracks()
+	var squad: Squad = b.call(&"my_squad") if b != null else null
+	if squad == null:
+		return
+	_cancel_hand_aims()
+	squad.command_escort()
+	_refresh_barracks_panel()
+
+
+## «Вернуть на стену» — мягкий hold: бойцы с назначенными постами сами лезут в гарнизон
+## (та же логика, что кнопка «На стену» карточки отряда).
+func _on_barracks_wall_pressed() -> void:
+	var b := _panel_barracks()
+	var squad: Squad = b.call(&"my_squad") if b != null else null
+	if squad == null:
+		return
+	_cancel_hand_aims()
+	squad.command_hold(_squad_alive_center_or_tower(squad), false)
+	_refresh_barracks_panel()
+
+
 # --- ВЕРФЬ БАШНИ (срезы-слои, TowerUpgrades) ---------------------------------------------------
 ## Окно покупки срезов башни. Открывается кликом по Верфи (EventBus.tower_dock_requested).
 ## Каталог и установка — в TowerUpgrades (нода Upgrades в tower.tscn); тут только карточки
@@ -1670,54 +1892,23 @@ var _dock_shop_list: VBoxContainer = null
 var _dock_crew_label: Label = null
 
 
-## Окно верфи (по центру экрана, скрыто). Программно — как _build_spell_shop.
+## КОМПАКТНАЯ панель верфи у правого края (каркас _make_side_panel) — не модалка
+## на полэкрана: три строки-среза + строка экипажа. Подсказки срезов — в tooltip.
 func _build_dock_shop() -> void:
-	_dock_shop = Panel.new()
-	_dock_shop.anchor_left = 0.5
-	_dock_shop.anchor_right = 0.5
-	_dock_shop.anchor_top = 0.5
-	_dock_shop.anchor_bottom = 0.5
-	_dock_shop.offset_left = -230.0
-	_dock_shop.offset_right = 230.0
-	_dock_shop.offset_top = -170.0
-	_dock_shop.offset_bottom = 170.0
-	_dock_shop.visible = false
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.1, 0.08, 0.06, 0.96)
-	sb.border_color = Color(0.85, 0.68, 0.35, 0.9)
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(10)
-	sb.set_content_margin_all(14)
-	_dock_shop.add_theme_stylebox_override(&"panel", sb)
-	add_child(_dock_shop)
-	var vbox := VBoxContainer.new()
-	vbox.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	vbox.offset_left = 14
-	vbox.offset_top = 14
-	vbox.offset_right = -14
-	vbox.offset_bottom = -14
-	vbox.add_theme_constant_override(&"separation", 8)
-	_dock_shop.add_child(vbox)
-	var title := Label.new()
-	title.text = "🛠 Верфь башни — срезы"
-	title.add_theme_font_size_override(&"font_size", 17)
-	title.add_theme_color_override(&"font_color", Color(1.0, 0.85, 0.6))
-	vbox.add_child(title)
+	var parts: Dictionary = _make_side_panel("🛠 Верфь башни", 178.0, Color(0.85, 0.68, 0.35))
+	_dock_shop = parts["panel"]
+	var vbox: VBoxContainer = parts["vbox"]
 	_dock_shop_list = VBoxContainer.new()
-	_dock_shop_list.add_theme_constant_override(&"separation", 6)
+	_dock_shop_list.add_theme_constant_override(&"separation", 3)
 	_dock_shop_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vbox.add_child(_dock_shop_list)
 	# Строка экипажа арбалетов: видна при установленных окнах (обновляется при открытии/покупке).
 	_dock_crew_label = Label.new()
-	_dock_crew_label.add_theme_font_size_override(&"font_size", 12)
+	_dock_crew_label.add_theme_font_size_override(&"font_size", 11)
 	_dock_crew_label.add_theme_color_override(&"font_color", Color(0.75, 0.72, 0.65))
+	_dock_crew_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_dock_crew_label.visible = false
 	vbox.add_child(_dock_crew_label)
-	var close := Button.new()
-	close.text = "Закрыть"
-	close.focus_mode = Control.FOCUS_NONE
-	close.pressed.connect(func() -> void: _dock_shop.visible = false)
-	vbox.add_child(close)
 
 
 func _on_tower_dock_requested() -> void:
@@ -1746,41 +1937,40 @@ func _populate_dock_shop() -> void:
 		var has_windows: bool = up != null and up.window_count() > 0
 		_dock_crew_label.visible = has_windows
 		if has_windows:
-			_dock_crew_label.text = "Экипаж: %d лучников внутри · стволов %d. Прячь лучников: карточка отряда → «🏰 В башню»." \
+			_dock_crew_label.text = "Экипаж %d · стволов %d — прячь лучников: «🏰 В башню»" \
 				% [up.crew_count(), up.window_count()]
 
 
+## Компактная строка среза: свотч + имя (подсказка — в tooltip) + кнопка-цена/✓.
 func _make_dock_card(id: StringName, data: Dictionary, up: TowerUpgrades) -> Control:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override(&"separation", 8)
+	row.add_theme_constant_override(&"separation", 7)
+	row.tooltip_text = String(data.get("hint", ""))
 	var sw := ColorRect.new()
 	sw.color = data.get("icon_color", Color.WHITE)
-	sw.custom_minimum_size = Vector2(22, 22)
+	sw.custom_minimum_size = Vector2(15, 15)
+	sw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	sw.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(sw)
-	var text_col := VBoxContainer.new()
-	text_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	text_col.add_theme_constant_override(&"separation", 0)
-	row.add_child(text_col)
 	var name_lbl := Label.new()
 	name_lbl.text = String(data.get("name", id))
-	text_col.add_child(name_lbl)
-	var hint_lbl := Label.new()
-	hint_lbl.text = String(data.get("hint", ""))
-	hint_lbl.add_theme_font_size_override(&"font_size", 11)
-	hint_lbl.add_theme_color_override(&"font_color", Color(0.7, 0.68, 0.62))
-	hint_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	text_col.add_child(hint_lbl)
+	name_lbl.add_theme_font_size_override(&"font_size", 12)
+	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(name_lbl)
 	var owned: bool = up != null and up.is_installed(id)
 	var btn := Button.new()
 	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_font_size_override(&"font_size", 11)
+	btn.tooltip_text = row.tooltip_text
 	var cost: Dictionary = data.get("cost", {})
 	if owned:
-		btn.text = "✓ Установлено"
+		btn.text = "✓"
 		btn.disabled = true
 	else:
 		var bank := get_tree().get_first_node_in_group(&"gold_bank")
 		var afford: bool = bank != null and bank.has_method(&"can_afford") and bool(bank.call(&"can_afford", cost))
-		btn.text = "Купить  %s" % _format_cost({"cost": cost})
+		btn.text = _format_cost({"cost": cost})
 		btn.disabled = not afford or up == null
 		if not afford:
 			btn.modulate = Color(1.0, 0.6, 0.55)
