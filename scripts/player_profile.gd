@@ -20,12 +20,9 @@ func _ready() -> void:
 
 
 ## Открыть знание о постройках (idempotent). Зовёт BlueprintMachine на запуске
-## станка; эмитит EventBus один раз — HUD разблокирует меню.
+## станка. HUD/диалоги читают флаг поллингом (prof.get(&"building_unlocked")).
 func unlock_building() -> void:
-	if building_unlocked:
-		return
 	building_unlocked = true
-	EventBus.building_unlocked.emit()
 
 
 ## Отметить победу над камнеметателем (idempotent) — открывает найм лучников Room6.

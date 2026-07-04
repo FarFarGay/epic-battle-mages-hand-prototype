@@ -88,7 +88,7 @@ signal destroyed
 @export_group("")
 
 const GROUP := &"archer_post"
-const SKELETON_TARGET_GROUP := &"skeleton_target"
+const SKELETON_TARGET_GROUP := Enemy.TARGET_GROUP  # канон — Enemy.TARGET_GROUP, локальное имя для совместимости
 ## ENEMIES (16) + COLD_ENEMY (128) — литералом, т.к. const не может ссылаться
 ## на другой class const (см. DefenderGnome.TARGET_MASK).
 const TARGET_MASK: int = 16 | 128

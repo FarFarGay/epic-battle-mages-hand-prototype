@@ -20,10 +20,6 @@ extends Node3D
 ##    `skeletons_per_wave` теперь приходит из активной WaveStage POI, а не
 ##    из самой зоны (зона хранит только budget остатка).
 ##
-## Рантайм-API для эвентов типа «приход Короля Ночи»:
-## - `set_waves(n)` — переписать остаток (например, всем зонам по 50 разом).
-## - `add_waves(n)` — прибавить (накопление).
-##
 ## Визуал — плоский box-индикатор `Mesh` (BoxMesh 1×0.04×1) на y=0.05,
 ## масштабируемый по `size`. @tool-сеттер `size` обновляет индикатор моментально.
 ## В рантайме (`Engine.is_editor_hint() == false`) Mesh скрывается — зона
@@ -48,7 +44,7 @@ extends Node3D
 @export_node_path("Node3D") var target_poi: NodePath
 ## Стартовый budget волн с этой зоны. На _ready копируется в `_waves_left`.
 ## Decrement'ится `consume_wave()` при каждом выстреле дирижёра. По исчерпанию
-## (0) — зона тиха, пока кто-то не вызовет `add_waves`/`set_waves`.
+## (0) — зона тиха.
 @export var wave_count: int = 5
 @export_group("")
 
@@ -76,8 +72,7 @@ func area() -> float:
 
 
 ## Текущий остаток budget волн. Дирижёр читает чтобы понять — может ли
-## зона ещё фейерить. Геттер вместо прямого доступа к `_waves_left` —
-## чтобы внешние не правили счётчик в обход add/set API.
+## зона ещё фейерить.
 func waves_left() -> int:
 	return _waves_left
 
@@ -89,14 +84,3 @@ func consume_wave() -> bool:
 		return false
 	_waves_left -= 1
 	return true
-
-
-## Накопительное пополнение — для частичных рефиллов (на N штук добавить).
-func add_waves(n: int) -> void:
-	_waves_left = maxi(_waves_left + n, 0)
-
-
-## Жёсткая перезапись остатка — для эвентов типа Король Ночи (всем зонам
-## ставим по 100 волн разом, забывая что было раньше).
-func set_waves(n: int) -> void:
-	_waves_left = maxi(n, 0)

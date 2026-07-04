@@ -1442,7 +1442,7 @@ func _build_debug_tab(camp: Node) -> void:
 		self,
 		func(): _cheat_toggle_free_build(),
 	))
-	var bank: Node = get_tree().get_first_node_in_group(&"gold_bank")
+	var bank: Node = get_tree().get_first_node_in_group(GoldBank.GROUP)
 	list.add_child(_build_cheat_card(
 		"+10 золотых (казна rooms)",
 		"Накидывает 10 золотых монет в монетную казну GoldBank (room-экономика, не лагерь).",

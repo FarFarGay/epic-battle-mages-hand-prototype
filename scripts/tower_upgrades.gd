@@ -199,7 +199,7 @@ func fire_volley(point: Vector3) -> bool:
 ## Экипаж = лучники со статусом «спрятан в башне» (команда «В башню»). Любой отряд.
 func _count_hidden_archers() -> int:
 	var n: int = 0
-	for s in get_tree().get_nodes_in_group(&"soldier"):
+	for s in get_tree().get_nodes_in_group(SoldierGnome.SOLDIER_GROUP):
 		if is_instance_valid(s) and s is ArcherSoldier \
 				and s.has_method(&"is_hidden_in_tower") and s.call(&"is_hidden_in_tower"):
 			n += 1

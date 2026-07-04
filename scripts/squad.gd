@@ -23,11 +23,9 @@ signal state_changed
 ## squad из _squads и эмитнуть squad_disbanded.
 signal disbanded
 ## Заряженная AOE-атака отряда: накопилось ещё единиц / достигнут max / списано.
-## Маркер над отрядом подписан и обновляет визуал (прогресс bar / пульсация).
+## Маркер над отрядом подписан и обновляет визуал (прогресс bar / пульсация);
+## готовность он читает поллингом is_charge_ready().
 signal charge_changed(value: float, max_value: float)
-## Шкала впервые в этом цикле достигла max — маркер триггерит «готов»-анимацию
-## один раз (а не в каждом on_change).
-signal charge_ready
 
 enum State { HOLDING_POSITION, ESCORTING_TOWER, DEFENDING_CAMP }
 
@@ -238,16 +236,13 @@ func compute_center() -> Vector3:
 	return sum / float(n)
 
 
-## Прирастить заряд (1.0 = один kill членом отряда). Эмитит charge_changed,
-## один раз charge_ready на переходе через max.
+## Прирастить заряд (1.0 = один kill членом отряда). Эмитит charge_changed;
+## «готовность» маркер снимает поллингом is_charge_ready.
 func add_charge(amount: float) -> void:
 	if amount <= 0.0 or charge_max <= 0.0:
 		return
-	var was_ready: bool = _charge >= charge_max
 	_charge = clampf(_charge + amount, 0.0, charge_max)
 	charge_changed.emit(_charge, charge_max)
-	if not was_ready and _charge >= charge_max:
-		charge_ready.emit()
 
 
 func get_charge() -> float:

@@ -24,7 +24,7 @@ extends RigidBody3D
 signal damaged(amount: float)
 signal destroyed
 
-const SKELETON_TARGET_GROUP := &"skeleton_target"
+const SKELETON_TARGET_GROUP := Enemy.TARGET_GROUP  # канон — Enemy.TARGET_GROUP, локальное имя для совместимости
 
 ## HP палатки. Slam (hand_physical_slam.slam_damage=60 × falloff) рассчитан
 ## на 2 точных хлопка → hp=120. Скелеты (attack_damage=5) бьют 24 раза для

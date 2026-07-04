@@ -208,7 +208,7 @@ func _grant_mana() -> void:
 func _grant_gold() -> void:
 	if gold_amount <= 0:
 		return
-	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 	if bank == null:
 		return
 	if bank.has_method(&"add_coin"):

@@ -1273,7 +1273,7 @@ func _build_coins_label() -> void:
 func _update_coins_label() -> void:
 	if _coins_label == null:
 		return
-	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 	if bank == null or not bank.has_method(&"get_coin"):
 		_coins_label.visible = false
 		return
@@ -1625,7 +1625,7 @@ func _coin_emoji(t: int) -> String:
 ## Покрасить цену красным на карточках, чью монетную стоимость казна сейчас не тянет.
 ## Зовётся при наполнении и при смене ресурсов (_on_resource_changed), пока палитра видна.
 func _refresh_build_affordability() -> void:
-	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 	for entry in _build_cards:
 		var lbl: Label = entry["cost_label"]
 		if lbl == null or not is_instance_valid(lbl):
@@ -1737,7 +1737,7 @@ func _make_spell_card(id: StringName, cost: Dictionary) -> Control:
 		btn.text = "✓ Куплено"   # PENDING: тут будет «Заряды: N» при производстве патронами
 		btn.disabled = true
 	else:
-		var bank := get_tree().get_first_node_in_group(&"gold_bank")
+		var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 		var afford: bool = bank != null and bank.has_method(&"can_afford") and bool(bank.call(&"can_afford", cost))
 		btn.text = "Купить  %s" % _format_cost({"cost": cost})
 		btn.disabled = not afford
@@ -1750,7 +1750,7 @@ func _make_spell_card(id: StringName, cost: Dictionary) -> Control:
 
 ## Покупка заклинания: списать монеты (GoldBank) атомарно → SpellSystem.unlock → перерисовать.
 func _on_spell_buy(id: StringName, cost: Dictionary) -> void:
-	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 	if bank == null or not bank.has_method(&"spend_cost"):
 		return
 	if not bool(bank.call(&"spend_cost", cost)):
@@ -2013,7 +2013,7 @@ func _make_dock_card(id: StringName, data: Dictionary, up: TowerUpgrades) -> Con
 		btn.text = "✓"
 		btn.disabled = true
 	else:
-		var bank := get_tree().get_first_node_in_group(&"gold_bank")
+		var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 		var afford: bool = bank != null and bank.has_method(&"can_afford") and bool(bank.call(&"can_afford", cost))
 		btn.text = _format_cost({"cost": cost})
 		btn.disabled = not afford or up == null
@@ -2029,7 +2029,7 @@ func _on_dock_buy(id: StringName, cost: Dictionary) -> void:
 	var up := _tower_upgrades()
 	if up == null or up.is_installed(id):
 		return
-	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 	if bank == null or not bank.has_method(&"spend_cost"):
 		return
 	if not bool(bank.call(&"spend_cost", cost)):

@@ -178,11 +178,6 @@ signal alarm_changed(active: bool)
 ## (стройка, найм, магазин заклинаний) из одной точки.
 signal coins_spent(value: int)
 
-## Гномы-строители (Room6): станок-чертёжник в Room11 запущен ([BlueprintMachine])
-## → игрок получил знание о постройке стен/башен. HUD слушает, чтобы
-## разблокировать меню построек. Идемпотентно (флаг живёт в PlayerProfile).
-signal building_unlocked
-
 # --- Squads / Army (мобилизованные солдаты) ---
 ## Отряд создан (recruit_squad) — UI добавляет карточку.
 signal squad_created(squad: RefCounted)

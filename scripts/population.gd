@@ -14,7 +14,7 @@ extends Node
 ## НЕ считаются — это базовая бригада, существовала до экономики населения.
 
 const PAD_GROUP := &"pad_building"
-const SOLDIER_GROUP := &"soldier"
+const SOLDIER_GROUP := SoldierGnome.SOLDIER_GROUP  # канон — SoldierGnome.SOLDIER_GROUP
 const CASTLE_GROUP := &"castle"
 
 ## ЗАМОК — соц-ядро: население существует ТОЛЬКО с замком (он заселяет поселение). До замка cap=0 и

@@ -6,9 +6,8 @@ extends Control
 ## или задел не ту точку — fail. Прошёл все по порядку — success.
 ##
 ## Замедление мира делает не overlay, а координатор (HandSuper) — ставит
-## Engine.time_scale = pattern_time_scale на pattern_started сигнал, возвращает
-## 1.0 на pattern_succeeded/failed. Сам overlay живёт в обычном времени UI
-## (CanvasLayer не подвержен time_scale).
+## Engine.time_scale сам при запуске QTE и возвращает 1.0 по pattern_finished.
+## Сам overlay живёт в обычном времени UI (CanvasLayer не подвержен time_scale).
 ##
 ## Тайм-аут: pattern_timeout секунд. По истечении — fail. Под slow-mo игроку
 ## кажется «много времени», в реальных секундах — pattern_timeout * time_scale.
@@ -18,7 +17,6 @@ extends Control
 ##   await overlay.pattern_finished   # bool: true если success
 ##   queue_free() — overlay сам не убивается, координатор владеет жизненным циклом
 
-signal pattern_started
 ## Финальный сигнал — bool success. Координатор пишет полную/половинную
 ## цену списания и переходит дальше по state machine.
 signal pattern_finished(success: bool)
@@ -128,7 +126,6 @@ func start_pattern(pattern_length: int) -> void:
 	_cursor_trail.clear()
 	if debug_log and LogConfig.master_enabled:
 		print("[SuperPattern] старт, sequence=%s" % str(_expected_sequence))
-	pattern_started.emit()
 	queue_redraw()
 
 

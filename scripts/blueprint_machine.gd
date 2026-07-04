@@ -13,13 +13,11 @@ extends Node3D
 ##           порядке → сброс всех диодов + повторный показ (DEMO).
 ##   DONE  — вся последовательность верна → диоды заглушены, включается рычаг-
 ##           пускач ([lever_path].enable()). Игрок дёргает рычаг → lever зовёт
-##           наш activate() → [_ignite]: станок оживает, EventBus.building_unlocked.
+##           наш activate() → [_ignite]: станок оживает, PlayerProfile.unlock_building.
 ##
 ## Реюз: детект попадания Искрой живёт в SparkBolt → on_spark() у членов
 ## SPARK_TARGET_GROUP; диоды сообщают сюда через сигнал `sparked`. Рычаг — тот же
 ## [Lever] что и в дверных пазлах (enable-gate + target.activate()).
-
-signal ignited  ## станок запущен (квест пройден)
 
 enum State { IDLE, DEMO, INPUT, DONE }
 
@@ -186,6 +184,5 @@ func _ignite() -> void:
 	var profile := get_tree().get_first_node_in_group(&"player_profile")
 	if profile != null and profile.has_method(&"unlock_building"):
 		profile.call(&"unlock_building")
-	ignited.emit()
 	if debug_log and LogConfig.master_enabled:
 		print("[BlueprintMachine] ★ СТАНОК ЗАПУЩЕН — знание о постройках открыто")

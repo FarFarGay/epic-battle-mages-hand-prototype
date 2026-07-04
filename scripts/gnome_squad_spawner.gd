@@ -142,7 +142,7 @@ func _recall_squads() -> void:
 	EventBus.recall_zone_pulsed.emit(origin, recall_radius, recall_radius / maxf(recall_wave_speed, 0.001))
 	# Уникальные живые отряды из солдат.
 	var seen: Dictionary = {}
-	for s in get_tree().get_nodes_in_group(&"soldier"):
+	for s in get_tree().get_nodes_in_group(SoldierGnome.SOLDIER_GROUP):
 		if not is_instance_valid(s) or s._squad == null or seen.has(s._squad):
 			continue
 		seen[s._squad] = true

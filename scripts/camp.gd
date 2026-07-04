@@ -95,7 +95,7 @@ enum CollectionMode { FREE, WORK, ALARM }
 ## tower в эту группу в зависимости от состояния: в каравне tower уязвим
 ## для агро, в развёрнутом лагере — нет (скелеты переключаются на палатки
 ## и гномов вокруг костра).
-const SKELETON_TARGET_GROUP := &"skeleton_target"
+const SKELETON_TARGET_GROUP := Enemy.TARGET_GROUP  # канон — Enemy.TARGET_GROUP, локальное имя для совместимости
 
 ## ID-константы апгрейдов отряда. Используются в has_upgrade() и в каталоге
 ## UPGRADE_CATALOG (для UI/модала).

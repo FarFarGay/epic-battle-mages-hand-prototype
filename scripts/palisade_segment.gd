@@ -13,7 +13,7 @@ extends StaticBody3D
 ## **Не свёртывается с лагерем** — стоит до уничтожения, даже если
 ## караван уехал. «Забытые крепости» на пути.
 
-const SKELETON_TARGET_GROUP := &"skeleton_target"
+const SKELETON_TARGET_GROUP := Enemy.TARGET_GROUP  # канон — Enemy.TARGET_GROUP, локальное имя для совместимости
 ## Группа угловых столбов / endpoint'ов частокола. Используется в
 ## HandBuildAim для snap'а первой вершины новой цепочки к существующей
 ## стене — игрок может «продолжить» от любого угла. Сегменты-стены в

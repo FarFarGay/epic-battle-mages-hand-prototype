@@ -226,7 +226,7 @@ func _can_afford() -> bool:
 	var cost: Dictionary = _data.get("cost", {})
 	if cost.is_empty():
 		return true
-	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 	if bank == null or not bank.has_method(&"can_afford"):
 		return true
 	return bank.call(&"can_afford", cost)
@@ -242,7 +242,7 @@ func _commit(pos: Vector3) -> void:
 	# на дереве "cost" не имеет → бесплатна по монетам, держит свою wood-модель). Атомарно.
 	var cost: Dictionary = _data.get("cost", {})
 	if not cost.is_empty():
-		var bank := get_tree().get_first_node_in_group(&"gold_bank")
+		var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 		if bank != null and bank.has_method(&"spend_cost"):
 			if not bank.call(&"spend_cost", cost):
 				return  # не хватило (двойная защита — process уже гейтит _affordable)
@@ -414,7 +414,7 @@ func _refund_building(b: Node) -> void:
 	var cost: Dictionary = RoomBuildings.get_data((b as PadBuilding).building_id).get("cost", {})
 	if cost.is_empty():
 		return
-	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 	if bank == null or not bank.has_method(&"add_coin"):
 		return
 	for type in cost:

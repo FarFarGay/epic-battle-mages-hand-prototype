@@ -10,6 +10,9 @@ const GROUP := &"pad_building"
 ## ЛКМ-захват рукой (то же действие, что у домика гномов) — клик по казарме = найм,
 ## клик по плавильне = ручная чеканка.
 const ACTION_GRAB := &"hand_grab"
+## Фолбэк типа отряда казармы, если в каталоге забыли squad_type (единая точка —
+## раньше литерал был размазан по трём местам).
+const DEFAULT_SQUAD_TYPE := &"archer_squad"
 
 var building_id: StringName = &""
 var _mask: Array = []        # Array[Vector2i] — клетки фигуры (локальные offset'ы)
@@ -108,17 +111,10 @@ func _ready() -> void:
 	if is_barracks():
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
 		set_process(true)
-	# Плавильня — цель доставки руды гномами; тикает ради дыма во время работы.
-	if is_smelter():
-		add_to_group(&"smelter")
-		set_process(true)
-	# Чеканный двор — стадия конвейера: тикает (тянет металл, свечение). Ручной чеканки нет
-	# (валюта единая, бронза сама копится в серебро/золото — см. GoldBank).
-	if is_mint():
-		set_process(true)
-	# Гномий банк — финальный эндпоинт: тикает ради свечения, пока принимает монеты.
-	if is_bank():
-		set_process(true)
+	# Плавильня/двор/банк НЕ тикают сами: они работают как сапорты-соседи квартала
+	# шахты (_tick_mine у шахты читает их роли). Легаси конвейера (группа smelter,
+	# доставка руды гномами, свои set_process) вычищено 2026-07-04 — веток в _process
+	# у этих ролей не было, тики крутились вхолостую.
 	# Институт магии — тикает ману в башню + метит «магия открыта» (анлок) + hover-индикатор маны.
 	if is_magic():
 		add_to_group(&"magic_institute")
@@ -215,7 +211,7 @@ static func refresh_walls(tree: SceneTree) -> void:
 			b.call(&"_build")
 	# Структура изменилась (стройка/снос) → гарнизонные лучники пересчитывают пост сразу:
 	# падают со снесённой стены/казармы (→ плечо / замок) или лезут на достроенную стену.
-	for s in tree.get_nodes_in_group(&"soldier"):
+	for s in tree.get_nodes_in_group(SoldierGnome.SOLDIER_GROUP):
 		if is_instance_valid(s) and s.has_method(&"garrison_world_changed"):
 			s.call(&"garrison_world_changed")
 
@@ -815,9 +811,9 @@ func _build_mana_rune() -> void:
 	add_child(low)
 
 
-## Плавильня: каменная печь с раскалённым устьем (emission) + труба-дымоход. Клетка[0] —
-## корпус печи со светящимся зевом; клетка[1] — труба. Гном несёт сюда руду → монеты в
-## казну (см. SoldierGnome._tick_smelt_at). Анимация заброса/монет — косметика позже.
+## Плавильня: каменная печь с раскалённым устьем (emission) + труба-дымоход.
+## Работает как САПОРТ-СОСЕД квартала шахты (ось «Скорость», см. _tick_mine) —
+## доставка руды гномами вырезана вместе с конвейером.
 func _build_smelter() -> void:
 	# ЕДИНОЕ жёлтое здание (под цвет шахты/линии): сплошной массив по всей фигуре + один
 	# остроконечный шпиль по центру, раскалённое устье у земли, дым из вершины при работе.
@@ -1030,7 +1026,7 @@ func _open_hire() -> void:
 	var trade := tree.get_first_node_in_group(&"trade_ui")
 	if trade == null or not trade.has_method(&"open"):
 		return
-	var stype: StringName = RoomBuildings.get_data(building_id).get("squad_type", &"archer_squad")
+	var stype: StringName = RoomBuildings.get_data(building_id).get("squad_type", DEFAULT_SQUAD_TYPE)
 	# count_fn — счёт живых ИМЕННО этой казармы. cap_fn — эффективный кап = min(база типа, живые +
 	# свободные военные слоты НАСЕЛЕНИЯ), иначе торг гейтил бы «Артель полна» без учёта населения.
 	trade.call(&"open", stype, Callable(self, &"_on_hired"), Callable(self, &"_my_squad_count"), Callable(self, &"_my_hire_cap"))
@@ -1049,7 +1045,7 @@ func _my_squad_count() -> int:
 ## • НАСЕЛЕНИЕ (глобально): свободные военные слоты общего пула — есть ли вообще снабжение.
 ## cap = min(гарнизон, живые + снабжение). Уперлись в любой → торг «Артель полна» (строй барак ИЛИ социалку).
 func _my_hire_cap() -> int:
-	var stype: StringName = RoomBuildings.get_data(building_id).get("squad_type", &"archer_squad")
+	var stype: StringName = RoomBuildings.get_data(building_id).get("squad_type", DEFAULT_SQUAD_TYPE)
 	var base: int = int(SoldierSystem.get_squad_cap(stype)) if SoldierSystem != null else 0
 	var garrison: int = base + hire_cap_bonus()
 	var pop_room: int = int(Population.military_room()) if Population != null else garrison
@@ -1372,7 +1368,7 @@ func _tick_mine(delta: float) -> void:
 		return
 	_mine_accum -= float(whole)
 	var pay: int = whole * volume
-	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 	if bank == null or not bank.has_method(&"add_coin"):
 		return
 	var gold_before: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD)) if bank.has_method(&"get_coin") else 0
@@ -1399,12 +1395,16 @@ func _tick_unload(delta: float) -> void:
 	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
 	if tower == null or not is_instance_valid(tower):
 		return
+	# Мёртвая башня остаётся в группе tower (труп держит камера), но из Damageable
+	# выходит — с трупа, припаркованного на плите, трюм НЕ ссыпаем.
+	if not Damageable.is_damageable(tower):
+		return
 	var dx: float = tower.global_position.x - global_position.x
 	var dz: float = tower.global_position.z - global_position.z
 	if dx * dx + dz * dz > UNLOAD_RADIUS * UNLOAD_RADIUS:
 		return
 	var store: Node = get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
-	var bank: Node = get_tree().get_first_node_in_group(&"gold_bank")
+	var bank: Node = get_tree().get_first_node_in_group(GoldBank.GROUP)
 	if store == null or bank == null or not bank.has_method(&"smelt_yield"):
 		return
 	# Забираем всё и сразу платим; чанки копим списком по единице (для волны).
@@ -1783,15 +1783,9 @@ func _process(delta: float) -> void:
 		_tick_unload(delta)
 
 
-## Номинал на тир выше (чеканный двор-сапорт): бронза→серебро→золото. Золото — потолок.
+## Номинал на тир выше (чеканный двор-сапорт). Лесенка тиров — единая, в GoldBank.
 func _upgraded_coin(coin_type: int) -> int:
-	match coin_type:
-		ResourcePile.ResourceType.BRONZE:
-			return ResourcePile.ResourceType.SILVER
-		ResourcePile.ResourceType.SILVER:
-			return ResourcePile.ResourceType.GOLD
-		_:
-			return coin_type  # золото — выше некуда
+	return GoldBank.next_tier(coin_type)
 
 
 ## Emoji-иконка номинала монеты (для плашки-индикатора).
@@ -2147,7 +2141,7 @@ func _refresh_mine_indicator() -> void:
 ## Строки плашки КАЗАРМЫ: «Гарнизон живых/кап» + разбивка оси гарнизона (база+бараки) + снабжение пула.
 func _refresh_barracks_indicator() -> void:
 	_ind_title.text = "КАЗАРМА"
-	var stype: StringName = RoomBuildings.get_data(building_id).get("squad_type", &"archer_squad")
+	var stype: StringName = RoomBuildings.get_data(building_id).get("squad_type", DEFAULT_SQUAD_TYPE)
 	var base: int = int(SoldierSystem.get_squad_cap(stype)) if SoldierSystem != null else 0
 	var bonus: int = hire_cap_bonus()
 	var living: int = _my_squad_count()

@@ -35,7 +35,7 @@ extends CharacterBody3D
 signal damaged(amount: float)
 signal destroyed
 
-const SKELETON_TARGET_GROUP := &"skeleton_target"
+const SKELETON_TARGET_GROUP := Enemy.TARGET_GROUP  # канон — Enemy.TARGET_GROUP, локальное имя для совместимости
 ## Группа всех гномов (мирные + DefenderGnome'ы наследуются). Используется
 ## для cross-cutting'а через контракт «это гном» без `is Gnome` — skeleton'у
 ## приоритет цели по гномам, xp_orb'у — резолв camp'а через `body.get_camp()`.

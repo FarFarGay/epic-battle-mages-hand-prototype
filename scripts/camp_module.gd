@@ -16,7 +16,9 @@ extends RigidBody3D
 ## слоты, не «угадывает», куда монтироваться. Слот ловит `EventBus.hand_released`,
 ## проверяет дистанцию до своей точки и вызывает `attach_to_slot(self)`.
 
-signal mounted(slot: Node)
+## Сигнал размонтажа: MountSlot слушает, чтобы чистить зомби-ссылку при перехвате
+## модуля другим слотом. Парного «mounted»-сигнала нет — подклассы получают хук
+## _on_mounted, внешних слушателей монтажа не было.
 signal unmounted(slot: Node)
 
 const HIGHLIGHT_INTENSITY := 0.6
@@ -78,7 +80,6 @@ func attach_to_slot(slot: Node) -> void:
 	angular_velocity = Vector3.ZERO
 	# Переключаемся на «mounted»-слой, чтобы тауэр перестал видеть нас как стену.
 	collision_layer = Layers.MOUNTED_MODULE
-	mounted.emit(slot)
 	_on_mounted(slot)
 
 

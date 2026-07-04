@@ -26,7 +26,7 @@ extends StaticBody3D
 ##   pivot на 90° внутрь/наружу.
 ## - Damage: [hp]=60 (2× палисада, ворота крепче). На destroy — queue_free.
 
-const SKELETON_TARGET_GROUP := &"skeleton_target"
+const SKELETON_TARGET_GROUP := Enemy.TARGET_GROUP  # канон — Enemy.TARGET_GROUP, локальное имя для совместимости
 const WALL_GATE_GROUP := &"wall_gate"
 
 ## Ширина ворот (метры). 4м = 2 башни шириной 2м — фиксированный размер,

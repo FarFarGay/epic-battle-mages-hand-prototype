@@ -381,16 +381,13 @@ func is_running() -> bool:
 
 
 ## Сейчас ночь? Гейтит giant/thrower/boss-спавн в [_tick_active_poi] и
-## используется HUD'ом через [get_day_night_state] / [get_day_night_remaining].
+## используется HUD'ом вместе с [get_day_night_remaining].
 func is_night() -> bool:
 	return _day_night == DayNight.NIGHT
 
 
-## Public для HUD: текущая фаза и оставшееся время. HUD пуллит раз в кадр
-## (дёшево) — на сигналы реагирует только на смену фазы (звук/тинт).
-func get_day_night_state() -> int:
-	return _day_night
-
+## Public для HUD: оставшееся время фазы. HUD пуллит раз в кадр (дёшево) —
+## на сигналы реагирует только на смену фазы (звук/тинт).
 func get_day_night_remaining() -> float:
 	return maxf(_day_night_remaining, 0.0)
 
@@ -1576,28 +1573,6 @@ func _assign_forced_targets(enemies: Array, target: Node3D) -> void:
 	for enemy in enemies:
 		if enemy.has_method(&"set_forced_target"):
 			enemy.set_forced_target(target)
-
-
-# --- Public API: рантайм-управление budget'ом зон ---
-
-func set_waves_in_all_zones(n: int) -> void:
-	if _spawner == null:
-		return
-	for z in _spawner.get_zones():
-		if is_instance_valid(z):
-			z.set_waves(n)
-	if debug_log and LogConfig.master_enabled:
-		print("[WaveDirector] всем зонам выставлено %d волн" % n)
-
-
-func add_waves_to_all_zones(n: int) -> void:
-	if _spawner == null:
-		return
-	for z in _spawner.get_zones():
-		if is_instance_valid(z):
-			z.add_waves(n)
-	if debug_log and LogConfig.master_enabled:
-		print("[WaveDirector] всем зонам добавлено +%d волн" % n)
 
 
 ## Спавнит count скелетов uniform по карте, но каждая точка — вне safe-радиуса

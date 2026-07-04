@@ -16,7 +16,7 @@ signal damaged(amount: float)
 signal destroyed
 
 const GROUP := &"construction_site"
-const SKELETON_TARGET_GROUP := &"skeleton_target"
+const SKELETON_TARGET_GROUP := Enemy.TARGET_GROUP  # канон — Enemy.TARGET_GROUP, локальное имя для совместимости
 
 ## Прочность стройплощадки. Хрупкая — стройку реально сорвать парой ударов.
 @export var hp_max: float = 35.0

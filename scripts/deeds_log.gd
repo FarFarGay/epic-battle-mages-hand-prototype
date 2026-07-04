@@ -9,8 +9,6 @@ const GIANT_GROUP := &"skeleton_giant"
 ## Скидка за убийство гиганта (в золоте). При цене 200 это −150 → платить 50.
 const GIANT_DEED_VALUE := 150
 
-signal deeds_changed()
-
 ## Сид-дело для отладки торга без необходимости убивать гиганта. Держать ВЫКЛ в игре,
 ## иначе на старте появится фантомный «Убил Гиганта» поверх реальных убийств.
 @export var debug_seed_giant_deed: bool = false
@@ -33,10 +31,11 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 		add_deed("Убил Скелета Гиганта", GIANT_DEED_VALUE)
 
 
+## Потребитель (TradeUI) читает список поллингом get_deeds при каждом _rebuild —
+## сигнала «изменилось» не держим.
 func add_deed(label: String, value: int) -> void:
 	_counter += 1
 	_deeds.append({"id": StringName("deed_%d" % _counter), "label": label, "value": value})
-	deeds_changed.emit()
 
 
 func get_deeds() -> Array:
@@ -48,4 +47,3 @@ func consume(ids: Array) -> void:
 	if ids.is_empty():
 		return
 	_deeds = _deeds.filter(func(d: Dictionary) -> bool: return not (d["id"] in ids))
-	deeds_changed.emit()

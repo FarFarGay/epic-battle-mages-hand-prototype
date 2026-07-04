@@ -121,7 +121,7 @@ func _remaining() -> int:
 
 
 func _gold() -> int:
-	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 	if bank != null and bank.has_method(&"get_gold"):
 		return int(bank.call(&"get_gold"))
 	return 0
@@ -131,7 +131,7 @@ func _gold() -> int:
 ## soldier — спрятанные в башне рабочие остаются в ней (сняты лишь с целей скелетов).
 func _count_of_type(unit_type: StringName) -> int:
 	var c: int = 0
-	for s in get_tree().get_nodes_in_group(&"soldier"):
+	for s in get_tree().get_nodes_in_group(SoldierGnome.SOLDIER_GROUP):
 		if is_instance_valid(s) and s.get(&"soldier_type") == unit_type:
 			c += 1
 	return c
@@ -256,7 +256,7 @@ func _on_buy() -> void:
 	var rem: int = _remaining()
 	if _placed < rem:
 		return
-	var bank := get_tree().get_first_node_in_group(&"gold_bank")
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 	if bank == null or int(bank.call(&"get_gold")) < rem:
 		return
 	if rem > 0:

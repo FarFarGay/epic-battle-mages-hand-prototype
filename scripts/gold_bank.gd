@@ -1,3 +1,4 @@
+class_name GoldBank
 extends Node
 ## Казна room-режима (монетная экономика). **Одна валюта внутри** — целое `_value` в
 ## БРОНЗА-ЭКВИВАЛЕНТЕ; три номинала (🥉/🥈/🥇) — лишь ОТОБРАЖЕНИЕ (одометр). Размена как
@@ -15,6 +16,22 @@ const RT := ResourcePile.ResourceType
 const BRONZE_PER_SILVER := 10
 const SILVER_PER_GOLD := 25
 const BRONZE_PER_GOLD := BRONZE_PER_SILVER * SILVER_PER_GOLD  # 250
+
+## ЕДИНАЯ лесенка номиналов (бронза < серебро < золото). Раньше порядок тиров был
+## продублирован в pad_building._upgraded_coin — теперь один источник истины здесь.
+const TIER_ORDER: Array = [
+	ResourcePile.ResourceType.BRONZE,
+	ResourcePile.ResourceType.SILVER,
+	ResourcePile.ResourceType.GOLD,
+]
+
+
+## Номинал на тир выше (чеканный двор-сапорт и т.п.). Золото — потолок.
+static func next_tier(coin_type: int) -> int:
+	var i: int = TIER_ORDER.find(coin_type)
+	if i < 0 or i >= TIER_ORDER.size() - 1:
+		return coin_type
+	return TIER_ORDER[i + 1]
 
 ## Стартовый капитал (DEBUG) — задаётся по номиналам, суммируется в общий кошелёк.
 @export var start_bronze: int = 0

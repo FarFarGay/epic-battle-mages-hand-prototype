@@ -17,7 +17,7 @@ signal damaged(amount: float)
 signal destroyed
 
 const NAV_GROUP := &"nav_region"
-const SKELETON_TARGET_GROUP := &"skeleton_target"
+const SKELETON_TARGET_GROUP := Enemy.TARGET_GROUP  # канон — Enemy.TARGET_GROUP, локальное имя для совместимости
 ## Группа snap-целей стен: и площадки-чертежи, и достроенные стены. HandPlaceAim
 ## магнитит силуэт к их краям/центру. Член несёт meta "wall_half_len" (полудлина
 ## по миру) и ориентацию через global_transform.basis.x. См. [[project_ebm_building_rework]].
