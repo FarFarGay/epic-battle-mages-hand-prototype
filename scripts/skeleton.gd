@@ -1841,8 +1841,12 @@ func _do_lunge(target: Node3D) -> void:
 func _on_destroyed() -> void:
 	# Прячем тело и спавним осколки. Осколки живут в _effects_root — переживают
 	# queue_free самого скелета, который произойдёт в Enemy.take_damage сразу после.
+	# ОВЕРКИЛЛ (_overkill, Enemy.take_damage): чем сильнее удар перекрыл HP, тем
+	# больше осколков и мощнее разлёт — В СТОРОНУ удара (meta last_hit_dir).
 	if _mesh:
 		_mesh.visible = false
 	if _effects_root:
+		var extra: int = int(ceil(_overkill * 3.0))  # до +9 осколков на жирном оверкилле
+		var dir: Vector3 = get_meta(&"last_hit_dir", Vector3.ZERO) if _overkill > 0.2 else Vector3.ZERO
 		ShatterEffect.spawn(_effects_root, global_position, shatter_color,
-			shatter_fragment_count, shatter_lifetime)
+			shatter_fragment_count + extra, shatter_lifetime, dir, 1.0 + _overkill * 0.6)

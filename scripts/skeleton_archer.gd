@@ -338,5 +338,8 @@ func _on_destroyed() -> void:
 	if _mesh != null:
 		_mesh.visible = false
 	if _effects_root != null:
+		# Оверкилл-разлёт — симметрично Skeleton._on_destroyed ([[feedback_enemy_fx_universal]]).
+		var extra: int = int(ceil(_overkill * 3.0))
+		var dir: Vector3 = get_meta(&"last_hit_dir", Vector3.ZERO) if _overkill > 0.2 else Vector3.ZERO
 		ShatterEffect.spawn(_effects_root, global_position, shatter_color,
-			shatter_fragment_count, shatter_lifetime)
+			shatter_fragment_count + extra, shatter_lifetime, dir, 1.0 + _overkill * 0.6)

@@ -260,6 +260,14 @@ var _recoil_age: float = 0.0
 var _recoil_active: bool = false
 ## Tween scale-punch'а от ремонта (трекаем, чтобы частые удары не штабелировались).
 var _repair_punch_tween: Tween = null
+## Tween сжатия-антисипации каста (отдельный слот — ремонт и каст не дерутся за tween).
+var _cast_punch_tween: Tween = null
+## До какого msec жилы реактора форсированы вспышкой каста (антисипация).
+var _glow_flash_until_msec: int = 0
+## Яркость вспышки жил при зарядке каста и её длительность (мс). Заметно выше
+## REACTOR_GLOW_MAX — «вобрала силу», блум срабатывает.
+const CAST_FLASH_GLOW := 4.0
+const CAST_FLASH_MS := 300
 const _RECOIL_TILT_FRAC := 0.33  # доля HitTilt.MAX_TILT_DEG (~7° на пике)
 const _RECOIL_KICK := 0.22       # м — позиционный рывок назад на пике
 # Шейк камеры только на СИЛЬНЫЙ удар по башне (≥ порога) — отсекает чип рядовых
@@ -284,6 +292,7 @@ func _ready() -> void:
 	health_changed.connect(func(current: float, maximum: float) -> void: EventBus.tower_health_changed.emit(current, maximum))
 	mana_changed.connect(func(current: float, maximum: float) -> void: EventBus.tower_mana_changed.emit(current, maximum))
 	EventBus.tower_fired.connect(_on_tower_fired)  # отдача-тильт на каждый выстрел
+	EventBus.tower_cast_charging.connect(_on_tower_cast_charging)  # антисипация: сжатие+вспышка жил
 	# Стартовый sync HUD'у: emit'им текущие значения после connect'а — HUD
 	# подписывается на EventBus в своём _ready, поэтому даже если он ready'ится
 	# раньше Tower'а, сначала возьмёт snapshot через get_first_node_in_group.
@@ -792,6 +801,7 @@ func _resolve_dash_hand() -> Hand:
 ## Отдача на каждый выстрел (EventBus.tower_fired): крен НАЗАД, противоположно
 ## выстрелу. d = башня→цель (отдача в эту сторону = назад от выстрела). Башня не
 ## вращается → мир = локаль. Знак направления подобрать по ощущению (инвертить d).
+## Плюс ДУЛЬНАЯ ВСПЫШКА: свет-всплеск у точки вылета (верх башни, сторона цели).
 func _on_tower_fired(target: Vector3) -> void:
 	var d: Vector3 = global_position - target
 	d.y = 0.0
@@ -799,14 +809,36 @@ func _on_tower_fired(target: Vector3) -> void:
 		_recoil_dir = d.normalized()
 		_recoil_age = 0.0
 		_recoil_active = true
+	var scene: Node = get_tree().current_scene
+	if scene != null:
+		var muzzle: Vector3 = global_position + Vector3.UP * 3.0 - _recoil_dir * 1.4
+		AoeVisual.spawn_muzzle_flash(scene, muzzle)
+
+
+## Антисипация каста (EventBus.tower_cast_charging): башня «вбирает силу» перед
+## вылетом — краткий squash меша вниз + вспышка жил реактора. Следом придёт
+## отдача tower_fired — вместе читается «сжалась → выстрелила».
+func _on_tower_cast_charging(_target: Vector3) -> void:
+	if _dying:
+		return
+	_cast_punch_tween = HitPunch.punch(_mesh, _cast_punch_tween, 0.94, 0.04, 0.12)
+	_glow_flash_until_msec = Time.get_ticks_msec() + CAST_FLASH_MS
 
 
 ## Яркость жил реактора = доля маны. Пусто → тлеет (MIN), полный бак → ярко (MAX).
+## Вспышка каста (антисипация) поверх: пока _glow_flash_until_msec не истёк, жилы
+## форсированы к CAST_FLASH_GLOW с затуханием к базе (обновляемся каждый физкадр —
+## tween тут перезаписывался бы, поэтому огибающая по msec).
 func _update_reactor_glow() -> void:
 	if _glow_mat == null:
 		return
 	var frac: float = clampf(mana / max_mana, 0.0, 1.0) if max_mana > 0.0 else 0.0
-	_glow_mat.emission_energy_multiplier = lerpf(REACTOR_GLOW_MIN, REACTOR_GLOW_MAX, frac)
+	var base: float = lerpf(REACTOR_GLOW_MIN, REACTOR_GLOW_MAX, frac)
+	var now: int = Time.get_ticks_msec()
+	if now < _glow_flash_until_msec:
+		var t: float = float(_glow_flash_until_msec - now) / float(CAST_FLASH_MS)  # 1→0
+		base = maxf(base, lerpf(base, CAST_FLASH_GLOW, t))
+	_glow_mat.emission_energy_multiplier = base
 
 
 ## Basis камеры-рига (чистый yaw) для камера-относительного движения. Риг

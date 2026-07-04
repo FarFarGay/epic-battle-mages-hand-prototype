@@ -424,6 +424,7 @@ func _explode() -> void:
 	# не должна повторно прийти из FAR-fallback'а — иначе двойной damage.
 	var affected_set: Array[Node] = []
 	var affected: int = 0
+	var kills: int = 0
 	for r in results:
 		var collider = r.collider
 		if not is_instance_valid(collider):
@@ -436,7 +437,8 @@ func _explode() -> void:
 		# на y≈0.9 — 3D distance отъедал бы 0.9м horizontal-радиуса.
 		if _xz_distance_sq((collider as Node3D).global_position, origin) > radius_sq:
 			continue
-		_apply_aoe(collider, origin)
+		if _apply_aoe(collider, origin):
+			kills += 1
 		affected_set.append(collider)
 		affected += 1
 
@@ -455,11 +457,20 @@ func _explode() -> void:
 			continue
 		if _xz_distance_sq(skel.global_position, origin) > radius_sq:
 			continue
-		_apply_aoe(skel, origin)
+		if _apply_aoe(skel, origin):
+			kills += 1
 		far_hits += 1
 
+	# МУЛЬТИКИЛЛ-БИТ: один взрыв снял 3+ врагов → короткое slow-mo + доп. шейк.
+	# Кульминация-лайт (без флеш-кадра — тот для смертей тяжёлых/супера). Бит сам
+	# не стакается (HitStop скипает при уже искажённом времени) — серии шквала
+	# дают максимум один бит.
+	if kills >= 3:
+		HitStop.slowmo_beat(HitStop.BEAT_MULTIKILL_SCALE, HitStop.BEAT_MULTIKILL_TIME)
+		EventBus.camera_shake.emit(0.3, origin)
+
 	if LogConfig.master_enabled:
-		print("[Fireball] взрыв @ (%.1f, %.1f, %.1f), задело: %d (FAR: %d)" % [origin.x, origin.y, origin.z, affected + far_hits, far_hits])
+		print("[Fireball] взрыв @ (%.1f, %.1f, %.1f), задело: %d (FAR: %d), убито: %d" % [origin.x, origin.y, origin.z, affected + far_hits, far_hits, kills])
 
 	# Сигнал для коллеров, которые спавнят что-то на месте удара (Mine
 	# Scatter использует — ставит Mine'у в origin). Эмитим ДО visual'ов
@@ -479,6 +490,9 @@ func _explode() -> void:
 			AoeVisual.spawn_dust(fx_root, origin)
 		else:
 			AoeVisual.spawn_explosion(fx_root, origin, _radius)
+			# Воронка-декаль: выжженное пятно остаётся на месте взрыва («земля
+			# помнит бой»). Только для огненного взрыва, пыль мин пятна не жжёт.
+			AoeVisual.spawn_scorch(fx_root, origin, _radius * 0.55)
 		# Fog reveal: импакт-вздох тумана. Радиус: дефолт _radius × 7 (мелкие
 		# шоты шквала), override через setup_fog_pulse (большой файрбол → 12м).
 		# Pulse стартует с размера trail'а (8м у фаербола в полёте) — иначе
@@ -531,9 +545,11 @@ func _on_post_explode(_origin: Vector3) -> void:
 	pass
 
 
-func _apply_aoe(target: Node, origin: Vector3) -> void:
+## Урон+push одной цели AOE. Возвращает true, если удар стал СМЕРТЕЛЬНЫМ
+## (hp цели до удара было ≤ нанесённого) — счёт для мультикилл-бита.
+func _apply_aoe(target: Node, origin: Vector3) -> bool:
 	if not is_instance_valid(target):
-		return
+		return false
 	var to_target: Vector3 = (target as Node3D).global_position - origin
 	var horizontal_dist: float = Vector2(to_target.x, to_target.z).length()
 	# Falloff: sqrt-curve (раньше linear). Меньше «обрыв» на средней дистанции:
@@ -543,7 +559,7 @@ func _apply_aoe(target: Node, origin: Vector3) -> void:
 	var falloff_linear: float = clampf(1.0 - horizontal_dist / _radius, 0.0, 1.0)
 	var falloff: float = sqrt(falloff_linear)
 	if falloff <= 0.0:
-		return
+		return false
 	var horizontal_dir: Vector3 = VecUtil.horizontal(to_target)
 	if horizontal_dir.length_squared() < VecUtil.EPSILON_SQ:
 		horizontal_dir = Vector3.UP
@@ -553,6 +569,9 @@ func _apply_aoe(target: Node, origin: Vector3) -> void:
 	var velocity_change: Vector3 = horizontal_dir * _knockback_force * falloff
 	Pushable.try_push(target, velocity_change, _knockback_duration)
 	var dealt: float = _damage * falloff
+	# Смертельность считаем ДО удара: hp есть у Enemy/Tower/построек (duck-typing;
+	# нет свойства → не убийство для счёта мультикилла).
+	var hp_before = target.get(&"hp")
 	# _velocity = направление полёта (башня→цель) → тильт «со стороны удара»,
 	# в отличие от radial-нокбэка, который на прямом хите вырождается.
 	Damageable.try_damage(target, dealt, _hitstop, _velocity)
@@ -560,3 +579,4 @@ func _apply_aoe(target: Node, origin: Vector3) -> void:
 	# (мех ведёт счёт отражённого урона). Duck-typing, без связки с EnemyMech.
 	if _reflected and dealt > 0.0 and target.has_method("note_reflected_damage"):
 		target.note_reflected_damage(dealt)
+	return hp_before != null and dealt >= float(hp_before) and float(hp_before) > 0.0

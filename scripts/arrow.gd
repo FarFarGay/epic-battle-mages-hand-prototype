@@ -99,13 +99,14 @@ func _physics_process(delta: float) -> void:
 	_orient_along_velocity()
 
 
+## Сколько секунд воткнувшаяся в землю стрела остаётся торчать («земля помнит бой»).
+const STICK_LIFETIME := 2.5
+
+
 func _on_body_entered(body: Node) -> void:
 	if _consumed:
 		return
 	_consumed = true
-	# Если попали в Damageable (скелет) — наносим урон. В terrain — просто
-	# исчезаем. Kill credit идёт через EventBus.enemy_destroyed → XpOrbSpawner
-	# (autoload), поэтому стрела сама про XP ничего не знает (этап 49).
 	if debug_log and LogConfig.master_enabled:
 		var groups: Array = body.get_groups()
 		print("[Arrow:hit] body=%s layer=%d groups=%s damageable=%s pos=(%.1f,%.2f,%.1f)" % [
@@ -113,7 +114,35 @@ func _on_body_entered(body: Node) -> void:
 			str(groups), Damageable.is_damageable(body),
 			global_position.x, global_position.y, global_position.z,
 		])
+	# Попали в Damageable (скелет) — урон и исчезаем (цель рассыпается, стреле не
+	# в чем торчать). Kill credit идёт через EventBus.enemy_destroyed → XpOrbSpawner
+	# (autoload), поэтому стрела сама про XP ничего не знает (этап 49).
 	if Damageable.is_damageable(body):
 		Damageable.try_damage(body, damage)
 		hit.emit(body, global_position)
-	queue_free()
+		queue_free()
+		return
+	# Terrain/преграда: стрела ВТЫКАЕТСЯ и торчит пару секунд, потом исчезает.
+	_stick()
+
+
+## Воткнуться: заморозить полёт, чуть утопить носом, погасить трейл/свет/туман-метку.
+## Меш остаётся торчать STICK_LIFETIME секунд (WeakRef-таймер — без «capture freed»).
+func _stick() -> void:
+	set_physics_process(false)
+	_hit_area.set_deferred(&"monitoring", false)  # мы в колбэке area — только deferred
+	if _velocity.length_squared() > 0.0001:
+		global_position += _velocity.normalized() * 0.18
+	var trail := get_node_or_null("Trail") as GPUParticles3D
+	if trail != null:
+		trail.emitting = false
+	var light := get_node_or_null("Light") as OmniLight3D
+	if light != null:
+		light.visible = false
+	if is_in_group(FogOfWar.FOG_REVEAL_GROUP):
+		remove_from_group(FogOfWar.FOG_REVEAL_GROUP)
+	var ref: WeakRef = weakref(self)
+	get_tree().create_timer(STICK_LIFETIME).timeout.connect(func() -> void:
+		var n: Node = ref.get_ref()
+		if n != null and n.is_inside_tree():
+			n.queue_free())

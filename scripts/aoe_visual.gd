@@ -53,6 +53,67 @@ static func _queue_free_on_tween_callback(tween: Tween, node: Node) -> void:
 	)
 
 
+## ФЛЕШ-КАДР: мгновенная полноэкранная вспышка → fade за duration. Язык
+## КУЛЬМИНАЦИЙ (смерть гиганта, супер) — не звать на рядовых событиях.
+## CanvasLayer с PROCESS_MODE_ALWAYS: вспышка гаснет и под slow-mo битом.
+## mouse_filter=IGNORE — оверлей не перехватывает мышь (см. [[reference_godot_hud_blocks_mouselook]]).
+static func spawn_screen_flash(tree: SceneTree, color: Color, alpha: float, duration: float = 0.14) -> void:
+	if tree == null or tree.current_scene == null:
+		return
+	var layer := CanvasLayer.new()
+	layer.layer = 11  # над gameplay-HUD и Super-QTE (10)
+	layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	var rect := ColorRect.new()
+	rect.color = Color(color.r, color.g, color.b, clampf(alpha, 0.0, 1.0))
+	rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(rect)
+	tree.current_scene.add_child(layer)
+	var tw := rect.create_tween()
+	tw.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	tw.tween_property(rect, "color:a", 0.0, duration)
+	_queue_free_on_tween_callback(tw, layer)
+
+
+## ДУЛЬНАЯ ВСПЫШКА: OmniLight-всплеск в точке выстрела, гаснет за duration.
+## Продаёт момент вылета снаряда светом по земле/корпусу. Дёшево (без теней).
+static func spawn_muzzle_flash(root: Node, pos: Vector3,
+		color: Color = Color(1.0, 0.7, 0.35), energy: float = 5.0,
+		light_range: float = 7.0, duration: float = 0.15) -> void:
+	if root == null:
+		return
+	var light := OmniLight3D.new()
+	light.light_color = color
+	light.light_energy = energy
+	light.omni_range = light_range
+	light.shadow_enabled = false
+	root.add_child(light)
+	light.global_position = pos
+	var tw := light.create_tween()
+	tw.tween_property(light, "light_energy", 0.0, duration)
+	_queue_free_on_tween_callback(tw, light)
+
+
+## ВОРОНКА-ДЕКАЛЬ: тёмное пятно выжженной земли на месте взрыва, медленно
+## тает за lifetime. «Земля помнит бой» — поле после замеса выглядит как поле
+## после замеса. Дёшево: плоский диск, unshaded.
+static func spawn_scorch(root: Node, pos: Vector3, radius: float,
+		lifetime: float = 30.0, color: Color = Color(0.12, 0.09, 0.06, 0.5)) -> void:
+	var disc := spawn_ground_disc(root, pos, radius, color)
+	if disc == null:
+		return
+	# Чуть НИЖЕ штатных наземных маркеров (0.03) — декаль фон, не сигнал.
+	disc.global_position = pos + Vector3.UP * 0.02
+	var mat := disc.material_override as StandardMaterial3D
+	if mat != null:
+		mat.render_priority = 1  # над туманом, под кольцами зон
+	var tw := disc.create_tween()
+	# Первые 70% жизни пятно держится, затем медленно тает.
+	tw.tween_interval(lifetime * 0.7)
+	tw.tween_property(mat, "albedo_color:a", 0.0, lifetime * 0.3)
+	_queue_free_on_tween_callback(tw, disc)
+
+
 ## Пыль одним залпом — GPUParticles3D one_shot, explosiveness=1.0
 ## (все частицы спавнятся в первый кадр). Cleanup через таймер
 ## lifetime+0.2с.

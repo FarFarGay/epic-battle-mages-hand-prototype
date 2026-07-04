@@ -18,17 +18,27 @@ const ANGULAR_RANGE := 5.0
 
 ## Заспавнить пачку фрагментов. Все они становятся детьми `parent` и сами очищаются
 ## через `lifetime` секунд одним общим SceneTreeTimer.
+## burst_dir/power — ОВЕРКИЛЛ-разлёт: ненулевой burst_dir добавляет фрагментам
+## скорость В СТОРОНУ удара (осколки летят ОТ взрыва), power > 1 усиливает весь
+## разлёт. Дефолты = прежнее поведение (все существующие вызовы совместимы).
 static func spawn(
 	parent: Node,
 	position: Vector3,
 	color: Color,
 	fragment_count: int = 7,
-	lifetime: float = 1.5
+	lifetime: float = 1.5,
+	burst_dir: Vector3 = Vector3.ZERO,
+	power: float = 1.0
 ) -> void:
 	if not is_instance_valid(parent):
 		return
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
+	var push := VecUtil.horizontal(burst_dir)
+	if push.length_squared() > 0.0001:
+		push = push.normalized() * IMPULSE_RADIAL * 1.2 * power
+	else:
+		push = Vector3.ZERO
 	var fragments: Array[Node] = []
 	for i in range(fragment_count):
 		var body := _make_fragment(position, material)
@@ -42,12 +52,13 @@ static func spawn(
 		if radial.length_squared() > 0.0:
 			radial = radial.normalized()
 		body.linear_velocity = (radial * IMPULSE_RADIAL
-			+ Vector3.UP * IMPULSE_VERTICAL * randf_range(0.5, 1.0))
+			+ Vector3.UP * IMPULSE_VERTICAL * randf_range(0.5, 1.0)) * power \
+			+ push * randf_range(0.6, 1.0)
 		body.angular_velocity = Vector3(
 			randf_range(-ANGULAR_RANGE, ANGULAR_RANGE),
 			randf_range(-ANGULAR_RANGE, ANGULAR_RANGE),
 			randf_range(-ANGULAR_RANGE, ANGULAR_RANGE)
-		)
+		) * power
 		fragments.append(body)
 
 	# Один общий таймер на пачку — дешевле, чем Tween на каждый фрагмент.

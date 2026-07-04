@@ -153,6 +153,9 @@ var _state: int = AttackState.APPROACH
 var _state_timer: float = 0.0
 var _knockback := KnockbackState.new()
 var _dying: bool = false
+## Оверкилл добившего удара: (урон − остаток HP) / остаток, кап 3. Ставится в
+## take_damage на смерти; death-FX наследников масштабирует шаттер («размазало»).
+var _overkill: float = 0.0
 
 var _effects_root: Node = null
 
@@ -254,9 +257,14 @@ func get_active_target() -> Node3D:
 func take_damage(amount: float) -> void:
 	if _dying or amount <= 0.0:
 		return
+	var hp_before: float = hp
 	hp -= amount
 	damaged.emit(amount)
 	if hp <= 0.0:
+		# ОВЕРКИЛЛ: насколько добивший удар перекрыл остаток HP (0 = впритык,
+		# 1 = вдвое, кап 3). Death-FX наследников читает — рассыпаться сильнее и
+		# направленнее. Направление удара — meta last_hit_dir (Damageable.try_damage).
+		_overkill = clampf((amount - hp_before) / maxf(hp_before, 1.0), 0.0, 3.0)
 		_dying = true
 		destroyed.emit()
 		_on_destroyed()

@@ -26,6 +26,73 @@ const HEAVY_GROUPS: Array[StringName] = [&"skeleton_giant", &"enemy_mech"]
 const REFRACTORY := 0.35
 const _CD := &"_hitstop_cd_until_msec"
 
+# --- Slow-mo БИТЫ (глобальный Engine.time_scale, короткие кульминации) ---
+# Иерархия импакта: мелочь (искра/болт) время не трогает; средний (фаербол) —
+# per-target хитстоп выше; КУЛЬМИНАЦИИ — краткий глобальный бит. Биты не
+# стакаются (второй скипается, пока время искажено) и не мешают чужому слоумо
+# (супер-QTE, прицел супер-рывка): бит стартует только с time_scale=1 и
+# восстанавливает 1.0 только если время всё ещё ЕГО.
+const BEAT_HEAVY_DEATH_SCALE := 0.3    # смерть гиганта/меха
+const BEAT_HEAVY_DEATH_TIME := 0.25
+const BEAT_MULTIKILL_SCALE := 0.35     # AOE снял 3+ врагов разом
+const BEAT_MULTIKILL_TIME := 0.2
+const BEAT_CLEAR_SCALE := 0.3          # последний враг зачистки (после ≥ CLEAR_MIN_KILLS)
+const BEAT_CLEAR_TIME := 0.35
+## Сколько убийств должно накопиться с прошлой «чистой поляны», чтобы добить
+## последнего врага битом. Отсекает случайного одиночку-бродягу.
+const CLEAR_MIN_KILLS := 4
+## Шейк/вспышка кульминации смерти тяжёлого (поверх его собственного death-FX).
+const HEAVY_DEATH_SHAKE := 0.5
+
+var _beat_token: int = 0
+## Убийств с последней «чистой поляны» — для гейта clear-бита.
+var _kills_since_clear: int = 0
+
+
+func _ready() -> void:
+	# Кульминации смертей — централизованно тут (политика тайм-фила), а не в
+	# каждом классе врага: смерть тяжёлого → бит+шейк+флеш; последний враг → бит.
+	EventBus.enemy_destroyed.connect(_on_enemy_destroyed)
+
+
+## Короткий глобальный slow-mo бит. Скипается, если время уже искажено (чужое
+## слоумо или предыдущий бит). Таймер восстановления идёт в РЕАЛЬНОМ времени
+## (ignore_time_scale) — иначе бит длился бы duration/scale.
+func slowmo_beat(scale: float, duration: float) -> void:
+	if Engine.time_scale < 0.999 or scale >= 1.0 or duration <= 0.0:
+		return
+	Engine.time_scale = scale
+	_beat_token += 1
+	var token := _beat_token
+	get_tree().create_timer(duration, true, false, true).timeout.connect(func() -> void:
+		# Возвращаем 1.0 только если время всё ещё наше: не наш токен или чужое
+		# значение time_scale (вошёл супер-QTE/прицел) — не трогаем.
+		if _beat_token == token and is_equal_approx(Engine.time_scale, scale):
+			Engine.time_scale = 1.0)
+
+
+func _on_enemy_destroyed(enemy: Node3D) -> void:
+	_kills_since_clear += 1
+	# Кульминация: смерть «весомого» (гигант/мех) — бит + шейк + лёгкий флеш-кадр.
+	if is_instance_valid(enemy):
+		for g in HEAVY_GROUPS:
+			if enemy.is_in_group(g):
+				slowmo_beat(BEAT_HEAVY_DEATH_SCALE, BEAT_HEAVY_DEATH_TIME)
+				EventBus.camera_shake.emit(HEAVY_DEATH_SHAKE, enemy.global_position)
+				AoeVisual.spawn_screen_flash(get_tree(), Color(1.0, 0.9, 0.75), 0.16, 0.14)
+				break
+	# «Поляна чистая»: этот враг был последним. Умирающий ещё в группе (queue_free
+	# отложен) — считаем живых, исключая его и уже помеченных на удаление.
+	# Литерал группы — как HEAVY_GROUPS (без import'а классов в автозагрузку).
+	var remaining: int = 0
+	for n in get_tree().get_nodes_in_group(&"enemy"):
+		if n != enemy and is_instance_valid(n) and not n.is_queued_for_deletion():
+			remaining += 1
+	if remaining == 0:
+		if _kills_since_clear >= CLEAR_MIN_KILLS:
+			slowmo_beat(BEAT_CLEAR_SCALE, BEAT_CLEAR_TIME)
+		_kills_since_clear = 0
+
 
 ## Хитстоп по цели: оглушает её на `duration` сек, если она «весомая» и не в
 ## рефракторе. Удар по рядовому скелету/лучнику игнорируется. `hit_dir` (travel

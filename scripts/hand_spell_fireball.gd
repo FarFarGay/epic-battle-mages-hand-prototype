@@ -39,6 +39,10 @@ signal spell_cast(spell_name: StringName, position: Vector3)
 ## если заклинание разблокировано — @export'ы остаются как fallback для
 ## dev-сцен и как «edit-by-default» в инспекторе.
 @export var cooldown: float = 0.4
+## АНТИСИПАЦИЯ: пауза между нажатием и вылетом снаряда (сек). Башня в это окно
+## сжимается и вспыхивает жилами (EventBus.tower_cast_charging) — выстрел
+## читается как усилие. Мана/кулдаун списываются сразу при нажатии. 0 = мгновенно.
+@export var charge_delay: float = 0.1
 ## Стоимость каста в мане Tower'а — FALLBACK. Реальное значение берётся из
 ## SpellSystem.SPELL_CATALOG.fireball.levels[lvl].mana_cost (база 16, падает с
 ## прокачкой 16→13), этот @export используется только если в level-data нет ключа.
@@ -169,7 +173,6 @@ func _perform_cast() -> void:
 			print("[Hand:Spell:Fireball] не хватает маны (нужно %.0f)" % p_mana_cost)
 		fireball.queue_free()
 		return
-	var launch_pos: Vector3 = _coord.tower_launch_position(launch_offset_y, _hand)
 	var target_pos: Vector3 = _hand.cursor_world_position()
 	# Y цели — приземление: пол (`hand_height` снят, чтобы шар врезался в землю,
 	# а не в воздух над курсором). Если из cursor_world_position нельзя достать
@@ -182,6 +185,33 @@ func _perform_cast() -> void:
 	if _effects_root != null:
 		AoeVisual.spawn_ground_ring(_effects_root, target_pos, p_radius, warning_duration, warning_color)
 
+	# АНТИСИПАЦИЯ: башня «вбирает силу» (сжатие + вспышка жил, см. Tower), снаряд
+	# вылетает через charge_delay. Мана/кулдаун списаны УЖЕ (нажатие = обязательство).
+	# WeakRef'ы — смена сцены посреди зарядки не должна дать «Lambda capture freed»;
+	# не вылетевший снаряд освобождаем вручную (он ещё вне дерева).
+	EventBus.tower_cast_charging.emit(target_pos)
+	if charge_delay <= 0.0:
+		_launch_fireball(fireball, target_pos, p_damage, p_radius, p_burn_dmg, p_burn_radius, p_burn_duration, p_burn_tick_interval)
+		return
+	var self_ref: WeakRef = weakref(self)
+	var ball_ref: WeakRef = weakref(fireball)
+	get_tree().create_timer(charge_delay).timeout.connect(func() -> void:
+		var me: HandSpellFireball = self_ref.get_ref() as HandSpellFireball
+		var ball: Fireball = ball_ref.get_ref() as Fireball
+		if me == null or not me.is_inside_tree():
+			if ball != null and not ball.is_inside_tree():
+				ball.free()
+			return
+		me._launch_fireball(ball, target_pos, p_damage, p_radius, p_burn_dmg, p_burn_radius, p_burn_duration, p_burn_tick_interval))
+
+
+## Собственно вылет снаряда (хвост каста, отделён антисипацией charge_delay).
+## launch_pos берём В МОМЕНТ вылета — башня могла проехать за окно зарядки.
+func _launch_fireball(fireball: Fireball, target_pos: Vector3, p_damage: float, p_radius: float,
+		p_burn_dmg: float, p_burn_radius: float, p_burn_duration: float, p_burn_tick_interval: float) -> void:
+	if fireball == null or not is_instance_valid(fireball):
+		return
+	var launch_pos: Vector3 = _coord.tower_launch_position(launch_offset_y, _hand)
 	_effects_root.add_child(fireball)
 	# Метка «снаряд игрока» — EnemyMech сканит эту группу и уклоняется от
 	# летящего фаербола (реактивный интеллект, скелеты так не умеют).

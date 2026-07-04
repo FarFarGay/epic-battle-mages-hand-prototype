@@ -40,6 +40,10 @@ static func try_damage(target: Object, amount: float, hitstop: float = 0.0, hit_
 		return false
 	if not is_damageable(target):
 		return false
+	# Направление удара кладём в meta ДО урона: если удар смертельный, death-FX
+	# (направленный оверкилл-шаттер, см. Skeleton._on_destroyed) читает его оттуда.
+	if hit_dir.length_squared() > 0.0001:
+		(target as Node).set_meta(&"last_hit_dir", hit_dir)
 	(target as Node).take_damage(amount)
 	if hitstop > 0.0:
 		# стоп только на «весомых» целях; hit_dir (travel снаряда) задаёт сторону тильта
