@@ -73,6 +73,10 @@ func enable() -> void:
 	_enabled = true
 	if gnome_pullable:
 		add_to_group(GNOME_STRIKE_GROUP)  # гном теперь может БИТЬ рычаг (strike-цель)
+		if gnome_needs_power:
+			# Маркер «запитанный гном-рычаг ожил» — для читателей вроде
+			# TutorialHint (подсказка «пошли артель к рычагу»).
+			add_to_group(&"gnome_lever_powered")
 	else:
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)  # рука подсвечивает/тянет
 	_refresh_handle_color()

@@ -73,6 +73,17 @@ var _debug_log_timer: float = 0.0
 @export var summon_count: int = 6
 ## Урон призванных: комнатные «раздражатели», не убийцы (как room_skeleton_filler).
 @export var summon_attack_damage: float = 3.0
+## Рёв-подача аггрит комнату: вся мелочь в границах комнаты получает
+## forced-цель = башня (бой плотный сразу, мана-фарм ВНУТРИ боя).
+@export var roar_aggro_room: bool = true
+## Фаза-эскалация на каждом пороге HP (вместе с призывом): гигант быстрее
+## ходит и чаще заряжает — бой разгоняется к финалу.
+@export var phase_speed_mult: float = 1.3
+@export var phase_cooldown_mult: float = 0.75
+## Шоквейв на финише заряда (попал ИЛИ промазал): мелочь в радиусе разлетается.
+## 0 = выключено. Башню не трогает — она наказана самим контактом заряда.
+@export var charge_shockwave_radius: float = 4.5
+@export var charge_shockwave_impulse: float = 9.0
 
 @export_group("Room-гейт (аггр только когда башня В комнате)")
 ## Центр прямоугольника комнаты (XZ). room_size > 0 включает гейт.
@@ -295,6 +306,7 @@ func _ai_step(delta: float) -> void:
 			_check_charge_contact()
 			if _dash_remaining <= 0.0:
 				_charging = false
+				_charge_shockwave()
 				if not _charge_hit and miss_stun_duration > 0.0:
 					_begin_stun()
 		return
@@ -343,10 +355,11 @@ func take_damage(amount: float) -> void:
 	for threshold: float in [_hp_max * 2.0 / 3.0, _hp_max / 3.0]:
 		if hp_before > threshold and hp <= threshold:
 			_summon_pack()
+			_escalate_phase()
 
 
 ## Рёв-подача первого аггра: баннер «гигант» (BossWarningOverlay уже слушает
-## boss_wave_incoming), камера-шейк, пыль+разряд у ног.
+## boss_wave_incoming), камера-шейк, пыль+разряд у ног, аггр всей комнаты.
 func _roar_intro() -> void:
 	_roared = true
 	EventBus.boss_wave_incoming.emit(3.0)
@@ -355,6 +368,61 @@ func _roar_intro() -> void:
 	if scene_root != null:
 		AoeVisual.spawn_dust(scene_root, global_position)
 		AoeVisual.spawn_pulse_sparks(scene_root, global_position + Vector3.UP * 1.2, 2.5, 8.0)
+	if roar_aggro_room:
+		_aggro_room_skeletons()
+
+
+## Мелочь комнаты бросается на башню: forced-цель (fallback зрения — своей
+## жертвы у них нет, идут на башню; вблизи vision-скан работает как обычно).
+## Границы = room-гейт гиганта; без гейта — радиус вокруг гиганта.
+func _aggro_room_skeletons() -> void:
+	var tower := _resolve_tower()
+	if tower == null:
+		return
+	for n in get_tree().get_nodes_in_group(SKELETON_GROUP):
+		var sk := n as Skeleton
+		if sk == null or sk == self or sk is SkeletonGiant or not is_instance_valid(sk):
+			continue
+		var p: Vector3 = sk.global_position
+		if room_size.x > 0.0 and room_size.y > 0.0:
+			if absf(p.x - room_center.x) > room_size.x * 0.5 + 2.0 \
+					or absf(p.z - room_center.y) > room_size.y * 0.5 + 2.0:
+				continue
+		elif p.distance_to(global_position) > NO_ROOM_AGGRO_RADIUS * 0.5:
+			continue
+		sk.set_forced_target(tower)
+
+
+## Фаза-эскалация (каждый порог HP): быстрее ходит, чаще заряжает. Дважды за
+## бой: base → ×1.3/×0.75 → ×1.69/×0.56 — финал самый горячий.
+func _escalate_phase() -> void:
+	move_speed *= phase_speed_mult
+	attack_cooldown *= phase_cooldown_mult
+
+
+## Ударная волна на финише заряда: кольцо+пыль+шейк, мелочь в радиусе
+## расшвыривает (свои же — гигант неаккуратен). Башню не трогает.
+func _charge_shockwave() -> void:
+	if charge_shockwave_radius <= 0.0:
+		return
+	var scene_root := get_tree().current_scene
+	if scene_root != null:
+		AoeVisual.spawn_expanding_ring(scene_root, global_position,
+			charge_shockwave_radius, 0.25, Color(0.95, 0.6, 0.3, 0.9))
+		AoeVisual.spawn_dust(scene_root, global_position)
+	EventBus.camera_shake.emit(0.25, global_position)
+	var r_sq: float = charge_shockwave_radius * charge_shockwave_radius
+	for n in get_tree().get_nodes_in_group(SKELETON_GROUP):
+		var sk := n as Skeleton
+		if sk == null or sk == self or sk is SkeletonGiant or not is_instance_valid(sk):
+			continue
+		var to_sk: Vector3 = sk.global_position - global_position
+		to_sk.y = 0.0
+		if to_sk.length_squared() > r_sq:
+			continue
+		var dir: Vector3 = to_sk.normalized() if to_sk.length_squared() > 0.0001 \
+				else Vector3(randf() - 0.5, 0.0, randf() - 0.5).normalized()
+		sk.apply_knockback(dir * charge_shockwave_impulse + Vector3.UP * 2.0, 0.25)
 
 
 ## Матадор-окно: заряд промазал → гигант оглушён, светится синим, урон полный.

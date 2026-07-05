@@ -4,10 +4,12 @@ extends Area3D
 ## показывает плашку внизу экрана на duration секунд. Один скрипт на все виды
 ## триггеров — параметризуется trigger_mode: зона въезда башни (ZONE) /
 ## первая набранная мана (MANA_GAINED) / порог текущей маны (MANA_AT_LEAST) /
-## в watch_group появился узел (GROUP_APPEARS — «шаг пазла сделан, вот следующий»).
+## в watch_group появился узел (GROUP_APPEARS — «шаг пазла сделан, вот следующий») /
+## watch_group ОПУСТЕЛА (GROUP_EMPTIED — «врага/препятствия не стало»: ждёт,
+## пока группа непуста, стреляет на опустение — на старте без группы не срабатывает).
 ## Одноразовая: сработала → queue_free.
 
-enum Trigger { ZONE, MANA_GAINED, MANA_AT_LEAST, GROUP_APPEARS }
+enum Trigger { ZONE, MANA_GAINED, MANA_AT_LEAST, GROUP_APPEARS, GROUP_EMPTIED }
 
 ## Слой башни (Tower.collision_layer = 4) — зона реагирует только на неё.
 const TOWER_LAYER := 4
@@ -44,9 +46,9 @@ func _ready() -> void:
 			# Мана-триггеры зоной не пользуются — подписка на шину до самосноса.
 			monitoring = false
 			EventBus.tower_mana_changed.connect(_on_mana_changed)
-		Trigger.GROUP_APPEARS:
-			# Сигнала «узел вошёл в группу» у движка нет — дешёвый поллинг таймером.
-			# Timer-нода умирает вместе с подсказкой на queue_free.
+		Trigger.GROUP_APPEARS, Trigger.GROUP_EMPTIED:
+			# Сигналов «узел вошёл в группу / группа опустела» у движка нет —
+			# дешёвый поллинг таймером. Timer-нода умирает вместе с подсказкой.
 			monitoring = false
 			var poll := Timer.new()
 			poll.wait_time = 0.3
@@ -60,8 +62,22 @@ func _on_body_entered(body: Node3D) -> void:
 		_fire()
 
 
+## Был ли watch_group непустым хоть раз (для GROUP_EMPTIED: стреляем на переход
+## «был → не стало», а не на пустоту со старта сцены).
+var _group_was_present: bool = false
+
+
 func _check_watch_group() -> void:
-	if watch_group != &"" and get_tree().get_first_node_in_group(watch_group) != null:
+	if watch_group == &"":
+		return
+	var present: bool = get_tree().get_first_node_in_group(watch_group) != null
+	if trigger_mode == Trigger.GROUP_APPEARS:
+		if present:
+			_fire()
+		return
+	if present:
+		_group_was_present = true
+	elif _group_was_present:
 		_fire()
 
 

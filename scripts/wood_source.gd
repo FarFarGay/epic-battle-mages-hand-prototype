@@ -7,6 +7,11 @@ extends Node3D
 
 const GNOME_STRIKE_GROUP := Layers.GNOME_STRIKE_TARGET_GROUP
 
+## Рабочий ударил (запас уже списан). Слушают сценарии комнат (шум рубки → волны).
+signal chopped(remaining: int)
+## Дерево срублено полностью (ушло из strike-группы, остался пенёк).
+signal depleted
+
 ## Тип ресурса источника (дерево=WOOD; камень/железо — те же ноды с другим типом+визуалом).
 ## Рабочий получает единицу ЭТОГО типа, несёт на склад/стройку. См. [ResourcePile.ResourceType].
 @export var resource_type: int = ResourcePile.ResourceType.WOOD
@@ -71,8 +76,10 @@ func gnome_hit(gnome: Node) -> void:
 	gnome.receive_resource(resource_type)
 	wood_remaining -= 1
 	_refresh_visual()
+	chopped.emit(wood_remaining)
 	if wood_remaining <= 0:
 		_break()  # срублено — рабочие сами перейдут к следующему дереву
+		depleted.emit()
 
 
 ## Крона убывает с запасом (визуальная обратная связь «дерево рубят»).

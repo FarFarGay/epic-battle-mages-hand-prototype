@@ -51,6 +51,7 @@
 [ext_resource type="Script" path="res://scripts/tutorial_hint.gd" id="47_tuthint"]
 [ext_resource type="PackedScene" path="res://scenes/relay_socket.tscn" id="48_relaysocket"]
 [ext_resource type="Script" path="res://scripts/relay_item.gd" id="49_relayitem"]
+[ext_resource type="Script" path="res://scripts/grove_gate.gd" id="50_grovegate"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -469,7 +470,7 @@ mesh = SubResource("BoxMesh_door")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 shape = SubResource("BoxShape3D_door")
 
-[node name="TestGiant" parent="Room4" unique_id=1978101524 instance=ExtResource("30_giant")]
+[node name="TestGiant" parent="Room4" unique_id=1978101524 groups=["room4_giant"] instance=ExtResource("30_giant")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.2, 80)
 room_center = Vector2(0, 84)
 room_size = Vector2(36, 28)
@@ -550,10 +551,22 @@ script = ExtResource("39_wood")
 wood_remaining = 6
 
 [node name="BridgePlank" type="RigidBody3D" parent="Room5" unique_id=1415507207]
-transform = Transform3D(0.9659258, 0, 0.258819, 0, 1, 0, -0.258819, 0, 0.9659258, 16, 0.5, 103)
+transform = Transform3D(0.9659258, 0, 0.258819, 0, 1, 0, -0.258819, 0, 0.9659258, 8, 0.5, 121)
 collision_layer = 2
 collision_mask = 31
 script = ExtResource("46_plank")
+
+[node name="GroveGate" type="Node3D" parent="Room5" unique_id=911200024]
+script = ExtResource("50_grovegate")
+source_paths = [NodePath("../WoodSource"), NodePath("../WoodSource2"), NodePath("../WoodSource3")]
+plank_path = NodePath("../BridgePlank")
+skeleton_scene = ExtResource("22_skel")
+
+[node name="FlankNorth" type="Marker3D" parent="Room5/GroveGate" unique_id=911200025]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 22, 0, 122)
+
+[node name="FlankSouth" type="Marker3D" parent="Room5/GroveGate" unique_id=911200026]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 0, 100)
 
 [node name="Trunk" type="MeshInstance3D" parent="Room5/WoodSource" unique_id=1597788968]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 7)
@@ -667,13 +680,10 @@ area_half_z = 5.0
 [node name="SkeletonFiller6" type="Node3D" parent="." unique_id=891994549]
 script = ExtResource("23_filler")
 skeleton_scene = ExtResource("22_skel")
-count = 26
-area_center = Vector3(18, 0, 112)
-area_half_x = 34.0
-area_half_z = 12.5
-exclude_center = Vector3(30, 0, 112)
-exclude_half_x = 6.0
-exclude_half_z = 14.0
+count = 10
+area_center = Vector3(43, 0, 112)
+area_half_x = 8.0
+area_half_z = 11.0
 
 [node name="TutorialHints" type="Node3D" parent="." unique_id=911200007]
 
@@ -744,6 +754,27 @@ script = ExtResource("47_tuthint")
 text = "ГИГАНТ! Его ранит только СУПЕР-РЫВОК. Уклонись от заряда — оглушённый, он лёгкая мишень"
 duration = 9.0
 zone_size = Vector3(34, 8, 8)
+
+[node name="HintGiantDead" type="Area3D" parent="TutorialHints" unique_id=911200028]
+script = ExtResource("47_tuthint")
+text = "Гигант пал! Путь дальше: ударь Искрой [1] по синему диоду у западной стены"
+duration = 9.0
+trigger_mode = 4
+watch_group = &"room4_giant"
+
+[node name="HintGnomeLever" type="Area3D" parent="TutorialHints" unique_id=911200029]
+script = ExtResource("47_tuthint")
+text = "Рычаг ожил, но проём узкий — лишь гном пролезет. Артель: «Идти сюда» → клик по рычагу"
+duration = 10.0
+trigger_mode = 3
+watch_group = &"gnome_lever_powered"
+
+[node name="HintArtel" type="Area3D" parent="TutorialHints" unique_id=911200027]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 2, 102)
+script = ExtResource("47_tuthint")
+text = "В башне живёт артель. Выбери карточку рабочих, «Идти сюда» → клик по дереву — рубят"
+duration = 9.0
+zone_size = Vector3(22, 8, 8)
 
 [node name="FxPrewarm" type="Node" parent="." unique_id=1862981382]
 script = ExtResource("29_prewarm")
