@@ -17,6 +17,9 @@ extends RigidBody3D
 const CHASM_BARRIER_GROUP := &"chasm_barrier"
 const NAVMESH_SOURCE_GROUP := &"navmesh_source"
 const NAV_GROUP := &"nav_region"
+## Плашка в этой группе, пока лежит мостом — маркер «переход открыт» для
+## внешних читателей (TutorialHint глушит «нужен мост» и т.п.).
+const SNAPPED_GROUP := &"bridge_snapped"
 
 ## Габарит доски: длина по X (поперёк пропасти, с напуском на края), толщина, ширина по Z.
 @export var plank_size := Vector3(11.0, 0.35, 4.6)
@@ -30,11 +33,17 @@ var _snapped := false
 ## Плашка забрала владение барьером (оригинал нейтрализован, сегменты — наши).
 var _captured := false
 var _barrier_node: Node3D = null
-var _wall_cx: float = 0.0
+## Трансформ ШЕЙПА барьера на момент захвата. Вся математика — в его ЛОКАЛЬНЫХ
+## осях: local X = ось перехода (толщина пропасти), local Z = длина полосы.
+## Повернул барьер в сцене → плашка/сегменты сами подстроились (Room5 identity,
+## Room2 yaw 90° — один код).
+var _wall_xf: Transform3D = Transform3D.IDENTITY
+## Горизонтальная (yaw) проекция осей барьера — базис укладки доски и сегментов.
+var _yaw_basis: Basis = Basis.IDENTITY
 var _wall_sx: float = 0.0
 var _wall_sy: float = 3.0
-var _z_min: float = 0.0
-var _z_max: float = 0.0
+## Полудлина полосы барьера по его локальной Z.
+var _half_len: float = 0.0
 var _barrier_layer: int = Layers.CAMP_OBSTACLE | Layers.PALISADE_OBSTACLE
 var _barrier_parent: Node = null
 var _segments: Array[StaticBody3D] = []
@@ -105,6 +114,7 @@ func _on_hand_grabbed(item: Node3D) -> void:
 	if item != self or not _snapped:
 		return
 	_snapped = false
+	remove_from_group(SNAPPED_GROUP)
 	if _snap_tween != null and _snap_tween.is_valid():
 		_snap_tween.kill()  # перехватили в полёте доводки — твин не должен бороться с пружиной
 	_snap_tween = null
@@ -114,7 +124,7 @@ func _on_hand_grabbed(item: Node3D) -> void:
 	_schedule_rebake()
 	var root: Node = get_tree().current_scene
 	if root != null:
-		AoeVisual.spawn_dust(root, Vector3(_wall_cx, 0.0, global_position.z))
+		AoeVisual.spawn_dust(root, Vector3(global_position.x, 0.0, global_position.z))
 
 
 ## Отпустили доску: над полосой пропасти → защёлк поперёк; иначе — обычный предмет.
@@ -127,19 +137,22 @@ func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 func _try_snap() -> void:
 	if not _peek_bounds():
 		return
-	var p := global_position
-	if absf(p.x - _wall_cx) > _wall_sx * 0.5 + plank_size.x * 0.5:
+	var l: Vector3 = _wall_xf.affine_inverse() * global_position
+	if absf(l.x) > _wall_sx * 0.5 + plank_size.x * 0.5:
 		return
-	if p.z < _z_min - snap_margin or p.z > _z_max + snap_margin:
+	if absf(l.z) > _half_len + snap_margin:
 		return
 	_commit_capture()
-	var cz: float = clampf(p.z, _z_min + plank_size.z * 0.5, _z_max - plank_size.z * 0.5)
+	var cz: float = clampf(l.z, -_half_len + plank_size.z * 0.5, _half_len - plank_size.z * 0.5)
 	_snapped = true
+	add_to_group(SNAPPED_GROUP)
 	freeze = true
 	collision_layer = Layers.MOUNTED_MODULE
 	linear_velocity = Vector3.ZERO
 	angular_velocity = Vector3.ZERO
-	var target := Transform3D(Basis.IDENTITY, Vector3(_wall_cx, plank_size.y * 0.5 + 0.02, cz))
+	var origin: Vector3 = _wall_xf * Vector3(0.0, 0.0, cz)
+	origin.y = plank_size.y * 0.5 + 0.02
+	var target := Transform3D(_yaw_basis, origin)
 	_snap_tween = create_tween()
 	_snap_tween.tween_property(self, "global_transform", target, 0.16) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
@@ -155,18 +168,21 @@ func _snap_land() -> void:
 	var root: Node = get_tree().current_scene
 	if root != null:
 		var half: float = plank_size.x * 0.45
-		AoeVisual.spawn_dust(root, global_position + Vector3(half, 0.0, 0.0))
-		AoeVisual.spawn_dust(root, global_position + Vector3(-half, 0.0, 0.0))
+		AoeVisual.spawn_dust(root, global_position + _yaw_basis.x * half)
+		AoeVisual.spawn_dust(root, global_position - _yaw_basis.x * half)
 	EventBus.camera_shake.emit(0.3, global_position)
-	_rebuild_barrier(global_position.z - plank_size.z * 0.5, global_position.z + plank_size.z * 0.5)
+	var lz: float = (_wall_xf.affine_inverse() * global_position).z
+	_rebuild_barrier(lz - plank_size.z * 0.5, lz + plank_size.z * 0.5)
 	_schedule_rebake()
 
 
 ## Прочитать габариты барьера (без разрушения) — для проверки «над пропастью ли дроп».
+## Барьер — БЛИЖАЙШИЙ из группы (пропастей в сцене может быть несколько, Room2+Room5);
+## меряем по шейпу, не по узлу — origin узла бывает смещён от полосы (Room5).
 func _peek_bounds() -> bool:
 	if _captured:
 		return true
-	_barrier_node = get_tree().get_first_node_in_group(CHASM_BARRIER_GROUP) as Node3D
+	_barrier_node = _nearest_barrier()
 	if _barrier_node == null:
 		return false
 	var cs := _find_collision_shape(_barrier_node)
@@ -175,16 +191,36 @@ func _peek_bounds() -> bool:
 		box = cs.shape as BoxShape3D
 	if box == null:
 		return false
-	var w: Transform3D = cs.global_transform
-	_wall_cx = w.origin.x
+	_wall_xf = cs.global_transform.orthonormalized()
+	var bx: Vector3 = _wall_xf.basis.x
+	bx.y = 0.0
+	bx = bx.normalized() if bx.length_squared() > 0.001 else Vector3.RIGHT
+	_yaw_basis = Basis(bx, Vector3.UP, bx.cross(Vector3.UP))
 	_wall_sx = box.size.x
 	_wall_sy = box.size.y
-	_z_min = w.origin.z - box.size.z * 0.5
-	_z_max = w.origin.z + box.size.z * 0.5
+	_half_len = box.size.z * 0.5
 	if _barrier_node is CollisionObject3D:
 		_barrier_layer = (_barrier_node as CollisionObject3D).collision_layer
 	_barrier_parent = _barrier_node.get_parent()
 	return true
+
+
+## Ближайший к плашке барьер группы chasm_barrier (по центру ШЕЙПА). Дистанция
+## естественно разводит и чужие пропасти, и сегменты чужих плашек (та же группа).
+func _nearest_barrier() -> Node3D:
+	var best: Node3D = null
+	var best_d: float = INF
+	for n in get_tree().get_nodes_in_group(CHASM_BARRIER_GROUP):
+		var n3 := n as Node3D
+		if n3 == null:
+			continue
+		var cs := _find_collision_shape(n3)
+		var ref: Vector3 = cs.global_position if cs != null else n3.global_position
+		var d: float = ref.distance_squared_to(global_position)
+		if d < best_d:
+			best_d = d
+			best = n3
+	return best
 
 
 ## Первый защёлк: нейтрализуем оригинальный барьер СРАЗУ (queue_free отложен) —
@@ -226,16 +262,16 @@ func _rebuild_barrier(gap_lo: float, gap_hi: float) -> void:
 		seg.queue_free()
 	_segments.clear()
 	if is_nan(gap_lo):
-		_spawn_barrier_segment(_z_min, _z_max)
+		_spawn_barrier_segment(-_half_len, _half_len)
 		return
-	if gap_lo > _z_min + 0.1:
-		_spawn_barrier_segment(_z_min, gap_lo)
-	if gap_hi < _z_max - 0.1:
-		_spawn_barrier_segment(gap_hi, _z_max)
+	if gap_lo > -_half_len + 0.1:
+		_spawn_barrier_segment(-_half_len, gap_lo)
+	if gap_hi < _half_len - 0.1:
+		_spawn_barrier_segment(gap_hi, _half_len)
 
 
-## Сегмент барьера [z_lo..z_hi] — тот же слой/группы, что у оригинала (навмеш его
-## выгрызает, башня/скелеты упираются).
+## Сегмент барьера [z_lo..z_hi] (локальная Z полосы) — тот же слой/группы, что у
+## оригинала (навмеш его выгрызает, башня/скелеты упираются).
 func _spawn_barrier_segment(z_lo: float, z_hi: float) -> void:
 	if _barrier_parent == null or not is_instance_valid(_barrier_parent):
 		_barrier_parent = get_tree().current_scene
@@ -245,7 +281,9 @@ func _spawn_barrier_segment(z_lo: float, z_hi: float) -> void:
 	sb.add_to_group(NAVMESH_SOURCE_GROUP)
 	sb.add_to_group(CHASM_BARRIER_GROUP)
 	_barrier_parent.add_child(sb)
-	sb.global_position = Vector3(_wall_cx, 0.0, (z_lo + z_hi) * 0.5)
+	var pos: Vector3 = _wall_xf * Vector3(0.0, 0.0, (z_lo + z_hi) * 0.5)
+	pos.y = 0.0
+	sb.global_transform = Transform3D(_yaw_basis, pos)
 	var col := CollisionShape3D.new()
 	var b := BoxShape3D.new()
 	b.size = Vector3(_wall_sx, _wall_sy, z_hi - z_lo)

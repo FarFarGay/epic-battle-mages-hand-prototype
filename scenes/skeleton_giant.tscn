@@ -1,6 +1,7 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/skeleton_giant.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="2"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_giant"]
 radius = 0.5
@@ -21,7 +22,8 @@ emission_energy_multiplier = 0.4
 collision_layer = 16
 collision_mask = 2087
 script = ExtResource("1")
-hp = 240.0
+hp = 750.0
+summon_scene = ExtResource("2")
 move_speed = 2.0
 knockback_resistance = 0.2
 attack_range = 11.0

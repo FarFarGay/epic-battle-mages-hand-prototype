@@ -134,6 +134,11 @@ var _super_label: Label
 ## расположение, и счётчик заводить новой ноды в .tscn ради этого нет смысла.
 var _journal_button: Button
 var _journal_badge: Label
+## Плашка обучающей подсказки (узел в .tscn внизу по центру). Показ по
+## EventBus.tutorial_hint, прячется Timer-нодой (не SceneTreeTimer-лямбдой —
+## та падает на freed HUD при рестарте сцены).
+@onready var _tutorial_hint_label: Label = $TutorialHintLabel
+var _tutorial_hint_timer: Timer
 ## Палитра стройки (узлы в gameplay_hud.tscn, код только наполняет). Карточки группируются
 ## по СЕКЦИЯМ-категориям (что к чему относится) и показывают цену + эффект (что за что даётся).
 ## Тоггл по кнопке «🔨 Стройка». _build_cards — для live-обновления оплатимости при смене казны.
@@ -301,6 +306,12 @@ func _ready() -> void:
 	# match_won → баннер фиксируется на «победа» (на случай если игрок остаётся
 	# в сцене). Подписка идемпотентна с _disconnect_eventbus.
 	EventBus.match_won.connect(_on_match_won)
+	# Обучающие подсказки: плашка внизу, Timer-нода умирает вместе с HUD.
+	_tutorial_hint_timer = Timer.new()
+	_tutorial_hint_timer.one_shot = true
+	add_child(_tutorial_hint_timer)
+	_tutorial_hint_timer.timeout.connect(_on_tutorial_hint_timeout)
+	EventBus.tutorial_hint.connect(_on_tutorial_hint)
 	EventBus.squad_xp_changed.connect(_refresh_squad_bar)
 	EventBus.squad_leveled_up.connect(_on_level_up)
 	EventBus.pending_upgrade_choices_changed.connect(_refresh_journal_badge)
@@ -438,6 +449,7 @@ func _disconnect_eventbus() -> void:
 	EventBus.squad_recall_ignored.disconnect(_on_squad_recall_ignored)
 	EventBus.recall_zone_pulsed.disconnect(_on_recall_zone_pulsed)
 	EventBus.match_won.disconnect(_on_match_won)
+	EventBus.tutorial_hint.disconnect(_on_tutorial_hint)
 
 
 ## Строит SquadRow программно и докидывает в существующий VBox правой панели.
@@ -2465,6 +2477,21 @@ func _on_match_won() -> void:
 	_gold_goal_hint_label.visible = true
 	_gold_goal_hint_label.text = "★ ПОБЕДА! ★"
 	_gold_goal_hint_label.add_theme_color_override("font_color", GOLD_COLOR)
+
+
+## Обучающая подсказка: показать текст на плашке внизу. Новый текст перебивает
+## предыдущий (таймер рестартует). duration <= 0 трактуем как «стандартные 6с».
+func _on_tutorial_hint(text: String, duration: float) -> void:
+	if _tutorial_hint_label == null:
+		return
+	_tutorial_hint_label.text = text
+	_tutorial_hint_label.visible = true
+	_tutorial_hint_timer.start(duration if duration > 0.0 else 6.0)
+
+
+func _on_tutorial_hint_timeout() -> void:
+	if _tutorial_hint_label != null:
+		_tutorial_hint_label.visible = false
 
 
 ## Tower HP/Mana панель сверху по центру. Две полоски с overlay-Label'ами:

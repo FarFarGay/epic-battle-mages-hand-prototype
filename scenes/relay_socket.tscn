@@ -1,0 +1,38 @@
+[gd_scene format=3 uid="uid://bwxsmk0cblcyy"]
+
+[ext_resource type="Script" path="res://scripts/relay_socket.gd" id="1"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_body"]
+resource_local_to_scene = true
+albedo_color = Color(0.22, 0.26, 0.34, 1)
+emission_enabled = true
+emission = Color(0.3, 0.6, 1, 1)
+emission_energy_multiplier = 0.7
+
+[sub_resource type="CylinderMesh" id="Cyl_body"]
+top_radius = 0.58
+bottom_radius = 0.72
+height = 0.3
+
+[sub_resource type="StandardMaterial3D" id="Mat_rim"]
+albedo_color = Color(0.3, 0.6, 1, 1)
+emission_enabled = true
+emission = Color(0.3, 0.6, 1, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="TorusMesh" id="Torus_rim"]
+inner_radius = 0.4
+outer_radius = 0.52
+
+[node name="RelaySocket" type="Node3D"]
+script = ExtResource("1")
+
+[node name="Body" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, 0)
+material_override = SubResource("Mat_body")
+mesh = SubResource("Cyl_body")
+
+[node name="Rim" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.4, 0, 0, 0, 1, 0, 0.32, 0)
+material_override = SubResource("Mat_rim")
+mesh = SubResource("Torus_rim")

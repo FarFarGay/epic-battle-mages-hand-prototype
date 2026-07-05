@@ -48,6 +48,9 @@
 [ext_resource type="Script" path="res://scripts/enemy_spawner.gd" id="44_espawner"]
 [ext_resource type="Script" path="res://scripts/wave_director.gd" id="45_wavedir"]
 [ext_resource type="Script" path="res://scripts/bridge_plank.gd" id="46_plank"]
+[ext_resource type="Script" path="res://scripts/tutorial_hint.gd" id="47_tuthint"]
+[ext_resource type="PackedScene" path="res://scenes/relay_socket.tscn" id="48_relaysocket"]
+[ext_resource type="Script" path="res://scripts/relay_item.gd" id="49_relayitem"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -150,6 +153,12 @@ size = Vector3(8, 0.12, 28)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_chasm"]
 size = Vector3(8, 3, 30)
+
+[sub_resource type="BoxMesh" id="BoxMesh_chasm2"]
+size = Vector3(36, 0.12, 7)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_chasm2"]
+size = Vector3(7, 3, 38)
 
 [sub_resource type="StandardMaterial3D" id="Mat_trunk"]
 albedo_color = Color(0.42, 0.28, 0.16, 1)
@@ -307,6 +316,21 @@ shape = SubResource("BoxShape3D_door")
 [node name="WallNorth" parent="Room1" unique_id=1671344303 instance=ExtResource("6_wall")]
 transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -14)
 
+[node name="WallWestNorth" parent="Room1" unique_id=911200001 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 23, -18, 0, -8.75)
+
+[node name="WallWestSouth" parent="Room1" unique_id=911200002 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 23, -18, 0, 8.75)
+
+[node name="TunnelWallNorth" parent="Room1" unique_id=911200003 instance=ExtResource("6_wall")]
+transform = Transform3D(4, 0, 0, 0, 1, 0, 0, 0, 1, -26, 0, -3)
+
+[node name="TunnelWallSouth" parent="Room1" unique_id=911200004 instance=ExtResource("6_wall")]
+transform = Transform3D(4, 0, 0, 0, 1, 0, 0, 0, 1, -26, 0, 3)
+
+[node name="TunnelEndCap" parent="Room1" unique_id=911200005 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 12, -34, 0, 0)
+
 [node name="Room2" type="Node3D" parent="." unique_id=489139874]
 
 [node name="WallEast" parent="Room2" unique_id=1304910471 instance=ExtResource("6_wall")]
@@ -340,6 +364,26 @@ target_path = NodePath("../MetalDoor")
 [node name="WallWest" parent="Room2" unique_id=2108775321 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 58, -18, 0, 28)
 
+[node name="ChasmVisual2" type="MeshInstance3D" parent="Room2" unique_id=911200012 groups=["chasm_visual"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.05, 28)
+material_override = SubResource("Material_chasm")
+mesh = SubResource("BoxMesh_chasm2")
+
+[node name="ChasmBarrier2" type="StaticBody3D" parent="Room2" unique_id=911200013 groups=["chasm_barrier", "navmesh_source"]]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 0, 0, 28)
+collision_layer = 544
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Room2/ChasmBarrier2" unique_id=911200014]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("BoxShape3D_chasm2")
+
+[node name="BridgePlank2" type="RigidBody3D" parent="Room2" unique_id=911200015]
+transform = Transform3D(0.9659258, 0, 0.258819, 0, 1, 0, -0.258819, 0, 0.9659258, 8, 0.5, 20)
+collision_layer = 2
+collision_mask = 31
+script = ExtResource("46_plank")
+
 [node name="Room3" type="Node3D" parent="." unique_id=455955113]
 
 [node name="WallEast" parent="Room3" unique_id=696024864 instance=ExtResource("6_wall")]
@@ -370,12 +414,23 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 shape = SubResource("BoxShape3D_door")
 
 [node name="BlueDiode" parent="Room3" unique_id=423228748 instance=ExtResource("25_diode")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -15, 0, 67)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0, 46)
+target_path = NodePath("../RelaySocket")
+
+[node name="RelaySocket" parent="Room3" unique_id=911200019 instance=ExtResource("48_relaysocket")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0, 58)
+wire_from_path = NodePath("../BlueDiode")
 target_path = NodePath("../RedDiode")
+
+[node name="RelayCrystal" type="RigidBody3D" parent="Room3" unique_id=911200020]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 0.5, 52)
+collision_layer = 2
+collision_mask = 31
+script = ExtResource("49_relayitem")
 
 [node name="RedDiode" parent="Room3" unique_id=1884791915 instance=ExtResource("26_reddiode")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 67)
-wire_from_path = NodePath("../BlueDiode")
+wire_from_path = NodePath("../RelaySocket")
 lever_path = NodePath("../Lever")
 
 [node name="Lever" parent="Room3" unique_id=905898450 instance=ExtResource("27_lever")]
@@ -544,7 +599,7 @@ mesh = SubResource("Sph_foliage")
 script = ExtResource("42_grid")
 
 [node name="Tower" parent="." unique_id=1617488261 groups=["skeleton_target"] instance=ExtResource("1")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -53.900005, 3, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 3, 0)
 passive_mana_regen = false
 
 [node name="CameraRig" parent="." unique_id=1454102563 instance=ExtResource("3")]
@@ -568,12 +623,26 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.34867, 2.5, 0)
 [node name="SkeletonFiller" type="Node3D" parent="." unique_id=1193258852]
 script = ExtResource("23_filler")
 skeleton_scene = ExtResource("22_skel")
+count = 72
+area_center = Vector3(4, 0, 0)
+area_half_x = 11.0
+area_half_z = 12.0
+
+[node name="SkeletonFillerIntro" type="Node3D" parent="." unique_id=911200006]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 6
+area_center = Vector3(-11, 0, 5)
+area_half_x = 4.0
+area_half_z = 6.0
 
 [node name="SkeletonFiller2" type="Node3D" parent="." unique_id=1607814103]
 script = ExtResource("23_filler")
 skeleton_scene = ExtResource("22_skel")
-count = 20
-area_center = Vector3(0, 0, 28)
+count = 8
+area_center = Vector3(0, 0, 20)
+area_half_x = 14.0
+area_half_z = 4.0
 
 [node name="SkeletonFiller3" type="Node3D" parent="." unique_id=135078138]
 script = ExtResource("23_filler")
@@ -605,6 +674,76 @@ area_half_z = 12.5
 exclude_center = Vector3(30, 0, 112)
 exclude_half_x = 6.0
 exclude_half_z = 14.0
+
+[node name="TutorialHints" type="Node3D" parent="." unique_id=911200007]
+
+[node name="HintMove" type="Area3D" parent="TutorialHints" unique_id=911200008]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 2, 0)
+script = ExtResource("47_tuthint")
+text = "WASD — движение"
+zone_size = Vector3(10, 8, 8)
+
+[node name="HintDash" type="Area3D" parent="TutorialHints" unique_id=911200009]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20, 2, 0)
+script = ExtResource("47_tuthint")
+text = "ПРОБЕЛ — рывок. Тарань скелетов!"
+zone_size = Vector3(6, 8, 10)
+
+[node name="HintMana" type="Area3D" parent="TutorialHints" unique_id=911200010]
+script = ExtResource("47_tuthint")
+text = "Орбы с врагов дают ману — башня вбирает их сама"
+trigger_mode = 1
+
+[node name="HintSuper" type="Area3D" parent="TutorialHints" unique_id=911200011]
+script = ExtResource("47_tuthint")
+text = "Маны хватает! Зажми ПРОБЕЛ, целься, ПКМ — СУПЕР-РЫВОК снесёт красную дверь"
+duration = 8.0
+trigger_mode = 2
+mana_threshold = 50.0
+
+[node name="HintGrab" type="Area3D" parent="TutorialHints" unique_id=911200016]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 18)
+script = ExtResource("47_tuthint")
+text = "Мосток: наведи руку, зажми ЛКМ — тащи и положи поперёк пропасти"
+duration = 8.0
+zone_size = Vector3(34, 8, 8)
+
+[node name="HintNeedBridge" type="Area3D" parent="TutorialHints" unique_id=911200018]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 23)
+script = ExtResource("47_tuthint")
+text = "Пропасть! Нужен мост: схвати мосток рукой (ЛКМ) и положи поперёк"
+duration = 8.0
+zone_size = Vector3(34, 8, 4)
+suppress_group = &"bridge_snapped"
+
+[node name="HintSpark" type="Area3D" parent="TutorialHints" unique_id=911200017]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 36)
+script = ExtResource("47_tuthint")
+text = "Дверь заперта. Синий столбик — ДИОД: выбери Искру [1] и ударь ПКМ по нему"
+duration = 8.0
+zone_size = Vector3(34, 8, 6)
+
+[node name="HintRelay" type="Area3D" parent="TutorialHints" unique_id=911200021]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 47)
+script = ExtResource("47_tuthint")
+text = "Провод оборван: найди диод-ретранслятор и вставь рукой (ЛКМ) в гнездо"
+duration = 8.0
+zone_size = Vector3(34, 8, 8)
+suppress_group = &"relay_seated"
+
+[node name="HintChainReady" type="Area3D" parent="TutorialHints" unique_id=911200023]
+script = ExtResource("47_tuthint")
+text = "Цепь замкнута! Ударь Искрой [1] по синему диоду, потом дёрни рычаг (ЛКМ)"
+duration = 9.0
+trigger_mode = 3
+watch_group = &"relay_seated"
+
+[node name="HintGiant" type="Area3D" parent="TutorialHints" unique_id=911200022]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 74)
+script = ExtResource("47_tuthint")
+text = "ГИГАНТ! Его ранит только СУПЕР-РЫВОК. Уклонись от заряда — оглушённый, он лёгкая мишень"
+duration = 9.0
+zone_size = Vector3(34, 8, 8)
 
 [node name="FxPrewarm" type="Node" parent="." unique_id=1862981382]
 script = ExtResource("29_prewarm")

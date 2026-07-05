@@ -57,6 +57,23 @@ var _debug_log_timer: float = 0.0
 ## Дистанция контакта с башней во время заряда — бьём один раз и гасим рывок.
 @export var charge_hit_range: float = 2.8
 
+@export_group("Boss-бой (подача / стан-матадор / призыв)")
+## Стан после ПРОМАХА заряда — «матадор-окно»: гигант оглушён и светится синим,
+## стоячая цель = безопасный гарантированный удар. 0 = выключено.
+## 1.5с: впритык на супер-рывок (hold 0.3 + прицел в слоумо) — окно ощущается
+## наградой за уворот, а не бесплатной паузой (3.0 было «очень длинно», фидбек 2026-07-06).
+@export var miss_stun_duration: float = 1.5
+## Множитель входящего урона, пока гигант НЕ оглушён. 1.0 = гигант уязвим ВСЕГДА
+## (фидбек 2026-07-06: стан — удобное окно, не единственное); 3 супер-рывка (250)
+## = смерть при hp 750. Ручка на будущее: <1.0 вернёт «броню активного».
+@export var active_damage_factor: float = 1.0
+## Кого призывать на порогах HP 2/3 и 1/3 (пачка = эскалация + мана-топливо
+## для супер-рывков игрока). null = призыв выключен.
+@export var summon_scene: PackedScene
+@export var summon_count: int = 6
+## Урон призванных: комнатные «раздражатели», не убийцы (как room_skeleton_filler).
+@export var summon_attack_damage: float = 3.0
+
 @export_group("Room-гейт (аггр только когда башня В комнате)")
 ## Центр прямоугольника комнаты (XZ). room_size > 0 включает гейт.
 @export var room_center: Vector2 = Vector2.ZERO
@@ -75,10 +92,28 @@ var _dodge_cd: float = 0.0
 ## True если текущий рывок — заряд-атака (бьёт башню на контакте), не уворот.
 var _charging: bool = false
 var _charge_hit: bool = false
+## Остаток стана-матадора (промах заряда). >0 → гигант стоит, урон полный.
+var _stun_t: float = 0.0
+## Рёв-подача сыгран (баннер/шейк на первый аггр башни). Один раз за жизнь.
+var _roared: bool = false
+## HP на спавне — для порогов призыва (2/3, 1/3).
+var _hp_max: float = 0.0
+
+## Shared-материал стана (синее свечение «окно открыто») — как _shared_giant_material.
+static var _shared_stun_material: StandardMaterial3D
+
+
+## Босс: HP БЕЗ per-spawn вариации базы (±20% ломала бы обещание «3 оглушённых
+## супер-рывка = смерть»). Вариация замаха/скорости/кулдауна остаётся.
+func _apply_stat_variance() -> void:
+	var fixed_hp: float = hp
+	super._apply_stat_variance()
+	hp = fixed_hp
 
 
 func _ready() -> void:
 	super._ready()
+	_hp_max = hp
 	add_to_group(GIANT_GROUP)
 	# Тяжёлый: обычный таран башни его НЕ берёт — только СУПЕР-рывок (плюс AoE/магия).
 	# Семантическая группа (как room_door для красной двери), а не хардкод-фильтр по типу.
@@ -239,9 +274,18 @@ func _perform_strike(_target: Node3D) -> void:
 	_dash_ghost_t = 0.0
 
 
-## Override Skeleton._ai_step: сверху — общий dash (уворот/заряд) и скан угроз,
+## Override Skeleton._ai_step: сверху — стан-матадор и общий dash (уворот/заряд),
 ## иначе обычный FSM (approach → windup → strike→заряд через _perform_strike).
 func _ai_step(delta: float) -> void:
+	# Стан (промах заряда): стоим столбом, ничего не решаем — безопасное окно
+	# для удара (и полный урон, если active_damage_factor < 1).
+	if _stun_t > 0.0:
+		_stun_t -= delta
+		velocity.x = 0.0
+		velocity.z = 0.0
+		if _stun_t <= 0.0:
+			_end_stun()
+		return
 	# Активный рывок (уворот ИЛИ заряд) перекрывает всю обычную AI.
 	if _dash_remaining > 0.0:
 		_dash_remaining -= delta
@@ -251,7 +295,14 @@ func _ai_step(delta: float) -> void:
 			_check_charge_contact()
 			if _dash_remaining <= 0.0:
 				_charging = false
+				if not _charge_hit and miss_stun_duration > 0.0:
+					_begin_stun()
 		return
+	# Рёв-подача: первый раз, когда башня стала целью (вход в комнату) —
+	# баннер BossWarningOverlay + шейк. Статус «это босс» без слов.
+	if not _roared and _cached_target != null and is_instance_valid(_cached_target) \
+			and _cached_target.is_in_group(Tower.GROUP):
+		_roar_intro()
 	# Уворот от снарядов игрока. Single-target (Искра) промахивается, AoE и
 	# супер-рывок башни ловят (их радиус/скорость перекрывают короткий уворот).
 	_dodge_cd -= delta
@@ -277,6 +328,85 @@ func _check_charge_contact() -> void:
 		_charge_hit = true
 		Damageable.try_damage(tower, attack_damage, HitStop.HEAVY)
 		_dash_remaining = minf(_dash_remaining, 0.06)
+
+
+## Урон с ручкой active_damage_factor (1.0 = уязвим всегда; <1.0 — «броня
+## активного», урон вне стана режется). Пороги 2/3 и 1/3 HP пересечены
+## ударом → рёв-призыв пачки скелетов (угроза + мана-топливо игроку).
+func take_damage(amount: float) -> void:
+	if _stun_t <= 0.0:
+		amount *= active_damage_factor
+	var hp_before: float = hp
+	super.take_damage(amount)
+	if _dying or summon_scene == null or _hp_max <= 0.0:
+		return
+	for threshold: float in [_hp_max * 2.0 / 3.0, _hp_max / 3.0]:
+		if hp_before > threshold and hp <= threshold:
+			_summon_pack()
+
+
+## Рёв-подача первого аггра: баннер «гигант» (BossWarningOverlay уже слушает
+## boss_wave_incoming), камера-шейк, пыль+разряд у ног.
+func _roar_intro() -> void:
+	_roared = true
+	EventBus.boss_wave_incoming.emit(3.0)
+	EventBus.camera_shake.emit(0.7, global_position)
+	var scene_root := get_tree().current_scene
+	if scene_root != null:
+		AoeVisual.spawn_dust(scene_root, global_position)
+		AoeVisual.spawn_pulse_sparks(scene_root, global_position + Vector3.UP * 1.2, 2.5, 8.0)
+
+
+## Матадор-окно: заряд промазал → гигант оглушён, светится синим, урон полный.
+func _begin_stun() -> void:
+	_stun_t = miss_stun_duration
+	_ensure_stun_material()
+	if _mesh:
+		_mesh.material_override = _shared_stun_material
+	EventBus.camera_shake.emit(0.35, global_position)
+	var scene_root := get_tree().current_scene
+	if scene_root != null:
+		AoeVisual.spawn_dust(scene_root, global_position)
+
+
+func _end_stun() -> void:
+	_stun_t = 0.0
+	if _mesh:
+		_mesh.material_override = _shared_giant_material
+
+
+static func _ensure_stun_material() -> void:
+	if _shared_stun_material == null:
+		var m := StandardMaterial3D.new()
+		m.albedo_color = Color(0.38, 0.42, 0.5, 1.0)
+		m.roughness = 0.85
+		m.emission_enabled = true
+		m.emission = Color(0.3, 0.62, 1.0, 1.0)
+		m.emission_energy_multiplier = 2.2
+		_shared_stun_material = m
+
+
+## Пачка скелетов кольцом вокруг гиганта. Каждый труп = орб = мана — призыв
+## одновременно эскалирует бой и заправляет супер-рывки игрока.
+func _summon_pack() -> void:
+	var scene_root := get_tree().current_scene
+	if scene_root == null:
+		return
+	EventBus.camera_shake.emit(0.5, global_position)
+	AoeVisual.spawn_pulse_sparks(scene_root, global_position + Vector3.UP * 1.5, 3.0, 10.0)
+	var n: int = maxi(summon_count, 1)
+	for i in range(n):
+		var inst := summon_scene.instantiate() as Node3D
+		if inst == null:
+			continue
+		scene_root.add_child(inst)
+		var ang: float = TAU * float(i) / float(n)
+		var pos: Vector3 = global_position + Vector3(cos(ang), 0.0, sin(ang)) * 4.0
+		pos.y = 1.0
+		inst.global_position = pos
+		if summon_attack_damage > 0.0:
+			inst.set(&"attack_damage", summon_attack_damage)
+		AoeVisual.spawn_dust(scene_root, pos)
 
 
 ## Ближайший player_projectile в dodge_detect_radius (порт из EnemyMech._scan_threat).

@@ -48,6 +48,9 @@ signal tower_dock_requested
 ## ЛКМ-клик по казарме → HUD открывает ПАНЕЛЬ КАЗАРМЫ (нанять / призвать за башню /
 ## вернуть на стену). Стол найма открывается уже из панели, не напрямую.
 signal barracks_panel_requested(barracks: Node3D)
+## Обучающая подсказка ([TutorialHint]) → HUD показывает плашку с текстом внизу
+## экрана на duration секунд. Новый текст перебивает предыдущий.
+signal tutorial_hint(text: String, duration: float)
 ## Башня «вбирает силу» перед вылетом снаряда (антисипация каста): фаербол эмитит
 ## при нажатии, снаряд вылетает через charge_delay. Башня сжимается + жилы вспыхивают.
 signal tower_cast_charging(target: Vector3)
