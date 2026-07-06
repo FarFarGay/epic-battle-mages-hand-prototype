@@ -39,18 +39,24 @@ extends SkeletonGiantThrower
 ## Цвет точечного кольца-маркера места падения камня.
 @export var rock_marker_color: Color = Color(1.0, 0.5, 0.15, 0.85)
 
-@export_group("Динамика (танец вокруг башни)")
-## Доля move_speed на боковое (касательное) движение — обход цели. Чем выше,
-## тем сильнее «кружит», а не идёт по прямой. Подход к новой дистанции всегда
-## идёт дугой (радиаль + касательная), не лучом.
-@export var strafe_speed_factor: float = 0.8
+@export_group("Динамика (подход на позицию)")
+## Доля move_speed на боковое (касательное) движение — обход цели. 0.4 —
+## СПОКОЙНЫЙ шаг на позицию (фидбек 2026-07-07 «нечитаемый суетливый танец»:
+## было 0.8 — вечно кружил, бой не читался).
+@export var strafe_speed_factor: float = 0.4
 ## На сколько метров можно не дойти до выбранной дистанции, чтобы уже стрелять.
 ## Без допуска метатель доводил бы радиус идеально и «залипал».
 @export var range_tolerance: float = 2.5
 ## Каждый цикл выбирает НОВУЮ дистанцию выстрела в [attack_radius_min,
 ## attack_radius_max] — поэтому не «подбирает одно расстояние». reposition_jitter
 ## — доп. случайный сдвиг формейшн-точки в метрах (диск), чтобы и угол менялся.
-@export var reposition_jitter: float = 4.0
+@export var reposition_jitter: float = 2.5
+
+@export_group("Перезарядка (окно наказания)")
+## После залпа метатель ПЕРЕЗАРЯЖАЕТСЯ: стоит на месте, ОСТЫВАЕТ (эмиссия
+## гаснет — «разряжен») и НЕ уворачивается — окно возмездия, единый язык со
+## станом гиганта («потух/посинел = бей сейчас»). 0 = выключено.
+@export var reload_time: float = 4.0
 
 @export_group("Уворот (хуже гиганта)")
 ## Радиус замечания player_projectile. Меньше гигантского (8) — реагирует поздно.
@@ -73,11 +79,18 @@ extends SkeletonGiantThrower
 ## Shared material — пыльно-серый с горячей красно-оранжевой эмиссией: читается
 ## как «начинён камнями и вот-вот рванёт». Отличает от серо-каменного thrower'а.
 static var _shared_stone_thrower_material: StandardMaterial3D
+## Термо-сигналинг состояния (фидбек 2026-07-07 «нечитаемый»): WINDUP —
+## РАСКАЛЁН (яркая эмиссия, «сейчас жахнет»); перезарядка — ПОТУХ (эмиссии нет,
+## «разряжен, бей»); базовый — тлеет. Все shared (один draw-call на всех).
+static var _shared_hot_material: StandardMaterial3D
+static var _shared_dim_material: StandardMaterial3D
 
 ## Общий dash-механизм уворота: вектор скорости + остаток фазы + кулдаун.
 var _dash_vec: Vector3 = Vector3.ZERO
 var _dash_remaining: float = 0.0
 var _dodge_cd: float = 0.0
+## Остаток перезарядки после залпа: >0 → стоит потухший, не уворачивается.
+var _reload_t: float = 0.0
 
 ## Выбранная на текущий цикл дистанция выстрела и сторона обхода (+1/-1).
 ## Пересчитываются при каждом входе в APPROACH (после выстрела) → метатель
@@ -107,11 +120,20 @@ func _pick_new_approach() -> void:
 
 
 ## Override SkeletonArcher._on_state_enter: при входе в APPROACH берём новую
-## дистанцию/сторону (super сохраняет windup-телеграф).
+## дистанцию/сторону (super сохраняет windup-телеграф). Плюс термо-сигналинг:
+## WINDUP раскаляет корпус («сейчас жахнет»), возврат в APPROACH тушит до тления
+## (если не идёт перезарядка — та владеет материалом сама).
 func _on_state_enter(new_state: int) -> void:
 	super._on_state_enter(new_state)
 	if new_state == AttackState.APPROACH:
 		_pick_new_approach()
+	if _mesh == null:
+		return
+	if new_state == AttackState.WINDUP:
+		_ensure_thermo_materials()
+		_mesh.material_override = _shared_hot_material
+	elif new_state == AttackState.APPROACH and _reload_t <= 0.0:
+		_mesh.material_override = _shared_stone_thrower_material
 
 
 ## Override SkeletonArcher._kite_to_range: вместо «дойти до полосы [min,max] и
@@ -159,6 +181,21 @@ static func _ensure_stone_thrower_material() -> void:
 		_shared_stone_thrower_material = m
 
 
+static func _ensure_thermo_materials() -> void:
+	if _shared_hot_material == null:
+		var hot := StandardMaterial3D.new()
+		hot.albedo_color = Color(0.55, 0.44, 0.38, 1.0)
+		hot.roughness = 0.85
+		hot.emission_enabled = true
+		hot.emission = Color(1.0, 0.35, 0.05, 1.0)
+		hot.emission_energy_multiplier = 3.0
+		_shared_hot_material = hot
+		var dim := StandardMaterial3D.new()
+		dim.albedo_color = Color(0.42, 0.41, 0.4, 1.0)
+		dim.roughness = 0.95
+		_shared_dim_material = dim
+
+
 ## Override SkeletonGiantThrower._perform_strike: вместо одного валуна —
 ## РОССЫПЬ из volley_count мелких камней по диску volley_scatter_radius вокруг
 ## зафиксированной телеграфом точки. Сам высев — корутина `_spawn_volley`
@@ -187,6 +224,18 @@ func _perform_strike(target: Node3D) -> void:
 			name, volley_count, center.x, center.z, volley_scatter_radius,
 		])
 	_spawn_volley(center)
+	_begin_reload()
+
+
+## Перезарядка после залпа: корпус тухнет, метатель встаёт столбом — окно
+## возмездия. Тикается в _ai_step (velocity 0, уворот выключен).
+func _begin_reload() -> void:
+	if reload_time <= 0.0:
+		return
+	_reload_t = reload_time
+	_ensure_thermo_materials()
+	if _mesh:
+		_mesh.material_override = _shared_dim_material
 
 
 ## Корутина залпа: высевает volley_count камней со стаггером. Гард
@@ -242,10 +291,18 @@ func _spawn_one_rock(center: Vector3) -> void:
 		AoeVisual.spawn_ground_ring(root, aim, rock_aoe_radius, flight, rock_marker_color)
 
 
-## Override SkeletonArcher._ai_step: сверху — короткий рывок-уворот от снарядов
-## игрока, иначе обычная ranged-логика (kite → windup → залп). Рывок «хуже
-## гиганта»: см. dodge_* экспорты (поздно замечает, редко готов, прыгает недалеко).
+## Override SkeletonArcher._ai_step: сверху — перезарядка (стоит потухший, окно
+## наказания) и короткий рывок-уворот от снарядов игрока, иначе обычная
+## ranged-логика (kite → windup → залп). Рывок «хуже гиганта»: см. dodge_*.
 func _ai_step(delta: float) -> void:
+	# Перезарядка: столбом, без уворота — ритм «нагрелся → залп → остыл».
+	if _reload_t > 0.0:
+		_reload_t -= delta
+		velocity.x = 0.0
+		velocity.z = 0.0
+		if _reload_t <= 0.0 and _mesh:
+			_mesh.material_override = _shared_stone_thrower_material
+		return
 	if _dash_remaining > 0.0:
 		_dash_remaining -= delta
 		velocity.x = _dash_vec.x

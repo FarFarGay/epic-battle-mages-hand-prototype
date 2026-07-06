@@ -55,6 +55,9 @@ signal tutorial_hint(text: String, duration: float)
 ## бревно). SquadXpFx рисует попап «+N🥉» — доход виден в момент прихода, а не
 ## только цифрами одометра в углу.
 signal coins_gained_at(amount: int, world_position: Vector3)
+## Чеклист-задание Долины сменилось ([ValleyQuests]) → HUD обновляет постоянную
+## строку «⚑ …». Пустой текст = скрыть (цепочка пройдена).
+signal valley_quest_changed(text: String)
 ## Башня «вбирает силу» перед вылетом снаряда (антисипация каста): фаербол эмитит
 ## при нажатии, снаряд вылетает через charge_delay. Башня сжимается + жилы вспыхивают.
 signal tower_cast_charging(target: Vector3)

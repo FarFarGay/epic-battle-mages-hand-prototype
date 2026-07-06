@@ -139,6 +139,9 @@ var _journal_badge: Label
 ## та падает на freed HUD при рестарте сцены).
 @onready var _tutorial_hint_label: Label = $TutorialHintLabel
 var _tutorial_hint_timer: Timer
+## Строка чеклиста Долины «⚑ Задание…» (узел в .tscn слева сверху). Текст задаёт
+## ValleyQuests через EventBus.valley_quest_changed; пусто → скрыта.
+@onready var _quest_label: Label = $QuestLabel
 ## Палитра стройки (узлы в gameplay_hud.tscn, код только наполняет). Карточки группируются
 ## по СЕКЦИЯМ-категориям (что к чему относится) и показывают цену + эффект (что за что даётся).
 ## Тоггл по кнопке «🔨 Стройка». _build_cards — для live-обновления оплатимости при смене казны.
@@ -321,6 +324,7 @@ func _ready() -> void:
 	add_child(_tutorial_hint_timer)
 	_tutorial_hint_timer.timeout.connect(_on_tutorial_hint_timeout)
 	EventBus.tutorial_hint.connect(_on_tutorial_hint)
+	EventBus.valley_quest_changed.connect(_on_valley_quest_changed)
 	EventBus.squad_xp_changed.connect(_refresh_squad_bar)
 	EventBus.squad_leveled_up.connect(_on_level_up)
 	EventBus.pending_upgrade_choices_changed.connect(_refresh_journal_badge)
@@ -459,6 +463,7 @@ func _disconnect_eventbus() -> void:
 	EventBus.recall_zone_pulsed.disconnect(_on_recall_zone_pulsed)
 	EventBus.match_won.disconnect(_on_match_won)
 	EventBus.tutorial_hint.disconnect(_on_tutorial_hint)
+	EventBus.valley_quest_changed.disconnect(_on_valley_quest_changed)
 
 
 ## Строит SquadRow программно и докидывает в существующий VBox правой панели.
@@ -2570,6 +2575,20 @@ func _on_tutorial_hint(text: String, duration: float) -> void:
 func _on_tutorial_hint_timeout() -> void:
 	if _tutorial_hint_label != null:
 		_tutorial_hint_label.visible = false
+
+
+## Строка чеклиста Долины: новый текст (с лёгким панчем внимания) либо скрытие.
+func _on_valley_quest_changed(text: String) -> void:
+	if _quest_label == null:
+		return
+	_quest_label.text = text
+	_quest_label.visible = not text.is_empty()
+	if not text.is_empty():
+		_quest_label.pivot_offset = Vector2(0.0, _quest_label.size.y * 0.5)
+		_quest_label.scale = Vector2.ONE * 1.15
+		var tw := create_tween()
+		tw.tween_property(_quest_label, "scale", Vector2.ONE, 0.25) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
 ## Tower HP/Mana панель сверху по центру. Две полоски с overlay-Label'ами:

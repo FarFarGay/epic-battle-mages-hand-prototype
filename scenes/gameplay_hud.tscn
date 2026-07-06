@@ -234,6 +234,25 @@ offset_right = -10.0
 offset_bottom = 322.0
 mouse_filter = 2
 
+[node name="QuestLabel" type="Label" parent="." unique_id=911100002]
+visible = false
+layout_mode = 3
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 16.0
+offset_top = 8.0
+offset_right = -16.0
+offset_bottom = 34.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 0.9, 0.55, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.85)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 16
+text = ""
+horizontal_alignment = 0
+vertical_alignment = 1
+
 [node name="TutorialHintLabel" type="Label" parent="." unique_id=911100001]
 visible = false
 layout_mode = 3

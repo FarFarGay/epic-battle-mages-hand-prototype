@@ -52,6 +52,7 @@
 [ext_resource type="PackedScene" path="res://scenes/relay_socket.tscn" id="48_relaysocket"]
 [ext_resource type="Script" path="res://scripts/relay_item.gd" id="49_relayitem"]
 [ext_resource type="Script" path="res://scripts/grove_gate.gd" id="50_grovegate"]
+[ext_resource type="Script" path="res://scripts/valley_quests.gd" id="52_valleyquests"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -802,13 +803,14 @@ script = ExtResource("38_squadspawn")
 
 [node name="SpawnZones" type="Node3D" parent="." unique_id=911000001]
 
-[node name="SpawnZoneRoom1" parent="SpawnZones" unique_id=911000002 instance=ExtResource("43_spawnzone")]
-size = Vector2(30, 22)
+[node name="SpawnZoneValleyNorth" parent="SpawnZones" unique_id=911000002 instance=ExtResource("43_spawnzone")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 73, 0, 49)
+size = Vector2(34, 9)
 wave_count = 999
 
-[node name="SpawnZoneRoom2" parent="SpawnZones" unique_id=911000003 instance=ExtResource("43_spawnzone")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 28)
-size = Vector2(30, 22)
+[node name="SpawnZoneValleyEast" parent="SpawnZones" unique_id=911000003 instance=ExtResource("43_spawnzone")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 86, 0, 108)
+size = Vector2(9, 30)
 wave_count = 999
 
 [node name="EnemySpawner" type="Node3D" parent="." unique_id=911000004]
@@ -822,11 +824,13 @@ script = ExtResource("45_wavedir")
 spawner_path = NodePath("../EnemySpawner")
 skeleton_scene = ExtResource("22_skel")
 giant_scene = ExtResource("30_giant")
-autostart_on_match = false
 background_initial_count = 0
 day_warband_count = 1
 day_warband_size = 12
 night_assault_size = 40
+
+[node name="ValleyQuests" type="Node" parent="." unique_id=911000006]
+script = ExtResource("52_valleyquests")
 
 [node name="Pots" type="Node3D" parent="." unique_id=1345822434]
 
@@ -871,10 +875,10 @@ transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 92, 0, 112)
 transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 126)
 
 [node name="OilDepositR6" parent="Room6" unique_id=1023916198 instance=ExtResource("41_mjs4f")]
-transform = Transform3D(0.38499996, 0, 0, 0, 1, 0, 0, 0, 0.38499996, -40.0075, 0, -3.9783483)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 0, 52)
 
 [node name="OilDepositR7" parent="Room6" unique_id=175426567 instance=ExtResource("41_mjs4f")]
-transform = Transform3D(0.38499996, 0, 0, 0, 1, 0, 0, 0, 0.38499996, -43.8575, 0, 6.0316505)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 0, 47)
 
 [node name="Room8" type="Node3D" parent="." unique_id=1097619881]
 
@@ -887,37 +891,22 @@ transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, 62.5, 0, 42.999996)
 [node name="WallNorthRight" parent="Room8" unique_id=1809837513 instance=ExtResource("6_wall")]
 transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, 84.5, 0, 42.999996)
 
-[node name="WallWestNorth" parent="Room8" unique_id=445282470 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 20, 55, 0, 75)
-
-[node name="WallWestSouth" parent="Room8" unique_id=801119437 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 20, 55, 0, 93)
-
-[node name="DoorWest" type="StaticBody3D" parent="Room8" unique_id=640944273 groups=["hand_immune", "navmesh_source", "room_door", "slam_damage_immune"]]
-transform = Transform3D(-3.6199901e-06, 0, 1, 0, 1, 0, -1, 0, -3.6199901e-06, 55, 0, 84)
-collision_layer = 544
-collision_mask = 0
-script = ExtResource("21_door")
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="Room8/DoorWest" unique_id=1972501582]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
-material_override = SubResource("Material_door")
-mesh = SubResource("BoxMesh_door")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Room8/DoorWest" unique_id=1273752055]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
-shape = SubResource("BoxShape3D_door")
+[node name="WallNorthMid" parent="Room8" unique_id=911300001 instance=ExtResource("6_wall")]
+transform = Transform3D(1.75, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 42.999996)
 
 [node name="OilDepositR8" parent="Room8" unique_id=122949249 instance=ExtResource("41_mjs4f")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 78.5, 0, 91)
 
 [node name="Room9" type="Node3D" parent="." unique_id=960184648]
 
-[node name="WallWest" parent="Room9" unique_id=1373108981 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 55, 0, 56)
+[node name="WallNorthWest" parent="Room9" unique_id=911300002 instance=ExtResource("6_wall")]
+transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 42.999996)
 
 [node name="WallEastNorth" parent="Room9" unique_id=1347871448 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 92, 0, 48.625)
+
+[node name="WallEastMid" parent="Room9" unique_id=911300003 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 8, 92, 0, 56)
 
 [node name="WallEastSouth" parent="Room9" unique_id=1018263733 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 92, 0, 63.375)
@@ -925,24 +914,7 @@ transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 92, 0, 63.375)
 [node name="OilDepositR9" parent="Room9" unique_id=790238278 instance=ExtResource("41_mjs4f")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 68.5, 0, 81)
 
-[node name="Room10" type="Node3D" parent="." unique_id=427054087]
-
-[node name="WallNorth" parent="Room10" unique_id=12947699 instance=ExtResource("6_wall")]
-transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 110.5, 0, 48.5)
-
-[node name="WallSouth" parent="Room10" unique_id=1849406209 instance=ExtResource("6_wall")]
-transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 110.5, 0, 75)
-
-[node name="WallEast" parent="Room10" unique_id=780198487 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 129, 0, 61.6)
-
 [node name="Room11" type="Node3D" parent="." unique_id=1942734947]
-
-[node name="WallNorth" parent="Room11" unique_id=1728392868 instance=ExtResource("6_wall")]
-transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 70)
-
-[node name="WallSouth" parent="Room11" unique_id=834258109 instance=ExtResource("6_wall")]
-transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 98)
 
 [node name="BlueprintMachine" parent="Room11" unique_id=428979207 instance=ExtResource("41_4w2r8")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 84)
@@ -970,7 +942,7 @@ coin_count = 5
 gold_per_coin = 20
 
 [node name="PotBigRoom10" parent="PotsExtra" unique_id=201098503 instance=ExtResource("33_pot")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 110.5, 0, 56)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 62, 0, 50)
 coin_count = 5
 gold_per_coin = 20
 
@@ -996,7 +968,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 68, 0, 90)
 coin_count = 4
 
 [node name="PotSmallRoom10" parent="PotsExtra" unique_id=724953693 instance=ExtResource("33_pot")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 115, 0, 62)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 48, 0, 58)
 coin_count = 4
 
 [node name="ResWood2" type="Node3D" parent="." unique_id=410355176]
@@ -1179,4 +1151,4 @@ count = 20
 area_center = Vector3(73.5, 0, 56)
 
 [node name="StoneThrowerTest" parent="." unique_id=990126243 instance=ExtResource("41_8brgo")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 3, 84)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 85, 3, 53)
