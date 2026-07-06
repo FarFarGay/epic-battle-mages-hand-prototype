@@ -208,6 +208,10 @@ func _fail() -> void:
 	remove_from_group(SKELETON_TARGET_GROUP)
 	remove_from_group(Damageable.GROUP)
 	destroyed.emit()
+	# Недострой лопается как здание, только слабее (единый язык смерти построек).
+	var ghost: Color = _data.get("ghost_color", Color(0.6, 0.8, 1.0, 0.4))
+	ShatterEffect.building_explosion(get_tree().current_scene,
+		global_position + Vector3.UP * 0.5, Color(ghost.r, ghost.g, ghost.b), 1.5, 8)
 	queue_free()
 
 

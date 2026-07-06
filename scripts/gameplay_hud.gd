@@ -151,7 +151,7 @@ var _tutorial_hint_timer: Timer
 ## Активная вкладка палитры (индекс в BUILD_SECTIONS). Помнится между открытиями.
 var _build_active_tab: int = 0
 var _build_cards: Array = []  # [{cost_label: Label, cost: Dictionary}] — для _refresh_build_affordability
-const BUILD_MENU_PUMP := 11  # качалка-замок (центр грид-города)
+const BUILD_MENU_PUMP := 11  # качалка-замок: ВНЕ палитры (2026-07-07) — закладка ТОЛЬКО чертежом на фундамент ([CastleFoundation])
 const BUILD_MENU_PAD_WALL1 := 12
 const BUILD_MENU_PAD_GATE := 15
 const BUILD_MENU_PAD_BARRACKS := 16
@@ -199,7 +199,7 @@ const BUILD_SECTIONS := [
 	{"tab": "⛏ Добыча", "title": "⛏  ДОБЫЧА — квартал", "ids": [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_SMELTER, BUILD_MENU_PAD_MINT]},
 	{"tab": "🛡 Оборона", "title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_STAKES]},
 	{"tab": "⚔ Войско", "title": "⚔  ГАРНИЗОН — квартал", "ids": [BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
-	{"tab": "🏰 Замок", "title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE, BUILD_MENU_PAD_UNLOAD, BUILD_MENU_PAD_DOCK]},
+	{"tab": "🏰 Замок", "title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PAD_HOUSE, BUILD_MENU_PAD_UNLOAD, BUILD_MENU_PAD_DOCK]},
 	{"tab": "🔮 Магия", "title": "🔮  МАГИЯ — квартал", "ids": [BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_MANA_CRYSTAL, BUILD_MENU_PAD_MANA_RUNE]},
 	{"tab": "🌉 Инженерия", "title": "🌉  ИНЖЕНЕРИЯ", "ids": [BUILD_MENU_BRIDGE]},
 ]

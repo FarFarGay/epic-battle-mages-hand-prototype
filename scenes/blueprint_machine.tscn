@@ -1,4 +1,4 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://scripts/blueprint_machine.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/spark_diode.tscn" id="2"]
@@ -13,9 +13,34 @@ albedo_color = Color(0.34, 0.31, 0.36, 1)
 metallic = 0.45
 roughness = 0.55
 
+[sub_resource type="BoxMesh" id="Box_furnace"]
+size = Vector3(1.5, 1.5, 1.3)
+
+[sub_resource type="StandardMaterial3D" id="Mat_furnace"]
+albedo_color = Color(0.22, 0.2, 0.22, 1)
+metallic = 0.6
+roughness = 0.5
+
+[sub_resource type="BoxMesh" id="Box_mouth"]
+size = Vector3(1.0, 0.9, 0.3)
+
+[sub_resource type="StandardMaterial3D" id="Mat_mouth"]
+resource_local_to_scene = true
+albedo_color = Color(0.06, 0.05, 0.05, 1)
+roughness = 0.8
+
+[sub_resource type="BoxMesh" id="Box_chimney"]
+size = Vector3(0.4, 1.1, 0.4)
+
+[sub_resource type="BoxShape3D" id="Shape_intake"]
+size = Vector3(1.8, 1.8, 1.8)
+
 [node name="BlueprintMachine" type="Node3D"]
 script = ExtResource("1")
-diode_paths = [NodePath("Diode2"), NodePath("Diode3"), NodePath("Diode1")]
+coal_needed = 2
+furnace_area_path = NodePath("Furnace/Intake")
+furnace_mouth_path = NodePath("Furnace/Mouth")
+diode_path = NodePath("Diode")
 lever_path = NodePath("Lever")
 core_path = NodePath("Core")
 
@@ -24,16 +49,36 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 mesh = SubResource("Box_core")
 material_override = SubResource("Mat_core")
 
-[node name="Diode1" parent="." instance=ExtResource("2")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.5, 0, 3)
+[node name="Furnace" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.2, 0, 2)
 
-[node name="Diode2" parent="." instance=ExtResource("2")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 4)
+[node name="Body" type="MeshInstance3D" parent="Furnace"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.75, 0)
+mesh = SubResource("Box_furnace")
+material_override = SubResource("Mat_furnace")
 
-[node name="Diode3" parent="." instance=ExtResource("2")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5, 0, 3)
+[node name="Mouth" type="MeshInstance3D" parent="Furnace"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 0.55)
+mesh = SubResource("Box_mouth")
+material_override = SubResource("Mat_mouth")
+
+[node name="Chimney" type="MeshInstance3D" parent="Furnace"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.35, 1.9, -0.3)
+mesh = SubResource("Box_chimney")
+material_override = SubResource("Mat_furnace")
+
+[node name="Intake" type="Area3D" parent="Furnace"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+collision_layer = 0
+collision_mask = 2
+
+[node name="IntakeShape" type="CollisionShape3D" parent="Furnace/Intake"]
+shape = SubResource("Shape_intake")
+
+[node name="Diode" parent="." instance=ExtResource("2")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.2, 0, 2)
 
 [node name="Lever" parent="." instance=ExtResource("3")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2.8)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 3.4)
 target_path = NodePath("..")
 gnome_pullable = false

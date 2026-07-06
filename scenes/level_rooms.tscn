@@ -45,14 +45,17 @@
 [ext_resource type="PackedScene" path="res://scenes/oil_deposit.tscn" id="41_mjs4f"]
 [ext_resource type="Script" uid="uid://cbp2ajv0lxvky" path="res://scripts/grid_anchor.gd" id="42_grid"]
 [ext_resource type="PackedScene" path="res://scenes/spawn_zone.tscn" id="43_spawnzone"]
-[ext_resource type="Script" path="res://scripts/enemy_spawner.gd" id="44_espawner"]
-[ext_resource type="Script" path="res://scripts/wave_director.gd" id="45_wavedir"]
-[ext_resource type="Script" path="res://scripts/bridge_plank.gd" id="46_plank"]
-[ext_resource type="Script" path="res://scripts/tutorial_hint.gd" id="47_tuthint"]
-[ext_resource type="PackedScene" path="res://scenes/relay_socket.tscn" id="48_relaysocket"]
-[ext_resource type="Script" path="res://scripts/relay_item.gd" id="49_relayitem"]
-[ext_resource type="Script" path="res://scripts/grove_gate.gd" id="50_grovegate"]
-[ext_resource type="Script" path="res://scripts/valley_quests.gd" id="52_valleyquests"]
+[ext_resource type="Script" uid="uid://g47nmagw0cfh" path="res://scripts/enemy_spawner.gd" id="44_espawner"]
+[ext_resource type="Script" uid="uid://b8arph4ob7p8l" path="res://scripts/wave_director.gd" id="45_wavedir"]
+[ext_resource type="Script" uid="uid://b8xcah11kprqd" path="res://scripts/bridge_plank.gd" id="46_plank"]
+[ext_resource type="Script" uid="uid://dfxhal7dv00qe" path="res://scripts/tutorial_hint.gd" id="47_tuthint"]
+[ext_resource type="PackedScene" uid="uid://bwxsmk0cblcyy" path="res://scenes/relay_socket.tscn" id="48_relaysocket"]
+[ext_resource type="Script" uid="uid://d00ig6lxslu5v" path="res://scripts/relay_item.gd" id="49_relayitem"]
+[ext_resource type="Script" uid="uid://dlqwa1s3gqs71" path="res://scripts/grove_gate.gd" id="50_grovegate"]
+[ext_resource type="Script" uid="uid://dmfgukanb87ad" path="res://scripts/valley_quests.gd" id="52_valleyquests"]
+[ext_resource type="Script" path="res://scripts/castle_foundation.gd" id="53_foundation"]
+[ext_resource type="PackedScene" path="res://scenes/castle_blueprint.tscn" id="54_blueprint"]
+[ext_resource type="PackedScene" path="res://scenes/coal_lump.tscn" id="55_coal"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -150,17 +153,17 @@ roughness = 0.32
 [sub_resource type="StandardMaterial3D" id="Material_chasm"]
 albedo_color = Color(0.02, 0.02, 0.04, 1)
 
-[sub_resource type="BoxMesh" id="BoxMesh_chasm"]
-size = Vector3(8, 0.12, 28)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_chasm"]
-size = Vector3(8, 3, 30)
-
 [sub_resource type="BoxMesh" id="BoxMesh_chasm2"]
 size = Vector3(36, 0.12, 7)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_chasm2"]
 size = Vector3(7, 3, 38)
+
+[sub_resource type="BoxMesh" id="BoxMesh_chasm"]
+size = Vector3(8, 0.12, 28)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_chasm"]
+size = Vector3(8, 3, 30)
 
 [sub_resource type="StandardMaterial3D" id="Mat_trunk"]
 albedo_color = Color(0.42, 0.28, 0.16, 1)
@@ -176,68 +179,6 @@ albedo_color = Color(0.24, 0.5, 0.22, 1)
 [sub_resource type="SphereMesh" id="Sph_foliage"]
 radius = 1.6
 height = 3.0
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_wq2ia"]
-albedo_color = Color(0.5, 0.51, 0.55, 1)
-roughness = 0.95
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_8brgo"]
-albedo_color = Color(0.58, 0.59, 0.62, 1)
-roughness = 0.95
-
-[sub_resource type="BoxMesh" id="BoxMesh_4w2r8"]
-size = Vector3(1.7, 1.4, 1.5)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_5ltah"]
-albedo_color = Color(0.48, 0.49, 0.53, 1)
-roughness = 0.95
-
-[sub_resource type="BoxMesh" id="BoxMesh_mjs4f"]
-size = Vector3(1.3, 1, 1.2)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_xhgmq"]
-albedo_color = Color(0.62, 0.62, 0.66, 1)
-roughness = 0.95
-
-[sub_resource type="BoxMesh" id="BoxMesh_lhsvk"]
-size = Vector3(1.1, 0.9, 1.3)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_2ji6t"]
-albedo_color = Color(0.33, 0.32, 0.34, 1)
-roughness = 0.9
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_w8dvj"]
-albedo_color = Color(0.32, 0.24, 0.2, 1)
-metallic = 0.8
-roughness = 0.4
-emission_enabled = true
-emission = Color(0.95, 0.45, 0.12, 1)
-emission_energy_multiplier = 0.6
-
-[sub_resource type="BoxMesh" id="BoxMesh_11skg"]
-size = Vector3(0.9, 0.8, 0.9)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_jx7x4"]
-albedo_color = Color(0.32, 0.24, 0.2, 1)
-metallic = 0.8
-roughness = 0.4
-emission_enabled = true
-emission = Color(0.95, 0.45, 0.12, 1)
-emission_energy_multiplier = 0.6
-
-[sub_resource type="BoxMesh" id="BoxMesh_o130g"]
-size = Vector3(0.7, 0.6, 0.8)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_vgjc5"]
-albedo_color = Color(0.32, 0.24, 0.2, 1)
-metallic = 0.8
-roughness = 0.4
-emission_enabled = true
-emission = Color(0.95, 0.45, 0.12, 1)
-emission_energy_multiplier = 0.6
-
-[sub_resource type="BoxMesh" id="BoxMesh_utu4w"]
-size = Vector3(0.8, 0.6, 0.7)
 
 [node name="LevelRooms" type="Node3D" unique_id=169599323]
 
@@ -421,8 +362,8 @@ target_path = NodePath("../RelaySocket")
 
 [node name="RelaySocket" parent="Room3" unique_id=911200019 instance=ExtResource("48_relaysocket")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 0, 58)
-wire_from_path = NodePath("../BlueDiode")
 target_path = NodePath("../RedDiode")
+wire_from_path = NodePath("../BlueDiode")
 
 [node name="RelayCrystal" type="RigidBody3D" parent="Room3" unique_id=911200020]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 0.5, 52)
@@ -551,17 +492,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 112)
 script = ExtResource("39_wood")
 wood_remaining = 12
 
-[node name="GroveGate" type="Node3D" parent="Room5" unique_id=911200024]
-script = ExtResource("50_grovegate")
-source_paths = [NodePath("../WoodSource"), NodePath("../WoodSource2"), NodePath("../WoodSource3")]
-skeleton_scene = ExtResource("22_skel")
-
-[node name="FlankNorth" type="Marker3D" parent="Room5/GroveGate" unique_id=911200025]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 22, 0, 122)
-
-[node name="FlankSouth" type="Marker3D" parent="Room5/GroveGate" unique_id=911200026]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 0, 100)
-
 [node name="Trunk" type="MeshInstance3D" parent="Room5/WoodSource" unique_id=1597788968]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 7)
 material_override = SubResource("Mat_trunk")
@@ -571,6 +501,17 @@ mesh = SubResource("Cyl_trunk")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 7)
 material_override = SubResource("Mat_foliage")
 mesh = SubResource("Sph_foliage")
+
+[node name="GroveGate" type="Node3D" parent="Room5" unique_id=911200024]
+script = ExtResource("50_grovegate")
+source_paths = Array[NodePath]([NodePath("../WoodSource"), NodePath("../WoodSource2"), NodePath("../WoodSource3")])
+skeleton_scene = ExtResource("22_skel")
+
+[node name="FlankNorth" type="Marker3D" parent="Room5/GroveGate" unique_id=911200025]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 22, 0, 122)
+
+[node name="FlankSouth" type="Marker3D" parent="Room5/GroveGate" unique_id=911200026]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 0, 100)
 
 [node name="WoodSource2" type="Node3D" parent="Room5" unique_id=1263815007]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 118)
@@ -633,7 +574,6 @@ skeleton_scene = ExtResource("22_skel")
 count = 72
 area_center = Vector3(4, 0, 0)
 area_half_x = 11.0
-area_half_z = 12.0
 
 [node name="SkeletonFillerIntro" type="Node3D" parent="." unique_id=911200006]
 script = ExtResource("23_filler")
@@ -703,7 +643,6 @@ script = ExtResource("47_tuthint")
 text = "Маны хватает! Зажми ПРОБЕЛ, целься, ПКМ — СУПЕР-РЫВОК снесёт красную дверь"
 duration = 8.0
 trigger_mode = 2
-mana_threshold = 50.0
 
 [node name="HintGrab" type="Area3D" parent="TutorialHints" unique_id=911200016]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 18)
@@ -776,6 +715,21 @@ text = "Доска готова! Схвати её рукой (ЛКМ) и пол
 duration = 9.0
 trigger_mode = 3
 watch_group = &"built_plank"
+
+[node name="HintZastava" type="Area3D" parent="TutorialHints" unique_id=911400006]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 2, 39)
+script = ExtResource("47_tuthint")
+text = "Застава: раскочегарь станок — схвати уголь рукой (ЛКМ) и кинь в топку"
+duration = 8.0
+zone_size = Vector3(26, 8, 10)
+
+[node name="HintFoundation" type="Area3D" parent="TutorialHints" unique_id=911400007]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 66, 2, 84)
+script = ExtResource("47_tuthint")
+text = "Плита Гильдии: здесь заложится замок — нужен чертёж со станка на заставе"
+duration = 8.0
+zone_size = Vector3(14, 8, 14)
+suppress_group = &"castle"
 
 [node name="FxPrewarm" type="Node" parent="." unique_id=1862981382]
 script = ExtResource("29_prewarm")
@@ -874,12 +828,6 @@ transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 92, 0, 112)
 [node name="WallSouth" parent="Room6" unique_id=382709928 instance=ExtResource("6_wall")]
 transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 126)
 
-[node name="OilDepositR6" parent="Room6" unique_id=1023916198 instance=ExtResource("41_mjs4f")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 0, 52)
-
-[node name="OilDepositR7" parent="Room6" unique_id=175426567 instance=ExtResource("41_mjs4f")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 37, 0, 47)
-
 [node name="Room8" type="Node3D" parent="." unique_id=1097619881]
 
 [node name="WallEast" parent="Room8" unique_id=1747620114 instance=ExtResource("6_wall")]
@@ -890,12 +838,6 @@ transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, 62.5, 0, 42.999996)
 
 [node name="WallNorthRight" parent="Room8" unique_id=1809837513 instance=ExtResource("6_wall")]
 transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, 84.5, 0, 42.999996)
-
-[node name="WallNorthMid" parent="Room8" unique_id=911300001 instance=ExtResource("6_wall")]
-transform = Transform3D(1.75, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 42.999996)
-
-[node name="OilDepositR8" parent="Room8" unique_id=122949249 instance=ExtResource("41_mjs4f")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 78.5, 0, 91)
 
 [node name="Room9" type="Node3D" parent="." unique_id=960184648]
 
@@ -911,13 +853,51 @@ transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 8, 92, 0, 56)
 [node name="WallEastSouth" parent="Room9" unique_id=1018263733 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 92, 0, 63.375)
 
-[node name="OilDepositR9" parent="Room9" unique_id=790238278 instance=ExtResource("41_mjs4f")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 68.5, 0, 81)
+[node name="Zastava" type="Node3D" parent="." unique_id=1942734947]
 
-[node name="Room11" type="Node3D" parent="." unique_id=1942734947]
+[node name="BlueprintMachine" parent="Zastava" unique_id=428979207 instance=ExtResource("41_4w2r8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 74, 0, 28)
+print_scene = ExtResource("54_blueprint")
+print_hint = "Чертёж замка отпечатан! Хватай рукой и неси на плиту-фундамент в центре долины"
 
-[node name="BlueprintMachine" parent="Room11" unique_id=428979207 instance=ExtResource("41_4w2r8")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 84)
+[node name="WallWest" parent="Zastava" unique_id=911400001 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 50, 58, 0, 30.5)
+
+[node name="WallEast" parent="Zastava" unique_id=911400002 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 50, 90, 0, 30.5)
+
+[node name="WallNorth" parent="Zastava" unique_id=911400003 instance=ExtResource("6_wall")]
+transform = Transform3D(8, 0, 0, 0, 1, 0, 0, 0, 1, 74, 0, 18)
+
+[node name="SkeletonFillerZastava" type="Node3D" parent="Zastava" unique_id=911400004]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 8
+area_center = Vector3(74, 0, 30)
+area_half_x = 12.0
+area_half_z = 9.0
+
+[node name="Coal1" parent="Zastava" unique_id=911400010 instance=ExtResource("55_coal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 64, 0.4, 31)
+
+[node name="Coal2" parent="Zastava" unique_id=911400011 instance=ExtResource("55_coal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65.5, 0.4, 29.5)
+
+[node name="Coal3" parent="Zastava" unique_id=911400012 instance=ExtResource("55_coal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 63.5, 0.4, 28.5)
+
+[node name="Coal4" parent="Zastava" unique_id=911400013 instance=ExtResource("55_coal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65, 0.4, 32.5)
+
+[node name="CastleFoundation" type="Node3D" parent="." unique_id=911400005]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 66, 0, 84)
+script = ExtResource("53_foundation")
+
+[node name="OreVeinWest" parent="." unique_id=911400008 instance=ExtResource("41_mjs4f")]
+transform = Transform3D(0.39999998, 0, 0, 0, 1, 0, 0, 0, 0.39999998, 60, 0, 78)
+
+[node name="OreVeinEast" parent="." unique_id=911400009 instance=ExtResource("41_mjs4f")]
+transform = Transform3D(-0.39999998, 0, 0, 0, 1, 0, 0, 0, 0.39999998, 72, 0, 90)
 
 [node name="GnomeHouseB" parent="." unique_id=1635103079 instance=ExtResource("28_gnomehouse")]
 transform = Transform3D(0.49999997, 0, -0.86602545, 0, 1, 0, 0.86602545, 0, 0.49999997, 85.479675, 0, 98.05763)
@@ -1000,134 +980,6 @@ mesh = SubResource("Cyl_trunk")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 7)
 material_override = SubResource("Mat_foliage")
 mesh = SubResource("Sph_foliage")
-
-[node name="ResStone2" type="Node3D" parent="." unique_id=238538709]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 88, 0, 81)
-script = ExtResource("39_wood")
-resource_type = 2
-wood_remaining = 33
-
-[node name="Trunk" type="MeshInstance3D" parent="ResStone2" unique_id=1818173772]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
-visible = false
-material_override = SubResource("Mat_trunk")
-mesh = SubResource("Cyl_trunk")
-
-[node name="Foliage" type="MeshInstance3D" parent="ResStone2" unique_id=210179987]
-transform = Transform3D(1.15, 0, 0, 0, 0.2, 0, 0, 0, 1.15, 0, 0.28, 0)
-material_override = SubResource("StandardMaterial3D_wq2ia")
-mesh = SubResource("Sph_foliage")
-
-[node name="RockA" type="MeshInstance3D" parent="ResStone2" unique_id=67852862]
-transform = Transform3D(0.91652817, -0.09920122, 0.38747287, 0.14869158, 0.98383135, -0.09983342, -0.37130436, 0.14911409, 0.9164595, 0.6, 0.7, 0.4)
-material_override = SubResource("StandardMaterial3D_8brgo")
-mesh = SubResource("BoxMesh_4w2r8")
-
-[node name="RockB" type="MeshInstance3D" parent="ResStone2" unique_id=938562938]
-transform = Transform3D(0.8183951, -0.110475466, -0.5639368, 0.099708654, 0.9937607, -0.04997917, 0.5659397, -0.015326679, 0.82430416, -0.9, 0.5, 0.6)
-material_override = SubResource("StandardMaterial3D_5ltah")
-mesh = SubResource("BoxMesh_mjs4f")
-
-[node name="RockC" type="MeshInstance3D" parent="ResStone2" unique_id=52359755]
-transform = Transform3D(0.6255199, 0.06258905, 0.77769375, 0.04961975, 0.9915679, -0.119712204, -0.7786288, 0.11347133, 0.61713976, 0.7, 0.45, -0.8)
-material_override = SubResource("StandardMaterial3D_xhgmq")
-mesh = SubResource("BoxMesh_lhsvk")
-
-[node name="ResStone3" type="Node3D" parent="." unique_id=1550360469]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 59, 0, 53)
-script = ExtResource("39_wood")
-resource_type = 2
-wood_remaining = 33
-
-[node name="Trunk" type="MeshInstance3D" parent="ResStone3" unique_id=44124497]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
-visible = false
-material_override = SubResource("Mat_trunk")
-mesh = SubResource("Cyl_trunk")
-
-[node name="Foliage" type="MeshInstance3D" parent="ResStone3" unique_id=2041594999]
-transform = Transform3D(1.15, 0, 0, 0, 0.2, 0, 0, 0, 1.15, 0, 0.28, 0)
-material_override = SubResource("StandardMaterial3D_wq2ia")
-mesh = SubResource("Sph_foliage")
-
-[node name="RockA" type="MeshInstance3D" parent="ResStone3" unique_id=1295710635]
-transform = Transform3D(0.91652817, -0.09920122, 0.38747287, 0.14869158, 0.98383135, -0.09983342, -0.37130436, 0.14911409, 0.9164595, 0.6, 0.7, 0.4)
-material_override = SubResource("StandardMaterial3D_8brgo")
-mesh = SubResource("BoxMesh_4w2r8")
-
-[node name="RockB" type="MeshInstance3D" parent="ResStone3" unique_id=2032214686]
-transform = Transform3D(0.8183951, -0.110475466, -0.5639368, 0.099708654, 0.9937607, -0.04997917, 0.5659397, -0.015326679, 0.82430416, -0.9, 0.5, 0.6)
-material_override = SubResource("StandardMaterial3D_5ltah")
-mesh = SubResource("BoxMesh_mjs4f")
-
-[node name="RockC" type="MeshInstance3D" parent="ResStone3" unique_id=2057702983]
-transform = Transform3D(0.6255199, 0.06258905, 0.77769375, 0.04961975, 0.9915679, -0.119712204, -0.7786288, 0.11347133, 0.61713976, 0.7, 0.45, -0.8)
-material_override = SubResource("StandardMaterial3D_xhgmq")
-mesh = SubResource("BoxMesh_lhsvk")
-
-[node name="ResIron2" type="Node3D" parent="." unique_id=1578154131]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 88, 0, 86)
-script = ExtResource("39_wood")
-resource_type = 3
-wood_remaining = 33
-
-[node name="Trunk" type="MeshInstance3D" parent="ResIron2" unique_id=1616756595]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
-visible = false
-material_override = SubResource("Mat_trunk")
-mesh = SubResource("Cyl_trunk")
-
-[node name="Foliage" type="MeshInstance3D" parent="ResIron2" unique_id=805112473]
-transform = Transform3D(1.15, 0, 0, 0, 0.2, 0, 0, 0, 1.15, 0, 0.28, 0)
-material_override = SubResource("StandardMaterial3D_2ji6t")
-mesh = SubResource("Sph_foliage")
-
-[node name="OreA" type="MeshInstance3D" parent="ResIron2" unique_id=1566679878]
-transform = Transform3D(0.8882368, -0.035492957, 0.45801273, 0.18979606, 0.9362934, -0.29552022, -0.4183454, 0.34942093, 0.83838665, 0.5, 0.5, 0.3)
-material_override = SubResource("StandardMaterial3D_w8dvj")
-mesh = SubResource("BoxMesh_11skg")
-
-[node name="OreB" type="MeshInstance3D" parent="ResIron2" unique_id=1064422968]
-transform = Transform3D(0.7251535, -0.25154006, -0.64099926, 0.24616797, 0.9640719, -0.09983342, 0.6430815, -0.085398935, 0.7610212, -0.6, 0.4, 0.5)
-material_override = SubResource("StandardMaterial3D_jx7x4")
-mesh = SubResource("BoxMesh_o130g")
-
-[node name="OreC" type="MeshInstance3D" parent="ResIron2" unique_id=1687212873]
-transform = Transform3D(0.5542926, 0.11239907, 0.82469755, 0.0978434, 0.9751704, -0.19866933, -0.82655084, 0.19081217, 0.5295322, 0.6, 0.4, -0.6)
-material_override = SubResource("StandardMaterial3D_vgjc5")
-mesh = SubResource("BoxMesh_utu4w")
-
-[node name="ResIron3" type="Node3D" parent="." unique_id=243854509]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 59, 0, 58)
-script = ExtResource("39_wood")
-resource_type = 3
-wood_remaining = 33
-
-[node name="Trunk" type="MeshInstance3D" parent="ResIron3" unique_id=779411599]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
-visible = false
-material_override = SubResource("Mat_trunk")
-mesh = SubResource("Cyl_trunk")
-
-[node name="Foliage" type="MeshInstance3D" parent="ResIron3" unique_id=565126434]
-transform = Transform3D(1.15, 0, 0, 0, 0.2, 0, 0, 0, 1.15, 0, 0.28, 0)
-material_override = SubResource("StandardMaterial3D_2ji6t")
-mesh = SubResource("Sph_foliage")
-
-[node name="OreA" type="MeshInstance3D" parent="ResIron3" unique_id=207443871]
-transform = Transform3D(0.8882368, -0.035492957, 0.45801273, 0.18979606, 0.9362934, -0.29552022, -0.4183454, 0.34942093, 0.83838665, 0.5, 0.5, 0.3)
-material_override = SubResource("StandardMaterial3D_w8dvj")
-mesh = SubResource("BoxMesh_11skg")
-
-[node name="OreB" type="MeshInstance3D" parent="ResIron3" unique_id=1034715296]
-transform = Transform3D(0.7251535, -0.25154006, -0.64099926, 0.24616797, 0.9640719, -0.09983342, 0.6430815, -0.085398935, 0.7610212, -0.6, 0.4, 0.5)
-material_override = SubResource("StandardMaterial3D_jx7x4")
-mesh = SubResource("BoxMesh_o130g")
-
-[node name="OreC" type="MeshInstance3D" parent="ResIron3" unique_id=57563979]
-transform = Transform3D(0.5542926, 0.11239907, 0.82469755, 0.0978434, 0.9751704, -0.19866933, -0.82655084, 0.19081217, 0.5295322, 0.6, 0.4, -0.6)
-material_override = SubResource("StandardMaterial3D_vgjc5")
-mesh = SubResource("BoxMesh_utu4w")
 
 [node name="SkeletonFillerR6" type="Node3D" parent="." unique_id=1129011248]
 script = ExtResource("23_filler")

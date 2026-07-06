@@ -449,8 +449,16 @@ func _ai_step(delta: float) -> void:
 ## и порог `dist ≤ attack_range` (как и strike-радиус) до ЦЕНТРА не срабатывает.
 ## Цель может объявить `get_attack_reach_bonus() -> float` (≈ её радиус) — он
 ## прибавляется к attack_range/strike, чтобы её били с края. 0 для обычных целей.
+## ВЫТЯНУТЫЕ цели (стена-брус 3 клетки: origin в торце, скаляр-радиус дал бы
+## замах по воздуху у тонкой грани) объявляют направленный вариант
+## `get_attack_reach_bonus_from(from_pos) -> float` — бонус до ГРАНИ со стороны
+## атакующего; он в приоритете.
 func target_reach_bonus(t: Node) -> float:
-	if t != null and t.has_method(&"get_attack_reach_bonus"):
+	if t == null:
+		return 0.0
+	if t.has_method(&"get_attack_reach_bonus_from"):
+		return t.get_attack_reach_bonus_from(global_position)
+	if t.has_method(&"get_attack_reach_bonus"):
 		return t.get_attack_reach_bonus()
 	return 0.0
 

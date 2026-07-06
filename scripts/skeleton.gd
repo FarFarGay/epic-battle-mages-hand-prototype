@@ -1563,7 +1563,13 @@ func _has_line_of_sight_to(target: Node3D) -> bool:
 	var from := Vector3(global_position.x, y, global_position.z)
 	var to := Vector3(target.global_position.x, y, target.global_position.z)
 	var q := PhysicsRayQueryParameters3D.create(from, to, Layers.PALISADE_OBSTACLE)
-	q.exclude = [self.get_rid()]
+	# САМА цель — не преграда. Замок стоит на PALISADE_OBSTACLE (блокирует башню
+	# физикой) — луч к его центру бился в его ЖЕ коллайдер → «за стеной», vision
+	# слеп, скелеты его не атаковали (фикс 2026-07-07).
+	if target is CollisionObject3D:
+		q.exclude = [self.get_rid(), (target as CollisionObject3D).get_rid()]
+	else:
+		q.exclude = [self.get_rid()]
 	var hit: Dictionary = space.intersect_ray(q)
 	return hit.is_empty()
 

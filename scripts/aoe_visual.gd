@@ -311,9 +311,31 @@ static func _explosion_fire(root: Node, pos: Vector3, radius: float) -> void:
 ## Дымные частицы: серые, медленно поднимаются вверх, лётают дольше огня
 ## (чтобы дым ещё висел когда пламя потухнет). lifetime 1.2с.
 static func _explosion_smoke(root: Node, pos: Vector3, radius: float) -> void:
+	var lifetime: float = 1.2
+	_spawn_oneshot_particles(root, pos, _smoke_ppm(radius), _smoke_quad(), 40, lifetime, radius)
+
+
+## ПОСТОЯННЫЙ дым-эмиттер «зданию плохо» (низкий HP, 2026-07-07): те же клубы,
+## что у взрыва, но continuous — телеграф урона, видный издалека. Caller
+## добавляет ребёнком (умирает вместе со зданием) и позиционирует сам.
+static func make_smoke_emitter(radius: float = 0.6) -> GPUParticles3D:
+	var particles := GPUParticles3D.new()
+	particles.process_material = _smoke_ppm(radius)
+	particles.draw_pass_1 = _smoke_quad()
+	particles.amount = 14
+	particles.lifetime = 1.3
+	particles.one_shot = false
+	particles.explosiveness = 0.0
+	particles.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var ext: float = radius * 3.0 + 3.0
+	particles.visibility_aabb = AABB(Vector3(-ext, -ext, -ext), Vector3(ext * 2.0, ext * 2.0, ext * 2.0))
+	return particles
+
+
+## Общий конфиг дыма (взрыв one-shot и distress-эмиттер зданий — один вид).
+static func _smoke_quad() -> QuadMesh:
 	var quad := QuadMesh.new()
 	quad.size = Vector2(0.6, 0.6)
-
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -321,7 +343,10 @@ static func _explosion_smoke(root: Node, pos: Vector3, radius: float) -> void:
 	mat.billboard_keep_scale = true
 	mat.albedo_color = Color(0.35, 0.32, 0.3, 0.8)
 	quad.material = mat
+	return quad
 
+
+static func _smoke_ppm(radius: float) -> ParticleProcessMaterial:
 	var grad_color := Gradient.new()
 	grad_color.offsets = PackedFloat32Array([0.0, 0.4, 1.0])
 	grad_color.colors = PackedColorArray([
@@ -351,9 +376,7 @@ static func _explosion_smoke(root: Node, pos: Vector3, radius: float) -> void:
 	ppm.scale_curve = scale_tex
 	ppm.scale_min = 0.8
 	ppm.scale_max = 1.4
-
-	var lifetime: float = 1.2
-	_spawn_oneshot_particles(root, pos, ppm, quad, 40, lifetime, radius)
+	return ppm
 
 
 ## Общий helper: создаёт one_shot GPUParticles3D, спавнит на root, через

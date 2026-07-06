@@ -77,7 +77,9 @@ static func apply_uniform(
 		# radius, как Skeleton/Enemy.target_reach_bonus. 0 для обычных целей.
 		if collider is Node3D:
 			var reach: float = 0.0
-			if collider.has_method(&"get_attack_reach_bonus"):
+			if collider.has_method(&"get_attack_reach_bonus_from"):
+				reach = collider.get_attack_reach_bonus_from(center)
+			elif collider.has_method(&"get_attack_reach_bonus"):
 				reach = collider.get_attack_reach_bonus()
 			var eff: float = r_sq if reach <= 0.0 else (radius + reach) * (radius + reach)
 			var d_sq: float = (collider.global_position - center).length_squared()

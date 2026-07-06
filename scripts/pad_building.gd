@@ -343,6 +343,34 @@ func _role_hp() -> float:
 			return 60.0
 
 
+## Reach-контракт ([Enemy.target_reach_bonus], направленный вариант): здание —
+## не точка. Скелет должен замахиваться у ГРАНИ футпринта: у стены-бруса
+## (3 клетки, origin в торцевой якорь-клетке) центр-дистанция не срабатывала —
+## скелеты упирались в коллайдер БЕЗ атак и телеграфа (фидбек 2026-07-07).
+## Бонус = |атакующий→origin| − |атакующий→ближайшая точка футпринта| (XZ,
+## в локальных осях — поворот узла учитывается to_local автоматически).
+func get_attack_reach_bonus_from(from_pos: Vector3) -> float:
+	if _mask.is_empty():
+		return 0.0
+	var l: Vector3 = to_local(from_pos)
+	var half: float = CityGrid.CELL * 0.5
+	var min_x: float = INF
+	var max_x: float = -INF
+	var min_z: float = INF
+	var max_z: float = -INF
+	for c in _mask:
+		var cc := c as Vector2i
+		min_x = minf(min_x, cc.x * CityGrid.CELL - half)
+		max_x = maxf(max_x, cc.x * CityGrid.CELL + half)
+		min_z = minf(min_z, cc.y * CityGrid.CELL - half)
+		max_z = maxf(max_z, cc.y * CityGrid.CELL + half)
+	var px: float = clampf(l.x, min_x, max_x)
+	var pz: float = clampf(l.z, min_z, max_z)
+	var d_box: float = Vector2(l.x - px, l.z - pz).length()
+	var d_origin: float = Vector2(l.x, l.z).length()
+	return maxf(0.0, d_origin - d_box)
+
+
 ## Damageable-контракт: приём урона (скелеты — по группе, магия/слэм — по коллайдеру).
 func take_damage(amount: float) -> void:
 	if _dead or amount <= 0.0:
@@ -350,34 +378,72 @@ func take_damage(amount: float) -> void:
 	_hp -= amount
 	damaged.emit(amount)
 	_flash_hit()
+	_update_distress()
 	if _hp <= 0.0:
 		_die()
 
 
-## Hit-flash на приём урона (универсальный FX, как у врагов): кратко подсветить меши.
+## Цвет hit-flash'а. По нему же отличаем «наш флеш ещё гаснет» от РОДНОГО
+## свечения здания (кристалл института и т.п.) — родное не трогаем.
+const _FLASH_COLOR := Color(1.0, 0.4, 0.3)
+
+## Hit-flash на приём урона (универсальный FX, как у врагов): здание МИГАЕТ —
+## двойной пульс вспышка→притух→вспышка→погас (~0.35с; фидбек 2026-07-07:
+## одиночное затухание не читалось как «мигание») + крошка-пыль.
 func _flash_hit() -> void:
+	var mats: Array = []
 	for ch in get_children():
 		var mi := ch as MeshInstance3D
 		if mi == null:
 			continue
 		var mat := mi.material_override as StandardMaterial3D
-		if mat == null:
+		if mat == null or mats.has(mat):
 			continue
+		if mat.emission_enabled and not mat.emission.is_equal_approx(_FLASH_COLOR):
+			continue  # родное свечение здания — не глушим флешем
+		mats.append(mat)
+	if mats.is_empty():
+		return
+	for m in mats:
+		var mat := m as StandardMaterial3D
 		mat.emission_enabled = true
-		mat.emission = Color(1.0, 0.4, 0.3)
-		mat.emission_energy_multiplier = 0.9
-	var tw := create_tween()
-	tw.tween_interval(0.08)
-	tw.tween_callback(func() -> void:
-		if not is_instance_valid(self) or _dead:
-			return
-		for ch in get_children():
-			var mi := ch as MeshInstance3D
-			if mi == null:
-				continue
-			var mat := mi.material_override as StandardMaterial3D
-			if mat != null:
-				mat.emission_energy_multiplier = 0.0)
+		mat.emission = _FLASH_COLOR
+	var apply := func(v: float) -> void:
+		for m in mats:
+			(m as StandardMaterial3D).emission_energy_multiplier = v
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
+	_flash_tween = create_tween()
+	_flash_tween.tween_method(apply, 2.4, 0.2, 0.1)
+	_flash_tween.tween_method(apply, 0.2, 1.8, 0.08)
+	_flash_tween.tween_method(apply, 1.8, 0.0, 0.16)
+	# Крошка от удара (throttle — осада лупит десятками ударов в секунду).
+	var now: int = Time.get_ticks_msec()
+	if now - _hit_dust_msec >= 400:
+		_hit_dust_msec = now
+		var scene := get_tree().current_scene
+		if scene != null:
+			AoeVisual.spawn_dust(scene, to_global(_mask_center()) + Vector3(0, 0.7, 0))
+
+
+var _flash_tween: Tween = null
+
+
+var _hit_dust_msec: int = 0
+var _distress_smoke: GPUParticles3D = null
+
+
+## Телеграф «зданию плохо»: ниже 35% HP над зданием встаёт дым-столб — виден
+## издалека и постоянно, в отличие от мгновенного флеша. Умирает со зданием.
+func _update_distress() -> void:
+	if _dead or _distress_smoke != null:
+		return
+	var max_hp: float = _role_hp()
+	if max_hp <= 0.0 or _hp / max_hp > 0.35:
+		return
+	_distress_smoke = AoeVisual.make_smoke_emitter(0.7)
+	add_child(_distress_smoke)
+	_distress_smoke.position = _mask_center() + Vector3(0, 1.4, 0)
 
 
 ## Смерть: СРАЗУ выходим из групп цели/Damageable (queue_free отложен — иначе скелеты/AOE
@@ -394,7 +460,10 @@ func _die() -> void:
 	var tree := get_tree()
 	var scene := tree.current_scene if tree != null else null
 	if scene != null and is_instance_valid(scene):
-		ShatterEffect.spawn(scene, to_global(_mask_center()) + Vector3(0, 0.6, 0), _role_color(_role), 12, 1.5)
+		# Взрыв масштабируется размером здания (клетки маски): будка ~1.6, стена-брус ~2.6.
+		var boom_r: float = clampf(1.2 + 0.45 * float(_mask.size()), 1.6, 3.0)
+		ShatterEffect.building_explosion(scene, to_global(_mask_center()) + Vector3(0, 0.6, 0),
+			_role_color(_role), boom_r, 12)
 	queue_free()
 	# Структура изменилась → стены/ворота пересобираются, гарнизон пересчитывает пост.
 	# Этот узел уже вышел из GROUP выше, так что refresh_walls его не трогает.

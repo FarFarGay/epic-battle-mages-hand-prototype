@@ -16,6 +16,19 @@ const IMPULSE_VERTICAL := 5.0
 const ANGULAR_RANGE := 5.0
 
 
+## ЕДИНАЯ смерть здания (2026-07-07, «все здания взрываются»): взрыв + пыль +
+## обломки в цвет постройки + шейк. Один язык на PadBuilding / Castle /
+## RoomBuildSite / PalisadeSegment — масштаб через radius (размер здания).
+static func building_explosion(parent: Node, position: Vector3, color: Color,
+		radius: float = 1.8, fragment_count: int = 12) -> void:
+	if not is_instance_valid(parent):
+		return
+	AoeVisual.spawn_explosion(parent, position, radius)
+	AoeVisual.spawn_dust(parent, position)
+	spawn(parent, position, color, fragment_count, 1.5)
+	EventBus.camera_shake.emit(clampf(radius * 0.14, 0.2, 0.6), position)
+
+
 ## Заспавнить пачку фрагментов. Все они становятся детьми `parent` и сами очищаются
 ## через `lifetime` секунд одним общим SceneTreeTimer.
 ## burst_dir/power — ОВЕРКИЛЛ-разлёт: ненулевой burst_dir добавляет фрагментам

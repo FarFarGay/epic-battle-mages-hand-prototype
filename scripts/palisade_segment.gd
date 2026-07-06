@@ -96,8 +96,27 @@ func take_damage(amount: float) -> void:
 	if LogConfig.master_enabled:
 		print("[Palisade] получил урон %.1f, hp=%.1f" % [amount, hp])
 	damaged.emit(amount)
+	_flash_hit()
 	if hp <= 0.0:
 		_die()
+
+
+## Hit-flash при уроне — единый язык с PadBuilding/врагами: МИГАНИЕ двойным
+## пульсом вспышка→притух→вспышка→погас (~0.35с).
+func _flash_hit() -> void:
+	if _material == null or _highlighted:
+		return
+	_material.emission_enabled = true
+	_material.emission = Color(1.0, 0.4, 0.3)
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
+	_flash_tween = create_tween()
+	_flash_tween.tween_property(_material, "emission_energy_multiplier", 0.2, 0.1).from(2.2)
+	_flash_tween.tween_property(_material, "emission_energy_multiplier", 1.7, 0.08)
+	_flash_tween.tween_property(_material, "emission_energy_multiplier", _base_emission_energy, 0.16)
+
+
+var _flash_tween: Tween = null
 
 
 func _die() -> void:
@@ -114,6 +133,9 @@ func _die() -> void:
 	remove_from_group(PALISADE_WALL_GROUP)
 	remove_from_group(PALISADE_VERTEX_GROUP)
 	destroyed.emit()
+	# Ломается как здание: щепки в цвет дерева + малый взрыв (единый язык).
+	ShatterEffect.building_explosion(get_tree().current_scene,
+		global_position + Vector3.UP * 0.7, Color(0.5, 0.36, 0.2), 1.6, 9)
 	# call_deferred — Camp подписан на сигнал и может ещё реагировать
 	# (например, для счётчика).
 	call_deferred("queue_free")

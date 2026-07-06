@@ -20,6 +20,12 @@ const ACTION_GRAB := &"hand_grab"
 
 signal oil_changed(oil: float, goal: float)
 signal filled
+signal damaged(amount: float)
+signal destroyed
+
+## HP замка (2026-07-07, «все здания получают урон»): цель ночного штурма теперь
+## реально ломается. Танкует толпу (стены 140, замок — сердце города), но не вечен.
+@export var hp: float = 600.0
 
 ## Цель матча — накопить столько нефти со всех буров (победа). Подключим к
 ## WinOverlay следующим куском (HUD-счётчик + победа).
@@ -33,14 +39,111 @@ var _full: bool = false
 var _fill: Node3D = null
 var _net_timer: float = 0.0
 var _hand: Hand = null
+var _dead: bool = false
 
 
 func _ready() -> void:
 	add_to_group(GROUP)
 	add_to_group(PipeSegment.PORT_HOST_GROUP)  # коллектор даёт порты для снапа/сети
 	add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)  # замок = кнопка найма рабочих (hover + ЛКМ)
+	# Боевой слой (как PadBuilding): Damageable-нода = сам StaticBody (коллайдер),
+	# цель скелетов по группе — бродяги и штурм реально ломают замок.
+	Damageable.register(self)
+	add_to_group(Enemy.TARGET_GROUP)
+	_hp_max = hp
 	_build_castle()
 	_update_fill()
+
+
+# --- Боевой слой: урон/смерть (единый язык зданий) ---
+
+## Reach-контракт (Enemy.target_reach_bonus): замок широкий (корпус ~4.6м) —
+## атакующий упирается в стену далеко от центра; без бонуса скелеты стояли
+## вокруг БЕЗ атак и телеграфа (фидбек 2026-07-07). Бьют с края.
+func get_attack_reach_bonus() -> float:
+	return 2.4
+
+
+## Damageable-контракт: скелеты — по группе, магия/слэм игрока — по коллайдеру.
+func take_damage(amount: float) -> void:
+	if _dead or amount <= 0.0:
+		return
+	hp -= amount
+	damaged.emit(amount)
+	_flash_hit()
+	_update_distress()
+	if hp <= 0.0:
+		_die()
+
+
+## Цвет hit-flash'а (см. PadBuilding._FLASH_COLOR — единый язык): по нему же
+## отличаем гаснущий флеш от родного свечения (заливка-индикатор нефти).
+const _FLASH_COLOR := Color(1.0, 0.4, 0.3)
+
+## Hit-flash: замок МИГАЕТ — двойной пульс вспышка→притух→вспышка→погас
+## (~0.35с, единый язык с PadBuilding). Материалы шарятся между мешами —
+## дедуп и красим разом.
+func _flash_hit() -> void:
+	var mats: Array = []
+	for mi in find_children("*", "MeshInstance3D", true, false):
+		var mat := (mi as MeshInstance3D).material_override as StandardMaterial3D
+		if mat == null or mats.has(mat):
+			continue
+		if mat.emission_enabled and not mat.emission.is_equal_approx(_FLASH_COLOR):
+			continue  # родное свечение — не глушим
+		mats.append(mat)
+	if mats.is_empty():
+		return
+	for m in mats:
+		var mat := m as StandardMaterial3D
+		mat.emission_enabled = true
+		mat.emission = _FLASH_COLOR
+	var apply := func(v: float) -> void:
+		for m in mats:
+			(m as StandardMaterial3D).emission_energy_multiplier = v
+	if _flash_tween != null and _flash_tween.is_valid():
+		_flash_tween.kill()
+	_flash_tween = create_tween()
+	_flash_tween.tween_method(apply, 2.2, 0.2, 0.1)
+	_flash_tween.tween_method(apply, 0.2, 1.7, 0.08)
+	_flash_tween.tween_method(apply, 1.7, 0.0, 0.16)
+
+
+var _flash_tween: Tween = null
+
+
+var _hp_max: float = 0.0
+var _distress_smoke: GPUParticles3D = null
+
+
+## Телеграф «замку плохо»: ниже 35% HP — постоянный дым-столб над донжоном.
+func _update_distress() -> void:
+	if _dead or _distress_smoke != null or _hp_max <= 0.0 or hp / _hp_max > 0.35:
+		return
+	_distress_smoke = AoeVisual.make_smoke_emitter(1.2)
+	add_child(_distress_smoke)
+	_distress_smoke.position = Vector3(0, 3.2, 0)
+
+
+## Смерть замка: из групп СРАЗУ (queue_free отложен — скелеты/AOE не целят труп),
+## большой взрыв — сердце города рушится с кульминацией.
+func _die() -> void:
+	if _dead:
+		return
+	_dead = true
+	remove_from_group(GROUP)
+	remove_from_group(Enemy.TARGET_GROUP)
+	remove_from_group(Damageable.GROUP)
+	remove_from_group(PipeSegment.PORT_HOST_GROUP)
+	remove_from_group(Hand.PICKUP_HIGHLIGHT_GROUP)
+	destroyed.emit()
+	var scene: Node = get_tree().current_scene
+	if scene != null and is_instance_valid(scene):
+		ShatterEffect.building_explosion(scene, global_position + Vector3.UP * 1.2,
+			_STONE, 5.0, 26)
+		AoeVisual.spawn_screen_flash(get_tree(), Color(1.0, 0.6, 0.3), 0.22, 0.18)
+	EventBus.tutorial_hint.emit("⚠ Замок разрушен!", 6.0)
+	queue_free()
 
 
 # --- Визуал: мини-замок (центр грид-города). Строится кодом, как трубы (один путь). ---

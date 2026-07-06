@@ -1,9 +1,9 @@
 class_name ValleyQuests
 extends Node
 ## Чеклист-задания Долины (город, зона за Room5): постоянная строка «⚑ Задание»
-## на HUD ведёт игрока по городским урокам — станок → замок → шахта → дом+казарма
-## → стены → верфь → пережить ночь → наполнить замок. Одна цепочка, шаги
-## последовательные.
+## на HUD ведёт игрока по городским урокам — Гильдия → чертёж (станок на заставе)
+## → фундамент → замок → шахта → дом+казарма → стены → верфь → пережить ночь →
+## наполнить замок. Одна цепочка, шаги последовательные.
 ##
 ## Механика: ПОЛЛИНГ состояния мира (Timer 0.5с) — условия читаются из групп/
 ## флагов, никакой подписки на десяток сигналов. Шаг выполнен → плашка
@@ -33,9 +33,13 @@ var _steps: Array = []
 
 func _ready() -> void:
 	_steps = [
-		{"text": "Найди Гильдию Камня и запусти станок-чертёжник",
+		{"text": "Найди Гильдию Камня — домики на юго-востоке долины",
+			"done": func() -> bool: return _guild_met()},
+		{"text": "Добудь чертёж замка: запусти станок на заставе за северной стеной",
 			"done": func() -> bool: return _building_known()},
-		{"text": "Построй качалку-замок у жилы (карточка артели → Стройка)",
+		{"text": "Отнеси чертёж рукой на плиту-фундамент в центре долины",
+			"done": func() -> bool: return _castle_started()},
+		{"text": "Замок строится — артель Гильдии достроит",
 			"done": func() -> bool: return _castle_built()},
 		{"text": "Поставь шахту на жилу — монеты закапают сами",
 			"done": func() -> bool: return _has_role(&"mine")},
@@ -93,6 +97,23 @@ func _building_known() -> bool:
 
 func _castle_built() -> bool:
 	return get_tree().get_first_node_in_group(Castle.GROUP) != null
+
+
+## Разговор с Гильдией состоялся (домик builders вешает на себя guild_met);
+## знание построек добыто — шаг тем более пройден (каскад не залипнет).
+func _guild_met() -> bool:
+	return get_tree().get_first_node_in_group(&"guild_met") != null or _building_known()
+
+
+## Чертёж вложен: стройплощадка замка существует (или замок уже стоит —
+## с free_build площадка живёт один кадр, ловим итог, не момент).
+func _castle_started() -> bool:
+	if _castle_built():
+		return true
+	for s in get_tree().get_nodes_in_group(Layers.BUILD_SITE_GROUP):
+		if is_instance_valid(s) and s.get(&"building_id") == RoomBuildings.PUMP:
+			return true
+	return false
 
 
 func _has_role(role: StringName) -> bool:
