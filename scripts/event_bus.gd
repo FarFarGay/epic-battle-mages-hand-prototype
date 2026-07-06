@@ -51,6 +51,10 @@ signal barracks_panel_requested(barracks: Node3D)
 ## Обучающая подсказка ([TutorialHint]) → HUD показывает плашку с текстом внизу
 ## экрана на duration секунд. Новый текст перебивает предыдущий.
 signal tutorial_hint(text: String, duration: float)
+## Казна пополнилась В ТОЧКЕ МИРА (монета с горшка доехала до башни, гном продал
+## бревно). SquadXpFx рисует попап «+N🥉» — доход виден в момент прихода, а не
+## только цифрами одометра в углу.
+signal coins_gained_at(amount: int, world_position: Vector3)
 ## Башня «вбирает силу» перед вылетом снаряда (антисипация каста): фаербол эмитит
 ## при нажатии, снаряд вылетает через charge_delay. Башня сжимается + жилы вспыхивают.
 signal tower_cast_charging(target: Vector3)

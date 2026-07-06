@@ -383,8 +383,12 @@ func _tick_worker_order(delta: float) -> void:
 ## (башня заберёт магнитом, когда освободится место). Не таскаем к башне впустую.
 func _tick_gather(_delta: float) -> void:
 	if is_carrying():
-		# Добыча едет в ТРЮМ башни (склад): монетой станет на РАЗГРУЗОЧНОЙ ПЛАТФОРМЕ
-		# в городе (2026-07-03, единый путь конверсии; плавильня — чистый сапорт шахты).
+		# ДЕРЕВО: продажа казне у башни (2026-07-07) — склад/переполнение не при чём.
+		if _carried_type == ResourcePile.ResourceType.WOOD:
+			_tick_deposit_to_store()
+			return
+		# Руда/камень едут в ТРЮМ башни (склад): монетой станут на РАЗГРУЗОЧНОЙ
+		# ПЛАТФОРМЕ в городе (2026-07-03; плавильня — чистый сапорт шахты).
 		var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
 		# Нет склада ИЛИ трюм полон → роняем орб (а не застреваем навсегда с грузом).
 		if store == null or store.is_full(_carried_type):
@@ -685,11 +689,11 @@ func _compute_repair_angle() -> float:
 	return TAU * float(idx) / float(n)
 
 
+## Монет за одно сданное бревно (единая валюта, 2026-07-07: рубка = ЗАРАБОТОК,
+## дерево-как-ресурс из живого пути убрано; мостки покупаются за монеты).
+const WOOD_SALE_BRONZE := 4
+
 func _tick_deposit_to_store() -> void:
-	var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
-	if store == null:
-		velocity = Vector3.ZERO
-		return
 	var dest: Vector3 = _tower_center()
 	var to := Vector3(dest.x - global_position.x, 0.0, dest.z - global_position.z)
 	var d: float = to.length()
@@ -697,6 +701,22 @@ func _tick_deposit_to_store() -> void:
 		_move_toward(to, d)
 		return
 	velocity = Vector3.ZERO
+	# ДЕРЕВО продаётся казне прямо на сдаче у башни (склад не участвует): бревно —
+	# предмет-носка, монетой становится в момент сдачи. Руда/камень по-прежнему
+	# едут в трюм (город: плавильня/разгрузочная платформа).
+	if _carried_type == ResourcePile.ResourceType.WOOD:
+		var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
+		if bank != null and bank.has_method(&"add_coin"):
+			bank.call(&"add_coin", ResourcePile.ResourceType.BRONZE, WOOD_SALE_BRONZE)
+			AoeVisual.spawn_pulse_sparks(get_tree().current_scene,
+				global_position + Vector3.UP * 0.8, 0.7, 5.0)
+			# Попап «+4🥉» над гномом — продажа видна в момент сдачи.
+			EventBus.coins_gained_at.emit(WOOD_SALE_BRONZE, global_position)
+		deliver_resource()
+		return
+	var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
+	if store == null:
+		return
 	# Склад полон по этому типу — сдать нельзя: ждём, периодически краснеет кольцо.
 	if store.is_full(_carried_type):
 		if _store_full_ring_cd <= 0.0:

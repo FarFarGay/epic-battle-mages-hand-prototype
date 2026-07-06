@@ -1026,7 +1026,25 @@ func _dash_damage_enemy(collider: Node) -> void:
 	if collider in _dash_hit_set:
 		return  # уже задели этим рывком
 	_dash_hit_set.append(collider)
-	Damageable.try_damage(collider, dmg, HitStop.HEAVY)
+	# КУЛЬМИНАЦИЯ: супер-таран впечатался в тяжёлого (гигант) — слоумо-бит, шейк,
+	# синяя вспышка, разряд+кольцо в точке контакта, отброс-слайд (резист танка
+	# сгладит до короткого проезда). Рядовая мелочь давится без бита — иначе каша
+	# (фидбек 2026-07-07 «врезалась глуховато»).
+	var heavy_super_hit: bool = _dash_is_super and collider.is_in_group(&"super_dash_only")
+	if heavy_super_hit and collider is Node3D:
+		var cpos: Vector3 = (collider as Node3D).global_position
+		HitStop.slowmo_beat(0.25, 0.18)
+		EventBus.camera_shake.emit(0.8, cpos)
+		AoeVisual.spawn_screen_flash(get_tree(), Color(0.55, 0.75, 1.0), 0.18, 0.12)
+		var impact_root := get_tree().current_scene
+		if impact_root != null:
+			AoeVisual.spawn_pulse_sparks(impact_root, cpos + Vector3.UP * 1.2, 3.0, 12.0)
+			AoeVisual.spawn_dust(impact_root, cpos)
+			AoeVisual.spawn_expanding_ring(impact_root, cpos, 3.5, 0.22, super_dash_marker_color)
+		if collider.has_method(&"apply_knockback"):
+			var kdir := Vector3(_dash_dir.x, 0.0, _dash_dir.y)
+			collider.call(&"apply_knockback", kdir * 42.0 + Vector3.UP * 3.0, 0.3)
+	Damageable.try_damage(collider, dmg, HitStop.SUPER if heavy_super_hit else HitStop.HEAVY)
 
 
 ## Радиус «тарана» дэша по настилам-постройкам (мост): настил НЕ блокирует башню

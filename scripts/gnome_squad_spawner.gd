@@ -170,6 +170,12 @@ func _squad_has_member_in_ring(sq: Squad, origin: Vector3, radius: float) -> boo
 	return false
 
 
+## Публичный найм generic-путём (минуя стол торга): диалог гномов Room4 нанимает
+## артель одним кликом (2026-07-07). Тот же код-путь, что TradeUI.purchased.
+func hire_squad(unit_type: StringName, size: int) -> void:
+	_on_purchased(unit_type, size)
+
+
 func _on_purchased(unit_type: StringName, squad_size: int) -> void:
 	if SoldierSystem == null:
 		return
@@ -186,16 +192,21 @@ func _on_purchased(unit_type: StringName, squad_size: int) -> void:
 	_spawn_squad(soldier_type, soldier_type, add, front)
 
 
+## Стартовая численность артели. 2026-07-07: ОДИН гном — остальных ПОКУПАЕШЬ у
+## гномов Room4 после Хартии (стол торга, +6). Кап типа (7) остаётся потолком долива.
+@export var starting_worker_count: int = 1
+
+
 ## Стартовая артель рабочих — появляется У БАШНИ и сразу прячется внутрь (они в ней
-## «живут»). Численность = кап типа (7). Зовётся deferred из _ready (ждёт дерево сцены).
+## «живут»). Зовётся deferred из _ready (ждёт дерево сцены).
 func _spawn_starting_workers() -> void:
 	await get_tree().physics_frame
 	if not is_inside_tree() or SoldierSystem == null:
 		return
 	var soldier_type: StringName = SoldierSystem.ROLE_WORKER
-	var count: int = SoldierSystem.get_squad_cap(soldier_type)
+	var count: int = starting_worker_count
 	if count <= 0:
-		count = SoldierSystem.get_squad_size(soldier_type)
+		return
 	var tower := get_tree().get_first_node_in_group(&"tower")
 	if tower == null or not is_instance_valid(tower):
 		return

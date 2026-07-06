@@ -152,7 +152,9 @@ func _process(_delta: float) -> void:
 	# Хватает ли монет на составную цену (постройки с "cost"; без неё — бесплатно).
 	_affordable = _can_afford()
 	# Замок — ОДИН на уровень: если уже есть/строится — ставить нельзя (силуэт красный).
-	_blocked = _pump_blocked()
+	# Постройки с forbid_on_chasm (мостки) не ставятся НА полосе пропасти — доску
+	# туда перекладывает РУКА, стройка через дыру не умеет.
+	_blocked = _pump_blocked() or _chasm_blocked(place)
 	_update_ghost(place)
 	# Зелёная зона стройки 9×9: при установке замка — вокруг силуэта (видно будущую зону);
 	# при укладке прочего — вокруг существующего замка. Ездит за силуэтом (per-frame).
@@ -172,10 +174,10 @@ func _process(_delta: float) -> void:
 			if debug_log and LogConfig.master_enabled:
 				print("[Hand:PlaceAim] нельзя сюда — стыкуй к порту либо держи фигуру в площадке без наложений")
 			return
-		# Замок уже есть/строится — второй нельзя.
+		# Замок уже есть/строится — второй нельзя. Либо силуэт на полосе пропасти.
 		if _blocked:
 			if debug_log and LogConfig.master_enabled:
-				print("[Hand:PlaceAim] замок уже есть — второй нельзя")
+				print("[Hand:PlaceAim] нельзя сюда — замок уже есть либо силуэт на пропасти")
 			return
 		# Не хватает монет → не ставим (силуэт уже красный — см. _update_ghost).
 		if not _affordable:
@@ -230,6 +232,31 @@ func _can_afford() -> bool:
 	if bank == null or not bank.has_method(&"can_afford"):
 		return true
 	return bank.call(&"can_afford", cost)
+
+
+## Силуэт на полосе пропасти? Только для построек с "forbid_on_chasm" (мостки):
+## центр силуэта в локальных осях шейпа любого chasm_barrier (+запас по оси перехода).
+func _chasm_blocked(center: Vector3) -> bool:
+	if not _data.get("forbid_on_chasm", false):
+		return false
+	for n in get_tree().get_nodes_in_group(&"chasm_barrier"):
+		var n3 := n as Node3D
+		if n3 == null or not is_instance_valid(n3):
+			continue
+		var cs: CollisionShape3D = null
+		for c in n3.get_children():
+			if c is CollisionShape3D:
+				cs = c as CollisionShape3D
+				break
+		var box: BoxShape3D = null
+		if cs != null:
+			box = cs.shape as BoxShape3D
+		if box == null:
+			continue
+		var l: Vector3 = cs.global_transform.affine_inverse() * center
+		if absf(l.x) <= box.size.x * 0.5 + 1.0 and absf(l.z) <= box.size.z * 0.5:
+			return true
+	return false
 
 
 ## Ставит RoomBuildSite на точке pos с текущим поворотом. Площадку строят рабочие

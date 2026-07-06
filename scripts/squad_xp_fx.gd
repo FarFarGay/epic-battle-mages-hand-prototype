@@ -22,9 +22,20 @@ const SquadXpPopupScene = preload("res://scripts/squad_xp_popup.gd")
 
 func _ready() -> void:
 	EventBus.squad_xp_gained_at.connect(_on_xp_gained)
+	# Доход казны (горшочная монета доехала, гном продал бревно) — тот же попап,
+	# текст с номиналом: доход читается в точке прихода (фидбек 2026-07-07).
+	EventBus.coins_gained_at.connect(_on_coins_gained)
 
 
 func _on_xp_gained(amount: int, world_position: Vector3) -> void:
+	_spawn_popup("+%d" % amount, world_position)
+
+
+func _on_coins_gained(amount: int, world_position: Vector3) -> void:
+	_spawn_popup("+%d🥉" % amount, world_position)
+
+
+func _spawn_popup(text: String, world_position: Vector3) -> void:
 	var tree := get_tree()
 	if tree == null:
 		return
@@ -32,6 +43,6 @@ func _on_xp_gained(amount: int, world_position: Vector3) -> void:
 	if scene == null or not is_instance_valid(scene):
 		return
 	var popup = SquadXpPopupScene.new()
-	popup.text = "+%d" % amount
+	popup.text = text
 	scene.add_child(popup)
 	popup.global_position = world_position

@@ -77,13 +77,23 @@ var _debug_log_timer: float = 0.0
 ## forced-цель = башня (бой плотный сразу, мана-фарм ВНУТРИ боя).
 @export var roar_aggro_room: bool = true
 ## Фаза-эскалация на каждом пороге HP (вместе с призывом): гигант быстрее
-## ходит и чаще заряжает — бой разгоняется к финалу.
+## ходит и чаще заряжает — бой разгоняется к финалу. Кулдаун-мульт смягчён
+## 0.75→0.85 (фидбек 2026-07-07 «дико спамит атаками»; база тоже 1.2→2.0 в tscn):
+## заряды 2.0 → 1.7 → 1.45с по фазам.
 @export var phase_speed_mult: float = 1.3
-@export var phase_cooldown_mult: float = 0.75
+@export var phase_cooldown_mult: float = 0.85
 ## Шоквейв на финише заряда (попал ИЛИ промазал): мелочь в радиусе разлетается.
 ## 0 = выключено. Башню не трогает — она наказана самим контактом заряда.
 @export var charge_shockwave_radius: float = 4.5
 @export var charge_shockwave_impulse: float = 9.0
+## Заряд ДАВИТ свою же мелочь по пути (симметрия: сила бьёт всех того же класса,
+## фидбек 2026-07-07). Каждый скелет — один раз за заряд. 0 = выключено.
+@export var charge_trample_damage: float = 60.0
+@export var charge_trample_radius: float = 1.8
+## Смерть = взрыв (зеркало предсмертного взрыва башни): бьёт НЕЖИТЬ в радиусе,
+## башню/гномов не трогает. 0 = выключено.
+@export var death_explosion_radius: float = 6.0
+@export var death_explosion_damage: float = 120.0
 
 @export_group("Room-гейт (аггр только когда башня В комнате)")
 ## Центр прямоугольника комнаты (XZ). room_size > 0 включает гейт.
@@ -103,6 +113,8 @@ var _dodge_cd: float = 0.0
 ## True если текущий рывок — заряд-атака (бьёт башню на контакте), не уворот.
 var _charging: bool = false
 var _charge_hit: bool = false
+## Скелеты, уже задавленные ТЕКУЩИМ зарядом (instance_id) — по разу за заряд.
+var _trampled: Array = []
 ## Остаток стана-матадора (промах заряда). >0 → гигант стоит, урон полный.
 var _stun_t: float = 0.0
 ## Рёв-подача сыгран (баннер/шейк на первый аггр башни). Один раз за жизнь.
@@ -280,6 +292,7 @@ func _perform_strike(_target: Node3D) -> void:
 	dir = dir.normalized()
 	_charging = true
 	_charge_hit = false
+	_trampled.clear()
 	_dash_vec = dir * charge_speed
 	_dash_remaining = charge_duration
 	_dash_ghost_t = 0.0
@@ -304,6 +317,7 @@ func _ai_step(delta: float) -> void:
 		velocity.z = _dash_vec.z
 		if _charging:
 			_check_charge_contact()
+			_trample_skeletons()
 			if _dash_remaining <= 0.0:
 				_charging = false
 				_charge_shockwave()
@@ -398,6 +412,55 @@ func _aggro_room_skeletons() -> void:
 func _escalate_phase() -> void:
 	move_speed *= phase_speed_mult
 	attack_cooldown *= phase_cooldown_mult
+
+
+## Заряд давит свою мелочь по пути: скелеты в trample-радиусе получают урон
+## (по разу за заряд) + отброс. Гигант — таран для всех, не только для башни.
+func _trample_skeletons() -> void:
+	if charge_trample_damage <= 0.0:
+		return
+	var r_sq: float = charge_trample_radius * charge_trample_radius
+	for n in get_tree().get_nodes_in_group(SKELETON_GROUP):
+		var sk := n as Skeleton
+		if sk == null or sk == self or sk is SkeletonGiant or not is_instance_valid(sk):
+			continue
+		var id: int = sk.get_instance_id()
+		if id in _trampled:
+			continue
+		var to_sk: Vector3 = sk.global_position - global_position
+		to_sk.y = 0.0
+		if to_sk.length_squared() > r_sq:
+			continue
+		_trampled.append(id)
+		sk.apply_knockback(_dash_vec.normalized() * 7.0 + Vector3.UP * 2.5, 0.22)
+		Damageable.try_damage(sk, charge_trample_damage)
+
+
+## Смерть гиганта = взрыв (зеркало предсмертного взрыва башни): испепеляет
+## нежить в радиусе — финальный аккорд расчищает призванную мелочь. Башня и
+## гномы не задеваются (итерация только по SKELETON_GROUP).
+func _on_destroyed() -> void:
+	super._on_destroyed()
+	if death_explosion_radius <= 0.0:
+		return
+	var scene_root := get_tree().current_scene
+	if scene_root == null:
+		return
+	AoeVisual.spawn_explosion(scene_root, global_position, death_explosion_radius)
+	EventBus.camera_shake.emit(0.6, global_position)
+	var r_sq: float = death_explosion_radius * death_explosion_radius
+	for n in get_tree().get_nodes_in_group(SKELETON_GROUP):
+		var sk := n as Skeleton
+		if sk == null or sk == self or sk is SkeletonGiant or not is_instance_valid(sk):
+			continue
+		var to_sk: Vector3 = sk.global_position - global_position
+		to_sk.y = 0.0
+		if to_sk.length_squared() > r_sq:
+			continue
+		var dir: Vector3 = to_sk.normalized() if to_sk.length_squared() > 0.0001 \
+				else Vector3(randf() - 0.5, 0.0, randf() - 0.5).normalized()
+		sk.apply_knockback(dir * 10.0 + Vector3.UP * 3.0, 0.25)
+		Damageable.try_damage(sk, death_explosion_damage)
 
 
 ## Ударная волна на финише заряда: кольцо+пыль+шейк, мелочь в радиусе

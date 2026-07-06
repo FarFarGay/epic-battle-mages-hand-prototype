@@ -215,6 +215,8 @@ func _grant_gold() -> void:
 		bank.call(&"add_coin", ResourcePile.ResourceType.BRONZE, gold_amount)
 	elif bank.has_method(&"add_gold"):
 		bank.call(&"add_gold", gold_amount)
+	# Попап «+N🥉» в точке прихода — доход виден глазами, не только одометром в углу.
+	EventBus.coins_gained_at.emit(gold_amount, global_position)
 
 
 ## Polling-сканер автомагнита: проверяет, попадает ли орб в чью-то «область

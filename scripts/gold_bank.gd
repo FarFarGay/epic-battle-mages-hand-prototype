@@ -34,9 +34,12 @@ static func next_tier(coin_type: int) -> int:
 	return TIER_ORDER[i + 1]
 
 ## Стартовый капитал (DEBUG) — задаётся по номиналам, суммируется в общий кошелёк.
+## Дефолт 0 (обнулено 2026-07-07): полная казна с порога обходила экономическую
+## арку туториала (Room4 стол опустошает → Room5 рубка = заработок на мостки).
+## Для тестов города крути в инспекторе.
 @export var start_bronze: int = 0
 @export var start_silver: int = 0
-@export var start_gold: int = 100
+@export var start_gold: int = 0
 
 var _value: int = 0  # всего денег в бронза-эквиваленте
 

@@ -163,6 +163,7 @@ const BUILD_MENU_PAD_MANA_CRYSTAL := 24  # сапорт института: ×т
 const BUILD_MENU_PAD_MANA_RUNE := 25     # сапорт института: ×темп маны (сильнее)
 const BUILD_MENU_PAD_UNLOAD := 26        # разгрузочная платформа: паркуй башню → трюм в казну
 const BUILD_MENU_PAD_DOCK := 27          # верфь башни: клик по ней → окно срезов-слоёв башни
+const BUILD_MENU_BRIDGE := 28            # мостки: доска за дерево, рука кладёт на пропасть
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[CityGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
@@ -197,6 +198,7 @@ const BUILD_SECTIONS := [
 	{"tab": "⚔ Войско", "title": "⚔  ГАРНИЗОН — квартал", "ids": [BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
 	{"tab": "🏰 Замок", "title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PUMP, BUILD_MENU_PAD_HOUSE, BUILD_MENU_PAD_UNLOAD, BUILD_MENU_PAD_DOCK]},
 	{"tab": "🔮 Магия", "title": "🔮  МАГИЯ — квартал", "ids": [BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_MANA_CRYSTAL, BUILD_MENU_PAD_MANA_RUNE]},
+	{"tab": "🌉 Инженерия", "title": "🌉  ИНЖЕНЕРИЯ", "ids": [BUILD_MENU_BRIDGE]},
 ]
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
@@ -232,6 +234,13 @@ var _squad_scroll: ScrollContainer
 ## Счётчик нефти замка-качалки (виден, когда замок построен). Прогресс к победе.
 ## Счётчик казны: 🥉 бронза / 🥈 серебро / 🥇 золото (монетная экономика). Всегда виден.
 var _coins_label: Label = null
+## Табло-казна (фидбек 2026-07-07 «мгновенно — импакта нет»): отображаемое значение
+## ДОКРУЧИВАЕТСЯ до реального как барабаны счётчика (_tick_coins_roll), изменение
+## панчит лейбл (масштаб-пульс + цветовая вспышка). _coins_shown < 0 = первый кадр.
+var _coins_shown: float = -1.0
+var _coins_target: int = 0
+var _coins_rendered: int = -1
+var _coins_punch_tween: Tween = null
 ## Счётчик НАСЕЛЕНИЯ (used/cap общего supply-пула, автолоад Population) — под монетами.
 var _population_label: Label = null
 ## «📦 Трюм» башни: сумма материалов склада; ⚠ при полном капе (пора на разгрузку).
@@ -1242,6 +1251,7 @@ func _set_shield_cd_fill(slot: Dictionary, color: Color, frac: float, show: bool
 
 
 func _process(delta: float) -> void:
+	_tick_coins_roll(delta)  # табло казны крутится каждый кадр (цель — по таймеру ниже)
 	_update_timer -= delta
 	if _update_timer <= 0.0:
 		_update_counts()
@@ -1282,18 +1292,57 @@ func _build_coins_label() -> void:
 	add_child(_coins_label)
 
 
+## Обновить ЦЕЛЬ табло (реальная казна). Сама прокрутка цифр — _tick_coins_roll
+## каждый кадр; здесь только фиксация изменения + панч лейбла.
 func _update_coins_label() -> void:
 	if _coins_label == null:
 		return
 	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
-	if bank == null or not bank.has_method(&"get_coin"):
+	if bank == null or not bank.has_method(&"get_gold"):
 		_coins_label.visible = false
 		return
 	_coins_label.visible = true
-	var b: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.BRONZE))
-	var s: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.SILVER))
-	var g: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD))
+	var total: int = int(bank.call(&"get_gold"))
+	if _coins_shown < 0.0:
+		_coins_shown = float(total)  # первый показ — снап без прокрутки
+	elif total != _coins_target:
+		_punch_coins_label(total > _coins_target)
+	_coins_target = total
+
+
+## Прокрутка табло: показываемая казна догоняет реальную (~0.25с на любую сумму,
+## мелочь тикает по единице). Перерисовка — только когда видимое целое сменилось.
+func _tick_coins_roll(delta: float) -> void:
+	if _coins_label == null or _coins_shown < 0.0:
+		return
+	var target_f: float = float(_coins_target)
+	if not is_equal_approx(_coins_shown, target_f):
+		var rate: float = maxf(8.0, absf(target_f - _coins_shown) * 4.0)
+		_coins_shown = move_toward(_coins_shown, target_f, rate * delta)
+	var shown: int = int(round(_coins_shown))
+	if shown == _coins_rendered:
+		return
+	_coins_rendered = shown
+	var g: int = shown / GoldBank.BRONZE_PER_GOLD
+	var s: int = (shown % GoldBank.BRONZE_PER_GOLD) / GoldBank.BRONZE_PER_SILVER
+	var b: int = shown % GoldBank.BRONZE_PER_SILVER
 	_coins_label.text = "🥇 %d    🥈 %d    🥉 %d" % [g, s, b]  # монеты казны
+
+
+## Панч табло на изменение казны: масштаб-пульс от центра + вспышка (зелёная на
+## приход, красноватая на трату) — «табло дёрнулось», импакт виден боковым зрением.
+func _punch_coins_label(gained: bool) -> void:
+	if _coins_label == null:
+		return
+	_coins_label.pivot_offset = _coins_label.size * 0.5
+	if _coins_punch_tween != null and _coins_punch_tween.is_valid():
+		_coins_punch_tween.kill()
+	_coins_label.scale = Vector2.ONE * 1.22
+	_coins_label.modulate = Color(0.7, 1.0, 0.6) if gained else Color(1.0, 0.65, 0.55)
+	_coins_punch_tween = create_tween()
+	_coins_punch_tween.tween_property(_coins_label, "scale", Vector2.ONE, 0.28) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_coins_punch_tween.parallel().tween_property(_coins_label, "modulate", Color.WHITE, 0.35)
 
 
 ## Счётчик СВОБОДНОГО населения (cap − занятое) под монетами. Янтарным при 0 (строить социалку).
@@ -1410,9 +1459,10 @@ func _populate_build_palette() -> void:
 	_fit_palette_height()
 
 
-## АВТОВЫСОТА палитры: панель в .tscn фиксирована (480), но контент вкладки обычно
-## меньше — низ подрезаем по факту (заголовок+табы+карточки+отступы), длинные
-## вкладки капятся исходной высотой (скролл). Пустой «хвост» панели — хреновый масштаб.
+## АВТОРАЗМЕР палитры: панель в .tscn фиксирована (372×480), но контент меняется —
+## низ подрезаем по факту (заголовок+табы+карточки+отступы), длинные вкладки капятся
+## исходной высотой (скролл). ШИРИНА растёт под ряд вкладок: секций прибавилось
+## (🌉 Инженерия, 2026-07-07) и табы вылезали за подложку — меряем их min-width.
 func _fit_palette_height() -> void:
 	if _build_palette == null or not is_instance_valid(_build_palette):
 		return
@@ -1420,13 +1470,22 @@ func _fit_palette_height() -> void:
 	var head_h: float = 34.0 + 34.0  # Title + Tabs (с сепараторами VBox)
 	var margins: float = 24.0 + 16.0
 	_build_palette.size.y = minf(480.0, cards_h + head_h + margins)
+	var tabs_w: float = 0.0
+	if _build_tabs != null and is_instance_valid(_build_tabs):
+		tabs_w = _build_tabs.get_combined_minimum_size().x
+	# 372 — базовая ширина из .tscn (не сужаем), 24 — горизонтальные поля Margin.
+	_build_palette.size.x = maxf(372.0, tabs_w + 24.0)
 
 
 ## Пересобрать кнопки-вкладки (активная — нажата/ярче). Полный титул секции — в tooltip.
 func _rebuild_build_tabs() -> void:
 	if _build_tabs == null or not is_instance_valid(_build_tabs):
 		return
+	# remove_child СРАЗУ (не только queue_free): иначе старые кнопки до конца кадра
+	# сидят в min-size контейнера и _fit_palette_height мерит ДВОЙНУЮ ширину табов
+	# (панель раздувалась вдвое на переключении вкладки). Та же грабля, что у карточек.
 	for c in _build_tabs.get_children():
+		_build_tabs.remove_child(c)
 		c.queue_free()
 	for i in range(BUILD_SECTIONS.size()):
 		var s: Dictionary = BUILD_SECTIONS[i]
@@ -1549,6 +1608,18 @@ func _build_item_info(id: int) -> Dictionary:
 			"cost_text": _format_cost(data), "cost": {}, "pop": 0, "cap": 0, "sub_text": sub, "disabled": disabled,
 			"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],  # ≈футпринт 4.6м
 			"shape_color": data.get("ghost_color", Color.GRAY)}
+	# Мостки: гейт только знанием (замка НЕ требуют — нужны в туториале Room5,
+	# задолго до города). Цена — дерево со склада, не монеты.
+	if id == BUILD_MENU_BRIDGE:
+		var bdata: Dictionary = RoomBuildings.get_data(RoomBuildings.BRIDGE_PLANK)
+		var bsub: String = String(bdata.get("hint", ""))
+		if not knows:
+			bsub = "🔒 нужно знание гномов-строителей"
+		return {"emoji": _emoji_of(bdata), "name": String(bdata.get("name", "Мостки")),
+			"cost_text": _format_cost(bdata), "cost": bdata.get("cost", {}), "pop": 0, "cap": 0,
+			"sub_text": bsub, "disabled": not knows,
+			"cells": [Vector2i(0, 0), Vector2i(1, 0)],  # ≈силуэт доски (длинная)
+			"shape_color": bdata.get("ghost_color", Color.GRAY)}
 	# Фигуры площадки: знание гномов И построенная качалка (от неё растёт грид). Магические сапорты
 	# (роли mana_*) дополнительно требуют Институт магии (_magic_unlocked).
 	var bid: StringName = PAD_MENU_IDS.get(id, &"")
@@ -2093,6 +2164,13 @@ func _on_build_menu_id(id: int) -> void:
 		var hand := _resolve_hand()
 		if hand != null and hand.place_aim != null:
 			hand.place_aim.start_aim(RoomBuildings.PUMP)
+	elif id == BUILD_MENU_BRIDGE:
+		if not _building_unlocked():
+			return  # нет знания — карточка и так greyed
+		_cancel_hand_aims(&"place")
+		var bhand := _resolve_hand()
+		if bhand != null and bhand.place_aim != null:
+			bhand.place_aim.start_aim(RoomBuildings.BRIDGE_PLANK)
 	elif PAD_MENU_IDS.has(id):
 		if not _building_unlocked() or not _pump_built():
 			return  # нет знания / нет качалки — пункт и так greyed

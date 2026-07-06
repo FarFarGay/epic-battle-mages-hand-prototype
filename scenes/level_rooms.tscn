@@ -548,18 +548,11 @@ shape = SubResource("BoxShape3D_chasm")
 [node name="WoodSource" type="Node3D" parent="Room5" unique_id=1415507107]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 112)
 script = ExtResource("39_wood")
-wood_remaining = 6
-
-[node name="BridgePlank" type="RigidBody3D" parent="Room5" unique_id=1415507207]
-transform = Transform3D(0.9659258, 0, 0.258819, 0, 1, 0, -0.258819, 0, 0.9659258, 8, 0.5, 121)
-collision_layer = 2
-collision_mask = 31
-script = ExtResource("46_plank")
+wood_remaining = 12
 
 [node name="GroveGate" type="Node3D" parent="Room5" unique_id=911200024]
 script = ExtResource("50_grovegate")
 source_paths = [NodePath("../WoodSource"), NodePath("../WoodSource2"), NodePath("../WoodSource3")]
-plank_path = NodePath("../BridgePlank")
 skeleton_scene = ExtResource("22_skel")
 
 [node name="FlankNorth" type="Marker3D" parent="Room5/GroveGate" unique_id=911200025]
@@ -581,7 +574,7 @@ mesh = SubResource("Sph_foliage")
 [node name="WoodSource2" type="Node3D" parent="Room5" unique_id=1263815007]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 118)
 script = ExtResource("39_wood")
-wood_remaining = 6
+wood_remaining = 12
 
 [node name="Trunk" type="MeshInstance3D" parent="Room5/WoodSource2" unique_id=872845925]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 5)
@@ -596,7 +589,7 @@ mesh = SubResource("Sph_foliage")
 [node name="WoodSource3" type="Node3D" parent="Room5" unique_id=1803264559]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 0, 106)
 script = ExtResource("39_wood")
-wood_remaining = 6
+wood_remaining = 12
 
 [node name="Trunk" type="MeshInstance3D" parent="Room5/WoodSource3" unique_id=434011427]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 16)
@@ -772,9 +765,16 @@ watch_group = &"gnome_lever_powered"
 [node name="HintArtel" type="Area3D" parent="TutorialHints" unique_id=911200027]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 2, 102)
 script = ExtResource("47_tuthint")
-text = "В башне живёт артель. Выбери карточку рабочих, «Идти сюда» → клик по дереву — рубят"
+text = "Мост придётся сколотить. В башне — артель: карточка рабочих, «Идти сюда» → клик по дереву"
 duration = 9.0
 zone_size = Vector3(22, 8, 8)
+
+[node name="HintPlankReady" type="Area3D" parent="TutorialHints" unique_id=911200030]
+script = ExtResource("47_tuthint")
+text = "Доска готова! Схвати её рукой (ЛКМ) и положи поперёк пропасти"
+duration = 9.0
+trigger_mode = 3
+watch_group = &"built_plank"
 
 [node name="FxPrewarm" type="Node" parent="." unique_id=1862981382]
 script = ExtResource("29_prewarm")

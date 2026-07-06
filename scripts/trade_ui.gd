@@ -2,16 +2,22 @@ extends CanvasLayer
 ## Стол торга: покупка отряда перетаскиванием монет. Поступки (реплики снизу) дают
 ## СКИДКУ на цену → итоговое «Купить за: N». Монеты (номинал coin_value) тащишь
 ## drag-n-drop'ом из кошелька-стопки в зону стола, пока не наберёшь N. Хватило →
-## купил: списываем N золота, гасим применённые поступки, эмитим
+## купил: списываем N из казны, гасим применённые поступки, эмитим
 ## purchased(unit_type, squad_size). Тип юнита задаёт open(unit_type) из gnome_house
+##
+## ЕДИНИЦЫ (2026-07-07, унификация с одометром казны): все внутренние числа —
+## БРОНЗА-эквивалент (как GoldBank._value); лейблы форматируются номиналами
+## 🥇🥈🥉 (_fmt), перетаскиваемая монета стола = 1 СЕРЕБРО (10 бронзы). Легаси
+## «N золота» с монетой 25 убрано — цифры на столе теперь совпадают с HUD.
 ## (копейщики / рабочие). Пример: цена 200, «Убил Гиганта» −150 → купить за 50
 ## (2 монеты по 25). Игра на паузе.
 
 const GROUP := &"trade_ui"
 const CoinToken := preload("res://scripts/coin_token.gd")
 
-## Номинал одной перетаскиваемой монеты в золоте. Цены кратны ему (200/150/50 / 25).
-@export var coin_value: int = 25
+## Номинал одной перетаскиваемой монеты (бронза-эквивалент). 10 = серебряная
+## монета одометра казны; цены держать кратными ему (200/150 → остаток 50 = 5🥈).
+@export var coin_value: int = 10
 
 signal purchased(unit_type: StringName, squad_size: int)
 
@@ -30,6 +36,9 @@ signal purchased(unit_type: StringName, squad_size: int)
 @export var base_price: int = 200
 ## Цена найма по типу юнита (золото). Нет в карте → base_price. Лучники дёшевы (прототип).
 const HIRE_PRICE := { &"archer_squad": 10 }
+## Размер покупки по типу. Нет в карте → SoldierSystem.get_squad_size. (Артель
+## Room4 столом больше НЕ продаётся — найм одним кликом из диалога, gnome_house.)
+const HIRE_SIZE := {}
 
 
 ## Цена найма текущего типа.
@@ -62,6 +71,11 @@ func _ready() -> void:
 	# Кошелёк-стопка — источник перетаскивания; зона стола — приёмник.
 	_coin_stack.set_drag_forwarding(_coin_get_drag, _no_drop, _noop)
 	_pay_zone.set_drag_forwarding(_no_drag, _zone_can_drop, _zone_drop)
+	# Быстрая оплата (2026-07-07, «душно тащить по одной»): КЛИК по стопке кошелька
+	# кладёт одну монету без перетаскивания; КЛИК по зоне стола — выкладывает всё
+	# нужное разом. Drag остаётся для смака первой монеты.
+	_coin_stack.gui_input.connect(_on_stack_gui_input)
+	_pay_zone.gui_input.connect(_on_zone_gui_input)
 	# Монета-затравка в кошельке — наглядно «вот это и тащи».
 	var purse_box := _coin_stack.get_node_or_null("HBox")
 	if purse_box != null:
@@ -127,6 +141,24 @@ func _gold() -> int:
 	return 0
 
 
+## Бронза-эквивалент → строка номиналами одометра («2🥇 3🥈 7🥉», нули пропущены).
+## Тот же язык, что цены построек в палитре и HUD-кошелёк.
+static func _fmt(value: int) -> String:
+	if value <= 0:
+		return "0🥉"
+	var gold: int = value / GoldBank.BRONZE_PER_GOLD
+	var silver: int = (value % GoldBank.BRONZE_PER_GOLD) / GoldBank.BRONZE_PER_SILVER
+	var bronze: int = value % GoldBank.BRONZE_PER_SILVER
+	var parts: Array = []
+	if gold > 0:
+		parts.append("%d🥇" % gold)
+	if silver > 0:
+		parts.append("%d🥈" % silver)
+	if bronze > 0:
+		parts.append("%d🥉" % bronze)
+	return " ".join(parts)
+
+
 ## Сколько живых юнитов этого типа уже есть (для потолка артели). Считаем по группе
 ## soldier — спрятанные в башне рабочие остаются в ней (сняты лишь с целей скелетов).
 func _count_of_type(unit_type: StringName) -> int:
@@ -175,6 +207,30 @@ func _zone_drop(_at: Vector2, _data) -> void:
 	_rebuild()
 
 
+## Клик по стопке кошелька — положить одну монету. Реагируем на ОТПУСКАНИЕ без
+## активного драга: press начинает перетаскивание (drag forwarding), и клик-платёж
+## не должен дублировать монету, если игрок всё же потащил.
+func _on_stack_gui_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb == null or mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if get_viewport().gui_is_dragging():
+		return
+	if _can_take_coin():
+		_placed += coin_value
+		_rebuild()
+
+
+## Клик по зоне оплаты — выложить ВСЁ недостающее разом (сколько позволяет кошелёк).
+func _on_zone_gui_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	while _can_take_coin():
+		_placed += coin_value
+	_rebuild()
+
+
 ## Заглушки для неиспользуемых направлений drag_forwarding (валидные Callable).
 func _no_drag(_at: Vector2):
 	return null
@@ -199,9 +255,12 @@ func _make_coin(clickable: bool) -> Control:
 
 func _rebuild() -> void:
 	var rem: int = _remaining()
-	_price_label.text = "Купить за: %d золота" % rem
-	_wallet_label.text = "Кошелёк: %d   (монета %d)" % [_gold(), coin_value]
-	_zone_label.text = "На стол положено: %d / %d" % [mini(_placed, rem), rem]
+	_price_label.text = "Купить за: %s" % _fmt(rem)
+	_wallet_label.text = "Кошелёк: %s   (монета = %s)" % [_fmt(_gold()), _fmt(coin_value)]
+	var zone_text: String = "На стол положено: %s / %s" % [_fmt(mini(_placed, rem)), _fmt(rem)]
+	if _placed < rem:
+		zone_text += "   (клик по зоне — всё разом)"
+	_zone_label.text = zone_text
 	for c in _placed_row.get_children():
 		c.queue_free()
 	var n: int = int(_placed / coin_value)
@@ -220,7 +279,7 @@ func _rebuild() -> void:
 	for deed in deeds:
 		var btn := Button.new()
 		var on: bool = deed["id"] in _applied
-		btn.text = "%s %s  (скидка −%d)" % ["[✓]" if on else "[  ]", String(deed["label"]), int(deed["value"])]
+		btn.text = "%s %s  (скидка −%s)" % ["[✓]" if on else "[  ]", String(deed["label"]), _fmt(int(deed["value"]))]
 		btn.pressed.connect(_on_deed_toggled.bind(deed))
 		_deeds_list.add_child(btn)
 	_buy_btn.disabled = _placed < rem
@@ -264,9 +323,9 @@ func _on_buy() -> void:
 	var deeds_log := get_tree().get_first_node_in_group(&"deeds_log")
 	if deeds_log != null and not _applied.is_empty():
 		deeds_log.call(&"consume", _applied.keys())
-	# Размер отряда — ИЗ КАТАЛОГА по типу (копейщик 5, рабочий 3), а не локальный
-	# экспорт: каталог — единый источник истины, иначе покупаешь не то число.
-	var size: int = SoldierSystem.get_squad_size(_unit_type)
+	# Размер отряда — ИЗ КАТАЛОГА по типу (единый источник истины), кроме явных
+	# переопределений покупки (HIRE_SIZE: артель гномов Room4 = пачка 6).
+	var size: int = int(HIRE_SIZE.get(_unit_type, SoldierSystem.get_squad_size(_unit_type)))
 	# Адресный колбэк (казарма) перебивает broadcast: захватываем ДО close (он чистит _on_purchase).
 	var cb: Callable = _on_purchase
 	if cb.is_valid():
