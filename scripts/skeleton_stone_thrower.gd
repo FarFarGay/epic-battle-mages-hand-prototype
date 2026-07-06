@@ -58,6 +58,35 @@ extends SkeletonGiantThrower
 ## станом гиганта («потух/посинел = бей сейчас»). 0 = выключено.
 @export var reload_time: float = 4.0
 
+@export_group("Очередь молний (между залпами)")
+## Параллельная атака (2026-07-07, v2 по фидбеку «чаще + эффект как искра
+## игрока, только усиленная»): во время ПОДХОДА метатель лупит очередью из
+## burst_count МОЛНИЙ (тот же SparkBolt-зигзаг, что Искра игрока, но крупнее)
+## прямо в башню — каждая наведена на текущую позицию цели, уворот дэшем между
+## выстрелами. Перед первым — мини-прогрев корпуса (термо-язык). 0 = выкл.
+@export var burst_count: int = 3
+## Пауза между молниями очереди (сек) — плотное «та-та-та» пулемёта.
+@export var burst_interval: float = 0.12
+## Кулдаун между очередями (сек). 1.6 — лупит часто, подход всегда под огнём.
+@export var burst_cooldown: float = 1.6
+## Мини-телеграф: прогрев корпуса перед первой молнией (сек).
+@export var burst_warmup: float = 0.4
+## Урон/радиус попадания одной молнии. Подрыв КОНТАКТНЫЙ по пути (SparkBolt
+## hostile) — по движущейся башне попадает честно.
+@export var burst_damage: float = 15.0
+@export var burst_aoe_radius: float = 2.0
+## Скорость молнии — быстрее искры игрока (пулемёт), механика полёта та же.
+@export var burst_speed: float = 45.0
+## Масштаб и размах зигзага — как у Искры игрока, чуть крупнее (принадлежность
+## читается направлением и размером, механика — та же).
+@export var burst_bolt_scale: float = 1.4
+@export var burst_zigzag_amplitude: float = 1.2
+## Дальность очереди (стреляем, если башня ближе).
+@export var burst_range: float = 40.0
+
+## Сцена молнии — тот же SparkBolt, что у Искры игрока (hostile-режим).
+const SPARK_BOLT_SCENE := preload("res://scenes/spark_bolt.tscn")
+
 @export_group("Уворот (хуже гиганта)")
 ## Радиус замечания player_projectile. Меньше гигантского (8) — реагирует поздно.
 @export var dodge_detect_radius: float = 6.0
@@ -67,6 +96,21 @@ extends SkeletonGiantThrower
 ## single-target Искра нередко всё равно цепляет, AoE перекрывает гарантированно.
 @export var dodge_dash_speed: float = 9.0
 @export var dodge_dash_duration: float = 0.16
+
+@export_group("Панический разряд (вблизи)")
+## Башня прилипла (ближе panic_radius, вне перезарядки) → электро-отмашка:
+## push-волна по башне (без урона) + отскок метателя назад. «Стой рядом и жди
+## окна» перестаёт быть бесплатной стратегией. 0 = выключено.
+@export var panic_radius: float = 6.0
+@export var panic_cooldown: float = 5.0
+## Сила толчка башни и скорость собственного отскока.
+@export var panic_push: float = 11.0
+@export var panic_hop_speed: float = 14.0
+
+@export_group("Крит в потухшего")
+## Множитель урона по метателю ВО ВРЕМЯ перезарядки — окно вознаграждается
+## жирнее. Первый удар в окне — мини-бит слоумо (кульминация «поймал»).
+@export var reload_crit_mult: float = 1.5
 
 @export_group("Взрыв на смерти")
 ## Радиус смертельного взрыва. Большой — «убивай издалека».
@@ -91,6 +135,12 @@ var _dash_remaining: float = 0.0
 var _dodge_cd: float = 0.0
 ## Остаток перезарядки после залпа: >0 → стоит потухший, не уворачивается.
 var _reload_t: float = 0.0
+## Кулдаун очереди прямых камней + флаг «очередь в полёте» (корутина).
+var _burst_cd: float = 0.0
+var _burst_active: bool = false
+## Кулдаун панического разряда + флаг «первый удар в окне» (мини-бит крита).
+var _panic_cd: float = 0.0
+var _reload_first_hit: bool = false
 
 ## Выбранная на текущий цикл дистанция выстрела и сторона обхода (+1/-1).
 ## Пересчитываются при каждом входе в APPROACH (после выстрела) → метатель
@@ -233,9 +283,56 @@ func _begin_reload() -> void:
 	if reload_time <= 0.0:
 		return
 	_reload_t = reload_time
+	_reload_first_hit = true
 	_ensure_thermo_materials()
 	if _mesh:
 		_mesh.material_override = _shared_dim_material
+
+
+## Отражённая молния попала обратно (SparkBolt reflected) → ДОСРОЧНАЯ
+## перезарядка: замах/залп сорван, метатель тухнет — окно открыто ПАРИРОМ игрока.
+func force_reload() -> void:
+	if _reload_t > 0.0:
+		return  # уже потух
+	_enter_state(AttackState.APPROACH)  # сорвать WINDUP/STRIKE (иначе дотикает залп)
+	_begin_reload()
+	var root: Node = get_tree().current_scene
+	if root != null:
+		AoeVisual.spawn_pulse_sparks(root, global_position + Vector3.UP * 1.2, 2.0, 10.0)
+	EventBus.camera_shake.emit(0.3, global_position)
+
+
+## Крит окна: урон в перезарядке усилен; первый удар в окне — мини-бит слоумо
+## («поймал!»). Спам искр дальше идёт без битов — каша не собирается.
+func take_damage(amount: float) -> void:
+	if _reload_t > 0.0:
+		amount *= reload_crit_mult
+		if _reload_first_hit:
+			_reload_first_hit = false
+			HitStop.slowmo_beat(0.35, 0.12)
+			EventBus.camera_shake.emit(0.3, global_position)
+	super.take_damage(amount)
+
+
+## Панический разряд: башня прилипла вплотную — электро-волна отталкивает её
+## (без урона) и метатель отпрыгивает назад. Кольцо+разряд читаются как «не
+## подходи, пока заряжен»; в перезарядке паника недоступна (окно честное).
+func _do_panic(tower: Node3D) -> void:
+	_panic_cd = panic_cooldown
+	var root: Node = get_tree().current_scene
+	var away: Vector3 = global_position - tower.global_position
+	away.y = 0.0
+	away = away.normalized() if away.length_squared() > 0.0001 else Vector3.BACK
+	if root != null:
+		AoeVisual.spawn_pulse_sparks(root, global_position + Vector3.UP * 0.8, panic_radius * 0.6, 12.0)
+		AoeVisual.spawn_expanding_ring(root, global_position, panic_radius, 0.25,
+			Color(1.0, 0.7, 0.2, 0.9))
+	EventBus.camera_shake.emit(0.3, global_position)
+	if tower.has_method(&"apply_knockback"):
+		tower.call(&"apply_knockback", -away * panic_push, 0.3)
+	# Отскок метателя тем же dash-механизмом, что уворот.
+	_dash_vec = away * panic_hop_speed
+	_dash_remaining = 0.3
 
 
 ## Корутина залпа: высевает volley_count камней со стаггером. Гард
@@ -315,7 +412,73 @@ func _ai_step(delta: float) -> void:
 			_start_evade(threat.global_position)
 			_dodge_cd = dodge_cooldown
 			return
+	# Панический разряд: башня прилипла вплотную (вне перезарядки — там окно честное).
+	_panic_cd -= delta
+	if _panic_cd <= 0.0 and panic_radius > 0.0:
+		var near_tower := get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
+		if near_tower != null and is_instance_valid(near_tower) \
+				and global_position.distance_to(near_tower.global_position) <= panic_radius:
+			_do_panic(near_tower)
+			return
+	# Очередь прямых камней: только в ПОДХОДЕ (WINDUP/STRIKE заняты залпом),
+	# по кулдауну и если башня в дальности. Fire-and-forget корутина — метатель
+	# продолжает идти/страфить, камни лупят по ходу.
+	_burst_cd -= delta
+	if _burst_cd <= 0.0 and not _burst_active and burst_count > 0 \
+			and _state == AttackState.APPROACH:
+		var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
+		if tower != null and is_instance_valid(tower) and Damageable.is_damageable(tower) \
+				and _tower_aggro_ok(tower) \
+				and global_position.distance_to(tower.global_position) <= burst_range:
+			_burst_cd = burst_cooldown
+			_fire_burst()
 	super._ai_step(delta)
+
+
+## Очередь: мини-прогрев корпуса → burst_count крупных настильных камней с
+## интервалом, каждый наведён на ТЕКУЩУЮ позицию башни (очередь «ведёт» цель).
+## Гарды is_instance_valid после каждого await — метатель мог умереть в очереди.
+func _fire_burst() -> void:
+	_burst_active = true
+	_ensure_thermo_materials()
+	if _mesh and _reload_t <= 0.0:
+		_mesh.material_override = _shared_hot_material
+	await get_tree().create_timer(burst_warmup).timeout
+	if not is_instance_valid(self):
+		return
+	for i in burst_count:
+		if not is_instance_valid(self) or _reload_t > 0.0:
+			break  # залп/перезарядка перебили очередь
+		_spawn_burst_bolt()
+		await get_tree().create_timer(burst_interval).timeout
+		if not is_instance_valid(self):
+			return
+	_burst_active = false
+	if _mesh and _reload_t <= 0.0 and _state != AttackState.WINDUP:
+		_mesh.material_override = _shared_stone_thrower_material
+
+
+## Одна молния очереди: усиленный SparkBolt (крупнее/размашистее искры игрока)
+## в hostile-режиме — летит зигзагом в текущую позицию башни, бьёт башню/гномов,
+## механизмы не активирует, свои от неё не уворачиваются.
+func _spawn_burst_bolt() -> void:
+	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
+	if tower == null or not is_instance_valid(tower):
+		return
+	var bolt := SPARK_BOLT_SCENE.instantiate() as SparkBolt
+	if bolt == null:
+		return
+	if not is_instance_valid(_projectiles_root):
+		_projectiles_root = get_tree().current_scene
+	_projectiles_root.add_child(bolt)
+	bolt.hostile = true
+	bolt.set_shooter(self)  # Reflectable: парир вернёт молнию «обратно в стрелка»
+	bolt.scale = Vector3.ONE * burst_bolt_scale
+	bolt.speed = burst_speed
+	bolt.impact_radius = burst_aoe_radius
+	bolt.zigzag_amplitude = burst_zigzag_amplitude
+	var spawn: Vector3 = global_position + arrow_spawn_offset
+	bolt.setup(spawn, tower.global_position, burst_damage, get_tree().current_scene)
 
 
 ## Ближайший player_projectile в dodge_detect_radius (порт из SkeletonGiant).

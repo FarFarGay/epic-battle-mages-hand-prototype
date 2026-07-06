@@ -40,9 +40,47 @@ extends Node3D
 ## Лайфтайм safety-cap (с).
 @export var max_lifetime: float = 4.0
 
+## ВРАЖЕСКИЙ режим (2026-07-07, очередь камнеметателя): та же молния, но жертва —
+## БАШНЯ/гномы (не враги), spark_target-механизмы НЕ активируются (вражеское
+## электричество не открывает игроку двери). Группу player_projectile вешает
+## кастер игрока (hand_spell_spark) — вражеский инстанс её не получает, свои
+## от него не уворачиваются. Ставить ДО setup. Вражеская молния ПАРИРУЕМА
+## (Reflectable): Q-парир башни разворачивает её обратно в стрелка; попадание
+## отражённой вышибает метателя в досрочную перезарядку (victim.force_reload).
+var hostile: bool = false
+
+## Стрелок вражеской молнии (для отражения «обратно в него»).
+var _shooter: Node3D = null
+## Молния отражена париром: летит в _reflect_target (ведёт его), бьёт врагов.
+var _reflected: bool = false
+var _reflect_target: Node3D = null
+
 var _target_pos: Vector3 = Vector3.ZERO
 var _elapsed: float = 0.0
 var _effects_root: Node = null
+
+
+## Пометить стрелка и встать в Reflectable (только вражеская молния парируема).
+func set_shooter(shooter: Node3D) -> void:
+	_shooter = shooter
+	if hostile:
+		Reflectable.register(self)
+
+
+## Контракт Reflectable: развернуть молнию в стрелка (или ближайшего врага).
+## После отражения — дружественная (player-ветка _explode), ведёт цель в полёте.
+func reflect(_reflector_pos: Vector3) -> bool:
+	var target := Reflectable.resolve_reflect_target(get_tree(), global_position, _shooter)
+	if target == null:
+		return false
+	hostile = false
+	_reflected = true
+	_reflect_target = target
+	_target_pos = target.global_position
+	_elapsed = 0.0  # свежий lifetime на обратный путь
+	remove_from_group(Reflectable.GROUP)
+	add_to_group(&"player_projectile")  # враги уворачиваются от собственной отражёнки
+	return true
 
 
 ## Caller (HandSpellSpark) задаёт start_pos, target_pos и damage. effects_root —
@@ -62,6 +100,19 @@ func _process(delta: float) -> void:
 	if _elapsed >= max_lifetime:
 		_explode()
 		return
+	# Вражеская молния подрывается КОНТАКТОМ по пути: башня ДВИЖЕТСЯ, и снаряд
+	# в зафиксированную точку вечно мазал бы (2026-07-07 «урон не наносит»).
+	# Игроку контакт не нужен — он целится с упреждением сам.
+	if hostile and _elapsed > 0.05 and _find_nearest_player_side_in_radius() != null:
+		_explode()
+		return
+	# Отражённая молния ВЕДЁТ цель (стрелок движется) и рвётся контактом.
+	if _reflected:
+		if is_instance_valid(_reflect_target):
+			_target_pos = _reflect_target.global_position
+		if _elapsed > 0.05 and _find_nearest_enemy_in_radius() != null:
+			_explode()
+			return
 	var to_target: Vector3 = _target_pos - global_position
 	# Игнорим Y при чек'е прибытия — снаряд может «зависнуть» по вертикали,
 	# а нам важна точка на земле.
@@ -92,10 +143,20 @@ func _explode() -> void:
 	# Скорость одна со spread'ом fog-pulse (10 м/с) — единый визуальный темп.
 	if _effects_root != null:
 		AoeVisual.spawn_pulse_sparks(_effects_root, global_position, impact_radius, 10.0)
+	if hostile:
+		var target: Node3D = _find_nearest_player_side_in_radius()
+		if target != null:
+			Damageable.try_damage(target, damage)
+		queue_free()
+		return
 	var victim: Node3D = _find_nearest_enemy_in_radius()
 	if victim != null and victim.has_method(&"take_damage"):
 		victim.call(&"take_damage", damage)
 		HitStop.fire_for(victim, HitStop.LIGHT)  # быстрый зап; стоп только на «весомых», не на фоддере
+		# Отражённая молния ВЫШИБАЕТ стрелка в досрочную перезарядку (награда за
+		# парир: окно наказания открыто ИГРОКОМ, не таймером).
+		if _reflected and victim.has_method(&"force_reload"):
+			victim.call(&"force_reload")
 	_notify_spark_targets()
 	queue_free()
 
@@ -114,6 +175,27 @@ func _notify_spark_targets() -> void:
 		var dz: float = node.global_position.z - global_position.z
 		if dx * dx + dz * dz <= impact_radius * impact_radius and node.has_method(&"on_spark"):
 			node.call(&"on_spark")
+
+
+## Жертва вражеской молнии: ближайшая цель СТОРОНЫ ИГРОКА в радиусе — башня
+## или гном-солдат (артель/копейщики). Скелетов вражеская искра не бьёт.
+func _find_nearest_player_side_in_radius() -> Node3D:
+	var best: Node3D = null
+	var best_dist_sq: float = impact_radius * impact_radius
+	for grp in [&"tower", SoldierGnome.SOLDIER_GROUP]:
+		for n in get_tree().get_nodes_in_group(grp):
+			if not is_instance_valid(n):
+				continue
+			var t := n as Node3D
+			if t == null or not Damageable.is_damageable(t):
+				continue
+			var dx: float = t.global_position.x - global_position.x
+			var dz: float = t.global_position.z - global_position.z
+			var d_sq: float = dx * dx + dz * dz
+			if d_sq < best_dist_sq:
+				best_dist_sq = d_sq
+				best = t
+	return best
 
 
 func _find_nearest_enemy_in_radius() -> Node3D:

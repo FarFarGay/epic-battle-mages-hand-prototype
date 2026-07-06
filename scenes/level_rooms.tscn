@@ -1152,3 +1152,5 @@ area_center = Vector3(73.5, 0, 56)
 
 [node name="StoneThrowerTest" parent="." unique_id=990126243 instance=ExtResource("41_8brgo")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 85, 3, 53)
+room_center = Vector2(55, 84)
+room_size = Vector2(74, 84)

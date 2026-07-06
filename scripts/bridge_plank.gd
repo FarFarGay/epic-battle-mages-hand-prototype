@@ -51,6 +51,19 @@ var _mats: Array[StandardMaterial3D] = []
 ## Твин доводки защёлка — глушим, если доску перехватили, пока она летела на место.
 var _snap_tween: Tween = null
 
+## Доска-МЕТЛА (2026-07-07): пока доска В РУКЕ и движется быстрее порога — скелеты
+## вдоль её короба расталкиваются push'ем, а РЯДОВЫЕ ещё и получают смертельный
+## урон (взмах моста косит мелочь). Тяжёлые (super_dash_only: гигант/метатель) —
+## только толчок, урона нет: симметрия с тараном башни, тяжёлых берёт лишь
+## супер-рывок. Per-skeleton кулдаун, чтобы не бить каждый физкадр контакта.
+const SWEEP_MIN_SPEED := 3.0
+const SWEEP_PUSH := 8.0
+const SWEEP_DAMAGE := 60.0
+const SWEEP_COOLDOWN_MSEC := 350
+const _SWEEP_CD_META := &"_plank_sweep_cd_msec"
+## Доска сейчас в руке (haul). Ставится/снимается в hand_grabbed/released.
+var _held: bool = false
+
 
 func _ready() -> void:
 	mass = 6.0
@@ -111,6 +124,8 @@ func set_highlighted(value: bool) -> void:
 ## Схватили защёлкнутую доску → пропасть закрывается обратно. freeze снимаем САМИ:
 ## haul-режим руки не морозит предмет (заморозка защёлка — наша, наша и разморозка).
 func _on_hand_grabbed(item: Node3D) -> void:
+	if item == self:
+		_held = true
 	if item != self or not _snapped:
 		return
 	_snapped = false
@@ -129,9 +144,42 @@ func _on_hand_grabbed(item: Node3D) -> void:
 
 ## Отпустили доску: над полосой пропасти → защёлк поперёк; иначе — обычный предмет.
 func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
+	if item == self:
+		_held = false
 	if item != self or _snapped:
 		return
 	_try_snap()
+
+
+## Метла: скелеты в коробе несомой доски получают push по её скорости. Работает
+## только В РУКЕ (полёт после броска не расталкивает) и не на защёлкнутой.
+func _physics_process(_delta: float) -> void:
+	if not _held or _snapped:
+		return
+	var vel: Vector3 = linear_velocity
+	vel.y = 0.0
+	var spd: float = vel.length()
+	if spd < SWEEP_MIN_SPEED:
+		return
+	var inv: Transform3D = global_transform.affine_inverse()
+	var dir: Vector3 = vel / spd
+	var now: int = Time.get_ticks_msec()
+	for n in get_tree().get_nodes_in_group(&"skeleton"):
+		var sk := n as Node3D
+		if sk == null or not is_instance_valid(sk):
+			continue
+		var l: Vector3 = inv * sk.global_position
+		if absf(l.x) > plank_size.x * 0.5 + 0.6 or absf(l.z) > plank_size.z * 0.5 + 0.9 \
+				or absf(l.y) > 2.5:
+			continue
+		if now < int(sk.get_meta(_SWEEP_CD_META, 0)):
+			continue
+		sk.set_meta(_SWEEP_CD_META, now + SWEEP_COOLDOWN_MSEC)
+		if sk.has_method(&"apply_knockback"):
+			sk.call(&"apply_knockback", dir * SWEEP_PUSH + Vector3.UP * 2.0, 0.2)
+		# Рядовых взмах КОСИТ (60 > hp 30 даже с вариацией); тяжёлые — только толчок.
+		if not sk.is_in_group(&"super_dash_only"):
+			Damageable.try_damage(sk, SWEEP_DAMAGE)
 
 
 func _try_snap() -> void:

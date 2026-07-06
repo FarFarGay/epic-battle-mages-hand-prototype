@@ -21,6 +21,17 @@ extends SkeletonArcher
 
 const GIANT_GROUP := &"skeleton_giant"
 
+@export_group("Room-гейт (башня — цель только В зоне)")
+## Прямоугольник зоны (XZ, центр/размер). (0,0) = гейт ВЫКЛ — тогда башня
+## берётся в радиусе NO_ROOM_AGGRO_RADIUS, а НЕ через всю карту (фикс
+## 2026-07-07: метатель видел башню сквозь стены из других комнат).
+@export var room_center: Vector2 = Vector2.ZERO
+@export var room_size: Vector2 = Vector2.ZERO
+## Буфер-гистерезис: башня чуть за зоной — цель ещё держится.
+@export var room_leash_margin: float = 4.0
+## Радиус пробуждения без заданного гейта (как у SkeletonGiant).
+const NO_ROOM_AGGRO_RADIUS := 60.0
+
 ## Радиус рассеивания тумана вокруг каменщика. 9м — чуть больше радиуса
 ## коллизии (0.75м), пятно вокруг него видно издалека как «он рядом».
 var fog_reveal_radius: float = 9.0
@@ -79,16 +90,27 @@ static func _ensure_thrower_material() -> void:
 		_shared_thrower_material = m
 
 
-## Override SkeletonArcher._resolve_target: Tower имеет абсолютный приоритет
-## пока damageable. base archer фильтрует _forced_target через TARGET_GROUP,
-## Tower там нет — без этого override'а каменщик stalk'ал бы ближайшую
-## палатку вместо башни. После смерти Tower (снимает себя с Damageable.GROUP)
-## — fallback на super (cached scan / forced / base get_active_target).
+## Override SkeletonArcher._resolve_target: Tower имеет приоритет пока damageable
+## И проходит room-гейт (в прямоугольнике зоны + буфер; без гейта — в радиусе
+## пробуждения, НЕ через всю карту). base archer фильтрует _forced_target через
+## TARGET_GROUP, Tower там нет — без этого override'а каменщик stalk'ал бы
+## ближайшую палатку вместо башни. Tower вне гейта/мертва → fallback на super.
 func _resolve_target() -> Node3D:
 	var tower: Node = get_tree().get_first_node_in_group(Tower.GROUP)
-	if tower != null and is_instance_valid(tower) and Damageable.is_damageable(tower):
+	if tower != null and is_instance_valid(tower) and Damageable.is_damageable(tower) \
+			and _tower_aggro_ok(tower as Node3D):
 		return tower as Node3D
 	return super._resolve_target()
+
+
+## Башня в зоне аггра? Гейт задан → прямоугольник + буфер (по bounds, не по
+## дистанции — не «сквозь стену» из соседней комнаты); нет → радиус пробуждения.
+func _tower_aggro_ok(tower: Node3D) -> bool:
+	if room_size.x <= 0.0 or room_size.y <= 0.0:
+		return global_position.distance_to(tower.global_position) <= NO_ROOM_AGGRO_RADIUS
+	var p: Vector3 = tower.global_position
+	return absf(p.x - room_center.x) <= room_size.x * 0.5 + room_leash_margin \
+			and absf(p.z - room_center.y) <= room_size.y * 0.5 + room_leash_margin
 
 
 ## Танк-семантика knockback резистанса теперь на Enemy.knockback_resistance
