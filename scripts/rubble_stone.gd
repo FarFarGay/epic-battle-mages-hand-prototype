@@ -22,7 +22,10 @@ var _material: StandardMaterial3D = null
 
 
 func _ready() -> void:
-	mass = 20.0
+	# < max_lift_mass руки (10) — тяжелее рука валун ДАЖЕ НЕ ПОДСВЕТИТ
+	# (_is_within_lift_mass режет кандидатов). Монолитность кучи даёт freeze,
+	# не масса.
+	mass = 8.0
 	freeze = true
 	collision_layer = Layers.ITEMS
 	collision_mask = Layers.MASK_ALL_GAMEPLAY
