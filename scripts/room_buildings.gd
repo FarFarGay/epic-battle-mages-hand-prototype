@@ -95,7 +95,7 @@ const CATALOG: Dictionary = {
 	PUMP: {
 		"name": "Качалка-замок",
 		"menu_label": "🏰 Качалка-замок (центр)",
-		"hint": "Центр города. Одна на отряд — от неё растёт площадка.",
+		"hint": "Сердце города башни: якорит кварталы и даёт кров. Потеряешь ночью — потеряешь город.",
 		"scene": "res://scenes/oil_collector.tscn",
 		"footprint": Vector3(4.6, 4.0, 4.6),  # ~ диаметр коллектора
 		"site_hp": 80.0,
@@ -152,7 +152,7 @@ const CATALOG: Dictionary = {
 	PAD_MINE: {
 		"name": "Шахта",
 		"menu_label": "⛏ Шахта (на жилу)",
-		"hint": "Ставь на жилу — сама капает деньги. Ядро квартала.",
+		"hint": "Ставь на жилу — кормит казну башни. Ядро квартала.",
 		"role": &"mine",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
@@ -194,7 +194,7 @@ const CATALOG: Dictionary = {
 	PAD_HOUSE: {
 		"name": "Дом гномов",
 		"menu_label": "🏠 Дом гномов (+4 населения)",
-		"hint": "Соц: +4 населения. В квартале шахты — ось «Объём» (×монет).",
+		"hint": "+4 гнома: руки для шахт и войск башни. В квартале шахты — ось «Объём» (×монет).",
 		"role": &"housing",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
 		"instant": true,
@@ -202,9 +202,9 @@ const CATALOG: Dictionary = {
 		"ghost_color": Color(0.6, 0.45, 0.3, 0.5),
 	},
 	PAD_UNLOAD: {
-		"name": "Разгрузочная платформа",
-		"menu_label": "📦 Разгрузочная платформа",
-		"hint": "Паркуй башню на плите — трюм ссыпается монетами в казну.",
+		"name": "Док города",
+		"menu_label": "⚓ Док города",
+		"hint": "Причал башни: паркуйся — трюм в казну, мана института течёт, корпус чинится.",
 		"role": &"unload",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
 		"cost": {ResourcePile.ResourceType.SILVER: 3},
@@ -216,7 +216,7 @@ const CATALOG: Dictionary = {
 	PAD_DOCK: {
 		"name": "Верфь башни",
 		"menu_label": "🛠 Верфь башни",
-		"hint": "Клик по плите — меню модификаций башни (срезы: трюм, арбалеты, броня).",
+		"hint": "Мастерская башни: клик по плите — обвесы-срезы (трюм, арбалеты, броня).",
 		"role": &"dock",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
 		"instant": true,
@@ -265,7 +265,7 @@ const CATALOG: Dictionary = {
 	PAD_BARRACKS: {
 		"name": "Казарма лучников",
 		"menu_label": "🏹 Казарма лучников (угол)",
-		"hint": "Найм лучников за золото — гарнизонят стены.",
+		"hint": "Найм лучников за золото: гарнизонят стены, «В башню» — сажает на борт.",
 		"role": &"barracks",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
 		"instant": true,
@@ -354,7 +354,7 @@ const CATALOG: Dictionary = {
 	PAD_INSTITUTE: {
 		"name": "Институт магии",
 		"menu_label": "🔮 Институт магии (+мана)",
-		"hint": "Льёт ману в башню и открывает магические постройки.",
+		"hint": "Мана-жила башни: заряжает её у дока города. Открывает магию.",
 		"role": &"magic",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,

@@ -383,6 +383,17 @@ func can_gnome_interact(gnome: Node) -> bool:
 	return not (gnome.has_method(&"is_carrying") and gnome.is_carrying())
 
 
+## Тихий ремонт (док города, [PadBuilding._tick_dock_services]): тонкий
+## постоянный поток без искр/панча — FX рабочего на таком спамил бы каждый тик.
+func repair(amount: float) -> void:
+	if _dying or hp >= max_hp:
+		return
+	hp = minf(hp + amount, max_hp)
+	health_changed.emit(hp, max_hp)
+	if hp >= max_hp and is_in_group(Layers.GNOME_STRIKE_TARGET_GROUP):
+		remove_from_group(Layers.GNOME_STRIKE_TARGET_GROUP)
+
+
 ## Рабочий ударил по башне (ремонт) — восстанавливаем HP. Полное HP → выходим из
 ## strike-группы (рабочие сами переключатся: вернутся в башню / к другой работе).
 func gnome_hit(_gnome: Node = null) -> void:

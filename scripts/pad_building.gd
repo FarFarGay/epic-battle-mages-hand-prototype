@@ -1373,7 +1373,10 @@ func pop_priority() -> int:
 	return 0 if (_role == &"mine" or _role == &"magic") else 1
 
 
-## Институт магии: льёт ману в башню (restore_mana капится на max). Глобально — башня где угодно.
+## Институт магии: льёт ману в башню (restore_mana капится на max) — но только
+## пока башня У ПРИЧАЛА (док-плита, «город кормит башню через пуповину»;
+## пивот 2026-07-07: в поле мана ТОЛЬКО с орбов убитых). Нет ни одной док-плиты
+## в сцене — фоллбек на глобальный поток (чит-пути не софтлочим).
 ## Сапорты на гранях (Кристалл маны / Рунный обелиск) перемножают темп — по примеру квартала шахты.
 func _tick_institute(delta: float) -> void:
 	var tower := get_tree().get_first_node_in_group(&"tower")
@@ -1381,6 +1384,8 @@ func _tick_institute(delta: float) -> void:
 		return
 	# НАСЕЛЕНИЕ: без укомплектованного гнома институт ПРОСТАИВАЕТ — как шахта (магия не исключение).
 	if Population != null and not Population.is_staffed(self):
+		return
+	if has_dock_pads(get_tree()) and not is_tower_docked_any(get_tree()):
 		return
 	var st := _quarter_status()
 	# Фидбэк «квартал СОБРАН» — симметрично шахте: вспышка единожды на переходе к 100%.
@@ -1456,22 +1461,71 @@ func _tick_mine(delta: float) -> void:
 ## визуал — ВОЛНА чанков от башни к замку: каждый со случайной задержкой в окне
 ## UNLOAD_WAVE_SPREAD и разбросом точек вылета/прилёта («растянутая куча»).
 ## Игрок может уезжать сразу — деньги уже в казне, чанки долетят сами.
+## Темп тихого ремонта корпуса башни в доке (hp/с).
+const DOCK_REPAIR_RATE := 12.0
+
+## Прошлое состояние парковки — плашка только на переходе «встал в док».
+var _docked_prev: bool = false
+
+
+## Сервисы дока (город обслуживает башню у причала): плашка на входе + ремонт.
+## Мана института гейтится доком на стороне института ([_tick_institute]).
+func _tick_dock_services(docked: bool) -> void:
+	if docked != _docked_prev:
+		_docked_prev = docked
+		if docked:
+			EventBus.tutorial_hint.emit("⚓ Башня в доке: трюм в казну, мана течёт, корпус чинится", 5.0)
+	if not docked:
+		return
+	var tower := get_tree().get_first_node_in_group(&"tower")
+	if tower != null and is_instance_valid(tower) and tower.has_method(&"repair"):
+		tower.call(&"repair", DOCK_REPAIR_RATE * UNLOAD_CHECK_INTERVAL)
+
+
+## Башня жива и припаркована на этой плите (XZ ≤ UNLOAD_RADIUS)? Единая
+## проверка дока: трюм, мана института ([_tick_institute]) и ремонт корпуса.
+func is_tower_docked() -> bool:
+	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
+	if tower == null or not is_instance_valid(tower):
+		return false
+	# Мёртвая башня остаётся в группе tower (труп держит камера), но из Damageable
+	# выходит — труп, припаркованный на плите, не обслуживаем.
+	if not Damageable.is_damageable(tower):
+		return false
+	var dx: float = tower.global_position.x - global_position.x
+	var dz: float = tower.global_position.z - global_position.z
+	return dx * dx + dz * dz <= UNLOAD_RADIUS * UNLOAD_RADIUS
+
+
+## Хоть одна док-плита сцены с припаркованной башней? Гейт «город кормит башню
+## только в доке» — читает институт (мана) и HUD.
+static func is_tower_docked_any(tree: SceneTree) -> bool:
+	for n in tree.get_nodes_in_group(&"pad_building"):
+		var p := n as PadBuilding
+		if p != null and is_instance_valid(p) and p.is_unload() and p.is_tower_docked():
+			return true
+	return false
+
+
+## Есть ли в сцене вообще док-плиты (для фоллбека институтской маны).
+static func has_dock_pads(tree: SceneTree) -> bool:
+	for n in tree.get_nodes_in_group(&"pad_building"):
+		var p := n as PadBuilding
+		if p != null and is_instance_valid(p) and p.is_unload():
+			return true
+	return false
+
+
 func _tick_unload(delta: float) -> void:
 	_unload_cd -= delta
 	if _unload_cd > 0.0:
 		return
 	_unload_cd = UNLOAD_CHECK_INTERVAL
+	var docked: bool = is_tower_docked()
+	_tick_dock_services(docked)
+	if not docked:
+		return
 	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
-	if tower == null or not is_instance_valid(tower):
-		return
-	# Мёртвая башня остаётся в группе tower (труп держит камера), но из Damageable
-	# выходит — с трупа, припаркованного на плите, трюм НЕ ссыпаем.
-	if not Damageable.is_damageable(tower):
-		return
-	var dx: float = tower.global_position.x - global_position.x
-	var dz: float = tower.global_position.z - global_position.z
-	if dx * dx + dz * dz > UNLOAD_RADIUS * UNLOAD_RADIUS:
-		return
 	var store: Node = get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
 	var bank: Node = get_tree().get_first_node_in_group(GoldBank.GROUP)
 	if store == null or bank == null or not bank.has_method(&"smelt_yield"):
