@@ -53,7 +53,7 @@
 [ext_resource type="Script" uid="uid://d00ig6lxslu5v" path="res://scripts/relay_item.gd" id="49_relayitem"]
 [ext_resource type="Script" uid="uid://dlqwa1s3gqs71" path="res://scripts/grove_gate.gd" id="50_grovegate"]
 [ext_resource type="Script" uid="uid://dmfgukanb87ad" path="res://scripts/valley_quests.gd" id="52_valleyquests"]
-[ext_resource type="Script" path="res://scripts/castle_foundation.gd" id="53_foundation"]
+[ext_resource type="PackedScene" path="res://scenes/castle_foundation.tscn" id="53_foundation"]
 [ext_resource type="PackedScene" path="res://scenes/castle_blueprint.tscn" id="54_blueprint"]
 [ext_resource type="PackedScene" path="res://scenes/coal_lump.tscn" id="55_coal"]
 [ext_resource type="PackedScene" path="res://scenes/gate_ruin.tscn" id="56_gateruin"]
@@ -741,7 +741,7 @@ duration = 9.0
 zone_size = Vector3(8, 8, 12)
 
 [node name="HintFoundation" type="Area3D" parent="TutorialHints" unique_id=911400007]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 66, 2, 84)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 56, 2, 84)
 script = ExtResource("47_tuthint")
 text = "Плита Гильдии: здесь заложится замок — нужен чертёж со станка на заставе"
 duration = 8.0
@@ -906,9 +906,8 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 63.5, 0.4, 28.5)
 [node name="Coal4" parent="Zastava" unique_id=911400013 instance=ExtResource("55_coal")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65, 0.4, 32.5)
 
-[node name="CastleFoundation" type="Node3D" parent="." unique_id=911400005]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 66, 0, 84)
-script = ExtResource("53_foundation")
+[node name="CastleFoundation" parent="." unique_id=911400005 instance=ExtResource("53_foundation")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 56, 0, 84)
 
 [node name="GateRuin" parent="." unique_id=911500001 instance=ExtResource("56_gateruin")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 0, 43)

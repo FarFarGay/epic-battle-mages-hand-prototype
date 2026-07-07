@@ -1,0 +1,35 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/castle_foundation.gd" id="1_foundation"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_plate"]
+albedo_color = Color(0.42, 0.4, 0.44, 1)
+roughness = 0.85
+
+[sub_resource type="CylinderMesh" id="Cyl_plate"]
+top_radius = 2.7
+bottom_radius = 2.9
+height = 0.16
+
+[sub_resource type="StandardMaterial3D" id="Mat_ring"]
+albedo_color = Color(0.4, 0.65, 1, 1)
+emission_enabled = true
+emission = Color(0.4, 0.65, 1, 1)
+emission_energy_multiplier = 1.2
+
+[sub_resource type="TorusMesh" id="Torus_ring"]
+inner_radius = 2.35
+outer_radius = 2.6
+
+[node name="CastleFoundation" type="Node3D"]
+script = ExtResource("1_foundation")
+
+[node name="Plate" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.08, 0)
+material_override = SubResource("Mat_plate")
+mesh = SubResource("Cyl_plate")
+
+[node name="Ring" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.18, 0)
+material_override = SubResource("Mat_ring")
+mesh = SubResource("Torus_ring")
