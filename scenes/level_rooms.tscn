@@ -56,6 +56,8 @@
 [ext_resource type="Script" path="res://scripts/castle_foundation.gd" id="53_foundation"]
 [ext_resource type="PackedScene" path="res://scenes/castle_blueprint.tscn" id="54_blueprint"]
 [ext_resource type="PackedScene" path="res://scenes/coal_lump.tscn" id="55_coal"]
+[ext_resource type="PackedScene" path="res://scenes/gate_ruin.tscn" id="56_gateruin"]
+[ext_resource type="PackedScene" path="res://scenes/rubble_pile.tscn" id="57_rubble"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -723,6 +725,13 @@ text = "Застава: раскочегарь станок — схвати у�
 duration = 8.0
 zone_size = Vector3(26, 8, 10)
 
+[node name="HintGates" type="Area3D" parent="TutorialHints" unique_id=911500004]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 2, 48)
+script = ExtResource("47_tuthint")
+text = "Древние Врата: механизм мёртв, три гнезда пусты. Элементы — за завалами в периметре"
+duration = 9.0
+zone_size = Vector3(20, 8, 10)
+
 [node name="HintFoundation" type="Area3D" parent="TutorialHints" unique_id=911400007]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 66, 2, 84)
 script = ExtResource("47_tuthint")
@@ -834,7 +843,7 @@ transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 126)
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 92, 0, 84)
 
 [node name="WallNorthLeft" parent="Room8" unique_id=460791204 instance=ExtResource("6_wall")]
-transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, 62.5, 0, 42.999996)
+transform = Transform3D(3.5, 0, 0, 0, 1, 0, 0, 0, 1, 63, 0, 42.999996)
 
 [node name="WallNorthRight" parent="Room8" unique_id=1809837513 instance=ExtResource("6_wall")]
 transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, 84.5, 0, 42.999996)
@@ -842,13 +851,13 @@ transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, 84.5, 0, 42.999996)
 [node name="Room9" type="Node3D" parent="." unique_id=960184648]
 
 [node name="WallNorthWest" parent="Room9" unique_id=911300002 instance=ExtResource("6_wall")]
-transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 36.5, 0, 42.999996)
+transform = Transform3D(2, 0, 0, 0, 1, 0, 0, 0, 1, 22, 0, 42.999996)
+
+[node name="WallNorthWestB" parent="Room9" unique_id=911500005 instance=ExtResource("6_wall")]
+transform = Transform3D(3, 0, 0, 0, 1, 0, 0, 0, 1, 38, 0, 42.999996)
 
 [node name="WallEastNorth" parent="Room9" unique_id=1347871448 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 92, 0, 48.625)
-
-[node name="WallEastMid" parent="Room9" unique_id=911300003 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 8, 92, 0, 56)
 
 [node name="WallEastSouth" parent="Room9" unique_id=1018263733 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 92, 0, 63.375)
@@ -892,6 +901,15 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65, 0.4, 32.5)
 [node name="CastleFoundation" type="Node3D" parent="." unique_id=911400005]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 66, 0, 84)
 script = ExtResource("53_foundation")
+
+[node name="GateRuin" parent="." unique_id=911500001 instance=ExtResource("56_gateruin")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 0, 43)
+
+[node name="RubbleNorthWest" parent="." unique_id=911500002 instance=ExtResource("57_rubble")]
+transform = Transform3D(1.5, 0, 0, 0, 1, 0, 0, 0, 1, 29, 0, 43)
+
+[node name="RubbleEast" parent="." unique_id=911500003 instance=ExtResource("57_rubble")]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 92, 0, 56)
 
 [node name="OreVeinWest" parent="." unique_id=911400008 instance=ExtResource("41_mjs4f")]
 transform = Transform3D(0.39999998, 0, 0, 0, 1, 0, 0, 0, 0.39999998, 60, 0, 78)

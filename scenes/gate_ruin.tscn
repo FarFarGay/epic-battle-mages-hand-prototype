@@ -1,0 +1,127 @@
+[gd_scene load_steps=17 format=3]
+
+[ext_resource type="Script" path="res://scripts/gate_ruin.gd" id="1_gateruin"]
+[ext_resource type="Script" path="res://scripts/blocker.gd" id="2_blocker"]
+[ext_resource type="PackedScene" uid="uid://bwxsmk0cblcyy" path="res://scenes/relay_socket.tscn" id="3_socket"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_pillar"]
+albedo_color = Color(0.34, 0.33, 0.37, 1)
+roughness = 0.92
+
+[sub_resource type="StandardMaterial3D" id="Mat_slab"]
+albedo_color = Color(0.24, 0.23, 0.29, 1)
+roughness = 0.85
+metallic = 0.15
+
+[sub_resource type="StandardMaterial3D" id="Mat_rune1"]
+albedo_color = Color(0.1, 0.09, 0.13, 1)
+emission_enabled = true
+emission = Color(1, 0.8, 0.35, 1)
+emission_energy_multiplier = 0.15
+
+[sub_resource type="StandardMaterial3D" id="Mat_rune2"]
+albedo_color = Color(0.1, 0.09, 0.13, 1)
+emission_enabled = true
+emission = Color(1, 0.8, 0.35, 1)
+emission_energy_multiplier = 0.15
+
+[sub_resource type="StandardMaterial3D" id="Mat_rune3"]
+albedo_color = Color(0.1, 0.09, 0.13, 1)
+emission_enabled = true
+emission = Color(1, 0.8, 0.35, 1)
+emission_energy_multiplier = 0.15
+
+[sub_resource type="BoxMesh" id="Box_pillar"]
+size = Vector3(2.6, 9, 2.6)
+
+[sub_resource type="BoxMesh" id="Box_slab"]
+size = Vector3(9.6, 6.4, 0.8)
+
+[sub_resource type="BoxMesh" id="Box_lintel"]
+size = Vector3(8, 1.5, 2.2)
+
+[sub_resource type="BoxMesh" id="Box_debris"]
+size = Vector3(1.8, 1.4, 1.6)
+
+[sub_resource type="BoxMesh" id="Box_rune"]
+size = Vector3(0.5, 2.2, 0.12)
+
+[sub_resource type="BoxShape3D" id="Shape_gate"]
+size = Vector3(12, 7.5, 1.2)
+
+[sub_resource type="BoxShape3D" id="Shape_pillar_w"]
+size = Vector3(2.6, 9, 2.6)
+
+[sub_resource type="BoxShape3D" id="Shape_pillar_e"]
+size = Vector3(2.6, 9, 2.6)
+
+[node name="GateRuin" type="Node3D"]
+script = ExtResource("1_gateruin")
+socket_paths = Array[NodePath]([NodePath("Socket1"), NodePath("Socket2"), NodePath("Socket3")])
+rune_paths = Array[NodePath]([NodePath("Slab/Rune1"), NodePath("Slab/Rune2"), NodePath("Slab/Rune3")])
+
+[node name="Slab" type="StaticBody3D" parent="."]
+collision_layer = 544
+collision_mask = 0
+script = ExtResource("2_blocker")
+
+[node name="SlabMesh" type="MeshInstance3D" parent="Slab"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.2, 0)
+material_override = SubResource("Mat_slab")
+mesh = SubResource("Box_slab")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Slab"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.75, 0)
+shape = SubResource("Shape_gate")
+
+[node name="CollisionPillarW" type="CollisionShape3D" parent="Slab"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.5, 4.5, 0)
+shape = SubResource("Shape_pillar_w")
+
+[node name="CollisionPillarE" type="CollisionShape3D" parent="Slab"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5, 4.5, 0)
+shape = SubResource("Shape_pillar_e")
+
+[node name="Rune1" type="MeshInstance3D" parent="Slab"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.2, 3.4, 0.46)
+material_override = SubResource("Mat_rune1")
+mesh = SubResource("Box_rune")
+
+[node name="Rune2" type="MeshInstance3D" parent="Slab"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.4, 0.46)
+material_override = SubResource("Mat_rune2")
+mesh = SubResource("Box_rune")
+
+[node name="Rune3" type="MeshInstance3D" parent="Slab"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.2, 3.4, 0.46)
+material_override = SubResource("Mat_rune3")
+mesh = SubResource("Box_rune")
+
+[node name="PillarWest" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.5, 4.5, 0)
+material_override = SubResource("Mat_pillar")
+mesh = SubResource("Box_pillar")
+
+[node name="PillarEast" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5, 4.5, 0)
+material_override = SubResource("Mat_pillar")
+mesh = SubResource("Box_pillar")
+
+[node name="Lintel" type="MeshInstance3D" parent="."]
+transform = Transform3D(0.990268, -0.139173, 0, 0.139173, 0.990268, 0, 0, 0, 1, 0.4, 9.3, 0)
+material_override = SubResource("Mat_pillar")
+mesh = SubResource("Box_lintel")
+
+[node name="Debris" type="MeshInstance3D" parent="."]
+transform = Transform3D(0.906308, 0, 0.422618, 0, 1, 0, -0.422618, 0, 0.906308, -3.6, 0.7, 1.2)
+material_override = SubResource("Mat_pillar")
+mesh = SubResource("Box_debris")
+
+[node name="Socket1" parent="." instance=ExtResource("3_socket")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0, 3.5)
+
+[node name="Socket2" parent="." instance=ExtResource("3_socket")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 4.2)
+
+[node name="Socket3" parent="." instance=ExtResource("3_socket")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0, 3.5)

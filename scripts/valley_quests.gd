@@ -3,7 +3,9 @@ extends Node
 ## Чеклист-задания Долины (город, зона за Room5): постоянная строка «⚑ Задание»
 ## на HUD ведёт игрока по городским урокам — Гильдия → чертёж (станок на заставе)
 ## → фундамент → замок → шахта → дом+казарма → стены → верфь → пережить ночь →
-## наполнить замок. Одна цепочка, шаги последовательные.
+## Врата (осмотр руины → блок «Элементы: N/3», §5.27). Одна цепочка, шаги
+## последовательные; порядок ДОБЫЧИ элементов внутри блока — любой (считает
+## [GateRuin], мы только читаем счёт).
 ##
 ## Механика: ПОЛЛИНГ состояния мира (Timer 0.5с) — условия читаются из групп/
 ## флагов, никакой подписки на десяток сигналов. Шаг выполнен → плашка
@@ -23,10 +25,13 @@ var _active: bool = false
 ## Ночь-шаг: штурм начался при живом замке (ждём рассвета).
 var _night_started: bool = false
 var _night_survived: bool = false
-var _won: bool = false
+## Последняя строка, ушедшая в HUD: эмитим только на изменение (шаг ИЛИ
+## динамический текст «Элементы: N/3» внутри шага).
+var _last_emitted: String = ""
 
 
-## Цепочка: text — в строку HUD; done — Callable():bool (поллинг).
+## Цепочка: text — в строку HUD (или text_fn: Callable():String для
+## динамических строк); done — Callable():bool (поллинг).
 ## Тексты держим короткими: строка одна.
 var _steps: Array = []
 
@@ -51,14 +56,15 @@ func _ready() -> void:
 			"done": func() -> bool: return _has_role(&"dock") and _slice_installed()},
 		{"text": "Ночью будет штурм. Переживи его — защити замок",
 			"done": func() -> bool: return _night_survived},
-		{"text": "Наполняй замок: шахты качают, город защищает",
-			"done": func() -> bool: return _won},
+		{"text": "Древние Врата в северной стене — подведи башню, осмотри руину",
+			"done": func() -> bool: return _gate_examined()},
+		{"text_fn": func() -> String:
+				return "Вставь элементы в гнёзда Врат: %d/3" % _gate_elements(),
+			"done": func() -> bool: return _gate_awake()},
 	]
 	EventBus.day_phase_changed.connect(_on_day_phase)
-	EventBus.match_won.connect(_on_won)
 	tree_exiting.connect(func() -> void:
-		EventBus.day_phase_changed.disconnect(_on_day_phase)
-		EventBus.match_won.disconnect(_on_won))
+		EventBus.day_phase_changed.disconnect(_on_day_phase))
 	var poll := Timer.new()
 	poll.wait_time = 0.5
 	poll.autostart = true
@@ -74,18 +80,28 @@ func _tick() -> void:
 		if not (_tower_in_valley() or _building_known()):
 			return
 		_active = true
-		EventBus.valley_quest_changed.emit(_current_text())
 	# Проверка текущего шага (и каскад — вдруг игрок перевыполнил вперёд).
 	while _step < _steps.size() and (_steps[_step]["done"] as Callable).call():
-		EventBus.tutorial_hint.emit("✓ %s" % _steps[_step]["text"], 5.0)
+		EventBus.tutorial_hint.emit("✓ %s" % _step_text(_step), 5.0)
 		_step += 1
-		EventBus.valley_quest_changed.emit(_current_text())
+	# Эмит на любое изменение строки: переход шага или динамический N/3.
+	var text := _current_text()
+	if text != _last_emitted:
+		_last_emitted = text
+		EventBus.valley_quest_changed.emit(text)
+
+
+func _step_text(i: int) -> String:
+	var s: Dictionary = _steps[i]
+	if s.has("text_fn"):
+		return String((s["text_fn"] as Callable).call())
+	return String(s["text"])
 
 
 func _current_text() -> String:
 	if _step >= _steps.size():
 		return ""  # цепочка пройдена — строка гаснет
-	return "⚑ %s" % String(_steps[_step]["text"])
+	return "⚑ %s" % _step_text(_step)
 
 
 # --- Условия шагов (чтение мира) ---
@@ -136,6 +152,33 @@ func _slice_installed() -> bool:
 	return installed is Dictionary and not (installed as Dictionary).is_empty()
 
 
+func _gate_ruin() -> GateRuin:
+	return get_tree().get_first_node_in_group(GateRuin.GROUP) as GateRuin
+
+
+func _gate_elements() -> int:
+	var gate := _gate_ruin()
+	return 0 if gate == null else gate.elements_count()
+
+
+func _gate_awake() -> bool:
+	var gate := _gate_ruin()
+	return gate != null and gate.is_awake()
+
+
+## Башня подъехала к руине Врат (XZ ≤ 16м); вставленный элемент — тем более
+## осмотр состоялся (каскад не залипнет, если игрок перевыполнил вперёд).
+func _gate_examined() -> bool:
+	if _gate_elements() > 0 or _gate_awake():
+		return true
+	var gate := _gate_ruin()
+	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
+	if gate == null or tower == null:
+		return false
+	var d: Vector3 = tower.global_position - gate.global_position
+	return Vector2(d.x, d.z).length() <= 16.0
+
+
 func _tower_in_valley() -> bool:
 	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
 	if tower == null:
@@ -153,7 +196,3 @@ func _on_day_phase(is_night: bool, _duration: float) -> void:
 		_night_started = _castle_built()
 	elif _night_started and _castle_built():
 		_night_survived = true
-
-
-func _on_won() -> void:
-	_won = true
