@@ -987,8 +987,9 @@ func _resolve_contacts(intended_velocity: Vector3) -> void:
 				and (collider as Node).is_in_group(&"room_door"):
 			# Супер-рывок сносит дверь комнаты: она сама разносится по физике,
 			# открывает проём и удаляется. Только супер-рывок (_dash_is_super).
+			# Направление рывка → осколки летят вперёд, ОТ башни.
 			if (collider as Node).has_method(&"shatter"):
-				(collider as Node).call(&"shatter")
+				(collider as Node).call(&"shatter", Vector3(_dash_dir.x, 0.0, _dash_dir.y))
 
 	if debug_log and LogConfig.master_enabled:
 		_log_contact_transitions(contacts_now)

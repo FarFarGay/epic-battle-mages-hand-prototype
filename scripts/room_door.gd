@@ -22,7 +22,9 @@ var _shattered: bool = false
 
 
 ## Снести дверь: осколки по физике + открыть проём + удалиться. Идемпотентно.
-func shatter() -> void:
+## hit_dir — направление удара (рывок башни): осколки летят ОТ башни, вперёд
+## по ходу тарана (burst_dir в [ShatterEffect.spawn]). Zero = прежний веер.
+func shatter(hit_dir: Vector3 = Vector3.ZERO) -> void:
 	if _shattered:
 		return
 	_shattered = true
@@ -37,7 +39,8 @@ func shatter() -> void:
 		if shatter_points > 1:
 			t = lerpf(-half_width, half_width, float(i) / float(shatter_points - 1))
 		var p: Vector3 = global_position + x_axis * t + Vector3.UP * 1.4
-		ShatterEffect.spawn(scene, p, shatter_color, fragments_per_point, 2.0)
+		ShatterEffect.spawn(scene, p, shatter_color, fragments_per_point, 2.0, hit_dir)
+	EventBus.camera_shake.emit(0.35, global_position)
 	# Проём открылся — перепечь навмеш (агенты/враги пойдут сквозь).
 	var nav := get_tree().get_first_node_in_group(NAV_GROUP)
 	if nav != null and nav.has_method(&"rebake"):

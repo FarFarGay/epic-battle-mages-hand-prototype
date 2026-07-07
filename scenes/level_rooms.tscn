@@ -61,6 +61,8 @@
 [ext_resource type="PackedScene" path="res://scenes/gear_element.tscn" id="58_gear"]
 [ext_resource type="PackedScene" path="res://scenes/keystone_element.tscn" id="59_keystone"]
 [ext_resource type="PackedScene" path="res://scenes/star_crystal.tscn" id="60_starcrystal"]
+[ext_resource type="Script" uid="uid://bi5ysv32a5q33" path="res://scripts/gnome_cage.gd" id="61_gnomecage"]
+[ext_resource type="Script" path="res://scripts/quest_marker.gd" id="62_questmarker"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -164,12 +166,6 @@ size = Vector3(36, 0.12, 7)
 [sub_resource type="BoxShape3D" id="BoxShape3D_chasm2"]
 size = Vector3(7, 3, 38)
 
-[sub_resource type="BoxMesh" id="BoxMesh_chasmA"]
-size = Vector3(24, 0.12, 6)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_chasmA"]
-size = Vector3(6, 3, 26)
-
 [sub_resource type="BoxMesh" id="BoxMesh_chasm"]
 size = Vector3(8, 0.12, 28)
 
@@ -190,6 +186,12 @@ albedo_color = Color(0.24, 0.5, 0.22, 1)
 [sub_resource type="SphereMesh" id="Sph_foliage"]
 radius = 1.6
 height = 3.0
+
+[sub_resource type="BoxMesh" id="BoxMesh_chasmA"]
+size = Vector3(24, 0.12, 6)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_chasmA"]
+size = Vector3(6, 3, 26)
 
 [node name="LevelRooms" type="Node3D" unique_id=169599323]
 
@@ -282,6 +284,14 @@ transform = Transform3D(4, 0, 0, 0, 1, 0, 0, 0, 1, -26, 0, -3)
 [node name="TunnelWallSouth" parent="Room1" unique_id=911200004 instance=ExtResource("6_wall")]
 transform = Transform3D(4, 0, 0, 0, 1, 0, 0, 0, 1, -26, 0, 3)
 
+[node name="GnomeCage" type="RigidBody3D" parent="Room1" unique_id=911200040]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 0.1, 0)
+script = ExtResource("61_gnomecage")
+
+[node name="QuestMarker" type="Node3D" parent="Room1/GnomeCage" unique_id=911200042]
+script = ExtResource("62_questmarker")
+marker_height = 2.4
+
 [node name="TunnelEndCap" parent="Room1" unique_id=911200005 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 12, -34, 0, 0)
 
@@ -335,8 +345,13 @@ shape = SubResource("BoxShape3D_chasm2")
 [node name="BridgePlank2" type="RigidBody3D" parent="Room2" unique_id=911200015]
 transform = Transform3D(0.9659258, 0, 0.258819, 0, 1, 0, -0.258819, 0, 0.9659258, 8, 0.5, 20)
 collision_layer = 2
-collision_mask = 31
+collision_mask = 575
 script = ExtResource("46_plank")
+
+[node name="QuestMarker" type="Node3D" parent="Room2/BridgePlank2" unique_id=911200043]
+script = ExtResource("62_questmarker")
+marker_height = 1.6
+done_group = &"bridge_snapped"
 
 [node name="Room3" type="Node3D" parent="." unique_id=455955113]
 
@@ -379,8 +394,13 @@ wire_from_path = NodePath("../BlueDiode")
 [node name="RelayCrystal" type="RigidBody3D" parent="Room3" unique_id=911200020]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 0.5, 52)
 collision_layer = 2
-collision_mask = 31
+collision_mask = 575
 script = ExtResource("49_relayitem")
+
+[node name="QuestMarker" type="Node3D" parent="Room3/RelayCrystal" unique_id=911200044]
+script = ExtResource("62_questmarker")
+marker_height = 1.8
+done_group = &"relay_seated"
 
 [node name="RedDiode" parent="Room3" unique_id=1884791915 instance=ExtResource("26_reddiode")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 67)
@@ -644,6 +664,12 @@ script = ExtResource("47_tuthint")
 text = "ПРОБЕЛ — рывок. Тарань скелетов!"
 zone_size = Vector3(6, 8, 10)
 
+[node name="HintCage" type="Area3D" parent="TutorialHints" unique_id=911200041]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 2, 0)
+script = ExtResource("47_tuthint")
+text = "Гном в клетке! ЛКМ — схвати клетку рукой и МЕТНИ, чтобы разбить"
+zone_size = Vector3(12, 8, 14)
+
 [node name="HintMana" type="Area3D" parent="TutorialHints" unique_id=911200010]
 script = ExtResource("47_tuthint")
 text = "Орбы с врагов дают ману — башня вбирает их сама"
@@ -794,6 +820,7 @@ script = ExtResource("36_deeds")
 
 [node name="GnomeSquadSpawner" type="Node" parent="." unique_id=1793913173]
 script = ExtResource("38_squadspawn")
+starting_worker_count = 0
 
 [node name="SpawnZones" type="Node3D" parent="." unique_id=911000001]
 
@@ -1021,7 +1048,7 @@ shape = SubResource("BoxShape3D_chasmA")
 [node name="BridgePlankA" type="RigidBody3D" parent="RiftRoom" unique_id=911700008]
 transform = Transform3D(0.9659258, 0, 0.258819, 0, 1, 0, -0.258819, 0, 0.9659258, 38, 0.5, 39)
 collision_layer = 2
-collision_mask = 31
+collision_mask = 575
 script = ExtResource("46_plank")
 
 [node name="Keystone" parent="RiftRoom" unique_id=911700009 instance=ExtResource("59_keystone")]
@@ -1088,17 +1115,17 @@ transform = Transform3D(0.39999998, 0, 0, 0, 1, 0, 0, 0, 0.39999998, 62, 0, 138)
 transform = Transform3D(-0.39999998, 0, 0, 0, 1, 0, 0, 0, -0.39999998, 96, 0, 132)
 
 [node name="GnomeHouseB" parent="." unique_id=1635103079 instance=ExtResource("28_gnomehouse")]
-transform = Transform3D(0.49999997, 0, -0.86602545, 0, 1, 0, 0.86602545, 0, 0.49999997, 85.479675, 0, 98.05763)
+transform = Transform3D(0.49999997, 0, -0.86602545, 0, 1, 0, 0.86602545, 0, 0.49999997, 111.99967, 0, 81.591606)
 dialog_enabled = true
 dialog_id = &"builders"
 
 [node name="GnomeHouseC" parent="." unique_id=663119585 instance=ExtResource("28_gnomehouse")]
-transform = Transform3D(0.087155804, 0, -0.9961947, 0, 1, 0, 0.9961947, 0, 0.087155804, 88.227936, 0, 103.06302)
+transform = Transform3D(0.087155804, 0, -0.9961947, 0, 1, 0, 0.9961947, 0, 0.087155804, 112.756905, 0, 86.261246)
 dialog_enabled = true
 dialog_id = &"c"
 
 [node name="GnomeHouseD" parent="." unique_id=560907591 instance=ExtResource("28_gnomehouse")]
-transform = Transform3D(-0.64278764, 0, -0.76604444, 0, 1, 0, 0.76604444, 0, -0.64278764, 84.64475, 0, 107.79829)
+transform = Transform3D(-0.64278764, 0, -0.76604444, 0, 1, 0, 0.76604444, 0, -0.64278764, 111.62845, 0, 90.88646)
 dialog_enabled = true
 dialog_id = &"d"
 
@@ -1140,7 +1167,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 48, 0, 58)
 coin_count = 4
 
 [node name="PotSouth1" parent="PotsExtra" unique_id=911700022 instance=ExtResource("33_pot")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 0, 146)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 66, 0, 146)
 coin_count = 4
 
 [node name="PotSouth2" parent="PotsExtra" unique_id=911700023 instance=ExtResource("33_pot")]
@@ -1222,12 +1249,12 @@ script = ExtResource("39_wood")
 wood_remaining = 33
 
 [node name="Trunk" type="MeshInstance3D" parent="ResWoodSouth" unique_id=911700017]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 7)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36, 1.2, 0)
 material_override = SubResource("Mat_trunk")
 mesh = SubResource("Cyl_trunk")
 
 [node name="Foliage" type="MeshInstance3D" parent="ResWoodSouth" unique_id=911700018]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 7)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36, 3, 0)
 material_override = SubResource("Mat_foliage")
 mesh = SubResource("Sph_foliage")
 

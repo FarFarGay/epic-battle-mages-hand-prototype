@@ -124,8 +124,14 @@ const MASK_HAND_TARGETS := ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE | MOUNTED_MO
 ## слой и явно включить его в этой маске.
 const MASK_HAND_SLAM := ITEMS | ACTORS | ENEMIES | CAMP_OBSTACLE | COLD_ENEMY | FRIENDLY_UNIT | MINE_HAZARD | DESTRUCTIBLE_DECK   # 9654
 
-## «Всё обычное» (без палаток лагеря). Tower / Item / Ground / shatter.
-const MASK_ALL_GAMEPLAY := TERRAIN | ITEMS | ACTORS | PROJECTILES | ENEMIES   # 31
+## «Всё обычное» для ПРЕДМЕТОВ (grabbable/throwable: ящик, плашка, клетка,
+## кристалл, элементы Врат). 2026-07-07: + CAMP_OBSTACLE | PALISADE_OBSTACLE —
+## брошенный предмет упирается в стены комнат/палисад/постройки (блокеры на 544),
+## а не пролетает сквозь. Итог 575 = ровно маска Tower: предмет сталкивается
+## с тем же, с чем башня. Ворота (WALL_GATE_BLOCK) намеренно НЕ включены —
+## предметы проходят как башня. .tscn-литералы 31 пересчитаны → 575
+## (item.tscn, bridge_plank.tscn, узлы level_rooms — см. шапку файла).
+const MASK_ALL_GAMEPLAY := TERRAIN | ITEMS | ACTORS | PROJECTILES | ENEMIES | CAMP_OBSTACLE | PALISADE_OBSTACLE   # 575
 
 ## Детонация при смерти крупного объекта (башня, харвестер-ядро): бьёт по
 ## площади врагов (ENEMIES), постройки лагеря и ядро (CAMP_OBSTACLE), палисад/

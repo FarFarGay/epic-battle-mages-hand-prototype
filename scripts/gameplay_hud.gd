@@ -2639,6 +2639,10 @@ func _build_tower_stats() -> void:
 	_mana_bar = panel.get_node_or_null(^"ManaBar") as ProgressBar
 	if _mana_bar != null:
 		_mana_label = _mana_bar.get_node_or_null(^"Label") as Label
+		# Прогрессивное пробуждение (туториал): бар скрыт, пока маны нет —
+		# появляется с первым орбом (_refresh_tower_mana). Тот же приём, что
+		# SuperBar «до разблокировки» ниже.
+		_mana_bar.visible = false
 	_super_bar = panel.get_node_or_null(^"SuperBar") as ProgressBar
 	if _super_bar != null:
 		_super_label = _super_bar.get_node_or_null(^"Label") as Label
@@ -2658,6 +2662,8 @@ func _refresh_tower_mana(current: float, maximum: float) -> void:
 	_current_mana = current  # кеш до null-guard'а: нужен трею даже если бар не построен
 	if _mana_bar == null:
 		return
+	if current > 0.0 and not _mana_bar.visible:
+		_mana_bar.visible = true  # первая мана — бар «пробуждается» и больше не прячется
 	_mana_bar.max_value = maxf(maximum, 1.0)
 	_mana_bar.value = clampf(current, 0.0, maximum)
 	_mana_label.text = "MP %d/%d" % [int(round(current)), int(round(maximum))]
