@@ -48,6 +48,7 @@ var _core_mat: StandardMaterial3D = null
 
 
 func _ready() -> void:
+	add_to_group(GROUP)
 	var area := get_node_or_null(furnace_area_path) as Area3D
 	if area != null:
 		area.body_entered.connect(_on_furnace_body)
@@ -115,9 +116,42 @@ func _on_diode_sparked() -> void:
 		print("[BlueprintMachine] контакт запитан → пускач включён")
 
 
+const GROUP := &"blueprint_machine"
+
+
 ## Зовёт рычаг ([Lever].target_path → станок) когда игрок его перекинул.
+## Первый дёрг — запуск станка; повторные (перезакладка замка, рычаг
+## перевзводится в [reprint_arm]) — новая печать чертежа с гейтом.
 func activate() -> void:
-	_ignite()
+	if not _ignited:
+		_ignite()
+		return
+	_reprint()
+
+
+## Перевзвод пускача после гибели замка ([Castle._die]): рычаг снова в OFF,
+## дёрг напечатает новый чертёж. Пазл растопки повторно проходить не надо —
+## станок уже раскочегарен.
+func reprint_arm() -> void:
+	if not _ignited:
+		return  # станок ещё не запускали — обычная цепочка сама справится
+	if _lever != null and _lever.has_method(&"reset"):
+		_lever.call(&"reset")
+
+
+## Повторная печать: только если старый чертёж потрачен и замка нет —
+## иначе плашка объясняет, почему станок молчит.
+func _reprint() -> void:
+	if get_tree().get_first_node_in_group(&"castle") != null:
+		EventBus.tutorial_hint.emit("Замок стоит — новый чертёж не нужен", 5.0)
+		return
+	if get_tree().get_first_node_in_group(CastleBlueprint.GROUP) != null:
+		EventBus.tutorial_hint.emit("Чертёж уже отпечатан — найди его и отнеси на плиту", 6.0)
+		return
+	var root: Node = get_tree().current_scene
+	if is_instance_valid(root):
+		AoeVisual.spawn_pulse_sparks(root, global_position + Vector3.UP * 0.8, 2.0, 14.0)
+	_print_blueprint()
 
 
 ## Станок оживает: вспышка ядра + искры + знание о постройках + печать чертежа.

@@ -153,6 +153,14 @@ func gnome_hit(_gnome: Node = null) -> void:
 	_throw()
 
 
+## Перевзвод (перезакладка замка: станок должен печатать чертёж повторно):
+## тумблер щёлкает обратно в OFF, рычаг снова дёргается. Enable не трогаем.
+func reset() -> void:
+	_thrown = false
+	_engaged = false
+	_snap_to(start_angle_deg)
+
+
 ## Щелчок тумблера в ON: быстрый снап с пружинкой, на финише — активация цели.
 func _throw() -> void:
 	_thrown = true

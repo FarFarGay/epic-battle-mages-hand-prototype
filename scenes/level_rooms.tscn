@@ -59,6 +59,7 @@
 [ext_resource type="PackedScene" path="res://scenes/gate_ruin.tscn" id="56_gateruin"]
 [ext_resource type="PackedScene" path="res://scenes/rubble_pile.tscn" id="57_rubble"]
 [ext_resource type="PackedScene" path="res://scenes/gear_element.tscn" id="58_gear"]
+[ext_resource type="PackedScene" path="res://scenes/keystone_element.tscn" id="59_keystone"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -161,6 +162,12 @@ size = Vector3(36, 0.12, 7)
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_chasm2"]
 size = Vector3(7, 3, 38)
+
+[sub_resource type="BoxMesh" id="BoxMesh_chasmA"]
+size = Vector3(24, 0.12, 6)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_chasmA"]
+size = Vector3(6, 3, 26)
 
 [sub_resource type="BoxMesh" id="BoxMesh_chasm"]
 size = Vector3(8, 0.12, 28)
@@ -740,6 +747,14 @@ text = "Проём под гнома — башня не пролезет. По�
 duration = 9.0
 zone_size = Vector3(8, 8, 12)
 
+[node name="HintRift" type="Area3D" parent="TutorialHints" unique_id=911700011]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 2, 39)
+script = ExtResource("47_tuthint")
+text = "Разлом! Возьми мосток рукой и положи поперёк. Ключ-плита — на той стороне, под охраной"
+duration = 9.0
+zone_size = Vector3(22, 8, 8)
+suppress_group = &"bridge_snapped"
+
 [node name="HintFoundation" type="Area3D" parent="TutorialHints" unique_id=911400007]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 56, 2, 84)
 script = ExtResource("47_tuthint")
@@ -917,6 +932,48 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 56, 0, 84)
 [node name="GateRuin" parent="." unique_id=911500001 instance=ExtResource("56_gateruin")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 0, 43)
 
+[node name="RiftRoom" type="Node3D" parent="." unique_id=911700001]
+
+[node name="WallNorth" parent="RiftRoom" unique_id=911700002 instance=ExtResource("6_wall")]
+transform = Transform3D(6, 0, 0, 0, 1, 0, 0, 0, 1, 32, 0, 18)
+
+[node name="WallWest" parent="RiftRoom" unique_id=911700003 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 50, 20, 0, 30.5)
+
+[node name="WallEast" parent="RiftRoom" unique_id=911700004 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 50, 44, 0, 30.5)
+
+[node name="ChasmVisualA" type="MeshInstance3D" parent="RiftRoom" unique_id=911700005 groups=["chasm_visual"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 0.05, 31)
+material_override = SubResource("Material_chasm")
+mesh = SubResource("BoxMesh_chasmA")
+
+[node name="ChasmBarrierA" type="StaticBody3D" parent="RiftRoom" unique_id=911700006 groups=["chasm_barrier", "navmesh_source"]]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 32, 0, 31)
+collision_layer = 544
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="RiftRoom/ChasmBarrierA" unique_id=911700007]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("BoxShape3D_chasmA")
+
+[node name="BridgePlankA" type="RigidBody3D" parent="RiftRoom" unique_id=911700008]
+transform = Transform3D(0.9659258, 0, 0.258819, 0, 1, 0, -0.258819, 0, 0.9659258, 38, 0.5, 39)
+collision_layer = 2
+collision_mask = 31
+script = ExtResource("46_plank")
+
+[node name="Keystone" parent="RiftRoom" unique_id=911700009 instance=ExtResource("59_keystone")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 0.5, 22)
+
+[node name="RiftGuards" type="Node3D" parent="RiftRoom" unique_id=911700010]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 6
+area_center = Vector3(32, 0, 23)
+area_half_x = 9.0
+area_half_z = 4.0
+
 [node name="RubbleNorthWest" parent="." unique_id=911500002 instance=ExtResource("57_rubble")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 0, 43)
 
@@ -949,11 +1006,25 @@ transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 40, 136, 0, 54)
 [node name="GearElement" parent="DwarfDungeon" unique_id=911500014 instance=ExtResource("58_gear")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 138, 0.5, 47)
 
+[node name="DungeonGuards" type="Node3D" parent="DwarfDungeon" unique_id=911700012]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 7
+area_center = Vector3(129, 0, 57)
+area_half_x = 9.0
+area_half_z = 11.0
+
 [node name="OreVeinWest" parent="." unique_id=911400008 instance=ExtResource("41_mjs4f")]
 transform = Transform3D(0.39999998, 0, 0, 0, 1, 0, 0, 0, 0.39999998, 60, 0, 78)
 
 [node name="OreVeinEast" parent="." unique_id=911400009 instance=ExtResource("41_mjs4f")]
 transform = Transform3D(-0.39999998, 0, 0, 0, 1, 0, 0, 0, 0.39999998, 72, 0, 90)
+
+[node name="OreVeinSouth" parent="." unique_id=911700013 instance=ExtResource("41_mjs4f")]
+transform = Transform3D(0.39999998, 0, 0, 0, 1, 0, 0, 0, 0.39999998, 62, 0, 138)
+
+[node name="OreVeinSouthEast" parent="." unique_id=911700014 instance=ExtResource("41_mjs4f")]
+transform = Transform3D(-0.39999998, 0, 0, 0, 1, 0, 0, 0, -0.39999998, 96, 0, 132)
 
 [node name="GnomeHouseB" parent="." unique_id=1635103079 instance=ExtResource("28_gnomehouse")]
 transform = Transform3D(0.49999997, 0, -0.86602545, 0, 1, 0, 0.86602545, 0, 0.49999997, 85.479675, 0, 98.05763)
@@ -1007,6 +1078,24 @@ coin_count = 4
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 48, 0, 58)
 coin_count = 4
 
+[node name="PotSouth1" parent="PotsExtra" unique_id=911700022 instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 0, 146)
+coin_count = 4
+
+[node name="PotSouth2" parent="PotsExtra" unique_id=911700023 instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 78, 0, 148)
+coin_count = 5
+gold_per_coin = 20
+
+[node name="PotSouth3" parent="PotsExtra" unique_id=911700024 instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 112, 0, 144)
+coin_count = 4
+
+[node name="PotRift" parent="PotsExtra" unique_id=911700025 instance=ExtResource("33_pot")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 0, 21)
+coin_count = 5
+gold_per_coin = 20
+
 [node name="ResWood2" type="Node3D" parent="." unique_id=410355176]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 88, 0, 76)
 script = ExtResource("39_wood")
@@ -1057,6 +1146,44 @@ script = ExtResource("23_filler")
 skeleton_scene = ExtResource("22_skel")
 count = 20
 area_center = Vector3(73.5, 0, 56)
+
+[node name="SkeletonFillerSouth" type="Node3D" parent="." unique_id=911700015]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 15
+area_center = Vector3(75, 0, 140)
+area_half_x = 30.0
+area_half_z = 9.0
+
+[node name="ResWoodSouth" type="Node3D" parent="." unique_id=911700016]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 38, 0, 132)
+script = ExtResource("39_wood")
+wood_remaining = 33
+
+[node name="Trunk" type="MeshInstance3D" parent="ResWoodSouth" unique_id=911700017]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 7)
+material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
+
+[node name="Foliage" type="MeshInstance3D" parent="ResWoodSouth" unique_id=911700018]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 7)
+material_override = SubResource("Mat_foliage")
+mesh = SubResource("Sph_foliage")
+
+[node name="ResWoodSouth2" type="Node3D" parent="." unique_id=911700019]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 104, 0, 138)
+script = ExtResource("39_wood")
+wood_remaining = 33
+
+[node name="Trunk" type="MeshInstance3D" parent="ResWoodSouth2" unique_id=911700020]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 7)
+material_override = SubResource("Mat_trunk")
+mesh = SubResource("Cyl_trunk")
+
+[node name="Foliage" type="MeshInstance3D" parent="ResWoodSouth2" unique_id=911700021]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3, 7)
+material_override = SubResource("Mat_foliage")
+mesh = SubResource("Sph_foliage")
 
 [node name="StoneThrowerTest" parent="." unique_id=990126243 instance=ExtResource("41_8brgo")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 85, 3, 53)

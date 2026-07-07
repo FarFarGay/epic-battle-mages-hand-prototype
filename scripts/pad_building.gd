@@ -1387,6 +1387,17 @@ func _tick_institute(delta: float) -> void:
 		return
 	if has_dock_pads(get_tree()) and not is_tower_docked_any(get_tree()):
 		return
+	# Пуповина видна: пока город кормит башню маной, от института к ней бежит
+	# синий импульс (реюз PlaceFx.link_pulse, как чанки трюма). Кулдаун — не спам.
+	_mana_beam_cd -= delta
+	if _mana_beam_cd <= 0.0:
+		_mana_beam_cd = 1.1
+		var t3d := tower as Node3D
+		if t3d != null:
+			PlaceFx.link_pulse(get_tree().current_scene,
+				global_position + Vector3.UP * 1.5,
+				Vector3(t3d.global_position.x, 2.0, t3d.global_position.z),
+				Color(0.4, 0.65, 1.0))
 	var st := _quarter_status()
 	# Фидбэк «квартал СОБРАН» — симметрично шахте: вспышка единожды на переходе к 100%.
 	var full: bool = float(st["fill"]) >= 0.999
@@ -1466,6 +1477,8 @@ const DOCK_REPAIR_RATE := 12.0
 
 ## Прошлое состояние парковки — плашка только на переходе «встал в док».
 var _docked_prev: bool = false
+## Кулдаун синего импульса «институт кормит башню» (виден только в доке).
+var _mana_beam_cd: float = 0.0
 
 
 ## Сервисы дока (город обслуживает башню у причала): плашка на входе + ремонт.

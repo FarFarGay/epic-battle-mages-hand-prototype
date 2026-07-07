@@ -142,7 +142,16 @@ func _die() -> void:
 		ShatterEffect.building_explosion(scene, global_position + Vector3.UP * 1.2,
 			_STONE, 5.0, 26)
 		AoeVisual.spawn_screen_flash(get_tree(), Color(1.0, 0.6, 0.3), 0.22, 0.18)
-	EventBus.tutorial_hint.emit("⚠ Замок разрушен!", 6.0)
+		# ПЕРЕЗАКЛАДКА (решение юзера 2026-07-07: потеря замка ≠ софтлок):
+		# на руинах снова встаёт плита-фундамент, а пускач станка перевзводится —
+		# дёрг печатает новый чертёж (пазл растопки повторно проходить не надо).
+		var foundation := preload("res://scenes/castle_foundation.tscn").instantiate() as Node3D
+		scene.add_child(foundation)
+		foundation.global_position = global_position
+		for m in get_tree().get_nodes_in_group(BlueprintMachine.GROUP):
+			if is_instance_valid(m) and m.has_method(&"reprint_arm"):
+				m.call(&"reprint_arm")
+	EventBus.tutorial_hint.emit("⚠ Замок разрушен! Гильдия готова заложить новый: чертёж — со станка на заставе", 8.0)
 	queue_free()
 
 
