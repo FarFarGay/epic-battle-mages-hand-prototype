@@ -416,7 +416,8 @@ func add_oil(amount: float) -> void:
 	if _oil >= oil_goal:
 		_full = true
 		filled.emit()
-		EventBus.match_won.emit()  # замок наполнен нефтью → победа (WinOverlay слушает)
+		# match_won здесь БОЛЬШЕ НЕ эмитим (пивот 2026-07-07): победа акта —
+		# открытые Врата ([GateRuin._check_victory]); казна — экономика, не цель.
 		if LogConfig.master_enabled:
 			print("[Castle] ★ КОЛЛЕКТОР ПОЛОН (%.0f) — цель добычи достигнута" % oil_goal)
 

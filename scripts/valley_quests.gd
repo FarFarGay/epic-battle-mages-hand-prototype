@@ -25,6 +25,8 @@ var _active: bool = false
 ## Ночь-шаг: штурм начался при живом замке (ждём рассвета).
 var _night_started: bool = false
 var _night_survived: bool = false
+## Финал: башня прошла врата (match_won от GateRuin).
+var _won: bool = false
 ## Последняя строка, ушедшая в HUD: эмитим только на изменение (шаг ИЛИ
 ## динамический текст «Элементы: N/3» внутри шага).
 var _last_emitted: String = ""
@@ -61,10 +63,16 @@ func _ready() -> void:
 		{"text_fn": func() -> String:
 				return "Вставь элементы в гнёзда Врат: %d/3" % _gate_elements(),
 			"done": func() -> bool: return _gate_awake()},
+		{"text": "⚔ Срази СТРАЖА ВРАТ — путь наружу за ним",
+			"done": func() -> bool: return _gate_open()},
+		{"text": "Врата открыты! Веди башню в проём — прочь из долины",
+			"done": func() -> bool: return _won},
 	]
 	EventBus.day_phase_changed.connect(_on_day_phase)
+	EventBus.match_won.connect(_on_won)
 	tree_exiting.connect(func() -> void:
-		EventBus.day_phase_changed.disconnect(_on_day_phase))
+		EventBus.day_phase_changed.disconnect(_on_day_phase)
+		EventBus.match_won.disconnect(_on_won))
 	var poll := Timer.new()
 	poll.wait_time = 0.5
 	poll.autostart = true
@@ -166,6 +174,11 @@ func _gate_awake() -> bool:
 	return gate != null and gate.is_awake()
 
 
+func _gate_open() -> bool:
+	var gate := _gate_ruin()
+	return gate != null and gate.is_open()
+
+
 ## Башня подъехала к руине Врат (XZ ≤ 16м); вставленный элемент — тем более
 ## осмотр состоялся (каскад не залипнет, если игрок перевыполнил вперёд).
 func _gate_examined() -> bool:
@@ -196,3 +209,7 @@ func _on_day_phase(is_night: bool, _duration: float) -> void:
 		_night_started = _castle_built()
 	elif _night_started and _castle_built():
 		_night_survived = true
+
+
+func _on_won() -> void:
+	_won = true

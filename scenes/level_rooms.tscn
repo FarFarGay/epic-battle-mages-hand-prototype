@@ -60,6 +60,7 @@
 [ext_resource type="PackedScene" path="res://scenes/rubble_pile.tscn" id="57_rubble"]
 [ext_resource type="PackedScene" path="res://scenes/gear_element.tscn" id="58_gear"]
 [ext_resource type="PackedScene" path="res://scenes/keystone_element.tscn" id="59_keystone"]
+[ext_resource type="PackedScene" path="res://scenes/star_crystal.tscn" id="60_starcrystal"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -747,6 +748,13 @@ text = "Проём под гнома — башня не пролезет. По�
 duration = 9.0
 zone_size = Vector3(8, 8, 12)
 
+[node name="HintStarDoor" type="Area3D" parent="TutorialHints" unique_id=911800014]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 74, 2, 24)
+script = ExtResource("47_tuthint")
+text = "Глубина заставы заперта. Ударь Искрой [1] по синему диоду, потом дёрни рычаг (ЛКМ)"
+duration = 9.0
+zone_size = Vector3(16, 8, 9)
+
 [node name="HintRift" type="Area3D" parent="TutorialHints" unique_id=911700011]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 2, 39)
 script = ExtResource("47_tuthint")
@@ -903,8 +911,61 @@ transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 50, 58, 0, 30.5)
 [node name="WallEast" parent="Zastava" unique_id=911400002 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 50, 90, 0, 30.5)
 
-[node name="WallNorth" parent="Zastava" unique_id=911400003 instance=ExtResource("6_wall")]
-transform = Transform3D(8, 0, 0, 0, 1, 0, 0, 0, 1, 74, 0, 18)
+[node name="WallNorthWest" parent="Zastava" unique_id=911400003 instance=ExtResource("6_wall")]
+transform = Transform3D(3, 0, 0, 0, 1, 0, 0, 0, 1, 64, 0, 18)
+
+[node name="WallNorthEast" parent="Zastava" unique_id=911800001 instance=ExtResource("6_wall")]
+transform = Transform3D(3, 0, 0, 0, 1, 0, 0, 0, 1, 84, 0, 18)
+
+[node name="StarVault" type="Node3D" parent="Zastava" unique_id=911800002]
+
+[node name="WallNorth" parent="Zastava/StarVault" unique_id=911800003 instance=ExtResource("6_wall")]
+transform = Transform3D(6, 0, 0, 0, 1, 0, 0, 0, 1, 74, 0, 2)
+
+[node name="WallWest" parent="Zastava/StarVault" unique_id=911800004 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 32, 62, 0, 10)
+
+[node name="WallEast" parent="Zastava/StarVault" unique_id=911800005 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 32, 86, 0, 10)
+
+[node name="MetalDoorStar" type="StaticBody3D" parent="Zastava/StarVault" unique_id=911800006 groups=["hand_immune", "navmesh_source", "slam_damage_immune"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 74, 0, 18)
+collision_layer = 544
+collision_mask = 0
+script = ExtResource("24_metaldoor")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Zastava/StarVault/MetalDoorStar" unique_id=911800007]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+material_override = SubResource("Material_metal")
+mesh = SubResource("BoxMesh_door")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Zastava/StarVault/MetalDoorStar" unique_id=911800008]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+shape = SubResource("BoxShape3D_door")
+
+[node name="BlueDiodeStar" parent="Zastava/StarVault" unique_id=911800009 instance=ExtResource("25_diode")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 68, 0, 23)
+target_path = NodePath("../RedDiodeStar")
+
+[node name="RedDiodeStar" parent="Zastava/StarVault" unique_id=911800010 instance=ExtResource("26_reddiode")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 71, 0, 20.5)
+wire_from_path = NodePath("../BlueDiodeStar")
+lever_path = NodePath("../LeverStar")
+
+[node name="LeverStar" parent="Zastava/StarVault" unique_id=911800011 instance=ExtResource("27_lever")]
+transform = Transform3D(0.6, 0, 0, 0, 0.6, 0, 0, 0, 0.6, 78, 0, 20.5)
+target_path = NodePath("../MetalDoorStar")
+
+[node name="StarCrystalItem" parent="Zastava/StarVault" unique_id=911800012 instance=ExtResource("60_starcrystal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 74, 0.6, 8)
+
+[node name="VaultGuards" type="Node3D" parent="Zastava/StarVault" unique_id=911800013]
+script = ExtResource("23_filler")
+skeleton_scene = ExtResource("22_skel")
+count = 4
+area_center = Vector3(74, 0, 9)
+area_half_x = 9.0
+area_half_z = 5.0
 
 [node name="SkeletonFillerZastava" type="Node3D" parent="Zastava" unique_id=911400004]
 script = ExtResource("23_filler")

@@ -19,11 +19,22 @@ const GROUP := &"gate_ruin"
 @export var rune_paths: Array[NodePath] = []
 @export var rune_dead_energy: float = 0.15
 @export var rune_live_energy: float = 3.0
+## Плита-створ (Blocker-StaticBody): после смерти стража съезжает под землю.
+@export var slab_path: NodePath = ^"Slab"
+## Мех-страж Врат ([EnemyMech], СОЛО-дуэль — канон «строго 1 за раз»).
+@export var mech_scene: PackedScene
+## Задержка выхода стража после оживления механизма (сек) — время на предупреждение.
+@export var mech_delay: float = 3.0
+## Насколько плита уезжает вниз при открытии.
+@export var slab_slide_depth: float = 7.0
 
 var _sockets: Array[RelaySocket] = []
 var _runes: Array[MeshInstance3D] = []
 var _count: int = 0
 var _awake: bool = false
+var _mech: Node3D = null
+var _open: bool = false
+var _won: bool = false
 
 
 func _ready() -> void:
@@ -58,6 +69,7 @@ func is_awake() -> bool:
 
 
 func _poll() -> void:
+	_check_victory()
 	var n: int = 0
 	for s in _sockets:
 		if is_instance_valid(s) and s.is_seated():
@@ -85,11 +97,85 @@ func _update_runes() -> void:
 				rune_live_energy if i < _count else rune_dead_energy
 
 
+func is_open() -> bool:
+	return _open
+
+
+func is_guard_down() -> bool:
+	return _awake and _mech == null
+
+
 ## Все элементы на месте. Пробуждение одностороннее: вынутый обратно элемент
 ## механизм уже не «усыпит» (руны погаснут, но _awake остаётся).
-## Фаза меха-стража (§5.27.3 ⑤) повесит сюда спавн и открытие створ.
+## Финал акта: предупреждение → из врат выходит мех-страж (соло-дуэль, СТРОГО
+## один — канон [[project_ebm_mech_solo_apex]]) → убил → створ открывается →
+## башня в проёме = победа (см. [_poll] хвост).
 func _on_awakened() -> void:
 	EventBus.camera_shake.emit(0.5, global_position)
 	AoeVisual.spawn_explosion(get_tree().current_scene,
 		global_position + Vector3.UP * 3.0, 3.0)
 	EventBus.tutorial_hint.emit("Механизм Врат гудит — древний страж просыпается…", 8.0)
+	EventBus.boss_wave_incoming.emit(mech_delay)
+	var t := get_tree().create_timer(mech_delay)
+	t.timeout.connect(_spawn_mech)
+
+
+func _spawn_mech() -> void:
+	if mech_scene == null:
+		push_warning("[GateRuin] mech_scene не задан — страж не выйдет, врата откроются сразу")
+		_open_gates()
+		return
+	var scene: Node = get_tree().current_scene
+	if scene == null:
+		return
+	_mech = mech_scene.instantiate() as Node3D
+	scene.add_child(_mech)
+	_mech.global_position = global_position + Vector3(0, 1.2, 6.0)
+	if _mech.has_signal(&"destroyed"):
+		_mech.connect(&"destroyed", _on_mech_destroyed)
+	AoeVisual.spawn_explosion(scene, _mech.global_position, 2.5)
+	EventBus.camera_shake.emit(0.6, _mech.global_position)
+	EventBus.tutorial_hint.emit("⚔ СТРАЖ ВРАТ! Срази его — путь наружу за ним", 8.0)
+
+
+func _on_mech_destroyed() -> void:
+	_mech = null
+	_open_gates()
+
+
+## Створ уезжает под землю (как MetalDoor): навмеш снимаем СИНХРОННО в конце
+## съезда — физика и навмеш согласованы, агенты не ходят «сквозь» плиту.
+func _open_gates() -> void:
+	if _open:
+		return
+	_open = true
+	EventBus.tutorial_hint.emit("⚑ Врата открыты! Веди башню в проём — путь из долины свободен", 10.0)
+	var slab := get_node_or_null(slab_path) as Node3D
+	if slab == null:
+		return
+	var tween := create_tween()
+	tween.tween_property(slab, "position:y", slab.position.y - slab_slide_depth, 2.2) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tween.tween_callback(func() -> void:
+		if is_instance_valid(slab):
+			if slab.is_in_group(&"navmesh_source"):
+				slab.remove_from_group(&"navmesh_source")
+			var nav := get_tree().get_first_node_in_group(&"nav_region")
+			if nav != null and nav.has_method(&"rebake"):
+				nav.rebake()
+			slab.queue_free())
+	AoeVisual.spawn_dust(get_tree().current_scene, global_position + Vector3.UP * 0.5)
+	EventBus.camera_shake.emit(0.5, global_position)
+
+
+## Башня вошла в открытый проём (полоса врат, XZ) → победа акта.
+func _check_victory() -> void:
+	if not _open or _won:
+		return
+	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
+	if tower == null:
+		return
+	var p: Vector3 = tower.global_position
+	if absf(p.x - global_position.x) <= 4.5 and p.z <= global_position.z - 0.5:
+		_won = true
+		EventBus.match_won.emit()
