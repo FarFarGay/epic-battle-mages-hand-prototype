@@ -58,6 +58,7 @@
 [ext_resource type="PackedScene" path="res://scenes/coal_lump.tscn" id="55_coal"]
 [ext_resource type="PackedScene" path="res://scenes/gate_ruin.tscn" id="56_gateruin"]
 [ext_resource type="PackedScene" path="res://scenes/rubble_pile.tscn" id="57_rubble"]
+[ext_resource type="PackedScene" path="res://scenes/gear_element.tscn" id="58_gear"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -728,9 +729,16 @@ zone_size = Vector3(26, 8, 10)
 [node name="HintGates" type="Area3D" parent="TutorialHints" unique_id=911500004]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 2, 48)
 script = ExtResource("47_tuthint")
-text = "Древние Врата: механизм мёртв, три гнезда пусты. Элементы — за завалами в периметре"
+text = "Древние Врата: механизм мёртв, три гнезда пусты. Элементы — за завалами; завал разбирается рукой"
 duration = 9.0
 zone_size = Vector3(20, 8, 10)
+
+[node name="HintDungeon" type="Area3D" parent="TutorialHints" unique_id=911500015]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 88, 2, 56)
+script = ExtResource("47_tuthint")
+text = "Проём под гнома — башня не пролезет. Пошли артель: «Идти сюда» вглубь лабиринта"
+duration = 9.0
+zone_size = Vector3(8, 8, 12)
 
 [node name="HintFoundation" type="Area3D" parent="TutorialHints" unique_id=911400007]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 66, 2, 84)
@@ -906,10 +914,36 @@ script = ExtResource("53_foundation")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 0, 43)
 
 [node name="RubbleNorthWest" parent="." unique_id=911500002 instance=ExtResource("57_rubble")]
-transform = Transform3D(1.5, 0, 0, 0, 1, 0, 0, 0, 1, 29, 0, 43)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 0, 43)
+
+[node name="RubbleNorthWest2" parent="." unique_id=911500006 instance=ExtResource("57_rubble")]
+transform = Transform3D(-0.965926, 0, -0.258819, 0, 1, 0, 0.258819, 0, -0.965926, 30.5, 0, 43.2)
 
 [node name="RubbleEast" parent="." unique_id=911500003 instance=ExtResource("57_rubble")]
 transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 92, 0, 56)
+
+[node name="DwarfDungeon" type="Node3D" parent="." unique_id=911500007]
+
+[node name="WallNorth" parent="DwarfDungeon" unique_id=911500008 instance=ExtResource("6_wall")]
+transform = Transform3D(5.5, 0, 0, 0, 1, 0, 0, 0, 1, 103, 0, 44)
+
+[node name="WallEast" parent="DwarfDungeon" unique_id=911500009 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 52, 114, 0, 57)
+
+[node name="WallSouth" parent="DwarfDungeon" unique_id=911500010 instance=ExtResource("6_wall")]
+transform = Transform3D(5.5, 0, 0, 0, 1, 0, 0, 0, 1, 103, 0, 70)
+
+[node name="MazeWall1" parent="DwarfDungeon" unique_id=911500011 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 40, 98, 0, 54)
+
+[node name="MazeWall2" parent="DwarfDungeon" unique_id=911500012 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 40, 104, 0, 60)
+
+[node name="MazeWall3" parent="DwarfDungeon" unique_id=911500013 instance=ExtResource("6_wall")]
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 40, 110, 0, 54)
+
+[node name="GearElement" parent="DwarfDungeon" unique_id=911500014 instance=ExtResource("58_gear")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 112, 0.5, 47)
 
 [node name="OreVeinWest" parent="." unique_id=911400008 instance=ExtResource("41_mjs4f")]
 transform = Transform3D(0.39999998, 0, 0, 0, 1, 0, 0, 0, 0.39999998, 60, 0, 78)
