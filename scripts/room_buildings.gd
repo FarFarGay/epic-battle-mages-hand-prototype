@@ -166,7 +166,7 @@ const CATALOG: Dictionary = {
 		"role": &"defend",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 18},
+		"cost": {ResourcePile.ResourceType.BRONZE: 20},
 		"ghost_color": Color(0.5, 0.58, 0.72, 0.5),
 	},
 	PAD_WALL1: {
@@ -176,7 +176,7 @@ const CATALOG: Dictionary = {
 		"role": &"defend",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 6},
+		"cost": {ResourcePile.ResourceType.BRONZE: 5},
 		"ghost_color": Color(0.5, 0.58, 0.72, 0.5),
 	},
 	# ⚠ ВНЕ МЕНЮ: грид-версия сторожевой башни не продаётся (роль attack без логики).
@@ -186,7 +186,7 @@ const CATALOG: Dictionary = {
 		"role": &"attack",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 40, ResourcePile.ResourceType.SILVER: 2},
+		"cost": {ResourcePile.ResourceType.BRONZE: 60},
 		"ghost_color": Color(0.55, 0.6, 0.62, 0.5),
 	},
 	# Дом гномов — СОЦИАЛЬНЫЙ сапорт-универсал (прямой, 3 клетки): даёт НАСЕЛЕНИЕ (PadBuilding.HOUSING_POP)
@@ -198,7 +198,7 @@ const CATALOG: Dictionary = {
 		"role": &"housing",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 50, ResourcePile.ResourceType.SILVER: 3},
+		"cost": {ResourcePile.ResourceType.BRONZE: 80},
 		"ghost_color": Color(0.6, 0.45, 0.3, 0.5),
 	},
 	PAD_UNLOAD: {
@@ -207,7 +207,7 @@ const CATALOG: Dictionary = {
 		"hint": "Причал башни: паркуйся — трюм в казну, мана института течёт, корпус чинится.",
 		"role": &"unload",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
-		"cost": {ResourcePile.ResourceType.SILVER: 3},
+		"cost": {ResourcePile.ResourceType.BRONZE: 30},
 		"ghost_color": Color(0.95, 0.8, 0.35, 0.4),
 	},
 	# Верфь башни: платформа 2×2 без коллизии (башня может заезжать на плиту).
@@ -221,7 +221,7 @@ const CATALOG: Dictionary = {
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
 		"instant": true,
 		"hp": 120,
-		"cost": {ResourcePile.ResourceType.BRONZE: 60, ResourcePile.ResourceType.SILVER: 4},
+		"cost": {ResourcePile.ResourceType.BRONZE: 100},
 		"ghost_color": Color(0.85, 0.7, 0.4, 0.5),
 	},
 	# ⚠ ВНЕ МЕНЮ: склад 2×2 без функции (кап трюма теперь растит срез башни на верфи).
@@ -231,7 +231,7 @@ const CATALOG: Dictionary = {
 		"role": &"storage",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 50, ResourcePile.ResourceType.SILVER: 4},
+		"cost": {ResourcePile.ResourceType.BRONZE: 90},
 		"ghost_color": Color(0.55, 0.45, 0.3, 0.5),
 	},
 	# Ворота: арка со створками в линии стены (пилоны по ±X стыкуются со стенами, проём
@@ -243,7 +243,7 @@ const CATALOG: Dictionary = {
 		"role": &"gate",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 30, ResourcePile.ResourceType.SILVER: 2},
+		"cost": {ResourcePile.ResourceType.BRONZE: 50},
 		"ghost_color": Color(0.5, 0.58, 0.72, 0.5),
 	},
 	# Колья — дешёвый 1-клеточный ЗАСЛОН перед стеной: низкие деревянные колья-препятствие. Как стена
@@ -257,7 +257,7 @@ const CATALOG: Dictionary = {
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
 		"hp": 40,
-		"cost": {ResourcePile.ResourceType.BRONZE: 15},
+		"cost": {ResourcePile.ResourceType.BRONZE: 10},
 		"ghost_color": Color(0.6, 0.45, 0.28, 0.5),
 	},
 	# Угловая казарма лучников: L-бастион периметра (стены стыкуются к концам), боевой
@@ -269,7 +269,7 @@ const CATALOG: Dictionary = {
 		"role": &"barracks",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 60, ResourcePile.ResourceType.SILVER: 5},
+		"cost": {ResourcePile.ResourceType.BRONZE: 100},
 		"ghost_color": Color(0.5, 0.6, 0.7, 0.5),
 		"banner_color": Color(0.28, 0.46, 0.7),  # синий стяг — лучники
 		"corner_tower": true,  # башня венчает угол → лучники выходят на стены (гарнизон)
@@ -285,7 +285,7 @@ const CATALOG: Dictionary = {
 		"role": &"barracks",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],  # ПРЯМАЯ как кусок стены
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 60, ResourcePile.ResourceType.SILVER: 5},
+		"cost": {ResourcePile.ResourceType.BRONZE: 100},
 		"ghost_color": Color(0.7, 0.55, 0.5, 0.5),
 		"banner_color": Color(0.72, 0.3, 0.26),  # красный стяг — копейщики
 		"squad_type": &"pikeman",
@@ -301,7 +301,7 @@ const CATALOG: Dictionary = {
 		"role": &"barrack",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 40, ResourcePile.ResourceType.SILVER: 2},
+		"cost": {ResourcePile.ResourceType.BRONZE: 60},
 		"ghost_color": Color(0.6, 0.62, 0.5, 0.5),
 	},
 	# ⚠ ВНЕ МЕНЮ (легаси конвейера): линия шахта→плавильня вырезана — сапорты работают
@@ -312,7 +312,7 @@ const CATALOG: Dictionary = {
 		"role": &"line",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(1, 1), Vector2i(2, 1)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 12},
+		"cost": {ResourcePile.ResourceType.BRONZE: 10},
 		"ghost_color": Color(0.6, 0.7, 0.85, 0.5),
 	},
 	# Плавильня-САПОРТ (1 клетка): кладётся в ПЛОТ-силуэт квартала шахты. Бонус — за РАЗНЫЕ типы в
@@ -324,7 +324,7 @@ const CATALOG: Dictionary = {
 		"role": &"smelter",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 25},
+		"cost": {ResourcePile.ResourceType.BRONZE: 20},
 		"ghost_color": Color(0.95, 0.55, 0.25, 0.5),
 	},
 	# Чеканный двор-САПОРТ (Г-форма, 4 клетки: длинное верхнее плечо + одна вниз слева):
@@ -336,7 +336,7 @@ const CATALOG: Dictionary = {
 		"role": &"mint",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(0, 1)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 25},
+		"cost": {ResourcePile.ResourceType.BRONZE: 20},
 		"ghost_color": Color(0.95, 0.78, 0.25, 0.5),
 	},
 	# Гномий банк: помпезная крепость. ПАРКОВАН под сапорт ЗАМКА (не добычи) — из меню убран.
@@ -359,7 +359,7 @@ const CATALOG: Dictionary = {
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
 		"hp": 120,
-		"cost": {ResourcePile.ResourceType.BRONZE: 60, ResourcePile.ResourceType.SILVER: 4},
+		"cost": {ResourcePile.ResourceType.BRONZE: 100},
 		"ghost_color": Color(0.6, 0.5, 1.0, 0.5),
 	},
 	# Кафедра Волшебных свитков — САПОРТ Института магии, L-форма (4 кл.): в его зону-соседство →
@@ -371,7 +371,7 @@ const CATALOG: Dictionary = {
 		"role": &"mana_crystal",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(2, 1)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 30, ResourcePile.ResourceType.SILVER: 2},
+		"cost": {ResourcePile.ResourceType.BRONZE: 50},
 		"ghost_color": Color(0.5, 0.7, 1.0, 0.5),
 	},
 	# Осколок звёздной руды — САПОРТ Института магии (1 кл., на башенке): ×темп маны сильнее
@@ -383,7 +383,7 @@ const CATALOG: Dictionary = {
 		"role": &"mana_rune",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 45, ResourcePile.ResourceType.SILVER: 3},
+		"cost": {ResourcePile.ResourceType.BRONZE: 80},
 		"ghost_color": Color(0.6, 0.45, 1.0, 0.5),
 	},
 }

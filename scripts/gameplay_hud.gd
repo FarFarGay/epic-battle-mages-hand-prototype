@@ -1712,12 +1712,23 @@ func _emoji_of(data: Dictionary) -> String:
 ## Строка цены карточки: монеты «cost» (🥇🥈🥉) + время самостройки «⏱Nс»
 ## (для площадочных построек; instant-трубы — без времени). Доставка
 ## ресурсов вырезана (2026-07-03) — «N🪵» больше не показываем.
+## Цена — ОДНИМ числом в одометре казны (фидбек 2026-07-07: «60🥉 5🥈» читалось
+## как две валюты, хотя это просто 11🥈). Сумму считаем в бронза-эквиваленте
+## (как GoldBank._cost_value) и рисуем через _fmt_coin_value — язык казны.
 func _format_cost(data: Dictionary) -> String:
 	var parts: Array = []
 	var cost: Dictionary = data.get("cost", {})
-	for t in [ResourcePile.ResourceType.GOLD, ResourcePile.ResourceType.SILVER, ResourcePile.ResourceType.BRONZE]:
-		if cost.has(t):
-			parts.append("%d%s" % [int(cost[t]), _coin_emoji(t)])
+	var total: int = 0
+	for t in cost:
+		match int(t):
+			ResourcePile.ResourceType.GOLD:
+				total += int(cost[t]) * 250
+			ResourcePile.ResourceType.SILVER:
+				total += int(cost[t]) * 10
+			_:
+				total += int(cost[t])
+	if total > 0:
+		parts.append(_fmt_coin_value(total))
 	if not data.get("instant", false) and (data.has("cells") or data.has("scene")):
 		parts.append("⏱%dс" % int(ceil(RoomBuildSite.build_time_for(data))))
 	return "  ".join(parts)
