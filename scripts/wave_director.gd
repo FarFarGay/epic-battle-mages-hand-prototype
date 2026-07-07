@@ -275,6 +275,9 @@ var _day_night: int = DayNight.DAY
 ## на ≤0 → переключаем фазу, эмитим [signal EventBus.day_phase_changed],
 ## взводим обратно на новое значение из @export'ов.
 var _day_night_remaining: float = 0.0
+## Стадия предупреждений о закате (0 = ничего, 1 = «через минуту»,
+## 2 = «ЗАКАТ»). Сбрасывается на каждом рассвете — акцент КАЖДЫЙ день.
+var _sunset_warn_stage: int = 0
 
 ## Кулдаун до фактического спавна боссовой волны после предупреждения.
 ## -1 = нет pending волны. Взводится в [_tick_active_poi] когда счётчик
@@ -398,6 +401,15 @@ func get_day_night_remaining() -> float:
 ## в `_tick_active_poi`).
 func _tick_day_night(delta: float) -> void:
 	_day_night_remaining -= delta
+	# Акцент заката (ночь = метроном акта, напоминаем КАЖДЫЙ день): плашки
+	# за минуту и за 15с до темноты. Стадия сбрасывается на рассвете.
+	if _day_night == DayNight.DAY and _day_night_remaining > 0.0:
+		if _sunset_warn_stage < 1 and _day_night_remaining <= 60.0:
+			_sunset_warn_stage = 1
+			EventBus.tutorial_hint.emit("☀ Солнце садится — через минуту ночь. Ночью нежить идёт на штурм!", 6.0)
+		elif _sunset_warn_stage < 2 and _day_night_remaining <= 15.0:
+			_sunset_warn_stage = 2
+			EventBus.tutorial_hint.emit("🌙 ЗАКАТ! Займи оборону — нежить уже близко", 5.0)
 	if _day_night_remaining > 0.0:
 		return
 	# Переключаем фазу. Carryover отрицательного остатка в новую фазу —
@@ -406,9 +418,12 @@ func _tick_day_night(delta: float) -> void:
 	if _day_night == DayNight.DAY:
 		_day_night = DayNight.NIGHT
 		_day_night_remaining = night_duration_seconds + carryover
+		EventBus.tutorial_hint.emit("🌙 Ночь. Держись до рассвета!", 5.0)
 	else:
 		_day_night = DayNight.DAY
 		_day_night_remaining = day_duration_seconds + carryover
+		_sunset_warn_stage = 0
+		EventBus.tutorial_hint.emit("☀ Рассвет! День — время строить и готовиться", 5.0)
 	EventBus.day_phase_changed.emit(is_night(), _phase_duration())
 	if debug_log and LogConfig.master_enabled:
 		print("[WaveDirector] фаза → %s на %.0fс" % [

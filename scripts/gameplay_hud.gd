@@ -142,6 +142,10 @@ var _tutorial_hint_timer: Timer
 ## Строка чеклиста Долины «⚑ Задание…» (узел в .tscn слева сверху). Текст задаёт
 ## ValleyQuests через EventBus.valley_quest_changed; пусто → скрыта.
 @onready var _quest_label: Label = $QuestLabel
+## Часы дня (узел в .tscn, центр-верх): «☀ до заката N:NN» / «🌙 до рассвета» —
+## ночь = метроном акта, дедлайн всегда на виду. Данные — WaveDirector (группа).
+@onready var _day_clock: Label = $DayClock
+var _day_clock_director: WaveDirector = null
 ## Палитра стройки (узлы в gameplay_hud.tscn, код только наполняет). Карточки группируются
 ## по СЕКЦИЯМ-категориям (что к чему относится) и показывают цену + эффект (что за что даётся).
 ## Тоггл по кнопке «🔨 Стройка». _build_cards — для live-обновления оплатимости при смене казны.
@@ -1263,6 +1267,7 @@ func _process(delta: float) -> void:
 		_update_coins_label()
 		_update_population_label()
 		_update_squad_cards_dynamic()
+		_update_day_clock()
 		_update_timer = UPDATE_INTERVAL
 	_action_bar_update_timer -= delta
 	if _action_bar_update_timer <= 0.0:
@@ -1270,6 +1275,23 @@ func _process(delta: float) -> void:
 		_action_bar_update_timer = ACTION_BAR_UPDATE_INTERVAL
 	# Физика ghost-карты — каждый кадр, не throttled (чем плавнее, тем приятнее).
 	_process_drag_physics(delta)
+
+
+## Часы дня: тикают только при живой кампании (в IDLE-меню фазы нет).
+func _update_day_clock() -> void:
+	if _day_clock_director == null or not is_instance_valid(_day_clock_director):
+		_day_clock_director = get_tree().get_first_node_in_group(WaveDirector.GROUP) as WaveDirector
+	if _day_clock_director == null or not _day_clock_director.is_running():
+		_day_clock.visible = false
+		return
+	_day_clock.visible = true
+	var t: int = int(ceilf(_day_clock_director.get_day_night_remaining()))
+	if _day_clock_director.is_night():
+		_day_clock.text = "🌙 до рассвета %d:%02d" % [t / 60, t % 60]
+		_day_clock.add_theme_color_override(&"font_color", Color(0.62, 0.72, 1.0))
+	else:
+		_day_clock.text = "☀ до заката %d:%02d" % [t / 60, t % 60]
+		_day_clock.add_theme_color_override(&"font_color", Color(1.0, 0.85, 0.4))
 
 
 func _update_counts() -> void:

@@ -734,7 +734,7 @@ duration = 9.0
 zone_size = Vector3(20, 8, 10)
 
 [node name="HintDungeon" type="Area3D" parent="TutorialHints" unique_id=911500015]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 88, 2, 56)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 114, 2, 56)
 script = ExtResource("47_tuthint")
 text = "Проём под гнома — башня не пролезет. Пошли артель: «Идти сюда» вглубь лабиринта"
 duration = 9.0
@@ -780,8 +780,8 @@ size = Vector2(34, 9)
 wave_count = 999
 
 [node name="SpawnZoneValleyEast" parent="SpawnZones" unique_id=911000003 instance=ExtResource("43_spawnzone")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 86, 0, 108)
-size = Vector2(9, 30)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 112, 0, 108)
+size = Vector2(9, 40)
 wave_count = 999
 
 [node name="EnemySpawner" type="Node3D" parent="." unique_id=911000004]
@@ -802,6 +802,8 @@ night_assault_size = 40
 
 [node name="ValleyQuests" type="Node" parent="." unique_id=911000006]
 script = ExtResource("52_valleyquests")
+valley_center = Vector2(68, 97.5)
+valley_size = Vector2(100, 110)
 
 [node name="Pots" type="Node3D" parent="." unique_id=1345822434]
 
@@ -840,21 +842,21 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -22, 0, 88)
 [node name="Room6" type="Node3D" parent="." unique_id=1386067645]
 
 [node name="WallEast" parent="Room6" unique_id=1321794723 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 92, 0, 112)
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 108, 118, 0, 125)
 
 [node name="WallSouth" parent="Room6" unique_id=382709928 instance=ExtResource("6_wall")]
-transform = Transform3D(9.25, 0, 0, 0, 1, 0, 0, 0, 1, 73.5, 0, 126)
+transform = Transform3D(15.75, 0, 0, 0, 1, 0, 0, 0, 1, 86.5, 0, 152)
 
 [node name="Room8" type="Node3D" parent="." unique_id=1097619881]
 
 [node name="WallEast" parent="Room8" unique_id=1747620114 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 92, 0, 84)
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 56, 118, 0, 84)
 
 [node name="WallNorthLeft" parent="Room8" unique_id=460791204 instance=ExtResource("6_wall")]
 transform = Transform3D(3.5, 0, 0, 0, 1, 0, 0, 0, 1, 63, 0, 42.999996)
 
 [node name="WallNorthRight" parent="Room8" unique_id=1809837513 instance=ExtResource("6_wall")]
-transform = Transform3D(3.75, 0, 0, 0, 1, 0, 0, 0, 1, 84.5, 0, 42.999996)
+transform = Transform3D(10.25, 0, 0, 0, 1, 0, 0, 0, 1, 97.5, 0, 42.999996)
 
 [node name="Room9" type="Node3D" parent="." unique_id=960184648]
 
@@ -865,10 +867,10 @@ transform = Transform3D(2, 0, 0, 0, 1, 0, 0, 0, 1, 22, 0, 42.999996)
 transform = Transform3D(3, 0, 0, 0, 1, 0, 0, 0, 1, 38, 0, 42.999996)
 
 [node name="WallEastNorth" parent="Room9" unique_id=1347871448 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 92, 0, 48.625)
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 118, 0, 48.625)
 
 [node name="WallEastSouth" parent="Room9" unique_id=1018263733 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 92, 0, 63.375)
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 118, 0, 63.375)
 
 [node name="Zastava" type="Node3D" parent="." unique_id=1942734947]
 
@@ -919,30 +921,30 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 0, 43)
 transform = Transform3D(-0.965926, 0, -0.258819, 0, 1, 0, 0.258819, 0, -0.965926, 30.5, 0, 43.2)
 
 [node name="RubbleEast" parent="." unique_id=911500003 instance=ExtResource("57_rubble")]
-transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 92, 0, 56)
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 118, 0, 56)
 
 [node name="DwarfDungeon" type="Node3D" parent="." unique_id=911500007]
 
 [node name="WallNorth" parent="DwarfDungeon" unique_id=911500008 instance=ExtResource("6_wall")]
-transform = Transform3D(5.5, 0, 0, 0, 1, 0, 0, 0, 1, 103, 0, 44)
+transform = Transform3D(5.5, 0, 0, 0, 1, 0, 0, 0, 1, 129, 0, 44)
 
 [node name="WallEast" parent="DwarfDungeon" unique_id=911500009 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 52, 114, 0, 57)
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 52, 140, 0, 57)
 
 [node name="WallSouth" parent="DwarfDungeon" unique_id=911500010 instance=ExtResource("6_wall")]
-transform = Transform3D(5.5, 0, 0, 0, 1, 0, 0, 0, 1, 103, 0, 70)
+transform = Transform3D(5.5, 0, 0, 0, 1, 0, 0, 0, 1, 129, 0, 70)
 
 [node name="MazeWall1" parent="DwarfDungeon" unique_id=911500011 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 40, 98, 0, 54)
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 40, 124, 0, 54)
 
 [node name="MazeWall2" parent="DwarfDungeon" unique_id=911500012 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 40, 104, 0, 60)
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 40, 130, 0, 60)
 
 [node name="MazeWall3" parent="DwarfDungeon" unique_id=911500013 instance=ExtResource("6_wall")]
-transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 40, 110, 0, 54)
+transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 40, 136, 0, 54)
 
 [node name="GearElement" parent="DwarfDungeon" unique_id=911500014 instance=ExtResource("58_gear")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 112, 0.5, 47)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 138, 0.5, 47)
 
 [node name="OreVeinWest" parent="." unique_id=911400008 instance=ExtResource("41_mjs4f")]
 transform = Transform3D(0.39999998, 0, 0, 0, 1, 0, 0, 0, 0.39999998, 60, 0, 78)
@@ -1055,5 +1057,5 @@ area_center = Vector3(73.5, 0, 56)
 
 [node name="StoneThrowerTest" parent="." unique_id=990126243 instance=ExtResource("41_8brgo")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 85, 3, 53)
-room_center = Vector2(55, 84)
-room_size = Vector2(74, 84)
+room_center = Vector2(68, 97.5)
+room_size = Vector2(100, 110)
