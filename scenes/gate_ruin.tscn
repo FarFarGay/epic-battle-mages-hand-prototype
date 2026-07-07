@@ -32,28 +32,28 @@ emission = Color(1, 0.8, 0.35, 1)
 emission_energy_multiplier = 0.15
 
 [sub_resource type="BoxMesh" id="Box_pillar"]
-size = Vector3(2.6, 9, 2.6)
+size = Vector3(2.2, 5, 2.2)
 
 [sub_resource type="BoxMesh" id="Box_slab"]
-size = Vector3(9.6, 6.4, 0.8)
+size = Vector3(9.6, 4.4, 0.8)
 
 [sub_resource type="BoxMesh" id="Box_lintel"]
-size = Vector3(8, 1.5, 2.2)
+size = Vector3(7.5, 1.2, 2)
 
 [sub_resource type="BoxMesh" id="Box_debris"]
 size = Vector3(1.8, 1.4, 1.6)
 
 [sub_resource type="BoxMesh" id="Box_rune"]
-size = Vector3(0.5, 2.2, 0.12)
+size = Vector3(0.4, 1.6, 0.12)
 
 [sub_resource type="BoxShape3D" id="Shape_gate"]
-size = Vector3(12, 7.5, 1.2)
+size = Vector3(12, 5.5, 1.2)
 
 [sub_resource type="BoxShape3D" id="Shape_pillar_w"]
-size = Vector3(2.6, 9, 2.6)
+size = Vector3(2.2, 5, 2.2)
 
 [sub_resource type="BoxShape3D" id="Shape_pillar_e"]
-size = Vector3(2.6, 9, 2.6)
+size = Vector3(2.2, 5, 2.2)
 
 [node name="GateRuin" type="Node3D"]
 script = ExtResource("1_gateruin")
@@ -66,49 +66,49 @@ collision_mask = 0
 script = ExtResource("2_blocker")
 
 [node name="SlabMesh" type="MeshInstance3D" parent="Slab"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.2, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.2, 0)
 material_override = SubResource("Mat_slab")
 mesh = SubResource("Box_slab")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Slab"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.75, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.75, 0)
 shape = SubResource("Shape_gate")
 
 [node name="CollisionPillarW" type="CollisionShape3D" parent="Slab"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.5, 4.5, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.5, 2.5, 0)
 shape = SubResource("Shape_pillar_w")
 
 [node name="CollisionPillarE" type="CollisionShape3D" parent="Slab"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5, 4.5, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5, 2.5, 0)
 shape = SubResource("Shape_pillar_e")
 
 [node name="Rune1" type="MeshInstance3D" parent="Slab"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.2, 3.4, 0.46)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.2, 2.4, 0.46)
 material_override = SubResource("Mat_rune1")
 mesh = SubResource("Box_rune")
 
 [node name="Rune2" type="MeshInstance3D" parent="Slab"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.4, 0.46)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.4, 0.46)
 material_override = SubResource("Mat_rune2")
 mesh = SubResource("Box_rune")
 
 [node name="Rune3" type="MeshInstance3D" parent="Slab"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.2, 3.4, 0.46)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.2, 2.4, 0.46)
 material_override = SubResource("Mat_rune3")
 mesh = SubResource("Box_rune")
 
 [node name="PillarWest" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.5, 4.5, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.5, 2.5, 0)
 material_override = SubResource("Mat_pillar")
 mesh = SubResource("Box_pillar")
 
 [node name="PillarEast" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5, 4.5, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.5, 2.5, 0)
 material_override = SubResource("Mat_pillar")
 mesh = SubResource("Box_pillar")
 
 [node name="Lintel" type="MeshInstance3D" parent="."]
-transform = Transform3D(0.990268, -0.139173, 0, 0.139173, 0.990268, 0, 0, 0, 1, 0.4, 9.3, 0)
+transform = Transform3D(0.990268, -0.139173, 0, 0.139173, 0.990268, 0, 0, 0, 1, 0.4, 5.6, 0)
 material_override = SubResource("Mat_pillar")
 mesh = SubResource("Box_lintel")
 
