@@ -423,10 +423,10 @@ func _on_coins_spent(value: int) -> void:
 
 
 ## Бронза-эквивалент → строка по номиналам одометра («2🥇 3🥈 6🥉»). Курсы
-## дублируют gold_bank.gd (1🥇=250🥉, 1🥈=10🥉) — без импорта, как HEAVY_GROUPS в HitStop.
+## дублируют gold_bank.gd (1🥇=100🥉, 1🥈=10🥉) — без импорта, как HEAVY_GROUPS в HitStop.
 func _fmt_coin_value(value: int) -> String:
-	var g: int = value / 250
-	var s: int = (value % 250) / 10
+	var g: int = value / 100
+	var s: int = (value % 100) / 10
 	var b: int = value % 10
 	var parts: Array = []
 	if g > 0:
@@ -1722,7 +1722,7 @@ func _format_cost(data: Dictionary) -> String:
 	for t in cost:
 		match int(t):
 			ResourcePile.ResourceType.GOLD:
-				total += int(cost[t]) * 250
+				total += int(cost[t]) * 100
 			ResourcePile.ResourceType.SILVER:
 				total += int(cost[t]) * 10
 			_:
