@@ -175,6 +175,9 @@ const BUILD_MENU_PAD_MANA_RUNE := 25     # сапорт института: ×т
 const BUILD_MENU_PAD_UNLOAD := 26        # разгрузочная платформа: паркуй башню → трюм в казну
 const BUILD_MENU_PAD_DOCK := 27          # верфь башни: клик по ней → окно срезов-слоёв башни
 const BUILD_MENU_BRIDGE := 28            # мостки: доска за дерево, рука кладёт на пропасть
+const BUILD_MENU_PAD_FIRE_LAB := 29      # кафедра огня: анлок fireball+firestorm
+const BUILD_MENU_PAD_ENGINEER_LAB := 30  # инженерная гильдия: анлок harpoon+mine_scatter
+const BUILD_MENU_PAD_FROST_LAB := 31     # кафедра льда: анлок frost
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[CityGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
@@ -196,6 +199,9 @@ var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_MANA_RUNE: RoomBuildings.PAD_MANA_RUNE,
 	BUILD_MENU_PAD_UNLOAD: RoomBuildings.PAD_UNLOAD,
 	BUILD_MENU_PAD_DOCK: RoomBuildings.PAD_DOCK,
+	BUILD_MENU_PAD_FIRE_LAB: RoomBuildings.PAD_FIRE_LAB,
+	BUILD_MENU_PAD_ENGINEER_LAB: RoomBuildings.PAD_ENGINEER_LAB,
+	BUILD_MENU_PAD_FROST_LAB: RoomBuildings.PAD_FROST_LAB,
 }
 ## Секции палитры стройки: заголовок-категория + список пунктов (BUILD_MENU_* id). Порядок
 ## внутри = порядок карточек. Группировка по той же таксономии, что и квартал-баффы — игрок
@@ -208,7 +214,7 @@ const BUILD_SECTIONS := [
 	{"tab": "🛡 Оборона", "title": "🛡  ОБОРОНА", "ids": [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE, BUILD_MENU_PAD_STAKES]},
 	{"tab": "⚔ Войско", "title": "⚔  ГАРНИЗОН — квартал", "ids": [BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN, BUILD_MENU_PAD_BARRACK]},
 	{"tab": "🏰 Замок", "title": "🏰  ЗАМОК · СОЦИУМ", "ids": [BUILD_MENU_PAD_HOUSE, BUILD_MENU_PAD_UNLOAD, BUILD_MENU_PAD_DOCK]},
-	{"tab": "🔮 Магия", "title": "🔮  МАГИЯ — квартал", "ids": [BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_MANA_CRYSTAL, BUILD_MENU_PAD_MANA_RUNE]},
+	{"tab": "🔮 Магия", "title": "🔮  МАГИЯ — квартал", "ids": [BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_MANA_CRYSTAL, BUILD_MENU_PAD_MANA_RUNE, BUILD_MENU_PAD_FIRE_LAB, BUILD_MENU_PAD_ENGINEER_LAB, BUILD_MENU_PAD_FROST_LAB]},
 	{"tab": "🌉 Инженерия", "title": "🌉  ИНЖЕНЕРИЯ", "ids": [BUILD_MENU_BRIDGE]},
 ]
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
@@ -1656,7 +1662,7 @@ func _build_item_info(id: int) -> Dictionary:
 	var bid: StringName = PAD_MENU_IDS.get(id, &"")
 	var pdata: Dictionary = RoomBuildings.get_data(bid)
 	var prole: StringName = pdata.get("role", &"")
-	var needs_magic: bool = prole == &"mana_crystal" or prole == &"mana_rune"
+	var needs_magic: bool = prole == &"mana_crystal" or prole == &"mana_rune" or prole == &"spell_lab"
 	var pump_built: bool = _pump_built()
 	var magic_ok: bool = not needs_magic or _magic_unlocked()
 	var pdisabled: bool = not (knows and pump_built and magic_ok)
@@ -2221,7 +2227,7 @@ func _on_build_menu_id(id: int) -> void:
 			return  # нет знания / нет качалки — пункт и так greyed
 		# Магические сапорты — только при построенном Институте магии (пункт и так greyed).
 		var role: StringName = RoomBuildings.get_data(PAD_MENU_IDS[id]).get("role", &"")
-		if (role == &"mana_crystal" or role == &"mana_rune") and not _magic_unlocked():
+		if (role == &"mana_crystal" or role == &"mana_rune" or role == &"spell_lab") and not _magic_unlocked():
 			return
 		_cancel_hand_aims(&"place")
 		var hand := _resolve_hand()
@@ -2302,23 +2308,11 @@ func _build_resources_rows() -> void:
 
 		_resource_labels[int(entry["type"])] = count_label
 
-	# «📦 Трюм» башни: единый агрегат материалов склада (руда/дерево с выездов).
-	# Желтеет с ⚠, когда любой тип упёрся в кап — орбы не всасываются, пора на
-	# разгрузочную платформу в город.
-	var crow := HBoxContainer.new()
-	crow.add_theme_constant_override("separation", 8)
-	_vbox.add_child(crow)
-	var cname := Label.new()
-	cname.text = "📦 трюм"
-	cname.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cname.add_theme_font_size_override("font_size", 14)
-	crow.add_child(cname)
-	_cargo_label = Label.new()
-	_cargo_label.text = "0"
-	_cargo_label.custom_minimum_size = Vector2(64, 0)
-	_cargo_label.add_theme_font_size_override("font_size", 14)
-	_cargo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	crow.add_child(_cargo_label)
+	# «📦 Трюм» УБРАН из HUD (2026-07-07): в живом пути трюм всегда пуст —
+	# дерево продаётся на сдаче, руду никто не возит (добыча = кварталы монетами).
+	# _cargo_label остаётся null → _refresh_cargo no-op. Механизм TowerStore жив;
+	# вернуть строку = восстановить этот блок (см. git). Оживление трюма рудой
+	# вылазок — дизайн-кандидат (SPEC).
 
 
 func _sync_all_resources() -> void:

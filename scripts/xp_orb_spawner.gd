@@ -31,6 +31,12 @@ const XP_PER_KILL: int = 10
 ## offset от трупа стабилен в любой момент смерти.
 const SPAWN_OFFSET_Y: float = 1.0
 
+## МАНА-КРИСТАЛЛ с ТЯЖЁЛОГО врага (super_dash_only: гигант/метатель; мех):
+## жирная порция маны «выковырял из туши» — тяжёлый бой сам подкидывает топливо
+## артиллерии. Не новая сущность: тот же XpOrb, просто крупный и ледяно-белый.
+const MANA_PER_HEAVY_CRYSTAL: float = 40.0
+static var _crystal_material: StandardMaterial3D
+
 
 func _ready() -> void:
 	EventBus.enemy_destroyed.connect(_on_enemy_destroyed)
@@ -58,9 +64,34 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 	var enemy_pos: Vector3 = enemy.global_position
 	orb.position = enemy_pos + Vector3.UP * SPAWN_OFFSET_Y
 	tree.current_scene.add_child(orb)
+	# ТЯЖЁЛЫЙ враг дополнительно роняет мана-кристалл (жирная порция).
+	if enemy.is_in_group(&"super_dash_only") or enemy.is_in_group(EnemyMech.MECH_GROUP):
+		_spawn_mana_crystal(tree, enemy_pos)
 	if debug_log and LogConfig.master_enabled:
 		print("[XpOrbSpawner] spawn: enemy=(%.2f, %.2f, %.2f) → orb=(%.2f, %.2f, %.2f), offset_y=%.2f" % [
 			enemy_pos.x, enemy_pos.y, enemy_pos.z,
 			orb.global_position.x, orb.global_position.y, orb.global_position.z,
 			SPAWN_OFFSET_Y,
 		])
+
+
+## Мана-кристалл: XpOrb с жирной порцией маны; крупнее и ледяно-белый —
+## отличим от синего мана-орба (один визуальный язык = один смысл).
+func _spawn_mana_crystal(tree: SceneTree, pos: Vector3) -> void:
+	var orb := ORB_SCENE.instantiate() as XpOrb
+	if orb == null:
+		return
+	orb.amount = 0
+	orb.mana_amount = MANA_PER_HEAVY_CRYSTAL
+	orb.position = pos + Vector3.UP * (SPAWN_OFFSET_Y + 0.4)
+	tree.current_scene.add_child(orb)
+	orb.scale = Vector3.ONE * 1.7
+	var mesh := orb.get_node_or_null(^"Mesh") as MeshInstance3D
+	if mesh != null:
+		if _crystal_material == null:
+			_crystal_material = StandardMaterial3D.new()
+			_crystal_material.albedo_color = Color(0.85, 0.95, 1.0)
+			_crystal_material.emission_enabled = true
+			_crystal_material.emission = Color(0.7, 0.9, 1.0)
+			_crystal_material.emission_energy_multiplier = 3.0
+		mesh.material_override = _crystal_material

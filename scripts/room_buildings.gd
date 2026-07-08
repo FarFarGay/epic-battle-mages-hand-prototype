@@ -39,6 +39,9 @@ const PAD_MANA_CRYSTAL := &"pad_mana_crystal" # сапорт института:
 const PAD_MANA_RUNE := &"pad_mana_rune"       # сапорт института: ×темп маны сильнее (роль mana_rune)
 const PAD_UNLOAD := &"pad_unload"             # разгрузочная платформа 2×2: паркуй башню → трюм в казну (роль unload)
 const PAD_DOCK := &"pad_dock"                 # верфь башни: клик → окно срезов-слоёв башни (роль dock)
+const PAD_FIRE_LAB := &"pad_fire_lab"         # кафедра огня: открывает fireball+firestorm (роль spell_lab)
+const PAD_ENGINEER_LAB := &"pad_engineer_lab" # инженерная гильдия: harpoon+mine_scatter (роль spell_lab)
+const PAD_FROST_LAB := &"pad_frost_lab"       # кафедра льда: frost (роль spell_lab)
 
 const CATALOG: Dictionary = {
 	# Мостки: доска за МОНЕТЫ (единая валюта; рубка рощи = заработок, брёвна
@@ -204,7 +207,7 @@ const CATALOG: Dictionary = {
 	PAD_UNLOAD: {
 		"name": "Док города",
 		"menu_label": "⚓ Док города",
-		"hint": "Причал башни: паркуйся — трюм в казну, мана института течёт, корпус чинится.",
+		"hint": "Причал башни: паркуйся — мана института течёт, корпус чинится.",
 		"role": &"unload",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
 		"cost": {ResourcePile.ResourceType.BRONZE: 30},
@@ -216,7 +219,7 @@ const CATALOG: Dictionary = {
 	PAD_DOCK: {
 		"name": "Верфь башни",
 		"menu_label": "🛠 Верфь башни",
-		"hint": "Мастерская башни: клик по плите — обвесы-срезы (трюм, арбалеты, броня).",
+		"hint": "Мастерская башни: клик по плите — обвесы-срезы (арбалеты, броня).",
 		"role": &"dock",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)],
 		"instant": true,
@@ -385,6 +388,49 @@ const CATALOG: Dictionary = {
 		"instant": true,
 		"cost": {ResourcePile.ResourceType.BRONZE: 80},
 		"ghost_color": Color(0.6, 0.45, 1.0, 0.5),
+	},
+	# КАФЕДРЫ-ШКОЛЫ (2026-07-07, «хочешь пушку — построй завод»): постройка
+	# открывает ВЕТКУ заклинаний (SpellSystem.unlock на завершении, см.
+	# PadBuilding._unlock_lab_spells). Магазин заклинаний УМЕР — цена спелла =
+	# цена постройки. Гейт: нужен институт (_magic_unlocked), как у сапортов.
+	# Здание на ШКОЛУ, не на спелл — каталог не пухнет, новые спеллы падают
+	# в существующие ветки. Дальше по модели: кафедры производят МОДУЛИ на
+	# корпус башни (лодаут рукой) — этап 3.
+	PAD_FIRE_LAB: {
+		"name": "Кафедра огня",
+		"menu_label": "🔥 Кафедра огня (шар+шквал)",
+		"hint": "Школа огня: открывает Огненный шар и Огненный шквал. Требует институт.",
+		"role": &"spell_lab",
+		"spells": [&"fireball", &"firestorm"],
+		"cells": [Vector2i(0, 0), Vector2i(1, 0)],
+		"instant": true,
+		"hp": 100,
+		"cost": {ResourcePile.ResourceType.BRONZE: 120},
+		"ghost_color": Color(1.0, 0.5, 0.2, 0.5),
+	},
+	PAD_ENGINEER_LAB: {
+		"name": "Инженерная гильдия",
+		"menu_label": "⚙ Инженерная гильдия (гарпун+мины)",
+		"hint": "Школа железа: открывает Гарпун и Минное рассеивание. Требует институт.",
+		"role": &"spell_lab",
+		"spells": [&"harpoon", &"mine_scatter"],
+		"cells": [Vector2i(0, 0), Vector2i(1, 0)],
+		"instant": true,
+		"hp": 100,
+		"cost": {ResourcePile.ResourceType.BRONZE: 120},
+		"ghost_color": Color(0.7, 0.75, 0.8, 0.5),
+	},
+	PAD_FROST_LAB: {
+		"name": "Кафедра льда",
+		"menu_label": "❄ Кафедра льда (мороз)",
+		"hint": "Школа льда: открывает Мороз (заморозка + ледяное пятно). Требует институт.",
+		"role": &"spell_lab",
+		"spells": [&"frost"],
+		"cells": [Vector2i(0, 0)],
+		"instant": true,
+		"hp": 100,
+		"cost": {ResourcePile.ResourceType.BRONZE: 90},
+		"ghost_color": Color(0.45, 0.8, 1.0, 0.5),
 	},
 }
 

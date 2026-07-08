@@ -37,9 +37,21 @@ const HIRE_CAP_PER_BARRACK := 1
 ## Институт магии (role magic): тикает ману в башню (restore_mana) и открывает магические постройки.
 ## Это ПРОДЮСЕР квартала (как шахта): сапорты на гранях ускоряют ману (множители перемножаются).
 const MANA_INSTITUTE_RATE := 3.0  # базовая мана/сек в башню (соло, без сапортов). Тюнится.
+## Радиус кормления маной ОТ ИНСТИТУТА (XZ): башня ближе — мана течёт, дальше —
+## нет. Заменил док-гейт с фоллбеком «нет дока → кормим глобально» (дыра: без
+## построенного дока мана хуярила через всю карту). Одно правило, видимое глазами.
+const INSTITUTE_FEED_RADIUS := 18.0
 ## «Защёлк» полного квартала: ВСЕ грани продюсера закрыты сапортами → комбо-множитель
 ## ТЕМПА поверх осей (шахта — монет/сек, институт — маны/сек). Один на всех продюсеров.
 const FULL_QUARTER_BONUS := 1.5
+
+## --- УРОВНИ ЗДАНИЙ (Clash-инкремент, 2026-07-07) ---
+## Продюсеры (шахта/институт) апгрейдятся ЛКМ-кликом за монеты: выработка ×2/×4,
+## цена растёт круче дохода (base×2 → base×6), здание визуально жиреет
+## (золотые кольца, _add_level_accents). Ур.1 = как было (совместимость).
+const MAX_LEVEL := 3
+## Множитель выработки по уровню (индекс = уровень).
+const LEVEL_OUTPUT_MULT := [0.0, 1.0, 2.0, 4.0]
 ## FX «печати» установки: падение+сквош+пыль+рябь+тряска (см. play_place_impact).
 const PlaceFx = preload("res://scripts/place_impact_fx.gd")
 ## Разгрузочная платформа: радиус парковки башни (XZ от центра платформы).
@@ -124,6 +136,10 @@ func _ready() -> void:
 	if is_scroll_dept():
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
 		set_process(true)
+	# Кафедра-школа (spell_lab): построил → ветка заклинаний открыта. Deferred:
+	# на момент _ready трей HUD мог ещё не подписаться на spell_unlocked.
+	if is_spell_lab():
+		call_deferred(&"_unlock_lab_spells")
 	# Верфь башни: платформа без коллизии (башня может заезжать на плиту), но меню
 	# срезов открывается ЛКМ-КЛИКОМ по плите (заезд-триггер пробовали — неудобно).
 	if is_dock():
@@ -188,6 +204,103 @@ func is_bank() -> bool:
 
 func is_scroll_dept() -> bool:
 	return _role == &"mana_crystal"  # Кафедра Волшебных свитков (сапорт института + магазин заклинаний)
+
+
+## Кафедра-школа заклинаний (огонь/инженерия/лёд): постройка = анлок ветки.
+func is_spell_lab() -> bool:
+	return _role == &"spell_lab"
+
+
+## --- Уровни зданий (Clash-инкремент) ---
+
+## Текущий уровень (1..MAX_LEVEL). Апгрейд — ЛКМ-клик по зданию (_try_upgrade).
+var _level: int = 1
+
+
+## Апгрейдится кликом: продюсеры с выработкой (шахта, институт магии).
+func is_upgradable() -> bool:
+	return _role == &"mine" or _role == &"magic"
+
+
+## Множитель выработки текущего уровня.
+func _level_output_mult() -> float:
+	return float(LEVEL_OUTPUT_MULT[clampi(_level, 1, MAX_LEVEL)])
+
+
+## Цена следующего уровня в бронзе: base×2 на ур.2, base×6 на ур.3 —
+## цена растёт втрое на шаг, доход вдвое (классическая инкремент-кривая).
+func upgrade_cost_bronze() -> int:
+	var base: int = int(RoomBuildings.get_data(building_id).get("cost", {}).get(ResourcePile.ResourceType.BRONZE, 100))
+	return base * 2 * int(pow(3.0, float(_level - 1)))
+
+
+## ЛКМ по продюсеру → попытка апгрейда (как найм у казармы: тот же клик-паттерн).
+func _tick_upgrade_click() -> void:
+	if _clicked_on_self():
+		_try_upgrade()
+
+
+func _try_upgrade() -> void:
+	if _level >= MAX_LEVEL:
+		EventBus.tutorial_hint.emit("⭐ %s: максимальный уровень" % RoomBuildings.get_data(building_id).get("name", "Здание"), 2.5)
+		return
+	var cost: int = upgrade_cost_bronze()
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
+	if bank == null or not bank.has_method(&"try_spend"):
+		return
+	if not bank.call(&"try_spend", cost):
+		EventBus.tutorial_hint.emit("Не хватает монет на улучшение: нужно %d🥉" % cost, 3.0)
+		return
+	_level += 1
+	_build()  # перестройка визуала с уровневыми акцентами
+	var root: Node = get_tree().current_scene
+	if root != null:
+		AoeVisual.spawn_pulse_sparks(root, global_position + Vector3.UP * 1.5, 2.0, 10.0)
+	EventBus.camera_shake.emit(0.2, global_position)
+	EventBus.tutorial_hint.emit("⭐ %s — уровень %d! Выработка ×%s" % [
+		RoomBuildings.get_data(building_id).get("name", "Здание"), _level,
+		String.num(_level_output_mult(), 0)], 4.0)
+
+
+## Уровневые акценты поверх любого визуала: золотые светящиеся кольца на
+## «мачте» по центру — уровень читается издалека, N-1 колец = уровень N.
+func _add_level_accents() -> void:
+	if _level <= 1:
+		return
+	var s: float = CityGrid.CELL
+	var ctr := Vector3.ZERO
+	for off in _mask:
+		ctr += Vector3(float((off as Vector2i).x) * s, 0.0, float((off as Vector2i).y) * s)
+	ctr /= float(_mask.size())
+	var gold := _solid(Color(1.0, 0.85, 0.35), 0.4, 0.3)
+	gold.emission_enabled = true
+	gold.emission = Color(1.0, 0.8, 0.3)
+	gold.emission_energy_multiplier = 1.8
+	for i in range(_level - 1):
+		var ring := MeshInstance3D.new()
+		var tm := TorusMesh.new()
+		tm.inner_radius = 0.3
+		tm.outer_radius = 0.42
+		ring.mesh = tm
+		ring.material_override = gold
+		ring.position = ctr + Vector3(0.0, 2.6 + float(i) * 0.35, 0.0)
+		add_child(ring)
+
+
+## Открыть заклинания своей школы (каталог RoomBuildings, ключ "spells").
+## SpellSystem.unlock идемпотентен — вторая кафедра той же школы безвредна.
+## Знание НЕ отбирается при сносе кафедры (модель «город = тыл»: локальная
+## потеря — производство модулей/зарядов, не выученное).
+func _unlock_lab_spells() -> void:
+	var d: Dictionary = RoomBuildings.get_data(building_id)
+	var names: Array[String] = []
+	for id in d.get("spells", []):
+		if SpellSystem != null and not SpellSystem.is_unlocked(id):
+			SpellSystem.unlock(id)
+			var sd: Dictionary = SpellSystem.get_spell_data(id)
+			names.append(str(sd.get("name", id)))
+	if not names.is_empty():
+		EventBus.tutorial_hint.emit("✨ Школа открыта: %s — в трее заклинаний" % ", ".join(names), 6.0)
 
 
 ## Верфь башни: клик → окно срезов-слоёв башни (TowerUpgrades, покупка за монеты).
@@ -299,12 +412,15 @@ func _build() -> void:
 			_build_mana_crystal()
 		&"mana_rune":
 			_build_mana_rune()
+		&"spell_lab":
+			_build_spell_lab()
 		_:
 			var mat := _solid(_role_color(_role), 0.1, 0.7)
 			var s: float = CityGrid.CELL
 			for off in _mask:
 				var o := off as Vector2i
 				_box(Vector3(s * 0.96, 1.4, s * 0.96), Vector3(o.x * s, 0.7, o.y * s), mat, true)
+	_add_level_accents()  # золотые кольца уровня (Clash-инкремент, ур.≥2)
 	_build_collider()  # коллайдер по футпринту (после очистки детей в начале _build)
 
 
@@ -847,6 +963,37 @@ func _build_mana_crystal() -> void:
 	_cone(0.16, 0.6, ctr + Vector3(0.0, top + 0.45, 0.0), glow)
 
 
+## Кафедра-школа (spell_lab): каменный зал + светящаяся сфера-горн в цвет школы
+## (ghost_color каталога) — «здесь куют заклинания этой стихии».
+func _build_spell_lab() -> void:
+	var d: Dictionary = RoomBuildings.get_data(building_id)
+	var school_c: Color = d.get("ghost_color", Color(0.6, 0.5, 1.0, 0.5))
+	school_c.a = 1.0
+	var stone := _solid(Color(0.4, 0.4, 0.5), 0.1, 0.8)
+	var dark := _solid(Color(0.26, 0.26, 0.36), 0.1, 0.85)
+	var glow := _solid(school_c, 0.0, 0.4)
+	glow.emission_enabled = true
+	glow.emission = school_c
+	glow.emission_energy_multiplier = 2.6
+	_solid_shape(_BASE_H * 0.5, _BASE_H, dark, _STREET)   # цоколь по футпринту
+	var bh := 1.0
+	_solid_shape(_BASE_H + bh * 0.5, bh, stone, _STREET)  # зал
+	# Сфера-горн школы по центру фигуры.
+	var s: float = CityGrid.CELL
+	var ctr := Vector3.ZERO
+	for off in _mask:
+		ctr += Vector3(float((off as Vector2i).x) * s, 0.0, float((off as Vector2i).y) * s)
+	ctr /= float(_mask.size())
+	var orb := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.32
+	sm.height = 0.64
+	orb.mesh = sm
+	orb.material_override = glow
+	orb.position = ctr + Vector3(0.0, _BASE_H + bh + 0.35, 0.0)
+	add_child(orb)
+
+
 ## Осколок звёздной руды (сапорт института, ×темп сильнее): гранёный сияющий шард на каменной БАШЕНКЕ
 ## (цоколь + столб + карниз + зубцы). Шард бело-голубой с сильным emission — «звёздная руда».
 func _build_mana_rune() -> void:
@@ -1385,26 +1532,35 @@ func _tick_institute(delta: float) -> void:
 	# НАСЕЛЕНИЕ: без укомплектованного гнома институт ПРОСТАИВАЕТ — как шахта (магия не исключение).
 	if Population != null and not Population.is_staffed(self):
 		return
-	if has_dock_pads(get_tree()) and not is_tower_docked_any(get_tree()):
+	# Мана течёт ТОЛЬКО в радиусе от института (INSTITUTE_FEED_RADIUS по XZ).
+	# Был док-гейт с фоллбеком «нет дока → глобальный поток» — дыра: без
+	# построенного дока институт кормил через всю карту.
+	var t3d := tower as Node3D
+	if t3d == null:
+		return
+	var fdx: float = t3d.global_position.x - global_position.x
+	var fdz: float = t3d.global_position.z - global_position.z
+	if fdx * fdx + fdz * fdz > INSTITUTE_FEED_RADIUS * INSTITUTE_FEED_RADIUS:
+		return
+	# Полный бак — НЕ кормим и луч НЕ рисуем («пополняется при полном» = враньё).
+	if float(tower.get(&"mana")) >= float(tower.get(&"max_mana")):
 		return
 	# Пуповина видна: пока город кормит башню маной, от института к ней бежит
-	# синий импульс (реюз PlaceFx.link_pulse, как чанки трюма). Кулдаун — не спам.
+	# синий импульс (реюз PlaceFx.link_pulse). Кулдаун — не спам.
 	_mana_beam_cd -= delta
 	if _mana_beam_cd <= 0.0:
 		_mana_beam_cd = 1.1
-		var t3d := tower as Node3D
-		if t3d != null:
-			PlaceFx.link_pulse(get_tree().current_scene,
-				global_position + Vector3.UP * 1.5,
-				Vector3(t3d.global_position.x, 2.0, t3d.global_position.z),
-				Color(0.4, 0.65, 1.0))
+		PlaceFx.link_pulse(get_tree().current_scene,
+			global_position + Vector3.UP * 1.5,
+			Vector3(t3d.global_position.x, 2.0, t3d.global_position.z),
+			Color(0.4, 0.65, 1.0))
 	var st := _quarter_status()
 	# Фидбэк «квартал СОБРАН» — симметрично шахте: вспышка единожды на переходе к 100%.
 	var full: bool = float(st["fill"]) >= 0.999
 	if full and not _quarter_was_full:
 		_play_quarter_fx()
 	_quarter_was_full = full
-	tower.call(&"restore_mana", MANA_INSTITUTE_RATE * _mana_mult(st) * delta)
+	tower.call(&"restore_mana", MANA_INSTITUTE_RATE * _mana_mult(st) * _level_output_mult() * delta)
 
 
 ## Множитель темпа маны от сапортов в зоне института (перемножение, как оси шахты). Соло → 1.0.
@@ -1447,7 +1603,8 @@ func _tick_mine(delta: float) -> void:
 		_play_quarter_fx()
 	_quarter_was_full = full
 	# «Защёлк»: полный квартал крутит темп сверх осей — комбо за полный сет.
-	_mine_accum += MINE_RATE * speed * _full_quarter_mult(st) * delta
+	# Уровень здания (Clash-инкремент) множит итоговый темп.
+	_mine_accum += MINE_RATE * speed * _full_quarter_mult(st) * _level_output_mult() * delta
 	var whole := int(_mine_accum)
 	if whole < 1:
 		return
@@ -1487,7 +1644,7 @@ func _tick_dock_services(docked: bool) -> void:
 	if docked != _docked_prev:
 		_docked_prev = docked
 		if docked:
-			EventBus.tutorial_hint.emit("⚓ Башня в доке: трюм в казну, мана течёт, корпус чинится", 5.0)
+			EventBus.tutorial_hint.emit("⚓ Башня в доке: мана течёт, корпус чинится", 5.0)
 	if not docked:
 		return
 	var tower := get_tree().get_first_node_in_group(&"tower")
@@ -1917,6 +2074,9 @@ func _process(delta: float) -> void:
 		_tick_dock_click()
 	if is_unload():
 		_tick_unload(delta)
+	# Продюсеры (шахта/институт): ЛКМ-клик = улучшение уровня (Clash-инкремент).
+	if is_upgradable():
+		_tick_upgrade_click()
 
 
 ## Номинал на тир выше (чеканный двор-сапорт). Лесенка тиров — единая, в GoldBank.
@@ -2098,10 +2258,12 @@ func hire_cap() -> int:
 	return _my_hire_cap()
 
 
-## ЛКМ по Кафедре Волшебных свитков → HUD открывает магазин заклинаний (ловит spell_shop_requested).
+## ЛКМ по Кафедре Волшебных свитков. МАГАЗИН ЗАКЛИНАНИЙ УМЕР (2026-07-07):
+## заклинания открывают КАФЕДРЫ-ШКОЛЫ постройкой (role spell_lab, «хочешь
+## пушку — построй завод»). Клик оставлен как подсказка-редирект.
 func _tick_scroll_click() -> void:
 	if _clicked_on_self():
-		EventBus.spell_shop_requested.emit()
+		EventBus.tutorial_hint.emit("Заклинания открывают КАФЕДРЫ-ШКОЛЫ (🔮 Магия в палитре): огонь / инженерия / лёд", 5.0)
 
 
 ## ЛКМ по плите верфи → HUD открывает окно срезов башни (ловит tower_dock_requested).
@@ -2168,7 +2330,7 @@ func _build_quarter_indicator() -> void:
 	_ind_title.add_theme_color_override(&"font_color", Color(0.85, 0.9, 1.0))
 	vb.add_child(_ind_title)
 	_ind_rows = []
-	for _i in range(5):  # хватает на оси шахты + защёлк (5) и гарнизон казармы (≤2, лишние прячем)
+	for _i in range(6):  # уровень + оси шахты + защёлк (6) и гарнизон казармы (≤2, лишние прячем)
 		_ind_rows.append(_make_indicator_row(vb))
 	# Sprite3D-билборд с текстурой вьюпорта над шахтой.
 	_quarter_indicator = Sprite3D.new()
@@ -2205,7 +2367,7 @@ func _refresh_quarter_indicator() -> void:
 ## Строки плашки ИНСТИТУТА МАГИИ: оси-сапорты (×темп) + дом + итоговая мана/сек. Состояния как у шахты:
 ## ×N работает / ⏸ нет гнома (построено, смены нет) / — не построено; сам институт без гнома → простой.
 func _refresh_magic_indicator() -> void:
-	_ind_title.text = "ИНСТИТУТ МАГИИ"
+	_ind_title.text = "ИНСТИТУТ МАГИИ · ур.%d" % _level
 	var st := _quarter_status()
 	var roles: Dictionary = st["roles"]            # построено в зоне
 	var on: Dictionary = st["staffed_roles"]       # реально работает (есть гном; дом — без гнома)
@@ -2216,25 +2378,28 @@ func _refresh_magic_indicator() -> void:
 	# _mana_mult уже включает «защёлк» полного квартала.
 	var quarter_on: bool = _full_quarter_mult(st) > 1.0
 	var quarter_val: String = "×%s  СОБРАН!" % FULL_QUARTER_BONUS if quarter_on else "—  (заполни все грани)"
-	var rate: float = MANA_INSTITUTE_RATE * _mana_mult(st)
+	var rate: float = MANA_INSTITUTE_RATE * _mana_mult(st) * _level_output_mult()
 	var last: String = "✨ %s маны/сек" % String.num(rate, 1)
 	if not staffed:
 		last = "🚨 ТРЕВОГА — простой" if (Population != null and Population.alarm_active) else "⏸ Нет населения — простой"
+	var lvl_val: String = "×%s  МАКС" % String.num(_level_output_mult(), 0) if _level >= MAX_LEVEL \
+		else "×%s  (клик: ур.%d за %d🥉)" % [String.num(_level_output_mult(), 0), _level + 1, upgrade_cost_bronze()]
 	_apply_indicator_rows([
+		"⭐ Уровень    %s" % lvl_val,
 		"📜 Кафедра    %s" % crystal_val,
 		"🌟 Осколок    %s" % rune_val,
 		"🏠 Дом          %s" % house_val,
 		"⚡ Квартал     %s" % quarter_val,
 		last,
 	])
-	if _ind_rows.size() >= 5 and is_instance_valid(_ind_rows[4]):
+	if _ind_rows.size() >= 6 and is_instance_valid(_ind_rows[5]):
 		var col: Color = Color(1.0, 0.5, 0.4) if not staffed else Color(0.7, 0.7, 1.0)
-		(_ind_rows[4] as Label).add_theme_color_override(&"font_color", col)
+		(_ind_rows[5] as Label).add_theme_color_override(&"font_color", col)
 
 
 ## Строки плашки ШАХТЫ: каждая ось — значение или «—  (что построить)»; внизу итоговая добыча.
 func _refresh_mine_indicator() -> void:
-	_ind_title.text = "КВАРТАЛ ШАХТЫ"
+	_ind_title.text = "КВАРТАЛ ШАХТЫ · ур.%d" % _level
 	var st := _quarter_status()
 	var roles: Dictionary = st["roles"]            # построено в зоне
 	var on: Dictionary = st["staffed_roles"]       # реально работает (есть гном-смена)
@@ -2255,23 +2420,26 @@ func _refresh_mine_indicator() -> void:
 		mint_val = "%s %s  (двор +тир)" % [_coin_emoji(coin), _coin_name(coin)]
 	# «Защёлк»: полный квартал крутит темп сверх осей (учтён в rate ниже).
 	var quarter_mult: float = _full_quarter_mult(st)
-	rate *= quarter_mult
+	rate *= quarter_mult * _level_output_mult()
 	var quarter_val: String = "×%s  СОБРАН!" % FULL_QUARTER_BONUS if quarter_mult > 1.0 else "—  (заполни все грани)"
 	# Укомплектована ли САМА шахта: без слота простаивает (Population, военный приоритет).
 	var staffed: bool = Population == null or Population.is_staffed(self)
 	var last_row: String = "≈ %s %s/сек" % [String.num(rate, 1), _coin_emoji(coin)]
 	if not staffed:
 		last_row = "🚨 ТРЕВОГА — простой" if (Population != null and Population.alarm_active) else "⏸ Нет населения — простой"
+	var lvl_val: String = "×%s  МАКС" % String.num(_level_output_mult(), 0) if _level >= MAX_LEVEL \
+		else "×%s  (клик: ур.%d за %d🥉)" % [String.num(_level_output_mult(), 0), _level + 1, upgrade_cost_bronze()]
 	_apply_indicator_rows([
+		"⭐ Уровень    %s" % lvl_val,
 		"🔥 Скорость   %s" % speed_val,
 		"🪙 Номинал    %s" % mint_val,
 		"🏠 Объём       %s" % ("×%d" % MINE_VOLUME_MULT if vol_on else "—  (дом гномов)"),
 		"⚡ Квартал     %s" % quarter_val,
 		last_row,
 	])
-	if _ind_rows.size() >= 5 and is_instance_valid(_ind_rows[4]):
+	if _ind_rows.size() >= 6 and is_instance_valid(_ind_rows[5]):
 		var col: Color = Color(1.0, 0.5, 0.4) if not staffed else Color(1.0, 0.9, 0.4)
-		(_ind_rows[4] as Label).add_theme_color_override(&"font_color", col)
+		(_ind_rows[5] as Label).add_theme_color_override(&"font_color", col)
 
 
 ## Строки плашки КАЗАРМЫ: «Гарнизон живых/кап» + разбивка оси гарнизона (база+бараки) + снабжение пула.
