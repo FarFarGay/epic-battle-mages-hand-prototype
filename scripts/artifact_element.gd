@@ -15,9 +15,12 @@ extends RelayItem
 @export var deliver_role: StringName = &"magic"
 ## Радиус доставки (XZ до центра здания).
 @export var deliver_radius: float = 4.0
+## Подсказка при ПЕРВОМ подборе рукой: что это и куда нести (наследники задают).
+@export var pickup_hint: String = ""
 
 var _held: bool = false
 var _delivered: bool = false
+var _hint_shown: bool = false
 
 
 func _ready() -> void:
@@ -46,6 +49,9 @@ func _on_hand_grabbed(item: Node3D) -> void:
 	if _snap_tween != null and _snap_tween.is_valid():
 		_snap_tween.kill()
 	_snap_tween = null
+	if not _hint_shown and pickup_hint != "":
+		_hint_shown = true
+		EventBus.tutorial_hint.emit(pickup_hint, 9.0)
 
 
 ## Наследник может запретить доставку в моменте (гном-носильщик и т.п.).

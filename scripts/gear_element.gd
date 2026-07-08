@@ -25,6 +25,7 @@ var _carrier: Node3D = null
 
 func _ready() -> void:
 	deliver_role = &"magic"
+	pickup_hint = "📜 Древний рецепт! Неси в 🔮 ИНСТИТУТ МАГИИ (нет — построй в палитре) — откроет Кафедру огня. Можно положить на крышу башни и везти"
 	super()
 	mass = 8.0
 	var poll := Timer.new()

@@ -75,7 +75,7 @@ func _commit_build() -> void:
 	site.building_id = RoomBuildings.PUMP
 	scene.add_child(site)
 	site.global_position = root_pos
-	EventBus.tutorial_hint.emit("Фундамент принял чертёж — артель Гильдии достроит замок", 6.0)
+	EventBus.tutorial_hint.emit("🏰 Фундамент принял чертёж — замок встаёт!", 6.0)
 	# Роль сыграна: плита исчезает, место занимает стройка замка.
 	if _pulse_tween != null and _pulse_tween.is_valid():
 		_pulse_tween.kill()

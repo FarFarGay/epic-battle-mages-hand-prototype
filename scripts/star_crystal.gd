@@ -11,6 +11,7 @@ extends ArtifactElement
 
 func _ready() -> void:
 	deliver_role = &"unload"
+	pickup_hint = "💎 Клад! Отвези в ⚓ ДОК ГОРОДА — казна пополнится на %d🥉. Можно везти на крыше башни" % treasure_bronze
 	super()
 
 

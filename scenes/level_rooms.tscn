@@ -859,6 +859,7 @@ map_half_extent = 150.0
 
 [node name="WaveDirector" type="Node" parent="." unique_id=911000005]
 script = ExtResource("45_wavedir")
+autostart_on_match = false
 spawner_path = NodePath("../EnemySpawner")
 skeleton_scene = ExtResource("22_skel")
 giant_scene = ExtResource("30_giant")
@@ -1297,5 +1298,6 @@ mesh = SubResource("Sph_foliage")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 85, 3, 53)
 room_center = Vector2(68, 97.5)
 room_size = Vector2(100, 110)
+
 
 

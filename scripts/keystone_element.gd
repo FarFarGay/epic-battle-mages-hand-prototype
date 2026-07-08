@@ -12,6 +12,7 @@ extends ArtifactElement
 
 func _ready() -> void:
 	deliver_role = &"magic"
+	pickup_hint = "⚡ Аккумулятор древних! Неси в 🔮 ИНСТИТУТ МАГИИ — Искра станет Молнией, откроется Огненный шквал. Можно везти на крыше башни"
 	super()
 
 

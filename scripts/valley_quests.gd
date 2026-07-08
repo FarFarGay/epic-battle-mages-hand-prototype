@@ -44,8 +44,6 @@ func _ready() -> void:
 		{"text": "Добудь чертёж замка: запусти станок на заставе за северной стеной",
 			"done": func() -> bool: return _building_known()},
 		{"text": "Отнеси чертёж рукой на плиту-фундамент в центре долины",
-			"done": func() -> bool: return _castle_started()},
-		{"text": "Замок строится — артель Гильдии достроит",
 			"done": func() -> bool: return _castle_built()},
 		{"text": "Поставь шахту на жилу — монеты закапают сами",
 			"done": func() -> bool: return _has_role(&"mine")},
@@ -90,6 +88,11 @@ func _tick() -> void:
 		_active = true
 		EventBus.tutorial_hint.emit(
 			"⛰ ВЕРХНИЙ ПРЕДЕЛ — неспокойное графство Верхолазов. Проверь шахтёрские города, подними форпост и накопи на проход домой", 10.0)
+		# День 1 начинается ЗДЕСЬ (выход в долину), не с кнопки меню — пока
+		# игрок в пещере-туториале, цикл дня/ночи и банды не крутятся вхолостую.
+		var wd := get_tree().get_first_node_in_group(WaveDirector.GROUP)
+		if wd != null and wd.has_method(&"ensure_started"):
+			wd.call(&"ensure_started")
 	# Проверка текущего шага (и каскад — вдруг игрок перевыполнил вперёд).
 	while _step < _steps.size() and (_steps[_step]["done"] as Callable).call():
 		EventBus.tutorial_hint.emit("✓ %s" % _step_text(_step), 5.0)
@@ -129,17 +132,6 @@ func _castle_built() -> bool:
 ## знание построек добыто — шаг тем более пройден (каскад не залипнет).
 func _guild_met() -> bool:
 	return get_tree().get_first_node_in_group(&"guild_met") != null or _building_known()
-
-
-## Чертёж вложен: стройплощадка замка существует (или замок уже стоит —
-## с free_build площадка живёт один кадр, ловим итог, не момент).
-func _castle_started() -> bool:
-	if _castle_built():
-		return true
-	for s in get_tree().get_nodes_in_group(Layers.BUILD_SITE_GROUP):
-		if is_instance_valid(s) and s.get(&"building_id") == RoomBuildings.PUMP:
-			return true
-	return false
 
 
 func _has_role(role: StringName) -> bool:

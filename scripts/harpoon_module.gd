@@ -18,8 +18,9 @@ extends RigidBody3D
 const MOUNTED_GROUP := &"harpoon_module_mounted"
 ## Радиус защёлка: отпустил ближе этого от башни (XZ) → монтаж.
 const MOUNT_RADIUS := 3.5
-## Локальная позиция на корпусе башни (сбоку, «навесной аппарат»).
-const MOUNT_LOCAL := Vector3(1.45, 1.9, 0.0)
+## Локальная позиция на башне: КРЫША (юзер 2026-07-08 — «навеска ставится
+## сверху»; рука с грузом взбирается на башню, см. Hand._is_carrying_module).
+const MOUNT_LOCAL := Vector3(0.0, 3.0, 0.0)
 
 @export var highlight_color: Color = Color(1.0, 0.95, 0.4)
 @export_range(0.0, 5.0) var highlight_intensity: float = 0.6
@@ -174,6 +175,21 @@ func is_mounted() -> bool:
 	return _mounted
 
 
+## Установленная турель ПОВОРАЧИВАЕТСЯ за рукой (юзер 2026-07-08): жёлоб со
+## стрелой (визуал смотрит в -Z) целится туда же, куда прицелится «Гарпун».
+func _process(_delta: float) -> void:
+	if Engine.is_editor_hint() or not _mounted:
+		return
+	var hand := get_tree().get_first_node_in_group(Hand.HAND_GROUP) as Hand
+	if hand == null:
+		return
+	var target: Vector3 = hand.cursor_world_position()
+	target.y = global_position.y
+	if target.distance_squared_to(global_position) < 1.0:
+		return
+	look_at(target, Vector3.UP)
+
+
 ## Схватили с башни → демонтаж: обратно в мир, гарпун глохнет, гном прячется.
 func _on_hand_grabbed(item: Node3D) -> void:
 	if item != self:
@@ -193,9 +209,13 @@ func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
 	if tower == null or not is_instance_valid(tower):
 		return
-	# Один слот (пилот): другой аппарат уже стоит — этот падает рядом.
+	# Крыша одна: другой аппарат или ГРУЗ на верхушке — этот падает рядом.
 	var occupied := get_tree().get_first_node_in_group(MOUNTED_GROUP)
 	if occupied != null and occupied != self:
+		return
+	var slot := get_tree().get_first_node_in_group(&"tower_top_slot")
+	if slot != null and slot.has_method(&"has_cargo") and slot.call(&"has_cargo"):
+		EventBus.tutorial_hint.emit("⚠ Крыша башни занята грузом — сними его рукой", 4.0)
 		return
 	var dx: float = tower.global_position.x - global_position.x
 	var dz: float = tower.global_position.z - global_position.z
@@ -219,9 +239,9 @@ func _mount(tower: Node3D) -> void:
 	add_to_group(MOUNTED_GROUP)
 	if _gnome_visual != null:
 		_gnome_visual.visible = true  # оператор вылез и сел за аппарат
+	# Твиним только ПОЗИЦИЮ: поворотом владеет слежение за рукой (_process).
 	_snap_tween = create_tween()
-	_snap_tween.tween_property(self, "transform",
-		Transform3D(Basis.IDENTITY, MOUNT_LOCAL), 0.18) \
+	_snap_tween.tween_property(self, "position", MOUNT_LOCAL, 0.18) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_snap_tween.tween_callback(func() -> void:
 		AoeVisual.spawn_pulse_sparks(get_tree().current_scene, global_position, 0.9, 8.0))

@@ -55,8 +55,14 @@ var _cargo: RigidBody3D = null
 
 
 func _ready() -> void:
+	add_to_group(&"tower_top_slot")
 	EventBus.hand_grabbed.connect(_on_hand_grabbed)
 	EventBus.hand_released.connect(_on_hand_released)
+
+
+## Крыша занята грузом? (эксклюзив с турелью — HarpoonModule спрашивает).
+func has_cargo() -> bool:
+	return _cargo != null
 
 
 func is_occupied() -> bool:
@@ -97,18 +103,23 @@ func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 
 # --- Груз («верх башни = инвентарь») ---
 
-## Попытка парковки груза: grabbable-RigidBody группы tower_cargo, свободный
-## (не frozen — frozen = уже где-то сидит), отпущен в cargo_snap_radius.
+## Попытка парковки груза: ЛЮБОЙ свободный grabbable-RigidBody (юзер
+## 2026-07-08: «на крышу можно всё, что берёт рука») кроме исключений:
+## мост-доска (haul, волочится), модули со своим монтажом. frozen = уже
+## где-то сидит (сокет/гном/чужой слот) — не трогаем.
 func _try_park_cargo(item: Node3D) -> void:
 	var rb := item as RigidBody3D
-	if rb == null or not rb.is_in_group(CARGO_GROUP) or rb.freeze:
+	if rb == null or rb.freeze or not Grabbable.is_grabbable(rb):
+		return
+	if rb.is_in_group(Layers.HAND_HAUL_GROUP) or rb is CampModule or rb is HarpoonModule:
 		return
 	if _horizontal_distance(rb.global_position) > cargo_snap_radius:
 		return
-	if _cargo != null:
-		EventBus.tutorial_hint.emit("⚠ Верх башни занят — сними старый груз рукой", 4.0)
+	if _cargo != null or get_tree().get_first_node_in_group(HarpoonModule.MOUNTED_GROUP) != null:
+		EventBus.tutorial_hint.emit("⚠ Крыша башни занята — сними старый груз рукой", 4.0)
 		return
 	_cargo = rb
+	rb.add_to_group(CARGO_GROUP)  # маркер «на борту»; артефакт снимает его при доставке
 	rb.freeze = true
 	rb.linear_velocity = Vector3.ZERO
 	rb.angular_velocity = Vector3.ZERO

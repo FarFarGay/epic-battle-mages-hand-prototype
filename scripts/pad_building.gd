@@ -233,7 +233,13 @@ func _unlock_lab_spells() -> void:
 			var sd: Dictionary = SpellSystem.get_spell_data(id)
 			names.append(str(sd.get("name", id)))
 	if not names.is_empty():
-		EventBus.tutorial_hint.emit("✨ Школа открыта: %s — в трее заклинаний" % ", ".join(names), 6.0)
+		# Мастерская навесок — свой текст: кроме заклинания она КУЁТ аппараты кликом.
+		if building_id == RoomBuildings.PAD_ENGINEER_LAB:
+			EventBus.tutorial_hint.emit(
+				"✨ %s — в трее. ⚙ Мастерская куёт ГАРПУННУЮ ТУРЕЛЬ: ЛКМ-клик по зданию (%d🥉), рука ставит её на крышу башни"
+				% [", ".join(names), FORGE_MODULE_COST_BRONZE], 9.0)
+		else:
+			EventBus.tutorial_hint.emit("✨ Школа открыта: %s — в трее заклинаний" % ", ".join(names), 6.0)
 
 
 ## Верфь башни: клик → окно срезов-слоёв башни (TowerUpgrades, покупка за монеты).
@@ -1539,10 +1545,17 @@ func _coin_bronze_value(coin_type: int) -> int:
 
 
 ## Сбор стопки: башня вплотную (MINE_COLLECT_RADIUS) или ЛКМ-клик по шахте.
+## ПОЛНЫЙ КВАРТАЛ (все грани, включая дом) = АВТОМАТИЗАЦИЯ (юзер 2026-07-08):
+## стопка улетает в казну сама пачками — ручной сбор остаётся этапом
+## неполного квартала, полный сет освобождает внимание игрока.
+const AUTO_COLLECT_AT_BRONZE := 24
+
 func _tick_mine_collect() -> void:
 	if _stack_bronze <= 0:
 		return
 	var collect: bool = _clicked_on_self()
+	if not collect and _quarter_was_full and _stack_bronze >= AUTO_COLLECT_AT_BRONZE:
+		collect = true  # полный квартал: веер монет летит к башне сам
 	if not collect:
 		var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
 		if tower != null and is_instance_valid(tower):

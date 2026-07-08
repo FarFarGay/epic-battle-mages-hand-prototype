@@ -275,6 +275,8 @@ var _campaign_started_at_ms: int = 0
 ## DAY при старте/рестарте кампании. Меняется в [_tick_day_night] когда
 ## [_day_night_remaining] доходит до нуля.
 var _day_night: int = DayNight.DAY
+## Номер суток кампании (1..N): растёт на каждом рассвете, HUD-часы показывают.
+var _day_number: int = 1
 ## Сколько секунд осталось до смены фазы. Тикается в [_tick_day_night];
 ## на ≤0 → переключаем фазу, эмитим [signal EventBus.day_phase_changed],
 ## взводим обратно на новое значение из @export'ов.
@@ -399,6 +401,20 @@ func get_day_night_remaining() -> float:
 	return maxf(_day_night_remaining, 0.0)
 
 
+## Номер текущих суток кампании (1..N) — «3 суток Верхнего Предела» на часах.
+func get_day_number() -> int:
+	return _day_number
+
+
+## Старт кампании ПО СОБЫТИЮ МИРА (выход башни в долину — зовёт ValleyQuests):
+## день 1 начинается когда игрок реально вышел в Верхний Предел, а не пока он
+## в пещере-туториале (иначе фазы прокручивались вхолостую и к долине игрок
+## приходил в случайной точке цикла). Идемпотентно: RUNNING — no-op.
+func ensure_started() -> void:
+	if _phase == Phase.IDLE:
+		_start_campaign()
+
+
 ## Тик day/night-цикла. Уменьшает _day_night_remaining; при ≤0 меняет фазу
 ## и эмитит сигнал. Не пытаемся «дожать» волну до конца — если ночь
 ## закончилась, волны просто становятся редкими (день начинается, переключатель
@@ -422,12 +438,13 @@ func _tick_day_night(delta: float) -> void:
 	if _day_night == DayNight.DAY:
 		_day_night = DayNight.NIGHT
 		_day_night_remaining = night_duration_seconds + carryover
-		EventBus.tutorial_hint.emit("🌙 Ночь. Держись до рассвета!", 5.0)
+		EventBus.tutorial_hint.emit("🌙 Ночь %d. Держись до рассвета!" % _day_number, 5.0)
 	else:
 		_day_night = DayNight.DAY
 		_day_night_remaining = day_duration_seconds + carryover
 		_sunset_warn_stage = 0
-		EventBus.tutorial_hint.emit("☀ Рассвет! День — время строить и готовиться", 5.0)
+		_day_number += 1
+		EventBus.tutorial_hint.emit("☀ Рассвет! День %d — время строить и готовиться" % _day_number, 5.0)
 	EventBus.day_phase_changed.emit(is_night(), _phase_duration())
 	if debug_log and LogConfig.master_enabled:
 		print("[WaveDirector] фаза → %s на %.0fс" % [
@@ -961,6 +978,7 @@ func _start_campaign() -> void:
 	_campaign_started_at_ms = Time.get_ticks_msec()
 	# Стартуем с дня — игрок получает короткое окно дыхания до первой ночи.
 	_day_night = DayNight.DAY
+	_day_number = 1
 	_day_night_remaining = day_duration_seconds
 	EventBus.day_phase_changed.emit(false, day_duration_seconds)
 	# Сброс телеграфов осады.

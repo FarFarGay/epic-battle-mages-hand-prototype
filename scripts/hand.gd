@@ -362,13 +362,17 @@ func _raycast_terrain(origin: Vector3, dir: Vector3) -> Dictionary:
 	return space.intersect_ray(query)
 
 
-## True если рука сейчас держит CampModule (для динамической раскладки маски
-## курсора). Не зависит от наличия PhysicalActions — null-safe.
+## True если рука несёт предмет, с которым курсор должен «взбираться» на башню
+## (верх башни = инвентарь, юзер 2026-07-08: рука поднимается над крышей с
+## ЛЮБЫМ грузом). Исключение — мост-доска: она волочится по земле (haul),
+## поднимать руку на башню с ней не надо. Null-safe.
 func _is_carrying_module() -> bool:
 	if physical_actions == null:
 		return false
 	var held := physical_actions.get_held_item()
-	return held != null and held is CampModule
+	if held == null:
+		return false
+	return not held.is_in_group(Layers.HAND_HAUL_GROUP)
 
 
 func _track_velocity(delta: float) -> void:

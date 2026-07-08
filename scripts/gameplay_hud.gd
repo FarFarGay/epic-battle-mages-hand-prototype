@@ -1296,11 +1296,12 @@ func _update_day_clock() -> void:
 		return
 	_day_clock.visible = true
 	var t: int = int(ceilf(_day_clock_director.get_day_night_remaining()))
+	var day_n: int = _day_clock_director.get_day_number()
 	if _day_clock_director.is_night():
-		_day_clock.text = "🌙 до рассвета %d:%02d" % [t / 60, t % 60]
+		_day_clock.text = "🌙 Ночь %d · до рассвета %d:%02d" % [day_n, t / 60, t % 60]
 		_day_clock.add_theme_color_override(&"font_color", Color(0.62, 0.72, 1.0))
 	else:
-		_day_clock.text = "☀ до заката %d:%02d" % [t / 60, t % 60]
+		_day_clock.text = "☀ День %d · до заката %d:%02d" % [day_n, t / 60, t % 60]
 		_day_clock.add_theme_color_override(&"font_color", Color(1.0, 0.85, 0.4))
 
 
