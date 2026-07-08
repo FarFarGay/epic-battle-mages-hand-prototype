@@ -113,10 +113,17 @@ const SPELL_CATALOG: Dictionary = {
 		# impact_radius — радиус sphere-scan в точке падения: бьёт ОДНОГО
 		# ближайшего к точке. Маленький (1.5м) — нужна точность; промах —
 		# просто искра в землю.
+		# Уровень 2 «МОЛНИЯ» — даёт Аккумулятор из храма (KeystoneElement →
+		# SpellSystem.grant_level, бесплатно): one-shot лучника (hp 60+),
+		# шире скан, дешевле мана. upgrade_costs = недостижимый PAGE-прайс,
+		# чтобы журнал не продал апгрейд за монеты (канон: только артефакт).
 		"levels": [
 			{"damage": 35.0, "cooldown": 0.15, "mana_cost": 3.0, "impact_radius": 1.5},
+			{"damage": 90.0, "cooldown": 0.12, "mana_cost": 5.0, "impact_radius": 2.2},
 		],
-		"upgrade_costs": [],
+		"upgrade_costs": [
+			{ResourcePile.ResourceType.PAGE: 99},
+		],
 	},
 	&"frost": {
 		"name": "Мороз",
@@ -288,6 +295,18 @@ func unlock(id: StringName) -> void:
 	_unlocked[id] = true
 	_levels[id] = 0
 	EventBus.spell_unlocked.emit(id)
+
+
+## БЕСПЛАТНЫЙ +1 уровень (артефакты-находки: Аккумулятор и т.п. — цена
+## заплачена вылазкой, не ресурсами). true если уровень поднялся.
+func grant_level(id: StringName) -> bool:
+	if not can_upgrade_further(id):
+		return false
+	_levels[id] = int(_levels.get(id, 0)) + 1
+	if LogConfig.master_enabled:
+		print("[SpellSystem] %s поднято артефактом до уровня %d" % [id, _levels[id]])
+	EventBus.spell_upgraded.emit(id, _levels[id])
+	return true
 
 
 ## Пытается прокачать заклинание на следующий уровень. Возвращает true если

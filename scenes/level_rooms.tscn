@@ -780,7 +780,7 @@ zone_size = Vector3(26, 8, 10)
 [node name="HintGates" type="Area3D" parent="TutorialHints" unique_id=911500004]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 2, 48)
 script = ExtResource("47_tuthint")
-text = "Древние Врата: механизм мёртв, три гнезда пусты. Элементы — за завалами; завал разбирается рукой"
+text = "Древние Врата — путь домой, к подземной столице. Механизм жаден: накопи плату и кликни по плите"
 duration = 9.0
 zone_size = Vector3(20, 8, 10)
 
@@ -801,7 +801,7 @@ zone_size = Vector3(16, 8, 9)
 [node name="HintRift" type="Area3D" parent="TutorialHints" unique_id=911700011]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 2, 39)
 script = ExtResource("47_tuthint")
-text = "Разлом! Возьми мосток рукой и положи поперёк. Ключ-плита — на той стороне, под охраной"
+text = "Каньон храма! Аккумулятор древних — на той стороне, под охраной"
 duration = 9.0
 zone_size = Vector3(22, 8, 8)
 suppress_group = &"bridge_snapped"
@@ -1294,3 +1294,4 @@ mesh = SubResource("Sph_foliage")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 85, 3, 53)
 room_center = Vector2(68, 97.5)
 room_size = Vector2(100, 110)
+

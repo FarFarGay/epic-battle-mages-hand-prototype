@@ -1,12 +1,20 @@
 class_name StarCrystal
-extends RelayItem
-## Звёздный кристалл — элемент механизма Врат из глубины заставы (§5.27.2,
-## комната Б): заперт за электро-дверью, добыча = экзамен искры+цепи (диод →
-## ток → рычаг → дверь съезжает). Grab / сокет-снап / вспышка тока — целиком
-## от [RelayItem]; здесь только визуал: яркое звёздное ядро с шипами-лучами.
+extends ArtifactElement
+## Звёздный кристалл — КЛАД (сюжет «Верхний Предел»): заперт в глубине заставы
+## за электро-дверью, добыча = экзамен искры+цепи (диод → ток → рычаг → дверь
+## съезжает). Опциональная вылазка риск-ревард: доставка [ArtifactElement] в
+## ДОК ГОРОДА («unload») → крупная сумма в казну — ускоряет плату за Врата.
+
+## Выручка за клад (бронза-эквивалент единой казны).
+@export var treasure_bronze: int = 300
 
 
-## Ядро-сфера + 6 шипов крестом. Один материал — highlight/ток красят разом.
+func _ready() -> void:
+	deliver_role = &"unload"
+	super()
+
+
+## Ядро-сфера + 6 шипов крестом. Один материал — highlight красит разом.
 func _build_visual() -> void:
 	_material = StandardMaterial3D.new()
 	_material.albedo_color = Color(0.85, 0.9, 1.0)
@@ -42,3 +50,12 @@ func _build_visual() -> void:
 	shape.radius = 0.55
 	col.shape = shape
 	add_child(col)
+
+
+## Клад продан: монеты в казну (одометр казны сам разложит по номиналам).
+func _on_delivered(_receiver: Node3D) -> void:
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
+	if bank != null:
+		bank.call(&"add_gold", treasure_bronze)
+	EventBus.tutorial_hint.emit(
+		"💎 Клад заставы продан в доке: +%d🥉 в казну" % treasure_bronze, 7.0)

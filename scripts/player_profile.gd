@@ -11,8 +11,11 @@ var player_name: String = ""
 ## прогресса игрока, до которого диалоги/HUD уже дотягиваются через GROUP.
 ## - building_unlocked: запущен станок в Room11 → меню стен/башен открыто.
 ## - stone_thrower_defeated: убит камнеметатель → у гномов Room6 доступен найм лучников.
+## - fire_recipe_found: древний рецепт из пещеры доставлен в институт →
+##   Кафедра огня доступна в палитре (гейт HUD).
 var building_unlocked: bool = false
 var stone_thrower_defeated: bool = false
+var fire_recipe_found: bool = false
 
 
 func _ready() -> void:
@@ -28,6 +31,12 @@ func unlock_building() -> void:
 ## Отметить победу над камнеметателем (idempotent) — открывает найм лучников Room6.
 func mark_stone_thrower_defeated() -> void:
 	stone_thrower_defeated = true
+
+
+## Рецепт Огненного выстрела изучен институтом (idempotent) — зовёт
+## GearElement._on_delivered; HUD-палитра читает флаг поллингом.
+func unlock_fire_recipe() -> void:
+	fire_recipe_found = true
 
 
 func is_signed() -> bool:

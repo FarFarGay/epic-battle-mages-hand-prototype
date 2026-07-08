@@ -1663,9 +1663,12 @@ func _build_item_info(id: int) -> Dictionary:
 	var pdata: Dictionary = RoomBuildings.get_data(bid)
 	var prole: StringName = pdata.get("role", &"")
 	var needs_magic: bool = prole == &"mana_crystal" or prole == &"mana_rune" or prole == &"spell_lab"
+	# Кафедра огня дополнительно требует древний рецепт из пещеры (сюжет).
+	var needs_recipe: bool = bid == RoomBuildings.PAD_FIRE_LAB
 	var pump_built: bool = _pump_built()
 	var magic_ok: bool = not needs_magic or _magic_unlocked()
-	var pdisabled: bool = not (knows and pump_built and magic_ok)
+	var recipe_ok: bool = not needs_recipe or _fire_recipe_found()
+	var pdisabled: bool = not (knows and pump_built and magic_ok and recipe_ok)
 	var psub: String = String(pdata.get("hint", ""))
 	if not knows:
 		psub = "🔒 нужно знание гномов-строителей"
@@ -1673,6 +1676,8 @@ func _build_item_info(id: int) -> Dictionary:
 		psub = "🔒 нужна качалка-замок"
 	elif needs_magic and not _magic_unlocked():
 		psub = "🔒 нужен Институт магии"
+	elif needs_recipe and not _fire_recipe_found():
+		psub = "🔒 нужен древний рецепт — пещеры гномов на востоке"
 	return {"emoji": _emoji_of(pdata), "name": String(pdata.get("name", "Фигура")),
 		"cost_text": _format_cost(pdata), "cost": pdata.get("cost", {}),
 		"pop": PadBuilding.pop_for_role(pdata.get("role", &"")),
@@ -2197,6 +2202,12 @@ func _magic_unlocked() -> bool:
 	return get_tree().get_first_node_in_group(&"magic_institute") != null
 
 
+## Древний рецепт доставлен в институт (GearElement → PlayerProfile).
+func _fire_recipe_found() -> bool:
+	var prof := get_tree().get_first_node_in_group(&"player_profile")
+	return prof != null and bool(prof.get(&"fire_recipe_found"))
+
+
 ## Качалка есть ИЛИ строится (стройплощадка с building_id=PUMP) — гейт «одна на отряд».
 func _pump_exists_or_building() -> bool:
 	if _pump_built():
@@ -2228,6 +2239,9 @@ func _on_build_menu_id(id: int) -> void:
 		# Магические сапорты — только при построенном Институте магии (пункт и так greyed).
 		var role: StringName = RoomBuildings.get_data(PAD_MENU_IDS[id]).get("role", &"")
 		if (role == &"mana_crystal" or role == &"mana_rune" or role == &"spell_lab") and not _magic_unlocked():
+			return
+		# Кафедра огня — только с древним рецептом (пункт и так greyed).
+		if PAD_MENU_IDS[id] == RoomBuildings.PAD_FIRE_LAB and not _fire_recipe_found():
 			return
 		_cancel_hand_aims(&"place")
 		var hand := _resolve_hand()
