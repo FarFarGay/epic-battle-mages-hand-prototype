@@ -22,6 +22,9 @@ var _delivered: bool = false
 
 func _ready() -> void:
 	super()
+	# Артефакт можно везти на верхушке башни («верх башни = инвентарь»,
+	# паркует MountSlot); с борта у здания-приёмника всасывается сам.
+	add_to_group(&"tower_cargo")
 	var poll := Timer.new()
 	poll.wait_time = 0.5
 	poll.autostart = true
@@ -80,6 +83,8 @@ func _nearest_receiver() -> Node3D:
 ## Всасывание в здание: доводка вверх-внутрь → FX → эффект наследника → удаление.
 func _deliver(receiver: Node3D) -> void:
 	_delivered = true
+	# Выход из группы груза = сигнал MountSlot отпустить пин (везли на борту).
+	remove_from_group(&"tower_cargo")
 	freeze = true
 	collision_layer = 0
 	linear_velocity = Vector3.ZERO

@@ -14,6 +14,13 @@ extends Node3D
 ## Можно положить несколько слотов в проекте. Каждый — независим, конфликтов
 ## за один и тот же модуль нет (на release модуль монтируется в первый слот,
 ## который успел его засчитать).
+##
+## ГРУЗ (2026-07-08, «верх башни = инвентарь»): слот дополнительно паркует
+## любой grabbable-RigidBody из группы tower_cargo (артефакты вылазок:
+## рецепт/аккумулятор/клад) — предмет едет на верхушке, руки свободны для
+## боя. Снять — схватить рукой (слой MOUNTED_MODULE в grab-маске). Груз,
+## вышедший из группы (ArtifactElement всосался в здание-приёмник прямо
+## с борта), слот отпускает сам. Один груз за раз.
 
 ## Где сидит модуль относительно слота. Y > 0 — стоит «над» слотом, чтобы
 ## база не просвечивалась мешем модуля.
@@ -38,8 +45,13 @@ extends Node3D
 		if not enabled and _mounted:
 			_drop_mounted()
 @export var debug_log: bool = true
+## Радиус посадки ГРУЗА (XZ до слота): предмет отпущен рукой у подножия башни.
+@export var cargo_snap_radius: float = 2.5
+
+const CARGO_GROUP := &"tower_cargo"
 
 var _mounted: CampModule = null
+var _cargo: RigidBody3D = null
 
 
 func _ready() -> void:
@@ -62,12 +74,16 @@ func _on_hand_grabbed(item: Node3D) -> void:
 	# Hand уже выставил freeze=true в _attach и владеет модулем до релиза.
 	if _mounted != null and item == _mounted:
 		_release_to_hand()
+	# Груз сняли с верхушки — рука владеет (слой/freeze предмет чинит сам).
+	if _cargo != null and item == _cargo:
+		_cargo = null
 
 
 func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 	if not enabled or _mounted != null:
 		return
 	if not (item is CampModule):
+		_try_park_cargo(item)
 		return
 	var module := item as CampModule
 	if module.is_mounted():
@@ -77,6 +93,41 @@ func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 	if dist > snap_radius:
 		return
 	_mount(module)
+
+
+# --- Груз («верх башни = инвентарь») ---
+
+## Попытка парковки груза: grabbable-RigidBody группы tower_cargo, свободный
+## (не frozen — frozen = уже где-то сидит), отпущен в cargo_snap_radius.
+func _try_park_cargo(item: Node3D) -> void:
+	var rb := item as RigidBody3D
+	if rb == null or not rb.is_in_group(CARGO_GROUP) or rb.freeze:
+		return
+	if _horizontal_distance(rb.global_position) > cargo_snap_radius:
+		return
+	if _cargo != null:
+		EventBus.tutorial_hint.emit("⚠ Верх башни занят — сними старый груз рукой", 4.0)
+		return
+	_cargo = rb
+	rb.freeze = true
+	rb.linear_velocity = Vector3.ZERO
+	rb.angular_velocity = Vector3.ZERO
+	rb.collision_layer = Layers.MOUNTED_MODULE
+	rb.global_position = global_position + module_offset
+	AoeVisual.spawn_pulse_sparks(get_tree().current_scene, rb.global_position, 0.9, 8.0)
+	EventBus.tutorial_hint.emit("📦 Груз на верхушке башни — поехали. Снять: схвати рукой", 4.0)
+	if debug_log and LogConfig.master_enabled:
+		print("[MountSlot:%s] груз на борту: %s" % [name, rb.name])
+
+
+## Пин груза + авто-отпуск: предмет вышел из группы (всосался в здание) или умер.
+func _tick_cargo() -> void:
+	if _cargo == null:
+		return
+	if not is_instance_valid(_cargo) or not _cargo.is_in_group(CARGO_GROUP):
+		_cargo = null
+		return
+	_cargo.global_position = global_position + module_offset
 
 
 # --- Mount/unmount ---
@@ -148,6 +199,7 @@ func _drop_mounted() -> void:
 # --- Цикл ---
 
 func _physics_process(_delta: float) -> void:
+	_tick_cargo()
 	if _mounted == null:
 		return
 	# Жёстко прибиваем модуль к слоту. Слот может двигаться (Tower едет, Camp
