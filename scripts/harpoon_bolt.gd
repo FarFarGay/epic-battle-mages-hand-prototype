@@ -194,12 +194,20 @@ func _physics_process(delta: float) -> void:
 func _tick_fly(delta: float) -> void:
 	var prev: Vector3 = global_position
 	global_position += _dir * bolt_speed * delta
-	# Стена по пути → пшик, гарпун ломается об камень.
+	# Стена по пути → пшик, гарпун ломается об камень. Невидимые барьеры
+	# ПРОПАСТЕЙ (chasm_barrier, тот же слой 544) — не стена: пропасть фейковая,
+	# стрела летит НАД ней (пазл храма: стащить плиту-мост с того берега).
 	var space := get_world_3d().direct_space_state
 	if space != null:
 		var q := PhysicsRayQueryParameters3D.create(prev, global_position, WALL_MASK)
-		var wall: Dictionary = space.intersect_ray(q)
-		if not wall.is_empty():
+		for _attempt in 4:
+			var wall: Dictionary = space.intersect_ray(q)
+			if wall.is_empty():
+				break
+			var collider := wall.get("collider") as Node3D
+			if collider != null and collider.is_in_group(&"chasm_barrier"):
+				q.exclude = q.exclude + [wall.get("rid")]
+				continue
 			_stick_to_wall(wall.get("position", global_position))
 			return
 	# Утварь (горшки) — разбиваем на пролёте, летим дальше.
@@ -341,6 +349,11 @@ func cancel() -> void:
 func _tick_pull(delta: float) -> void:
 	_pull_t += delta
 	if _victim == null or not is_instance_valid(_victim) or _pull_t >= max_pull_time:
+		_release(FADE_TIME_DELIVERED)
+		return
+	# Жертву заморозили в полёте (рука перехватила / плита-мост защёлкнулась
+	# авто-снапом) — добыча «встала на место», верёвка отпускает.
+	if _victim is RigidBody3D and (_victim as RigidBody3D).freeze:
 		_release(FADE_TIME_DELIVERED)
 		return
 	var to_tower: Vector3 = VecUtil.horizontal(_tower.global_position - _victim.global_position)

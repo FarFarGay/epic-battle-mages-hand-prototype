@@ -28,6 +28,12 @@ const SNAPPED_GROUP := &"bridge_snapped"
 @export_range(0.0, 5.0) var highlight_intensity: float = 0.6
 ## Насколько дальше полосы барьера по Z ещё защёлкиваемся (прощение неточного дропа).
 @export var snap_margin: float = 3.0
+## Масса. > max_lift_mass руки (10) = плиту таскает ТОЛЬКО гарпун (< 12 —
+## порог разрыва верёвки): каменная плита-мост храма, экзамен гарпуна.
+@export var plank_mass: float = 6.0
+## Авто-защёлк БЕЗ руки: остановилась над полосой пропасти → легла мостом
+## (гарпун дотащил плиту до кромки — она сама садится). Поллинг 0.4с.
+@export var auto_snap: bool = false
 
 var _snapped := false
 ## Плашка забрала владение барьером (оригинал нейтрализован, сегменты — наши).
@@ -66,11 +72,17 @@ var _held: bool = false
 
 
 func _ready() -> void:
-	mass = 6.0
+	mass = plank_mass
 	collision_layer = Layers.ITEMS
 	collision_mask = Layers.MASK_ALL_GAMEPLAY
 	_build_visual()
 	Grabbable.register(self)
+	if auto_snap:
+		var poll := Timer.new()
+		poll.wait_time = 0.4
+		poll.autostart = true
+		add_child(poll)
+		poll.timeout.connect(_poll_auto_snap)
 	# ВОЛОЧЕНИЕ (юзер 2026-07-03 «чтобы не приклеивалась к руке»): рука не морозит
 	# доску, а тянет пружиной за точку хвата — провисает, скребёт землю, можно
 	# волочь за конец. Реализация в HandPhysicalActions._apply_haul_force.
@@ -180,6 +192,16 @@ func _physics_process(_delta: float) -> void:
 		# Рядовых взмах КОСИТ (60 > hp 30 даже с вариацией); тяжёлые — только толчок.
 		if not sk.is_in_group(&"super_dash_only"):
 			Damageable.try_damage(sk, SWEEP_DAMAGE)
+
+
+## Авто-снап (auto_snap): плита свободна и почти остановилась у полосы —
+## садится мостом сама. Порог скорости отсекат момент волочения гарпуном.
+func _poll_auto_snap() -> void:
+	if _snapped or _held:
+		return
+	if linear_velocity.length_squared() > 1.5 * 1.5:
+		return
+	_try_snap()
 
 
 func _try_snap() -> void:

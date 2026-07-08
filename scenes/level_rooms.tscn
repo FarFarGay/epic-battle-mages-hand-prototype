@@ -801,7 +801,7 @@ zone_size = Vector3(16, 8, 9)
 [node name="HintRift" type="Area3D" parent="TutorialHints" unique_id=911700011]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 2, 39)
 script = ExtResource("47_tuthint")
-text = "Каньон храма! Аккумулятор древних — на той стороне, под охраной"
+text = "Каньон храма! Плита-мост на том берегу слишком тяжела для руки — стащи её ГАРПУНОМ"
 duration = 9.0
 zone_size = Vector3(22, 8, 8)
 suppress_group = &"bridge_snapped"
@@ -1062,11 +1062,14 @@ collision_mask = 0
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
 shape = SubResource("BoxShape3D_chasmA")
 
-[node name="BridgePlankA" type="RigidBody3D" parent="RiftRoom" unique_id=911700008]
-transform = Transform3D(0.9659258, 0, 0.258819, 0, 1, 0, -0.258819, 0, 0.9659258, 38, 0.5, 39)
+[node name="BridgeSlabA" type="RigidBody3D" parent="RiftRoom" unique_id=911700008]
+transform = Transform3D(0.9659258, 0, 0.258819, 0, 1, 0, -0.258819, 0, 0.9659258, 32, 0.4, 24.5)
 collision_layer = 2
 collision_mask = 575
 script = ExtResource("46_plank")
+plank_color = Color(0.52, 0.52, 0.58, 1)
+plank_mass = 11.0
+auto_snap = true
 
 [node name="Keystone" parent="RiftRoom" unique_id=911700009 instance=ExtResource("59_keystone")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 0.5, 22)
@@ -1294,4 +1297,5 @@ mesh = SubResource("Sph_foliage")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 85, 3, 53)
 room_center = Vector2(68, 97.5)
 room_size = Vector2(100, 110)
+
 
