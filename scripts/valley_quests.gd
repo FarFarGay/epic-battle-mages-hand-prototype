@@ -88,6 +88,8 @@ func _tick() -> void:
 		if not (_tower_in_valley() or _building_known()):
 			return
 		_active = true
+		EventBus.tutorial_hint.emit(
+			"⛰ ВЕРХНИЙ ПРЕДЕЛ — неспокойное графство Верхолазов. Проверь шахтёрские города, подними форпост и накопи на проход домой", 10.0)
 	# Проверка текущего шага (и каскад — вдруг игрок перевыполнил вперёд).
 	while _step < _steps.size() and (_steps[_step]["done"] as Callable).call():
 		EventBus.tutorial_hint.emit("✓ %s" % _step_text(_step), 5.0)
