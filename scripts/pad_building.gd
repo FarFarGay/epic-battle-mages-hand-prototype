@@ -44,14 +44,10 @@ const INSTITUTE_FEED_RADIUS := 18.0
 ## «Защёлк» полного квартала: ВСЕ грани продюсера закрыты сапортами → комбо-множитель
 ## ТЕМПА поверх осей (шахта — монет/сек, институт — маны/сек). Один на всех продюсеров.
 const FULL_QUARTER_BONUS := 1.5
-
-## --- УРОВНИ ЗДАНИЙ (Clash-инкремент, 2026-07-07) ---
-## Продюсеры (шахта/институт) апгрейдятся ЛКМ-кликом за монеты: выработка ×2/×4,
-## цена растёт круче дохода (base×2 → base×6), здание визуально жиреет
-## (золотые кольца, _add_level_accents). Ур.1 = как было (совместимость).
-const MAX_LEVEL := 3
-## Множитель выработки по уровню (индекс = уровень).
-const LEVEL_OUTPUT_MULT := [0.0, 1.0, 2.0, 4.0]
+# КЛИК-УРОВНИ зданий (Clash) СДЕЛАНЫ И ВЫПИЛЕНЫ 2026-07-07: дублировали
+# полимино-квартал — второй путь к тому же множителю выработки. Прокачка
+# продюсера = ТОЛЬКО квартал (оси граней + защёлк). Из Clash взят СБОР:
+# шахта копит добычу видимой стопкой, собираешь башней/кликом (см. _tick_mine).
 ## FX «печати» установки: падение+сквош+пыль+рябь+тряска (см. play_place_impact).
 const PlaceFx = preload("res://scripts/place_impact_fx.gd")
 ## Разгрузочная платформа: радиус парковки башни (XZ от центра платформы).
@@ -140,6 +136,10 @@ func _ready() -> void:
 	# на момент _ready трей HUD мог ещё не подписаться на spell_unlocked.
 	if is_spell_lab():
 		call_deferred(&"_unlock_lab_spells")
+		# Гильдия инженеров дополнительно КУЁТ аппараты кликом (модульная система).
+		if building_id == RoomBuildings.PAD_ENGINEER_LAB:
+			add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
+			set_process(true)
 	# Верфь башни: платформа без коллизии (башня может заезжать на плиту), но меню
 	# срезов открывается ЛКМ-КЛИКОМ по плите (заезд-триггер пробовали — неудобно).
 	if is_dock():
@@ -211,80 +211,13 @@ func is_spell_lab() -> bool:
 	return _role == &"spell_lab"
 
 
-## --- Уровни зданий (Clash-инкремент) ---
-
-## Текущий уровень (1..MAX_LEVEL). Апгрейд — ЛКМ-клик по зданию (_try_upgrade).
-var _level: int = 1
-
-
-## Апгрейдится кликом: продюсеры с выработкой (шахта, институт магии).
-func is_upgradable() -> bool:
-	return _role == &"mine" or _role == &"magic"
-
-
-## Множитель выработки текущего уровня.
-func _level_output_mult() -> float:
-	return float(LEVEL_OUTPUT_MULT[clampi(_level, 1, MAX_LEVEL)])
-
-
-## Цена следующего уровня в бронзе: base×2 на ур.2, base×6 на ур.3 —
-## цена растёт втрое на шаг, доход вдвое (классическая инкремент-кривая).
-func upgrade_cost_bronze() -> int:
-	var base: int = int(RoomBuildings.get_data(building_id).get("cost", {}).get(ResourcePile.ResourceType.BRONZE, 100))
-	return base * 2 * int(pow(3.0, float(_level - 1)))
-
-
-## ЛКМ по продюсеру → попытка апгрейда (как найм у казармы: тот же клик-паттерн).
-func _tick_upgrade_click() -> void:
-	if _clicked_on_self():
-		_try_upgrade()
-
-
-func _try_upgrade() -> void:
-	if _level >= MAX_LEVEL:
-		EventBus.tutorial_hint.emit("⭐ %s: максимальный уровень" % RoomBuildings.get_data(building_id).get("name", "Здание"), 2.5)
-		return
-	var cost: int = upgrade_cost_bronze()
-	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
-	if bank == null or not bank.has_method(&"try_spend"):
-		return
-	if not bank.call(&"try_spend", cost):
-		EventBus.tutorial_hint.emit("Не хватает монет на улучшение: нужно %d🥉" % cost, 3.0)
-		return
-	_level += 1
-	_build()  # перестройка визуала с уровневыми акцентами
-	var root: Node = get_tree().current_scene
-	if root != null:
-		AoeVisual.spawn_pulse_sparks(root, global_position + Vector3.UP * 1.5, 2.0, 10.0)
-	EventBus.camera_shake.emit(0.2, global_position)
-	EventBus.tutorial_hint.emit("⭐ %s — уровень %d! Выработка ×%s" % [
-		RoomBuildings.get_data(building_id).get("name", "Здание"), _level,
-		String.num(_level_output_mult(), 0)], 4.0)
-
-
-## Уровневые акценты поверх любого визуала: золотые светящиеся кольца на
-## «мачте» по центру — уровень читается издалека, N-1 колец = уровень N.
-func _add_level_accents() -> void:
-	if _level <= 1:
-		return
+## Центр футпринта в локальных координатах (стопка монет, FX).
+func _footprint_center() -> Vector3:
 	var s: float = CityGrid.CELL
 	var ctr := Vector3.ZERO
 	for off in _mask:
 		ctr += Vector3(float((off as Vector2i).x) * s, 0.0, float((off as Vector2i).y) * s)
-	ctr /= float(_mask.size())
-	var gold := _solid(Color(1.0, 0.85, 0.35), 0.4, 0.3)
-	gold.emission_enabled = true
-	gold.emission = Color(1.0, 0.8, 0.3)
-	gold.emission_energy_multiplier = 1.8
-	for i in range(_level - 1):
-		var ring := MeshInstance3D.new()
-		var tm := TorusMesh.new()
-		tm.inner_radius = 0.3
-		tm.outer_radius = 0.42
-		ring.mesh = tm
-		ring.material_override = gold
-		ring.position = ctr + Vector3(0.0, 2.6 + float(i) * 0.35, 0.0)
-		add_child(ring)
+	return ctr / float(_mask.size())
 
 
 ## Открыть заклинания своей школы (каталог RoomBuildings, ключ "spells").
@@ -420,8 +353,12 @@ func _build() -> void:
 			for off in _mask:
 				var o := off as Vector2i
 				_box(Vector3(s * 0.96, 1.4, s * 0.96), Vector3(o.x * s, 0.7, o.y * s), mat, true)
-	_add_level_accents()  # золотые кольца уровня (Clash-инкремент, ур.≥2)
 	_build_collider()  # коллайдер по футпринту (после очистки детей в начале _build)
+	# Перестройка снесла детей → стопка монет шахты пересоздаётся под текущее значение.
+	_stack_root = null
+	_stack_coins_shown = -1
+	if _role == &"mine":
+		_refresh_stack_visual()
 
 
 ## Коллайдер-бокс на каждую клетку футпринта (StaticBody = сам узел). Локальные позиции по
@@ -1560,7 +1497,7 @@ func _tick_institute(delta: float) -> void:
 	if full and not _quarter_was_full:
 		_play_quarter_fx()
 	_quarter_was_full = full
-	tower.call(&"restore_mana", MANA_INSTITUTE_RATE * _mana_mult(st) * _level_output_mult() * delta)
+	tower.call(&"restore_mana", MANA_INSTITUTE_RATE * _mana_mult(st) * delta)
 
 
 ## Множитель темпа маны от сапортов в зоне института (перемножение, как оси шахты). Соло → 1.0.
@@ -1578,15 +1515,126 @@ func _mana_mult(st: Dictionary) -> float:
 	return mult * _full_quarter_mult(st)
 
 
-## Шаг добычи: шахта сама капает деньги в казну. Каждый ТИП сапорта в зоне крутит СВОЮ ось:
+## --- Clash-сбор: стопка добычи на крыше шахты (2026-07-07) ---
+## Кап стопки в бронзовом эквиваленте; полна → добыча встаёт до сбора.
+const MINE_STACK_CAP_BRONZE := 60
+## Радиус автосбора башней (XZ): подъехал — стопка сама всасывается.
+const MINE_COLLECT_RADIUS := 4.5
+const COIN_ORB_SCENE := preload("res://scenes/xp_orb.tscn")
+## Несобранная добыча (бронза). Копится в _tick_mine, забирается _collect_stack.
+var _stack_bronze: int = 0
+var _stack_root: Node3D = null
+var _stack_coins_shown: int = -1
+
+
+## Бронзовый эквивалент монеты номинала (двор чеканит серебро → ×10 ценность).
+func _coin_bronze_value(coin_type: int) -> int:
+	match coin_type:
+		ResourcePile.ResourceType.GOLD:
+			return 100
+		ResourcePile.ResourceType.SILVER:
+			return 10
+		_:
+			return 1
+
+
+## Сбор стопки: башня вплотную (MINE_COLLECT_RADIUS) или ЛКМ-клик по шахте.
+func _tick_mine_collect() -> void:
+	if _stack_bronze <= 0:
+		return
+	var collect: bool = _clicked_on_self()
+	if not collect:
+		var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
+		if tower != null and is_instance_valid(tower):
+			var dx: float = tower.global_position.x - global_position.x
+			var dz: float = tower.global_position.z - global_position.z
+			collect = dx * dx + dz * dz <= MINE_COLLECT_RADIUS * MINE_COLLECT_RADIUS
+	if collect:
+		_collect_stack()
+
+
+## Забрать стопку: веер монет-орбов летит к башне, каждый на arrival кладёт
+## монеты в казну (попап «+N🥉» и салют на золотую — штатные у XpOrb).
+func _collect_stack() -> void:
+	var total: int = _stack_bronze
+	if total <= 0:
+		return
+	_stack_bronze = 0
+	_refresh_stack_visual()
+	var root: Node = get_tree().current_scene
+	var tower := get_tree().get_first_node_in_group(&"tower")
+	var ctr: Vector3 = to_global(_footprint_center())
+	if root == null or tower == null or not is_instance_valid(tower):
+		# Фоллбек без сцены/башни: кредит напрямую, без полёта.
+		var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
+		if bank != null and bank.has_method(&"add_coin"):
+			bank.call(&"add_coin", ResourcePile.ResourceType.BRONZE, total)
+		return
+	var n: int = clampi(total / 10 + 1, 2, 6)
+	var base: int = total / n
+	var rem: int = total % n
+	for i in range(n):
+		var share: int = base + (1 if i < rem else 0)
+		if share <= 0:
+			continue
+		var orb := COIN_ORB_SCENE.instantiate() as XpOrb
+		if orb == null:
+			continue
+		orb.amount = 0
+		orb.mana_amount = 0.0
+		orb.gold_amount = share
+		orb.position = ctr + Vector3(randf_range(-0.5, 0.5), 2.2 + randf_range(0.0, 0.5), randf_range(-0.5, 0.5))
+		root.add_child(orb)
+		# Форс-магнит к башне сразу: монеты веером стягиваются, не ждут касания.
+		if orb.has_method(&"_activate_magnet_to_tower"):
+			orb.call(&"_activate_magnet_to_tower", tower)
+	AoeVisual.spawn_pulse_sparks(root, ctr + Vector3.UP * 2.2, 1.2, 10.0)
+
+
+## Стопка монет на крыше: 1 «монета» ≈ 10 бронзы, до 8 в столбике. Перестраиваем
+## только при смене числа монет (не каждый тик).
+func _refresh_stack_visual() -> void:
+	var coins: int = clampi(int(ceil(float(_stack_bronze) / 10.0)), 0, 8)
+	if coins == _stack_coins_shown:
+		return
+	_stack_coins_shown = coins
+	if _stack_root != null and is_instance_valid(_stack_root):
+		_stack_root.queue_free()
+	_stack_root = null
+	if coins <= 0:
+		return
+	_stack_root = Node3D.new()
+	add_child(_stack_root)
+	var gold := _solid(Color(1.0, 0.85, 0.35), 0.5, 0.35)
+	gold.emission_enabled = true
+	gold.emission = Color(1.0, 0.8, 0.3)
+	gold.emission_energy_multiplier = 1.2
+	var ctr: Vector3 = _footprint_center()
+	for i in range(coins):
+		var c := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.28
+		cm.bottom_radius = 0.28
+		cm.height = 0.09
+		c.mesh = cm
+		c.material_override = gold
+		c.position = ctr + Vector3(randf_range(-0.06, 0.06), 2.25 + float(i) * 0.11, randf_range(-0.06, 0.06))
+		c.rotation.y = randf() * TAU
+		_stack_root.add_child(c)
+
+
+## Шаг добычи: шахта копит добычу СТОПКОЙ на крыше (Clash-сбор). Каждый ТИП сапорта в зоне крутит СВОЮ ось:
 ## ПЛАВИЛЬНЯ → ×СКОРОСТЬ темпа; ДОМ → ×ОБЪЁМ монет за выплату; ДВОР → НОМИНАЛ монеты на тир выше.
-## Заполнение зоны на 100% → вспышка «собран». +N всплывашка и салют на золотую — над шахтой.
+## Заполнение зоны на 100% → вспышка «собран».
 func _tick_mine(delta: float) -> void:
 	if _vein == null or not is_instance_valid(_vein):
 		return
 	# НАСЕЛЕНИЕ: без укомплектованного слота (Population) шахта ПРОСТАИВАЕТ — не копит/не платит.
 	# Военный приоритет: если солдат столько, что на шахты слотов не осталось — добыча встаёт.
 	if Population != null and not Population.is_staffed(self):
+		return
+	# Стопка полна — добыча встаёт (Clash: полный коллектор стоит, ЗАБЕРИ).
+	if _stack_bronze >= MINE_STACK_CAP_BRONZE:
 		return
 	var st := _quarter_status()
 	var roles: Dictionary = st["roles"]
@@ -1603,24 +1651,18 @@ func _tick_mine(delta: float) -> void:
 		_play_quarter_fx()
 	_quarter_was_full = full
 	# «Защёлк»: полный квартал крутит темп сверх осей — комбо за полный сет.
-	# Уровень здания (Clash-инкремент) множит итоговый темп.
-	_mine_accum += MINE_RATE * speed * _full_quarter_mult(st) * _level_output_mult() * delta
+	_mine_accum += MINE_RATE * speed * _full_quarter_mult(st) * delta
 	var whole := int(_mine_accum)
 	if whole < 1:
 		return
 	_mine_accum -= float(whole)
 	var pay: int = whole * volume
-	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
-	if bank == null or not bank.has_method(&"add_coin"):
-		return
-	var gold_before: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD)) if bank.has_method(&"get_coin") else 0
-	bank.call(&"add_coin", coin, pay)  # монета выбранного номинала в казну
-	_recv_amount += pay                # копим для всплывашки «+N»
-	_recv_coin = coin                  # каким номиналом платим (для всплывашки)
-	if bank.has_method(&"get_coin"):
-		var gold_after: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD))
-		for _i in range(gold_after - gold_before):
-			_spawn_firework(ResourcePile.ResourceType.GOLD)  # салют на каждую новую золотую
+	# CLASH-СБОР (2026-07-07, «нет тактильности»): добыча НЕ капает в казну сама —
+	# копится ВИДИМОЙ стопкой монет на крыше (бронзовый эквивалент номинала; двор
+	# сохраняет своё ×10 через ценность). Забираешь башней вплотную или ЛКМ-кликом
+	# (_tick_mine_collect) — веер монет-орбов летит к башне, казна звенит попапами.
+	_stack_bronze = mini(_stack_bronze + pay * _coin_bronze_value(coin), MINE_STACK_CAP_BRONZE)
+	_refresh_stack_visual()
 
 
 ## Разгрузка трюма: башня в радиусе и трюм не пуст → сдаём ВСЁ ОДНОМОМЕНТНО.
@@ -2053,6 +2095,7 @@ func _process(delta: float) -> void:
 		_tick_institute(delta)
 	if _role == &"mine":
 		_tick_mine(delta)
+		_tick_mine_collect()  # сбор стопки: башня вплотную или ЛКМ-клик
 		# Live-обновление индикатора осей, пока наведено (hover) — поспел за достройкой сапорта.
 		if _quarter_indicator != null and is_instance_valid(_quarter_indicator) and _quarter_indicator.visible:
 			_refresh_quarter_indicator()
@@ -2074,9 +2117,8 @@ func _process(delta: float) -> void:
 		_tick_dock_click()
 	if is_unload():
 		_tick_unload(delta)
-	# Продюсеры (шахта/институт): ЛКМ-клик = улучшение уровня (Clash-инкремент).
-	if is_upgradable():
-		_tick_upgrade_click()
+	if building_id == RoomBuildings.PAD_ENGINEER_LAB:
+		_tick_forge_click()
 
 
 ## Номинал на тир выше (чеканный двор-сапорт). Лесенка тиров — единая, в GoldBank.
@@ -2258,6 +2300,40 @@ func hire_cap() -> int:
 	return _my_hire_cap()
 
 
+## Цена ковки Гарпунной турели в гильдии инженеров (клик по зданию).
+const FORGE_MODULE_COST_BRONZE := 40
+
+
+## ЛКМ по Гильдии инженеров → ВЫКОВАТЬ аппарат: списываем монеты, модуль-вещь
+## выпадает перед зданием (дальше рука несёт его к башне). Модульная система:
+## «кафедры производят вещи, рука ставит».
+func _tick_forge_click() -> void:
+	if not _clicked_on_self():
+		return
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
+	if bank == null or not bank.has_method(&"try_spend"):
+		return
+	if not bank.call(&"try_spend", FORGE_MODULE_COST_BRONZE):
+		EventBus.tutorial_hint.emit("Ковка турели: не хватает монет (нужно %d🥉)" % FORGE_MODULE_COST_BRONZE, 3.0)
+		return
+	var root: Node = get_tree().current_scene
+	if root == null:
+		return
+	var ctr: Vector3 = to_global(_footprint_center())
+	# Выпадает в сторону башни (в открытое место), на землю.
+	var out := Vector3.FORWARD
+	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
+	if tower != null and is_instance_valid(tower):
+		out = VecUtil.horizontal(tower.global_position - ctr)
+		out = out.normalized() if out.length() > 0.1 else Vector3.FORWARD
+	var module := HarpoonModule.new()
+	module.position = Vector3(ctr.x, 0.4, ctr.z) + out * 2.2
+	root.add_child(module)
+	AoeVisual.spawn_pulse_sparks(root, module.global_position + Vector3.UP * 0.5, 1.0, 10.0)
+	EventBus.camera_shake.emit(0.2, ctr)
+	EventBus.tutorial_hint.emit("⚙ Турель выкована! Схвати рукой и поднеси к башне", 4.0)
+
+
 ## ЛКМ по Кафедре Волшебных свитков. МАГАЗИН ЗАКЛИНАНИЙ УМЕР (2026-07-07):
 ## заклинания открывают КАФЕДРЫ-ШКОЛЫ постройкой (role spell_lab, «хочешь
 ## пушку — построй завод»). Клик оставлен как подсказка-редирект.
@@ -2367,7 +2443,7 @@ func _refresh_quarter_indicator() -> void:
 ## Строки плашки ИНСТИТУТА МАГИИ: оси-сапорты (×темп) + дом + итоговая мана/сек. Состояния как у шахты:
 ## ×N работает / ⏸ нет гнома (построено, смены нет) / — не построено; сам институт без гнома → простой.
 func _refresh_magic_indicator() -> void:
-	_ind_title.text = "ИНСТИТУТ МАГИИ · ур.%d" % _level
+	_ind_title.text = "ИНСТИТУТ МАГИИ"
 	var st := _quarter_status()
 	var roles: Dictionary = st["roles"]            # построено в зоне
 	var on: Dictionary = st["staffed_roles"]       # реально работает (есть гном; дом — без гнома)
@@ -2378,28 +2454,25 @@ func _refresh_magic_indicator() -> void:
 	# _mana_mult уже включает «защёлк» полного квартала.
 	var quarter_on: bool = _full_quarter_mult(st) > 1.0
 	var quarter_val: String = "×%s  СОБРАН!" % FULL_QUARTER_BONUS if quarter_on else "—  (заполни все грани)"
-	var rate: float = MANA_INSTITUTE_RATE * _mana_mult(st) * _level_output_mult()
+	var rate: float = MANA_INSTITUTE_RATE * _mana_mult(st)
 	var last: String = "✨ %s маны/сек" % String.num(rate, 1)
 	if not staffed:
 		last = "🚨 ТРЕВОГА — простой" if (Population != null and Population.alarm_active) else "⏸ Нет населения — простой"
-	var lvl_val: String = "×%s  МАКС" % String.num(_level_output_mult(), 0) if _level >= MAX_LEVEL \
-		else "×%s  (клик: ур.%d за %d🥉)" % [String.num(_level_output_mult(), 0), _level + 1, upgrade_cost_bronze()]
 	_apply_indicator_rows([
-		"⭐ Уровень    %s" % lvl_val,
 		"📜 Кафедра    %s" % crystal_val,
 		"🌟 Осколок    %s" % rune_val,
 		"🏠 Дом          %s" % house_val,
 		"⚡ Квартал     %s" % quarter_val,
 		last,
 	])
-	if _ind_rows.size() >= 6 and is_instance_valid(_ind_rows[5]):
+	if _ind_rows.size() >= 5 and is_instance_valid(_ind_rows[4]):
 		var col: Color = Color(1.0, 0.5, 0.4) if not staffed else Color(0.7, 0.7, 1.0)
-		(_ind_rows[5] as Label).add_theme_color_override(&"font_color", col)
+		(_ind_rows[4] as Label).add_theme_color_override(&"font_color", col)
 
 
 ## Строки плашки ШАХТЫ: каждая ось — значение или «—  (что построить)»; внизу итоговая добыча.
 func _refresh_mine_indicator() -> void:
-	_ind_title.text = "КВАРТАЛ ШАХТЫ · ур.%d" % _level
+	_ind_title.text = "КВАРТАЛ ШАХТЫ"
 	var st := _quarter_status()
 	var roles: Dictionary = st["roles"]            # построено в зоне
 	var on: Dictionary = st["staffed_roles"]       # реально работает (есть гном-смена)
@@ -2420,21 +2493,22 @@ func _refresh_mine_indicator() -> void:
 		mint_val = "%s %s  (двор +тир)" % [_coin_emoji(coin), _coin_name(coin)]
 	# «Защёлк»: полный квартал крутит темп сверх осей (учтён в rate ниже).
 	var quarter_mult: float = _full_quarter_mult(st)
-	rate *= quarter_mult * _level_output_mult()
+	rate *= quarter_mult
 	var quarter_val: String = "×%s  СОБРАН!" % FULL_QUARTER_BONUS if quarter_mult > 1.0 else "—  (заполни все грани)"
 	# Укомплектована ли САМА шахта: без слота простаивает (Population, военный приоритет).
 	var staffed: bool = Population == null or Population.is_staffed(self)
 	var last_row: String = "≈ %s %s/сек" % [String.num(rate, 1), _coin_emoji(coin)]
 	if not staffed:
 		last_row = "🚨 ТРЕВОГА — простой" if (Population != null and Population.alarm_active) else "⏸ Нет населения — простой"
-	var lvl_val: String = "×%s  МАКС" % String.num(_level_output_mult(), 0) if _level >= MAX_LEVEL \
-		else "×%s  (клик: ур.%d за %d🥉)" % [String.num(_level_output_mult(), 0), _level + 1, upgrade_cost_bronze()]
+	# Стопка на крыше: сколько лежит несобранного (Clash-сбор).
+	var stack_row: String = "💰 Стопка      %d🥉 из %d  (подъедь/кликни)" % [_stack_bronze, MINE_STACK_CAP_BRONZE] \
+		if _stack_bronze > 0 else "💰 Стопка      —  (копится)"
 	_apply_indicator_rows([
-		"⭐ Уровень    %s" % lvl_val,
 		"🔥 Скорость   %s" % speed_val,
 		"🪙 Номинал    %s" % mint_val,
 		"🏠 Объём       %s" % ("×%d" % MINE_VOLUME_MULT if vol_on else "—  (дом гномов)"),
 		"⚡ Квартал     %s" % quarter_val,
+		stack_row,
 		last_row,
 	])
 	if _ind_rows.size() >= 6 and is_instance_valid(_ind_rows[5]):

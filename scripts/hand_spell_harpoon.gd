@@ -43,7 +43,17 @@ func setup(hand: Hand, coord: HandSpell) -> void:
 func can_trigger() -> bool:
 	if _cancelable_bolt() != null:
 		return true  # слот активен: нажатие = отмена висящего гарпуна
+	# МОДУЛЬНЫЙ ГЕЙТ (пилот 2026-07-07): гарпун стреляет ТОЛЬКО с установленной
+	# Гарпунной турелью на корпусе (аппарат-вещь, рука ставит). Нет аппарата —
+	# слот в трее тусклый.
+	if _mounted_module() == null:
+		return false
 	return _cooldown_remaining <= 0.0
+
+
+## Установленный на башню аппарат гарпуна (или null).
+func _mounted_module() -> Node3D:
+	return get_tree().get_first_node_in_group(HarpoonModule.MOUNTED_GROUP) as Node3D
 
 
 func on_press() -> void:
@@ -83,6 +93,10 @@ func _perform_cast() -> void:
 	var tower := _coord.find_tower()
 	if tower == null:
 		return  # гарпун — оружие башни, без башни не кастуется
+	var module := _mounted_module()
+	if module == null:
+		EventBus.tutorial_hint.emit("Нужна Гарпунная турель на корпусе: поднеси аппарат рукой к башне", 4.0)
+		return
 	var target_pos: Vector3 = _hand.cursor_world_position()
 	target_pos.y -= _hand.hand_height
 	var dir: Vector3 = VecUtil.horizontal(target_pos - tower.global_position)
@@ -94,10 +108,10 @@ func _perform_cast() -> void:
 		return
 	_cooldown_remaining = p_cooldown
 
-	# Старт: от башни в сторону курсора, на высоте полёта над землёй у цели.
+	# Старт: ИЗ АППАРАТА (он на корпусе — рядом с башней), на высоте полёта у цели.
 	var flight_y: float = target_pos.y + flight_height
-	var start: Vector3 = Vector3(tower.global_position.x, flight_y, tower.global_position.z) \
-		+ dir.normalized() * 1.5
+	var start: Vector3 = Vector3(module.global_position.x, flight_y, module.global_position.z) \
+		+ dir.normalized() * 1.2
 	var bolt := HarpoonBolt.new()
 	bolt.damage = p_damage
 	bolt.max_range = p_range

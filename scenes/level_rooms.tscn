@@ -63,6 +63,7 @@
 [ext_resource type="PackedScene" path="res://scenes/star_crystal.tscn" id="60_starcrystal"]
 [ext_resource type="Script" uid="uid://bi5ysv32a5q33" path="res://scripts/gnome_cage.gd" id="61_gnomecage"]
 [ext_resource type="Script" path="res://scripts/quest_marker.gd" id="62_questmarker"]
+[ext_resource type="Script" path="res://scripts/harpoon_module.gd" id="63_harpoonmodule"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -291,6 +292,15 @@ script = ExtResource("61_gnomecage")
 [node name="QuestMarker" type="Node3D" parent="Room1/GnomeCage" unique_id=911200042]
 script = ExtResource("62_questmarker")
 marker_height = 2.4
+
+[node name="HarpoonModuleStarter" type="RigidBody3D" parent="Room1" unique_id=911200045]
+transform = Transform3D(0.86602545, 0, 0.5, 0, 1, 0, -0.5, 0, 0.86602545, -25, 0.3, 1.6)
+script = ExtResource("63_harpoonmodule")
+
+[node name="QuestMarker" type="Node3D" parent="Room1/HarpoonModuleStarter" unique_id=911200046]
+script = ExtResource("62_questmarker")
+marker_height = 1.9
+done_group = &"harpoon_module_mounted"
 
 [node name="TunnelEndCap" parent="Room1" unique_id=911200005 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 12, -34, 0, 0)
@@ -663,6 +673,13 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20, 2, 0)
 script = ExtResource("47_tuthint")
 text = "ПРОБЕЛ — рывок. Тарань скелетов!"
 zone_size = Vector3(6, 8, 10)
+
+[node name="HintModule" type="Area3D" parent="TutorialHints" unique_id=911200047]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -26, 2, 0)
+script = ExtResource("47_tuthint")
+text = "⚙ Аппарат гномов! Схвати рукой (ЛКМ) и поднеси к башне — встанет на корпус"
+duration = 6.0
+zone_size = Vector3(8, 8, 8)
 
 [node name="HintCage" type="Area3D" parent="TutorialHints" unique_id=911200041]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 2, 0)
