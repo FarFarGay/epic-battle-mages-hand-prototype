@@ -66,6 +66,11 @@ const ROPE_BREAK_MASS := 12.0
 ## Боевая высота полёта: стрела, выпущенная с крыши (дуло турели), плавно
 ## снижается к ней в FLY (NAN = лететь на высоте старта, как раньше).
 var descend_to_y: float = NAN
+## Узел-якорь верёвки (турель на крыше): верёвка тянется ИЗ ДУЛА аппарата и
+## поворачивается с ним (фидбек 2026-07-09 «гарпун всё ещё из центра башни» —
+## стрела стартовала из дула, но верёвка шла из середины корпуса и доминировала
+## в картинке). null = легаси-якорь на башне.
+var anchor_node: Node3D = null
 
 var _tower: Node3D = null
 var _effects_root: Node = null
@@ -173,6 +178,9 @@ func _build_rope() -> void:
 
 
 func _rope_anchor() -> Vector3:
+	if anchor_node != null and is_instance_valid(anchor_node):
+		return anchor_node.global_position \
+			- anchor_node.global_basis.z * 0.7 + Vector3.UP * 0.7
 	return _tower.global_position + Vector3.UP * 0.5
 
 

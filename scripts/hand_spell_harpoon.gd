@@ -120,6 +120,7 @@ func _perform_cast() -> void:
 	bolt.bolt_speed = p_bolt_speed
 	bolt.pull_speed = p_pull_speed
 	bolt.descend_to_y = flight_y
+	bolt.anchor_node = module  # верёвка из дула турели, поворачивается с ней
 	_active_bolt = bolt
 	_effects_root.add_child(bolt)
 	bolt.add_to_group(&"player_projectile")  # мех уклоняется от снарядов игрока
