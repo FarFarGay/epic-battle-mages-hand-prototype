@@ -3,9 +3,8 @@ extends Node
 ## Чеклист-задания Долины (город, зона за Room5): постоянная строка «⚑ Задание»
 ## на HUD ведёт игрока по городским урокам — Гильдия → чертёж (станок на заставе)
 ## → фундамент → замок → шахта → дом+казарма → стены → верфь → пережить ночь →
-## Врата (осмотр руины → блок «Элементы: N/3», §5.27). Одна цепочка, шаги
-## последовательные; порядок ДОБЫЧИ элементов внутри блока — любой (считает
-## [GateRuin], мы только читаем счёт).
+## Врата (осмотр руины → блок «Накопи плату: казна/цена», §5.27). Одна цепочка,
+## шаги последовательные; оплату принимает [GateRuin], мы только читаем казну.
 ##
 ## Механика: ПОЛЛИНГ состояния мира (Timer 0.5с) — условия читаются из групп/
 ## флагов, никакой подписки на десяток сигналов. Шаг выполнен → плашка
@@ -61,11 +60,12 @@ func _ready() -> void:
 		{"text": "Древние Врата в северной стене — подведи башню, осмотри руину",
 			"done": func() -> bool: return _gate_examined()},
 		{"text_fn": func() -> String:
-				return "Вставь элементы в гнёзда Врат: %d/3" % _gate_elements(),
+				return "Накопи плату за проход: %d🥉 в казне из %d🥉 — кликни по Вратам" \
+					% [_bank_value(), _gate_price()],
 			"done": func() -> bool: return _gate_awake()},
-		{"text": "⚔ Срази СТРАЖА ВРАТ — путь наружу за ним",
+		{"text": "⚔ Грохот поднял нежить всей долины! Срази СТРАЖА ВРАТ",
 			"done": func() -> bool: return _gate_open()},
-		{"text": "Врата открыты! Веди башню в проём — прочь из долины",
+		{"text": "Врата открыты! Веди башню в проём — домой, к подземной столице",
 			"done": func() -> bool: return _won},
 	]
 	EventBus.day_phase_changed.connect(_on_day_phase)
@@ -164,9 +164,14 @@ func _gate_ruin() -> GateRuin:
 	return get_tree().get_first_node_in_group(GateRuin.GROUP) as GateRuin
 
 
-func _gate_elements() -> int:
+func _gate_price() -> int:
 	var gate := _gate_ruin()
-	return 0 if gate == null else gate.elements_count()
+	return 0 if gate == null else gate.price()
+
+
+func _bank_value() -> int:
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
+	return 0 if bank == null else int(bank.call(&"get_gold"))
 
 
 func _gate_awake() -> bool:
@@ -179,10 +184,10 @@ func _gate_open() -> bool:
 	return gate != null and gate.is_open()
 
 
-## Башня подъехала к руине Врат (XZ ≤ 16м); вставленный элемент — тем более
+## Башня подъехала к руине Врат (XZ ≤ 16м); оплата состоялась — тем более
 ## осмотр состоялся (каскад не залипнет, если игрок перевыполнил вперёд).
 func _gate_examined() -> bool:
-	if _gate_elements() > 0 or _gate_awake():
+	if _gate_awake():
 		return true
 	var gate := _gate_ruin()
 	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D

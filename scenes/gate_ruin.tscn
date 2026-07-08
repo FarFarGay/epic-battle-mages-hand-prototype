@@ -1,8 +1,7 @@
-[gd_scene load_steps=18 format=3]
+[gd_scene load_steps=17 format=3]
 
 [ext_resource type="Script" path="res://scripts/gate_ruin.gd" id="1_gateruin"]
 [ext_resource type="Script" path="res://scripts/blocker.gd" id="2_blocker"]
-[ext_resource type="PackedScene" uid="uid://bwxsmk0cblcyy" path="res://scenes/relay_socket.tscn" id="3_socket"]
 [ext_resource type="PackedScene" path="res://scenes/enemy_mech.tscn" id="4_mech"]
 
 [sub_resource type="StandardMaterial3D" id="Mat_pillar"]
@@ -58,7 +57,6 @@ size = Vector3(2.2, 5, 2.2)
 
 [node name="GateRuin" type="Node3D"]
 script = ExtResource("1_gateruin")
-socket_paths = Array[NodePath]([NodePath("Socket1"), NodePath("Socket2"), NodePath("Socket3")])
 rune_paths = Array[NodePath]([NodePath("Slab/Rune1"), NodePath("Slab/Rune2"), NodePath("Slab/Rune3")])
 mech_scene = ExtResource("4_mech")
 
@@ -118,12 +116,3 @@ mesh = SubResource("Box_lintel")
 transform = Transform3D(0.906308, 0, 0.422618, 0, 1, 0, -0.422618, 0, 0.906308, -3.6, 0.7, 1.2)
 material_override = SubResource("Mat_pillar")
 mesh = SubResource("Box_debris")
-
-[node name="Socket1" parent="." instance=ExtResource("3_socket")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0, 3.5)
-
-[node name="Socket2" parent="." instance=ExtResource("3_socket")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 4.2)
-
-[node name="Socket3" parent="." instance=ExtResource("3_socket")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0, 3.5)

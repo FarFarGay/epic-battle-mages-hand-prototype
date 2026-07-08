@@ -143,6 +143,8 @@ enum DayNight { DAY, NIGHT }
 @export var day_warband_spawn_interval: float = 12.0
 ## Ночь: размер штурм-банды (осада с 1 фронта).
 @export var night_assault_size: int = 120
+## Финальная осада (оплата Врат): размер банды С КАЖДОЙ живой зоны.
+@export var final_siege_band_size: int = 30
 ## Телеграф штурма: ТОНКАЯ мигающая дуга по КРАЮ зоны строительства (radius =
 ## Camp.build_radius), со стороны фронта. Появляется в момент штурма и мигает
 ## ВСЁ ВРЕМЯ, пока волна не войдёт в зону строительства (иначе можно пропустить).
@@ -163,6 +165,8 @@ var _warbands: Array[SkeletonWarband] = []
 var _warband_spawn_cd: float = 0.0
 ## Штурм-банда спавнится ОДИН раз за ночь. Сбрасывается на день.
 var _night_assault_done: bool = false
+## Финальная осада (оплата Врат) — одноразовая на заход.
+var _final_siege_done: bool = false
 ## Дуги-телеграфы штурма: ПО ОДНОЙ на каждую штурм-банду (несколько фронтов →
 ## несколько дуг). Элемент — Dictionary {warband, mesh, mat}. Каждая мигает, пока
 ## ЕЁ банда не войдёт в зону строительства (или не будет выбита). Фаза мигания общая.
@@ -614,15 +618,20 @@ func _do_assault(size: int, label: String) -> void:
 	var origin := _roll_warband_origin()
 	if origin == Vector3.INF:
 		return
+	_assault_from(origin, size, target, label)
+
+
+## Штурм-банда из КОНКРЕТНОЙ точки + её личная дуга-телеграф (мульти-фронт:
+## дуги других банд не трогаем). Общее ядро ночного штурма и финальной осады.
+func _assault_from(origin: Vector3, size: int, target: Node3D, label: String) -> SkeletonWarband:
 	var wb := _spawn_warband_at(origin, size, SkeletonWarband.Mode.ASSAULT, target)
 	if wb == null:
-		return
+		return null
 	if debug_log and LogConfig.master_enabled:
 		print("[WaveDirector] %s: штурм-банда (%d) с фронта" % [label, size])
 	var center: Vector3 = _assault_zone_center()
 	if center == Vector3.INF:
-		return
-	# Своя дуга на ЭТУ банду — не трогаем дуги других фронтов.
+		return wb
 	var mesh := _spawn_assault_telegraph(center, _assault_zone_radius(), origin)
 	if mesh != null:
 		_telegraphs.append({
@@ -630,6 +639,37 @@ func _do_assault(size: int, label: String) -> void:
 			"mesh": mesh,
 			"mat": mesh.material_override as StandardMaterial3D,
 		})
+	return wb
+
+
+## ФИНАЛЬНАЯ ОСАДА (оплата Врат, финал акта): грохот механизма поднимает
+## нежить всей долины — по штурм-банде с КАЖДОЙ живой зоны ОДНОВРЕМЕННО,
+## у каждой своя дуга-телеграф. «Большая волна со всех сторон» на дуэль
+## с мехом-стражем. Одноразовая (повторный вызов — no-op).
+func launch_final_siege() -> void:
+	if _final_siege_done:
+		return
+	var target := _resolve_assault_target()
+	if target == null:
+		# Замка нет (разрушен к моменту оплаты) — финал всё равно идёт: цель = башня.
+		var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
+		if tower != null and tower.is_in_group(Enemy.TARGET_GROUP):
+			target = tower
+	if target == null or _spawner == null:
+		return
+	_final_siege_done = true
+	var launched: int = 0
+	for zone: SpawnZone in _spawner.get_zones():
+		if not is_instance_valid(zone) or zone.waves_left() <= 0:
+			continue
+		var origin := _pick_safe_point_in_zone(zone)
+		if _point_in_dungeon(origin):
+			continue
+		origin.y = _spawner.spawn_y
+		if _assault_from(origin, final_siege_band_size, target, "ФИНАЛ") != null:
+			launched += 1
+	if debug_log and LogConfig.master_enabled:
+		print("[WaveDirector] финальная осада: %d фронтов по %d" % [launched, final_siege_band_size])
 
 
 ## Поднять ТОНКУЮ дугу-телеграф по краю зоны строительства (radius): сектор
