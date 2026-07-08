@@ -64,6 +64,10 @@ const ABILITY_META: Dictionary = {
 		"name": "Залп", "color": Color(0.62, 0.68, 0.78),
 		"category_str": "MAGIC", "type": 5,
 	},
+	&"harpoon": {
+		"name": "Гарпун", "color": Color(0.7, 0.85, 0.9),
+		"category_str": "MAGIC", "type": 6,
+	},
 }
 
 ## Названия equip-actions в InputMap, в порядке слотов 1..5. Используется
@@ -80,7 +84,7 @@ const SLOT_EQUIP_ACTIONS: Array[StringName] = [
 ## Стартовая раскладка слотов. Игрок может пересобрать через drag-and-drop.
 ## Сохранение в файл — TODO (пока сбрасывается на дефолт при рестарте).
 const ACTION_BAR_DEFAULT_ASSIGNMENT: Array[StringName] = [
-	&"fireball", &"firestorm", &"mine_scatter", &"frost", &"spark", &"arbalest_volley",
+	&"fireball", &"firestorm", &"mine_scatter", &"frost", &"spark", &"arbalest_volley", &"harpoon",
 ]
 
 ## Super — фиксированный 6-й слот, не draggable. Имеет свою клавишу (E,
@@ -1773,6 +1777,9 @@ const SPELL_SHOP_ITEMS := [
 	{"id": &"fireball", "cost": {ResourcePile.ResourceType.GOLD: 5}},
 	{"id": &"firestorm", "cost": {ResourcePile.ResourceType.GOLD: 8}},
 	{"id": &"mine_scatter", "cost": {ResourcePile.ResourceType.GOLD: 6}},
+	# Гарпун сейчас unlocked_by_default (плейтест) — карточка покажет «Куплено»;
+	# после выключения дефолта станет обычным товаром.
+	{"id": &"harpoon", "cost": {ResourcePile.ResourceType.GOLD: 6}},
 ]
 var _spell_shop: Panel = null
 var _spell_shop_list: VBoxContainer = null

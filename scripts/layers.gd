@@ -90,6 +90,13 @@ const NAV_CARVE := 1 << 12          # 4096 — bit 12 = layer 13
 ## потому «разрушается всем кроме искры» выходит без единого фильтра-исключения.
 const DESTRUCTIBLE_DECK := 1 << 13  # 8192 — bit 13 = layer 14
 
+## Невидимый барьер ФЕЙКОВОЙ пропасти (ChasmBarrier: пол сплошной, дыра —
+## визуал). Отдельный слой ОТ стен (2026-07-07): барьер держит БАШНЮ и
+## СКЕЛЕТОВ (edge геймплея), но ПРЕДМЕТЫ проходят — мост несут/кладут ПОПЕРЁК
+## пропасти, гарпун летит через. Когда предметы получили стены в маску
+## (MASK_ALL_GAMEPLAY 575), барьер на 544 стал бить мост об невидимую стену.
+const CHASM_BARRIER := 1 << 14      # 16384 — bit 14 = layer 15
+
 # Композитные маски — собирай через OR из именованных битов.
 
 ## Hand cursor raycast: пол + предметы + смонтированные модули. Под цели
@@ -154,7 +161,7 @@ const MASK_DEATH_BLAST := ENEMIES | CAMP_OBSTACLE | PALISADE_OBSTACLE | ACTORS  
 ## физически отбрасывает соседа через get_slide_collision) не работает,
 ## так как slide-collision между скелетами не регистрируется. Если
 ## понадобится восстановить — paттерн group+dist push, как Slam-fallback.
-const MASK_SKELETON := TERRAIN | ITEMS | ACTORS | CAMP_OBSTACLE | WALL_GATE_BLOCK     # 2087
+const MASK_SKELETON := TERRAIN | ITEMS | ACTORS | CAMP_OBSTACLE | WALL_GATE_BLOCK | CHASM_BARRIER     # 18471
 
 ## Shatter-фрагменты: видят только пол.
 const MASK_TERRAIN_ONLY := TERRAIN                              # 1

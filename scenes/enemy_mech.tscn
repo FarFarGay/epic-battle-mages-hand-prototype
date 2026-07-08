@@ -12,7 +12,7 @@ size = Vector3(2.2, 4.2, 2.2)
 
 [node name="EnemyMech" type="CharacterBody3D"]
 collision_layer = 16
-collision_mask = 2087
+collision_mask = 18471
 script = ExtResource("1")
 hp = 400.0
 move_speed = 7.0

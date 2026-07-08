@@ -153,3 +153,4 @@ gnome_alarm={
 3d_physics/layer_12="WallGateBlock"
 3d_physics/layer_13="NavCarve"
 3d_physics/layer_14="DestructibleDeck"
+3d_physics/layer_15="ChasmBarrier"
