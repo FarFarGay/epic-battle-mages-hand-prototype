@@ -61,8 +61,8 @@
 [ext_resource type="PackedScene" path="res://scenes/keystone_element.tscn" id="59_keystone"]
 [ext_resource type="PackedScene" path="res://scenes/star_crystal.tscn" id="60_starcrystal"]
 [ext_resource type="Script" uid="uid://bi5ysv32a5q33" path="res://scripts/gnome_cage.gd" id="61_gnomecage"]
-[ext_resource type="Script" path="res://scripts/quest_marker.gd" id="62_questmarker"]
-[ext_resource type="Script" path="res://scripts/harpoon_module.gd" id="63_harpoonmodule"]
+[ext_resource type="Script" uid="uid://cj3u1rkiy7qxw" path="res://scripts/quest_marker.gd" id="62_questmarker"]
+[ext_resource type="Script" uid="uid://b2w5h5nbg7ckg" path="res://scripts/harpoon_module.gd" id="63_harpoonmodule"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -588,7 +588,6 @@ script = ExtResource("42_grid")
 
 [node name="Tower" parent="." unique_id=1617488261 groups=["skeleton_target"] instance=ExtResource("1")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 3, 0)
-passive_mana_regen = false
 
 [node name="CameraRig" parent="." unique_id=1454102563 instance=ExtResource("3")]
 target_path = NodePath("../Tower")
@@ -675,8 +674,6 @@ zone_size = Vector3(6, 8, 10)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -26, 2, 0)
 script = ExtResource("47_tuthint")
 text = "⚙ Аппарат гномов! Схвати рукой (ЛКМ) и поднеси к башне — встанет на корпус"
-duration = 6.0
-zone_size = Vector3(8, 8, 8)
 
 [node name="HintCage" type="Area3D" parent="TutorialHints" unique_id=911200041]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 2, 0)
@@ -856,7 +853,6 @@ map_half_extent = 150.0
 
 [node name="WaveDirector" type="Node" parent="." unique_id=911000005]
 script = ExtResource("45_wavedir")
-autostart_on_match = false
 spawner_path = NodePath("../EnemySpawner")
 skeleton_scene = ExtResource("22_skel")
 giant_scene = ExtResource("30_giant")
@@ -864,6 +860,7 @@ background_initial_count = 0
 day_warband_count = 1
 day_warband_size = 12
 night_assault_size = 40
+autostart_on_match = false
 
 [node name="ValleyQuests" type="Node" parent="." unique_id=911000006]
 script = ExtResource("52_valleyquests")
@@ -1295,8 +1292,3 @@ mesh = SubResource("Sph_foliage")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 85, 3, 53)
 room_center = Vector2(68, 97.5)
 room_size = Vector2(100, 110)
-
-
-
-
-
