@@ -18,7 +18,6 @@
 [ext_resource type="PackedScene" path="res://scenes/win_overlay.tscn" id="16_win"]
 [ext_resource type="PackedScene" path="res://scenes/defeat_overlay.tscn" id="17_defeat"]
 [ext_resource type="PackedScene" path="res://scenes/boss_warning_overlay.tscn" id="18_boss"]
-[ext_resource type="PackedScene" path="res://scenes/day_night_overlay.tscn" id="19_daynight"]
 [ext_resource type="PackedScene" uid="uid://startmenu001" path="res://scenes/start_menu.tscn" id="20_startmenu"]
 [ext_resource type="Script" uid="uid://c5yv0cj4x0ued" path="res://scripts/room_door.gd" id="21_door"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="22_skel"]
@@ -606,8 +605,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.34867, 2.5, 0)
 [node name="DefeatOverlay" parent="." unique_id=2074978692 instance=ExtResource("17_defeat")]
 
 [node name="BossWarningOverlay" parent="." unique_id=320482772 instance=ExtResource("18_boss")]
-
-[node name="DayNightOverlay" parent="." unique_id=1923067689 instance=ExtResource("19_daynight")]
 
 [node name="SkeletonFiller" type="Node3D" parent="." unique_id=1193258852]
 script = ExtResource("23_filler")
@@ -1298,6 +1295,7 @@ mesh = SubResource("Sph_foliage")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 85, 3, 53)
 room_center = Vector2(68, 97.5)
 room_size = Vector2(100, 110)
+
 
 
 

@@ -360,11 +360,6 @@ func _build() -> void:
 				var o := off as Vector2i
 				_box(Vector3(s * 0.96, 1.4, s * 0.96), Vector3(o.x * s, 0.7, o.y * s), mat, true)
 	_build_collider()  # коллайдер по футпринту (после очистки детей в начале _build)
-	# Перестройка снесла детей → стопка монет шахты пересоздаётся под текущее значение.
-	_stack_root = null
-	_stack_coins_shown = -1
-	if _role == &"mine":
-		_refresh_stack_visual()
 
 
 ## Коллайдер-бокс на каждую клетку футпринта (StaticBody = сам узел). Локальные позиции по
@@ -449,13 +444,13 @@ const _FLASH_COLOR := Color(1.0, 0.4, 0.3)
 ## Hit-flash на приём урона (универсальный FX, как у врагов): здание МИГАЕТ —
 ## двойной пульс вспышка→притух→вспышка→погас (~0.35с; фидбек 2026-07-07:
 ## одиночное затухание не читалось как «мигание») + крошка-пыль.
+## Фидбек 2026-07-08 «часть построек не мигает»: меши собираются РЕКУРСИВНО
+## (вложенные визуалы не мигали), и мигает сам ЦВЕТ (albedo → красный) —
+## emission на дневном солнце почти не читался.
 func _flash_hit() -> void:
 	var mats: Array = []
-	for ch in get_children():
-		var mi := ch as MeshInstance3D
-		if mi == null:
-			continue
-		var mat := mi.material_override as StandardMaterial3D
+	for mi in find_children("*", "MeshInstance3D", true, false):
+		var mat := (mi as MeshInstance3D).material_override as StandardMaterial3D
 		if mat == null or mats.has(mat):
 			continue
 		if mat.emission_enabled and not mat.emission.is_equal_approx(_FLASH_COLOR):
@@ -467,9 +462,17 @@ func _flash_hit() -> void:
 		var mat := m as StandardMaterial3D
 		mat.emission_enabled = true
 		mat.emission = _FLASH_COLOR
+		# База albedo для возврата: пишем ЕДИНОЖДЫ (ретриггер во время гашения
+		# не должен захватить подкрашенный красным цвет как «базу»).
+		if not _flash_base_albedo.has(mat):
+			_flash_base_albedo[mat] = mat.albedo_color
 	var apply := func(v: float) -> void:
+		var k: float = clampf(v / 2.4, 0.0, 1.0) * 0.8
 		for m in mats:
-			(m as StandardMaterial3D).emission_energy_multiplier = v
+			var mat := m as StandardMaterial3D
+			mat.emission_energy_multiplier = v
+			var base: Color = _flash_base_albedo.get(mat, mat.albedo_color)
+			mat.albedo_color = base.lerp(Color(1.0, 0.22, 0.18), k)
 	if _flash_tween != null and _flash_tween.is_valid():
 		_flash_tween.kill()
 	_flash_tween = create_tween()
@@ -486,6 +489,8 @@ func _flash_hit() -> void:
 
 
 var _flash_tween: Tween = null
+## mat → базовый albedo (до первого флеша) — точный возврат цвета.
+var _flash_base_albedo: Dictionary = {}
 
 
 var _hit_dust_msec: int = 0
@@ -1521,122 +1526,9 @@ func _mana_mult(st: Dictionary) -> float:
 	return mult * _full_quarter_mult(st)
 
 
-## --- Clash-сбор: стопка добычи на крыше шахты (2026-07-07) ---
-## Кап стопки в бронзовом эквиваленте; полна → добыча встаёт до сбора.
-const MINE_STACK_CAP_BRONZE := 60
-## Радиус автосбора башней (XZ): подъехал — стопка сама всасывается.
-const MINE_COLLECT_RADIUS := 4.5
-const COIN_ORB_SCENE := preload("res://scenes/xp_orb.tscn")
-## Несобранная добыча (бронза). Копится в _tick_mine, забирается _collect_stack.
-var _stack_bronze: int = 0
-var _stack_root: Node3D = null
-var _stack_coins_shown: int = -1
-
-
-## Бронзовый эквивалент монеты номинала (двор чеканит серебро → ×10 ценность).
-func _coin_bronze_value(coin_type: int) -> int:
-	match coin_type:
-		ResourcePile.ResourceType.GOLD:
-			return 100
-		ResourcePile.ResourceType.SILVER:
-			return 10
-		_:
-			return 1
-
-
-## Сбор стопки: башня вплотную (MINE_COLLECT_RADIUS) или ЛКМ-клик по шахте.
-## ПОЛНЫЙ КВАРТАЛ (все грани, включая дом) = АВТОМАТИЗАЦИЯ (юзер 2026-07-08):
-## стопка улетает в казну сама пачками — ручной сбор остаётся этапом
-## неполного квартала, полный сет освобождает внимание игрока.
-const AUTO_COLLECT_AT_BRONZE := 24
-
-func _tick_mine_collect() -> void:
-	if _stack_bronze <= 0:
-		return
-	var collect: bool = _clicked_on_self()
-	if not collect and _quarter_was_full and _stack_bronze >= AUTO_COLLECT_AT_BRONZE:
-		collect = true  # полный квартал: веер монет летит к башне сам
-	if not collect:
-		var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
-		if tower != null and is_instance_valid(tower):
-			var dx: float = tower.global_position.x - global_position.x
-			var dz: float = tower.global_position.z - global_position.z
-			collect = dx * dx + dz * dz <= MINE_COLLECT_RADIUS * MINE_COLLECT_RADIUS
-	if collect:
-		_collect_stack()
-
-
-## Забрать стопку: веер монет-орбов летит к башне, каждый на arrival кладёт
-## монеты в казну (попап «+N🥉» и салют на золотую — штатные у XpOrb).
-func _collect_stack() -> void:
-	var total: int = _stack_bronze
-	if total <= 0:
-		return
-	_stack_bronze = 0
-	_refresh_stack_visual()
-	var root: Node = get_tree().current_scene
-	var tower := get_tree().get_first_node_in_group(&"tower")
-	var ctr: Vector3 = to_global(_footprint_center())
-	if root == null or tower == null or not is_instance_valid(tower):
-		# Фоллбек без сцены/башни: кредит напрямую, без полёта.
-		var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
-		if bank != null and bank.has_method(&"add_coin"):
-			bank.call(&"add_coin", ResourcePile.ResourceType.BRONZE, total)
-		return
-	var n: int = clampi(total / 10 + 1, 2, 6)
-	var base: int = total / n
-	var rem: int = total % n
-	for i in range(n):
-		var share: int = base + (1 if i < rem else 0)
-		if share <= 0:
-			continue
-		var orb := COIN_ORB_SCENE.instantiate() as XpOrb
-		if orb == null:
-			continue
-		orb.amount = 0
-		orb.mana_amount = 0.0
-		orb.gold_amount = share
-		orb.position = ctr + Vector3(randf_range(-0.5, 0.5), 2.2 + randf_range(0.0, 0.5), randf_range(-0.5, 0.5))
-		root.add_child(orb)
-		# Форс-магнит к башне сразу: монеты веером стягиваются, не ждут касания.
-		if orb.has_method(&"_activate_magnet_to_tower"):
-			orb.call(&"_activate_magnet_to_tower", tower)
-	AoeVisual.spawn_pulse_sparks(root, ctr + Vector3.UP * 2.2, 1.2, 10.0)
-
-
-## Стопка монет на крыше: 1 «монета» ≈ 10 бронзы, до 8 в столбике. Перестраиваем
-## только при смене числа монет (не каждый тик).
-func _refresh_stack_visual() -> void:
-	var coins: int = clampi(int(ceil(float(_stack_bronze) / 10.0)), 0, 8)
-	if coins == _stack_coins_shown:
-		return
-	_stack_coins_shown = coins
-	if _stack_root != null and is_instance_valid(_stack_root):
-		_stack_root.queue_free()
-	_stack_root = null
-	if coins <= 0:
-		return
-	_stack_root = Node3D.new()
-	add_child(_stack_root)
-	var gold := _solid(Color(1.0, 0.85, 0.35), 0.5, 0.35)
-	gold.emission_enabled = true
-	gold.emission = Color(1.0, 0.8, 0.3)
-	gold.emission_energy_multiplier = 1.2
-	var ctr: Vector3 = _footprint_center()
-	for i in range(coins):
-		var c := MeshInstance3D.new()
-		var cm := CylinderMesh.new()
-		cm.top_radius = 0.28
-		cm.bottom_radius = 0.28
-		cm.height = 0.09
-		c.mesh = cm
-		c.material_override = gold
-		c.position = ctr + Vector3(randf_range(-0.06, 0.06), 2.25 + float(i) * 0.11, randf_range(-0.06, 0.06))
-		c.rotation.y = randf() * TAU
-		_stack_root.add_child(c)
-
-
-## Шаг добычи: шахта копит добычу СТОПКОЙ на крыше (Clash-сбор). Каждый ТИП сапорта в зоне крутит СВОЮ ось:
+## Шаг добычи: монеты капают В КАЗНУ САМИ (стопка/клик-сбор ВЫПИЛЕНЫ по
+## фидбеку 2026-07-08 «вернуть как было — так проще»; попап «+N» и салют на
+## золотую остались). Каждый ТИП сапорта в зоне крутит СВОЮ ось:
 ## ПЛАВИЛЬНЯ → ×СКОРОСТЬ темпа; ДОМ → ×ОБЪЁМ монет за выплату; ДВОР → НОМИНАЛ монеты на тир выше.
 ## Заполнение зоны на 100% → вспышка «собран».
 func _tick_mine(delta: float) -> void:
@@ -1645,9 +1537,6 @@ func _tick_mine(delta: float) -> void:
 	# НАСЕЛЕНИЕ: без укомплектованного слота (Population) шахта ПРОСТАИВАЕТ — не копит/не платит.
 	# Военный приоритет: если солдат столько, что на шахты слотов не осталось — добыча встаёт.
 	if Population != null and not Population.is_staffed(self):
-		return
-	# Стопка полна — добыча встаёт (Clash: полный коллектор стоит, ЗАБЕРИ).
-	if _stack_bronze >= MINE_STACK_CAP_BRONZE:
 		return
 	var st := _quarter_status()
 	var roles: Dictionary = st["roles"]
@@ -1670,12 +1559,17 @@ func _tick_mine(delta: float) -> void:
 		return
 	_mine_accum -= float(whole)
 	var pay: int = whole * volume
-	# CLASH-СБОР (2026-07-07, «нет тактильности»): добыча НЕ капает в казну сама —
-	# копится ВИДИМОЙ стопкой монет на крыше (бронзовый эквивалент номинала; двор
-	# сохраняет своё ×10 через ценность). Забираешь башней вплотную или ЛКМ-кликом
-	# (_tick_mine_collect) — веер монет-орбов летит к башне, казна звенит попапами.
-	_stack_bronze = mini(_stack_bronze + pay * _coin_bronze_value(coin), MINE_STACK_CAP_BRONZE)
-	_refresh_stack_visual()
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
+	if bank == null or not bank.has_method(&"add_coin"):
+		return
+	var gold_before: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD)) if bank.has_method(&"get_coin") else 0
+	bank.call(&"add_coin", coin, pay)  # монета выбранного номинала в казну
+	_recv_amount += pay                # копим для всплывашки «+N»
+	_recv_coin = coin                  # каким номиналом платим (для всплывашки)
+	if bank.has_method(&"get_coin"):
+		var gold_after: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD))
+		for _i in range(gold_after - gold_before):
+			_spawn_firework(ResourcePile.ResourceType.GOLD)  # салют на каждую новую золотую
 
 
 ## Разгрузка трюма: башня в радиусе и трюм не пуст → сдаём ВСЁ ОДНОМОМЕНТНО.
@@ -2108,7 +2002,6 @@ func _process(delta: float) -> void:
 		_tick_institute(delta)
 	if _role == &"mine":
 		_tick_mine(delta)
-		_tick_mine_collect()  # сбор стопки: башня вплотную или ЛКМ-клик
 		# Live-обновление индикатора осей, пока наведено (hover) — поспел за достройкой сапорта.
 		if _quarter_indicator != null and is_instance_valid(_quarter_indicator) and _quarter_indicator.visible:
 			_refresh_quarter_indicator()
@@ -2513,20 +2406,16 @@ func _refresh_mine_indicator() -> void:
 	var last_row: String = "≈ %s %s/сек" % [String.num(rate, 1), _coin_emoji(coin)]
 	if not staffed:
 		last_row = "🚨 ТРЕВОГА — простой" if (Population != null and Population.alarm_active) else "⏸ Нет населения — простой"
-	# Стопка на крыше: сколько лежит несобранного (Clash-сбор).
-	var stack_row: String = "💰 Стопка      %d🥉 из %d  (подъедь/кликни)" % [_stack_bronze, MINE_STACK_CAP_BRONZE] \
-		if _stack_bronze > 0 else "💰 Стопка      —  (копится)"
 	_apply_indicator_rows([
 		"🔥 Скорость   %s" % speed_val,
 		"🪙 Номинал    %s" % mint_val,
 		"🏠 Объём       %s" % ("×%d" % MINE_VOLUME_MULT if vol_on else "—  (дом гномов)"),
 		"⚡ Квартал     %s" % quarter_val,
-		stack_row,
 		last_row,
 	])
-	if _ind_rows.size() >= 6 and is_instance_valid(_ind_rows[5]):
+	if _ind_rows.size() >= 5 and is_instance_valid(_ind_rows[4]):
 		var col: Color = Color(1.0, 0.5, 0.4) if not staffed else Color(1.0, 0.9, 0.4)
-		(_ind_rows[5] as Label).add_theme_color_override(&"font_color", col)
+		(_ind_rows[4] as Label).add_theme_color_override(&"font_color", col)
 
 
 ## Строки плашки КАЗАРМЫ: «Гарнизон живых/кап» + разбивка оси гарнизона (база+бараки) + снабжение пула.

@@ -63,6 +63,10 @@ const DROP_GRAVITY := 25.0
 ## порог с запасом; мех рвёт всегда — apex непротягиваем, см. _hook).
 const ROPE_BREAK_MASS := 12.0
 
+## Боевая высота полёта: стрела, выпущенная с крыши (дуло турели), плавно
+## снижается к ней в FLY (NAN = лететь на высоте старта, как раньше).
+var descend_to_y: float = NAN
+
 var _tower: Node3D = null
 var _effects_root: Node = null
 var _dir: Vector3 = Vector3.FORWARD
@@ -194,6 +198,9 @@ func _physics_process(delta: float) -> void:
 func _tick_fly(delta: float) -> void:
 	var prev: Vector3 = global_position
 	global_position += _dir * bolt_speed * delta
+	# Снижение с дула турели к боевой высоте (полого, ~2 горизонтали на 1 вниз).
+	if not is_nan(descend_to_y):
+		global_position.y = move_toward(global_position.y, descend_to_y, bolt_speed * 0.5 * delta)
 	# Стена по пути → пшик, гарпун ломается об камень. Невидимые барьеры
 	# ПРОПАСТЕЙ (chasm_barrier, тот же слой 544) — не стена: пропасть фейковая,
 	# стрела летит НАД ней (пазл храма: стащить плиту-мост с того берега).

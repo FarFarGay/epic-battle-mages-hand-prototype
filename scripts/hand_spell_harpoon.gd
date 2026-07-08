@@ -108,19 +108,22 @@ func _perform_cast() -> void:
 		return
 	_cooldown_remaining = p_cooldown
 
-	# Старт: ИЗ АППАРАТА (он на корпусе — рядом с башней), на высоте полёта у цели.
+	# Старт: из ДУЛА турели на крыше (она повёрнута за рукой — жёлоб смотрит
+	# в цель). Стрела вылетает сверху и СНИЖАЕТСЯ к боевой высоте по пути
+	# (HarpoonBolt.descend_to_y) — сканы предметов сферические, у земли.
+	var muzzle: Vector3 = module.global_position \
+		- module.global_basis.z * 0.9 + Vector3.UP * 0.75
 	var flight_y: float = target_pos.y + flight_height
-	var start: Vector3 = Vector3(module.global_position.x, flight_y, module.global_position.z) \
-		+ dir.normalized() * 1.2
 	var bolt := HarpoonBolt.new()
 	bolt.damage = p_damage
 	bolt.max_range = p_range
 	bolt.bolt_speed = p_bolt_speed
 	bolt.pull_speed = p_pull_speed
+	bolt.descend_to_y = flight_y
 	_active_bolt = bolt
 	_effects_root.add_child(bolt)
 	bolt.add_to_group(&"player_projectile")  # мех уклоняется от снарядов игрока
-	bolt.setup(tower as Node3D, start, dir, _effects_root)
+	bolt.setup(tower as Node3D, muzzle, dir, _effects_root)
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Spell:Harpoon] гарпун → (%.1f, %.1f) damage=%.0f" % [target_pos.x, target_pos.z, p_damage])
 	spell_cast.emit(&"harpoon", target_pos)

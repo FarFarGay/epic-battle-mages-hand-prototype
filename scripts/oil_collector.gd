@@ -98,9 +98,17 @@ func _flash_hit() -> void:
 		var mat := m as StandardMaterial3D
 		mat.emission_enabled = true
 		mat.emission = _FLASH_COLOR
+		if not _flash_base_albedo.has(mat):
+			_flash_base_albedo[mat] = mat.albedo_color
+	# Мигает и сам ЦВЕТ (albedo → красный): emission днём не читался (фидбек
+	# 2026-07-08 «замок не получает урон» — получал, но видно не было).
 	var apply := func(v: float) -> void:
+		var k: float = clampf(v / 2.2, 0.0, 1.0) * 0.8
 		for m in mats:
-			(m as StandardMaterial3D).emission_energy_multiplier = v
+			var mat := m as StandardMaterial3D
+			mat.emission_energy_multiplier = v
+			var base: Color = _flash_base_albedo.get(mat, mat.albedo_color)
+			mat.albedo_color = base.lerp(Color(1.0, 0.22, 0.18), k)
 	if _flash_tween != null and _flash_tween.is_valid():
 		_flash_tween.kill()
 	_flash_tween = create_tween()
@@ -110,6 +118,8 @@ func _flash_hit() -> void:
 
 
 var _flash_tween: Tween = null
+## mat → базовый albedo (до первого флеша) — точный возврат цвета.
+var _flash_base_albedo: Dictionary = {}
 
 
 var _hp_max: float = 0.0
