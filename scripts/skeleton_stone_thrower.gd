@@ -141,6 +141,13 @@ var _burst_active: bool = false
 ## Кулдаун панического разряда + флаг «первый удар в окне» (мини-бит крита).
 var _panic_cd: float = 0.0
 var _reload_first_hit: bool = false
+## ЯКОРЬ ГАРПУНА (как у меха, 2026-07-09): верёвка держит — метатель борется,
+## не атакует (окно расстрела), потом ВЫРЫВАЕТСЯ рывком. Болт читает _tether_t.
+var _tether_t: float = 0.0
+var _struggle_vec: Vector3 = Vector3.ZERO
+var _struggle_flip_t: float = 0.0
+## Амплитуда борьбы на привязи (м/с).
+@export var tether_struggle_speed: float = 2.5
 
 ## Выбранная на текущий цикл дистанция выстрела и сторона обхода (+1/-1).
 ## Пересчитываются при каждом входе в APPROACH (после выстрела) → метатель
@@ -392,6 +399,16 @@ func _spawn_one_rock(center: Vector3) -> void:
 ## наказания) и короткий рывок-уворот от снарядов игрока, иначе обычная
 ## ranged-логика (kite → windup → залп). Рывок «хуже гиганта»: см. dodge_*.
 func _ai_step(delta: float) -> void:
+	# ЯКОРЬ ГАРПУНА — верховное состояние: борется на верёвке, не атакует и
+	# не уворачивается (гарантированное окно расстрела); перезарядка в это
+	# время ЗАМИРАЕТ (окна складываются). Таймер вышел → вырывается рывком.
+	if _tether_t > 0.0:
+		_tether_t -= delta
+		if _tether_t <= 0.0:
+			_break_free()
+		else:
+			_tick_struggle(delta)
+		return
 	# Перезарядка: столбом, без уворота — ритм «нагрелся → залп → остыл».
 	if _reload_t > 0.0:
 		_reload_t -= delta
@@ -435,6 +452,35 @@ func _ai_step(delta: float) -> void:
 	super._ai_step(delta)
 
 
+## Гарпунная ПРИВЯЗЬ (зовёт HarpoonBolt при зацепе — duck-typing, как у меха).
+func set_tethered(duration: float) -> void:
+	_tether_t = maxf(_tether_t, duration)
+	_dash_remaining = 0.0  # активный уворот обрывается — верёвка дёрнула
+	_struggle_flip_t = 0.0
+
+
+## Борьба на верёвке: рывочки в случайные стороны — живой, но обездвиженный.
+func _tick_struggle(delta: float) -> void:
+	_struggle_flip_t -= delta
+	if _struggle_flip_t <= 0.0:
+		_struggle_flip_t = randf_range(0.2, 0.4)
+		var ang: float = randf() * TAU
+		_struggle_vec = Vector3(cos(ang), 0.0, sin(ang)) * tether_struggle_speed
+	velocity.x = _struggle_vec.x
+	velocity.z = _struggle_vec.z
+
+
+## ВЫРВАЛСЯ: рывок в сторону (реюз dodge-дэша), болт рвёт канат по _tether_t.
+func _break_free() -> void:
+	var ang: float = randf() * TAU
+	_dash_vec = Vector3(cos(ang), 0.0, sin(ang)) * dodge_dash_speed * 1.5
+	_dash_remaining = dodge_dash_duration * 1.5
+	velocity.x = _dash_vec.x
+	velocity.z = _dash_vec.z
+	EventBus.camera_shake.emit(0.2, global_position)
+	EventBus.tutorial_hint.emit("⛓ Метатель ВЫРВАЛСЯ — верёвка порвана!", 3.0)
+
+
 ## Очередь: мини-прогрев корпуса → burst_count крупных настильных камней с
 ## интервалом, каждый наведён на ТЕКУЩУЮ позицию башни (очередь «ведёт» цель).
 ## Гарды is_instance_valid после каждого await — метатель мог умереть в очереди.
@@ -447,8 +493,8 @@ func _fire_burst() -> void:
 	if not is_instance_valid(self):
 		return
 	for i in burst_count:
-		if not is_instance_valid(self) or _reload_t > 0.0:
-			break  # залп/перезарядка перебили очередь
+		if not is_instance_valid(self) or _reload_t > 0.0 or _tether_t > 0.0:
+			break  # залп/перезарядка/якорь гарпуна перебили очередь
 		_spawn_burst_bolt()
 		await get_tree().create_timer(burst_interval).timeout
 		if not is_instance_valid(self):

@@ -359,13 +359,13 @@ func _hook(target: Node3D) -> void:
 	# Тяжёлому — небольшой чип-урон за попадание (гарпун всё-таки железо).
 	if _is_heavy(target) and target.has_method(&"take_damage"):
 		target.call(&"take_damage", damage * 0.35)
-	# МЕХ: непротягиваем, но верёвка ДЕРЖИТ его якорем tether_time — окно дуэли.
-	if target.is_in_group(EnemyMech.MECH_GROUP):
+	# ЯКОРНАЯ ЦЕЛЬ (дуэлянты с set_tethered: мех, камнеметатель): непротягиваема,
+	# но верёвка ДЕРЖИТ её tether_time — окно расстрела, потом вырывается.
+	if target.has_method(&"set_tethered"):
 		_state = State.TETHER
 		_tether_t = tether_time
-		if target.has_method(&"set_tethered"):
-			target.call(&"set_tethered", tether_time)
-		EventBus.tutorial_hint.emit("⛓ Страж на привязи — расстреливай, пока не вырвался!", 3.0)
+		target.call(&"set_tethered", tether_time)
+		EventBus.tutorial_hint.emit("⛓ Цель на привязи — расстреливай, пока не вырвалась!", 3.0)
 		return
 	# РАЗРЫВ ПО ВЕСУ: слишком тяжёлая добыча.
 	if target is RigidBody3D and (target as RigidBody3D).mass > ROPE_BREAK_MASS:
