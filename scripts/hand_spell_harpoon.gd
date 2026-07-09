@@ -89,6 +89,7 @@ func _perform_cast() -> void:
 	var p_range: float = float(lvl.get("range", max_range))
 	var p_bolt_speed: float = float(lvl.get("bolt_speed", bolt_speed))
 	var p_pull_speed: float = float(lvl.get("pull_speed", pull_speed))
+	var p_tether: float = float(lvl.get("tether_time", 4.0))
 
 	var tower := _coord.find_tower()
 	if tower == null:
@@ -119,6 +120,7 @@ func _perform_cast() -> void:
 	bolt.max_range = p_range
 	bolt.bolt_speed = p_bolt_speed
 	bolt.pull_speed = p_pull_speed
+	bolt.tether_time = p_tether
 	bolt.descend_to_y = flight_y
 	bolt.anchor_node = module  # верёвка из дула турели, поворачивается с ней
 	_active_bolt = bolt

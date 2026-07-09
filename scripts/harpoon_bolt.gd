@@ -62,10 +62,11 @@ const DROP_GRAVITY := 25.0
 ## Порог веса: RigidBody тяжелее — верёвка РВЁТСЯ при зацепе (предметы 3-4,
 ## порог с запасом; мех рвёт ПОСЛЕ якоря — apex непротягиваем, см. _hook).
 const ROPE_BREAK_MASS := 12.0
-## ЯКОРЬ на мехе (дуэль, 2026-07-09): верёвка держит apex TETHER_TIME секунд —
-## протянуть нельзя, но на привязи он не стрейфит и не уклоняется
-## (EnemyMech.set_tethered) = заработанное окно для фаерболов. Потом рвётся.
-const TETHER_TIME := 2.5
+## ЯКОРЬ на мехе (дуэль, 2026-07-09): верёвка держит apex tether_time секунд —
+## гарантированное окно расстрела (мех стоит и борется, не атакует,
+## EnemyMech.set_tethered), потом ВЫРЫВАЕТСЯ рывком — верёвка рвётся.
+## Значение задаёт каталог спелла (harpoon.tether_time), это фолбэк.
+var tether_time: float = 4.0
 
 ## Боевая высота полёта: стрела, выпущенная с крыши (дуло турели), плавно
 ## снижается к ней в FLY (NAN = лететь на высоте старта, как раньше).
@@ -211,13 +212,20 @@ func _physics_process(delta: float) -> void:
 	_tick_rope(delta)
 
 
-## Якорь на мехе: стрела сидит в корпусе, верёвка натянута. Таймер вышел /
-## мех умер / жертва пропала → верёвка рвётся (или тихий отпуск по смерти).
+## Якорь на мехе: стрела сидит в корпусе, верёвка натянута. Источник истины
+## времени — САМ МЕХ (его _tether_t; он замирает в перегреве — окна не
+## рассинхронятся): у меха вышло → верёвка рвётся (мех вырывается рывком на
+## своей стороне). Фолбэк на свой таймер, если жертва не ведёт свой.
 func _tick_tether(delta: float) -> void:
 	if _victim == null or not is_instance_valid(_victim):
 		_release(FADE_TIME_DELIVERED)
 		return
 	global_position = _victim.global_position + Vector3.UP * 1.8
+	var vt: Variant = _victim.get(&"_tether_t")
+	if vt is float:
+		if float(vt) <= 0.0:
+			_snap_rope()
+		return
 	_tether_t -= delta
 	if _tether_t <= 0.0:
 		_snap_rope()
@@ -351,13 +359,13 @@ func _hook(target: Node3D) -> void:
 	# Тяжёлому — небольшой чип-урон за попадание (гарпун всё-таки железо).
 	if _is_heavy(target) and target.has_method(&"take_damage"):
 		target.call(&"take_damage", damage * 0.35)
-	# МЕХ: непротягиваем, но верёвка ДЕРЖИТ его якорем TETHER_TIME — окно дуэли.
+	# МЕХ: непротягиваем, но верёвка ДЕРЖИТ его якорем tether_time — окно дуэли.
 	if target.is_in_group(EnemyMech.MECH_GROUP):
 		_state = State.TETHER
-		_tether_t = TETHER_TIME
+		_tether_t = tether_time
 		if target.has_method(&"set_tethered"):
-			target.call(&"set_tethered", TETHER_TIME)
-		EventBus.tutorial_hint.emit("⛓ Страж на привязи — он не может уклоняться!", 3.0)
+			target.call(&"set_tethered", tether_time)
+		EventBus.tutorial_hint.emit("⛓ Страж на привязи — расстреливай, пока не вырвался!", 3.0)
 		return
 	# РАЗРЫВ ПО ВЕСУ: слишком тяжёлая добыча.
 	if target is RigidBody3D and (target as RigidBody3D).mass > ROPE_BREAK_MASS:

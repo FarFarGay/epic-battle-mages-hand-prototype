@@ -258,8 +258,9 @@ var fog_reveal_radius: float = 12.0
 @export var overheat_crit_mult: float = 1.5
 ## Иммунитет к повторному перегреву ПОСЛЕ выхода (окно нельзя станлочить цепью).
 @export var overheat_immunity: float = 8.0
-## Замедление на гарпунной привязи (доля скорости; стрейф/евейд выключены совсем).
-@export var tether_speed_factor: float = 0.35
+## Амплитуда «борьбы» на гарпунной привязи (м/с): мех дёргается на верёвке,
+## не атакует — гарантированное окно расстрела до вырывания.
+@export var tether_struggle_speed: float = 3.5
 @export_group("Duel: фазы (арка боя)")
 ## Пороги фаз по доле HP: выше phase2_hp — фаза 1 (джеб-ритм), выше
 ## phase3_hp — фаза 2 (капканы+Шквал), ниже — фаза 3 ЯРОСТЬ.
@@ -353,8 +354,11 @@ var _global_action_cd: float = 0.0
 var _overheat_t: float = 0.0
 ## Иммунитет к повторному перегреву (тикает и во время окна).
 var _overheat_immune_t: float = 0.0
-## Остаток гарпунной ПРИВЯЗИ (стрейф/евейд/спринт выключены, ход медленный).
+## Остаток гарпунной ПРИВЯЗИ (мех стоит-борется, не атакует; выход = рывок).
 var _tether_t: float = 0.0
+## Борьба на привязи: текущий вектор дёрганья + таймер смены направления.
+var _struggle_vec: Vector3 = Vector3.ZERO
+var _struggle_flip_t: float = 0.0
 ## Текущая фаза арки (1..3) — переключается по HP, см. _tick_phase.
 var _phase_seen: int = 1
 ## HP на старте (для долей фаз — hp мутирует).
@@ -1115,12 +1119,44 @@ func take_damage(amount: float) -> void:
 
 
 ## Гарпунная ПРИВЯЗЬ (зовёт HarpoonBolt при зацепе): протянуть apex нельзя,
-## но пока верёвка держит — стрейф/евейд/спринт выключены, ход еле-еле.
+## но пока верёвка держит — мех СТОИТ НА РАССТРЕЛЕ: борется с верёвкой
+## (дёрганье), не атакует и не уклоняется. Вырывание гарантировано по
+## таймеру — рывок (_break_free), верёвку рвёт болт (читает наш _tether_t).
 func set_tethered(duration: float) -> void:
 	_tether_t = maxf(_tether_t, duration)
 	_dash_remaining = 0.0  # активный евейд обрывается — верёвка дёрнула
+	_missile_pending = false
+	_spread_active = false
+	_hide_telegraph()
+	_struggle_flip_t = 0.0
 	if debug_log and LogConfig.master_enabled:
 		print("[EnemyMech:%s] на привязи %.1fс" % [name, duration])
+
+
+## Борьба на верёвке: рывочки в случайные стороны (смена направления ~0.3с) —
+## живой, но обездвиженный. Игрок в это время расстреливает (искра/фаербол).
+func _tick_struggle(delta: float) -> void:
+	_struggle_flip_t -= delta
+	if _struggle_flip_t <= 0.0:
+		_struggle_flip_t = randf_range(0.2, 0.4)
+		var ang: float = randf() * TAU
+		_struggle_vec = Vector3(cos(ang), 0.0, sin(ang)) * tether_struggle_speed
+	velocity.x = _struggle_vec.x
+	velocity.z = _struggle_vec.z
+
+
+## ВЫРВАЛСЯ: таймер привязи вышел — мех рвёт верёвку РЫВКОМ в сторону
+## (болт увидит _tether_t<=0 и порвёт канат со своей стороны).
+func _break_free() -> void:
+	var ang: float = randf() * TAU
+	_dash_vec = Vector3(cos(ang), 0.0, sin(ang)) * dash_speed
+	_dash_remaining = dash_duration
+	velocity.x = _dash_vec.x
+	velocity.z = _dash_vec.z
+	EventBus.camera_shake.emit(0.3, global_position)
+	EventBus.tutorial_hint.emit("⛓ Страж ВЫРВАЛСЯ — верёвка порвана!", 3.0)
+	if debug_log and LogConfig.master_enabled:
+		print("[EnemyMech:%s] вырвался с привязи" % name)
 
 
 ## Фаза арки боя по доле HP: 1 джеб-ритм → 2 капканы+Шквал → 3 ЯРОСТЬ.
@@ -1231,7 +1267,16 @@ func _ai_step(delta: float) -> void:
 		if _overheat_t <= 0.0:
 			_set_reactor_hot(false)
 		return
-	_tether_t = maxf(_tether_t - delta, 0.0)
+	# ПРИВЯЗЬ — второе верховное состояние: мех борется с верёвкой (дёрганье),
+	# не атакует и не уклоняется — гарантированное окно расстрела. Таймер
+	# вышел → вырывается рывком (болт рвёт канат, читая наш _tether_t).
+	if _tether_t > 0.0:
+		_tether_t -= delta
+		if _tether_t <= 0.0:
+			_break_free()
+		else:
+			_tick_struggle(delta)
+		return
 	_tick_phase()
 	super._ai_step(delta)
 	var target: Node3D = _resolve_target()
@@ -1246,15 +1291,11 @@ func _ai_step(delta: float) -> void:
 	# Спринт-преследование: дальше kite_max_range мех прибавляет в скорости
 	# (масштабируем APPROACH-velocity базы) — нет «безопасной парковки» за зоной
 	# связки. Близко (strafe/evade) — d мал, условие ложно; в evade — перетрётся ниже.
-	if target != null and pursuit_speed_mult > 1.0 and _tether_t <= 0.0:
+	if target != null and pursuit_speed_mult > 1.0:
 		var d_pursuit: float = global_position.distance_to(target.global_position)
 		if d_pursuit > kite_max_range:
 			velocity.x *= pursuit_speed_mult
 			velocity.z *= pursuit_speed_mult
-	# ПРИВЯЗЬ: гарпунная верёвка держит — ход еле-еле (стрейф/евейд ниже гейтятся).
-	if _tether_t > 0.0:
-		velocity.x *= tether_speed_factor
-		velocity.z *= tether_speed_factor
 	# Редкий парируемый супер-залп (рой ракет в одну точку) — приоритет над комбо
 	# (ставит общий бит, комбо в этот кадр ждёт). Гейт по своему длинному кулдауну.
 	_tick_missile_super(delta, target)
@@ -1274,7 +1315,7 @@ func _ai_step(delta: float) -> void:
 	# таймер-рывком; уже активный рывок не прерываем). Это и делает меха «умнее
 	# скелетов» — он уходит с линии огня.
 	_dodge_cd -= delta
-	if _dash_remaining <= 0.0 and _dodge_cd <= 0.0 and dash_speed > 0.0 and _tether_t <= 0.0:
+	if _dash_remaining <= 0.0 and _dodge_cd <= 0.0 and dash_speed > 0.0:
 		var threat: Node3D = _scan_threat()
 		if threat != null:
 			_start_evade(threat.global_position, target)
@@ -1285,9 +1326,8 @@ func _ai_step(delta: float) -> void:
 		velocity.x = _dash_vec.x
 		velocity.z = _dash_vec.z
 		return
-	# Стрейф вокруг башни в фазах атаки (база там стоит на месте). На привязи
-	# гарпуна кружить нечем — верёвка держит.
-	if (_state == AttackState.WINDUP or _state == AttackState.COOLDOWN) and _tether_t <= 0.0:
+	# Стрейф вокруг башни в фазах атаки (база там стоит на месте).
+	if _state == AttackState.WINDUP or _state == AttackState.COOLDOWN:
 		_strafe_flip_timer -= delta
 		if _strafe_flip_timer <= 0.0:
 			_strafe_flip_timer = strafe_flip_interval

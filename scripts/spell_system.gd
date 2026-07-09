@@ -168,9 +168,10 @@ const SPELL_CATALOG: Dictionary = {
 		"unlock_cost": {},
 		# damage=60 → one-shot скелета/лучника при пробое; тяжёлым чип-урон
 		# 0.35×damage при зацепе (см. HarpoonBolt._hook). range/pull_speed —
-		# рычаги ощущения «выстрелил-притянул».
+		# рычаги ощущения «выстрелил-притянул». tether_time — окно якоря на
+		# МЕХЕ (стоит на расстреле, борется, потом вырывается рывком).
 		"levels": [
-			{"damage": 60.0, "range": 20.0, "cooldown": 2.5, "mana_cost": 25.0, "bolt_speed": 40.0, "pull_speed": 14.0},
+			{"damage": 60.0, "range": 20.0, "cooldown": 2.5, "mana_cost": 25.0, "bolt_speed": 40.0, "pull_speed": 14.0, "tether_time": 4.0},
 		],
 		"upgrade_costs": [],
 	},
