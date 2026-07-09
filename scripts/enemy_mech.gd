@@ -250,6 +250,29 @@ var fog_reveal_radius: float = 12.0
 @export var telemetry_enabled: bool = true
 @export_group("")
 
+@export_group("Duel: окна (2026-07-09)")
+## ПЕРЕГРЕВ (парри-рикошет): отражённая ракета/фаербол попала в меха →
+## реактор открыт: мех стоит, не атакует и не уклоняется overheat_duration сек.
+@export var overheat_duration: float = 3.0
+## Крит-окно: множитель урона по меху в перегреве.
+@export var overheat_crit_mult: float = 1.5
+## Иммунитет к повторному перегреву ПОСЛЕ выхода (окно нельзя станлочить цепью).
+@export var overheat_immunity: float = 8.0
+## Замедление на гарпунной привязи (доля скорости; стрейф/евейд выключены совсем).
+@export var tether_speed_factor: float = 0.35
+@export_group("Duel: фазы (арка боя)")
+## Пороги фаз по доле HP: выше phase2_hp — фаза 1 (джеб-ритм), выше
+## phase3_hp — фаза 2 (капканы+Шквал), ниже — фаза 3 ЯРОСТЬ.
+@export var phase2_hp: float = 0.66
+@export var phase3_hp: float = 0.33
+## Ярость: множители скорости стрейфа и бита (короче вдох), двойные залпы.
+@export var fury_strafe_mult: float = 1.35
+@export var fury_beat_mult: float = 0.8
+## Анти-черепаха (только ЯРОСТЬ): башня прячется вне kite_max_range дольше
+## этого — мех начинает крушить ГОРОД (ближайшие постройки), пока не вернёшься.
+@export var turtle_timeout: float = 6.0
+@export_group("")
+
 ## Набор атак меха (паттерн). Базовый AIMED + добавляемые. Выбор — _pick_attack.
 enum MechAttack { AIMED, SPREAD }
 ## Атака текущего цикла — выбирается на входе в WINDUP, используется и телеграфом,
@@ -325,6 +348,21 @@ var _missile_super_cd: float = 0.0
 ## Глобальный бит: общий «вдох» после любой атаки. Пока > 0 — никто не стреляет
 ## (ближний windup растягивается до него, kite-комбо ждёт). Сериализует ритм.
 var _global_action_cd: float = 0.0
+## --- Дуэль: окна и фазы (2026-07-09) ---
+## Остаток ПЕРЕГРЕВА (реактор открыт: стоит, не атакует, урон ×crit).
+var _overheat_t: float = 0.0
+## Иммунитет к повторному перегреву (тикает и во время окна).
+var _overheat_immune_t: float = 0.0
+## Остаток гарпунной ПРИВЯЗИ (стрейф/евейд/спринт выключены, ход медленный).
+var _tether_t: float = 0.0
+## Текущая фаза арки (1..3) — переключается по HP, см. _tick_phase.
+var _phase_seen: int = 1
+## HP на старте (для долей фаз — hp мутирует).
+var _hp_max_seen: float = 0.0
+## Анти-черепаха: сколько подряд башня прячется вне kite_max_range (фаза 3).
+var _turtle_t: float = 0.0
+## Троттл плашки «страж крушит город».
+var _turtle_hint_cd: float = 0.0
 ## Ближняя фаза: переключатель чередования AIMED↔Шквал (детерминированно).
 var _near_toggle: bool = false
 ## Kite-комбо: шаг (0 = следующее Поле, 1 = следующее Ракеты) + пауза после связки.
@@ -379,8 +417,11 @@ func _ready() -> void:
 	add_to_group(MECH_GROUP)
 	add_to_group(FogOfWar.FOG_REVEAL_GROUP)
 	_ensure_mech_material()
+	_hp_max_seen = hp  # база долей фаз (hp тает)
 	if _mesh:
-		_mesh.material_override = _shared_mech_material
+		# Per-instance дубль материала: ПЕРЕГРЕВ красит реактор в раскал, не
+		# трогая других мехов (канон соло-apex — мех один, draw-call не жалко).
+		_mesh.material_override = _shared_mech_material.duplicate()
 		_mesh_base_basis = _mesh.basis  # база для dash-наклона/стретча (DashFx)
 		_mesh_base_position = _mesh.position  # база для тильт-крена от ног
 	# Hit-feedback: короткая вспышка эмиссии ТОЛЬКО в момент попадания (как у всех
@@ -606,7 +647,9 @@ func _start_missile_salvo(target: Node3D, count: int = -1, warn: float = -1.0, i
 	_missile_warn_timer = warn if warn >= 0.0 else missile_warn
 	_missile_spawn_timer = 0.0
 	_missile_salvo_index = 0
-	_missile_active_count = count if count > 0 else missile_count
+	# ЯРОСТЬ (фаза 3): обычные залпы двойные. Супер передаёт свой count — не трогаем.
+	_missile_active_count = count if count > 0 \
+		else missile_count * (2 if _phase_seen >= 3 else 1)
 	_missile_active_interval = interval if interval >= 0.0 else missile_spawn_interval
 	_missile_active_damage = damage if damage > 0.0 else missile_damage
 	# Супер пускает ракеты из сгустка над корпусом, обычный залп — из дула.
@@ -733,6 +776,14 @@ func _tick_kite_combo(delta: float, target: Node3D) -> void:
 	var dist: float = global_position.distance_to(target.global_position)
 	if dist < kite_min_range or dist > kite_max_range:
 		return  # вблизи — рулит ближняя фаза; слишком далеко — спринт догоняет
+	# ФАЗА 1 (арка дуэли): без капканов — простой залп, читаемый джеб-ритм.
+	# Капкан-поле подключается со 2-й фазы (перегруппировка).
+	if _phase_seen < 2:
+		_global_action_cd = _beat()
+		_telem_atk_missile += 1
+		_start_missile_salvo(target)
+		_combo_cd = kite_combo_cooldown
+		return
 	_global_action_cd = _beat()
 	_telem_atk_field += 1
 	_launch_temporal_charge(target)
@@ -837,6 +888,9 @@ func _burst_shock(target: Node3D) -> void:
 ## Ближняя фаза: детерминированное чередование AIMED↔Шквал (читаемый «джеб-ритм»,
 ## не рандом). Вес 0 выключает приём — тогда чередования нет, идёт только включённый.
 func _pick_attack() -> int:
+	# ФАЗА 1: только AIMED — Шквал приходит со 2-й фазы (эскалация арки).
+	if _phase_seen < 2:
+		return MechAttack.AIMED
 	var use_aimed: bool = weight_aimed > 0.0
 	var use_spread: bool = weight_spread > 0.0
 	if use_aimed and not use_spread:
@@ -1012,12 +1066,127 @@ func _on_self_damaged(amount: float) -> void:
 		HitFlash.flash(_mesh)
 
 
-## Телеметрия: реальный урон, прилетевший в меха ОТРАЖЁННЫМ снарядом (через
-## парирование игрока). Зовёт сам отражённый снаряд при попадании по меху
-## (duck-typing, без жёсткой связки). amount — уже применённый урон (с falloff).
+## Отражённый снаряд попал в меха (зовёт сам снаряд при импакте, duck-typing).
+## Телеметрия + ЗАРАБОТАННОЕ ОКНО дуэли: перегрев реактора (парри-рикошет).
 func note_reflected_damage(amount: float) -> void:
 	_telem_reflect_hits += 1
 	_telem_reflect_damage += amount
+	_trigger_overheat()
+
+
+# --- Дуэль: перегрев / привязь / фазы (2026-07-09, формула камнеметателя:
+# «окно уязвимости надо ЗАРАБОТАТЬ») ---
+
+## ПЕРЕГРЕВ: отражённая ракета вскрыла реактор. Мех встаёт, гасит всё текущее
+## (залп/веер/евейд/телеграф), корпус раскаляется — язык «раскалён/потух» общий
+## с камнеметателем. Урон в окне × overheat_crit_mult (см. take_damage).
+func _trigger_overheat() -> void:
+	if _overheat_t > 0.0 or _overheat_immune_t > 0.0:
+		return
+	_overheat_t = overheat_duration
+	_overheat_immune_t = overheat_duration + overheat_immunity
+	_missile_pending = false
+	_spread_active = false
+	_dash_remaining = 0.0
+	_hide_telegraph()
+	_set_reactor_hot(true)
+	EventBus.camera_shake.emit(0.35, global_position)
+	AoeVisual.spawn_pulse_sparks(get_tree().current_scene,
+		global_position + Vector3.UP * 2.0, 1.6, 12.0)
+	EventBus.tutorial_hint.emit("⚙ ПЕРЕГРЕВ! Реактор стража открыт — бей, урон ×%.1f" % overheat_crit_mult, 4.0)
+	if debug_log and LogConfig.master_enabled:
+		print("[EnemyMech:%s] ПЕРЕГРЕВ (%.1fс, крит ×%.1f)" % [name, overheat_duration, overheat_crit_mult])
+
+
+## Раскал/остывание реактора (per-instance материал, см. _ready).
+func _set_reactor_hot(hot: bool) -> void:
+	if not is_instance_valid(_mesh):
+		return
+	var mat := _mesh.material_override as StandardMaterial3D
+	if mat == null:
+		return
+	mat.emission = Color(1.0, 0.42, 0.08) if hot else Color(0.35, 0.7, 1.0)
+	mat.emission_energy_multiplier = 3.2 if hot else 0.6
+
+
+## Крит-окно: урон в открытый реактор умножается.
+func take_damage(amount: float) -> void:
+	super.take_damage(amount * (overheat_crit_mult if _overheat_t > 0.0 else 1.0))
+
+
+## Гарпунная ПРИВЯЗЬ (зовёт HarpoonBolt при зацепе): протянуть apex нельзя,
+## но пока верёвка держит — стрейф/евейд/спринт выключены, ход еле-еле.
+func set_tethered(duration: float) -> void:
+	_tether_t = maxf(_tether_t, duration)
+	_dash_remaining = 0.0  # активный евейд обрывается — верёвка дёрнула
+	if debug_log and LogConfig.master_enabled:
+		print("[EnemyMech:%s] на привязи %.1fс" % [name, duration])
+
+
+## Фаза арки боя по доле HP: 1 джеб-ритм → 2 капканы+Шквал → 3 ЯРОСТЬ.
+func _phase_of_hp() -> int:
+	var frac: float = hp / maxf(_hp_max_seen, 1.0)
+	if frac > phase2_hp:
+		return 1
+	return 2 if frac > phase3_hp else 3
+
+
+## Переход фазы: плашка + вспышка; ЯРОСТЬ разгоняет стрейф и укорачивает бит.
+func _tick_phase() -> void:
+	var ph: int = _phase_of_hp()
+	if ph == _phase_seen:
+		return
+	_phase_seen = ph
+	EventBus.camera_shake.emit(0.3, global_position)
+	AoeVisual.spawn_expanding_ring(get_tree().current_scene,
+		global_position, 5.0, 0.5, telegraph_lock_color, 0.35)
+	if ph == 2:
+		EventBus.tutorial_hint.emit("⚙ Страж перегруппировался: капканы и шквальный огонь!", 5.0)
+	elif ph == 3:
+		strafe_speed *= fury_strafe_mult
+		global_attack_cooldown *= fury_beat_mult
+		EventBus.tutorial_hint.emit("⚙ ЯРОСТЬ! Реактор ревёт — двойные залпы. Не прячься — он крушит город", 6.0)
+	if debug_log and LogConfig.master_enabled:
+		print("[EnemyMech:%s] фаза → %d" % [name, ph])
+
+
+## Анти-черепаха (ЯРОСТЬ): башня отсиживается вне боевой полосы — мех лупит
+## по ближайшей постройке города, пока игрок не вернётся в дуэль.
+func _tick_turtle(delta: float, target: Node3D) -> void:
+	_turtle_hint_cd = maxf(_turtle_hint_cd - delta, 0.0)
+	if _phase_seen < 3 or target == null:
+		_turtle_t = 0.0
+		return
+	var d: float = global_position.distance_to(target.global_position)
+	_turtle_t = (_turtle_t + delta) if d > kite_max_range else 0.0
+	if _turtle_t <= turtle_timeout or _global_action_cd > 0.0:
+		return
+	var bld := _nearest_building()
+	if bld == null:
+		return
+	_global_action_cd = _beat()
+	if _turtle_hint_cd <= 0.0:
+		_turtle_hint_cd = 6.0
+		EventBus.tutorial_hint.emit("⚠ Страж крушит город — вернись в бой!", 4.0)
+	var aim: Vector3 = bld.global_position
+	aim.y = 0.0
+	_fire_one(aim)
+
+
+## Ближайшая к меху структура города (skeleton_target, не гном) в радиусе 45м.
+func _nearest_building() -> Node3D:
+	var best: Node3D = null
+	var best_sq: float = 45.0 * 45.0
+	for n in get_tree().get_nodes_in_group(Enemy.TARGET_GROUP):
+		if not (n is Node3D) or not is_instance_valid(n):
+			continue
+		if (n as Node).is_in_group(Gnome.GNOME_GROUP):
+			continue
+		var d_sq: float = (n as Node3D).global_position.distance_squared_to(global_position)
+		if d_sq < best_sq:
+			best_sq = d_sq
+			best = n as Node3D
+	return best
 
 
 ## Механическая смерть: к осколкам (super) добавляем взрыв корпуса + ударную
@@ -1052,9 +1221,22 @@ func _on_destroyed() -> void:
 ## замаха/кулдауна перекрываем нулевую скорость стрейфом — мех кружит вокруг
 ## башни и остаётся подвижной целью всё время атаки.
 func _ai_step(delta: float) -> void:
+	# ПЕРЕГРЕВ — верховное состояние: мех стоит с открытым реактором, ничего
+	# не делает (база не тикает). Выход — реактор остывает, цикл продолжается.
+	_overheat_immune_t = maxf(_overheat_immune_t - delta, 0.0)
+	if _overheat_t > 0.0:
+		_overheat_t -= delta
+		velocity = Vector3.ZERO
+		_hide_telegraph()
+		if _overheat_t <= 0.0:
+			_set_reactor_hot(false)
+		return
+	_tether_t = maxf(_tether_t - delta, 0.0)
+	_tick_phase()
 	super._ai_step(delta)
 	var target: Node3D = _resolve_target()
 	_telemetry_sample(target, delta)  # дев-лог поведения игрока (для дизайна 3-го приёма)
+	_tick_turtle(delta, target)  # ЯРОСТЬ: черепашишься — страж крушит город
 	_target_slowed = target != null and target.has_method("is_movement_slowed") and target.is_movement_slowed()
 	_global_action_cd = maxf(_global_action_cd - delta, 0.0)  # бит-дирижёр (вдох между атаками)
 	# Ракеты в полёте: live-наведение + ripple текущего залпа (сам залп — из комбо).
@@ -1064,11 +1246,15 @@ func _ai_step(delta: float) -> void:
 	# Спринт-преследование: дальше kite_max_range мех прибавляет в скорости
 	# (масштабируем APPROACH-velocity базы) — нет «безопасной парковки» за зоной
 	# связки. Близко (strafe/evade) — d мал, условие ложно; в evade — перетрётся ниже.
-	if target != null and pursuit_speed_mult > 1.0:
+	if target != null and pursuit_speed_mult > 1.0 and _tether_t <= 0.0:
 		var d_pursuit: float = global_position.distance_to(target.global_position)
 		if d_pursuit > kite_max_range:
 			velocity.x *= pursuit_speed_mult
 			velocity.z *= pursuit_speed_mult
+	# ПРИВЯЗЬ: гарпунная верёвка держит — ход еле-еле (стрейф/евейд ниже гейтятся).
+	if _tether_t > 0.0:
+		velocity.x *= tether_speed_factor
+		velocity.z *= tether_speed_factor
 	# Редкий парируемый супер-залп (рой ракет в одну точку) — приоритет над комбо
 	# (ставит общий бит, комбо в этот кадр ждёт). Гейт по своему длинному кулдауну.
 	_tick_missile_super(delta, target)
@@ -1088,7 +1274,7 @@ func _ai_step(delta: float) -> void:
 	# таймер-рывком; уже активный рывок не прерываем). Это и делает меха «умнее
 	# скелетов» — он уходит с линии огня.
 	_dodge_cd -= delta
-	if _dash_remaining <= 0.0 and _dodge_cd <= 0.0 and dash_speed > 0.0:
+	if _dash_remaining <= 0.0 and _dodge_cd <= 0.0 and dash_speed > 0.0 and _tether_t <= 0.0:
 		var threat: Node3D = _scan_threat()
 		if threat != null:
 			_start_evade(threat.global_position, target)
@@ -1099,8 +1285,9 @@ func _ai_step(delta: float) -> void:
 		velocity.x = _dash_vec.x
 		velocity.z = _dash_vec.z
 		return
-	# Стрейф вокруг башни в фазах атаки (база там стоит на месте).
-	if _state == AttackState.WINDUP or _state == AttackState.COOLDOWN:
+	# Стрейф вокруг башни в фазах атаки (база там стоит на месте). На привязи
+	# гарпуна кружить нечем — верёвка держит.
+	if (_state == AttackState.WINDUP or _state == AttackState.COOLDOWN) and _tether_t <= 0.0:
 		_strafe_flip_timer -= delta
 		if _strafe_flip_timer <= 0.0:
 			_strafe_flip_timer = strafe_flip_interval

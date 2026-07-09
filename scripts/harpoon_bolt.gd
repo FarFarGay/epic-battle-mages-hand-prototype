@@ -12,7 +12,7 @@ extends Node3D
 ## расстояний, оба конца пришпилены к башне и стреле), рендер — сегменты-
 ## цилиндры. Провисает в полёте, натягивается при протяжке, не липнет в пол.
 
-enum State { FLY, PULL, SPENT }
+enum State { FLY, PULL, SPENT, TETHER }
 
 ## Скорость полёта стрелы (м/с).
 var bolt_speed: float = 40.0
@@ -60,8 +60,12 @@ const FADE_TIME_SNAP := 0.4
 ## Гравитация падения стрелы на промахе.
 const DROP_GRAVITY := 25.0
 ## Порог веса: RigidBody тяжелее — верёвка РВЁТСЯ при зацепе (предметы 3-4,
-## порог с запасом; мех рвёт всегда — apex непротягиваем, см. _hook).
+## порог с запасом; мех рвёт ПОСЛЕ якоря — apex непротягиваем, см. _hook).
 const ROPE_BREAK_MASS := 12.0
+## ЯКОРЬ на мехе (дуэль, 2026-07-09): верёвка держит apex TETHER_TIME секунд —
+## протянуть нельзя, но на привязи он не стрейфит и не уклоняется
+## (EnemyMech.set_tethered) = заработанное окно для фаерболов. Потом рвётся.
+const TETHER_TIME := 2.5
 
 ## Боевая высота полёта: стрела, выпущенная с крыши (дуло турели), плавно
 ## снижается к ней в FLY (NAN = лететь на высоте старта, как раньше).
@@ -81,6 +85,8 @@ var _victim: Node3D = null
 var _pull_t: float = 0.0
 ## Кого уже пробили этим выстрелом (не бить дважды).
 var _pierced: Array = []
+## Остаток удержания якоря на мехе (State.TETHER).
+var _tether_t: float = 0.0
 
 var _rope_root: Node3D = null
 var _rope_segs: Array[MeshInstance3D] = []
@@ -200,7 +206,21 @@ func _physics_process(delta: float) -> void:
 			_tick_pull(delta)
 		State.SPENT:
 			_tick_spent(delta)
+		State.TETHER:
+			_tick_tether(delta)
 	_tick_rope(delta)
+
+
+## Якорь на мехе: стрела сидит в корпусе, верёвка натянута. Таймер вышел /
+## мех умер / жертва пропала → верёвка рвётся (или тихий отпуск по смерти).
+func _tick_tether(delta: float) -> void:
+	if _victim == null or not is_instance_valid(_victim):
+		_release(FADE_TIME_DELIVERED)
+		return
+	global_position = _victim.global_position + Vector3.UP * 1.8
+	_tether_t -= delta
+	if _tether_t <= 0.0:
+		_snap_rope()
 
 
 func _tick_fly(delta: float) -> void:
@@ -331,10 +351,16 @@ func _hook(target: Node3D) -> void:
 	# Тяжёлому — небольшой чип-урон за попадание (гарпун всё-таки железо).
 	if _is_heavy(target) and target.has_method(&"take_damage"):
 		target.call(&"take_damage", damage * 0.35)
-	# РАЗРЫВ ПО ВЕСУ: слишком тяжёлая добыча (или мех — apex непротягиваем).
-	var too_heavy: bool = target.is_in_group(EnemyMech.MECH_GROUP) \
-		or (target is RigidBody3D and (target as RigidBody3D).mass > ROPE_BREAK_MASS)
-	if too_heavy:
+	# МЕХ: непротягиваем, но верёвка ДЕРЖИТ его якорем TETHER_TIME — окно дуэли.
+	if target.is_in_group(EnemyMech.MECH_GROUP):
+		_state = State.TETHER
+		_tether_t = TETHER_TIME
+		if target.has_method(&"set_tethered"):
+			target.call(&"set_tethered", TETHER_TIME)
+		EventBus.tutorial_hint.emit("⛓ Страж на привязи — он не может уклоняться!", 3.0)
+		return
+	# РАЗРЫВ ПО ВЕСУ: слишком тяжёлая добыча.
+	if target is RigidBody3D and (target as RigidBody3D).mass > ROPE_BREAK_MASS:
 		_snap_rope()
 
 
