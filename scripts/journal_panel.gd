@@ -1406,6 +1406,13 @@ func _build_debug_tab(camp: Node) -> void:
 		func(): camp.economy.add_resource(int(ResourcePile.ResourceType.GOLD), 1000),
 	))
 	list.add_child(_build_cheat_card(
+		"Все заклинания",
+		"Разблокирует все заклинания каталога (бесплатно, SpellSystem.unlock). Для теста магии и дэш-форм без покупки у Кафедры свитков. «Великий удар» (старый экранный QTE) не трогает.",
+		"открыть все",
+		SpellSystem,
+		func(): _unlock_all_spells(),
+	))
+	list.add_child(_build_cheat_card(
 		"Призвать копейщиков",
 		"Спавнит отряд копейщиков (×5) кольцом вокруг центра лагеря. Без затрат gatherer'ов и ресурсов, без проверки развёрнутости.",
 		"копейщики",
@@ -1481,9 +1488,39 @@ func _build_cheat_card(title: String, desc: String, btn_text: String, target: No
 		_dim(card, 0.55)
 	else:
 		btn.text = btn_text
-		btn.pressed.connect(action)
+		# Телеграф нажатия: многие читы срабатывают за экраном (спавн у зон,
+		# анлоки) — без вспышки не понятно, кликнул или нет.
+		btn.pressed.connect(func() -> void:
+			action.call()
+			_flash_cheat_button(btn, btn_text))
 
 	return card
+
+
+## Вспышка-подтверждение на кнопке чита: зелёный «✓» + блок на время вспышки
+## (заодно гасит дабл-клики), затем возврат исходного текста. Tween привязан к
+## кнопке (create_tween) — умирает вместе с ней при rebuild вкладки, лямбда по
+## freed-ноде не стрельнёт.
+func _flash_cheat_button(btn: Button, original_text: String) -> void:
+	btn.text = "✓"
+	btn.disabled = true
+	btn.modulate = Color(0.5, 1.0, 0.55)
+	var tw := btn.create_tween()
+	tw.tween_property(btn, "modulate", Color.WHITE, 0.5)
+	tw.tween_callback(func() -> void:
+		btn.text = original_text
+		btn.disabled = false)
+
+
+## Чит: разблокировать все заклинания каталога. unlock идемпотентен и эмитит
+## spell_unlocked на каждое новое — вкладка SPELLS и ActionBar перерисуются
+## реактивно. &"super" (старый экранный QTE «Великий удар») намеренно пропускаем:
+## он вне текущей модели (дэш-формы), держим запертым.
+func _unlock_all_spells() -> void:
+	for id in SpellSystem.SPELL_CATALOG.keys():
+		if id == &"super":
+			continue
+		SpellSystem.unlock(id)
 
 
 ## Чит-выдача: amount каждого из 4 типов ресурсов на склад лагеря.

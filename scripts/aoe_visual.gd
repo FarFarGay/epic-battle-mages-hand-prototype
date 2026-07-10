@@ -447,6 +447,63 @@ static func spawn_ground_ring(
 	return mesh
 
 
+## Плоская линия-полоска на земле между двумя точками (XZ, Y берётся из from).
+## Телеграф-нить: обводка дэш-формы (Tower) тянет её от взятой точки к курсору.
+## Caller владеет жизненным циклом: двигает через [update_ground_line],
+## освобождает queue_free. Материал — тот же язык, что у [spawn_ground_ring]
+## (unshaded + emission + поверх тумана).
+static func spawn_ground_line(
+	root: Node,
+	from: Vector3,
+	to: Vector3,
+	color: Color = Color(1.0, 0.55, 0.15, 0.95),
+	thickness: float = 0.22,
+	emission_energy: float = 2.5,
+) -> MeshInstance3D:
+	if root == null:
+		return null
+	var box := BoxMesh.new()
+	box.size = Vector3(thickness, 0.02, 1.0)  # длина по Z — растягивается scale'ом сегмента
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.emission_enabled = true
+	mat.emission = Color(color.r, color.g, color.b, 1.0)
+	# emission_energy > ~4 под WorldEnvironment-глоу даёт видимый блум-ореол
+	# (тот же трюк, что у маркера супер-дэша).
+	mat.emission_energy_multiplier = emission_energy
+	mat.render_priority = GROUND_MARKER_PRIORITY
+	var mesh := MeshInstance3D.new()
+	mesh.mesh = box
+	mesh.material_override = mat
+	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(mesh)
+	update_ground_line(mesh, from, to)
+	return mesh
+
+
+## Перекладывает линию [spawn_ground_line] между новыми точками. Y плоский (из
+## from) + микроподъём против z-fight'а. Вырожденный сегмент (<5см) — прячем,
+## не деформируем.
+static func update_ground_line(line: MeshInstance3D, from: Vector3, to: Vector3) -> void:
+	if line == null or not is_instance_valid(line):
+		return
+	var a := from
+	var b := Vector3(to.x, from.y, to.z)
+	var seg := b - a
+	var seg_len: float = seg.length()
+	if seg_len < 0.05:
+		line.visible = false
+		return
+	line.visible = true
+	# -Z basis'а смотрит вдоль сегмента; локальный Z (длина бокса) растянут на
+	# длину через from_scale справа — scale в локальных осях, не мировых.
+	var basis := Basis.looking_at(seg / seg_len, Vector3.UP) * Basis.from_scale(Vector3(1.0, 1.0, seg_len))
+	line.global_transform = Transform3D(basis, (a + b) * 0.5 + Vector3.UP * 0.03)
+
+
 ## Плоский СЕКТОР-дуга на земле — НАПРАВЛЕННЫЙ индикатор «откуда придёт угроза»
 ## (в отличие от кругового [spawn_ground_ring]): полоса кольца r_in..r_out,
 ## раскрытая на ±half_angle вокруг bearing. Угол как в build_block —

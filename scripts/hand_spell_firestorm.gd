@@ -142,6 +142,31 @@ func tick(delta: float) -> void:
 			_next_shot_in = shot_interval
 
 
+## Залп в точке импакта супер-дэша (EventBus.super_dash_impact → HandSpell):
+## тот же конвейер серии, что у обычного каста, но без маны/кулдауна/гейтов —
+## цена уплачена дэш-формой на коммите рывка, unlock проверен при входе в
+## обводку. Башня в этот момент стоит в самой точке — ракеты взмывают из неё
+## и ложатся вокруг, «шквал по окружившим».
+func super_dash_volley(position: Vector3) -> void:
+	if fireball_scene == null:
+		return
+	var lvl: Dictionary = SpellSystem.get_current_level_data(&"firestorm") if SpellSystem != null else {}
+	_series_shot_damage = float(lvl.get("shot_damage", shot_damage))
+	_series_shot_radius = float(lvl.get("shot_radius", shot_radius))
+	_series_scatter_radius = float(lvl.get("scatter_radius", scatter_radius))
+	_series_burn_radius = float(lvl.get("burn_radius", burn_radius))
+	_series_burn_damage_per_tick = float(lvl.get("burn_damage_per_tick", burn_damage_per_tick))
+	_series_burn_tick_interval = float(lvl.get("burn_tick_interval", burn_tick_interval))
+	_series_burn_duration = float(lvl.get("burn_duration", burn_duration))
+	shot_interval = float(lvl.get("shot_interval", shot_interval))
+	_volley_target = position
+	_shots_remaining = int(lvl.get("shot_count", shot_count))
+	_next_shot_in = 0.0
+	if debug_log and LogConfig.master_enabled:
+		print("[Hand:Spell:Firestorm] залп супер-дэша × %d @ (%.1f, %.1f, %.1f)" % [_shots_remaining, position.x, position.y, position.z])
+	spell_cast.emit(&"firestorm", position)
+
+
 # --- Запуск серии ---
 
 func _start_volley() -> void:

@@ -71,6 +71,27 @@ func is_spell_ready(type: int) -> bool:
 	return true
 
 
+## Каталожный id (SpellSystem.SPELL_CATALOG) текущего экипированного заклинания.
+## Tower читает при входе в супер-дэш: dash_form/unlock-гейт живут в каталоге.
+func equipped_spell_id() -> StringName:
+	match equipped:
+		SpellType.FIREBALL:
+			return &"fireball"
+		SpellType.FIRESTORM:
+			return &"firestorm"
+		SpellType.MINE_SCATTER:
+			return &"mine_scatter"
+		SpellType.FROST:
+			return &"frost"
+		SpellType.SPARK:
+			return &"spark"
+		SpellType.ARBALEST:
+			return &"arbalest_volley"
+		SpellType.HARPOON:
+			return &"harpoon"
+	return &""
+
+
 func _ready() -> void:
 	_fireball.spell_cast.connect(spell_cast.emit)
 	_firestorm.spell_cast.connect(spell_cast.emit)
@@ -80,10 +101,22 @@ func _ready() -> void:
 	_arbalest.spell_cast.connect(spell_cast.emit)
 	_harpoon.spell_cast.connect(spell_cast.emit)
 	EventBus.tower_destroyed.connect(_on_tower_destroyed)
+	EventBus.super_dash_impact.connect(_on_super_dash_impact)
 
 
 func _on_tower_destroyed() -> void:
 	_tower_cache = null
+
+
+## Импакт супер-дэша: башня доехала до цели — заклинание дэш-формы отрабатывает
+## в точке. Диспатч на модуль-владелец (он знает свои параметры/сцены). Ману не
+## трогаем — уплачена Tower'ом на коммите рывка.
+func _on_super_dash_impact(position: Vector3, spell_id: StringName) -> void:
+	match spell_id:
+		&"fireball":
+			_fireball.super_dash_burst(position)
+		&"firestorm":
+			_firestorm.super_dash_volley(position)
 
 
 # --- Shared spell-cast helpers (используют 3 spell-модуля + HandSuper) ---

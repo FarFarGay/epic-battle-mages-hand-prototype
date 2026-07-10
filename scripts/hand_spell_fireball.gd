@@ -133,6 +133,32 @@ func tick(delta: float) -> void:
 		_cooldown_remaining = maxf(_cooldown_remaining - delta, 0.0)
 
 
+## Импакт огненного супер-дэша (EventBus.super_dash_impact → HandSpell): взрыв
+## и остаточное горение в точке, куда доехала башня. Урон самого тарана уже
+## нанесён контактами рывка — здесь взрывной визуал + горящая зона по уровню
+## заклинания. Мана/кулдаун не трогаются: цена уплачена дэш-формой на коммите.
+func super_dash_burst(position: Vector3) -> void:
+	if _effects_root == null or not is_instance_valid(_effects_root):
+		return
+	var lvl: Dictionary = SpellSystem.get_current_level_data(&"fireball") if SpellSystem != null else {}
+	var p_radius: float = float(lvl.get("radius", radius))
+	var p_burn_dmg: float = float(lvl.get("burn_damage_per_tick", burn_damage_per_tick))
+	var p_burn_radius: float = float(lvl.get("burn_radius", burn_radius))
+	var p_burn_duration: float = float(lvl.get("burn_duration", burn_duration))
+	var p_burn_tick_interval: float = float(lvl.get("burn_tick_interval", burn_tick_interval))
+	AoeVisual.spawn_explosion(_effects_root, position, p_radius)
+	# Шейк/слоумо-бит/пыль импакта делает Tower на конце рывка (универсальный
+	# акцент прибытия) — здесь только взрыв и горение, без дубля тряски.
+	if burn_patch_scene != null:
+		var patch := burn_patch_scene.instantiate() as BurnPatch
+		if patch != null:
+			_effects_root.add_child(patch)
+			patch.global_position = position
+			patch.setup(p_burn_radius, p_burn_dmg, p_burn_tick_interval, p_burn_duration)
+	if debug_log and LogConfig.master_enabled:
+		print("[Hand:Spell:Fireball] импакт супер-дэша @ (%.1f, %.1f, %.1f)" % [position.x, position.y, position.z])
+
+
 # --- Каст ---
 
 func _perform_cast() -> void:

@@ -17,6 +17,14 @@ extends Node
 ##   - `upgrade_costs: Array[Dictionary]` — стоимость каждого следующего
 ##     уровня. upgrade_costs[i] — цена перехода level i → i+1. Длина =
 ##     levels.size() - 1.
+##   - `dash_form: Dictionary` (опционально) — «ближняя атака» заклинания:
+##     супер-дэш башни, заряжаемый обводкой фигуры (зажать Space → точки на
+##     земле → обвёл курсором → прицел → ПКМ). Поля: `points` (Array[Vector2] —
+##     смещения точек фигуры от башни в camera-yaw пространстве, x=вправо,
+##     y=вглубь экрана отрицательным), `mana_cost`, `damage` (урон тарана).
+##     Импакт-эффект в конце рывка диспатчится по id (EventBus.super_dash_impact
+##     → HandSpell). Нет секции (Искра и др.) — ОБЫЧНЫЙ супер-дэш без обводки:
+##     fallback-параметры @export'ов Tower, без импакт-эффекта заклинания.
 ##
 ## Прокачка через PAGE — отдельный ресурс ResourcePile.ResourceType.PAGE.
 ## Списание/проверка идут через Camp.try_spend / Camp.can_afford — тот же
@@ -52,6 +60,13 @@ const SPELL_CATALOG: Dictionary = {
 			{ResourcePile.ResourceType.PAGE: 6},
 			{ResourcePile.ResourceType.PAGE: 12},
 		],
+		# Дэш-форма: 2 точки — короткий «росчерк» перед башней. Огненный
+		# супер-дэш; на импакте взрыв + остаточное горение (HandSpellFireball).
+		"dash_form": {
+			"points": [Vector2(-3.0, -3.0), Vector2(3.0, -3.0)],
+			"mana_cost": 50.0,
+			"damage": 250.0,
+		},
 	},
 	&"firestorm": {
 		"name": "Огненный шквал",
@@ -72,6 +87,15 @@ const SPELL_CATALOG: Dictionary = {
 			{ResourcePile.ResourceType.PAGE: 6},
 			{ResourcePile.ResourceType.PAGE: 12},
 		],
+		# Дэш-форма: 5 точек — пентаграмма вокруг башни (порядок обхода —
+		# звездой, нить рисует пирует). Дороже и дольше заряжать, зато на
+		# импакте — залп малых ракет по области (HandSpellFirestorm).
+		"dash_form": {
+			"points": [Vector2(0.0, -4.5), Vector2(2.65, 3.64), Vector2(-4.28, -1.39),
+				Vector2(4.28, -1.39), Vector2(-2.65, 3.64)],
+			"mana_cost": 75.0,
+			"damage": 200.0,
+		},
 	},
 	&"super": {
 		"name": "Великий удар",
