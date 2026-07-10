@@ -12,7 +12,7 @@ config_version=5
 
 config/name="Hand Gameplay Prototype"
 run/main_scene="uid://dn2nfnt6ifaii"
-config/features=PackedStringArray("4.6")
+config/features=PackedStringArray("4.7")
 
 [autoload]
 

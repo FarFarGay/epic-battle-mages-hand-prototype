@@ -588,6 +588,7 @@ script = ExtResource("42_grid")
 
 [node name="Tower" parent="." unique_id=1617488261 groups=["skeleton_target"] instance=ExtResource("1")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -30, 3, 0)
+passive_mana_regen = false
 
 [node name="CameraRig" parent="." unique_id=1454102563 instance=ExtResource("3")]
 target_path = NodePath("../Tower")
@@ -1292,6 +1293,3 @@ mesh = SubResource("Sph_foliage")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 85, 3, 53)
 room_center = Vector2(68, 97.5)
 room_size = Vector2(100, 110)
-
-
-
