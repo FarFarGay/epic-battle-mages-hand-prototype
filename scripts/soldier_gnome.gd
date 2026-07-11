@@ -140,8 +140,16 @@ var _store_full_ring_cd: float = 0.0
 ## Рабочий спрятан ВНУТРИ башни (механика IN_TENT на Tower): невидим, неуязвим,
 ## вне группы целей скелетов, позиция приклеена к башне. Выходит по команде «Идти сюда».
 var _hidden_in_tower: bool = false
+## СМЕНА В ЗДАНИИ (население = артель, 2026-07-12): производственное здание, куда
+## рабочего назначил Population. Идёт туда и прячется внутри (та же IN_TENT-механика) —
+## здание работает, только пока он внутри (Population.is_staffed). null = свободен.
+## Пока назначен — squad-команды артели его не трогают (он на смене).
+var _staff_building: Node3D = null
 ## Дистанция до центра башни, на которой рабочий «забегает внутрь» и прячется.
 const HIDE_ENTER_RADIUS := 2.2
+## Радиус входа НА СМЕНУ в здание: шире HIDE_ENTER_RADIUS — навмеш-дыра здания
+## (коллайдер + agent-margin запечки) держит гнома в ~2м от origin, 2.2 впритык.
+const STAFF_ENTER_RADIUS := 3.2
 var _attack_cd: float = 0.0
 ## Текущая патрульная точка в DEFENDING_CAMP. INF = «нужно выбрать новую»
 ## (старт или дошли до прежней).
@@ -303,6 +311,35 @@ func _has_squad_context() -> bool:
 ## не комбатант — берегите копейщиками). Воин (копейщик) — false.
 func is_worker() -> bool:
 	return soldier_type == SoldierSystem.ROLE_WORKER
+
+
+# --- Смена в здании (население = артель, Population назначает) ---
+
+## Назначить рабочего на смену в производственное здание. Зовёт только Population
+## (единый путь комплектования). Гном сам пойдёт и спрячется внутри в _active_tick.
+func assign_staffing(building: Node3D) -> void:
+	_staff_building = building
+
+
+## Снять со смены: выходит из здания и возвращается под команды артели.
+## UI-карточку артели пинает Population._recompute (заметит смену free/cap).
+func clear_staffing() -> void:
+	_staff_building = null
+	if _hidden_in_tower:
+		_exit_hidden()
+
+
+## Здание смены (валидное) или null. Гном со сменой занят — не свободен ни для
+## других зданий, ни для расхода на найм солдат.
+func staff_building() -> Node3D:
+	if _staff_building != null and is_instance_valid(_staff_building):
+		return _staff_building
+	return null
+
+
+## На смене И уже ВНУТРИ здания (дошёл) — только тогда здание работает.
+func is_on_shift() -> bool:
+	return staff_building() != null and _hidden_in_tower
 
 
 ## Намерен ли отряд чинить башню (кнопка «Ремонт» / клик ЛКМ по башне). Гейт для
@@ -743,7 +780,8 @@ func _shelter_center() -> Vector3:
 ## Шаг «спрятаться в точке dest». Бежит к центру; добежал — прячется
 ## (невидим/неуязвим/приклеен), как гном IN_TENT в палатке. Уже спрятан →
 ## остаётся приклеенным к dest (мобильное убежище-башня его «возит»).
-func _tick_hide_at(dest: Vector3) -> void:
+## enter_radius — с какой дистанции «забегает» (смена в здании берёт шире).
+func _tick_hide_at(dest: Vector3, enter_radius: float = HIDE_ENTER_RADIUS) -> void:
 	if _hidden_in_tower:
 		# Приклеены ТОЛЬКО по XZ — origin башни приподнят (y≈3), тянуть
 		# рабочего по Y нельзя (повисал бы в воздухе на высоте башни). Y держим
@@ -753,7 +791,7 @@ func _tick_hide_at(dest: Vector3) -> void:
 		return
 	var to := Vector3(dest.x - global_position.x, 0.0, dest.z - global_position.z)
 	var d: float = to.length()
-	if d <= HIDE_ENTER_RADIUS:
+	if d <= enter_radius:
 		_enter_hidden()
 		velocity = Vector3.ZERO
 	else:
@@ -831,6 +869,22 @@ func _active_tick(delta: float) -> void:
 	# IN_TENT, наведённой на башню. Команда «Идти сюда» (HOLD) выводит из
 	# башни на стройку. См. _tick_hide_in_tower / _enter_hidden / _exit_hidden.
 	if is_worker():
+		# СМЕНА В ЗДАНИИ (население = артель): назначенный Population'ом рабочий
+		# идёт к своему зданию и прячется внутри — добыча идёт, пока он там.
+		# Перекрывает и squad-команды, и тревогу (внутри здания безопасно, как в
+		# башне). Здание пропало (снос/взрыв) — сброс, обычные ветки вернут в артель.
+		if _staff_building != null:
+			if not is_instance_valid(_staff_building):
+				clear_staffing()
+			else:
+				# Спрятан в БАШНЕ, а смена далеко → сперва выйти наружу и дойти
+				# ногами (иначе glue-ветка _tick_hide_at телепортнула бы в здание).
+				var bpos: Vector3 = _staff_building.global_position
+				var bdist: float = Vector2(bpos.x - global_position.x, bpos.z - global_position.z).length()
+				if _hidden_in_tower and bdist > STAFF_ENTER_RADIUS:
+					_exit_hidden()
+				_tick_hide_at(bpos, STAFF_ENTER_RADIUS)
+				return
 		# ТРЕВОГА (Population.alarm_active, клавиша V): рабочий бросает любой
 		# приказ и прячется в убежище — замок, пока замка нет — башня. Той же
 		# IN_TENT-механикой; отбой тревоги → обычные ветки выведут наружу.

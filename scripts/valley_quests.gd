@@ -47,7 +47,7 @@ func _ready() -> void:
 			"done": func() -> bool: return _castle_built()},
 		{"text": "Поставь шахту на жилу — монеты закапают сами",
 			"done": func() -> bool: return _has_role(&"mine")},
-		{"text": "Расстройся: дом (население) и казарма (гарнизон)",
+		{"text": "Расстройся: дом (уют кварталов) и казарма (гарнизон)",
 			"done": func() -> bool: return _has_role(&"housing") and _has_role(&"barracks")},
 		{"text": "Обнеси город стеной: 5 секций обороны",
 			"done": func() -> bool: return _count_role(&"defend") >= 5},

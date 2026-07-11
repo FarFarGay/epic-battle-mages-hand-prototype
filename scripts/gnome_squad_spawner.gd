@@ -56,11 +56,11 @@ func request_squad_for(owner: Node, soldier_type: StringName, count: int, pos: V
 	if owner == null or SoldierSystem == null or not SoldierSystem.has_soldier(soldier_type):
 		return []
 	var key: int = owner.get_instance_id()
-	# ДВА предела: ось ГАРНИЗОНА этой казармы (база типа + бараки рядом, hire_cap_bonus) И глобальное
-	# НАСЕЛЕНИЕ (Population) — общий пул армия+добыча. Нанять можно лишь в пределах обоих.
+	# ДВА предела: ось ГАРНИЗОНА этой казармы (база типа + бараки рядом, hire_cap_bonus) И
+	# АРТЕЛЬ (Population): солдат = бывший рабочий, нанять можно лишь в пределах обоих.
 	var cap_bonus: int = int(owner.call(&"hire_cap_bonus")) if owner.has_method(&"hire_cap_bonus") else 0
 	var add: int = _clamp_to_cap(key, soldier_type, maxi(count, 1), cap_bonus)
-	add = _clamp_to_population(soldier_type, add)
+	add = _consume_population(soldier_type, add, pos)
 	if add <= 0:
 		return []
 	var pre: Squad = _squads.get(key)
@@ -102,6 +102,7 @@ func request_squad(soldier_type: StringName, count: int, pos: Vector3) -> Array:
 	if SoldierSystem == null or not SoldierSystem.has_soldier(soldier_type):
 		return []
 	var add: int = _clamp_to_cap(soldier_type, soldier_type, maxi(count, 1))
+	add = _consume_population(soldier_type, add, pos)  # солдат = бывший рабочий артели
 	if add <= 0:
 		return []
 	var pre: Squad = _squads.get(soldier_type)
@@ -183,11 +184,13 @@ func _on_purchased(unit_type: StringName, squad_size: int) -> void:
 	# Кап артели (рабочие — 7): докупка доливает только до потолка. Уже полно → ничего.
 	# Покупка в домике гномов — отряд НА ТИП (ключ = тип), не per-barracks.
 	var add: int = _clamp_to_cap(soldier_type, soldier_type, maxi(squad_size, 1))
-	add = _clamp_to_population(soldier_type, add)  # поверх типа — глобальное население (рабочих не трогает)
 	if add <= 0:
 		return
 	var front: Vector3 = _purchase_front()
 	if front == Vector3.INF:
+		return
+	add = _consume_population(soldier_type, add, front)  # солдат = бывший рабочий артели
+	if add <= 0:
 		return
 	_spawn_squad(soldier_type, soldier_type, add, front)
 
@@ -223,16 +226,18 @@ func _clamp_to_cap(key, soldier_type: StringName, want: int, cap_bonus: int = 0)
 	return clampi(want, 0, maxi(cap + cap_bonus - _count_in(key), 0))
 
 
-## Поверх типа — глобальное НАСЕЛЕНИЕ (Population): нанять не больше свободных военных слотов общего
-## пула. Рабочие-артель НЕ тратят население (базовая бригада башни) → их не клампим. Нет Population → как было.
-func _clamp_to_population(soldier_type: StringName, want: int) -> int:
+## НАСЕЛЕНИЕ = АРТЕЛЬ (2026-07-12): найм солдата РАСХОДУЕТ свободного гнома-рабочего
+## (Population.consume_free_workers — гном у казармы исчезает, солдат = бывший рабочий).
+## Возвращает, скольких реально удалось «переодеть» (кламп и расход в одном шаге).
+## Рабочие сами гномы — не расходуют. Нет Population → как было (дев-сцены).
+func _consume_population(soldier_type: StringName, want: int, pos: Vector3) -> int:
 	if want <= 0:
 		return want
 	if SoldierSystem != null and soldier_type == SoldierSystem.ROLE_WORKER:
 		return want
 	if Population == null:
 		return want
-	return clampi(want, 0, maxi(int(Population.military_room()), 0))
+	return int(Population.consume_free_workers(want, pos))
 
 
 ## Живых членов отряда по ключу (тип ИЛИ казарма) — для капа/гейта.

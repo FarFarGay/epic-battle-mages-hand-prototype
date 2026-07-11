@@ -291,7 +291,7 @@ var _coins_shown: float = -1.0
 var _coins_target: int = 0
 var _coins_rendered: int = -1
 var _coins_punch_tween: Tween = null
-## Счётчик НАСЕЛЕНИЯ (used/cap общего supply-пула, автолоад Population) — под монетами.
+## Счётчик АРТЕЛИ (население = живые рабочие, автолоад Population) — под монетами.
 var _population_label: Label = null
 ## «📦 Трюм» башни: сумма материалов склада; ⚠ при полном капе (пора на разгрузку).
 var _cargo_label: Label = null
@@ -1433,14 +1433,16 @@ func _build_population_label() -> void:
 func _update_population_label() -> void:
 	if _population_label == null:
 		return
-	# Население — система замка: до его установки параметр не показываем (cap=0, нечего считать).
-	if Population == null or not Population.has_castle():
+	# Население = АРТЕЛЬ (2026-07-12): показываем свободных/всего живых рабочих.
+	# Пока гномов нет вовсе (старт до спасения первого) — параметр прячем.
+	if Population == null or int(Population.cap()) <= 0:
 		_population_label.visible = false
 		return
 	var free: int = int(Population.free_slots())
 	_population_label.visible = true
-	_population_label.text = "👥 Свободное население  %d" % free
-	# Янтарным, когда свободных слотов нет (строй социалку — иначе шахты простаивают / не нанять).
+	_population_label.text = "👥 Артель: свободно %d из %d" % [free, int(Population.cap())]
+	# Янтарным, когда свободных гномов нет (найми у замка/купи в домике — иначе
+	# новые здания простаивают и солдат не нанять).
 	var col: Color = Color(1.0, 0.8, 0.3) if free <= 0 else Color(1, 1, 1)
 	_population_label.add_theme_color_override(&"font_color", col)
 
@@ -1648,8 +1650,9 @@ func _make_build_card(id: int, hand_idx: int = -1) -> Button:
 	cost_lbl.text = "" if hand_idx >= 0 else String(info["cost_text"])
 	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top.add_child(cost_lbl)
-	# Цена/выгода в НАСЕЛЕНИИ — иконкой 👥±N рядом с золотом: PRODUCTION берёт гнома (−, голубым),
-	# SOCIAL даёт слоты (+, зелёным). Своя метка → не красится affordability'ю казны.
+	# Цена в ГНОМАХ АРТЕЛИ — иконкой 👥−N рядом с золотом: PRODUCTION забирает реального
+	# гнома на смену (голубым). Плюсов больше нет (население = артель, дом слоты не даёт);
+	# ветка +N оставлена на будущие «дающие» роли. Не красится affordability'ю казны.
 	var pop: int = int(info.get("pop", 0))
 	if pop != 0:
 		var pop_lbl := Label.new()
@@ -3291,6 +3294,13 @@ func _add_squad_buttons_camp(vbox: VBoxContainer, squad: Squad) -> void:
 func _refresh_squad_card(card: Control, squad: Squad) -> void:
 	var alive: int = squad.count_alive()
 	var total: int = squad.members.size()
+	# АРТЕЛЬ = НАСЕЛЕНИЕ (2026-07-12): карточка артели ДУБЛИРУЕТ счётчик под
+	# монетами — «свободно/всего живых» из Population. Гном на смене в здании
+	# или потраченный на солдата списывается из ЭТИХ цифр; два счётчика на
+	# экране всегда показывают одно и то же.
+	if squad.soldier_type == SoldierSystem.ROLE_WORKER and Population != null:
+		alive = int(Population.free_slots())
+		total = int(Population.cap())
 	var type_name: String = SoldierSystem.get_soldier_data(squad.soldier_type).get("name", str(squad.soldier_type))
 	# Префикс «⚠» когда отряд вне recall-зоны: персистентный визуальный
 	# маркер, что Q-recall его не вернёт. Обновляется и через event-driven
