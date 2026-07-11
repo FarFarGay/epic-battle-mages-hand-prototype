@@ -1,23 +1,27 @@
 class_name CastleBlueprint
 extends RigidBody3D
 ## Чертёж замка — квестовый предмет базы Долины (акт II): его печатает
-## станок-чертёжник на заставе ([BlueprintMachine].print_scene), рука несёт
-## на плиту-фундамент в центре долины ([CastleFoundation]) — вклад запускает
-## стройку замка артелью. Замок из палитры стройки убран (2026-07-07):
-## закладка ТОЛЬКО чертежом на привязанную точку.
+## станок-чертёжник на заставе ([BlueprintMachine].print_scene). ПИВОТ 2026-07-11:
+## рука кладёт чертёж на ВЕРХ БАШНИ (как груз-артефакты, [MountSlot]) — башня
+## ЗАПОМИНАЕТ его НАВСЕГДА (learned), предмет растворяется, а в панели стройки
+## открывается карточка «Замок» (вне колоды). Ставится замок по-прежнему ТОЛЬКО
+## на фундамент ([CastleFoundation] — привязка в [HandPlaceAim]).
 ##
-## Grabbable-паттерн [RelayItem] (рука морозит при захвате сама, слой ITEMS):
-## отпустил в [snap_radius] от фундамента → фундамент поглощает чертёж и
-## спавнит стройплощадку замка. Визуал = светящаяся «синька» с моделькой
-## башенки сверху — читается как чертёж с высоты камеры.
+## Grabbable-паттерн [RelayItem] (рука морозит при захвате сама, слой ITEMS).
+## Визуал = светящаяся «синька» с моделькой башенки сверху — читается как
+## чертёж с высоты камеры.
 
 const GROUP := &"castle_blueprint"
+
+## Башня выучила чертёж (навсегда на сессию): гейт карточки «Замок» в панели стройки.
+static var learned := false
 
 @export var sheet_color: Color = Color(0.35, 0.6, 1.0)
 @export var highlight_color: Color = Color(1.0, 0.95, 0.4)
 @export_range(0.0, 5.0) var highlight_intensity: float = 0.6
-## В каком радиусе от фундамента дроп засчитывается как вклад.
-@export var snap_radius: float = 3.0
+## В каком радиусе (XZ до tower_top_slot) дроп засчитывается как «положил на башню»
+## — тот же порог, что у груза MountSlot.cargo_snap_radius.
+@export var snap_radius: float = 2.5
 
 var _material: StandardMaterial3D = null
 var _seated: bool = false
@@ -79,33 +83,46 @@ func set_highlighted(value: bool) -> void:
 		_material.emission_energy_multiplier = 1.4
 
 
-## Отпустили рядом с фундаментом → вклад. Дальше фундамент сам ведёт доводку,
-## растворение чертежа и закладку стройки; повторный захват отрезаем слоем.
+## Отпустили у верха башни → башня запоминает чертёж: доводка к слоту, растворение,
+## learned=true навсегда. Карточка «Замок» в панели стройки оживает (гейт по learned).
 func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 	if item != self or _seated:
 		return
-	var foundation := _nearest_foundation()
-	if foundation == null or foundation.is_used():
+	var slot := _nearest_top_slot()
+	if slot == null:
 		return
-	if global_position.distance_to(foundation.global_position) > snap_radius:
+	var dx: float = global_position.x - slot.global_position.x
+	var dz: float = global_position.z - slot.global_position.z
+	if dx * dx + dz * dz > snap_radius * snap_radius:
 		return
 	_seated = true
+	learned = true
 	freeze = true
-	collision_layer = 0  # рука больше не видит — предмет уходит в фундамент
+	collision_layer = 0  # рука больше не видит — предмет уходит в башню
 	linear_velocity = Vector3.ZERO
 	angular_velocity = Vector3.ZERO
-	foundation.seat(self)
+	var tw := create_tween()
+	tw.tween_property(self, "global_position", slot.global_position + Vector3.UP * 0.5, 0.3) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(self, "scale", Vector3.ONE * 0.05, 0.35) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	tw.tween_callback(func() -> void:
+		if is_instance_valid(self):
+			AoeVisual.spawn_pulse_sparks(get_tree().current_scene,
+				global_position, 1.5, 8.0)
+			queue_free())
+	EventBus.tutorial_hint.emit("🏰 Башня запомнила чертёж замка — закладывай из панели стройки на фундамент", 6.0)
 
 
-func _nearest_foundation() -> CastleFoundation:
-	var best: CastleFoundation = null
+func _nearest_top_slot() -> Node3D:
+	var best: Node3D = null
 	var best_d: float = INF
-	for n in get_tree().get_nodes_in_group(CastleFoundation.GROUP):
-		var f := n as CastleFoundation
-		if f == null:
+	for n in get_tree().get_nodes_in_group(&"tower_top_slot"):
+		var s := n as Node3D
+		if s == null or not is_instance_valid(s):
 			continue
-		var d: float = f.global_position.distance_squared_to(global_position)
+		var d: float = s.global_position.distance_squared_to(global_position)
 		if d < best_d:
 			best_d = d
-			best = f
+			best = s
 	return best

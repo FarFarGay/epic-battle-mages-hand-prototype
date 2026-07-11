@@ -12,6 +12,12 @@ extends Node
 
 const ACTION_COMMIT := &"hand_grab"  # ЛКМ — зажать (точка) → отпустить (поставить)
 const ACTION_CANCEL := &"ui_cancel"  # Esc — отмена
+
+## Здание успешно поставлено (площадка/instant заспавнены). HUD по нему снимает карту руки.
+signal placed(building_id: StringName)
+## Пад-здание снесено (ПКМ в режиме стройки / ворота заменили стену). HUD возвращает
+## карту здания в колоду — взамен прежнего монетного рефанда.
+signal demolished(building_id: StringName)
 const ROOM_BUILD_SITE := preload("res://scripts/room_build_site.gd")
 
 ## Группа snap-целей стен (площадки + достроенные стены, см. [RoomBuildSite]).
@@ -63,6 +69,9 @@ var _snapped: bool = false
 var _affordable: bool = true
 ## Замок уже есть/строится → ставить второй нельзя (красный силуэт + гейт). См. _pump_blocked.
 var _blocked: bool = false
+## КАРТА КОЛОДЫ: мана уплачена при взятии карты → монетную цену не проверяем/не списываем,
+## sticky выключен (одна карта = одно здание, aim закрывается после установки).
+var _prepaid: bool = false
 
 
 func _ready() -> void:
@@ -88,7 +97,7 @@ func toggle_aim(building_id: StringName) -> void:
 		start_aim(building_id)
 
 
-func start_aim(building_id: StringName) -> void:
+func start_aim(building_id: StringName, prepaid: bool = false) -> void:
 	if not is_instance_valid(_hand):
 		push_warning("[Hand:PlaceAim] start_aim — _hand не задан")
 		return
@@ -99,6 +108,7 @@ func start_aim(building_id: StringName) -> void:
 	if _aiming:
 		_clear_ghost()  # переключение здания без полного выхода категории
 	_building = building_id
+	_prepaid = prepaid
 	_data = data
 	_footprint = data.get("footprint", _footprint)
 	if not _aiming:
@@ -146,15 +156,22 @@ func _process(_delta: float) -> void:
 		# (коллектор/бур/труба). Для труб это ГЕЙТ (в воздух нельзя), буру — лишь подсветка.
 		_snapped = _touches_host(_oil_ports_world(place, _rot_y))
 	elif _building == RoomBuildings.PUMP:
-		place = _snap_oil_grid(ground)  # замок ставится ПО единому гриду (как всё прочее)
+		# Замок привязан к ФУНДАМЕНТУ ([CastleFoundation]): силуэт липнет к ближайшей
+		# незанятой плите, вне её радиуса — красный запрет (_snapped=false → _blocked).
+		place = _snap_oil_grid(ground)  # по единому гриду (фоллбек, если плиты нет рядом)
+		var fnd := _foundation_for(place)
+		_snapped = fnd != null
+		if fnd != null:
+			place = _snap_oil_grid(fnd.global_position)
 	else:
 		place = _snap_center(ground)
 	# Хватает ли монет на составную цену (постройки с "cost"; без неё — бесплатно).
 	_affordable = _can_afford()
 	# Замок — ОДИН на уровень: если уже есть/строится — ставить нельзя (силуэт красный).
-	# Постройки с forbid_on_chasm (мостки) не ставятся НА полосе пропасти — доску
-	# туда перекладывает РУКА, стройка через дыру не умеет.
-	_blocked = _pump_blocked() or _chasm_blocked(place)
+	# И только НА фундаменте (_snapped из ветки PUMP выше). Постройки с forbid_on_chasm
+	# (мостки) не ставятся НА полосе пропасти — доску туда перекладывает РУКА.
+	_blocked = _pump_blocked() or _chasm_blocked(place) \
+		or (_building == RoomBuildings.PUMP and not _snapped)
 	_update_ghost(place)
 	# Зелёная зона стройки 9×9: при установке замка — вокруг силуэта (видно будущую зону);
 	# при укладке прочего — вокруг существующего замка. Ездит за силуэтом (per-frame).
@@ -209,6 +226,27 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
+## Радиус привязки замка к фундаменту (XZ от силуэта до плиты).
+const FOUNDATION_SNAP_RADIUS := 6.0
+
+## Ближайший НЕЗАНЯТЫЙ фундамент ([CastleFoundation]) в радиусе привязки — точка,
+## куда липнет силуэт замка и которую поглощает commit. null = плиты рядом нет.
+func _foundation_for(place: Vector3) -> CastleFoundation:
+	var best: CastleFoundation = null
+	var best_d: float = FOUNDATION_SNAP_RADIUS * FOUNDATION_SNAP_RADIUS
+	for n in get_tree().get_nodes_in_group(CastleFoundation.GROUP):
+		var f := n as CastleFoundation
+		if f == null or not is_instance_valid(f) or f.is_used():
+			continue
+		var dx: float = f.global_position.x - place.x
+		var dz: float = f.global_position.z - place.z
+		var d: float = dx * dx + dz * dz
+		if d < best_d:
+			best_d = d
+			best = f
+	return best
+
+
 ## Замок (PUMP) — ОДИН на уровень: уже построен (группа Castle) ИЛИ строится (стройплощадка
 ## с building_id=PUMP). Для прочих построек всегда false. Зеркалит гейт меню в gameplay_hud.
 func _pump_blocked() -> bool:
@@ -224,7 +262,10 @@ func _pump_blocked() -> bool:
 
 
 ## Хватает ли в казне монет на составную цену текущей постройки. Нет "cost" → бесплатно.
+## Карта колоды (prepaid) — всегда true: мана уже уплачена при взятии карты.
 func _can_afford() -> bool:
+	if _prepaid:
+		return true
 	var cost: Dictionary = _data.get("cost", {})
 	if cost.is_empty():
 		return true
@@ -267,8 +308,9 @@ func _commit(pos: Vector3) -> void:
 		return
 	# Оплата составной цены из казны (только постройки с "cost" — полимино; стройплощадка
 	# на дереве "cost" не имеет → бесплатна по монетам, держит свою wood-модель). Атомарно.
+	# Карта колоды (prepaid) уже оплачена маной — казну не трогаем.
 	var cost: Dictionary = _data.get("cost", {})
-	if not cost.is_empty():
+	if not _prepaid and not cost.is_empty():
 		var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 		if bank != null and bank.has_method(&"spend_cost"):
 			if not bank.call(&"spend_cost", cost):
@@ -294,6 +336,7 @@ func _commit(pos: Vector3) -> void:
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:PlaceAim] площадка-фигура %s @ клетка %s, yaw %.0f°" % [
 				_building, CityGrid.world_to_cell(pos, get_tree()), rad_to_deg(_rot_y)])
+		_after_commit()
 		return
 	# Мгновенная постройка (трубы): ставим готовую сцену сразу, без стройплощадки и
 	# рабочих — длинную трассу не хочется хаулить. Снап/связь у труб — по портам
@@ -310,6 +353,7 @@ func _commit(pos: Vector3) -> void:
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:PlaceAim] %s @ (%.1f, %.1f) yaw %.0f° (мгновенно)" % [
 				_building, pos.x, pos.z, rad_to_deg(_rot_y)])
+		_after_commit()
 		return
 	var site := StaticBody3D.new()
 	site.set_script(ROOM_BUILD_SITE)
@@ -317,9 +361,23 @@ func _commit(pos: Vector3) -> void:
 	scene.add_child(site)
 	site.global_position = pos
 	site.rotation.y = _rot_y
+	# Замок лёг на фундамент — плита сыграла роль и исчезает (FX внутри consume).
+	if _building == RoomBuildings.PUMP:
+		var fnd := _foundation_for(pos)
+		if fnd != null:
+			fnd.consume()
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:PlaceAim] площадка %s @ (%.1f, %.1f), yaw %.0f°" % [
 			_building, pos.x, pos.z, rad_to_deg(_rot_y)])
+	_after_commit()
+
+
+## Общий хвост успешной установки: сигнал placed (HUD снимает карту руки). Для карты
+## (prepaid) — выход из aim: sticky остаётся только у монетных построек, карта = одно здание.
+func _after_commit() -> void:
+	placed.emit(_building)
+	if _prepaid:
+		_finish()
 
 
 ## Якорь нефте-решётки — центр коллектора (порты коллектора у inlet_dist=3.0 ложатся
@@ -433,19 +491,13 @@ func _remove_walls_under(cells: Array) -> void:
 				break
 
 
-## Возврат составной цены постройки в казну при сносе (монеты — единственный ресурс, снос
-## не должен быть чистой потерей). Полный рефанд. Постройки без "cost" (трубы) — ноль.
+## Снос пад-здания: монетного рефанда больше нет (пады приходят КАРТАМИ колоды за ману,
+## монеты за них не платятся) — вместо денег сигнал demolished, HUD вернёт карту в колоду.
+## Не-пады (трубы) карты не имеют → no-op.
 func _refund_building(b: Node) -> void:
 	if not (b is PadBuilding):
 		return
-	var cost: Dictionary = RoomBuildings.get_data((b as PadBuilding).building_id).get("cost", {})
-	if cost.is_empty():
-		return
-	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
-	if bank == null or not bank.has_method(&"add_coin"):
-		return
-	for type in cost:
-		bank.call(&"add_coin", type, int(cost[type]))
+	demolished.emit((b as PadBuilding).building_id)
 
 
 ## Магнит: притягивает ближайшую snap-точку силуэта (центр + два края по локальному X)

@@ -53,11 +53,27 @@ func add_cap_bonus(amount: int) -> void:
 		_econ.get_resource(ResourcePile.ResourceType.WOOD))
 
 
-## Сдать на склад до капа. Возвращает СКОЛЬКО реально приняли (0 = склад полон по
-## этому типу). Рабочий сверяет: принято 0 → ноша осталась, встал/ждёт.
+## Сдать на склад. ПИВОТ 2026-07-11 «ресурсы прибывают сами»: ритуала сдачи больше нет —
+## всё, КРОМЕ ДЕРЕВА, конвертится в монеты прямо в момент прибытия (единая точка
+## GoldBank.smelt_yield — та же математика, что была у разгрузочной платформы, только
+## без парковки; платформа убрана из колоды). Попап «+N🥉» у башни — доход виден.
+## Дерево — стройматериал (мостки/ferry), остаётся буфером с капом.
+## Возвращает СКОЛЬКО реально приняли (монетная сдача принимает всё; дерево: 0 = склад
+## полон, рабочий встал/ждёт).
 func deposit(type: int, amount: int) -> int:
 	if amount <= 0:
 		return 0
+	if type != ResourcePile.ResourceType.WOOD:
+		var bank := get_tree().get_first_node_in_group(GoldBank.GROUP) as GoldBank
+		if bank != null:
+			var pair: Array = bank.smelt_yield(type)
+			bank.add_coin(int(pair[0]), int(pair[1]) * amount)
+			var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
+			if tower != null and is_instance_valid(tower):
+				# Попап в бронза-эквиваленте — единый формат «+N🥉» (см. soldier_gnome).
+				EventBus.coins_gained_at.emit(
+					int(pair[1]) * amount * bank._unit(int(pair[0])), tower.global_position)
+			return amount
 	var room: int = maxi(0, _econ.cap_for(type) - _econ.get_resource(type))
 	var accepted: int = mini(amount, room)
 	if accepted > 0:

@@ -521,6 +521,8 @@ func _die() -> void:
 	remove_from_group(Damageable.GROUP)
 	remove_from_group(GROUP)
 	destroyed.emit()
+	# Колода: правило ключевых зданий (последняя шахта/институт/верфь → карта наверх).
+	EventBus.pad_building_destroyed.emit(building_id)
 	var tree := get_tree()
 	var scene := tree.current_scene if tree != null else null
 	if scene != null and is_instance_valid(scene):

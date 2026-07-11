@@ -1,10 +1,10 @@
 class_name CastleFoundation
 extends Node3D
-## Фундамент замка — ПРИВЯЗАННАЯ точка закладки (акт II «Долина»): замок не
-## ставится из палитры, а закладывается ТОЛЬКО здесь. Рука вкладывает чертёж
-## ([CastleBlueprint], его release-снап зовёт [seat]) → фундамент поглощает
-## предмет и спавнит стройплощадку замка ([RoomBuildSite], building_id=PUMP) —
-## дальше обычный путь стройки артелью (чит free_build достроит мгновенно).
+## Фундамент замка — ПРИВЯЗАННАЯ точка закладки (акт II «Долина»): замок
+## закладывается ТОЛЬКО здесь. ПИВОТ 2026-07-11: чертёж ([CastleBlueprint])
+## больше не вкладывается в плиту — он кладётся на ВЕРХ БАШНИ (learned), после
+## чего карточка «Замок» из панели стройки размещается рукой; силуэт ЛИПНЕТ к
+## этой плите ([HandPlaceAim] — вне её красный запрет), commit зовёт [consume].
 ## После закладки фундамент ИСЧЕЗАЕТ (фидбек 2026-07-07 — раньше плита
 ## оставалась постаментом).
 ##
@@ -16,7 +16,6 @@ extends Node3D
 ## при закладке подстрахует, но жилы вокруг ставь по сетке GridAnchor.
 
 const GROUP := &"castle_foundation"
-const ROOM_BUILD_SITE := preload("res://scripts/room_build_site.gd")
 
 ## Цвет пульс-кольца ожидающего фундамента (в тон «синьки» чертежа).
 @export var glow_color: Color = Color(0.4, 0.65, 1.0)
@@ -43,40 +42,18 @@ func is_used() -> bool:
 	return _used
 
 
-## Вклад чертежа: доводка предмета в центр плиты, растворение, закладка стройки.
-## Зовёт [CastleBlueprint._on_hand_released] — предмет уже заморожен и снят со слоёв.
-func seat(blueprint: Node3D) -> void:
+## Плита приняла ЗАКЛАДКУ замка (рука поставила карточку «Замок», [HandPlaceAim._commit]):
+## FX + роль сыграна — фундамент исчезает, место занимает стройка замка.
+func consume() -> void:
 	if _used:
 		return
 	_used = true
-	var tw := create_tween()
-	tw.tween_property(blueprint, "global_position", global_position + Vector3.UP * 0.5, 0.3) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tw.tween_property(blueprint, "scale", Vector3.ONE * 0.05, 0.35) \
-		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
-	tw.tween_callback(func() -> void:
-		if is_instance_valid(blueprint):
-			blueprint.queue_free()
-		if is_instance_valid(self):
-			_commit_build())
-
-
-## Закладка: FX + стройплощадка замка обычным путём (как рука в [HandPlaceAim._commit]).
-func _commit_build() -> void:
 	var scene: Node = get_tree().current_scene
-	if scene == null:
-		return
-	var root_pos: Vector3 = CityGrid.snap(global_position, get_tree())
-	AoeVisual.spawn_explosion(scene, root_pos + Vector3.UP * 0.5, 2.2)
-	AoeVisual.spawn_pulse_sparks(scene, root_pos + Vector3.UP * 0.5, 3.0, 14.0)
-	EventBus.camera_shake.emit(0.4, root_pos)
-	var site := StaticBody3D.new()
-	site.set_script(ROOM_BUILD_SITE)
-	site.building_id = RoomBuildings.PUMP
-	scene.add_child(site)
-	site.global_position = root_pos
-	EventBus.tutorial_hint.emit("🏰 Фундамент принял чертёж — замок встаёт!", 6.0)
-	# Роль сыграна: плита исчезает, место занимает стройка замка.
+	if scene != null:
+		AoeVisual.spawn_explosion(scene, global_position + Vector3.UP * 0.5, 2.2)
+		AoeVisual.spawn_pulse_sparks(scene, global_position + Vector3.UP * 0.5, 3.0, 14.0)
+	EventBus.camera_shake.emit(0.4, global_position)
+	EventBus.tutorial_hint.emit("🏰 Фундамент принял закладку — замок встаёт!", 6.0)
 	if _pulse_tween != null and _pulse_tween.is_valid():
 		_pulse_tween.kill()
 	queue_free()
