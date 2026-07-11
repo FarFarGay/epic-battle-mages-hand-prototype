@@ -111,9 +111,13 @@ signal mana_changed(current: float, maximum: float)
 ## Engine.time_scale во время прицеливания (как у Super-QTE). 0.15 = 6.7× слоумо.
 @export var super_dash_time_scale: float = 0.15
 ## Радиус синего кольца-прицела на земле (в точке руки).
-@export var super_dash_marker_radius: float = 2.2
+@export var super_dash_marker_radius: float = 1.4
 ## Цвет кольца-прицела. Синий с блумом (emission бустится при спавне).
 @export var super_dash_marker_color: Color = Color(0.3, 0.62, 1.0, 0.95)
+## Цвет маркера приземления ПОСЛЕ обводки пируэта (заряд готов): золотой +
+## пульс против статичного синего обычного дэша. Не icon_color заклинания —
+## красный в прицеле фрустрировал (решение 2026-07-12).
+@export var super_dash_charged_color: Color = Color(1.0, 0.82, 0.25, 0.95)
 ## Цвет/прозрачность затемнения экрана на время прицеливания. Лёгкое (alpha ~0.3),
 ## синевато-тёмное — фокус на прицеле, тот же язык что у Super-QTE, но мягче.
 @export var super_dash_dim_color: Color = Color(0.02, 0.03, 0.06, 0.32)
@@ -196,7 +200,15 @@ var _dash_is_super: bool = false
 enum SDash { IDLE, HOLDING, TRACING, AIMING }
 var _sdash_state: int = SDash.IDLE
 var _sdash_hold_t: float = 0.0
+## Маркер ТОЧКИ ПРИЗЕМЛЕНИЯ рывка: под курсором, пока тот в пределах длины
+## удара (speed*duration), дальше — клампится на пределе. _sdash_range_line —
+## линия от подножия башни к маркеру. Спавнятся лениво в
+## _update_sdash_range_visuals, живут в TRACING и AIMING.
 var _sdash_marker: MeshInstance3D = null
+var _sdash_range_line: MeshInstance3D = null
+## Последнее валидное направление прицела — линия не дёргается, когда курсор
+## проезжает через подножие башни.
+var _sdash_last_dir: Vector3 = Vector3.FORWARD
 var _sdash_dim: CanvasLayer = null  # лёгкое затемнение экрана на время прицела
 var _sdash_hand: Node = null
 ## Дэш-форма текущего супер-дэша (SPELL_CATALOG[id].dash_form) + id заклинания.
@@ -732,6 +744,8 @@ func _process(delta: float) -> void:
 ## Фигура (точки пируэта) и цена/урон — из dash_form экипированного заклинания
 ## (SpellSystem.SPELL_CATALOG). Нет dash_form (Искра и др.) — обычный супер-дэш
 ## без обводки (fallback @export, без импакт-эффекта).
+## Фигура ОПЦИОНАЛЬНА: ПКМ прямо во время обводки = обычный супер-дэш в точку
+## (заряд заклинания просто не набран) — «мили-удар» доступен с любым заклинанием.
 ## В _process, не в _physics_process: под слоумо физкадры редки, а Input-поллинг
 ## на реальном кадре ловит ПКМ/отпускание мгновенно. Исполнение рывка — в
 ## _physics_process через флаги _sdash_commit / _normal_dash_requested.
@@ -757,20 +771,31 @@ func _update_super_dash_input(delta: float) -> void:
 				if _sdash_hold_t >= super_dash_hold_threshold:
 					_try_enter_sdash_trace()
 		SDash.TRACING:
-			if not Input.is_action_pressed("dash"):
+			if Input.is_action_just_pressed("hand_action"):
+				# ПКМ до завершения фигуры — фигура ОПЦИОНАЛЬНА: обычный
+				# супер-рывок в точку прицела с любым заклинанием. Форму
+				# сбрасываем → цена/урон fallback, импакт-эффекта заклинания нет.
+				_sdash_form = {}
+				_sdash_spell_id = &""
+				var thand := _resolve_dash_hand()
+				if thand != null:
+					_sdash_commit_target = _sdash_landing_point(thand.cursor_world_position())
+					_sdash_commit = true
+				_exit_sdash_aim()
+			elif not Input.is_action_pressed("dash"):
 				# Отпустил до завершения фигуры — отмена, мана не тронута.
 				_exit_sdash_aim()
 			else:
 				_tick_trace()
 		SDash.AIMING:
 			var hand := _resolve_dash_hand()
-			if hand != null and is_instance_valid(_sdash_marker):
-				var p: Vector3 = hand.cursor_world_position()
-				_sdash_marker.global_position = Vector3(p.x, 0.05, p.z)
+			if hand != null:
+				_update_sdash_range_visuals(hand.cursor_world_position())
 			if Input.is_action_just_pressed("hand_action"):
-				# ПКМ — коммит супер-рывка в точку прицела.
+				# ПКМ — коммит супер-рывка. Цель = точка приземления (то, что
+				# показывает маркер), а не сырой курсор: «куда целюсь, туда лечу».
 				if hand != null:
-					_sdash_commit_target = hand.cursor_world_position()
+					_sdash_commit_target = _sdash_landing_point(hand.cursor_world_position())
 					_sdash_commit = true
 				_exit_sdash_aim()
 			elif not Input.is_action_pressed("dash"):
@@ -865,6 +890,9 @@ func _tick_trace() -> void:
 		return
 	var cur: Vector3 = hand.cursor_world_position()
 	var ground := Vector3(cur.x, 0.05, cur.z)
+	# Линия дальности + маркер приземления живут и во время обводки: ПКМ-коммит
+	# обычного рывка доступен в любой момент, игрок должен видеть его длину.
+	_update_sdash_range_visuals(cur)
 	# Пульс свечения (0..1) на РЕАЛЬНОМ времени — под слоумо (time_scale 0.15)
 	# игровые секунды почти стоят, дыхание должно жить в темпе игрока.
 	var pulse: float = 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) / 1000.0 * 8.0)
@@ -946,6 +974,17 @@ func _set_marker_emission(mesh: MeshInstance3D, energy: float) -> void:
 		mat.emission_energy_multiplier = energy
 
 
+## Перекрасить ground-маркер на лету (albedo + emission в тон). Маркер
+## приземления дэша: синий = обычный, золотой = заряд пируэтом готов.
+func _set_marker_color(mesh: MeshInstance3D, color: Color) -> void:
+	if not is_instance_valid(mesh):
+		return
+	var mat := mesh.material_override as StandardMaterial3D
+	if mat != null:
+		mat.albedo_color = color
+		mat.emission = Color(color.r, color.g, color.b, 1.0)
+
+
 ## Фигура обведена целиком — «сверкнула». АКЦЕНТ «заряд готов»: кольцо-разряд от
 ## башни + искры + вспышка экрана цветом заклинания + шейк + панч башни. Дальше
 ## прежний прицел супер-дэша (маркер под курсором, ПКМ-коммит).
@@ -962,11 +1001,13 @@ func _on_trace_complete() -> void:
 	_enter_sdash_aim()
 
 
-## Цвет текущей дэш-формы — icon_color заклинания из каталога (единый язык:
-## точки обводки, вспышки, маркер прицела). Fallback — прежний синий.
+## Цвет визуалов супер-дэша (точки обводки, нити, вспышки, маркер, линия
+## дальности). Раньше брался icon_color заклинания, но красный (фаербол)
+## читался как «опасность/ошибка» и фрустрировал — теперь единый синий
+## обычного супер-дэша для всех форм (решение 2026-07-12). Импакт-эффект
+## самого заклинания свои цвета сохраняет.
 func _sdash_spell_color() -> Color:
-	var data: Dictionary = SpellSystem.get_spell_data(_sdash_spell_id) if SpellSystem != null else {}
-	return data.get("icon_color", super_dash_marker_color)
+	return super_dash_marker_color
 
 
 func _clear_trace_rings() -> void:
@@ -986,18 +1027,60 @@ func _clear_trace_rings() -> void:
 	_trace_cursor_marker = null
 
 
-## Прицел (после успешной обводки): маркер на земле под курсором цветом
-## заклинания. Слоумо/категория/затемнение уже включены обводкой.
+## Прицел (после обводки или сразу для формы без фигуры). Маркер приземления и
+## линия дальности спавнятся/обновляются в _update_sdash_range_visuals.
+## Слоумо/категория/затемнение уже включены на входе.
 func _enter_sdash_aim() -> void:
 	_sdash_state = SDash.AIMING
 	var hand := _resolve_dash_hand()
-	var origin: Vector3 = hand.cursor_world_position() if hand != null else global_position
-	_sdash_marker = AoeVisual.spawn_ground_ring(
-		get_tree().current_scene, origin, super_dash_marker_radius, 0.0, _sdash_spell_color())
-	if is_instance_valid(_sdash_marker):
-		var mat := _sdash_marker.material_override as StandardMaterial3D
-		if mat != null:
-			mat.emission_energy_multiplier = 5.0
+	var cur: Vector3 = hand.cursor_world_position() if hand != null \
+			else global_position + _sdash_last_dir
+	_update_sdash_range_visuals(cur)
+
+
+## Точка приземления супер-рывка при прицеле в cursor: рывок летит К КУРСОРУ и
+## останавливается в нём. Курсор дальше предела (speed*duration) — точка
+## клампится на предельной дистанции: круг «упирается» в максимум и фиксируется,
+## линия за курсором дальше не растёт. Курсор у подножия башни — держим
+## последнее валидное направление, чтобы линия не дёргалась.
+func _sdash_landing_point(cursor: Vector3) -> Vector3:
+	var dir := Vector3(cursor.x - global_position.x, 0.0, cursor.z - global_position.z)
+	var dist: float = dir.length()
+	if dist > 0.05:
+		_sdash_last_dir = dir / dist
+	var max_dist: float = super_dash_speed * super_dash_duration
+	var landing: Vector3 = global_position + _sdash_last_dir * minf(dist, max_dist)
+	return Vector3(landing.x, 0.05, landing.z)
+
+
+## Телеграф дальности рывка: линия от подножия башни к точке приземления +
+## кольцо-маркер в ней. Зовётся каждый кадр TRACING и AIMING — игрок всегда
+## видит, как далеко башня прыгнет и куда бьёт. Спавн ленивый (первый вызов).
+## Состояние заряда читается по маркеру: пируэт обведён целиком → маркер
+## ПУЛЬСИРУЕТ (эмиссия + дыхание масштабом, реальное время — под слоумо игровые
+## секунды стоят); без фигуры / фигура не закончена → статичный.
+func _update_sdash_range_visuals(cursor: Vector3) -> void:
+	var landing: Vector3 = _sdash_landing_point(cursor)
+	var foot := Vector3(global_position.x, 0.05, global_position.z)
+	if not is_instance_valid(_sdash_marker):
+		_sdash_marker = AoeVisual.spawn_ground_ring(
+			get_tree().current_scene, landing, super_dash_marker_radius, 0.0, _sdash_spell_color())
+	_sdash_marker.global_position = landing
+	var charged: bool = _sdash_state == SDash.AIMING and not _sdash_form.is_empty()
+	if charged:
+		var pulse: float = 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) / 1000.0 * 8.0)
+		_set_marker_color(_sdash_marker, super_dash_charged_color)
+		_set_marker_emission(_sdash_marker, 5.0 + 4.0 * pulse)
+		_sdash_marker.scale = Vector3.ONE * (1.0 + 0.15 * pulse)
+	else:
+		_set_marker_color(_sdash_marker, _sdash_spell_color())
+		_set_marker_emission(_sdash_marker, 5.0)
+		_sdash_marker.scale = Vector3.ONE
+	if is_instance_valid(_sdash_range_line):
+		AoeVisual.update_ground_line(_sdash_range_line, foot, landing)
+	else:
+		_sdash_range_line = AoeVisual.spawn_ground_line(
+			get_tree().current_scene, foot, landing, _sdash_spell_color(), 0.16, 4.0)
 
 
 ## Лёгкое затемнение экрана (отдельный CanvasLayer, вне слоумо).
@@ -1019,6 +1102,9 @@ func _exit_sdash_aim() -> void:
 	if is_instance_valid(_sdash_marker):
 		_sdash_marker.queue_free()
 	_sdash_marker = null
+	if is_instance_valid(_sdash_range_line):
+		_sdash_range_line.queue_free()
+	_sdash_range_line = null
 	if is_instance_valid(_sdash_dim):
 		_sdash_dim.queue_free()
 	_sdash_dim = null
@@ -1145,27 +1231,32 @@ func _physics_process(delta: float) -> void:
 		# гейт только мана, не кд.
 		_sdash_commit = false
 		_normal_dash_requested = false
-		if not _dying and try_consume_mana(float(_sdash_form.get("mana_cost", super_dash_mana_cost))):
-			var sdir := Vector2(_sdash_commit_target.x - global_position.x,
-					_sdash_commit_target.z - global_position.z)
-			if sdir.length() > 0.05:
-				_dash_dir = sdir.normalized()
-				_dash_is_super = true
-				_sdash_impact_pending = true
-				_dash_timer = super_dash_duration
-				_dash_cd = dash_cooldown
-				_dash_ghost_t = 0.0
-				_super_trail_t = 0.0
-				_dash_hit_set.clear()
-				# АКЦЕНТ «запустил супер»: вспышка экрана + шейк + панч башни +
-				# стартовая волна цветом заклинания. Читается как каст, не как
-				# обычный рывок подлиннее.
-				var launch_color: Color = _sdash_spell_color()
-				AoeVisual.spawn_screen_flash(get_tree(), launch_color, 0.15, 0.1)
-				EventBus.camera_shake.emit(0.5, global_position)
-				_cast_punch_tween = HitPunch.punch(_mesh, _cast_punch_tween, 0.9, 0.04, 0.14)
-				AoeVisual.spawn_expanding_ring(get_tree().current_scene,
-					Vector3(global_position.x, 0.05, global_position.z), 4.0, 0.3, launch_color)
+		var sdir := Vector2(_sdash_commit_target.x - global_position.x,
+				_sdash_commit_target.z - global_position.z)
+		var sdist: float = sdir.length()
+		# Дистанция-гейт ДО списания маны: цель у подножия — рывка нет, ману не жжём.
+		if sdist > 0.05 and not _dying \
+				and try_consume_mana(float(_sdash_form.get("mana_cost", super_dash_mana_cost))):
+			_dash_dir = sdir / sdist
+			_dash_is_super = true
+			_sdash_impact_pending = true
+			# Рывок летит ДО точки прицела и там останавливается (маркер = честный
+			# финал): таймер по дистанции, потолок — полная длительность (цель уже
+			# клампнута на пределе speed*duration в _sdash_landing_point).
+			_dash_timer = minf(sdist / super_dash_speed, super_dash_duration)
+			_dash_cd = dash_cooldown
+			_dash_ghost_t = 0.0
+			_super_trail_t = 0.0
+			_dash_hit_set.clear()
+			# АКЦЕНТ «запустил супер»: вспышка экрана + шейк + панч башни +
+			# стартовая волна цветом заклинания. Читается как каст, не как
+			# обычный рывок подлиннее.
+			var launch_color: Color = _sdash_spell_color()
+			AoeVisual.spawn_screen_flash(get_tree(), launch_color, 0.15, 0.1)
+			EventBus.camera_shake.emit(0.5, global_position)
+			_cast_punch_tween = HitPunch.punch(_mesh, _cast_punch_tween, 0.9, 0.04, 0.14)
+			AoeVisual.spawn_expanding_ring(get_tree().current_scene,
+				Vector3(global_position.x, 0.05, global_position.z), 4.0, 0.3, launch_color)
 	elif _normal_dash_requested:
 		_normal_dash_requested = false
 		if _dash_timer <= 0.0 and _dash_cd <= 0.0 and not _dying:
