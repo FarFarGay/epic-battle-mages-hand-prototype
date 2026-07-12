@@ -272,7 +272,9 @@ var mana: float = 0.0
 @onready var _floor_normal_threshold: float = cos(get_floor_max_angle())
 # Каменная масса башни (тело+корона+зубцы) из выпеченной модели tower_visual.tscn.
 # По ней идут HitFlash (вспышка урона) и DashFx-призрак — это основной силуэт.
-@onready var _mesh: MeshInstance3D = $VisualRoot/TowerVisual/Body
+# Body лежит под BodyScale (масштаб 3D-модели, 2026-07-13): сам Body держит
+# scale=1 — HitPunch твинит scale к Vector3.ONE и растёр бы масштаб модели.
+@onready var _mesh: MeshInstance3D = $VisualRoot/TowerVisual/BodyScale/Body
 # Светящиеся жилы-каналы реактора: их яркость гоним от количества маны.
 @onready var _glow_mesh: MeshInstance3D = $VisualRoot/TowerVisual/Glow
 @onready var _visual_root: Node3D = $VisualRoot

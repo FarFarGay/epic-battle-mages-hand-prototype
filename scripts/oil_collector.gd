@@ -163,26 +163,38 @@ func _die() -> void:
 	queue_free()
 
 
-# --- Визуал: мини-замок (центр грид-города). Строится кодом, как трубы (один путь). ---
+# --- Визуал: 3D-модель замка (центр грид-города). ---
 
+## Цвет осколков death-взрыва (камень — прежний процедурный корпус).
 const _STONE := Color(0.56, 0.55, 0.6)
-const _TRIM := Color(0.4, 0.38, 0.43)
+
+
+## Ширина замка по XZ (м) — под неё масштабируется 3D-модель. ≈ прежний
+## процедурный габарит (донжон 3.4 + башенки), коллизия-цилиндр r=2.3 совпадает.
+const CASTLE_WIDTH := 4.4
+## 3D-модель замка (2026-07-13, заменила процедурные кубики): OBJ ~1×1×1 м
+## с центром в нуле — масштаб/посадка на землю считаются из AABB, замена
+## модели не требует правок кода.
+const CASTLE_MESH := preload("res://models/castle/castle.obj")
+const CASTLE_TEX := preload("res://models/castle/castle_basecolor.jpg")
 
 
 func _build_castle() -> void:
-	var stone := _mat(_STONE, 0.9)
-	var trim := _mat(_TRIM, 0.85)
-	# Донжон: квадратный корпус-стена.
-	_box(Vector3(3.4, 2.2, 3.4), Vector3(0, 1.1, 0), stone)
-	_battlements(1.7, 2.2, trim)  # зубцы по верху стен
-	# Угловые башенки — КВАДРАТНЫЕ короба выше стен + квадратные пирамидальные крыши.
-	for sx in [-1.0, 1.0]:
-		for sz in [-1.0, 1.0]:
-			var c := Vector3(sx * 1.7, 0, sz * 1.7)
-			_box(Vector3(1.0, 3.4, 1.0), c + Vector3(0, 1.7, 0), stone)
-			_pyramid(0.6, 0.9, c + Vector3(0, 3.85, 0), trim)
-	# Ворота (тёмный проём спереди).
-	_box(Vector3(1.1, 1.5, 0.25), Vector3(0, 0.75, 1.72), trim)
+	var mi := MeshInstance3D.new()
+	mi.mesh = CASTLE_MESH
+	# material_override (не материал меша): его видит hit-flash (_flash_hit
+	# собирает override'ы) — замок мигает от урона, как все здания.
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = CASTLE_TEX
+	mat.roughness = 0.9
+	mi.material_override = mat
+	var aabb: AABB = CASTLE_MESH.get_aabb()
+	var s: float = CASTLE_WIDTH / maxf(aabb.size.x, maxf(aabb.size.z, 0.001))
+	mi.scale = Vector3.ONE * s
+	# Центр по XZ в ноль, низ модели на землю (y=0).
+	var c: Vector3 = aabb.get_center()
+	mi.position = Vector3(-c.x * s, -aabb.position.y * s, -c.z * s)
+	add_child(mi)
 	# Уровень нефти = светящийся столб в центре двора, растёт по Y (oil → победа).
 	_fill = Node3D.new()
 	add_child(_fill)
@@ -202,52 +214,6 @@ func _build_castle() -> void:
 	_fill.add_child(glow)
 
 
-## Зубцы (мерлоны) по периметру верха стен: ряд кубиков на каждой из 4 сторон.
-func _battlements(half: float, top_y: float, mat: StandardMaterial3D) -> void:
-	var n := 4
-	var mh := 0.5
-	var mw := 0.36
-	var step := (half * 2.0) / float(n)
-	for i in n:
-		var o: float = -half + step * (float(i) + 0.5)
-		var y: float = top_y + mh * 0.5
-		_box(Vector3(mw, mh, mw), Vector3(o, y, half), mat)
-		_box(Vector3(mw, mh, mw), Vector3(o, y, -half), mat)
-		_box(Vector3(mw, mh, mw), Vector3(half, y, o), mat)
-		_box(Vector3(mw, mh, mw), Vector3(-half, y, o), mat)
-
-
-func _mat(c: Color, rough: float) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = c
-	m.roughness = rough
-	return m
-
-
-func _box(size: Vector3, pos: Vector3, mat: StandardMaterial3D) -> void:
-	var mi := MeshInstance3D.new()
-	var b := BoxMesh.new()
-	b.size = size
-	mi.mesh = b
-	mi.material_override = mat
-	mi.position = pos
-	add_child(mi)
-
-
-## Квадратная пирамида (крыша башенки): CylinderMesh с 4 сегментами, повёрнут на 45°,
-## чтобы грани шли вдоль осей (как у короба башни). half — полуширина квадрата основания.
-func _pyramid(half: float, height: float, pos: Vector3, mat: StandardMaterial3D) -> void:
-	var mi := MeshInstance3D.new()
-	var c := CylinderMesh.new()
-	c.top_radius = 0.0
-	c.bottom_radius = half * 1.4142  # описанный радиус квадрата стороной 2·half
-	c.height = height
-	c.radial_segments = 4
-	mi.mesh = c
-	mi.material_override = mat
-	mi.position = pos
-	mi.rotation.y = PI / 4.0
-	add_child(mi)
 
 
 ## Порты коллектора (мировые концы инлетов спереди/сзади) — контракт pipe_port_host.

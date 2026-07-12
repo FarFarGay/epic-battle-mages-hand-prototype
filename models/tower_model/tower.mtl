@@ -1,0 +1,16 @@
+# Blender 5.0.1 MTL File: 'None'
+# www.blender.org
+
+newmtl tripo_mat_11d6e063-f95b-4023-bd17-5a2037ddf8e1
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd tower_basecolor.jpg
+map_Ns tower_roughness.jpg
+map_Pr tower_roughness.jpg
+map_refl tower_metallic.jpg
+map_Pm tower_metallic.jpg
+map_Bump -bm 1.000000 tower_normal.jpg
