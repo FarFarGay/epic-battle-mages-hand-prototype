@@ -30,6 +30,15 @@ extends SoldierGnome
 ##
 ## Прокачка точности — per-instance счётчик `_shots_fired`, теряется на
 ## смерти. Дизайн: «храни ветеранов».
+##
+## НОСИМОЕ ОРУЖИЕ (2026-07-12): любого живого лучника можно ВЗЯТЬ РУКОЙ
+## (невидимая [UnitGrabHandle] при гноме) и поставить на крышу башни — он
+## автострелятет на 360° (VS-режим, тот же боевой цикл, что у гарнизона).
+## Слот на крыше ОДИН (заменяет экипаж-3 «В башню»): установленный лучник
+## питает и арбалетные окна ([TowerUpgrades.crew_count]). Прокачка — XP за
+## СВОИ убийства (kill-credit через Arrow.shooter_ref), уровень даёт
+## +урон/+темп. XP личный и работает везде (стена/поле/крыша) — «храни
+## ветеранов» теперь буквально: ветеран на крыше ценнее новичка.
 
 @export_group("Archer combat")
 ## Скорость стрелы (м/с).
@@ -103,9 +112,40 @@ const PROXIMITY_OVERRIDE_RADIUS: float = 1.8
 ## другой class const.
 const TARGET_MASK: int = 16 | 128
 
+## Группа-маркер «лучник стоит на крыше башни» — слот один; гейт занятости
+## и экипаж арбалетных окон (TowerUpgrades) читают её.
+const TOWER_WEAPON_GROUP := &"tower_archer_mounted"
+## Позиция на крыше ОТНОСИТЕЛЬНО origin башни (крыша = +3 как у HarpoonModule;
+## чуть в сторону от оси — не сливаться с турелью/грузом по центру).
+const TOWER_MOUNT_OFFSET := Vector3(0.55, 3.0, 0.0)
+
+## XP за убийство и пороги уровней — легаси-числа отрядного опыта
+## (Camp.squad_xp_per_kill=10 и squad_level_xp_curve), теперь per-instance.
+const XP_PER_KILL := 10
+const XP_LEVEL_CURVE: Array[int] = [50, 120, 250, 500, 1000]
+## Бонусы уровня: урон ×(1+0.15·lvl), кулдаун ×1/(1+0.12·lvl). Кривая на
+## плейтест (юзер 2026-07-12: «простая ось темп+урон»).
+const LEVEL_DAMAGE_BONUS := 0.15
+const LEVEL_RATE_BONUS := 0.12
+
 ## Per-soldier счётчик выстрелов для расчёта точности. Теряется на смерть.
 var _shots_fired: int = 0
 var _projectiles_root: Node = null
+
+## XP/уровень за убийства (kill-credit от своих стрел). Теряется на смерть.
+var _xp: int = 0
+var _level: int = 0
+
+## Носимое оружие: нас несёт рука / стоим на крыше башни.
+var _hand_carried: bool = false
+var _weapon_mounted: bool = false
+var _mount_tower: Node3D = null
+var _grab_handle: UnitGrabHandle = null
+
+## Материалы визуала + шест значков уровня (для подсветки руки и звёзд).
+var _visual_mats: Array[StandardMaterial3D] = []
+var _visual_holder: Node3D = null
+var _badge_root: Node3D = null
 
 ## Текущее горизонтальное направление взгляда. Конус зрения считается
 ## относительно него. Обновляется на каждом тике: при движении → на цель/
@@ -143,9 +183,23 @@ func _ready() -> void:
 	# timing (targeting → ~1с раньше).
 	EventBus.skeleton_attacked_camp.connect(_on_skeleton_attacked_camp)
 	EventBus.skeleton_targeting_camp.connect(_on_skeleton_attacked_camp)
+	# Ручка-захват живёт В СЦЕНЕ (не ребёнком) — deferred: на буте current_scene
+	# ещё может собираться.
+	call_deferred(&"_spawn_grab_handle")
+
+
+func _spawn_grab_handle() -> void:
+	if _grab_handle == null and is_inside_tree():
+		_grab_handle = UnitGrabHandle.attach_to(self)
 
 
 func _exit_tree() -> void:
+	# Смерть/удаление: слот крыши освобождаем сразу, ручка не переживает юнита.
+	if is_in_group(TOWER_WEAPON_GROUP):
+		remove_from_group(TOWER_WEAPON_GROUP)
+	if _grab_handle != null and is_instance_valid(_grab_handle):
+		_grab_handle.queue_free()
+		_grab_handle = null
 	if EventBus.skeleton_attacked_camp.is_connected(_on_skeleton_attacked_camp):
 		EventBus.skeleton_attacked_camp.disconnect(_on_skeleton_attacked_camp)
 	if EventBus.skeleton_targeting_camp.is_connected(_on_skeleton_attacked_camp):
@@ -242,7 +296,8 @@ func _try_fire_at_resolved_target(delta: float) -> bool:
 	_face_horizontal(to_t, dist)
 	velocity = Vector3.ZERO
 	_fire_at(target)
-	_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max)
+	# Уровень ускоряет темп: cd масштабируется cooldown_scale (см. XP-блок).
+	_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max) * cooldown_scale()
 	return true
 
 
@@ -471,6 +526,7 @@ func volley_fire_at(aim_pos: Vector3, dmg: float) -> void:
 	_projectiles_root.add_child(arrow)
 	arrow.damage = dmg
 	arrow.speed = arrow_speed
+	arrow.shooter_ref = weakref(self)  # kill-credit → XP (см. credit_kill)
 	arrow.setup(global_position + arrow_spawn_offset, aim_pos)
 
 
@@ -488,7 +544,7 @@ func _fire_at(target: Node3D) -> void:
 	if not is_instance_valid(_projectiles_root):
 		_projectiles_root = get_tree().current_scene
 	_projectiles_root.add_child(arrow)
-	var damage: float = randf_range(attack_damage_min, attack_damage_max)
+	var damage: float = randf_range(attack_damage_min, attack_damage_max) * damage_multiplier()
 	var spawn := global_position + arrow_spawn_offset
 	var inaccuracy: float = current_inaccuracy_radius()
 	var aim_pos: Vector3 = target.global_position
@@ -499,6 +555,7 @@ func _fire_at(target: Node3D) -> void:
 		aim_pos.z += sin(angle) * r
 	arrow.damage = damage
 	arrow.speed = arrow_speed
+	arrow.shooter_ref = weakref(self)  # kill-credit → XP (см. credit_kill)
 	arrow.setup(spawn, aim_pos)
 	_shots_fired += 1
 	if _squad != null:
@@ -522,12 +579,32 @@ func _apply_visual() -> void:
 	var holder := Node3D.new()
 	holder.position = Vector3(0, -0.4, 0)  # капсула центрирована в origin — опускаем «ноги»
 	add_child(holder)
+	_visual_holder = holder
 	var cloth := _arch_mat(Color(0.28, 0.46, 0.7))  # синий — лучники
 	var skin := _arch_mat(Color(0.85, 0.7, 0.55))
 	var wood := _arch_mat(Color(0.3, 0.2, 0.12))
+	# Типизированная локальная вместо литерала-присваивания (см. SPEC §7.3 #4).
+	var mats: Array[StandardMaterial3D] = []
+	mats.append(cloth)
+	mats.append(skin)
+	mats.append(wood)
+	_visual_mats = mats
 	_arch_box(holder, Vector3(0.34, 0.5, 0.26), Vector3(0, 0.45, 0), cloth)   # тело
 	_arch_box(holder, Vector3(0.26, 0.26, 0.24), Vector3(0, 0.82, 0), skin)   # голова
 	_arch_box(holder, Vector3(0.06, 0.62, 0.06), Vector3(0.22, 0.55, 0), wood)  # лук
+	if _level > 0:
+		_refresh_level_badges()
+
+
+## Контракт подсветки руки (транслирует UnitGrabHandle): любой grab'аемый
+## объект подсвечивается при наведении — [[feedback_grabbable_highlight]].
+func set_highlighted(value: bool) -> void:
+	for m in _visual_mats:
+		if m == null:
+			continue
+		m.emission_enabled = true
+		m.emission = Color(1.0, 0.95, 0.4)
+		m.emission_energy_multiplier = 0.9 if value else 0.0
 
 
 func _arch_mat(c: Color) -> StandardMaterial3D:
@@ -604,6 +681,14 @@ func _grn_should_garrison() -> bool:
 
 
 func _physics_process(delta: float) -> void:
+	# Носимое оружие — приоритет над всем (squad-команды/гарнизон не трогают
+	# несомого и установленного лучника; позицией владеет рука/башня).
+	if _hand_carried:
+		velocity = Vector3.ZERO
+		return
+	if _weapon_mounted:
+		_weapon_tick(delta)
+		return
 	if _grn_should_garrison():
 		_grn_active = true
 		_garrison_move(delta)
@@ -756,6 +841,146 @@ func garrison_world_changed() -> void:
 		var cell := CityGrid.world_to_cell(global_position, get_tree())
 		if not _grn_walk.has(cell):
 			_grn_falling = true
+
+
+# --- НОСИМОЕ ОРУЖИЕ: рука несёт лучника / лучник стоит на крыше башни -------------
+# Контракт UnitGrabHandle (см. unit_grab_handle.gd). Крыша = VS-автострельба:
+# тот же цикл, что у гарнизона (360° ближайший враг → ориентация конуса →
+# штатный _try_fire_at_resolved_target: точность/стрела/cd/XP — всё общее).
+
+
+## Можно ли сейчас хватать рукой: жив, не спрятан в башню (невидимого не хватаем).
+func is_carry_available() -> bool:
+	return not _hidden_in_tower and visible
+
+
+## Рука подняла: AI замирает, скелеты нас не целят (мы в воздухе), гарнизонный
+## спуск (_grn_active) гасим — иначе после дропа в другом месте лучник «плыл» бы
+## к старому ground_y.
+func begin_hand_carry() -> void:
+	if _weapon_mounted:
+		_dismount_from_tower()
+	_exit_hidden()
+	_hand_carried = true
+	_grn_active = false
+	velocity = Vector3.ZERO
+	if is_in_group(SKELETON_TARGET_GROUP):
+		remove_from_group(SKELETON_TARGET_GROUP)
+
+
+## Пока несут — висим под ручкой (позицию ведёт UnitGrabHandle каждый физкадр).
+func carry_follow(pos: Vector3) -> void:
+	global_position = pos
+
+
+## Отпустили в мир: оживаем на месте (гравитация штатной физики сама уронит).
+func end_hand_carry() -> void:
+	_hand_carried = false
+	if not is_in_group(SKELETON_TARGET_GROUP):
+		add_to_group(SKELETON_TARGET_GROUP)
+
+
+## Отпустили над башней: занять слот крыши. Слот ОДИН — занят другим лучником →
+## false (ручка вернёт юнита в мир обычным дропом). Вне целей скелетов, как
+## бывший экипаж «В башню» (melee всё равно не достаёт до крыши).
+func try_mount_on_tower(tower: Node3D) -> bool:
+	for other in get_tree().get_nodes_in_group(TOWER_WEAPON_GROUP):
+		if other != self and is_instance_valid(other) and not other.is_queued_for_deletion():
+			EventBus.tutorial_hint.emit("⚠ На башне уже стоит лучник — сними его рукой", 4.0)
+			return false
+	_hand_carried = false
+	_weapon_mounted = true
+	_mount_tower = tower
+	add_to_group(TOWER_WEAPON_GROUP)
+	global_position = tower.global_position + TOWER_MOUNT_OFFSET
+	AoeVisual.spawn_pulse_sparks(get_tree().current_scene, global_position, 0.9, 8.0)
+	EventBus.tutorial_hint.emit("🏹 Лучник встал на башню — стреляет сам; арбалетные окна ожили", 4.0)
+	if debug_log and LogConfig.master_enabled:
+		print("[ArcherSoldier:%s] смонтирован на башню (lvl=%d)" % [name, _level])
+	return true
+
+
+## Снятие с крыши (рука схватила / башня погибла).
+func _dismount_from_tower() -> void:
+	_weapon_mounted = false
+	_mount_tower = null
+	if is_in_group(TOWER_WEAPON_GROUP):
+		remove_from_group(TOWER_WEAPON_GROUP)
+
+
+func is_tower_weapon() -> bool:
+	return _weapon_mounted
+
+
+## VS-тик на крыше: пин к башне (едем на корпусе, как груз MountSlot) + боевой
+## цикл гарнизона (360°-ближайший → конус → штатный выстрел).
+func _weapon_tick(delta: float) -> void:
+	if _mount_tower == null or not is_instance_valid(_mount_tower):
+		# Башня погибла под нами — слезаем, дальше штатная жизнь (падение/отряд).
+		_dismount_from_tower()
+		if not is_in_group(SKELETON_TARGET_GROUP):
+			add_to_group(SKELETON_TARGET_GROUP)
+		return
+	global_position = _mount_tower.global_position + TOWER_MOUNT_OFFSET
+	velocity = Vector3.ZERO
+	if _attack_cd > 0.0:
+		_attack_cd -= delta
+	var foe: Node3D = _grn_nearest_enemy()
+	if foe != null:
+		var tf := Vector3(foe.global_position.x - global_position.x, 0.0, foe.global_position.z - global_position.z)
+		_face_horizontal(tf, tf.length())
+		_try_fire_at_resolved_target(delta)
+
+
+# --- XP за убийства → уровни → +урон/+темп ----------------------------------------
+
+
+## Kill-credit от своей стрелы (Arrow.shooter_ref). Работает везде: поле, стена,
+## крыша башни, залп арбалетных окон (болт приписан лучнику на крыше).
+func credit_kill() -> void:
+	_xp += XP_PER_KILL
+	while _level < XP_LEVEL_CURVE.size() and _xp >= XP_LEVEL_CURVE[_level]:
+		_level += 1
+		_on_level_up()
+
+
+func get_level() -> int:
+	return _level
+
+
+## Множитель урона стрелы от уровня.
+func damage_multiplier() -> float:
+	return 1.0 + LEVEL_DAMAGE_BONUS * float(_level)
+
+
+## Множитель кулдауна от уровня (меньше = чаще стреляет).
+func cooldown_scale() -> float:
+	return 1.0 / (1.0 + LEVEL_RATE_BONUS * float(_level))
+
+
+func _on_level_up() -> void:
+	_refresh_level_badges()
+	AoeVisual.spawn_pulse_sparks(get_tree().current_scene, global_position, 0.7, 6.0)
+	EventBus.tutorial_hint.emit("🏹 Лучник — уровень %d: урон и темп выросли" % _level, 3.0)
+	if debug_log and LogConfig.master_enabled:
+		print("[ArcherSoldier:%s] уровень %d (xp=%d)" % [name, _level, _xp])
+
+
+## Значки уровня — золотые кубики-звёзды столбиком над головой (дёшево и видно
+## издалека, какой лучник ветеран).
+func _refresh_level_badges() -> void:
+	if _visual_holder == null:
+		return
+	if _badge_root != null:
+		_badge_root.queue_free()
+	_badge_root = Node3D.new()
+	_visual_holder.add_child(_badge_root)
+	var gold := _arch_mat(Color(1.0, 0.85, 0.25))
+	gold.emission_enabled = true
+	gold.emission = Color(1.0, 0.85, 0.25)
+	gold.emission_energy_multiplier = 0.6
+	for i in range(_level):
+		_arch_box(_badge_root, Vector3(0.1, 0.1, 0.1), Vector3(0, 1.08 + 0.16 * float(i), 0), gold)
 
 
 ## Ближайший враг в attack_range (XZ) — только для ОРИЕНТАЦИИ конуса на стене (выстрел

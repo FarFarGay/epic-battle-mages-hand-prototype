@@ -32,6 +32,11 @@ signal hit(target: Node, position: Vector3)
 
 @onready var _hit_area: Area3D = $HitArea
 
+## WeakRef на стрелка (ArcherSoldier и т.п., duck-typing: credit_kill()).
+## Смертельное попадание по врагу → стрелок получает kill-credit (XP уровней
+## носимого лучника, 2026-07-12). null — анонимная стрела (вражеские, турель).
+var shooter_ref: WeakRef = null
+
 var _velocity: Vector3 = Vector3.ZERO
 var _life: float = 0.0
 ## Идемпотентность: если Area3D триггернулся дважды (terrain + enemy в одном
@@ -118,7 +123,16 @@ func _on_body_entered(body: Node) -> void:
 	# в чем торчать). Kill credit идёт через EventBus.enemy_destroyed → XpOrbSpawner
 	# (autoload), поэтому стрела сама про XP ничего не знает (этап 49).
 	if Damageable.is_damageable(body):
+		# Kill-credit: смерть врага СИНХРОННА внутри try_damage (hp≤0 →
+		# destroyed.emit + queue_free), поэтому «убил ли этот выстрел» видно
+		# по is_queued_for_deletion сразу после. Группу читаем ДО урона —
+		# _die-цепочки чистят группы немедленно (см. queue_free-deferred).
+		var was_enemy: bool = body is Node and (body as Node).is_in_group(Enemy.ENEMY_GROUP)
 		Damageable.try_damage(body, damage)
+		if was_enemy and shooter_ref != null and (body as Node).is_queued_for_deletion():
+			var shooter: Object = shooter_ref.get_ref()
+			if shooter != null and shooter.has_method(&"credit_kill"):
+				shooter.call(&"credit_kill")
 		hit.emit(body, global_position)
 		queue_free()
 		return

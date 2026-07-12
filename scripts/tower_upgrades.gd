@@ -6,9 +6,11 @@ extends Node3D
 ## max_hp, стволы). Ребёнок Tower (tower.tscn), визуал срезов кладёт в ../VisualRoot —
 ## ярусы наследуют motion-fx/крен/шаттер смерти вместе с корпусом.
 ##
-## АРБАЛЕТНЫЕ ОКНА — железо без экипажа: стреляют только пока внутри башни спрятаны
-## лучники (карточка отряда → «🏰 В башню», существующий hide_in_tower; F спрятанных
-## не вытаскивает). Активных стволов = min(окон, лучников внутри). Огонь — СПЕЛЛ
+## АРБАЛЕТНЫЕ ОКНА — железо без экипажа: стреляют только пока НА КРЫШЕ башни стоит
+## лучник (носимое оружие 2026-07-12: рука ставит любого живого лучника на крышу,
+## группа ArcherSoldier.TOWER_WEAPON_GROUP; заменил экипаж-3 «В башню»). Один
+## лучник оживляет ВСЕ окна; его же качают убийства залпов (болт приписан ему).
+## Огонь — СПЕЛЛ
 ## «Арбалетный залп» ([HandSpellArbalest]): покупка среза анлочит карточку в трее
 ## (SpellSystem.unlock), выбирается цифрой как магия, ПКМ-клик → fire_volley(точка).
 ## Своего AI-прицела нет: залп идёт по ближайшему врагу у точки клика.
@@ -26,7 +28,7 @@ const SLICE_CATALOG: Dictionary = {
 	# запись (git). Оживление трюма рудой вылазок — дизайн-кандидат (SPEC).
 	&"arbalest": {
 		"name": "Арбалетные окна",
-		"hint": "2 ствола + карточка «Залп» в трее магии (выбор цифрой, клик — залп). Стреляют, пока в башне спрятаны лучники («В башню»).",
+		"hint": "2 ствола + карточка «Залп» в трее магии (выбор цифрой, клик — залп). Стреляют, пока на крыше башни стоит лучник (поставь рукой).",
 		"icon_color": Color(0.55, 0.6, 0.72, 1.0),
 		"cost": {ResourcePile.ResourceType.SILVER: 8},
 		"windows": 2,
@@ -134,13 +136,14 @@ func install(id: StringName) -> void:
 		print("[TowerUpgrades] установлен срез %s" % id)
 
 
-## Лучников спрятано в башне сейчас (экипаж). Скан троттлится кэшем — HUD-трей
-## дёргает can_volley каждые ~0.1с. debug_fake_crew добавляется поверх реальных.
+## Экипаж = лучник на КРЫШЕ башни (носимое оружие; заменил экипаж-3 «В башню»).
+## Скан троттлится кэшем — HUD-трей дёргает can_volley каждые ~0.1с.
+## debug_fake_crew добавляется поверх реальных.
 func crew_count() -> int:
 	var now: int = Time.get_ticks_msec()
 	if _crew_scan_msec == 0 or now - _crew_scan_msec >= CREW_SCAN_INTERVAL_MSEC:
 		_crew_scan_msec = now
-		_crew = _count_hidden_archers() + debug_fake_crew
+		_crew = (1 if _roof_archer() != null else 0) + debug_fake_crew
 	return _crew
 
 
@@ -179,7 +182,8 @@ func fire_burst(point: Vector3) -> bool:
 func fire_volley(point: Vector3) -> bool:
 	if _tower == null or not can_volley():
 		return false
-	var active: int = mini(_windows, crew_count())
+	# Один лучник на крыше оживляет ВСЕ окна (экипаж теперь 0/1, не по стволам).
+	var active: int = _windows if crew_count() >= 1 else 0
 	var target: Node3D = _pick_target(point)
 	var aim: Vector3 = point
 	if target != null:
@@ -192,14 +196,13 @@ func fire_volley(point: Vector3) -> bool:
 	return true
 
 
-## Экипаж = лучники со статусом «спрятан в башне» (команда «В башню»). Любой отряд.
-func _count_hidden_archers() -> int:
-	var n: int = 0
-	for s in get_tree().get_nodes_in_group(SoldierGnome.SOLDIER_GROUP):
-		if is_instance_valid(s) and s is ArcherSoldier \
-				and s.has_method(&"is_hidden_in_tower") and s.call(&"is_hidden_in_tower"):
-			n += 1
-	return n
+## Лучник, стоящий на крыше башни (носимое оружие), либо null. Его же качают
+## убийства залпов окон — болт приписывается ему как стрелку.
+func _roof_archer() -> ArcherSoldier:
+	for s in get_tree().get_nodes_in_group(ArcherSoldier.TOWER_WEAPON_GROUP):
+		if is_instance_valid(s) and not s.is_queued_for_deletion() and s is ArcherSoldier:
+			return s as ArcherSoldier
+	return null
 
 
 ## Цель залпа: ближайший к точке клика враг в designate_radius, при этом в fire_range
@@ -239,6 +242,10 @@ func _fire_bolt(aim: Vector3) -> void:
 	arrow.damage = randf_range(bolt_damage_min, bolt_damage_max)
 	arrow.speed = bolt_speed
 	arrow.gravity = bolt_gravity
+	# Kill-credit залпа — лучнику-экипажу на крыше (его XP растёт и от окон).
+	var crew_archer: ArcherSoldier = _roof_archer()
+	if crew_archer != null:
+		arrow.shooter_ref = weakref(crew_archer)
 	var h: float = float((SLICE_CATALOG[&"arbalest"] as Dictionary).get("height", 0.3))
 	var dir: Vector3 = aim - _tower.global_position
 	dir.y = 0.0
