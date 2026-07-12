@@ -1,13 +1,16 @@
 class_name GearElement
 extends ArtifactElement
-## Древний РЕЦЕПТ Огненного выстрела (сюжет «Верхний Предел»; файл исторически
-## gear_element — раньше тут была Шестерня Врат). Лежит в конце лабиринта
+## СВИТОК ОГНЯ (сюжет «Верхний Предел»; файл исторически gear_element — раньше
+## тут была Шестерня Врат, потом Древний рецепт). Лежит в конце лабиринта
 ## пещеры гномов «под гнома»: башня в проём не пролезает, рука с дистанции не
 ## дотягивается. Добыча АРТЕЛЬЮ: гном-рабочий, оказавшись рядом (игрок
 ## командует «Идти сюда» в лабиринт), взваливает свиток на голову и несёт
 ## КУДА ИДЁТ сам (никакого автопилота — движением рулят обычные команды
-## отряда); у башни скидывает. Дальше путь [ArtifactElement]: рука несёт к
-## ИНСТИТУТУ МАГИИ → институт изучает рецепт → Кафедра огня доступна в палитре.
+## отряда); у башни скидывает. ПИВОТ 2026-07-12 («прогрессия к самой башне»):
+## свиток всасывается в САМУ БАШНЮ (приёмник = tower, не здание города) →
+## Огненный шар выучен НАВСЕГДА ([PlayerProfile.learn_scroll] — сейв профиля,
+## со следующего матча открыт со старта). Кафедра огня стала зданием-БАФОМ
+## (шквал/Молния пока стоит) и приходит отдельным ЧЕРТЕЖОМ из храма.
 ##
 ## Grab / доставка — от [ArtifactElement]; здесь визуал свитка и слой
 ## «гном-носильщик»: поллинг 0.3с (сигналов «гном дошёл» нет, и они тут
@@ -24,10 +27,13 @@ var _carrier: Node3D = null
 
 
 func _ready() -> void:
-	deliver_role = &"magic"
-	pickup_hint = "📜 Древний рецепт! Неси в 🔮 ИНСТИТУТ МАГИИ (нет — построй в палитре) — откроет Кафедру огня. Можно положить на крышу башни и везти"
+	# deliver_role не используется: приёмник переопределён на башню (_nearest_receiver).
+	pickup_hint = "📜 Свиток огня! Поднеси к БАШНЕ — маг выучит Огненный шар НАВСЕГДА"
 	super()
 	mass = 8.0
+	# Радиус всасывания = радиусу сброса носильщика: гном донёс до башни →
+	# свиток изучается сразу, без лишнего шага рукой.
+	deliver_radius = tower_drop_radius
 	var poll := Timer.new()
 	poll.wait_time = 0.3
 	poll.autostart = true
@@ -98,8 +104,7 @@ func _poll_carry() -> void:
 		if not is_instance_valid(_carrier):
 			_drop()
 		elif tower != null and _xz_dist(tower.global_position, global_position) <= tower_drop_radius:
-			_drop()
-			EventBus.tutorial_hint.emit("Гном донёс рецепт! Хватай рукой и неси в Институт магии", 7.0)
+			_drop()  # дальше свиток всосётся в башню сам (_poll_delivery)
 		return
 	# Свободен: башня рядом — рука дотянется сама, гномов не дёргаем.
 	if tower != null and _xz_dist(tower.global_position, global_position) <= tower_drop_radius:
@@ -116,7 +121,7 @@ func _attach(worker: Node3D) -> void:
 	angular_velocity = Vector3.ZERO
 	collision_layer = Layers.MOUNTED_MODULE  # рука видит — можно выхватить с головы
 	AoeVisual.spawn_pulse_sparks(get_tree().current_scene, global_position, 0.8, 6.0)
-	EventBus.tutorial_hint.emit("Гном взвалил свиток-рецепт — выведи его к башне", 7.0)
+	EventBus.tutorial_hint.emit("Гном взвалил свиток огня — выведи его к башне", 7.0)
 
 
 func _drop() -> void:
@@ -148,10 +153,17 @@ func _on_hand_grabbed(item: Node3D) -> void:
 	super(item)
 
 
-## Институт изучил рецепт → Кафедра огня открыта в палитре (гейт HUD).
+## Приёмник свитка — САМА БАШНЯ (не здание города): знание принадлежит магу.
+func _nearest_receiver() -> Node3D:
+	return get_tree().get_first_node_in_group(&"tower") as Node3D
+
+
+## Башня прочла свиток → Огненный шар выучен НАВСЕГДА (профиль, сейв на диск).
 func _on_delivered(_receiver: Node3D) -> void:
 	var prof := get_tree().get_first_node_in_group(&"player_profile")
-	if prof != null and prof.has_method(&"unlock_fire_recipe"):
-		prof.call(&"unlock_fire_recipe")
+	if prof != null and prof.has_method(&"learn_scroll"):
+		prof.call(&"learn_scroll", &"fireball")
+	else:
+		SpellSystem.unlock(&"fireball")  # чит-путь без профиля (кастомная сцена) — хотя бы на заезд
 	EventBus.tutorial_hint.emit(
-		"📜 Институт изучил древний рецепт! 🔥 Кафедра огня доступна в палитре построек", 8.0)
+		"📜 Свиток огня прочитан! 🔥 Огненный шар выучен НАВСЕГДА — он в трее заклинаний", 8.0)

@@ -137,10 +137,11 @@ const SPELL_CATALOG: Dictionary = {
 		# impact_radius — радиус sphere-scan в точке падения: бьёт ОДНОГО
 		# ближайшего к точке. Маленький (1.5м) — нужна точность; промах —
 		# просто искра в землю.
-		# Уровень 2 «МОЛНИЯ» — даёт Аккумулятор из храма (KeystoneElement →
-		# SpellSystem.grant_level, бесплатно): one-shot лучника (hp 60+),
-		# шире скан, дешевле мана. upgrade_costs = недостижимый PAGE-прайс,
-		# чтобы журнал не продал апгрейд за монеты (канон: только артефакт).
+		# Уровень 2 «МОЛНИЯ» — БАФ Кафедры огня, ПОКА ОНА СТОИТ (buff_levels
+		# каталога → set_granted_level; снос кафедры откатывает на 0). Сама
+		# карта кафедры приходит чертежом из храма (FireLabBlueprint).
+		# upgrade_costs = недостижимый PAGE-прайс, чтобы журнал не продал
+		# апгрейд за монеты (канон: только здание-баф).
 		"levels": [
 			{"damage": 35.0, "cooldown": 0.15, "mana_cost": 3.0, "impact_radius": 1.5},
 			{"damage": 90.0, "cooldown": 0.12, "mana_cost": 5.0, "impact_radius": 2.2},
@@ -201,14 +202,18 @@ const SPELL_CATALOG: Dictionary = {
 	},
 	&"mine_scatter": {
 		"name": "Минное рассеивание",
-		"description": "Башня запускает в небо снаряд, тот рассыпает над целью N мин. Мины приземляются, ждут жертв — рвут любого в радиусе (включая своих). Стратегическое оружие зоны контроля.",
+		"description": "Башня рассыпает над целью N мин с борта. Мины приземляются, ждут жертв — рвут любого в радиусе (включая своих). Боезапас — МИННЫЙ ЗАРЯД с верфи: мастерская куёт, рука кладёт на башню, один заряд = один залп.",
 		"icon_color": Color(0.8, 0.3, 0.2, 1.0),
-		"unlocked_by_default": false,  # временно: у игрока только Искра
+		# Железо, не магия. Слот в трее появляется ТОЛЬКО с минным зарядом на крыше
+		# башни и гаснет без него (MineCharge.refresh_tray → unlock/lock; юзер
+		# 2026-07-13: «если мин нет — в трее не появляются»). mana_cost=0 —
+		# залп оплачен монетами при ковке заряда, двойной цены нет.
+		"unlocked_by_default": false,
 		"unlock_cost": {},
 		"levels": [
-			{"mine_count": 11, "scatter_radius": 5.0, "mine_damage": 30.0, "mine_aoe_radius": 1.8, "cooldown": 4.0, "mana_cost": 40.0},
-			{"mine_count": 12, "scatter_radius": 5.5, "mine_damage": 36.0, "mine_aoe_radius": 2.0, "cooldown": 3.6, "mana_cost": 42.0},
-			{"mine_count": 13, "scatter_radius": 6.0, "mine_damage": 44.0, "mine_aoe_radius": 2.2, "cooldown": 3.2, "mana_cost": 44.0},
+			{"mine_count": 11, "scatter_radius": 5.0, "mine_damage": 30.0, "mine_aoe_radius": 1.8, "cooldown": 4.0, "mana_cost": 0.0},
+			{"mine_count": 12, "scatter_radius": 5.5, "mine_damage": 36.0, "mine_aoe_radius": 2.0, "cooldown": 3.6, "mana_cost": 0.0},
+			{"mine_count": 13, "scatter_radius": 6.0, "mine_damage": 44.0, "mine_aoe_radius": 2.2, "cooldown": 3.2, "mana_cost": 0.0},
 		],
 		"upgrade_costs": [
 			{ResourcePile.ResourceType.PAGE: 6},
@@ -312,14 +317,43 @@ func try_unlock(id: StringName) -> bool:
 	return true
 
 
-## Принудительно разблокировать заклинание БЕЗ камп-цены (магазин заклинаний у Кафедры платит
-## монетами сам через GoldBank, потом зовёт это). Идемпотентно. Эмитит spell_unlocked.
+## Принудительно разблокировать заклинание БЕЗ камп-цены (свитки профиля,
+## кафедры-школы). Идемпотентно. Эмитит spell_unlocked.
 func unlock(id: StringName) -> void:
 	if is_unlocked(id) or not SPELL_CATALOG.has(id):
 		return
 	_unlocked[id] = true
 	_levels[id] = 0
 	EventBus.spell_unlocked.emit(id)
+
+
+## Залочить заклинание ОБРАТНО (кафедра-школа даёт ветку ПОКА СТОИТ — снос гасит;
+## см. PadBuilding.refresh_lab_spells; свитки профиля гейтятся там же и сюда не
+## попадают). Уровень сбрасывается. Идемпотентно. Эмитит spell_locked.
+func lock(id: StringName) -> void:
+	if not is_unlocked(id):
+		return
+	_unlocked.erase(id)
+	_levels.erase(id)
+	if LogConfig.master_enabled:
+		print("[SpellSystem] залочено: %s" % id)
+	EventBus.spell_locked.emit(id)
+
+
+## Выставить уровень НАПРЯМУЮ (бафы зданий: Кафедра огня стоит → Искра = Молния,
+## снесли → обратно). В отличие от grant_level обратим и идемпотентен. Клампится
+## в диапазон levels; на locked-заклинании — no-op.
+func set_granted_level(id: StringName, lvl: int) -> void:
+	if not is_unlocked(id):
+		return
+	var levels: Array = SPELL_CATALOG.get(id, {}).get("levels", [])
+	lvl = clampi(lvl, 0, levels.size() - 1)
+	if int(_levels.get(id, 0)) == lvl:
+		return
+	_levels[id] = lvl
+	if LogConfig.master_enabled:
+		print("[SpellSystem] %s: уровень выставлен бафом → %d" % [id, lvl])
+	EventBus.spell_upgraded.emit(id, lvl)
 
 
 ## БЕСПЛАТНЫЙ +1 уровень (артефакты-находки: Аккумулятор и т.п. — цена

@@ -528,6 +528,28 @@ func add_max_hp(bonus: float) -> void:
 	health_changed.emit(hp, max_hp)
 
 
+## СЪЁМНЫЙ бонус капа HP от города (сапорты верфи: эллинг/бронный цех — кап растёт,
+## пока здания стоят и укомплектованы; см. PadBuilding._tick_dock). В отличие от
+## add_max_hp обратим: верфь пересчитывает сумму и зовёт с новым значением; рост
+## доливает HP (как покупка брони), падение клампит текущее.
+var _city_hp_cap_bonus: float = 0.0
+
+func set_city_hp_cap_bonus(bonus: float) -> void:
+	if _dying:
+		return
+	bonus = maxf(bonus, 0.0)
+	var delta: float = bonus - _city_hp_cap_bonus
+	if is_zero_approx(delta):
+		return
+	_city_hp_cap_bonus = bonus
+	max_hp += delta
+	if delta > 0.0:
+		hp += delta
+	else:
+		hp = minf(hp, max_hp)
+	health_changed.emit(hp, max_hp)
+
+
 ## Замедление от вражеского темпорального поля (SlowField зовёт каждый тик, пока
 ## башня внутри). factor: 1 = норма, 0.45 ≈ «вдвое медленнее». Сильнейшее (меньший
 ## factor) перекрывает, пока активно; until продлевается. Скейлит ходьбу И рывок

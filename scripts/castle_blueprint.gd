@@ -7,6 +7,10 @@ extends RigidBody3D
 ## открывается карточка «Замок» (вне колоды). Ставится замок по-прежнему ТОЛЬКО
 ## на фундамент ([CastleFoundation] — привязка в [HandPlaceAim]).
 ##
+## ЯЗЫК ЧЕРТЕЖЕЙ единый: «синька» кладётся на верх башни → знание в башне.
+## Наследники (чертёж Кафедры огня из храма, [keystone_element.gd]) меняют
+## эффект в [_on_learned] и цвет модельки (model_color).
+##
 ## Grabbable-паттерн [RelayItem] (рука морозит при захвате сама, слой ITEMS).
 ## Визуал = светящаяся «синька» с моделькой башенки сверху — читается как
 ## чертёж с высоты камеры.
@@ -17,6 +21,8 @@ const GROUP := &"castle_blueprint"
 static var learned := false
 
 @export var sheet_color: Color = Color(0.35, 0.6, 1.0)
+## Цвет мини-модели на листе (наследники: чертёж кафедры — цвет школы).
+@export var model_color: Color = Color(0.9, 0.93, 1.0)
 @export var highlight_color: Color = Color(1.0, 0.95, 0.4)
 @export_range(0.0, 5.0) var highlight_intensity: float = 0.6
 ## В каком радиусе (XZ до tower_top_slot) дроп засчитывается как «положил на башню»
@@ -57,9 +63,9 @@ func _build_visual() -> void:
 	model.mesh = mbox
 	model.position = Vector3(0, 0.23, 0)
 	var mmat := StandardMaterial3D.new()
-	mmat.albedo_color = Color(0.92, 0.95, 1.0)
+	mmat.albedo_color = model_color
 	mmat.emission_enabled = true
-	mmat.emission = Color(0.85, 0.9, 1.0)
+	mmat.emission = model_color
 	mmat.emission_energy_multiplier = 0.9
 	model.material_override = mmat
 	add_child(model)
@@ -84,7 +90,7 @@ func set_highlighted(value: bool) -> void:
 
 
 ## Отпустили у верха башни → башня запоминает чертёж: доводка к слоту, растворение,
-## learned=true навсегда. Карточка «Замок» в панели стройки оживает (гейт по learned).
+## эффект наследника в [_on_learned].
 func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 	if item != self or _seated:
 		return
@@ -96,7 +102,6 @@ func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 	if dx * dx + dz * dz > snap_radius * snap_radius:
 		return
 	_seated = true
-	learned = true
 	freeze = true
 	collision_layer = 0  # рука больше не видит — предмет уходит в башню
 	linear_velocity = Vector3.ZERO
@@ -111,6 +116,13 @@ func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 			AoeVisual.spawn_pulse_sparks(get_tree().current_scene,
 				global_position, 1.5, 8.0)
 			queue_free())
+	_on_learned()
+
+
+## Эффект изучения — наследники переопределяют (чертёж кафедры → карта в колоду).
+## База: карточка «Замок» в панели стройки оживает (гейт по learned).
+func _on_learned() -> void:
+	learned = true
 	EventBus.tutorial_hint.emit("🏰 Башня запомнила чертёж замка — закладывай из панели стройки на фундамент", 6.0)
 
 

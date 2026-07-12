@@ -172,12 +172,13 @@ const BUILD_MENU_PAD_STAKES := 22   # колья — дешёвый заслон
 const BUILD_MENU_PAD_INSTITUTE := 23  # институт магии — мана башне + анлок магических построек
 const BUILD_MENU_PAD_MANA_CRYSTAL := 24  # сапорт института: ×темп маны
 const BUILD_MENU_PAD_MANA_RUNE := 25     # сапорт института: ×темп маны (сильнее)
-const BUILD_MENU_PAD_UNLOAD := 26        # разгрузочная платформа: паркуй башню → трюм в казну
-const BUILD_MENU_PAD_DOCK := 27          # верфь башни: клик по ней → окно срезов-слоёв башни
+const BUILD_MENU_PAD_DOCK := 27          # верфь башни: парковка чинит, клик → срезы, сапорты капа HP
 const BUILD_MENU_BRIDGE := 28            # мостки: доска за дерево, рука кладёт на пропасть
-const BUILD_MENU_PAD_FIRE_LAB := 29      # кафедра огня: анлок fireball+firestorm
-const BUILD_MENU_PAD_ENGINEER_LAB := 30  # инженерная гильдия: анлок harpoon+mine_scatter
-const BUILD_MENU_PAD_FROST_LAB := 31     # кафедра льда: анлок frost
+const BUILD_MENU_PAD_FIRE_LAB := 29      # кафедра огня: БАФ школы пока стоит (шквал+Молния)
+const BUILD_MENU_PAD_ENGINEER_LAB := 30  # мастерская навесок: куёт турель и минные заряды
+const BUILD_MENU_PAD_FROST_LAB := 31     # кафедра льда: мороз пока стоит
+const BUILD_MENU_PAD_SLIPWAY := 32       # сапорт верфи: эллинг (+кап HP башни)
+const BUILD_MENU_PAD_ARMOR := 33         # сапорт верфи: бронный цех (+кап HP сильнее)
 # Полимино-фигуры площадки (Фаза 1, см. [PadBuilding]/[CityGrid]).
 const BUILD_MENU_PAD_MINE := 7
 const BUILD_MENU_PAD_WALL := 8
@@ -197,21 +198,24 @@ var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_INSTITUTE: RoomBuildings.PAD_INSTITUTE,
 	BUILD_MENU_PAD_MANA_CRYSTAL: RoomBuildings.PAD_MANA_CRYSTAL,
 	BUILD_MENU_PAD_MANA_RUNE: RoomBuildings.PAD_MANA_RUNE,
-	BUILD_MENU_PAD_UNLOAD: RoomBuildings.PAD_UNLOAD,
 	BUILD_MENU_PAD_DOCK: RoomBuildings.PAD_DOCK,
 	BUILD_MENU_PAD_FIRE_LAB: RoomBuildings.PAD_FIRE_LAB,
 	BUILD_MENU_PAD_ENGINEER_LAB: RoomBuildings.PAD_ENGINEER_LAB,
 	BUILD_MENU_PAD_FROST_LAB: RoomBuildings.PAD_FROST_LAB,
+	BUILD_MENU_PAD_SLIPWAY: RoomBuildings.PAD_SLIPWAY,
+	BUILD_MENU_PAD_ARMOR: RoomBuildings.PAD_ARMOR,
 }
 ## Цены операций с колодой (мана башни). Чит free_build делает обе нулевыми (см. _deck_draw_cost).
 const CARD_DRAW_MANA := 20.0     # «взять карту» — вслепую, верхняя карта колоды в руку
-const CARD_DISCARD_MANA := 5.0   # «сбросить» — карта возвращается В КОЛОДУ (не сгорает:
-                                 # уникальные институт/лабы потерять нельзя)
+const CARD_DISCARD_MANA := 5.0   # «сбросить» — карта возвращается В КОЛОДУ (мягкий реролл, не сгорает)
 const CARD_HAND_LIMIT := 5       # кап руки: берёшь по одной до капа, дальше — ставь или сбрасывай
-## Рецепт фикс-колоды заезда: [menu_id, count]. Дубли делают колоду больше; состав —
-## весь каталог падов. Мостки ВНЕ колоды (нужны в туториале до города, цена монетная).
+## Рецепт фикс-колоды заезда: [menu_id, count]. Дубли делают колоду больше. В колоде
+## только ТИРАЖИРУЕМОЕ (2026-07-12): КЛЮЧЕВЫЕ здания (шахта/институт/верфь) живут в
+## постоянной секции «⭐ ключевые» вне колоды (монеты, институт/верфь единоразовые) —
+## весь прежний lock-механизм стартовой тройки/гарант-возвратов выпилен. Кафедра огня
+## приходит только ЧЕРТЕЖОМ (профиль → карта, см. _deck_init). Мостки ВНЕ колоды
+## (нужны в туториале до города, цена монетная).
 const DECK_RECIPE := [
-	[BUILD_MENU_PAD_MINE, 5],
 	[BUILD_MENU_PAD_WALL, 6],
 	[BUILD_MENU_PAD_WALL1, 4],
 	[BUILD_MENU_PAD_GATE, 2],
@@ -222,30 +226,21 @@ const DECK_RECIPE := [
 	[BUILD_MENU_PAD_HOUSE, 5],
 	[BUILD_MENU_PAD_SMELTER, 3],
 	[BUILD_MENU_PAD_MINT, 2],
-	[BUILD_MENU_PAD_INSTITUTE, 1],
 	[BUILD_MENU_PAD_MANA_CRYSTAL, 2],
 	[BUILD_MENU_PAD_MANA_RUNE, 1],
-	# Разгрузочной платформы (PAD_UNLOAD) в колоде НЕТ: сдача ресурсов убрана —
-	# они конвертятся в казну сами в момент прибытия (tower_store.deposit).
-	[BUILD_MENU_PAD_DOCK, 1],
-	[BUILD_MENU_PAD_FIRE_LAB, 1],
+	[BUILD_MENU_PAD_SLIPWAY, 2],
+	[BUILD_MENU_PAD_ARMOR, 1],
 	[BUILD_MENU_PAD_ENGINEER_LAB, 1],
 	[BUILD_MENU_PAD_FROST_LAB, 1],
 ]
-## Стартовая тройка — ПЕРВЫЕ взятия всегда (порядок фиксирован): шахта (деньги),
-## институт магии (мана), верфь-док (все апгрейды/оружие/броня башни — только через него).
-## Экземпляры вынимаются ИЗ перетасованной колоды и кладутся наверх (не сверх рецепта).
-const DECK_OPENING := [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_DOCK]
+## КЛЮЧЕВЫЕ здания — постоянные карточки ВНЕ колоды («поставил и всё, без головной
+## боли»): шахта повторяемая (лимит = сами жилы), институт/верфь единоразовые
+## (карточка гаснет, пока стоит; разрушили — снова горит). Оплата монетами, как мостки.
+const KEY_MENU_IDS := [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_DOCK]
+## Ключевые здания уникальны (одна на город), кроме шахты — её гейтит жила.
+const KEY_UNIQUE_IDS := [BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_DOCK]
 var _card_deck: Array = []   # неразданный остаток колоды (menu id), перетасован в _deck_init
 var _card_hand: Array = []   # карты в руке (menu id, дубли допустимы)
-## Параллельно _card_hand: true = ЭТОТ экземпляр не сбрасывается (только стартовая тройка —
-## обычные копии шахты из случайной части колоды сбрасываются как все). Мутируется строго
-## вместе с _card_hand (draw/discard/placed).
-var _card_hand_locked: Array = []
-## Сколько ВЕРХНИХ карт колоды залочены от сброса при взятии: стартовая тройка +
-## гарантийные возвраты ключевых зданий (_on_pad_destroyed). Сброс/возврат карты
-## вставляет НИЖЕ этого запаса — верх колоды детерминирован.
-var _deck_locked_top := 0
 var _deck_ready := false     # колода собирается лениво при первом открытии панели
 var _pending_hand_idx := -1  # карта руки, чьё размещение идёт сейчас (снимается в _on_card_placed)
 var _deck_draw_btn: Button = null   # кнопка «взять карту» — live-гейт по мане
@@ -403,7 +398,8 @@ func _ready() -> void:
 	# берём snapshot напрямую через group lookup.
 	EventBus.tower_health_changed.connect(_refresh_tower_health)
 	EventBus.tower_mana_changed.connect(_refresh_tower_mana)
-	EventBus.pad_building_destroyed.connect(_on_pad_destroyed)
+	EventBus.blueprint_granted.connect(_on_blueprint_granted)
+	EventBus.spell_locked.connect(_on_spell_unlocked)  # лок = тот же rebuild трея, что и анлок
 	EventBus.super_charge_changed.connect(_refresh_super_charge)
 	EventBus.squad_created.connect(_on_squad_created)
 	EventBus.squad_changed.connect(_on_squad_changed)
@@ -503,7 +499,8 @@ func _disconnect_eventbus() -> void:
 	EventBus.collection_mode_changed.disconnect(_refresh_gatherer_mode_buttons)
 	EventBus.tower_health_changed.disconnect(_refresh_tower_health)
 	EventBus.tower_mana_changed.disconnect(_refresh_tower_mana)
-	EventBus.pad_building_destroyed.disconnect(_on_pad_destroyed)
+	EventBus.blueprint_granted.disconnect(_on_blueprint_granted)
+	EventBus.spell_locked.disconnect(_on_spell_unlocked)
 	EventBus.super_charge_changed.disconnect(_refresh_super_charge)
 	EventBus.squad_created.disconnect(_on_squad_created)
 	EventBus.squad_changed.disconnect(_on_squad_changed)
@@ -1540,18 +1537,29 @@ func _populate_build_palette() -> void:
 		grid.add_child(empty)
 	for i in range(_card_hand.size()):
 		grid.add_child(_make_hand_row(i))
+	# КЛЮЧЕВЫЕ — постоянная секция вне колоды («поставил и всё»): шахта (повторяемая,
+	# лимит = жилы), институт и верфь (единоразовые — карточка гаснет, пока стоят).
+	# Оплата монетами, как мостки.
+	grid.add_child(_make_palette_separator("⭐  ключевые — вне колоды"))
+	for key_id in KEY_MENU_IDS:
+		grid.add_child(_make_build_card(int(key_id)))
 	# ВНЕ колоды: мостки (туториал задолго до города, цена монетная) и ЗАМОК —
 	# открывается чертежом на верху башни (CastleBlueprint.learned), ставится на фундамент.
-	var sep := Label.new()
-	sep.text = "···  вне колоды"
-	sep.add_theme_font_size_override(&"font_size", 10)
-	sep.modulate = Color(1, 1, 1, 0.4)
-	grid.add_child(sep)
+	grid.add_child(_make_palette_separator("···  вне колоды"))
 	grid.add_child(_make_build_card(BUILD_MENU_BRIDGE))
 	grid.add_child(_make_build_card(BUILD_MENU_PUMP))
 	_refresh_build_affordability()
 	_refresh_deck_buttons()
 	_fit_palette_height()
+
+
+## Строка-разделитель секции палитры.
+func _make_palette_separator(text: String) -> Label:
+	var sep := Label.new()
+	sep.text = text
+	sep.add_theme_font_size_override(&"font_size", 10)
+	sep.modulate = Color(1, 1, 1, 0.4)
+	return sep
 
 
 ## АВТОРАЗМЕР палитры: панель в .tscn фиксирована (372×480), но контент меняется —
@@ -1715,18 +1723,20 @@ func _build_item_info(id: int) -> Dictionary:
 			"sub_text": bsub, "disabled": not knows,
 			"cells": [Vector2i(0, 0), Vector2i(1, 0)],  # ≈силуэт доски (длинная)
 			"shape_color": bdata.get("ghost_color", Color.GRAY)}
-	# Фигуры площадки: знание гномов И построенная качалка (от неё растёт грид). Магические сапорты
-	# (роли mana_*) дополнительно требуют Институт магии (_magic_unlocked).
+	# Фигуры площадки: знание гномов И построенная качалка (от неё растёт грид).
+	# Магические сапорты/кафедры требуют Институт (_magic_unlocked), сапорты
+	# верфи и мастерская — Верфь (_dock_built). Уникальные ключевые (институт/
+	# верфь) гаснут, пока экземпляр стоит; разрушили — карточка оживает.
 	var bid: StringName = PAD_MENU_IDS.get(id, &"")
 	var pdata: Dictionary = RoomBuildings.get_data(bid)
 	var prole: StringName = pdata.get("role", &"")
 	var needs_magic: bool = prole == &"mana_crystal" or prole == &"mana_rune" or prole == &"spell_lab"
-	# Кафедра огня дополнительно требует древний рецепт из пещеры (сюжет).
-	var needs_recipe: bool = bid == RoomBuildings.PAD_FIRE_LAB
+	var needs_dock: bool = prole == &"slipway" or prole == &"armor" or prole == &"forge"
+	var unique_built: bool = KEY_UNIQUE_IDS.has(id) and _pad_exists(bid)
 	var pump_built: bool = _pump_built()
 	var magic_ok: bool = not needs_magic or _magic_unlocked()
-	var recipe_ok: bool = not needs_recipe or _fire_recipe_found()
-	var pdisabled: bool = not (knows and pump_built and magic_ok and recipe_ok)
+	var dock_ok: bool = not needs_dock or _dock_built()
+	var pdisabled: bool = not (knows and pump_built and magic_ok and dock_ok) or unique_built
 	var psub: String = String(pdata.get("hint", ""))
 	if not knows:
 		psub = "🔒 нужно знание гномов-строителей"
@@ -1734,8 +1744,10 @@ func _build_item_info(id: int) -> Dictionary:
 		psub = "🔒 нужна качалка-замок"
 	elif needs_magic and not _magic_unlocked():
 		psub = "🔒 нужен Институт магии"
-	elif needs_recipe and not _fire_recipe_found():
-		psub = "🔒 нужен древний рецепт — пещеры гномов на востоке"
+	elif needs_dock and not _dock_built():
+		psub = "🔒 нужна Верфь башни"
+	elif unique_built:
+		psub = "✓ уже построена (одна на город)"
 	return {"emoji": _emoji_of(pdata), "name": String(pdata.get("name", "Фигура")),
 		"cost_text": _format_cost(pdata), "cost": pdata.get("cost", {}),
 		"pop": PadBuilding.pop_for_role(pdata.get("role", &"")),
@@ -1840,7 +1852,8 @@ func _on_build_card_pressed(id: int) -> void:
 
 
 # --- КОЛОДА СТРОЙКИ ----------------------------------------------------------------------------
-## Собрать колоду заезда из DECK_RECIPE и перетасовать. Лениво, один раз на уровень.
+## Собрать колоду заезда: фикс-рецепт + ЧЕРТЕЖИ профиля башни (найденные в прошлых
+## матчах карты — колода растёт от заезда к заезду), перетасовать. Лениво, раз на уровень.
 func _deck_init() -> void:
 	if _deck_ready:
 		return
@@ -1849,16 +1862,26 @@ func _deck_init() -> void:
 	for entry in DECK_RECIPE:
 		for i in range(int(entry[1])):
 			_card_deck.append(int(entry[0]))
+	var prof := get_tree().get_first_node_in_group(&"player_profile")
+	if prof != null and prof.has_method(&"blueprint_ids"):
+		for bid in prof.call(&"blueprint_ids"):
+			var menu_id: int = _menu_id_for(StringName(String(bid)))
+			if menu_id >= 0:
+				_card_deck.append(menu_id)
 	_card_deck.shuffle()
-	# Стартовая тройка НАВЕРХ колоды (верх = конец массива, тянем pop_back): кладём
-	# DECK_OPENING в обратном порядке → первые взятия идут шахта → институт → док.
-	for i in range(DECK_OPENING.size() - 1, -1, -1):
-		var id: int = int(DECK_OPENING[i])
-		var at: int = _card_deck.find(id)
-		if at >= 0:
-			_card_deck.remove_at(at)
-		_card_deck.append(id)
-	_deck_locked_top = DECK_OPENING.size()
+
+
+## Чертёж изучен ПРЯМО В ЭТОМ заезде (положили на верх башни) → карта в живую
+## колоду немедленно (профиль уже сохранил её для будущих матчей).
+func _on_blueprint_granted(building_id: StringName) -> void:
+	if not _deck_ready:
+		return  # колода ещё не собрана — _deck_init прочтёт её из профиля
+	var menu_id: int = _menu_id_for(building_id)
+	if menu_id < 0:
+		return
+	_card_deck.insert(randi_range(0, _card_deck.size()), menu_id)
+	if _build_palette != null and is_instance_valid(_build_palette) and _build_palette.visible:
+		_populate_build_palette()
 
 
 ## Цены операций с колодой. Чит free_build (бесплатная стройка) обнуляет и их — удобно плейтестить.
@@ -1887,43 +1910,28 @@ func _on_draw_card_pressed() -> void:
 	if not _try_pay_mana(_deck_draw_cost()):
 		return
 	_card_hand.append(_card_deck.pop_back())
-	# Верхний запас колоды (стартовая тройка / гарантийный возврат ключевого здания):
-	# эти экземпляры лочатся от сброса (счётчик, а не тип — обычные шахты сбрасываемы).
-	_card_hand_locked.append(_deck_locked_top > 0)
-	_deck_locked_top = maxi(0, _deck_locked_top - 1)
 	_populate_build_palette()
 
 
-## ✖ на карте руки: за малую ману вернуть карту В КОЛОДУ (в случайное место). Карта не
-## сгорает — уникальные институт/лабы потерять нельзя, «сброс» = мягкий реролл.
-## Залоченные экземпляры (стартовая тройка) не сбрасываются — у их рядов нет ✖
-## (_make_hand_row), гард здесь — страховка от рассинхрона индексов.
+## ✖ на карте руки: за малую ману вернуть карту В КОЛОДУ (в случайное место).
+## Карта не сгорает — «сброс» = мягкий реролл (чертёжные карты терять нельзя).
 func _on_discard_card_pressed(hand_idx: int) -> void:
 	if hand_idx < 0 or hand_idx >= _card_hand.size():
-		return
-	if hand_idx < _card_hand_locked.size() and bool(_card_hand_locked[hand_idx]):
 		return
 	if not _try_pay_mana(_deck_discard_cost()):
 		return
 	var id: int = int(_card_hand.pop_at(hand_idx))
-	if hand_idx < _card_hand_locked.size():
-		_card_hand_locked.remove_at(hand_idx)
-	# Вставка НИЖЕ залоченного верха — гарантийные карты не сместить сбросом.
-	_card_deck.insert(randi_range(0, maxi(0, _card_deck.size() - _deck_locked_top)), id)
+	_card_deck.insert(randi_range(0, _card_deck.size()), id)
 	_populate_build_palette()
 
 
 ## Ряд карты руки: карточка здания (клик = размещение, уже оплачена) + кнопка ✖ сброса.
-## Залоченные экземпляры (стартовая тройка шахта/институт/верфь — _card_hand_locked)
-## сбросить НЕЛЬЗЯ: без них геймлуп не заводится, кнопки ✖ у них нет — только ставить.
 func _make_hand_row(hand_idx: int) -> Control:
 	var id: int = int(_card_hand[hand_idx])
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override(&"separation", 4)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(_make_build_card(id, hand_idx))
-	if hand_idx < _card_hand_locked.size() and bool(_card_hand_locked[hand_idx]):
-		return row
 	var drop := Button.new()
 	drop.text = "✖"
 	drop.tooltip_text = "Сбросить в колоду — %d 🔮" % int(_deck_discard_cost())
@@ -1967,12 +1975,10 @@ func _ensure_place_aim_signals() -> void:
 
 
 ## Здание с карты руки поставлено — карта покидает руку. Монетные размещения (мостки,
-## чертёж замка) тоже эмитят placed, но _pending_hand_idx у них -1 → no-op.
+## чертёж замка, ключевые) тоже эмитят placed, но _pending_hand_idx у них -1 → no-op.
 func _on_card_placed(_building_id: StringName) -> void:
 	if _pending_hand_idx >= 0 and _pending_hand_idx < _card_hand.size():
 		_card_hand.remove_at(_pending_hand_idx)
-		if _pending_hand_idx < _card_hand_locked.size():
-			_card_hand_locked.remove_at(_pending_hand_idx)
 	_pending_hand_idx = -1
 
 
@@ -1985,41 +1991,14 @@ func _menu_id_for(building_id: StringName) -> int:
 
 
 ## Снос пад-здания (ПКМ в стройке / ворота съели стену): карта возвращается в колоду —
-## взамен прежнего монетного рефанда (монеты за пады больше не платятся).
+## взамен прежнего монетного рефанда (монеты за пады больше не платятся). КЛЮЧЕВЫЕ
+## (шахта/институт/верфь) картами не являются — их карточка в секции «⭐ ключевые»
+## оживает сама (гейт «уже построена» отпускает), в колоду ничего не кладём.
 func _on_building_demolished(building_id: StringName) -> void:
 	var menu_id: int = _menu_id_for(building_id)
-	if menu_id < 0:
+	if menu_id < 0 or KEY_MENU_IDS.has(menu_id):
 		return
-	# Вставка НИЖЕ залоченного верха — гарантийные карты не сместить возвратом.
-	_card_deck.insert(randi_range(0, maxi(0, _card_deck.size() - _deck_locked_top)), menu_id)
-	if _build_palette != null and is_instance_valid(_build_palette) and _build_palette.visible:
-		_populate_build_palette()
-
-
-## ПРАВИЛО ключевых зданий: у игрока всегда должна быть достижима минимум 1 шахта,
-## 1 институт магии и 1 верфь (замок — своя петля: Castle._die возрождает фундамент,
-## карточка «Замок» вне колоды оживает сама). Здание уничтожили боем, а этого типа
-## не осталось ни на поле (включая недострой), ни картой в руке/колоде → карта
-## ложится НАВЕРХ колоды (выпадет СЛЕДУЮЩИМ взятием) и лочится от сброса; если она
-## глубоко в колоде — поднимается наверх, не дублируясь.
-func _on_pad_destroyed(building_id: StringName) -> void:
-	var menu_id: int = _menu_id_for(building_id)
-	if menu_id < 0 or not DECK_OPENING.has(menu_id) or not _deck_ready:
-		return
-	for b in get_tree().get_nodes_in_group(&"pad_building"):
-		if is_instance_valid(b) and b.get(&"building_id") == building_id:
-			return  # живой экземпляр стоит — правило не нарушено
-	for s in get_tree().get_nodes_in_group(Layers.BUILD_SITE_GROUP):
-		if is_instance_valid(s) and s.get(&"building_id") == building_id:
-			return  # достраивается — считается установленным
-	if _card_hand.has(menu_id):
-		return  # карта уже в руке — доступна немедленно
-	var at: int = _card_deck.find(menu_id)
-	if at >= 0:
-		_card_deck.remove_at(at)  # была глубоко — поднимаем наверх без дубля
-	_card_deck.append(menu_id)
-	_deck_locked_top += 1
-	EventBus.tutorial_hint.emit("🎴 Ключевое здание потеряно — его карта ждёт наверху колоды", 5.0)
+	_card_deck.insert(randi_range(0, _card_deck.size()), menu_id)
 	if _build_palette != null and is_instance_valid(_build_palette) and _build_palette.visible:
 		_populate_build_palette()
 
@@ -2467,10 +2446,21 @@ func _magic_unlocked() -> bool:
 	return get_tree().get_first_node_in_group(&"magic_institute") != null
 
 
-## Древний рецепт доставлен в институт (GearElement → PlayerProfile).
-func _fire_recipe_found() -> bool:
-	var prof := get_tree().get_first_node_in_group(&"player_profile")
-	return prof != null and bool(prof.get(&"fire_recipe_found"))
+## Построена ли Верфь башни — гейт её сапортов (эллинг/бронный цех) и мастерской навесок.
+func _dock_built() -> bool:
+	return _pad_exists(RoomBuildings.PAD_DOCK)
+
+
+## Стоит ли (или достраивается) пад-здание этого типа — гейт уникальных ключевых
+## (институт/верфь: «одна на город», карточка гаснет, пока экземпляр жив).
+func _pad_exists(building_id: StringName) -> bool:
+	for b in get_tree().get_nodes_in_group(&"pad_building"):
+		if is_instance_valid(b) and b.get(&"building_id") == building_id:
+			return true
+	for s in get_tree().get_nodes_in_group(Layers.BUILD_SITE_GROUP):
+		if is_instance_valid(s) and s.get(&"building_id") == building_id:
+			return true
+	return false
 
 
 ## Качалка есть ИЛИ строится (стройплощадка с building_id=PUMP) — гейт «одна на отряд».
@@ -2499,15 +2489,9 @@ func _on_build_menu_id(id: int) -> void:
 		if bhand != null and bhand.place_aim != null:
 			bhand.place_aim.start_aim(RoomBuildings.BRIDGE_PLANK)
 	elif PAD_MENU_IDS.has(id):
-		if not _building_unlocked() or not _pump_built():
-			return  # нет знания / нет качалки — пункт и так greyed
-		# Магические сапорты — только при построенном Институте магии (пункт и так greyed).
-		var role: StringName = RoomBuildings.get_data(PAD_MENU_IDS[id]).get("role", &"")
-		if (role == &"mana_crystal" or role == &"mana_rune" or role == &"spell_lab") and not _magic_unlocked():
-			return
-		# Кафедра огня — только с древним рецептом (пункт и так greyed).
-		if PAD_MENU_IDS[id] == RoomBuildings.PAD_FIRE_LAB and not _fire_recipe_found():
-			return
+		# Единый гейт с карточкой (_build_item_info): знание/качалка/институт/верфь/уникальность.
+		if bool(_build_item_info(id)["disabled"]):
+			return  # пункт и так greyed
 		_cancel_hand_aims(&"place")
 		var hand := _resolve_hand()
 		if hand != null and hand.place_aim != null:

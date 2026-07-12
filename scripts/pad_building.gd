@@ -50,12 +50,9 @@ const FULL_QUARTER_BONUS := 1.5
 # шахта копит добычу видимой стопкой, собираешь башней/кликом (см. _tick_mine).
 ## FX «печати» установки: падение+сквош+пыль+рябь+тряска (см. play_place_impact).
 const PlaceFx = preload("res://scripts/place_impact_fx.gd")
-## Разгрузочная платформа: радиус парковки башни (XZ от центра платформы).
-## Сдача ОДНОМОМЕНТНАЯ (заехал-сдал-поехал): монеты в казну сразу всей суммой,
-## чанки-визуал вылетают волной, растянутой на UNLOAD_WAVE_SPREAD секунд.
+## Верфь: радиус парковки башни (XZ от центра плиты) — внутри него корпус чинится.
 const UNLOAD_RADIUS := 6.0
-const UNLOAD_CHECK_INTERVAL := 0.25  # частота опроса «башня рядом и трюм не пуст?»
-const UNLOAD_WAVE_SPREAD := 1.0      # разброс задержек чанков волны, сек
+const UNLOAD_CHECK_INTERVAL := 0.25  # частота опроса «башня у причала?» + пересчёта капа HP
 const MANA_MULT_CRYSTAL := 1.5    # Кафедра Волшебных свитков в зоне → ×темп
 const MANA_MULT_RUNE := 2.0       # Осколок звёздной руды в зоне → ×темп (сильнее/дороже)
 const MANA_MULT_HOUSE := 1.5      # Дом гномов в зоне → ×темп (соц-универсал, как «Объём» у шахты)
@@ -132,25 +129,23 @@ func _ready() -> void:
 	if is_scroll_dept():
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
 		set_process(true)
-	# Кафедра-школа (spell_lab): построил → ветка заклинаний открыта. Deferred:
+	# Кафедра-школа (spell_lab): её ветка заклинаний открыта ПОКА ОНА СТОИТ
+	# (пивот 2026-07-12: анлок навсегда — у свитков профиля). Deferred:
 	# на момент _ready трей HUD мог ещё не подписаться на spell_unlocked.
 	if is_spell_lab():
-		call_deferred(&"_unlock_lab_spells")
-		# Гильдия инженеров дополнительно КУЁТ аппараты кликом (модульная система).
-		if building_id == RoomBuildings.PAD_ENGINEER_LAB:
-			add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
-			set_process(true)
-	# Верфь башни: платформа без коллизии (башня может заезжать на плиту), но меню
-	# срезов открывается ЛКМ-КЛИКОМ по плите (заезд-триггер пробовали — неудобно).
+		call_deferred(&"_announce_lab_built")
+	# Мастерская навесок (forge, категория верфи): КУЁТ аппараты кликом —
+	# гарпунную турель, затем минные заряды (модульная система).
+	if is_forge():
+		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
+		set_process(true)
+	# Верфь башни — ПРОДЮСЕР обвеса: платформа без коллизии (башня заезжает на
+	# плиту и ЧИНИТСЯ у причала — «Док города» слит сюда 2026-07-12), меню срезов
+	# открывается ЛКМ-КЛИКОМ по плите (заезд-триггер пробовали — неудобно).
+	# Сапорты по граням (эллинг/бронный цех) дают ось «кап HP» (_tick_dock).
 	if is_dock():
 		collision_layer = 0
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
-		set_process(true)
-	# Разгрузочная платформа: тикает конверсию трюма, пока башня припаркована рядом.
-	# КОЛЛИЗИИ НЕТ (плита не должна блокировать заезд башни — та ходит физикой);
-	# урон/цель скелетов работают через группы, как у RoomBuildSite без коллайдера.
-	if is_unload():
-		collision_layer = 0
 		set_process(true)
 	# Отложенно: HandPlaceAim ставит global-трансформ ПОСЛЕ add_child (нужен стене для
 	# мировых клеток и поиска соседей).
@@ -165,9 +160,9 @@ func is_attack() -> bool:
 	return _role == &"attack"
 
 
-## Разгрузочная платформа 2×2: башня паркуется рядом → трюм (склад) конвертится в монеты.
-func is_unload() -> bool:
-	return _role == &"unload"
+## Мастерская навесок (категория верфи): куёт турель/минные заряды кликом.
+func is_forge() -> bool:
+	return _role == &"forge"
 
 
 func is_gate() -> bool:
@@ -220,26 +215,59 @@ func _footprint_center() -> Vector3:
 	return ctr / float(_mask.size())
 
 
-## Открыть заклинания своей школы (каталог RoomBuildings, ключ "spells").
-## SpellSystem.unlock идемпотентен — вторая кафедра той же школы безвредна.
-## Знание НЕ отбирается при сносе кафедры (модель «город = тыл»: локальная
-## потеря — производство модулей/зарядов, не выученное).
-func _unlock_lab_spells() -> void:
+## Кафедра построена: пересчитать бафы школ + подсказка, что именно ожило.
+## Заклинания кафедр живут ПОКА КАФЕДРА СТОИТ ([refresh_lab_spells]).
+func _announce_lab_built() -> void:
+	PadBuilding.refresh_lab_spells(get_tree())
 	var d: Dictionary = RoomBuildings.get_data(building_id)
 	var names: Array[String] = []
 	for id in d.get("spells", []):
-		if SpellSystem != null and not SpellSystem.is_unlocked(id):
-			SpellSystem.unlock(id)
-			var sd: Dictionary = SpellSystem.get_spell_data(id)
-			names.append(str(sd.get("name", id)))
+		var sd: Dictionary = SpellSystem.get_spell_data(id)
+		names.append(str(sd.get("name", id)))
 	if not names.is_empty():
-		# Мастерская навесок — свой текст: кроме заклинания она КУЁТ аппараты кликом.
-		if building_id == RoomBuildings.PAD_ENGINEER_LAB:
-			EventBus.tutorial_hint.emit(
-				"✨ %s — в трее. ⚙ Мастерская куёт ГАРПУННУЮ ТУРЕЛЬ: ЛКМ-клик по зданию (%d🥉), рука ставит её на крышу башни"
-				% [", ".join(names), FORGE_MODULE_COST_BRONZE], 9.0)
-		else:
-			EventBus.tutorial_hint.emit("✨ Школа открыта: %s — в трее заклинаний" % ", ".join(names), 6.0)
+		EventBus.tutorial_hint.emit(
+			"✨ Школа работает, пока кафедра стоит: %s — в трее заклинаний" % ", ".join(names), 6.0)
+
+
+## Пересчитать заклинания-БАФЫ кафедр-школ (пивот 2026-07-12): ветка открыта,
+## ПОКА в городе стоит хоть одна кафедра с этим "spells"; снос/разрушение гасит.
+## "buff_levels" (Кафедра огня: Искра→Молния) выставляются уровнем напрямую и
+## откатываются так же. Свитки профиля (PlayerProfile.scrolls) кафедрами НЕ
+## лочатся — выученное навсегда. Зовётся при постройке ([_announce_lab_built]),
+## смерти ([_die]) и сносе ([_exit_tree]).
+static func refresh_lab_spells(tree: SceneTree) -> void:
+	if tree == null or SpellSystem == null:
+		return
+	# Живые кафедры → какие спеллы/уровни активны сейчас.
+	var live_spells: Dictionary = {}
+	var live_levels: Dictionary = {}  # spell id → max уровень из buff_levels живых кафедр
+	for n in tree.get_nodes_in_group(GROUP):
+		var p := n as PadBuilding
+		if p == null or not is_instance_valid(p) or p._dead or not p.is_spell_lab():
+			continue
+		var d: Dictionary = RoomBuildings.get_data(p.building_id)
+		for id in d.get("spells", []):
+			live_spells[id] = true
+		var buffs: Dictionary = d.get("buff_levels", {})
+		for id in buffs:
+			live_levels[id] = maxi(int(live_levels.get(id, 0)), int(buffs[id]))
+	# Профиль: свитки не трогаем (гейт «выучено навсегда»).
+	var prof := tree.get_first_node_in_group(&"player_profile")
+	# Все спеллы/уровни, которыми ВООБЩЕ управляют кафедры (по каталогу) — чтобы
+	# погасить то, чего больше нет.
+	for bid in RoomBuildings.CATALOG:
+		var data: Dictionary = RoomBuildings.CATALOG[bid]
+		if data.get("role", &"") != &"spell_lab":
+			continue
+		for id in data.get("spells", []):
+			var scroll_known: bool = prof != null and prof.has_method(&"has_scroll") \
+				and bool(prof.call(&"has_scroll", id))
+			if live_spells.has(id):
+				SpellSystem.unlock(id)
+			elif not scroll_known:
+				SpellSystem.lock(id)
+		for id in data.get("buff_levels", {}):
+			SpellSystem.set_granted_level(id, int(live_levels.get(id, 0)))
 
 
 ## Верфь башни: клик → окно срезов-слоёв башни (TowerUpgrades, покупка за монеты).
@@ -314,8 +342,6 @@ func _build() -> void:
 	_conn_overlay = null
 	_conn_state = 0
 	match _role:
-		&"unload":
-			_build_unload_pad()
 		&"dock":
 			_build_dock()
 		&"mine":
@@ -351,8 +377,8 @@ func _build() -> void:
 			_build_mana_crystal()
 		&"mana_rune":
 			_build_mana_rune()
-		&"spell_lab":
-			_build_spell_lab()
+		&"spell_lab", &"forge":
+			_build_spell_lab()  # мастерская (forge) — тот же «зал с горном школы», цвет из ghost_color
 		_:
 			var mat := _solid(_role_color(_role), 0.1, 0.7)
 			var s: float = CityGrid.CELL
@@ -535,6 +561,24 @@ func _die() -> void:
 	# Этот узел уже вышел из GROUP выше, так что refresh_walls его не трогает.
 	if tree != null:
 		PadBuilding.refresh_walls(tree)
+		# Кафедра погибла → её школа гаснет; верфь/сапорт погибли → кап HP спадает.
+		if is_spell_lab():
+			PadBuilding.refresh_lab_spells(tree)
+		if _role == &"dock" or _role == &"slipway" or _role == &"armor":
+			PadBuilding.refresh_city_hp_cap(tree)
+
+
+## ПКМ-снос (HandPlaceAim → queue_free БЕЗ _die): пересчёты бафов — по факту выхода
+## из дерева, deferred (группы чистятся в момент выхода; отложенный вызов видит мир
+## уже без нас). Смерть боем сюда тоже придёт — refresh идемпотентен, дубль безвреден.
+func _exit_tree() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	if is_spell_lab():
+		PadBuilding.refresh_lab_spells.call_deferred(tree)
+	if _role == &"dock" or _role == &"slipway" or _role == &"armor":
+		PadBuilding.refresh_city_hp_cap.call_deferred(tree)
 
 
 const _WALL_STONE := Color(0.56, 0.55, 0.52)  # тёплый камень
@@ -1435,6 +1479,10 @@ func _plot_support_roles() -> Dictionary:
 		&"magic":
 			# сапорты ускоряют ману; дом гномов (соц-универсал) работает на магию так же, как на шахту
 			return {&"mana_crystal": true, &"mana_rune": true, &"housing": true}
+		&"dock":
+			# ВЕРФЬ — третий продюсер: эллинг/бронный цех = ось «Кап HP» башни,
+			# дом гномов = ×темп ремонта у причала (см. refresh_city_hp_cap/_tick_dock_services)
+			return {&"slipway": true, &"armor": true, &"housing": true}
 		_:
 			return {}
 
@@ -1451,6 +1499,8 @@ func pop_demand() -> int:
 			return 1
 		&"magic", &"mana_crystal", &"mana_rune":
 			return 1  # магия не исключение: институт + сапорты берут гнома (как шахта/плавильня)
+		&"slipway", &"armor":
+			return 1  # сапорты верфи — рабочие места (ось капа HP живёт, пока гном внутри)
 		_:
 			return 0
 
@@ -1565,14 +1615,18 @@ func _tick_mine(delta: float) -> void:
 			_spawn_firework(ResourcePile.ResourceType.GOLD)  # салют на каждую новую золотую
 
 
-## Разгрузка трюма: башня в радиусе и трюм не пуст → сдаём ВСЁ ОДНОМОМЕНТНО.
-## Монеты падают в казну сразу всей суммой (GoldBank.smelt_yield: дерево→бронза,
-## камень→серебро, железо→золото; салюты на золотые — штатные банковские), а
-## визуал — ВОЛНА чанков от башни к замку: каждый со случайной задержкой в окне
-## UNLOAD_WAVE_SPREAD и разбросом точек вылета/прилёта («растянутая куча»).
-## Игрок может уезжать сразу — деньги уже в казне, чанки долетят сами.
-## Темп тихого ремонта корпуса башни в доке (hp/с).
+## ВЕРФЬ = ПРОДЮСЕР ОБВЕСА БАШНИ (2026-07-12, «Док города» слит сюда — был дублем).
+## Парковка на плите чинит корпус (юзер: «верфь чинит башню, когда она на неё
+## заходит, не перманентно»); сапорты по граням дают ось «КАП HP» (эллинг/бронный
+## цех — потолок корпуса растёт, пока стоят и укомплектованы); дом гномов —
+## ×темп ремонта (соц-универсал, симметрично шахте/институту).
+## Темп тихого ремонта корпуса башни у причала (hp/с).
 const DOCK_REPAIR_RATE := 12.0
+const DOCK_REPAIR_MULT_HOUSE := 2.0  # дом гномов в зоне верфи → ×темп ремонта
+## Ось «Кап HP» сапортов верфи (складываются по ТИПАМ, как оси шахты; «защёлк»
+## полного квартала множит сверху). Числа продублированы в hint'ах каталога.
+const HP_CAP_SLIPWAY := 300.0   # эллинг
+const HP_CAP_ARMOR := 600.0     # бронный цех
 
 ## Прошлое состояние парковки — плашка только на переходе «встал в док».
 var _docked_prev: bool = false
@@ -1580,22 +1634,23 @@ var _docked_prev: bool = false
 var _mana_beam_cd: float = 0.0
 
 
-## Сервисы дока (город обслуживает башню у причала): плашка на входе + ремонт.
-## Мана института гейтится доком на стороне института ([_tick_institute]).
+## Сервисы верфи (город обслуживает башню у причала): плашка на входе + ремонт.
+## Мана института гейтится радиусом на стороне института ([_tick_institute]).
 func _tick_dock_services(docked: bool) -> void:
 	if docked != _docked_prev:
 		_docked_prev = docked
 		if docked:
-			EventBus.tutorial_hint.emit("⚓ Башня в доке: мана течёт, корпус чинится", 5.0)
+			EventBus.tutorial_hint.emit("⚓ Башня на верфи: корпус чинится", 5.0)
 	if not docked:
 		return
 	var tower := get_tree().get_first_node_in_group(&"tower")
 	if tower != null and is_instance_valid(tower) and tower.has_method(&"repair"):
-		tower.call(&"repair", DOCK_REPAIR_RATE * UNLOAD_CHECK_INTERVAL)
+		var st := _quarter_status()
+		var mult: float = DOCK_REPAIR_MULT_HOUSE if (st["staffed_roles"] as Dictionary).has(&"housing") else 1.0
+		tower.call(&"repair", DOCK_REPAIR_RATE * mult * _full_quarter_mult(st) * UNLOAD_CHECK_INTERVAL)
 
 
-## Башня жива и припаркована на этой плите (XZ ≤ UNLOAD_RADIUS)? Единая
-## проверка дока: трюм, мана института ([_tick_institute]) и ремонт корпуса.
+## Башня жива и припаркована на этой плите (XZ ≤ UNLOAD_RADIUS)?
 func is_tower_docked() -> bool:
 	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
 	if tower == null or not is_instance_valid(tower):
@@ -1609,87 +1664,41 @@ func is_tower_docked() -> bool:
 	return dx * dx + dz * dz <= UNLOAD_RADIUS * UNLOAD_RADIUS
 
 
-## Хоть одна док-плита сцены с припаркованной башней? Гейт «город кормит башню
-## только в доке» — читает институт (мана) и HUD.
-static func is_tower_docked_any(tree: SceneTree) -> bool:
-	for n in tree.get_nodes_in_group(&"pad_building"):
+## Пересчитать съёмный бонус капа HP башни от ВСЕХ верфей города: сумма осей
+## укомплектованных сапортов (slipway/armor — по типам, как оси шахты) × «защёлк»
+## полного квартала. Зовётся тиком верфи (live: гномы приходят/уходят) и на
+## смерти/сносе верфи или её сапорта ([_die]/[_exit_tree]) — иначе бонус завис бы.
+static func refresh_city_hp_cap(tree: SceneTree) -> void:
+	if tree == null:
+		return
+	var tower := tree.get_first_node_in_group(&"tower")
+	if tower == null or not is_instance_valid(tower) or not tower.has_method(&"set_city_hp_cap_bonus"):
+		return
+	var total: float = 0.0
+	for n in tree.get_nodes_in_group(GROUP):
 		var p := n as PadBuilding
-		if p != null and is_instance_valid(p) and p.is_unload() and p.is_tower_docked():
-			return true
-	return false
+		if p == null or not is_instance_valid(p) or p._dead or not p.is_dock():
+			continue
+		var st: Dictionary = p._quarter_status()
+		var staffed: Dictionary = st["staffed_roles"]
+		var dock_bonus: float = 0.0
+		if staffed.has(&"slipway"):
+			dock_bonus += HP_CAP_SLIPWAY
+		if staffed.has(&"armor"):
+			dock_bonus += HP_CAP_ARMOR
+		total += dock_bonus * p._full_quarter_mult(st)
+	tower.call(&"set_city_hp_cap_bonus", total)
 
 
-## Есть ли в сцене вообще док-плиты (для фоллбека институтской маны).
-static func has_dock_pads(tree: SceneTree) -> bool:
-	for n in tree.get_nodes_in_group(&"pad_building"):
-		var p := n as PadBuilding
-		if p != null and is_instance_valid(p) and p.is_unload():
-			return true
-	return false
-
-
-func _tick_unload(delta: float) -> void:
+## Тик верфи: ремонт у причала + live-пересчёт оси «Кап HP» (по кулдауну
+## UNLOAD_CHECK_INTERVAL — не каждый кадр).
+func _tick_dock(delta: float) -> void:
 	_unload_cd -= delta
 	if _unload_cd > 0.0:
 		return
 	_unload_cd = UNLOAD_CHECK_INTERVAL
-	var docked: bool = is_tower_docked()
-	_tick_dock_services(docked)
-	if not docked:
-		return
-	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
-	var store: Node = get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
-	var bank: Node = get_tree().get_first_node_in_group(GoldBank.GROUP)
-	if store == null or bank == null or not bank.has_method(&"smelt_yield"):
-		return
-	# Забираем всё и сразу платим; чанки копим списком по единице (для волны).
-	var chunks: Array = []
-	for type in [ResourcePile.ResourceType.WOOD, ResourcePile.ResourceType.STONE,
-			ResourcePile.ResourceType.IRON, ResourcePile.ResourceType.SILVER,
-			ResourcePile.ResourceType.GOLD]:
-		var n: int = int(store.call(&"get_amount", type))
-		if n <= 0 or not bool(store.call(&"take", type, n)):
-			continue
-		var pair: Array = bank.call(&"smelt_yield", type)
-		bank.call(&"add_coin", pair[0], int(pair[1]) * n)
-		for _i in range(n):
-			chunks.append(type)
-	if chunks.is_empty():
-		return
-	chunks.shuffle()  # цвета волны вперемешку, не «сначала всё дерево»
-	# Y башни игнорируем (origin y≈5 — [[reference_ebm_tower_origin_y5]]).
-	var from := Vector3(tower.global_position.x, 0.0, tower.global_position.z)
-	var castle := get_tree().get_first_node_in_group(&"castle") as Node3D
-	var to: Vector3 = castle.global_position if (castle != null and is_instance_valid(castle)) else global_position
-	for type in chunks:
-		var tw := create_tween()  # node-bound: платформа снесена → волна гаснет
-		tw.tween_interval(randf() * UNLOAD_WAVE_SPREAD + 0.02)
-		tw.tween_callback(_spawn_cargo_chunk.bind(int(type), from, to))
-
-
-## Один чанк волны разгрузки: link_pulse от точки у башни (случайный разброс —
-## «куча», не струна) к замку, цвет материала.
-func _spawn_cargo_chunk(type: int, from: Vector3, to: Vector3) -> void:
-	if not is_inside_tree():
-		return
-	var f := from + Vector3(randf_range(-1.3, 1.3), 0.0, randf_range(-1.3, 1.3))
-	var t := to + Vector3(randf_range(-0.9, 0.9), 0.0, randf_range(-0.9, 0.9))
-	PlaceFx.link_pulse(get_tree().current_scene, f, t, _cargo_chunk_color(type))
-
-
-## Цвет чанка разгрузки по материалу (язык материала, не боя).
-func _cargo_chunk_color(type: int) -> Color:
-	match type:
-		ResourcePile.ResourceType.WOOD:
-			return Color(0.6, 0.4, 0.22)
-		ResourcePile.ResourceType.STONE:
-			return Color(0.66, 0.66, 0.66)
-		ResourcePile.ResourceType.IRON:
-			return Color(0.55, 0.62, 0.75)
-		ResourcePile.ResourceType.SILVER:
-			return Color(0.85, 0.88, 0.95)
-		_:
-			return Color(0.98, 0.82, 0.3)  # золото
+	_tick_dock_services(is_tower_docked())
+	PadBuilding.refresh_city_hp_cap(get_tree())
 
 
 ## Визуал верфи башни: стальная плита на весь футпринт 2×2 (башня заезжает — без
@@ -1721,30 +1730,6 @@ func _build_dock() -> void:
 			_box(Vector3(0.8, 0.18, 0.18) if absf(dx) > 0.0 else Vector3(0.18, 0.18, 0.8),
 				Vector3(px - dx * 0.45, 2.3, pz), metal, true)
 			_box(Vector3(0.3, 0.3, 0.3), Vector3(px, 2.55, pz), glow, true)
-
-
-## Визуал разгрузочной платформы: плоская плита на весь футпринт 2×2 + светящийся
-## посадочный квадрат + угловые маячки. Без коллизии (см. _ready) — башня заезжает.
-func _build_unload_pad() -> void:
-	var s: float = CityGrid.CELL
-	var plate := _solid(Color(0.5, 0.42, 0.3), 0.1, 0.8)
-	var glow := _solid(Color(0.95, 0.8, 0.35), 0.3, 0.4)
-	glow.emission_enabled = true
-	glow.emission = Color(0.95, 0.8, 0.35)
-	glow.emission_energy_multiplier = 1.2
-	# Центроид маски (2×2 → центр между клетками): плита кроет весь футпринт.
-	var cx: float = 0.0
-	var cz: float = 0.0
-	for off in _mask:
-		cx += float((off as Vector2i).x)
-		cz += float((off as Vector2i).y)
-	cx = cx / float(maxi(_mask.size(), 1)) * s
-	cz = cz / float(maxi(_mask.size(), 1)) * s
-	_box(Vector3(s * 2.0, 0.14, s * 2.0), Vector3(cx, 0.07, cz), plate, false)
-	_box(Vector3(s * 1.2, 0.05, s * 1.2), Vector3(cx, 0.17, cz), glow, false)
-	for dx in [-1.0, 1.0]:
-		for dz in [-1.0, 1.0]:
-			_box(Vector3(0.22, 1.1, 0.22), Vector3(cx + dx * (s - 0.2), 0.55, cz + dz * (s - 0.2)), glow, true)
 
 
 ## Клетки квартала продюсера = ВСЕ грани (орто-соседство футпринта в паде). Контур-силуэт убран —
@@ -2014,9 +1999,8 @@ func _process(delta: float) -> void:
 		_tick_scroll_click()
 	if is_dock():
 		_tick_dock_click()
-	if is_unload():
-		_tick_unload(delta)
-	if building_id == RoomBuildings.PAD_ENGINEER_LAB:
+		_tick_dock(delta)
+	if is_forge():
 		_tick_forge_click()
 
 
@@ -2199,21 +2183,29 @@ func hire_cap() -> int:
 	return _my_hire_cap()
 
 
-## Цена ковки Гарпунной турели в гильдии инженеров (клик по зданию).
+## Цены ковки в Мастерской навесок (клик по зданию): первая — Гарпунная турель
+## (уникальная навеска), дальше — Минные заряды (расходник «один заряд = один залп»).
 const FORGE_MODULE_COST_BRONZE := 40
+const FORGE_MINE_COST_BRONZE := 25
 
 
-## ЛКМ по Гильдии инженеров → ВЫКОВАТЬ аппарат: списываем монеты, модуль-вещь
-## выпадает перед зданием (дальше рука несёт его к башне). Модульная система:
-## «кафедры производят вещи, рука ставит».
+## ЛКМ по Мастерской навесок → ВЫКОВАТЬ: пока в мире нет Гарпунной турели — куётся
+## она; турель уже есть — куётся МИННЫЙ ЗАРЯД (рука кладёт его на башню → один залп
+## «Минного рассеивания»). Модульная система: «мастерская производит вещи, рука ставит».
 func _tick_forge_click() -> void:
 	if not _clicked_on_self():
 		return
+	var turret_exists: bool = false
+	for n in get_tree().get_nodes_in_group(Grabbable.GROUP):
+		if n is HarpoonModule and is_instance_valid(n):
+			turret_exists = true
+			break
+	var cost: int = FORGE_MINE_COST_BRONZE if turret_exists else FORGE_MODULE_COST_BRONZE
 	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 	if bank == null or not bank.has_method(&"try_spend"):
 		return
-	if not bank.call(&"try_spend", FORGE_MODULE_COST_BRONZE):
-		EventBus.tutorial_hint.emit("Ковка турели: не хватает монет (нужно %d🥉)" % FORGE_MODULE_COST_BRONZE, 3.0)
+	if not bank.call(&"try_spend", cost):
+		EventBus.tutorial_hint.emit("Ковка: не хватает монет (нужно %d🥉)" % cost, 3.0)
 		return
 	var root: Node = get_tree().current_scene
 	if root == null:
@@ -2225,12 +2217,15 @@ func _tick_forge_click() -> void:
 	if tower != null and is_instance_valid(tower):
 		out = VecUtil.horizontal(tower.global_position - ctr)
 		out = out.normalized() if out.length() > 0.1 else Vector3.FORWARD
-	var module := HarpoonModule.new()
+	var module: RigidBody3D = MineCharge.new() if turret_exists else HarpoonModule.new()
 	module.position = Vector3(ctr.x, 0.4, ctr.z) + out * 2.2
 	root.add_child(module)
 	AoeVisual.spawn_pulse_sparks(root, module.global_position + Vector3.UP * 0.5, 1.0, 10.0)
 	EventBus.camera_shake.emit(0.2, ctr)
-	EventBus.tutorial_hint.emit("⚙ Турель выкована! Схвати рукой и поднеси к башне", 4.0)
+	if turret_exists:
+		EventBus.tutorial_hint.emit("💣 Минный заряд выкован! Положи рукой на башню — один залп мин по клику", 5.0)
+	else:
+		EventBus.tutorial_hint.emit("⚙ Турель выкована! Схвати рукой и поднеси к башне. Следующая ковка — минные заряды", 5.0)
 
 
 ## ЛКМ по Кафедре Волшебных свитков. МАГАЗИН ЗАКЛИНАНИЙ УМЕР (2026-07-07):
@@ -2459,6 +2454,8 @@ static func pop_for_role(role: StringName) -> int:
 			return -MINE_POP_DEMAND
 		&"smelter", &"mint", &"magic", &"mana_crystal", &"mana_rune":
 			return -1  # магия берёт гнома (как добыча) → 👥 -1 на карточке
+		&"slipway", &"armor":
+			return -1  # сапорты верфи — рабочие места (ось капа HP)
 		_:
 			return 0
 
@@ -2469,9 +2466,10 @@ static func garrison_for_role(role: StringName) -> int:
 
 
 ## Категория роли: PRODUCTION (шахта/плавильня/двор), DEFENSE (стены/ворота/казармы),
-## STATE (замок/банк), SOCIAL (дом гномов — универсал), NONE (прочее). Здания «сочетаются»
-## (часть одного квартала) ⇔ одна категория ИЛИ одно из них SOCIAL.
-enum Category { NONE, PRODUCTION, DEFENSE, STATE, SOCIAL, MAGIC }
+## STATE (замок/банк), SOCIAL (дом гномов — универсал), MAGIC (институт+сапорты),
+## SHIPYARD (верфь+сапорты+мастерская — обвес башни), NONE (прочее). Здания
+## «сочетаются» (часть одного квартала) ⇔ одна категория ИЛИ одно из них SOCIAL.
+enum Category { NONE, PRODUCTION, DEFENSE, STATE, SOCIAL, MAGIC, SHIPYARD }
 
 static func category(role: StringName) -> int:
 	match role:
@@ -2479,12 +2477,14 @@ static func category(role: StringName) -> int:
 			return Category.PRODUCTION
 		&"defend", &"gate", &"attack", &"barracks", &"barrack", &"stakes":
 			return Category.DEFENSE  # барак — ёмкость казармы; колья — заслон (оба военные)
-		&"bank", &"pump", &"unload":
+		&"bank", &"pump":
 			return Category.STATE
 		&"housing":
 			return Category.SOCIAL
 		&"magic", &"mana_crystal", &"mana_rune":
 			return Category.MAGIC  # институт магии + его сапорты (квартал маны)
+		&"dock", &"slipway", &"armor", &"forge":
+			return Category.SHIPYARD  # верфь + её сапорты + мастерская (квартал корпуса)
 		_:
 			return Category.NONE
 

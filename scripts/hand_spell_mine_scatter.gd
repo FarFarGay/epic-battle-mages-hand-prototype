@@ -129,6 +129,15 @@ func _cast() -> void:
 		if debug_log and LogConfig.master_enabled:
 			print("[Hand:Spell:MineScatter] заклинание не разблокировано")
 		return
+	# Мины — расходник верфи (2026-07-12): залп требует МИННЫЙ ЗАРЯД на крыше башни
+	# (куёт Мастерская навесок, рука кладёт на башню; один заряд = один залп).
+	var charge := MineCharge.mounted_on_tower(_hand.get_tree())
+	if charge == null:
+		EventBus.tutorial_hint.emit(
+			"💣 Нет минного заряда: выкуй в ⚙ Мастерской навесок (25🥉) и положи рукой на башню", 4.0)
+		if debug_log and LogConfig.master_enabled:
+			print("[Hand:Spell:MineScatter] нет минного заряда на борту")
+		return
 	var lvl: Dictionary = SpellSystem.get_current_level_data(&"mine_scatter") if SpellSystem != null else {}
 	_series_mine_count = int(lvl.get("mine_count", mine_count))
 	_series_scatter_radius = float(lvl.get("scatter_radius", scatter_radius))
@@ -157,6 +166,7 @@ func _cast() -> void:
 		var landing: Vector3 = target_pos + Vector3(cos(angle) * r, 0.0, sin(angle) * r)
 		_landing_queue.append(landing)
 	_next_shot_in = 0.0
+	charge.consume()  # залп пошёл — заряд с крыши потрачен (один заряд = один залп)
 
 	if debug_log and LogConfig.master_enabled:
 		print("[Hand:Spell:MineScatter] залп × %d → центр (%.1f, %.1f), R=%.1fм" % [

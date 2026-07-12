@@ -40,6 +40,13 @@ signal tower_mana_changed(current: float, maximum: float)
 signal spell_unlocked(id: StringName)
 ## Заклинание прокачано на новый уровень. level — уже актуальный (после апгрейда).
 signal spell_upgraded(id: StringName, level: int)
+## Заклинание ЗАЛОЧЕНО обратно (SpellSystem.lock): кафедра-школа даёт ветку
+## ПОКА СТОИТ — снос/разрушение гасит её ([PadBuilding.refresh_lab_spells]).
+## Свитки профиля так не лочатся. Трей HUD пересобирается — слот пропадает.
+signal spell_locked(id: StringName)
+## Чертёж здания изучен башней ([PlayerProfile.grant_blueprint]): карта здания в
+## колоде НАСОВСЕМ (сейв профиля) + вставка в живую колоду текущего заезда (HUD).
+signal blueprint_granted(building_id: StringName)
 ## Клик по Кафедре Волшебных свитков → HUD открывает магазин заклинаний (покупка за монеты).
 signal spell_shop_requested
 ## ЛКМ-клик по плите Верфи → HUD открывает окно срезов башни (TowerUpgrades,

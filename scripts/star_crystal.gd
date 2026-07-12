@@ -2,16 +2,17 @@ class_name StarCrystal
 extends ArtifactElement
 ## Звёздный кристалл — КЛАД (сюжет «Верхний Предел»): заперт в глубине заставы
 ## за электро-дверью, добыча = экзамен искры+цепи (диод → ток → рычаг → дверь
-## съезжает). Опциональная вылазка риск-ревард: доставка [ArtifactElement] в
-## ДОК ГОРОДА («unload») → крупная сумма в казну — ускоряет плату за Врата.
+## съезжает). Опциональная вылазка риск-ревард: доставка [ArtifactElement] на
+## ВЕРФЬ БАШНИ («dock» — «Док города» слит в верфь 2026-07-13) → крупная сумма
+## в казну — ускоряет плату за Врата.
 
 ## Выручка за клад (бронза-эквивалент единой казны).
 @export var treasure_bronze: int = 300
 
 
 func _ready() -> void:
-	deliver_role = &"unload"
-	pickup_hint = "💎 Клад! Отвези в ⚓ ДОК ГОРОДА — казна пополнится на %d🥉. Можно везти на крыше башни" % treasure_bronze
+	deliver_role = &"dock"
+	pickup_hint = "💎 Клад! Отвези на 🛠 ВЕРФЬ БАШНИ — казна пополнится на %d🥉. Можно везти на крыше башни" % treasure_bronze
 	super()
 
 
@@ -59,4 +60,4 @@ func _on_delivered(_receiver: Node3D) -> void:
 	if bank != null:
 		bank.call(&"add_gold", treasure_bronze)
 	EventBus.tutorial_hint.emit(
-		"💎 Клад заставы продан в доке: +%d🥉 в казну" % treasure_bronze, 7.0)
+		"💎 Клад заставы продан на верфи: +%d🥉 в казну" % treasure_bronze, 7.0)
