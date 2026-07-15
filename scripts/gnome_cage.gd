@@ -83,16 +83,13 @@ func _build_visual() -> void:
 		disc.material_override = _bar_material
 		disc.position = Vector3(0.0, y, 0.0)
 		visual.add_child(disc)
-	# Пленник: зелёная капсула-гном внутри (визуальный крючок «там кто-то живой»).
-	var gnome := MeshInstance3D.new()
-	var cap := CapsuleMesh.new()
-	cap.radius = 0.22
-	cap.height = 0.75
-	gnome.mesh = cap
-	var gm := StandardMaterial3D.new()
-	gm.albedo_color = Color(0.35, 0.62, 0.3)
-	gnome.material_override = gm
-	gnome.position = Vector3(0.0, 0.45, 0.0)
+	# Пленник: гном-модель внутри (визуальный крючок «там кто-то живой»).
+	# Та же GLB, что у юнитов (gnome.tscn): центр в нуле, высота 1 м,
+	# смотрит в +X → yaw PI/2 разворачивает лицом в -Z.
+	var gnome := (preload("res://models/gnome_character/gnome_character.glb") as PackedScene).instantiate() as Node3D
+	gnome.position = Vector3(0.0, 0.42, 0.0)
+	gnome.rotation.y = PI / 2.0
+	gnome.scale = Vector3.ONE * 0.7
 	visual.add_child(gnome)
 	# Коллайдер — ПРЯМОЙ ребёнок тела (требование физики), не под CageVisual.
 	var old_col := get_node_or_null(^"CageCollision")

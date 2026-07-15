@@ -316,7 +316,16 @@ var _lod_offscreen_cos: float = 0.5
 ## FAR↔NEAR каждые lod_check_interval (0.5с) с переключением физ-режима.
 var _lod_offscreen_cos_exit: float = 0.4
 
-@onready var _mesh: MeshInstance3D = $MeshInstance3D
+## Капсула-fallback: есть только в сценах без GLB-модели (лучник/копейщик).
+## В сценах с моделью (gnome.tscn, soldier_worker.tscn) — null, тело живёт
+## в обёртке Visual.
+@onready var _mesh: MeshInstance3D = get_node_or_null("MeshInstance3D") as MeshInstance3D
+## Корень визуала тела: обёртка Visual (GLB-модель) либо сам _mesh (капсула).
+## Единая цель для hide/pose-tween'ов. Масштаб модели сидит во вложенной ноде
+## Model, поэтому scale-анимации поверх Visual его не затирают.
+@onready var _visual: Node3D = _resolve_visual_root()
+## Все MeshInstance3D тела — цели HitFlash (у GLB их может быть несколько).
+var _visual_meshes: Array[MeshInstance3D] = []
 ## NavAgent для path-following вокруг палисадов / палаток / башни. Все
 ## методы движения (`_move_toward_xz`) идут через [_resolve_path_step] —
 ## он возвращает либо следующий waypoint пути, либо сам goal если nav-агент
@@ -423,6 +432,7 @@ func _ready() -> void:
 	# твёрдая не пускает внутрь. Палатки (дом), ворота (для своих), других гномов
 	# и скелетов (FRIENDLY_UNIT/ENEMIES вне маски) — по-прежнему проходит насквозь.
 	collision_mask = Layers.TERRAIN | Layers.PALISADE_OBSTACLE
+	_collect_visual_meshes()
 	# DEBUG: отрисовка пути агента (видна при Debug→Visible Navigation в редакторе).
 	if nav_debug and _nav_agent != null:
 		_nav_agent.debug_enabled = true
@@ -490,11 +500,36 @@ func _disconnect_eventbus() -> void:
 
 
 func _apply_visual() -> void:
+	# Тонировка цветом типа — только для капсулы-fallback. GLB-модель держит
+	# свои текстуры: material_override затёр бы их плоским цветом.
 	if not _mesh:
 		return
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = gnome_color
 	_mesh.material_override = mat
+
+
+func _resolve_visual_root() -> Node3D:
+	var v := get_node_or_null("Visual") as Node3D
+	return v if v != null else _mesh
+
+
+## Собирает MeshInstance3D тела под _visual — цели HitFlash. У модели заодно
+## глушим тени: капсула их тоже не кастовала (cast_shadow=0 в сцене), а на
+## 100+ гномах shadow-pass заметен.
+func _collect_visual_meshes() -> void:
+	_visual_meshes.clear()
+	if _visual == null:
+		return
+	var stack: Array[Node] = [_visual]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is MeshInstance3D:
+			_visual_meshes.append(n)
+			if n != _mesh:
+				(n as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		for c in n.get_children():
+			stack.append(c)
 
 
 # --- API для Camp ---
@@ -712,7 +747,8 @@ func take_damage(amount: float) -> void:
 		return
 	hp -= amount
 	damaged.emit(amount)
-	HitFlash.flash(_mesh)
+	for m in _visual_meshes:
+		HitFlash.flash(m)
 	if hp <= 0.0:
 		_dying = true
 		# Снимаем флаг цели заранее: queue_free отрабатывает только в конце кадра,
@@ -725,8 +761,8 @@ func take_damage(amount: float) -> void:
 			_camp.unregister_caravan_follower(self)
 		# Прячем тело и спавним фрагменты — те живут в _effects_root, переживают
 		# queue_free самого гнома (queue_free ниже прибьёт его в конце кадра).
-		if _mesh:
-			_mesh.visible = false
+		if _visual:
+			_visual.visible = false
 		if _effects_root:
 			ShatterEffect.spawn(_effects_root, global_position, gnome_color,
 				shatter_fragment_count, shatter_lifetime)
@@ -795,6 +831,22 @@ func _physics_process(delta: float) -> void:
 		global_position.z += velocity.z * delta
 	else:
 		move_and_slide()
+
+	_update_visual_facing(delta)
+
+
+## Плавный разворот тела по направлению движения. Только для GLB-модели
+## (_visual == обёртка Visual): у капсулы-fallback лица нет, а у Pikeman'а
+## поверх капсулы стоит свой FacingIndicator со своей логикой.
+func _update_visual_facing(delta: float) -> void:
+	if _visual == null or _visual == _mesh:
+		return
+	var vx: float = velocity.x
+	var vz: float = velocity.z
+	if vx * vx + vz * vz < 0.04:
+		return
+	var target_yaw: float = atan2(-vx, -vz)
+	_visual.rotation.y = lerp_angle(_visual.rotation.y, target_yaw, minf(1.0, delta * 10.0))
 
 
 ## Виртуальный hook: тикать ли _physics_process без ссылки на Camp. База — нет

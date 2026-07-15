@@ -1136,16 +1136,17 @@ func _start_charge(target: Node3D) -> void:
 ##
 ## FacingIndicator — необязательная нода (только у Pikeman'а, в base Gnome
 ## её нет). Через get_node_or_null чтобы не падать на других классах.
-## _mesh — onready из Gnome, MeshInstance3D тела.
+## _visual — onready из Gnome: корень визуала тела (обёртка Visual у модели,
+## MeshInstance3D у капсулы); масштаб модели живёт глубже и позой не затирается.
 func _tween_pose_to(target: Vector3, duration: float) -> void:
-	if _mesh == null:
+	if _visual == null:
 		return
 	if _pose_tween != null and _pose_tween.is_valid():
 		_pose_tween.kill()
 	var facing: Node3D = get_node_or_null(^"FacingIndicator") as Node3D
 	_pose_tween = create_tween()
 	_pose_tween.set_parallel(true)
-	_pose_tween.tween_property(_mesh, "scale", target, duration).set_ease(Tween.EASE_OUT)
+	_pose_tween.tween_property(_visual, "scale", target, duration).set_ease(Tween.EASE_OUT)
 	if facing != null:
 		_pose_tween.tween_property(facing, "scale", target, duration).set_ease(Tween.EASE_OUT)
 
