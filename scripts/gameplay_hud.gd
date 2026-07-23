@@ -38,6 +38,13 @@ const SQUAD_CARD_SWATCH_SIZE := Vector2(14, 14)
 ##
 ## Super не в этой таблице — он не draggable, особняком (см. ACTION_BAR_FIXED_SUPER).
 const ABILITY_META: Dictionary = {
+	# Шлепок (slam) — физическая способность руки, вернулась карточкой 2026-07-21
+	# (пук-пук жил: нужен быстрый доступ с цифры). Не спелл: SpellSystem её не
+	# знает, фильтр анлока в _build_action_bar пропускает PHYSICAL всегда.
+	&"slam": {
+		"name": "Шлепок", "color": Color(0.82, 0.62, 0.35),
+		"category_str": "PHYSICAL", "type": HandPhysicalActions.AbilityType.SLAM,
+	},
 	&"fireball": {
 		"name": "Огонь", "color": Color(1.0, 0.45, 0.1),
 		"category_str": "MAGIC", "type": 0,
@@ -83,8 +90,10 @@ const SLOT_EQUIP_ACTIONS: Array[StringName] = [
 
 ## Стартовая раскладка слотов. Игрок может пересобрать через drag-and-drop.
 ## Сохранение в файл — TODO (пока сбрасывается на дефолт при рестарте).
+## Шлепок первым (клавиша 1) — базовый глагол добычи (пук-пук жил), доступен
+## с самого старта; спеллы дорастают следом по мере разблокировки.
 const ACTION_BAR_DEFAULT_ASSIGNMENT: Array[StringName] = [
-	&"fireball", &"firestorm", &"mine_scatter", &"frost", &"spark", &"arbalest_volley", &"harpoon",
+	&"slam", &"fireball", &"firestorm", &"mine_scatter", &"frost", &"spark", &"arbalest_volley", &"harpoon",
 ]
 
 ## Super — фиксированный 6-й слот, не draggable. Имеет свою клавишу (E,
@@ -205,46 +214,18 @@ var PAD_MENU_IDS := {
 	BUILD_MENU_PAD_SLIPWAY: RoomBuildings.PAD_SLIPWAY,
 	BUILD_MENU_PAD_ARMOR: RoomBuildings.PAD_ARMOR,
 }
-## Цены операций с колодой (мана башни). Чит free_build делает обе нулевыми (см. _deck_draw_cost).
-const CARD_DRAW_MANA := 20.0     # «взять карту» — вслепую, верхняя карта колоды в руку
-const CARD_DISCARD_MANA := 5.0   # «сбросить» — карта возвращается В КОЛОДУ (мягкий реролл, не сгорает)
-const CARD_HAND_LIMIT := 5       # кап руки: берёшь по одной до капа, дальше — ставь или сбрасывай
-## Рецепт фикс-колоды заезда: [menu_id, count]. Дубли делают колоду больше. В колоде
-## только ТИРАЖИРУЕМОЕ (2026-07-12): КЛЮЧЕВЫЕ здания (шахта/институт/верфь) живут в
-## постоянной секции «⭐ ключевые» вне колоды (монеты, институт/верфь единоразовые) —
-## весь прежний lock-механизм стартовой тройки/гарант-возвратов выпилен. Кафедра огня
-## приходит только ЧЕРТЕЖОМ (профиль → карта, см. _deck_init). Мостки ВНЕ колоды
-## (нужны в туториале до города, цена монетная).
-const DECK_RECIPE := [
-	[BUILD_MENU_PAD_WALL, 6],
-	[BUILD_MENU_PAD_WALL1, 4],
-	[BUILD_MENU_PAD_GATE, 2],
-	[BUILD_MENU_PAD_STAKES, 3],
-	[BUILD_MENU_PAD_BARRACKS, 2],
-	[BUILD_MENU_PAD_SPEARMEN, 2],
-	[BUILD_MENU_PAD_BARRACK, 2],
-	[BUILD_MENU_PAD_HOUSE, 5],
-	[BUILD_MENU_PAD_SMELTER, 3],
-	[BUILD_MENU_PAD_MINT, 2],
-	[BUILD_MENU_PAD_MANA_CRYSTAL, 2],
-	[BUILD_MENU_PAD_MANA_RUNE, 1],
-	[BUILD_MENU_PAD_SLIPWAY, 2],
-	[BUILD_MENU_PAD_ARMOR, 1],
-	[BUILD_MENU_PAD_ENGINEER_LAB, 1],
-	[BUILD_MENU_PAD_FROST_LAB, 1],
-]
-## КЛЮЧЕВЫЕ здания — постоянные карточки ВНЕ колоды («поставил и всё, без головной
-## боли»): шахта повторяемая (лимит = сами жилы), институт/верфь единоразовые
-## (карточка гаснет, пока стоит; разрушили — снова горит). Оплата монетами, как мостки.
-const KEY_MENU_IDS := [BUILD_MENU_PAD_MINE, BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_DOCK]
-## Ключевые здания уникальны (одна на город), кроме шахты — её гейтит жила.
+## ПЕРЕСБОРКА 2026-07-21 (DESIGN §5.Д): колода/рука/реролл ⛔ — стройка = простая
+## палитра за монеты. ЧЕРТЕЖИ профиля = постоянная секция-БИБЛИОТЕКА (полки: что
+## гномы умеют ковать/строить, навсегда). Мана осталась энергией машин, за карты
+## больше не платится.
+## КЛЮЧЕВЫЕ ЯДРА города: верфь (якорь — ставится свободно первой), машинный цех,
+## плавильня. Шахта и замок из палитры ⛔ (кран выключен; якорь = верфь).
+const KEY_MENU_IDS := [BUILD_MENU_PAD_DOCK, BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_SMELTER]
+## Уникальные (одна на город): карточка гаснет, пока экземпляр стоит.
 const KEY_UNIQUE_IDS := [BUILD_MENU_PAD_INSTITUTE, BUILD_MENU_PAD_DOCK]
-var _card_deck: Array = []   # неразданный остаток колоды (menu id), перетасован в _deck_init
-var _card_hand: Array = []   # карты в руке (menu id, дубли допустимы)
-var _deck_ready := false     # колода собирается лениво при первом открытии панели
-var _pending_hand_idx := -1  # карта руки, чьё размещение идёт сейчас (снимается в _on_card_placed)
-var _deck_draw_btn: Button = null   # кнопка «взять карту» — live-гейт по мане
-var _hand_discard_btns: Array = []  # кнопки ✖ сброса — live-гейт по мане
+## Оборона — тиражируемая секция палитры (за монеты).
+const DEFENSE_MENU_IDS := [BUILD_MENU_PAD_WALL, BUILD_MENU_PAD_WALL1, BUILD_MENU_PAD_GATE,
+	BUILD_MENU_PAD_STAKES, BUILD_MENU_PAD_BARRACKS, BUILD_MENU_PAD_SPEARMEN]
 ## Лейблы счётчиков ресурсов: ResourceType (int) → Label. Заполняется в
 ## _build_resources_rows, обновляется реактивно через EventBus.resources_changed.
 var _resource_labels: Dictionary = {}
@@ -345,6 +326,7 @@ func _ready() -> void:
 	_build_population_label()
 	_build_spell_shop()
 	_build_dock_shop()
+	_build_smelter_panel()
 	_build_journal_button()
 	_build_action_bar()
 	_build_gatherer_card()
@@ -374,6 +356,7 @@ func _ready() -> void:
 	EventBus.spell_shop_requested.connect(_on_spell_shop_requested)
 	EventBus.tower_dock_requested.connect(_on_tower_dock_requested)
 	EventBus.barracks_panel_requested.connect(_on_barracks_panel_requested)
+	EventBus.smelter_panel_requested.connect(_on_smelter_panel_requested)
 	# Разблокировали заклинание (магазин у Кафедры) → пересобрать трей: новый слот, equip'абельно клавишей.
 	EventBus.spell_unlocked.connect(_on_spell_unlocked)
 	_build_alarm_banner()
@@ -691,10 +674,15 @@ func _attach_panel(widget: Control, anchor_name: StringName) -> void:
 
 func _build_action_bar() -> void:
 	# Трей показывает только разблокированные заклинания (single source of truth —
-	# SpellSystem). Сейчас открыта только Искра → один слот; великий удар locked →
-	# фиксированный super-слот не строится. По мере разблокировки трей дорастёт.
+	# SpellSystem) + физические способности руки (PHYSICAL — врождённые, SpellSystem
+	# их не знает, всегда в трее). Великий удар locked → фиксированный super-слот
+	# не строится. По мере разблокировки трей дорастёт.
 	_slot_assignments = ACTION_BAR_DEFAULT_ASSIGNMENT.filter(
-		func(id: StringName) -> bool: return SpellSystem.is_unlocked(id))
+		func(id: StringName) -> bool:
+			var meta: Dictionary = ABILITY_META.get(id, {})
+			if meta.get("category_str", "") == "PHYSICAL":
+				return true
+			return SpellSystem.is_unlocked(id))
 
 	# ПЕРЕСБОРКА (разблокировали заклинание в магазине у Кафедры): трей уже построен → чистим слоты
 	# и наполняем заново, чтобы новое заклинание появилось слотом (и стало equip'абельно клавишей).
@@ -1501,21 +1489,19 @@ func _toggle_build_palette() -> void:
 	if _build_palette.visible:
 		_build_palette.hide()
 		return
-	_cancel_hand_aims()  # вход в стройку отменяет «Идти сюда» и пр. (включая aim карты)
-	_pending_hand_idx = -1  # aim карты отменён строкой выше — карта остаётся в руке
+	_cancel_hand_aims()  # вход в стройку отменяет «Идти сюда» и пр.
 	_ensure_place_aim_signals()
 	_populate_build_palette()
 	_build_palette.show()
 
 
-## Наполнить панель колоды: кнопка «взять карту» (в бывшем ряду вкладок) + карты РУКИ
-## (клик = размещение, ✖ = сброс в колоду) + мостки вне колоды (монеты, по-старому).
-## Пере-собирается при каждом открытии и изменении руки — так подхватывается и смена
-## гейтинга (построена ли качалка/институт) без событий.
+## Наполнить палитру-МЕНЮ (пересборка 2026-07-21, колода ⛔): секции — ядра города,
+## оборона, библиотека чертежей (профиль, навсегда), инженерия. Всё за монеты.
+## Пере-собирается при каждом открытии — гейтинг (ядро есть/уникальные стоят)
+## подхватывается без событий.
 func _populate_build_palette() -> void:
 	if _build_sections == null or not is_instance_valid(_build_sections):
 		return
-	_deck_init()
 	_rebuild_deck_header()
 	# remove_child СРАЗУ (не только queue_free): иначе старые карточки до конца кадра
 	# сидят в min-size контейнера и _fit_palette_height мерит двойную высоту.
@@ -1523,34 +1509,52 @@ func _populate_build_palette() -> void:
 		_build_sections.remove_child(child)
 		child.queue_free()
 	_build_cards.clear()
-	_hand_discard_btns.clear()
 	var grid := GridContainer.new()
 	grid.columns = 1
 	grid.add_theme_constant_override("v_separation", 4)
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_build_sections.add_child(grid)
-	if _card_hand.is_empty():
-		var empty := Label.new()
-		empty.text = "Рука пуста — возьми карту из колоды"
-		empty.add_theme_font_size_override(&"font_size", 11)
-		empty.modulate = Color(1, 1, 1, 0.55)
-		grid.add_child(empty)
-	for i in range(_card_hand.size()):
-		grid.add_child(_make_hand_row(i))
-	# КЛЮЧЕВЫЕ — постоянная секция вне колоды («поставил и всё»): шахта (повторяемая,
-	# лимит = жилы), институт и верфь (единоразовые — карточка гаснет, пока стоят).
-	# Оплата монетами, как мостки.
-	grid.add_child(_make_palette_separator("⭐  ключевые — вне колоды"))
+	# ЯДРА: верфь — якорь города (первой ставится свободно), цех, плавильня.
+	grid.add_child(_make_palette_separator("⭐  ядра города"))
 	for key_id in KEY_MENU_IDS:
 		grid.add_child(_make_build_card(int(key_id)))
-	# ВНЕ колоды: мостки (туториал задолго до города, цена монетная) и ЗАМОК —
-	# открывается чертежом на верху башни (CastleBlueprint.learned), ставится на фундамент.
-	grid.add_child(_make_palette_separator("···  вне колоды"))
+	# ОБОРОНА: периметр — главный тетрис (конкурирует за клетки с ростом ядер).
+	grid.add_child(_make_palette_separator("🛡  оборона"))
+	for did in DEFENSE_MENU_IDS:
+		grid.add_child(_make_build_card(int(did)))
+	# БИБЛИОТЕКА: чертежи профиля — навсегда (DESIGN §5.Д). Дубликаты чертежей
+	# схлопываются в одну карточку (постройка и так повторяемая).
+	var lib_ids: Array = _library_menu_ids()
+	if not lib_ids.is_empty():
+		grid.add_child(_make_palette_separator("📜  библиотека чертежей"))
+		for lid in lib_ids:
+			grid.add_child(_make_build_card(int(lid)))
+	# ИНЖЕНЕРИЯ: мостки (туториал задолго до города) и легаси-замок (чертёж Заставы).
+	grid.add_child(_make_palette_separator("🌉  инженерия"))
 	grid.add_child(_make_build_card(BUILD_MENU_BRIDGE))
-	grid.add_child(_make_build_card(BUILD_MENU_PUMP))
+	if CastleBlueprint.learned:
+		grid.add_child(_make_build_card(BUILD_MENU_PUMP))
 	_refresh_build_affordability()
-	_refresh_deck_buttons()
 	_fit_palette_height()
+
+
+## Уникальные menu id чертежей профиля (библиотека). Чертёж ядра/обороны, уже
+## присутствующего в базовых секциях, не дублируем.
+func _library_menu_ids() -> Array:
+	var profile := get_tree().get_first_node_in_group(&"player_profile")
+	if profile == null or not profile.has_method(&"blueprint_ids"):
+		return []
+	var seen: Dictionary = {}
+	var out: Array = []
+	for bid in profile.call(&"blueprint_ids"):
+		var menu_id: int = _menu_id_for(StringName(String(bid)))
+		if menu_id < 0 or seen.has(menu_id):
+			continue
+		if KEY_MENU_IDS.has(menu_id) or DEFENSE_MENU_IDS.has(menu_id):
+			continue
+		seen[menu_id] = true
+		out.append(menu_id)
+	return out
 
 
 ## Строка-разделитель секции палитры.
@@ -1580,30 +1584,27 @@ func _fit_palette_height() -> void:
 	_build_palette.size.x = maxf(372.0, tabs_w + 24.0)
 
 
-## Строка колоды (контейнер Tabs из .tscn): кнопка «взять карту» с ценой в мане и
-## счётчиком остатка. Текст/доступность живут в _refresh_deck_buttons (live по мане).
+## Шапка палитры (контейнер Tabs из .tscn): подсказка вместо бывшей кнопки колоды.
 func _rebuild_deck_header() -> void:
 	if _build_tabs == null or not is_instance_valid(_build_tabs):
 		return
-	# remove_child СРАЗУ (не только queue_free): иначе старая кнопка до конца кадра
+	# remove_child СРАЗУ (не только queue_free): иначе старый контент до конца кадра
 	# сидит в min-size контейнера и _fit_palette_height мерит ДВОЙНУЮ ширину ряда.
 	for c in _build_tabs.get_children():
 		_build_tabs.remove_child(c)
 		c.queue_free()
-	_deck_draw_btn = Button.new()
-	_deck_draw_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_deck_draw_btn.focus_mode = Control.FOCUS_NONE
-	_deck_draw_btn.tooltip_text = "Карта случайная — что попалось, то и попалось. Ненужную можно сбросить (✖)."
-	_deck_draw_btn.pressed.connect(_on_draw_card_pressed)
-	_build_tabs.add_child(_deck_draw_btn)
+	var hint := Label.new()
+	hint.text = "💰 стройка за монеты · ПКМ по зданию — снос"
+	hint.add_theme_font_size_override(&"font_size", 11)
+	hint.modulate = Color(1, 1, 1, 0.6)
+	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_build_tabs.add_child(hint)
 
 
 ## Одна карточка постройки = Button (даёт hover/pressed/disabled даром) с детьми-лейблами
 ## (mouse IGNORE → клик ловит кнопка). Верх: иконка+имя слева, цена справа. Низ: эффект ИЛИ
-## причина блокировки. Гейтинг (знание гномов / нужна качалка / уже есть) → disabled+серый.
-## hand_idx >= 0 — карта РУКИ колоды: цена не показывается (мана уплачена при взятии),
-## клик ведёт в _on_hand_card_pressed (prepaid-размещение).
-func _make_build_card(id: int, hand_idx: int = -1) -> Button:
+## причина блокировки. Гейтинг (знание гномов / нужно ядро / уже есть) → disabled+серый.
+func _make_build_card(id: int) -> Button:
 	var info := _build_item_info(id)
 	var card := Button.new()
 	card.custom_minimum_size = Vector2(0, 54)  # имя (1 стр.) + эффект (до 2 стр.); Button не растёт под детей
@@ -1611,10 +1612,7 @@ func _make_build_card(id: int, hand_idx: int = -1) -> Button:
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.focus_mode = Control.FOCUS_NONE
 	card.disabled = info["disabled"]
-	if hand_idx >= 0:
-		card.pressed.connect(_on_hand_card_pressed.bind(hand_idx))
-	else:
-		card.pressed.connect(_on_build_card_pressed.bind(id))
+	card.pressed.connect(_on_build_card_pressed.bind(id))
 	# Заблокированная карточка в дефолтной теме почти прозрачна → «висящий текст».
 	# Явный стиль: лёгкий фон + рамка, границы карточки видны и в disabled.
 	if info["disabled"]:
@@ -1654,8 +1652,7 @@ func _make_build_card(id: int, hand_idx: int = -1) -> Button:
 	name_lbl.custom_minimum_size = Vector2(60, 0)
 	top.add_child(name_lbl)
 	var cost_lbl := Label.new()
-	# Карта руки уже оплачена маной при взятии — монетную цену каталога не показываем.
-	cost_lbl.text = "" if hand_idx >= 0 else String(info["cost_text"])
+	cost_lbl.text = String(info["cost_text"])
 	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top.add_child(cost_lbl)
 	# Цена в ГНОМАХ АРТЕЛИ — иконкой 👥−N рядом с золотом: PRODUCTION забирает реального
@@ -1684,9 +1681,7 @@ func _make_build_card(id: int, hand_idx: int = -1) -> Button:
 	eff.modulate = Color(1, 1, 1, 0.62)
 	inner.add_child(eff)
 	# Оплатимость (только монетные «cost») обновляется live при смене казны — красный = не хватает.
-	# Карты руки в этом не участвуют: они предоплачены.
-	if hand_idx < 0:
-		_build_cards.append({"cost_label": cost_lbl, "cost": info["cost"]})
+	_build_cards.append({"cost_label": cost_lbl, "cost": info["cost"]})
 	return card
 
 
@@ -1723,27 +1718,27 @@ func _build_item_info(id: int) -> Dictionary:
 			"sub_text": bsub, "disabled": not knows,
 			"cells": [Vector2i(0, 0), Vector2i(1, 0)],  # ≈силуэт доски (длинная)
 			"shape_color": bdata.get("ghost_color", Color.GRAY)}
-	# Фигуры площадки: знание гномов И построенная качалка (от неё растёт грид).
-	# Магические сапорты/кафедры требуют Институт (_magic_unlocked), сапорты
-	# верфи и мастерская — Верфь (_dock_built). Уникальные ключевые (институт/
-	# верфь) гаснут, пока экземпляр стоит; разрушили — карточка оживает.
+	# Фигуры площадки: знание гномов И ЯДРО ГОРОДА (верфь — от неё растёт грид;
+	# пересборка 2026-07-21: сама верфь ядра не требует — она его создаёт).
+	# Узлы веток требуют своё ядро: магические — цех (_magic_unlocked), верфи —
+	# верфь (_dock_built). Уникальные (цех/верфь) гаснут, пока экземпляр стоит.
 	var bid: StringName = PAD_MENU_IDS.get(id, &"")
 	var pdata: Dictionary = RoomBuildings.get_data(bid)
 	var prole: StringName = pdata.get("role", &"")
 	var needs_magic: bool = prole == &"mana_crystal" or prole == &"mana_rune" or prole == &"spell_lab"
 	var needs_dock: bool = prole == &"slipway" or prole == &"armor" or prole == &"forge"
 	var unique_built: bool = KEY_UNIQUE_IDS.has(id) and _pad_exists(bid)
-	var pump_built: bool = _pump_built()
+	var core_built: bool = CityGrid.core_node(get_tree()) != null or prole == &"dock"
 	var magic_ok: bool = not needs_magic or _magic_unlocked()
 	var dock_ok: bool = not needs_dock or _dock_built()
-	var pdisabled: bool = not (knows and pump_built and magic_ok and dock_ok) or unique_built
+	var pdisabled: bool = not (knows and core_built and magic_ok and dock_ok) or unique_built
 	var psub: String = String(pdata.get("hint", ""))
 	if not knows:
 		psub = "🔒 нужно знание гномов-строителей"
-	elif not pump_built:
-		psub = "🔒 нужна качалка-замок"
+	elif not core_built:
+		psub = "🔒 сперва поставь Верфь — сердце города"
 	elif needs_magic and not _magic_unlocked():
-		psub = "🔒 нужен Институт магии"
+		psub = "🔒 нужен Машинный цех"
 	elif needs_dock and not _dock_built():
 		psub = "🔒 нужна Верфь башни"
 	elif unique_built:
@@ -1851,116 +1846,12 @@ func _on_build_card_pressed(id: int) -> void:
 	_on_build_menu_id(id)
 
 
-# --- КОЛОДА СТРОЙКИ ----------------------------------------------------------------------------
-## Собрать колоду заезда: фикс-рецепт + ЧЕРТЕЖИ профиля башни (найденные в прошлых
-## матчах карты — колода растёт от заезда к заезду), перетасовать. Лениво, раз на уровень.
-func _deck_init() -> void:
-	if _deck_ready:
-		return
-	_deck_ready = true
-	_card_deck.clear()
-	for entry in DECK_RECIPE:
-		for i in range(int(entry[1])):
-			_card_deck.append(int(entry[0]))
-	var prof := get_tree().get_first_node_in_group(&"player_profile")
-	if prof != null and prof.has_method(&"blueprint_ids"):
-		for bid in prof.call(&"blueprint_ids"):
-			var menu_id: int = _menu_id_for(StringName(String(bid)))
-			if menu_id >= 0:
-				_card_deck.append(menu_id)
-	_card_deck.shuffle()
-
-
-## Чертёж изучен ПРЯМО В ЭТОМ заезде (положили на верх башни) → карта в живую
-## колоду немедленно (профиль уже сохранил её для будущих матчей).
-func _on_blueprint_granted(building_id: StringName) -> void:
-	if not _deck_ready:
-		return  # колода ещё не собрана — _deck_init прочтёт её из профиля
-	var menu_id: int = _menu_id_for(building_id)
-	if menu_id < 0:
-		return
-	_card_deck.insert(randi_range(0, _card_deck.size()), menu_id)
+# --- ПАЛИТРА: сервисные обработчики (колода ⛔ 2026-07-21, DESIGN §5.Д) -------------------------
+## Чертёж изучен прямо в заезде (профиль уже сохранил навсегда) → библиотека
+## палитры пополнилась; открытая панель перерисовывается.
+func _on_blueprint_granted(_building_id: StringName) -> void:
 	if _build_palette != null and is_instance_valid(_build_palette) and _build_palette.visible:
 		_populate_build_palette()
-
-
-## Цены операций с колодой. Чит free_build (бесплатная стройка) обнуляет и их — удобно плейтестить.
-func _deck_draw_cost() -> float:
-	return 0.0 if RoomBuildSite.free_build else CARD_DRAW_MANA
-
-
-func _deck_discard_cost() -> float:
-	return 0.0 if RoomBuildSite.free_build else CARD_DISCARD_MANA
-
-
-## Списать ману башни за операцию с колодой. Нулевая цена (чит) — всегда успех.
-func _try_pay_mana(amount: float) -> bool:
-	if amount <= 0.0:
-		return true
-	var tower := _resolve_tower()
-	return tower != null and tower.try_consume_mana(amount)
-
-
-## «Взять карту»: списать ману → верхняя карта перетасованной колоды в руку. Вслепую —
-## что попалось, то и попалось; ненужное ждёт в руке или сбрасывается обратно (✖).
-## Рука ограничена CARD_HAND_LIMIT — полная рука давит «ставь или сбрасывай».
-func _on_draw_card_pressed() -> void:
-	if _card_deck.is_empty() or _card_hand.size() >= CARD_HAND_LIMIT:
-		return
-	if not _try_pay_mana(_deck_draw_cost()):
-		return
-	_card_hand.append(_card_deck.pop_back())
-	_populate_build_palette()
-
-
-## ✖ на карте руки: за малую ману вернуть карту В КОЛОДУ (в случайное место).
-## Карта не сгорает — «сброс» = мягкий реролл (чертёжные карты терять нельзя).
-func _on_discard_card_pressed(hand_idx: int) -> void:
-	if hand_idx < 0 or hand_idx >= _card_hand.size():
-		return
-	if not _try_pay_mana(_deck_discard_cost()):
-		return
-	var id: int = int(_card_hand.pop_at(hand_idx))
-	_card_deck.insert(randi_range(0, _card_deck.size()), id)
-	_populate_build_palette()
-
-
-## Ряд карты руки: карточка здания (клик = размещение, уже оплачена) + кнопка ✖ сброса.
-func _make_hand_row(hand_idx: int) -> Control:
-	var id: int = int(_card_hand[hand_idx])
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override(&"separation", 4)
-	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(_make_build_card(id, hand_idx))
-	var drop := Button.new()
-	drop.text = "✖"
-	drop.tooltip_text = "Сбросить в колоду — %d 🔮" % int(_deck_discard_cost())
-	drop.custom_minimum_size = Vector2(30, 54)
-	drop.focus_mode = Control.FOCUS_NONE
-	drop.pressed.connect(_on_discard_card_pressed.bind(hand_idx))
-	row.add_child(drop)
-	_hand_discard_btns.append(drop)
-	return row
-
-
-## Клик по карте руки: запустить размещение через HandPlaceAim с prepaid=true (мана уплачена
-## при взятии — монеты не списываются, sticky выключен). Карта уходит из руки ТОЛЬКО по
-## факту установки (сигнал placed → _on_card_placed); Esc-отмена оставляет карту в руке.
-func _on_hand_card_pressed(hand_idx: int) -> void:
-	if hand_idx < 0 or hand_idx >= _card_hand.size():
-		return
-	var id: int = int(_card_hand[hand_idx])
-	if bool(_build_item_info(id)["disabled"]):
-		return  # гейт (нет качалки/института/рецепта) — карточка и так серая
-	if _build_palette != null and is_instance_valid(_build_palette):
-		_build_palette.hide()
-	_cancel_hand_aims(&"place")
-	var hand := _resolve_hand()
-	if hand == null or hand.place_aim == null:
-		return
-	_ensure_place_aim_signals()
-	_pending_hand_idx = hand_idx
-	hand.place_aim.start_aim(PAD_MENU_IDS.get(id, &""), true)
 
 
 ## Подписаться на placed/demolished размещения (лениво: рука резолвится по группе).
@@ -1974,15 +1865,13 @@ func _ensure_place_aim_signals() -> void:
 		hand.place_aim.demolished.connect(_on_building_demolished)
 
 
-## Здание с карты руки поставлено — карта покидает руку. Монетные размещения (мостки,
-## чертёж замка, ключевые) тоже эмитят placed, но _pending_hand_idx у них -1 → no-op.
+## Здание поставлено → перерисовать открытую палитру (уникальные гаснут live).
 func _on_card_placed(_building_id: StringName) -> void:
-	if _pending_hand_idx >= 0 and _pending_hand_idx < _card_hand.size():
-		_card_hand.remove_at(_pending_hand_idx)
-	_pending_hand_idx = -1
+	if _build_palette != null and is_instance_valid(_build_palette) and _build_palette.visible:
+		_populate_build_palette()
 
 
-## Пункт меню (BUILD_MENU_*) по id здания из RoomBuildings, -1 если карты для него нет.
+## Пункт меню (BUILD_MENU_*) по id здания из RoomBuildings, -1 если карточки нет.
 func _menu_id_for(building_id: StringName) -> int:
 	for menu_id in PAD_MENU_IDS:
 		if PAD_MENU_IDS[menu_id] == building_id:
@@ -1990,52 +1879,20 @@ func _menu_id_for(building_id: StringName) -> int:
 	return -1
 
 
-## Снос пад-здания (ПКМ в стройке / ворота съели стену): карта возвращается в колоду —
-## взамен прежнего монетного рефанда (монеты за пады больше не платятся). КЛЮЧЕВЫЕ
-## (шахта/институт/верфь) картами не являются — их карточка в секции «⭐ ключевые»
-## оживает сама (гейт «уже построена» отпускает), в колоду ничего не кладём.
-func _on_building_demolished(building_id: StringName) -> void:
-	var menu_id: int = _menu_id_for(building_id)
-	if menu_id < 0 or KEY_MENU_IDS.has(menu_id):
-		return
-	_card_deck.insert(randi_range(0, _card_deck.size()), menu_id)
+## Снос пад-здания (ПКМ в стройке / ворота съели стену): рефанда нет (снос —
+## осознанный), уникальные карточки оживают сами при перерисовке.
+func _on_building_demolished(_building_id: StringName) -> void:
 	if _build_palette != null and is_instance_valid(_build_palette) and _build_palette.visible:
 		_populate_build_palette()
 
 
-## Live-гейт кнопок колоды по текущей мане (_current_mana кешируется в _refresh_tower_mana).
-func _refresh_deck_buttons() -> void:
-	var draw_cost: float = _deck_draw_cost()
-	if _deck_draw_btn != null and is_instance_valid(_deck_draw_btn):
-		if _card_deck.is_empty():
-			_deck_draw_btn.text = "🎴 Колода пуста"
-			_deck_draw_btn.disabled = true
-		elif _card_hand.size() >= CARD_HAND_LIMIT:
-			_deck_draw_btn.text = "🎴 Рука полна (%d/%d) — ставь или сбрасывай" % [_card_hand.size(), CARD_HAND_LIMIT]
-			_deck_draw_btn.disabled = true
-		else:
-			var price: String = "бесплатно (чит)" if draw_cost <= 0.0 else "%d 🔮" % int(draw_cost)
-			_deck_draw_btn.text = "🎴 Взять карту — %s   (рука %d/%d, в колоде %d)" % [
-				price, _card_hand.size(), CARD_HAND_LIMIT, _card_deck.size()]
-			_deck_draw_btn.disabled = _current_mana < draw_cost
-	var dis_cost: float = _deck_discard_cost()
-	for b in _hand_discard_btns:
-		if b != null and is_instance_valid(b):
-			(b as Button).disabled = _current_mana < dis_cost
-
-
-# --- МАГАЗИН ЗАКЛИНАНИЙ (Кафедра Волшебных свитков) -------------------------------------------
-## v1: единоразовая покупка за монеты (GoldBank) → SpellSystem.unlock. Открывается кликом по Кафедре
-## (EventBus.spell_shop_requested). PENDING: производство заклинаний как ПАТРОНЫ (заряды/боезапас) —
-## место оставлено (карточка покажет «заряды: N» вместо «Куплено»). Числа-заглушки.
-const SPELL_SHOP_ITEMS := [
-	{"id": &"fireball", "cost": {ResourcePile.ResourceType.GOLD: 5}},
-	{"id": &"firestorm", "cost": {ResourcePile.ResourceType.GOLD: 8}},
-	{"id": &"mine_scatter", "cost": {ResourcePile.ResourceType.GOLD: 6}},
-	# Гарпун сейчас unlocked_by_default (плейтест) — карточка покажет «Куплено»;
-	# после выключения дефолта станет обычным товаром.
-	{"id": &"harpoon", "cost": {ResourcePile.ResourceType.GOLD: 6}},
-]
+# --- МАШИННЫЙ ЦЕХ: КУЗНЯ БОЕВЫХ МАШИН (пересборка 2026-07-21, DESIGN §5.В) ---------------------
+## Экс-магазин заклинаний. Клик по цеху (EventBus.spell_shop_requested) → окно
+## ковки: боевые машины (WarMachine.CATALOG, знание = свиток профиля или
+## KNOWN_DEFAULT), гарпунная турель и минный заряд (переехали из мастерской).
+## Кованый аппарат падает у цеха — рука несёт его на крышу башни (слот = глагол).
+const FORGE_HARPOON_COST := 40   # 🥉 гарпунная турель
+const FORGE_MINE_COST := 25      # 🥉 минный заряд (расходник залпа)
 var _spell_shop: Panel = null
 var _spell_shop_list: VBoxContainer = null
 
@@ -2069,10 +1926,15 @@ func _build_spell_shop() -> void:
 	vbox.add_theme_constant_override(&"separation", 8)
 	_spell_shop.add_child(vbox)
 	var title := Label.new()
-	title.text = "📜 Кафедра свитков — заклинания"
+	title.text = "⚙ Машинный цех — ковка аппаратов"
 	title.add_theme_font_size_override(&"font_size", 17)
 	title.add_theme_color_override(&"font_color", Color(0.82, 0.78, 1.0))
 	vbox.add_child(title)
+	var sub := Label.new()
+	sub.text = "Кованый аппарат хватай рукой и ставь на КРЫШУ башни"
+	sub.add_theme_font_size_override(&"font_size", 12)
+	sub.add_theme_color_override(&"font_color", Color(0.6, 0.6, 0.7))
+	vbox.add_child(sub)
 	_spell_shop_list = VBoxContainer.new()
 	_spell_shop_list.add_theme_constant_override(&"separation", 6)
 	_spell_shop_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -2091,56 +1953,116 @@ func _on_spell_shop_requested() -> void:
 	_spell_shop.visible = true
 
 
-## Перестроить карточки (отражает «куплено» и оплатимость). Зовётся при открытии и после покупки.
+## Перестроить карточки кузни. Машины — по знанию (свиток профиля/дефолт);
+## гарпун — если турели ещё нет в мире; минный заряд — всегда (расходник).
 func _populate_spell_shop() -> void:
 	if _spell_shop_list == null or not is_instance_valid(_spell_shop_list):
 		return
 	for c in _spell_shop_list.get_children():
 		c.queue_free()
-	for item in SPELL_SHOP_ITEMS:
-		_spell_shop_list.add_child(_make_spell_card(item["id"], item["cost"]))
+	var profile := get_tree().get_first_node_in_group(&"player_profile")
+	for id in WarMachine.CATALOG:
+		var known: bool = WarMachine.KNOWN_DEFAULT.has(id) \
+			or (profile != null and profile.has_method(&"has_scroll") and bool(profile.call(&"has_scroll", id)))
+		_spell_shop_list.add_child(_make_forge_card(id, known))
+	# Гарпунная турель (переехала из мастерской): одна на мир.
+	var turret_exists := false
+	for n in get_tree().get_nodes_in_group(Grabbable.GROUP):
+		if n is HarpoonModule and is_instance_valid(n):
+			turret_exists = true
+			break
+	_spell_shop_list.add_child(_make_forge_row("Гарпунная турель", Color(0.7, 0.85, 0.9),
+		FORGE_HARPOON_COST, not turret_exists, "уже выкована", _on_forge_harpoon))
+	_spell_shop_list.add_child(_make_forge_row("Минный заряд", Color(0.8, 0.3, 0.2),
+		FORGE_MINE_COST, true, "", _on_forge_mine_charge))
+	# Узлы ветки цеха: пристройки ×темп энергии (полимино в зону цеха).
+	_spell_shop_list.add_child(_make_side_separator("узлы-пристройки (в зону цеха)"))
+	_spell_shop_list.add_child(_make_node_place_row(BUILD_MENU_PAD_MANA_CRYSTAL, _spell_shop))
+	_spell_shop_list.add_child(_make_node_place_row(BUILD_MENU_PAD_MANA_RUNE, _spell_shop))
 
 
-func _make_spell_card(id: StringName, cost: Dictionary) -> Control:
-	var data: Dictionary = SpellSystem.get_spell_data(id) if SpellSystem != null else {}
+## Карточка боевой машины: известна → «Ковать N🥉», нет → серое «Нужен чертёж».
+func _make_forge_card(id: StringName, known: bool) -> Control:
+	var data: Dictionary = WarMachine.CATALOG.get(id, {})
+	return _make_forge_row(String(data.get("name", id)), data.get("color", Color.WHITE),
+		int(data.get("cost", 50)), known, "нужен чертёж/свиток", _on_forge_machine.bind(id))
+
+
+## Общий ряд кузни: свотч + имя + кнопка «Ковать» (гейт по знанию и монетам).
+func _make_forge_row(label: String, color: Color, cost_bronze: int, available: bool,
+		na_text: String, action: Callable) -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override(&"separation", 8)
 	var sw := ColorRect.new()
-	sw.color = data.get("icon_color", Color.WHITE)
+	sw.color = color
 	sw.custom_minimum_size = Vector2(22, 22)
 	row.add_child(sw)
 	var name_lbl := Label.new()
-	name_lbl.text = String(data.get("name", id))
+	name_lbl.text = label
 	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(name_lbl)
-	var owned: bool = SpellSystem != null and SpellSystem.is_unlocked(id)
 	var btn := Button.new()
 	btn.focus_mode = Control.FOCUS_NONE
-	if owned:
-		btn.text = "✓ Куплено"   # PENDING: тут будет «Заряды: N» при производстве патронами
+	if not available:
+		btn.text = "🔒 %s" % na_text
 		btn.disabled = true
 	else:
+		var cost: Dictionary = {ResourcePile.ResourceType.BRONZE: cost_bronze}
 		var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
 		var afford: bool = bank != null and bank.has_method(&"can_afford") and bool(bank.call(&"can_afford", cost))
-		btn.text = "Купить  %s" % _format_cost({"cost": cost})
+		btn.text = "Ковать  %d🥉" % cost_bronze
 		btn.disabled = not afford
 		if not afford:
 			btn.modulate = Color(1.0, 0.6, 0.55)
-		btn.pressed.connect(_on_spell_buy.bind(id, cost))
+		btn.pressed.connect(action)
 	row.add_child(btn)
 	return row
 
 
-## Покупка заклинания: списать монеты (GoldBank) атомарно → SpellSystem.unlock → перерисовать.
-func _on_spell_buy(id: StringName, cost: Dictionary) -> void:
+## Списать монеты и выложить кованый предмет у цеха (в сторону башни).
+func _forge_pay_and_spawn(cost_bronze: int, item: RigidBody3D) -> bool:
 	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
-	if bank == null or not bank.has_method(&"spend_cost"):
-		return
-	if not bool(bank.call(&"spend_cost", cost)):
-		return  # не хватило монет
-	if SpellSystem != null:
-		SpellSystem.unlock(id)
+	var cost: Dictionary = {ResourcePile.ResourceType.BRONZE: cost_bronze}
+	if bank == null or not bank.has_method(&"spend_cost") or not bool(bank.call(&"spend_cost", cost)):
+		item.free()
+		return false
+	var shop: Node3D = null
+	for b in get_tree().get_nodes_in_group(PadBuilding.GROUP):
+		if is_instance_valid(b) and b.has_method(&"is_magic") and bool(b.call(&"is_magic")):
+			shop = b as Node3D
+			break
+	var scene := get_tree().current_scene
+	scene.add_child(item)
+	var base: Vector3 = shop.global_position if shop != null else Vector3.ZERO
+	var out := Vector3.FORWARD
+	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
+	if tower != null and is_instance_valid(tower):
+		out = tower.global_position - base
+		out.y = 0.0
+		out = out.normalized() if out.length() > 0.1 else Vector3.FORWARD
+	item.global_position = base + out * 2.4 + Vector3.UP * 0.4
+	AoeVisual.spawn_pulse_sparks(scene, item.global_position, 0.8, 6.0)
+	EventBus.camera_shake.emit(0.12, item.global_position)
 	_populate_spell_shop()
+	return true
+
+
+func _on_forge_machine(id: StringName) -> void:
+	var m := WarMachine.new()
+	m.machine_id = id
+	if _forge_pay_and_spawn(int(WarMachine.CATALOG.get(id, {}).get("cost", 50)), m):
+		EventBus.tutorial_hint.emit("⚙ %s выкована — хватай рукой и ставь на крышу башни" %
+			String(WarMachine.CATALOG.get(id, {}).get("name", id)), 5.0)
+
+
+func _on_forge_harpoon() -> void:
+	if _forge_pay_and_spawn(FORGE_HARPOON_COST, HarpoonModule.new()):
+		EventBus.tutorial_hint.emit("⚙ Гарпунная турель выкована — хватай рукой и ставь на крышу", 5.0)
+
+
+func _on_forge_mine_charge() -> void:
+	if _forge_pay_and_spawn(FORGE_MINE_COST, MineCharge.new()):
+		EventBus.tutorial_hint.emit("💣 Минный заряд выкован — положи его на башню", 5.0)
 
 
 # --- БОКОВЫЕ КОНТЕКСТНЫЕ ПАНЕЛИ (единый каркас: казарма, верфь) --------------------------------
@@ -2235,6 +2157,16 @@ func _build_barracks_panel() -> void:
 	_barracks_btn_wall.focus_mode = Control.FOCUS_NONE
 	_barracks_btn_wall.pressed.connect(_on_barracks_wall_pressed)
 	vbox.add_child(_barracks_btn_wall)
+	# Узел ветки казармы (пересборка 2026-07-21): барак-пристройка в её зону = +1 боец.
+	var btn_barrack := Button.new()
+	btn_barrack.text = "⛺ Барак-пристройка (+1 боец)"
+	btn_barrack.tooltip_text = "Полимино в зону казармы: растит кап её гарнизона"
+	btn_barrack.focus_mode = Control.FOCUS_NONE
+	btn_barrack.add_theme_font_size_override(&"font_size", 12)
+	btn_barrack.pressed.connect(func() -> void:
+		_barracks_panel.visible = false
+		_on_build_menu_id(BUILD_MENU_PAD_BARRACK))
+	vbox.add_child(btn_barrack)
 	_fit_side_panel(_barracks_panel, vbox)
 
 
@@ -2359,6 +2291,13 @@ func _populate_dock_shop() -> void:
 	var up := _tower_upgrades()
 	for id in TowerUpgrades.SLICE_CATALOG:
 		_dock_shop_list.add_child(_make_dock_card(id, TowerUpgrades.SLICE_CATALOG[id], up))
+	# ВЕТКА ВЕРФИ (пересборка 2026-07-21, DESIGN §5.А): все улучшения башни в
+	# одном окне — узлы-пристройки (полимино в зону верфи), слот крыши, найм артели.
+	_dock_shop_list.add_child(_make_side_separator("узлы-пристройки (в зону верфи)"))
+	_dock_shop_list.add_child(_make_node_place_row(BUILD_MENU_PAD_SLIPWAY, _dock_shop))
+	_dock_shop_list.add_child(_make_node_place_row(BUILD_MENU_PAD_ARMOR, _dock_shop))
+	_dock_shop_list.add_child(_make_roof_slot_row())
+	_dock_shop_list.add_child(_make_worker_hire_row())
 	# Экипаж: подсказка «как заставить окна стрелять», пока арбалеты куплены.
 	if _dock_crew_label != null and is_instance_valid(_dock_crew_label):
 		var has_windows: bool = up != null and up.window_count() > 0
@@ -2419,6 +2358,167 @@ func _on_dock_buy(id: StringName, cost: Dictionary) -> void:
 		return  # не хватило монет
 	up.install(id)
 	_populate_dock_shop()
+
+
+# --- ВЕТКИ ЯДЕР: узлы-пристройки (пересборка 2026-07-21, DESIGN §5.Б) ---------------------------
+## Узел ветки — не строчка меню, а полимино-пристройка: покупается из окна СВОЕГО
+## ядра, ставится рукой в его зону-соседство (attach_to-гейт в HandPlaceAim).
+
+const ROOF_SLOT_COST := {ResourcePile.ResourceType.SILVER: 12}
+const ROOF_SLOT_CAP := 3
+
+var _smelter_panel: Panel = null
+var _smelter_list: VBoxContainer = null
+
+
+## Мелкий разделитель для боковых панелей.
+func _make_side_separator(text: String) -> Label:
+	var sep := Label.new()
+	sep.text = text
+	sep.add_theme_font_size_override(&"font_size", 10)
+	sep.modulate = Color(1, 1, 1, 0.4)
+	return sep
+
+
+## Ряд «узел-пристройка»: имя + цена; клик прячет панель ядра и запускает
+## размещение (оплата при установке — общий путь _on_build_menu_id).
+func _make_node_place_row(menu_id: int, host_panel: Panel) -> Control:
+	var info := _build_item_info(menu_id)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override(&"separation", 7)
+	row.tooltip_text = String(info["sub_text"])
+	var sw := ColorRect.new()
+	sw.color = info.get("shape_color", Color.GRAY)
+	sw.custom_minimum_size = Vector2(15, 15)
+	sw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	sw.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(sw)
+	var name_lbl := Label.new()
+	name_lbl.text = "%s %s" % [info["emoji"], info["name"]]
+	name_lbl.add_theme_font_size_override(&"font_size", 12)
+	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(name_lbl)
+	var btn := Button.new()
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_font_size_override(&"font_size", 11)
+	btn.text = String(info["cost_text"])
+	btn.tooltip_text = row.tooltip_text
+	btn.disabled = bool(info["disabled"])
+	btn.pressed.connect(func() -> void:
+		if host_panel != null and is_instance_valid(host_panel):
+			host_panel.visible = false
+		_on_build_menu_id(menu_id))
+	row.add_child(btn)
+	return row
+
+
+## Ряд «+слот крыши»: узел ветки верфи без пристройки — растит Tower.roof_slots
+## (кап ROOF_SLOT_CAP). Дефицит слотов = фича (машины конкурируют за крышу).
+func _make_roof_slot_row() -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override(&"separation", 7)
+	row.tooltip_text = "Ещё один слот под аппарат на крыше башни (машина/гарпун)"
+	var tower := _resolve_tower()
+	var slots: int = int(tower.get(&"roof_slots")) if tower != null else 1
+	var name_lbl := Label.new()
+	name_lbl.text = "🔩 Слот крыши (%d/%d)" % [slots, ROOF_SLOT_CAP]
+	name_lbl.add_theme_font_size_override(&"font_size", 12)
+	name_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(name_lbl)
+	var btn := Button.new()
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_font_size_override(&"font_size", 11)
+	if slots >= ROOF_SLOT_CAP:
+		btn.text = "✓ макс"
+		btn.disabled = true
+	else:
+		var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
+		var afford: bool = bank != null and bank.has_method(&"can_afford") and bool(bank.call(&"can_afford", ROOF_SLOT_COST))
+		btn.text = _format_cost({"cost": ROOF_SLOT_COST})
+		btn.disabled = not afford
+		if not afford:
+			btn.modulate = Color(1.0, 0.6, 0.55)
+		btn.pressed.connect(func() -> void:
+			var b := get_tree().get_first_node_in_group(GoldBank.GROUP)
+			var t := _resolve_tower()
+			if t == null or b == null or not bool(b.call(&"spend_cost", ROOF_SLOT_COST)):
+				return
+			t.set(&"roof_slots", mini(int(t.get(&"roof_slots")) + 1, ROOF_SLOT_CAP))
+			EventBus.tutorial_hint.emit("🔩 Крыша расширена: слотов %d" % int(t.get(&"roof_slots")), 4.0)
+			_populate_dock_shop())
+	row.add_child(btn)
+	return row
+
+
+## Ряд найма рабочего у верфи (артель жила у замка — замок ⛔, найм переехал к ядру).
+func _make_worker_hire_row() -> Control:
+	var row := HBoxContainer.new()
+	var btn := Button.new()
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_font_size_override(&"font_size", 12)
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn.text = "💰 Нанять рабочего в артель"
+	btn.pressed.connect(func() -> void:
+		if _dock_shop != null and is_instance_valid(_dock_shop):
+			_dock_shop.visible = false
+		var trade := get_tree().get_first_node_in_group(&"trade_ui")
+		if trade != null and trade.has_method(&"open"):
+			trade.call(&"open", SoldierSystem.ROLE_WORKER, Callable(self, &"_on_hired_workers_at_core")))
+	row.add_child(btn)
+	return row
+
+
+## Оплата найма прошла → рабочие спавнятся у ядра города (request_squad клампит кап 7).
+func _on_hired_workers_at_core(unit_type: StringName, want: int) -> void:
+	var spawner := get_tree().get_first_node_in_group(&"squad_spawner")
+	if spawner == null or not spawner.has_method(&"request_squad"):
+		return
+	var core: Node3D = CityGrid.core_node(get_tree())
+	var base: Vector3 = core.global_position if core != null else Vector3.ZERO
+	spawner.call(&"request_squad", unit_type, want, Vector3(base.x, 0.5, base.z))
+
+
+## --- Панель плавильни: узлы ветки + статус трубы (клик по плавильне) ---
+func _build_smelter_panel() -> void:
+	var parts: Dictionary = _make_side_panel("🔥 Плавильня", 150.0, Color(0.95, 0.55, 0.25))
+	_smelter_panel = parts["panel"]
+	var vbox: VBoxContainer = parts["vbox"]
+	_smelter_list = VBoxContainer.new()
+	_smelter_list.add_theme_constant_override(&"separation", 3)
+	_smelter_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_child(_smelter_list)
+
+
+func _on_smelter_panel_requested(_smelter: Node3D) -> void:
+	if _smelter_panel == null or not is_instance_valid(_smelter_panel):
+		return
+	_populate_smelter_panel()
+	_smelter_panel.visible = true
+
+
+func _populate_smelter_panel() -> void:
+	if _smelter_list == null or not is_instance_valid(_smelter_list):
+		return
+	for c in _smelter_list.get_children():
+		_smelter_list.remove_child(c)
+		c.queue_free()
+	# Статус трубы: сырьё в трюме башни (вход плавильни).
+	var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
+	if store != null:
+		var stone: int = int(store.call(&"get_amount", ResourcePile.ResourceType.STONE))
+		var iron: int = int(store.call(&"get_amount", ResourcePile.ResourceType.IRON))
+		var status := Label.new()
+		status.add_theme_font_size_override(&"font_size", 11)
+		status.add_theme_color_override(&"font_color", Color(0.75, 0.72, 0.65))
+		status.text = "В трюме башни: 🪨 %d · ⛓ %d — гном плавит в монеты" % [stone, iron]
+		status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_smelter_list.add_child(status)
+	_smelter_list.add_child(_make_side_separator("узлы-пристройки (в зону плавильни)"))
+	_smelter_list.add_child(_make_node_place_row(BUILD_MENU_PAD_MINT, _smelter_panel))
+	_smelter_list.add_child(_make_node_place_row(BUILD_MENU_PAD_HOUSE, _smelter_panel))
+	_fit_side_panel(_smelter_panel, _smelter_list.get_parent() as VBoxContainer)
 
 
 ## ВРЕМЕННО (тест): стройка открыта с самого начала, без станка Room11. Вернуть в false,
@@ -2924,9 +3024,6 @@ func _refresh_tower_health(current: float, maximum: float) -> void:
 
 func _refresh_tower_mana(current: float, maximum: float) -> void:
 	_current_mana = current  # кеш до null-guard'а: нужен трею даже если бар не построен
-	# Панель колоды открыта → live-гейт кнопок «взять/сбросить» по новой мане.
-	if _build_palette != null and is_instance_valid(_build_palette) and _build_palette.visible:
-		_refresh_deck_buttons()
 	if _mana_bar == null:
 		return
 	if current > 0.0 and not _mana_bar.visible:

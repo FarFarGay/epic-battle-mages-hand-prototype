@@ -25,9 +25,23 @@ var amount: int = 1
 ## Период проверки «есть ли место на складе + башня в зоне» (с). Дёшево.
 const SCAN_INTERVAL: float = 0.25
 
-enum State { IDLE, MAGNETIZED }
+enum State { IDLE, MAGNETIZED, POPPING }
 
 var _state: State = State.IDLE
+## POPPING (шматок из лопнувшей жилы): баллистический подлёт до _pop_land_y,
+## дальше обычный IDLE (качается, ждёт магнита башни). См. launch().
+var _pop_velocity: Vector3 = Vector3.ZERO
+var _pop_land_y: float = 0.35
+const POP_GRAVITY: float = 14.0
+## Визуал «осколка жилы»: задан (alpha > 0) → меш не тип-цветной бокс, а
+## кристалл-призма этого цвета (как кристаллы залежи в VeinVisuals) с
+## кувырком в полёте. Один язык — один смысл (юзер 2026-07-21): осколок,
+## вылетающий из жилы, и ЕСТЬ шматок ресурса; отдельного FX-шаттера при
+## выбивании нет, кристальный цвет = «это можно собрать».
+var shard_color: Color = Color(0, 0, 0, 0)
+## Кувырок осколка в полёте (POPPING/MAGNETIZED). Ось и скорость — случайные.
+var _spin_axis: Vector3 = Vector3.UP
+var _spin_speed: float = 0.0
 var _elapsed: float = 0.0
 var _bob_phase: float = 0.0
 ## Высота, вокруг которой качается и на которой летит (горизонтальный полёт).
@@ -48,6 +62,21 @@ func is_idle() -> bool:
 	return _state == State.IDLE
 
 
+## Выстрелить кучку дугой (шматок, выбитый рукой из жилы — VeinBoulder). Звать
+## ПОСЛЕ add_child + установки global_position. Летит баллистикой (POP_GRAVITY)
+## до высоты land_y, там переходит в IDLE — качается и ждёт магнита башни.
+## В полёте не сливается и не магнитится (is_idle() == false).
+func launch(velocity: Vector3, land_y: float = 0.35) -> void:
+	_pop_velocity = velocity
+	_pop_land_y = land_y
+	# Кувырок на время полёта — осколок, а не парящий куб.
+	_spin_axis = Vector3(randf() - 0.5, randf() - 0.5, randf() - 0.5).normalized()
+	if _spin_axis.length_squared() < 0.5:
+		_spin_axis = Vector3.UP
+	_spin_speed = randf_range(3.0, 7.0)
+	_state = State.POPPING
+
+
 ## Влить ещё единиц (слияние при дропе рядом). Растит визуал.
 func add_units(n: int) -> void:
 	amount += maxi(n, 0)
@@ -56,15 +85,28 @@ func add_units(n: int) -> void:
 
 func _build_mesh() -> void:
 	_mesh = MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = Vector3(0.4, 0.3, 0.4)
-	_mesh.mesh = box
+	var c: Color
+	if shard_color.a > 0.0:
+		# Осколок жилы: кристалл-призма (та же форма, что кристаллы залежи
+		# в VeinVisuals) цвета кристаллов жилы, светится ярче бокса.
+		var prism := CylinderMesh.new()
+		prism.top_radius = 0.0
+		prism.bottom_radius = 0.19
+		prism.height = 0.72
+		prism.radial_segments = 5
+		prism.rings = 1
+		_mesh.mesh = prism
+		c = shard_color
+	else:
+		var box := BoxMesh.new()
+		box.size = Vector3(0.4, 0.3, 0.4)
+		_mesh.mesh = box
+		c = ResourcePile.color_for_type(resource_type)
 	var mat := StandardMaterial3D.new()
-	var c: Color = ResourcePile.color_for_type(resource_type)
 	mat.albedo_color = c
 	mat.emission_enabled = true
 	mat.emission = c
-	mat.emission_energy_multiplier = 0.5
+	mat.emission_energy_multiplier = 1.2 if shard_color.a > 0.0 else 0.5
 	_mesh.material_override = mat
 	_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_mesh)
@@ -91,6 +133,26 @@ func _physics_process(delta: float) -> void:
 				_try_magnetize()
 		State.MAGNETIZED:
 			_tick_magnet(delta)
+		State.POPPING:
+			_tick_pop(delta)
+
+
+## Баллистика подлёта: гравитация + перенос. Коллизий нет (Node3D) — просто
+## дуга до land_y на нисходящей ветке. Приземлился → фиксируем _base_y и в IDLE.
+func _tick_pop(delta: float) -> void:
+	if _spin_speed > 0.0:
+		rotate(_spin_axis, _spin_speed * delta)
+	_pop_velocity.y -= POP_GRAVITY * delta
+	global_position += _pop_velocity * delta
+	if _pop_velocity.y < 0.0 and global_position.y <= _pop_land_y:
+		global_position.y = _pop_land_y
+		_base_y = _pop_land_y
+		_elapsed = 0.0
+		_state = State.IDLE
+		# Скан сразу на приземлении (не ждать 0.25с): если башня уже в зоне —
+		# шматок подхватывается без паузы. Вне зоны — обычное ожидание.
+		_scan_timer = 0.0
+		_try_magnetize()
 
 
 ## Магнит включается, когда: башня есть, кучка в её зоне добычи (gather_radius —
@@ -119,6 +181,8 @@ func _tick_magnet(delta: float) -> void:
 	if _tower == null or not is_instance_valid(_tower):
 		_state = State.IDLE  # башня исчезла — не теряем кучку, ждём заново
 		return
+	if _spin_speed > 0.0:
+		rotate(_spin_axis, _spin_speed * delta)
 	var target := Vector3(_tower.global_position.x, _base_y, _tower.global_position.z)
 	var to_target := target - global_position
 	var dist: float = to_target.length()

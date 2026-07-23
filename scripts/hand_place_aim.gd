@@ -437,22 +437,54 @@ func _pad_valid(center: Vector3) -> bool:
 	# Шахта (role mine) ставится ТОЛЬКО на клетку жилы ([OilDeposit]); прочее — НЕ на жилу
 	# (на жиле можно лишь шахту).
 	var is_mine: bool = _data.get("role", &"") == &"mine"
+	# ВЕРФЬ = ядро города (2026-07-21): ПЕРВАЯ верфь ставится свободно — без неё
+	# площадки застройки не существует (in_pad считается ОТ неё). Ядро уже есть →
+	# обычные правила площадки.
+	var free_core: bool = _data.get("role", &"") == &"dock" \
+		and CityGrid.castle_cell(get_tree()) == null
 	var cells: Array = CityGrid.building_cells(center, _data.get("cells", []), _rot_y, get_tree())
 	var occ: Dictionary = _occupied_cells(over_walls)
 	var veins: Dictionary = OilDeposit.cell_map(get_tree())
 	for c in cells:
 		var cell := c as Vector2i
-		if not CityGrid.in_pad(cell, get_tree()) or CityGrid.is_pump(cell, get_tree()) or occ.has(cell):
+		if not free_core and (not CityGrid.in_pad(cell, get_tree()) or CityGrid.is_pump(cell, get_tree())):
+			return false
+		if occ.has(cell):
 			return false
 		var on_vein: bool = veins.has(cell)
 		if is_mine and not on_vein:
 			return false  # шахту — только на жилу
 		if not is_mine and on_vein:
 			return false  # на жилу — только шахту
+	# УЗЕЛ-ПРИСТРОЙКА ветки ядра (каталог: "attach_to" = роль родителя): хотя бы
+	# одна клетка фигуры должна лежать в ЗОНЕ-соседстве живого ядра этой роли.
+	var attach_role: StringName = _data.get("attach_to", &"")
+	if attach_role != &"" and not _touches_core_zone(cells, attach_role):
+		return false
 	# ЗОНУ квартала под застройку НЕ требуем свободной (раньше блок `_mine_plot_clear`): пад растёт
 	# с апгрейдом замка, а занятая клетка и так не закроется филлером → нет полного бонуса. Запрет
 	# был избыточен (самонаказание встроено). Превью зоны остаётся — красные клетки лишь инфо.
 	return true
+
+
+## Хотя бы одна клетка фигуры лежит в орто-соседстве футпринта живого ядра
+## роли attach_role (узел-пристройка «прикладывается» к своему зданию —
+## та же геометрия зоны, что у кварталов PadBuilding._adjacent_free_cells).
+func _touches_core_zone(cells: Array, attach_role: StringName) -> bool:
+	for b in get_tree().get_nodes_in_group(PadBuilding.GROUP):
+		if not is_instance_valid(b) or not b.has_method(&"occupied_cells"):
+			continue
+		if b.get(&"_role") != attach_role:
+			continue
+		var zone: Dictionary = {}
+		for oc in b.call(&"occupied_cells"):
+			var occ_cell := oc as Vector2i
+			for off in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				zone[occ_cell + off] = true
+		for c in cells:
+			if zone.has(c as Vector2i):
+				return true
+	return false
 
 
 ## Множество занятых клеток (все поставленные фигуры). allow_over_walls — НЕ считать стены

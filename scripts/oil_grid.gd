@@ -62,17 +62,36 @@ static func building_cells(center: Vector3, mask: Array, rot: float, tree: Scene
 	return out
 
 
-## Клетка замка на гриде (центр площадки застройки), или null если замка ещё нет.
-## Площадка считается ОТ ЗАМКА — поставил замок по гриду, вокруг него 9×9.
-static func castle_cell(tree: SceneTree):
+## ЯДРО ГОРОДА (пересборка 2026-07-21, DESIGN §5.А): якорь площадки застройки —
+## ВЕРФЬ (PadBuilding role dock, группа CORE_GROUP). Замок (Castle) оставлен
+## запасным резолвом — легаси-контент Заставы может его построить, но ядром
+## по умолчанию он больше не является.
+const CORE_GROUP := &"city_core_anchor"
+
+
+## Нода-ядро города: верфь, иначе замок, иначе null (города ещё нет).
+static func core_node(tree: SceneTree) -> Node3D:
+	var d := tree.get_first_node_in_group(CORE_GROUP)
+	if d is Node3D and is_instance_valid(d):
+		return d as Node3D
 	var c := tree.get_first_node_in_group(Castle.GROUP)
-	if c is Node3D:
-		return world_to_cell((c as Node3D).global_position, tree)
+	if c is Node3D and is_instance_valid(c):
+		return c as Node3D
 	return null
 
 
-## Клетка в пределах площадки застройки (квадрат радиуса PAD_RADIUS ВОКРУГ ЗАМКА, НЕ
-## вокруг центра карты). Нет замка → строить негде (сперва поставь замок по гриду).
+## Клетка ядра города (центр площадки застройки), или null если ядра ещё нет.
+## Имя историческое (раньше ядром был замок) — оставлено, чтобы не трогать
+## всех вызывающих; семантика теперь «клетка ядра» (верфь/замок).
+static func castle_cell(tree: SceneTree):
+	var n := core_node(tree)
+	if n != null:
+		return world_to_cell(n.global_position, tree)
+	return null
+
+
+## Клетка в пределах площадки застройки (квадрат радиуса PAD_RADIUS вокруг ЯДРА).
+## Нет ядра → строить негде (сперва поставь верфь — она ставится свободно).
 static func in_pad(cell: Vector2i, tree: SceneTree) -> bool:
 	var cc = castle_cell(tree)
 	if cc == null:
@@ -80,9 +99,11 @@ static func in_pad(cell: Vector2i, tree: SceneTree) -> bool:
 	return absi(cell.x - cc.x) <= PAD_RADIUS and absi(cell.y - cc.y) <= PAD_RADIUS
 
 
-## Клетка под ядром-замком (центр площадки) — строить нельзя (там сам замок).
+## Клетка под ядром-ЗАМКОМ — строить нельзя (там сам замок). Проверка только
+## по замку: верфь — обычный пад, свои клетки держит через occupied_cells.
 static func is_pump(cell: Vector2i, tree: SceneTree) -> bool:
-	var cc = castle_cell(tree)
-	if cc == null:
+	var c := tree.get_first_node_in_group(Castle.GROUP)
+	if not (c is Node3D) or not is_instance_valid(c):
 		return false
+	var cc: Vector2i = world_to_cell((c as Node3D).global_position, tree)
 	return absi(cell.x - cc.x) <= PUMP_RADIUS and absi(cell.y - cc.y) <= PUMP_RADIUS

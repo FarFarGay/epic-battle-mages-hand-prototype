@@ -89,7 +89,7 @@ func _on_furnace_body(body: Node3D) -> void:
 		if _diode != null:
 			_diode.locked = false
 		EventBus.camera_shake.emit(0.2, global_position)
-		EventBus.tutorial_hint.emit("Топка гудит! Теперь ударь Искрой [1] по контакту станка", 7.0)
+		EventBus.tutorial_hint.emit("Топка гудит! Теперь ударь Искрой [2] по контакту станка", 7.0)
 	else:
 		EventBus.tutorial_hint.emit("Уголь в топке: %d/%d — кидай ещё" % [_coal_count, coal_needed], 4.0)
 

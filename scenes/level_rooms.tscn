@@ -63,6 +63,7 @@
 [ext_resource type="Script" uid="uid://bi5ysv32a5q33" path="res://scripts/gnome_cage.gd" id="61_gnomecage"]
 [ext_resource type="Script" uid="uid://cj3u1rkiy7qxw" path="res://scripts/quest_marker.gd" id="62_questmarker"]
 [ext_resource type="Script" uid="uid://b2w5h5nbg7ckg" path="res://scripts/harpoon_module.gd" id="63_harpoonmodule"]
+[ext_resource type="PackedScene" path="res://scenes/vein_boulder.tscn" id="64_veinboulder"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -303,6 +304,13 @@ done_group = &"harpoon_module_mounted"
 
 [node name="TunnelEndCap" parent="Room1" unique_id=911200005 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 12, -34, 0, 0)
+
+[node name="VeinBoulderTut" parent="Room1" unique_id=911800004 instance=ExtResource("64_veinboulder")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 0, -8)
+
+[node name="VeinBoulderTut2" parent="Room1" unique_id=911800005 instance=ExtResource("64_veinboulder")]
+transform = Transform3D(0.86602545, 0, -0.5, 0, 1, 0, 0.5, 0, 0.86602545, 6, 0, 8)
+resource_type = 3
 
 [node name="Room2" type="Node3D" parent="." unique_id=489139874]
 
@@ -711,7 +719,7 @@ suppress_group = &"bridge_snapped"
 [node name="HintSpark" type="Area3D" parent="TutorialHints" unique_id=911200017]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 36)
 script = ExtResource("47_tuthint")
-text = "Дверь заперта. Синий столбик — ДИОД: выбери Искру [1] и ударь ПКМ по нему"
+text = "Дверь заперта. Синий столбик — ДИОД: выбери Искру [2] и ударь ПКМ по нему"
 duration = 8.0
 zone_size = Vector3(34, 8, 6)
 
@@ -725,7 +733,7 @@ suppress_group = &"relay_seated"
 
 [node name="HintChainReady" type="Area3D" parent="TutorialHints" unique_id=911200023]
 script = ExtResource("47_tuthint")
-text = "Цепь замкнута! Ударь Искрой [1] по синему диоду, потом дёрни рычаг (ЛКМ)"
+text = "Цепь замкнута! Ударь Искрой [2] по синему диоду, потом дёрни рычаг (ЛКМ)"
 duration = 9.0
 trigger_mode = 3
 watch_group = &"relay_seated"
@@ -739,7 +747,7 @@ zone_size = Vector3(34, 8, 8)
 
 [node name="HintGiantDead" type="Area3D" parent="TutorialHints" unique_id=911200028]
 script = ExtResource("47_tuthint")
-text = "Гигант пал! Путь дальше: ударь Искрой [1] по синему диоду у западной стены"
+text = "Гигант пал! Путь дальше: ударь Искрой [2] по синему диоду у западной стены"
 duration = 9.0
 trigger_mode = 4
 watch_group = &"room4_giant"
@@ -789,7 +797,7 @@ zone_size = Vector3(8, 8, 12)
 [node name="HintStarDoor" type="Area3D" parent="TutorialHints" unique_id=911800014]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 74, 2, 24)
 script = ExtResource("47_tuthint")
-text = "Глубина заставы заперта. Ударь Искрой [1] по синему диоду, потом дёрни рычаг (ЛКМ)"
+text = "Глубина заставы заперта. Ударь Искрой [2] по синему диоду, потом дёрни рычаг (ЛКМ)"
 duration = 9.0
 zone_size = Vector3(16, 8, 9)
 
@@ -962,10 +970,10 @@ transform = Transform3D(3, 0, 0, 0, 1, 0, 0, 0, 1, 84, 0, 18)
 [node name="WallNorth" parent="Zastava/StarVault" unique_id=911800003 instance=ExtResource("6_wall")]
 transform = Transform3D(6, 0, 0, 0, 1, 0, 0, 0, 1, 74, 0, 2)
 
-[node name="WallWest" parent="Zastava/StarVault" unique_id=911800004 instance=ExtResource("6_wall")]
+[node name="WallWest" parent="Zastava/StarVault" unique_id=94046952 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 32, 62, 0, 10)
 
-[node name="WallEast" parent="Zastava/StarVault" unique_id=911800005 instance=ExtResource("6_wall")]
+[node name="WallEast" parent="Zastava/StarVault" unique_id=60363031 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 32, 86, 0, 10)
 
 [node name="MetalDoorStar" type="StaticBody3D" parent="Zastava/StarVault" unique_id=911800006 groups=["hand_immune", "navmesh_source", "slam_damage_immune"]]
@@ -1129,6 +1137,17 @@ transform = Transform3D(0.39999998, 0, 0, 0, 1, 0, 0, 0, 0.39999998, 62, 0, 138)
 
 [node name="OreVeinSouthEast" parent="." unique_id=911700014 instance=ExtResource("41_mjs4f")]
 transform = Transform3D(-0.39999998, 0, 0, 0, 1, 0, 0, 0, -0.39999998, 96, 0, 132)
+
+[node name="VeinBoulderNorth" parent="." unique_id=907786814 instance=ExtResource("64_veinboulder")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 76, 0, 66)
+
+[node name="VeinBoulderEast" parent="." unique_id=156042061 instance=ExtResource("64_veinboulder")]
+transform = Transform3D(0.86602545, 0, -0.5, 0, 1, 0, 0.5, 0, 0.86602545, 104, 0, 98)
+resource_type = 3
+
+[node name="VeinBoulderSouth" parent="." unique_id=1167836598 instance=ExtResource("64_veinboulder")]
+transform = Transform3D(0.70710677, 0, 0.70710677, 0, 1, 0, -0.70710677, 0, 0.70710677, 78, 0, 126)
+units = 36
 
 [node name="GnomeHouseB" parent="." unique_id=1635103079 instance=ExtResource("28_gnomehouse")]
 transform = Transform3D(0.49999997, 0, -0.86602545, 0, 1, 0, 0.86602545, 0, 0.49999997, 111.99967, 0, 81.591606)

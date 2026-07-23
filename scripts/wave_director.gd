@@ -778,9 +778,11 @@ func _assault_anchor_center() -> Vector3:
 	if camp != null:
 		var tower: Node3D = camp.get_tower()
 		return tower.global_position if (tower != null and is_instance_valid(tower)) else Vector3.ZERO
-	var castle := get_tree().get_first_node_in_group(&"castle") as Node3D
-	if castle != null and is_instance_valid(castle):
-		return castle.global_position
+	# Rooms: ядро города — ВЕРФЬ (2026-07-21), замок остался запасным резолвом
+	# (CityGrid.core_node разруливает). Ядра нет → INF, штурм не запускается.
+	var core: Node3D = CityGrid.core_node(get_tree())
+	if core != null:
+		return core.global_position
 	return Vector3.INF
 
 
@@ -790,9 +792,9 @@ func _assault_zone_center() -> Vector3:
 	var camp := get_tree().get_first_node_in_group(&"camp") as Camp
 	if camp != null:
 		return camp.build_zone_center()
-	var castle := get_tree().get_first_node_in_group(&"castle") as Node3D
-	if castle != null and is_instance_valid(castle):
-		return castle.global_position
+	var core: Node3D = CityGrid.core_node(get_tree())
+	if core != null:
+		return core.global_position
 	return Vector3.INF
 
 

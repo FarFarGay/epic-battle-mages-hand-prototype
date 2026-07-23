@@ -199,8 +199,9 @@ const CATALOG: Dictionary = {
 	PAD_HOUSE: {
 		"name": "Дом гномов",
 		"menu_label": "🏠 Дом гномов (уют кварталов)",
-		"hint": "Ось «Объём» у шахты (×монет за выплату) и ×темп института. Гномов даёт найм у замка.",
+		"hint": "Узел ветки плавильни: ×1.5 темп плавки. Гнома не берёт (социальный).",
 		"role": &"housing",
+		"attach_to": &"smelter",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0)],
 		"instant": true,
 		"cost": {ResourcePile.ResourceType.BRONZE: 80},
@@ -230,8 +231,9 @@ const CATALOG: Dictionary = {
 		"name": "Эллинг",
 		"menu_label": "🛶 Эллинг (+кап HP)",
 		# Число в тексте = PadBuilding.HP_CAP_SLIPWAY (const-выражения в hint нельзя).
-		"hint": "Сапорт верфи: +300 к потолку корпуса башни. Ставь в зону верфи, берёт 1 гнома.",
+		"hint": "Узел ветки верфи: +300 к потолку корпуса башни. Ставь в зону верфи, берёт 1 гнома.",
 		"role": &"slipway",
+		"attach_to": &"dock",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0)],
 		"instant": true,
 		"cost": {ResourcePile.ResourceType.BRONZE: 60},
@@ -243,8 +245,9 @@ const CATALOG: Dictionary = {
 		"name": "Бронный цех",
 		"menu_label": "🛡 Бронный цех (+кап HP)",
 		# Число в тексте = PadBuilding.HP_CAP_ARMOR.
-		"hint": "Сапорт верфи: +600 к потолку корпуса (сильнее эллинга). Зона верфи, берёт 1 гнома.",
+		"hint": "Узел ветки верфи: +600 к потолку корпуса (сильнее эллинга). Зона верфи, берёт 1 гнома.",
 		"role": &"armor",
+		"attach_to": &"dock",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
 		"cost": {ResourcePile.ResourceType.BRONZE: 100},
@@ -323,8 +326,9 @@ const CATALOG: Dictionary = {
 	PAD_BARRACK: {
 		"name": "Барак",
 		"menu_label": "⛺ Барак (+1 боец)",
-		"hint": "В зону казармы (лучники/копейщики) → +1 боец в гарнизон. Снабжение — из домов.",
+		"hint": "Узел ветки казармы: +1 боец в её гарнизон. Ставь в зону казармы.",
 		"role": &"barrack",
+		"attach_to": &"barracks",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
 		"cost": {ResourcePile.ResourceType.BRONZE: 60},
@@ -341,16 +345,18 @@ const CATALOG: Dictionary = {
 		"cost": {ResourcePile.ResourceType.BRONZE: 10},
 		"ghost_color": Color(0.6, 0.7, 0.85, 0.5),
 	},
-	# Плавильня-САПОРТ (1 клетка): кладётся в ПЛОТ-силуэт квартала шахты. Бонус — за РАЗНЫЕ типы в
-	# плоте × заполнение (см. pad_building), размер сапорта свободен → компактная, как была.
+	# ПЛАВИЛЬНЯ-ЯДРО (пересборка 2026-07-21, DESIGN §5.А): приёмник трубы —
+	# гном-смена перерабатывает сырьё из трюма башни в монеты (_tick_smelter).
+	# Узлы ветки (двор/дом) прикладываются в её зону-соседство.
 	PAD_SMELTER: {
 		"name": "Плавильня",
-		"menu_label": "🔥 Плавильня (×скорость)",
-		"hint": "Ось «Скорость» квартала. Берёт 1 гнома на смену (нет гнома — ось не работает).",
+		"menu_label": "🔥 Плавильня (сырьё→монеты)",
+		"hint": "Ядро: гном плавит привезённое башней сырьё в монеты. Берёт 1 гнома на смену.",
 		"role": &"smelter",
-		"cells": [Vector2i(0, 0)],
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
 		"instant": true,
-		"cost": {ResourcePile.ResourceType.BRONZE: 20},
+		"hp": 120,
+		"cost": {ResourcePile.ResourceType.BRONZE: 60},
 		"ghost_color": Color(0.95, 0.55, 0.25, 0.5),
 	},
 	# Чеканный двор-САПОРТ (Г-форма, 4 клетки: длинное верхнее плечо + одна вниз слева):
@@ -358,8 +364,9 @@ const CATALOG: Dictionary = {
 	PAD_MINT: {
 		"name": "Чеканный двор",
 		"menu_label": "🪙 Чеканный двор (+номинал)",
-		"hint": "Ось «Номинал» квартала (монета на тир выше). Берёт 1 гнома на смену.",
+		"hint": "Узел ветки плавильни: ×2 к выплате за сырьё. Берёт 1 гнома на смену.",
 		"role": &"mint",
+		"attach_to": &"smelter",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(0, 1)],
 		"instant": true,
 		"cost": {ResourcePile.ResourceType.BRONZE: 20},
@@ -377,12 +384,15 @@ const CATALOG: Dictionary = {
 	},
 	# Институт магии (1 кл., роль magic): башня мага с кристаллом. Льёт ману в башню (MANA_INSTITUTE_RATE)
 	# И открывает доступ к магическим/сапорт-постройкам (группа magic_institute, см. _magic_unlocked).
+	# МАШИННЫЙ ЦЕХ (пересборка 2026-07-21, экс-Институт магии, DESIGN §5.А/§5.В):
+	# ядро города — куёт БОЕВЫЕ МАШИНЫ по чертежам (клик → окно цеха), льёт
+	# энергию в башню (механика маны не тронута — role &"magic" исторический).
 	PAD_INSTITUTE: {
-		"name": "Институт магии",
-		"menu_label": "🔮 Институт магии (+мана)",
-		"hint": "Мана-жила башни: заряжает её у дока города. Открывает магию.",
+		"name": "Машинный цех",
+		"menu_label": "⚙ Машинный цех (машины+энергия)",
+		"hint": "Ядро: куёт боевые машины на крышу башни (клик) и льёт энергию. Узлы ветки ×темп.",
 		"role": &"magic",
-		"cells": [Vector2i(0, 0)],
+		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
 		"instant": true,
 		"hp": 120,
 		"cost": {ResourcePile.ResourceType.BRONZE: 100},
@@ -393,8 +403,9 @@ const CATALOG: Dictionary = {
 	PAD_MANA_CRYSTAL: {
 		"name": "Кафедра Волшебных свитков",
 		"menu_label": "📜 Кафедра свитков (×темп)",
-		"hint": "Сапорт института: ×темп маны. Ставь в зону института магии.",
+		"hint": "Узел ветки цеха: ×темп энергии. Ставь в зону Машинного цеха.",
 		"role": &"mana_crystal",
+		"attach_to": &"magic",
 		"cells": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(2, 1)],
 		"instant": true,
 		"cost": {ResourcePile.ResourceType.BRONZE: 50},
@@ -405,8 +416,9 @@ const CATALOG: Dictionary = {
 	PAD_MANA_RUNE: {
 		"name": "Осколок звёздной руды",
 		"menu_label": "🌟 Осколок звёздной руды (×темп)",
-		"hint": "Сапорт института: ×темп маны (сильнее). Ставь в зону института магии.",
+		"hint": "Узел ветки цеха: ×темп энергии (сильнее). Ставь в зону Машинного цеха.",
 		"role": &"mana_rune",
+		"attach_to": &"magic",
 		"cells": [Vector2i(0, 0)],
 		"instant": true,
 		"cost": {ResourcePile.ResourceType.BRONZE: 80},

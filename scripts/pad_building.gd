@@ -116,10 +116,12 @@ func _ready() -> void:
 	if is_barracks():
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
 		set_process(true)
-	# Плавильня/двор/банк НЕ тикают сами: они работают как сапорты-соседи квартала
-	# шахты (_tick_mine у шахты читает их роли). Легаси конвейера (группа smelter,
-	# доставка руды гномами, свои set_process) вычищено 2026-07-04 — веток в _process
-	# у этих ролей не было, тики крутились вхолостую.
+	# ПЛАВИЛЬНЯ — приёмник трубы (пересборка 2026-07-21, DESIGN §4 стадия 4):
+	# тикает переработку сырья из трюма башни в монеты (_tick_smelter). Кран
+	# шахты выключен — это единственная конверсия сырья в деньги.
+	if is_smelter():
+		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
+		set_process(true)
 	# Институт магии — тикает ману в башню + метит «магия открыта» (анлок) + hover-индикатор маны.
 	if is_magic():
 		add_to_group(&"magic_institute")
@@ -146,6 +148,9 @@ func _ready() -> void:
 	if is_dock():
 		collision_layer = 0
 		add_to_group(Hand.PICKUP_HIGHLIGHT_GROUP)
+		# ВЕРФЬ = ЯДРО ГОРОДА (2026-07-21): якорит площадку застройки (CityGrid
+		# считает in_pad от неё) и служит целью ночной осады (WaveDirector).
+		add_to_group(CityGrid.CORE_GROUP)
 		set_process(true)
 	# Отложенно: HandPlaceAim ставит global-трансформ ПОСЛЕ add_child (нужен стене для
 	# мировых клеток и поиска соседей).
@@ -1472,8 +1477,10 @@ func _setup_mine() -> void:
 ## плавильня/двор/дом; казарма (DEFENSE-ядро) → барак. Пусто → здание не продюсер (нет квартала).
 func _plot_support_roles() -> Dictionary:
 	match _role:
-		&"mine":
-			return {&"smelter": true, &"mint": true, &"housing": true}
+		&"smelter":
+			# ПЛАВИЛЬНЯ-ЯДРО (2026-07-21): узлы-пристройки её ветки — чеканный
+			# двор (номинал ×2) и дом гномов (×темп). Покупаются через окно ядра.
+			return {&"mint": true, &"housing": true}
 		&"barracks":
 			return {&"barrack": true}  # ось «Гарнизон»: барак в зоне-соседстве → +кап этой казармы
 		&"magic":
@@ -1494,7 +1501,7 @@ func _plot_support_roles() -> Dictionary:
 func pop_demand() -> int:
 	match _role:
 		&"mine":
-			return MINE_POP_DEMAND if (_vein != null and is_instance_valid(_vein)) else 0
+			return 0  # кран выключен (2026-07-21) — шахта не работает, гнома не держит
 		&"smelter", &"mint":
 			return 1
 		&"magic", &"mana_crystal", &"mana_rune":
@@ -1508,7 +1515,9 @@ func pop_demand() -> int:
 ## Приоритет комплектования гномами при нехватке: 0 = раньше (ПРОДЮСЕР — шахта/институт держим),
 ## 1 = позже (сапорты — лишь усиление; их ось гаснет первой). Population сортирует по нему.
 func pop_priority() -> int:
-	return 0 if (_role == &"mine" or _role == &"magic") else 1
+	# Ядра-продюсеры (плавильня-приёмник, институт/цех) комплектуются раньше
+	# сапортов. Шахта выбыла из приоритета — кран выключен (2026-07-21).
+	return 0 if (_role == &"smelter" or _role == &"magic") else 1
 
 
 ## Институт магии: льёт ману в башню (restore_mana капится на max) — но только
@@ -1574,45 +1583,56 @@ func _mana_mult(st: Dictionary) -> float:
 ## золотую остались). Каждый ТИП сапорта в зоне крутит СВОЮ ось:
 ## ПЛАВИЛЬНЯ → ×СКОРОСТЬ темпа; ДОМ → ×ОБЪЁМ монет за выплату; ДВОР → НОМИНАЛ монеты на тир выше.
 ## Заполнение зоны на 100% → вспышка «собран».
-func _tick_mine(delta: float) -> void:
-	if _vein == null or not is_instance_valid(_vein):
-		return
-	# НАСЕЛЕНИЕ: без укомплектованного слота (Population) шахта ПРОСТАИВАЕТ — не копит/не платит.
-	# Военный приоритет: если солдат столько, что на шахты слотов не осталось — добыча встаёт.
+func _tick_mine(_delta: float) -> void:
+	# ⛔ КРАН ВЫКЛЮЧЕН (пересборка 2026-07-21, DESIGN §5.Е этап 1): шахта больше
+	# НЕ капает монеты сама — весь вход сырья добывает ИГРОК (рука пук-пукает
+	# жилы-валуны, VeinBoulder), монеты делает плавильня (_tick_smelter) из
+	# сырья трюма. Здание уходит из палитры этапом 2; тик оставлен пустым,
+	# чтобы hover-индикаторы/маркеры не крашились на живых шахтах в сейв-сценах.
+	pass
+
+
+## ПЛАВИЛЬНЯ = ПРИЁМНИК ТРУБЫ (пересборка 2026-07-21, DESIGN §4): гном-смена
+## перерабатывает сырьё из трюма башни (TowerStore) в монеты казны. Тянет по
+## одной единице раз в SMELT_INTERVAL: железо жирнее камня. Трюм пуст — стоит
+## (труба видна: «не привёз — не плавим»). Темп/номинал — оси будущей ветки
+## пристроек (этап 3); дерево не трогаем (стройматериал мостков).
+const SMELT_INTERVAL := 1.6   # сек на единицу сырья
+const SMELT_COIN_STONE := 5   # 🥉 за единицу камня
+const SMELT_COIN_IRON := 12   # 🥉 за единицу железа
+const SMELT_TEMPO_HOUSE := 1.5  # узел «Дом гномов» в зоне: ×темп плавки
+const SMELT_VALUE_MINT := 2     # узел «Чеканный двор» в зоне: ×номинал выплаты
+var _smelt_cd: float = 0.0
+
+
+func _tick_smelter(delta: float) -> void:
+	# Без гнома-смены плавильня стоит (гейт как у всех PRODUCTION-зданий).
 	if Population != null and not Population.is_staffed(self):
 		return
+	# Узлы-пристройки ветки (зона-соседство, как у прежних кварталов):
+	# дом гномов → ×темп; чеканный двор → ×номинал выплаты.
 	var st := _quarter_status()
-	var roles: Dictionary = st["roles"]
-	var staffed: Dictionary = st["staffed_roles"]  # ось работает, только если у сапорта есть гном
-	var fill: float = st["fill"]
-	# Оси сапортов: плавильня/двор — рабочие места, ось активна лишь с гномом (staffed_roles).
-	# Дом — социальный (гнома не требует) → ось «Объём» по факту постройки (он в staffed_roles всегда).
-	var speed: float = MINE_SPEED_MULT if staffed.has(&"smelter") else 1.0   # плавильня → скорость
-	var volume: int = MINE_VOLUME_MULT if staffed.has(&"housing") else 1     # дом → объём
-	var coin: int = _upgraded_coin(_vein.coin_type()) if staffed.has(&"mint") else _vein.coin_type()  # двор → номинал
-	# Фидбэк «квартал СОБРАН»: вспышка ЕДИНОЖДЫ при 100% заполнения зоны (по всей зоне).
-	var full: bool = fill >= 0.999
-	if full and not _quarter_was_full:
-		_play_quarter_fx()
-	_quarter_was_full = full
-	# «Защёлк»: полный квартал крутит темп сверх осей — комбо за полный сет.
-	_mine_accum += MINE_RATE * speed * _full_quarter_mult(st) * delta
-	var whole := int(_mine_accum)
-	if whole < 1:
+	var staffed: Dictionary = st["staffed_roles"]
+	var speed: float = SMELT_TEMPO_HOUSE if staffed.has(&"housing") else 1.0
+	var value_mult: int = SMELT_VALUE_MINT if staffed.has(&"mint") else 1
+	_smelt_cd -= delta * speed
+	if _smelt_cd > 0.0:
 		return
-	_mine_accum -= float(whole)
-	var pay: int = whole * volume
+	var store := get_tree().get_first_node_in_group(Layers.TOWER_STORE_GROUP)
 	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
-	if bank == null or not bank.has_method(&"add_coin"):
+	if store == null or bank == null or not bank.has_method(&"add_coin"):
 		return
-	var gold_before: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD)) if bank.has_method(&"get_coin") else 0
-	bank.call(&"add_coin", coin, pay)  # монета выбранного номинала в казну
-	_recv_amount += pay                # копим для всплывашки «+N»
-	_recv_coin = coin                  # каким номиналом платим (для всплывашки)
-	if bank.has_method(&"get_coin"):
-		var gold_after: int = int(bank.call(&"get_coin", ResourcePile.ResourceType.GOLD))
-		for _i in range(gold_after - gold_before):
-			_spawn_firework(ResourcePile.ResourceType.GOLD)  # салют на каждую новую золотую
+	var pay: int = 0
+	if bool(store.call(&"take", ResourcePile.ResourceType.IRON, 1)):
+		pay = SMELT_COIN_IRON
+	elif bool(store.call(&"take", ResourcePile.ResourceType.STONE, 1)):
+		pay = SMELT_COIN_STONE
+	if pay <= 0:
+		return  # сырья нет — ждём подвоза башней, кулдаун не жжём
+	_smelt_cd = SMELT_INTERVAL
+	bank.call(&"add_coin", ResourcePile.ResourceType.BRONZE, pay * value_mult)
+	_recv_amount += pay * value_mult
+	_recv_coin = ResourcePile.ResourceType.BRONZE
 
 
 ## ВЕРФЬ = ПРОДЮСЕР ОБВЕСА БАШНИ (2026-07-12, «Док города» слит сюда — был дублем).
@@ -1978,6 +1998,10 @@ func _process(delta: float) -> void:
 		_refresh_slot_ghost()
 	if is_magic():
 		_tick_institute(delta)
+		# Клик по Машинному цеху → окно ковки машин (сигнал переиспользован
+		# от мёртвого магазина заклинаний — HUD теперь рисует там кузню).
+		if _clicked_on_self():
+			EventBus.spell_shop_requested.emit()
 	if _role == &"mine":
 		_tick_mine(delta)
 		# Live-обновление индикатора осей, пока наведено (hover) — поспел за достройкой сапорта.
@@ -1988,6 +2012,18 @@ func _process(delta: float) -> void:
 			_popup_cd -= delta
 		if _recv_amount > 0 and _popup_cd <= 0.0:
 			_spawn_profit_popup(_recv_coin, _recv_amount)  # номинал = чем реально платили (двор поднимает)
+			_recv_amount = 0
+			_popup_cd = POPUP_INTERVAL
+	if is_smelter():
+		_tick_smelter(delta)
+		# Клик по плавильне → её панель (узлы ветки, статус трубы) в HUD.
+		if _clicked_on_self():
+			EventBus.smelter_panel_requested.emit(self)
+		# Всплывашка «+прибыль» над плавильней — тот же агрегатор, что был у шахты.
+		if _popup_cd > 0.0:
+			_popup_cd -= delta
+		if _recv_amount > 0 and _popup_cd <= 0.0:
+			_spawn_profit_popup(_recv_coin, _recv_amount)
 			_recv_amount = 0
 			_popup_cd = POPUP_INTERVAL
 	if is_barracks():

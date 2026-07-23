@@ -26,6 +26,9 @@ signal mana_changed(current: float, maximum: float)
 @export var move_speed: float = 8.0
 @export var gravity: float = 20.0
 @export var mass: float = 10.0
+## Слоты крыши под аппараты (машины/гарпун, WarMachine.ROOF_GROUP). Растёт
+## узлом ветки верфи (DESIGN §5.А «+слот крыши»); дефицит слотов = фича.
+@export var roof_slots: int = 1
 ## Максимум HP. Текущее значение в `hp`, сетится в _ready = max_hp. Урон —
 ## через take_damage(amount). Смерть при hp ≤ 0.
 @export var max_hp: float = 1000.0

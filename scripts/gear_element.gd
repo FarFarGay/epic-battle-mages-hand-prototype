@@ -158,7 +158,10 @@ func _nearest_receiver() -> Node3D:
 	return get_tree().get_first_node_in_group(&"tower") as Node3D
 
 
-## Башня прочла свиток → Огненный шар выучен НАВСЕГДА (профиль, сейв на диск).
+## Башня прочла свиток → знание огня НАВСЕГДА (профиль, сейв). Пересборка
+## 2026-07-21: свиток машинного спелла = знание КОВКИ (Машинный цех куёт
+## Огнемётную машину), каст появится с аппаратом на крыше — learn_scroll сам
+## разруливает; хинт ведёт игрока к цеху, не в трей.
 func _on_delivered(_receiver: Node3D) -> void:
 	var prof := get_tree().get_first_node_in_group(&"player_profile")
 	if prof != null and prof.has_method(&"learn_scroll"):
@@ -166,4 +169,4 @@ func _on_delivered(_receiver: Node3D) -> void:
 	else:
 		SpellSystem.unlock(&"fireball")  # чит-путь без профиля (кастомная сцена) — хотя бы на заезд
 	EventBus.tutorial_hint.emit(
-		"📜 Свиток огня прочитан! 🔥 Огненный шар выучен НАВСЕГДА — он в трее заклинаний", 8.0)
+		"📜 Свиток огня прочитан! Гномы знают Огнемётную машину — куй её в ⚙ Машинном цехе", 8.0)

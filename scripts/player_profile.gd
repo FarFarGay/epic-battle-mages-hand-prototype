@@ -36,17 +36,26 @@ func _ready() -> void:
 	add_to_group(GROUP)
 	_load()
 	# Выученные свитки — в SpellSystem сразу (autoload готов раньше сцены).
+	# МАШИННЫЕ спеллы (WarMachine.is_machine_spell) свиток НЕ анлочит:
+	# свиток = ЗНАНИЕ КОВКИ для Машинного цеха, каст даёт только аппарат
+	# на крыше (пересборка 2026-07-21, DESIGN §5.В).
 	for id in scrolls:
-		SpellSystem.unlock(StringName(String(id)))
+		var sid := StringName(String(id))
+		if not WarMachine.is_machine_spell(sid):
+			SpellSystem.unlock(sid)
 
 
-## Свиток выучен: заклинание открыто НАВСЕГДА (в профиль + SpellSystem + сейв).
-## Идемпотентно.
+## Свиток выучен: НАВСЕГДА в профиль + сейв. Немашинный спелл открывается сразу;
+## машинный — даёт цеху знание ковки (каст появится с аппаратом на крыше).
 func learn_scroll(spell_id: StringName) -> void:
 	if scrolls.has(String(spell_id)):
 		return
 	scrolls[String(spell_id)] = true
-	SpellSystem.unlock(spell_id)
+	if WarMachine.is_machine_spell(spell_id):
+		var mname: String = String(WarMachine.CATALOG.get(spell_id, {}).get("name", spell_id))
+		EventBus.tutorial_hint.emit("⚙ Гномы изучили чертёж: Машинный цех теперь куёт «%s»" % mname, 5.0)
+	else:
+		SpellSystem.unlock(spell_id)
 	_save()
 
 

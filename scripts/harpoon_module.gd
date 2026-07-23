@@ -209,9 +209,13 @@ func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 	var tower := get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
 	if tower == null or not is_instance_valid(tower):
 		return
-	# Крыша одна: другой аппарат или ГРУЗ на верхушке — этот падает рядом.
+	# Второй гарпун не нужен (спелл один), а слоты крыши общие с боевыми
+	# машинами (WarMachine.ROOF_GROUP, пересборка 2026-07-21).
 	var occupied := get_tree().get_first_node_in_group(MOUNTED_GROUP)
 	if occupied != null and occupied != self:
+		return
+	if not WarMachine.has_free_slot(get_tree()):
+		EventBus.tutorial_hint.emit("⚠ Слоты крыши заняты — сними другой аппарат рукой", 4.0)
 		return
 	var slot := get_tree().get_first_node_in_group(&"tower_top_slot")
 	if slot != null and slot.has_method(&"has_cargo") and slot.call(&"has_cargo"):
@@ -237,6 +241,7 @@ func _mount(tower: Node3D) -> void:
 	tower.add_child(self)
 	global_transform = keep
 	add_to_group(MOUNTED_GROUP)
+	add_to_group(WarMachine.ROOF_GROUP)  # общий учёт слотов крыши с машинами
 	if _gnome_visual != null:
 		_gnome_visual.visible = true  # оператор вылез и сел за аппарат
 	# Твиним только ПОЗИЦИЮ: поворотом владеет слежение за рукой (_process).
@@ -252,6 +257,7 @@ func _mount(tower: Node3D) -> void:
 func _unmount() -> void:
 	_mounted = false
 	remove_from_group(MOUNTED_GROUP)
+	remove_from_group(WarMachine.ROOF_GROUP)
 	if _gnome_visual != null:
 		_gnome_visual.visible = false  # оператор спрятался в башню
 	var keep := global_transform
