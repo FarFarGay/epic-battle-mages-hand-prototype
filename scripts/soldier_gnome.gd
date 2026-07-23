@@ -36,6 +36,189 @@ const SOLDIER_GROUP := &"soldier"
 @export var can_loot: bool = true
 @export_group("")
 
+@export_group("Steering (эксперимент данж-песочницы)")
+## Инерция руления, 1/с. 0 = ВЫКЛ (штатное мгновенное руление — вся основная
+## игра). >0 — velocity не разворачивается к цели мгновенно, а доворачивается
+## с этим темпом: на резких поворотах юнита сносит дугой («заносы», фидбек
+## 2026-07-23). Включается только через stats-оверрайд dungeon_sandbox.
+## При заданном [steer_grip] это инерция НА ПОЛНОМ РАЗГОНЕ (см. ниже).
+@export var steer_inertia: float = 0.0
+## Базовое сцепление, 1/с. 0 = не использовать (steer_inertia всегда).
+## МОДЕЛЬ «дрифт-событие» (3-я итерация 2026-07-23): руление ВСЕГДА цепкое
+## на этом темпе; скольжение (rate = steer_inertia) включается только
+## внешним триггером [drift_active] — резкий увод точки на скорости,
+## детектит dungeon_sandbox СИНХРОННО на весь отряд. Ramp сцепление больше
+## не трогает (та связка отвергнута: «дрифт подкрадывается незаметно»).
+@export var steer_grip: float = 0.0
+
+## Состояние «в скольжении». Ставит внешний детектор (dungeon_sandbox) на
+## входе/выходе дрифт-события; force_stop сбрасывает.
+var drift_active: bool = false
+
+## ЮЗ НА ОТПУСКАНИИ ЛКМ (2026-07-23, отменяет прежний «резкий стоп»):
+## юнит не замирает, а докатывается — скорость И разгон стекают с
+## [coast_friction], руления нет, наклон плавно выпрямляется. Ход упал —
+## коуст сам гаснет, дальше штатная парковка в ёж. Ставит dungeon_sandbox
+## через start_coast(); любой новый приказ (ЛКМ) перебивает естественно.
+var coast_active: bool = false
+## Трение юза, 1/с (меньше = дальше катятся).
+@export var coast_friction: float = 2.2
+
+
+## Войти в юз (если есть ход). Снимает дрифт/тормоз — это уже свободный накат.
+func start_coast() -> void:
+	drift_active = false
+	brake_active = false
+	if Vector2(velocity.x, velocity.z).length_squared() > 0.25:
+		coast_active = true
+
+
+## Кадр юза. True = кадр обработан (позиционирование пропустить).
+func _tick_coast(delta: float) -> bool:
+	if not coast_active:
+		return false
+	var v := Vector3(velocity.x, 0.0, velocity.z)
+	if v.length_squared() < 0.09:
+		coast_active = false
+		rotation.x = 0.0
+		return false
+	var k: float = exp(-coast_friction * delta)
+	v *= k
+	_run_time *= k
+	velocity = Vector3(v.x, velocity.y, v.z)
+	var prev_tilt: float = rotation.x
+	look_at(global_position + v.normalized(), Vector3.UP)
+	rotation.x = lerpf(prev_tilt, 0.0, 1.0 - exp(-4.0 * delta))
+	return true
+
+
+## ПКМ-ТОРМОЗ «как на тачке» (2026-07-23): пока true — ход гасится с
+## [brake_power], И разгон (_run_time) стекает тем же темпом: отпустил
+## тормоз — скорость не прыгает назад к разогнанной. Руление при этом
+## живёт — тормоз в повороте работает. Ставит dungeon_sandbox по ПКМ.
+var brake_active: bool = false
+## Сила торможения, 1/с экспоненциального гашения хода.
+@export var brake_power: float = 5.0
+
+## СЦЕПКА СТРОЯ в скольжении, 1/с: поверх карва каждого гнома подтягивает
+## к его слоту формации (сила растёт с отставанием, кап 3 м/с вклада) —
+## куча дрифтит ПАЧКОЙ и не расползается на препятствия/ловушки (фидбек
+## 2026-07-23). 0 = выкл (каждый сам по себе). Больше = жёстче строй,
+## меньше видимого разъезда.
+@export var drift_formation_pull: float = 2.0
+
+## Трение карва, 1/с: в скольжении величина скорости не рубится лерпом
+## (карв — можно кружить вокруг цели без ПКМ), а СХОДИТСЯ к желаемой с этим
+## темпом. Голый карв без трения разлетался по карте (откат), голый лерп
+## глушил дугу («летишь прямо») — трение = середина. Меньше = дольше
+## живёт момент, больше = быстрее гаснет к управляемому.
+@export var drift_scrub: float = 1.6
+## Разгон при НЕПРЕРЫВНОМ беге: за столько секунд движения скорость доходит
+## до полного буста. 0 = ВЫКЛ (основная игра). Сбрасывается только настоящим
+## стопом (velocity≈0: отпущенный ЛКМ-поводок / прибытие). Кадр выстрела в
+## дрифт-режиме velocity НЕ обнуляет (см. ArcherSoldier) — разгон живёт.
+@export var run_ramp_time: float = 0.0
+## Прибавка скорости на полном разгоне (0.7 = +70%). Работает только вместе
+## с run_ramp_time > 0. Усиливает заносы: длинная дуга = высокая скорость.
+@export var run_speed_boost: float = 0.0
+@export_group("")
+
+## Секунды непрерывного бега (для run_ramp_time). Копится в _move_toward,
+## сбрасывается когда юнит был остановлен (гориз. скорость ≈ 0).
+var _run_time: float = 0.0
+
+## Порог разгона (доля ramp'а), выше которого юнит НЕ глушит скорость на
+## прибытии, а проносится мимо точки, продолжая рулить в неё — вокруг
+## зажатой точки возникает орбита («пятаки», фидбек 2026-07-23).
+const DRIFT_CARRY_MIN_RAMP := 0.35
+
+## ПКМ-пин «микромашинки» (данж-песочница, 2-я итерация 2026-07-23): опора и
+## ДЛИНА поводка, зафиксированная в момент пина. НИКАКОГО руления к точке —
+## юнит летит по чистой ИНЕРЦИИ; верёвка лишь не пускает дальше длины:
+## на натяжении срезается радиальная компонента скорости → дуга рождается
+## из натяжения сама (в отличие от отвергнутой 1-й итерации, которая
+## принудительно доворачивала скорость в касательную — «противоестественно»).
+## INF = пина нет. Ставит start_swing / снимает stop_swing / force_stop.
+var swing_anchor: Vector3 = Vector3.INF
+## Длина натянутого поводка (фикс на входе, мин 1.0).
+var _swing_len: float = 0.0
+## Мягкий возврат на длину поводка при выносе за предел, 1/с.
+const SWING_TAUT_PULL := 4.0
+
+
+## Максимальный наклон корпуса вперёд на полном разгоне (градусы) — видимый
+## разгон: «мы заряжены» читается силуэтом. Применяется только в дрифт-ветках.
+const DRIFT_TILT_MAX_DEG := 11.0
+
+
+## Текущая доля разгона 0..1 — для визуалов песочницы (наклон, пыль, поводок).
+func run_ramp() -> float:
+	if run_ramp_time <= 0.0:
+		return 0.0
+	return clampf(_run_time / run_ramp_time, 0.0, 1.0)
+
+
+## Переместить опору пина БЕЗ пересчёта длины поводка — магнит к движущемуся
+## врагу: опора едет с ним, верёвка остаётся той же.
+func update_swing_anchor(anchor: Vector3) -> void:
+	if swing_anchor != Vector3.INF:
+		swing_anchor = anchor
+
+
+## Пин: опора = anchor, длина поводка = текущая дистанция (не укорачивается).
+func start_swing(anchor: Vector3) -> void:
+	swing_anchor = anchor
+	_swing_len = maxf(1.0, Vector2(anchor.x - global_position.x, anchor.z - global_position.z).length())
+
+
+func stop_swing() -> void:
+	swing_anchor = Vector3.INF
+
+
+## Кадр пина. True = кадр обработан (никакого squad-позиционирования: к точке
+## не бежим, лиш не укорачивается — стоим или летим по инерции).
+func _tick_swing(_delta: float) -> bool:
+	if swing_anchor == Vector3.INF:
+		return false
+	var v := Vector3(velocity.x, 0.0, velocity.z)
+	if v.length_squared() < 0.09:
+		return true  # хода нет — просто стоим на пине, инерции взяться неоткуда
+	var to_a := Vector3(swing_anchor.x - global_position.x, 0.0, swing_anchor.z - global_position.z)
+	var r: float = to_a.length()
+	if r >= _swing_len and r > 0.001:
+		var r_dir := to_a / r
+		# Поводок натянут: срезаем радиальный унос (движение ОТ опоры),
+		# касательная часть остаётся нетронутой — скорость сохраняется в дуге.
+		var out_speed: float = v.dot(-r_dir)
+		if out_speed > 0.0:
+			v += r_dir * out_speed
+		# Уже за пределом длины (вылетели за кадр) — мягко подтянуть назад.
+		v += r_dir * minf((r - _swing_len) * SWING_TAUT_PULL, 6.0)
+	velocity = Vector3(v.x, velocity.y, v.z)
+	if v.length_squared() > 0.01:
+		look_at(global_position + v.normalized(), Vector3.UP)
+		rotation.x = -deg_to_rad(DRIFT_TILT_MAX_DEG) * run_ramp()
+	return true
+
+
+## True когда разогнанный дрифт-юнит должен пронестись мимо точки прибытия
+## вместо мгновенной остановки. На малом разгоне — false: чёткая парковка.
+func drift_carries_through() -> bool:
+	return steer_inertia > 0.0 and run_ramp_time > 0.0 \
+			and _run_time / run_ramp_time > DRIFT_CARRY_MIN_RAMP
+
+
+## Принудительный мгновенный стоп + сброс разгона. Зовёт dungeon_sandbox на
+## отпускание ЛКМ-поводка: «резкий стоп» обязан работать и на полном ходу,
+## иначе carry-through закружил бы отряд вокруг точки стопа.
+func force_stop() -> void:
+	velocity = Vector3.ZERO
+	_run_time = 0.0
+	swing_anchor = Vector3.INF
+	drift_active = false
+	brake_active = false
+	rotation.x = 0.0
+
 @export_group("Defend patrol (DEFENDING_CAMP state)")
 ## Радиус патрулирования вокруг центра лагеря. По образцу
 ## `DefenderGnome.patrol_radius=12`. Каждый солдат отряда независимо
@@ -275,6 +458,12 @@ func _apply_soldier_stats(p_type: StringName, stats: Dictionary) -> void:
 	attack_range = float(stats.get("attack_range", attack_range))
 	attack_damage_min = float(stats.get("attack_damage_min", attack_damage_min))
 	attack_damage_max = float(stats.get("attack_damage_max", attack_damage_max))
+	steer_inertia = float(stats.get("steer_inertia", steer_inertia))
+	steer_grip = float(stats.get("steer_grip", steer_grip))
+	drift_scrub = float(stats.get("drift_scrub", drift_scrub))
+	drift_formation_pull = float(stats.get("drift_formation_pull", drift_formation_pull))
+	run_ramp_time = float(stats.get("run_ramp_time", run_ramp_time))
+	run_speed_boost = float(stats.get("run_speed_boost", run_speed_boost))
 	attack_cooldown_min = float(stats.get("attack_cooldown_min", attack_cooldown_min))
 	attack_cooldown_max = float(stats.get("attack_cooldown_max", attack_cooldown_max))
 	if stats.has("move_speed"):
@@ -1276,7 +1465,63 @@ func _move_toward(to_goal_xz: Vector3, dist: float) -> void:
 	step_dir = step_dir.normalized()
 	look_at(global_position + step_dir, Vector3.UP)
 	var speed: float = _sprint_speed_for(dist)
-	velocity = step_dir * speed
+	var ramp_t: float = 0.0
+	if run_ramp_time > 0.0 and run_speed_boost > 0.0:
+		# Разгон непрерывного бега: стартовали с места (скорость ≈ 0 после
+		# настоящего стопа) → счётчик с нуля.
+		if Vector2(velocity.x, velocity.z).length_squared() < 0.04:
+			_run_time = 0.0
+		_run_time += get_physics_process_delta_time()
+		ramp_t = clampf(_run_time / run_ramp_time, 0.0, 1.0)
+		speed *= 1.0 + run_speed_boost * ramp_t
+	var desired: Vector3 = step_dir * speed
+	if steer_inertia > 0.0:
+		# «Занос»: скорость доворачивается к желаемой экспоненциально — тело
+		# уже смотрит на цель (look_at выше), а едет ещё по старой дуге.
+		# Штатно руль цепкий (steer_grip); в дрифт-событии (drift_active,
+		# ставит внешний детектор) сцепление разом падает до steer_inertia.
+		var rate: float = steer_grip if steer_grip > 0.0 else steer_inertia
+		if drift_active:
+			rate = steer_inertia
+		var dt: float = get_physics_process_delta_time()
+		var k: float = 1.0 - exp(-rate * dt)
+		var old_v := Vector3(velocity.x, 0.0, velocity.z)
+		var v: Vector3 = old_v.lerp(desired, k)
+		if drift_active and v.length_squared() > 0.01:
+			# КАРВ С ТРЕНИЕМ: направление повернулось лерпом, а величина —
+			# отдельно, сходясь от текущего хода к желаемой скорости с темпом
+			# drift_scrub. Momentum живёт (орбита вокруг цели без ПКМ), но
+			# к желаемому ходу гаснет — без разлёта по карте.
+			var scrub_k: float = 1.0 - exp(-drift_scrub * dt)
+			v = v.normalized() * lerpf(old_v.length(), desired.length(), scrub_k)
+			# Сцепка строя: добавка скорости к СВОЕМУ слоту (to_goal_xz),
+			# пропорциональна отставанию (кап 3м) — дуга живёт, строй держится.
+			if drift_formation_pull > 0.0:
+				var cl: float = to_goal_xz.length()
+				if cl > 0.4:
+					v += to_goal_xz / cl * minf(cl, 3.0) \
+							* (1.0 - exp(-drift_formation_pull * dt))
+				# КАП: сцепка ДОВОРАЧИВАЕТ, но не разгоняет. Без него добавка
+				# качала энергию быстрее, чем трение снимало — на частой смене
+				# направления скорость росла безбожно и строй разлетался.
+				var max_sp: float = maxf(desired.length(), old_v.length())
+				if v.length_squared() > max_sp * max_sp:
+					v = v.normalized() * max_sp
+		if brake_active:
+			# Ручник: ход и разгон стекают вместе (см. док brake_active).
+			var brake_k: float = exp(-brake_power * dt)
+			v *= brake_k
+			_run_time *= brake_k
+		velocity = v
+		# Наклон корпуса: полный в скольжении (яркий вход-сигнал), лёгкий —
+		# от разгона; на тормозе — осаживание назад (после look_at pitch
+		# каждый кадр чистый, не копится).
+		var tilt: float = 1.0 if drift_active else ramp_t * 0.35
+		if brake_active:
+			tilt = -0.6
+		rotation.x = -deg_to_rad(DRIFT_TILT_MAX_DEG) * tilt
+		return
+	velocity = desired
 
 
 ## Цель в `enemy_detect_radius`е + охранной зоне (`combat_leash_radius` от

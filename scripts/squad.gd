@@ -72,6 +72,12 @@ var repair_intent: bool = false
 var hide_in_tower: bool = false
 ## Точка удержания при HOLDING_POSITION. Игнорируется в ESCORTING_TOWER.
 var hold_position: Vector3 = Vector3.ZERO
+## ЭКСПЕРИМЕНТ данж-песочницы «хвост кометы»: при tail_length > 0 HOLD-слоты
+## вытягиваются цепочкой ПОЗАДИ центра (против tail_dir, unit XZ) с лёгким
+## зигзагом — строй «летит», проходит между столбами без толкучки.
+## 0 = штатное кольцо (весь остальной код игры). Ставит dungeon_sandbox.
+var tail_dir: Vector3 = Vector3.ZERO
+var tail_length: float = 0.0
 ## Жёсткий приоритет последней `command_hold`. Пока true — каждый юнит,
 ## не дошедший до своего слота, игнорирует бой и марширует к точке.
 ## Дойдя — естественно начинает стрелять (per-soldier dist ≤ arrival),
@@ -216,6 +222,15 @@ func target_for_member(soldier: SoldierGnome, center: Vector3) -> Vector3:
 	if idx < 0:
 		idx = 0
 	var n: int = maxi(members.size(), 1)
+	if tail_length > 0.0 and state == State.HOLDING_POSITION and tail_dir != Vector3.ZERO:
+		# Хвост кометы: слоты цепочкой позади центра, зигзаг вбок для
+		# читаемости (не идеальная колонна — куча, вытянутая ходом).
+		var t: float = 0.0 if n <= 1 else float(idx) / float(n - 1)
+		var side := Vector3(-tail_dir.z, 0.0, tail_dir.x)
+		var lat: float = 0.35 + 0.45 * t
+		if idx % 2 == 1:
+			lat = -lat
+		return center - tail_dir * (tail_length * t) + side * lat
 	var radius: float = maxf(HOLD_RING_RADIUS, HOLD_RING_MIN_ARC * float(n) / TAU)
 	var angle: float = TAU * float(idx) / float(n)
 	return center + Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)

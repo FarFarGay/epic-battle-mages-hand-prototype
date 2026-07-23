@@ -1,0 +1,196 @@
+[gd_scene format=3 uid="uid://dxy7vb1rn5qdb"]
+
+[ext_resource type="Script" uid="uid://brhmj3f28qb2f" path="res://scripts/dungeon_sandbox.gd" id="1_script"]
+[ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="2_skel"]
+
+[sub_resource type="Environment" id="env_dungeon"]
+background_mode = 1
+background_color = Color(0.045, 0.045, 0.075, 1)
+ambient_light_source = 1
+ambient_light_color = Color(0.5, 0.5, 0.62, 1)
+ambient_light_energy = 1.1
+
+[sub_resource type="StandardMaterial3D" id="mat_floor"]
+albedo_color = Color(0.16, 0.15, 0.19, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="mesh_floor"]
+material = SubResource("mat_floor")
+size = Vector3(52, 1, 52)
+
+[sub_resource type="BoxShape3D" id="shape_floor"]
+size = Vector3(52, 1, 52)
+
+[sub_resource type="StandardMaterial3D" id="mat_wall"]
+albedo_color = Color(0.24, 0.21, 0.27, 1)
+roughness = 0.85
+
+[sub_resource type="BoxMesh" id="mesh_wall_z"]
+material = SubResource("mat_wall")
+size = Vector3(52, 3, 1)
+
+[sub_resource type="BoxShape3D" id="shape_wall_z"]
+size = Vector3(52, 3, 1)
+
+[sub_resource type="BoxMesh" id="mesh_wall_x"]
+material = SubResource("mat_wall")
+size = Vector3(1, 3, 52)
+
+[sub_resource type="BoxShape3D" id="shape_wall_x"]
+size = Vector3(1, 3, 52)
+
+[sub_resource type="StandardMaterial3D" id="mat_pillar"]
+albedo_color = Color(0.3, 0.26, 0.24, 1)
+roughness = 0.8
+
+[sub_resource type="BoxMesh" id="mesh_pillar"]
+material = SubResource("mat_pillar")
+size = Vector3(2, 2.6, 2)
+
+[sub_resource type="BoxShape3D" id="shape_pillar"]
+size = Vector3(2, 2.6, 2)
+
+[node name="DungeonSandbox" type="Node3D" unique_id=710973228]
+script = ExtResource("1_script")
+gnome_move_speed = 2.5
+gnome_drift_formation_pull = 9.0
+skeleton_scene = ExtResource("2_skel")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=970129009]
+environment = SubResource("env_dungeon")
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1795020762]
+transform = Transform3D(0.8678192, 0.40704, -0.28497067, 0, 0.57352, 0.8191916, 0.4968801, -0.71091014, 0.49771166, 0, 0, 0)
+light_energy = 0.85
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1035182959]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 21, 51)
+fov = 55.0
+
+[node name="Banner" type="Node3D" parent="." unique_id=831933589]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0, 40)
+
+[node name="Floor" type="StaticBody3D" parent="." unique_id=1979291621]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, -0.5, 40)
+
+[node name="Mesh" type="MeshInstance3D" parent="Floor" unique_id=1902113360]
+mesh = SubResource("mesh_floor")
+
+[node name="Collision" type="CollisionShape3D" parent="Floor" unique_id=572881813]
+shape = SubResource("shape_floor")
+
+[node name="WallN" type="StaticBody3D" parent="." unique_id=356259027]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 1.5, 14.5)
+
+[node name="Mesh" type="MeshInstance3D" parent="WallN" unique_id=582227896]
+mesh = SubResource("mesh_wall_z")
+
+[node name="Collision" type="CollisionShape3D" parent="WallN" unique_id=1287254111]
+shape = SubResource("shape_wall_z")
+
+[node name="WallS" type="StaticBody3D" parent="." unique_id=1164022530]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 1.5, 65.5)
+
+[node name="Mesh" type="MeshInstance3D" parent="WallS" unique_id=465299801]
+mesh = SubResource("mesh_wall_z")
+
+[node name="Collision" type="CollisionShape3D" parent="WallS" unique_id=582236225]
+shape = SubResource("shape_wall_z")
+
+[node name="WallW" type="StaticBody3D" parent="." unique_id=1498610109]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14.5, 1.5, 40)
+
+[node name="Mesh" type="MeshInstance3D" parent="WallW" unique_id=555595083]
+mesh = SubResource("mesh_wall_x")
+
+[node name="Collision" type="CollisionShape3D" parent="WallW" unique_id=712408179]
+shape = SubResource("shape_wall_x")
+
+[node name="WallE" type="StaticBody3D" parent="." unique_id=1266813508]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65.5, 1.5, 40)
+
+[node name="Mesh" type="MeshInstance3D" parent="WallE" unique_id=1869893515]
+mesh = SubResource("mesh_wall_x")
+
+[node name="Collision" type="CollisionShape3D" parent="WallE" unique_id=1786746668]
+shape = SubResource("shape_wall_x")
+
+[node name="PillarNW" type="StaticBody3D" parent="." unique_id=1914607130]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1.3, 31)
+
+[node name="Mesh" type="MeshInstance3D" parent="PillarNW" unique_id=1869118091]
+mesh = SubResource("mesh_pillar")
+
+[node name="Collision" type="CollisionShape3D" parent="PillarNW" unique_id=2118704558]
+shape = SubResource("shape_pillar")
+
+[node name="PillarNE" type="StaticBody3D" parent="." unique_id=982119332]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49, 1.3, 31)
+
+[node name="Mesh" type="MeshInstance3D" parent="PillarNE" unique_id=1485149512]
+mesh = SubResource("mesh_pillar")
+
+[node name="Collision" type="CollisionShape3D" parent="PillarNE" unique_id=1128050347]
+shape = SubResource("shape_pillar")
+
+[node name="PillarSW" type="StaticBody3D" parent="." unique_id=701432242]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1.3, 49)
+
+[node name="Mesh" type="MeshInstance3D" parent="PillarSW" unique_id=1124532514]
+mesh = SubResource("mesh_pillar")
+
+[node name="Collision" type="CollisionShape3D" parent="PillarSW" unique_id=1057188601]
+shape = SubResource("shape_pillar")
+
+[node name="PillarSE" type="StaticBody3D" parent="." unique_id=814991884]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49, 1.3, 49)
+
+[node name="Mesh" type="MeshInstance3D" parent="PillarSE" unique_id=1332431603]
+mesh = SubResource("mesh_pillar")
+
+[node name="Collision" type="CollisionShape3D" parent="PillarSE" unique_id=91314124]
+shape = SubResource("shape_pillar")
+
+[node name="HUD" type="CanvasLayer" parent="." unique_id=750494332]
+
+[node name="Panel" type="MarginContainer" parent="HUD" unique_id=985675069]
+offset_left = 14.0
+offset_top = 12.0
+offset_right = 320.0
+offset_bottom = 130.0
+mouse_filter = 2
+
+[node name="Rows" type="VBoxContainer" parent="HUD/Panel" unique_id=447001886]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="WaveLabel" type="Label" parent="HUD/Panel/Rows" unique_id=316343096]
+layout_mode = 2
+text = "Волна: 0"
+
+[node name="SquadLabel" type="Label" parent="HUD/Panel/Rows" unique_id=2038917985]
+layout_mode = 2
+text = "Гномов: 7 / 7"
+
+[node name="KillLabel" type="Label" parent="HUD/Panel/Rows" unique_id=2091934374]
+layout_mode = 2
+text = "Убито: 0"
+
+[node name="HintLabel" type="Label" parent="HUD/Panel/Rows" unique_id=1572096417]
+modulate = Color(1, 1, 1, 0.55)
+layout_mode = 2
+text = "ЛКМ (держать) — вести · +ПКМ — тормоз · T — волна · R — рестарт"
+
+[node name="Center" type="CenterContainer" parent="HUD" unique_id=763170307]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="GameOverLabel" type="Label" parent="HUD/Center" unique_id=462812225]
+visible = false
+layout_mode = 2
+theme_override_font_sizes/font_size = 34
+text = "Отряд погиб — R, чтобы начать заново"

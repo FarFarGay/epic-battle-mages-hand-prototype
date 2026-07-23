@@ -248,6 +248,20 @@ func _active_tick(delta: float) -> void:
 	if _try_fire_at_resolved_target(delta):
 		return
 
+	# ПКМ-пин «микромашинки» (данж-песочница): полёт по инерции на натянутом
+	# поводке вместо позиционирования. Стрельба выше — поливает всю дугу.
+	if _tick_swing(delta):
+		if velocity.length_squared() > 0.01:
+			_facing = Vector3(velocity.x, 0.0, velocity.z).normalized()
+		return
+
+	# Юз после отпускания ЛКМ (данж-песочница): докатываемся по инерции,
+	# стрельба на юзе жива (ветка выстрела выше по приоритету).
+	if _tick_coast(delta):
+		if velocity.length_squared() > 0.01:
+			_facing = Vector3(velocity.x, 0.0, velocity.z).normalized()
+		return
+
 	# Нет цели — squad-positioning (как у pikeman'а). Гейт по _has_squad_context
 	# (camp ИЛИ escort_target=башня) — иначе в комнатах (без Camp) лучник не слушал
 	# бы команды «Идти сюда»/«В башню».
@@ -268,7 +282,13 @@ func _active_tick(delta: float) -> void:
 	var to_goal_xz := Vector3(goal.x - global_position.x, 0.0, goal.z - global_position.z)
 	var dist: float = to_goal_xz.length()
 	if dist <= SQUAD_TARGET_ARRIVAL:
+		# Дрифт на полном разгоне НЕ паркуется — проносится мимо слота и
+		# рулит обратно в него: вокруг зажатой точки выходит орбита-«пятак».
+		if drift_carries_through():
+			_move_toward(to_goal_xz, maxf(dist, 0.1))
+			return
 		velocity = Vector3.ZERO
+		rotation.x = 0.0
 		_facing = _outward_facing()
 		return
 	_face_horizontal(to_goal_xz, dist)
@@ -294,7 +314,11 @@ func _try_fire_at_resolved_target(delta: float) -> bool:
 	# Face target + fire. _facing синхронизируется с look_at — cone в
 	# следующем скане будет ориентирован на цель.
 	_face_horizontal(to_t, dist)
-	velocity = Vector3.ZERO
+	# Дрифт-эксперимент (steer_inertia > 0, данж-песочница): выстрел НЕ
+	# останавливает — лучник стреляет на ходу, кружа вокруг цели, и не
+	# теряет разгон. Штатный режим — стоп-кадр на выстреле, как всегда.
+	if steer_inertia <= 0.0:
+		velocity = Vector3.ZERO
 	_fire_at(target)
 	# Уровень ускоряет темп: cd масштабируется cooldown_scale (см. XP-блок).
 	_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max) * cooldown_scale()
@@ -357,6 +381,11 @@ func _resolve_target(delta: float) -> Node3D:
 		var cached_dist: float = global_position.distance_to(_cached_target.global_position)
 		if cached_dist > cone_vision_radius:
 			stale = true
+		elif steer_inertia > 0.0 and cached_dist <= attack_range:
+			# Дрифт-эксперимент: ЗАХВАТ цели. Зацепил конусом по курсу —
+			# держишь на 360°, пока в attack_range (кружить вокруг врага,
+			# поливая его). Вне дальности — обычные cone-правила.
+			pass
 		elif cached_dist > PROXIMITY_OVERRIDE_RADIUS and not _is_in_cone(_cached_target.global_position):
 			stale = true
 	if stale:
