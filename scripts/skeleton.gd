@@ -161,6 +161,12 @@ enum WanderPhase { RESTING, WANDERING }
 ## cap'ом zoom_max в camera_rig — игрок не может отзумиться дальше зоны,
 ## где гарантированно работает физика. См. mine.gd FAR-fallback.
 @export var lod_far_distance: float = 80.0
+## Дополнительные биты collision_mask ПОВЕРХ штатной MASK_SKELETON —
+## _apply_lod_physics_mode перезаписывает маску на LOD-переходах, поэтому
+## per-instance `collision_mask |= X` не живёт. 0 = штатное поведение
+## (основная игра). Данж-песочница ставит FRIENDLY_UNIT — скелет телесно
+## упирается в гномов, а не проходит сквозь.
+var extra_collision_mask: int = 0
 ## Период переоценки LOD-уровня (с). Дистанция меряется не каждый кадр —
 ## per-skeleton distance-чек на 100 врагов сам по себе нагрузка.
 @export var lod_check_interval: float = 0.5
@@ -1114,7 +1120,7 @@ func _apply_lod_physics_mode() -> void:
 	match _lod_level:
 		LodLevel.NEAR, LodLevel.MID:
 			collision_layer = Layers.ENEMIES
-			collision_mask = Layers.MASK_SKELETON
+			collision_mask = Layers.MASK_SKELETON | extra_collision_mask
 			if _collision_shape:
 				_collision_shape.disabled = false
 		LodLevel.FAR:

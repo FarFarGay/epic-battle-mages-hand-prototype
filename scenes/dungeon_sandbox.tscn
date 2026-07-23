@@ -52,7 +52,9 @@ size = Vector3(2, 2.6, 2)
 
 [node name="DungeonSandbox" type="Node3D" unique_id=710973228]
 script = ExtResource("1_script")
-gnome_move_speed = 2.5
+gnome_speed_scale = 0.85
+gnome_damage_min = 5.0
+gnome_damage_max = 8.0
 gnome_drift_formation_pull = 9.0
 skeleton_scene = ExtResource("2_skel")
 

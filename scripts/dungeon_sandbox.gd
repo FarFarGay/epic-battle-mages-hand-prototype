@@ -45,8 +45,13 @@ const CMD_ARRIVED_DIST := 2.0
 @export_group("Отряд")
 ## Сколько гномов в отряде. Дизайн: 7 = вся артель (кап населения).
 @export var squad_size: int = 7
-## Скорость гнома в данже. Каталожные 1.6 — темп челнока по базе; для рулёжки
-## от толпы нужен VS-темп. Поверх работает спринт отстающих (до ~4.2).
+## ГЛАВНАЯ ручка темпа: пропорциональный множитель ВСЕЙ скорости отряда
+## (шаг + спринт догона + буст разгона поверх). Медленнее — крути сюда
+## (0.85 = −15%), НЕ gnome_move_speed: тот влияет только на шаг у самого
+## слота, а крейсер ведомого отряда — спринт (Gnome.caravan_sprint_speed=9).
+@export var gnome_speed_scale: float = 1.0
+## Скорость ШАГА у слота (каталожные 1.6 — челнок по базе). В ведении почти
+## не ощущается — крейсер задаёт спринт × gnome_speed_scale.
 @export var gnome_move_speed: float = 3.0
 ## Дальность выстрела. Каталожные 22.5 (оборона базы) в комнате 50×50 били бы
 ## через всю карту — толпа не успевала бы подойти. Короткая дистанция заставляет
@@ -191,7 +196,9 @@ func _spawn_squad() -> void:
 		return
 	# Статы из каталога + данж-оверрайды темпа (см. доки exports выше).
 	var stats: Dictionary = (data.get("stats", {}) as Dictionary).duplicate()
-	stats["move_speed"] = gnome_move_speed
+	stats["move_speed"] = gnome_move_speed * gnome_speed_scale
+	# 9.0 = дефолт Gnome.caravan_sprint_speed — крейсер ведомого отряда.
+	stats["caravan_sprint_speed"] = 9.0 * gnome_speed_scale
 	stats["attack_range"] = gnome_attack_range
 	stats["attack_cooldown_min"] = gnome_cooldown_min
 	stats["attack_cooldown_max"] = gnome_cooldown_max
@@ -220,6 +227,10 @@ func _spawn_squad() -> void:
 		# cos конуса кэшируется в _ready.
 		soldier.lod_far_distance = 100000.0
 		soldier.lod_offscreen_half_angle_deg = 90.0
+		# ТЕЛЕСНОСТЬ (фидбек 2026-07-23): гном врезается в скелетов. В основной
+		# игре выключено ради перфа толп (см. Layers.MASK_SKELETON) — тут
+		# масштабы крошечные, включаем per-instance обоюдно (см. _spawn_wave).
+		soldier.collision_mask |= Layers.ENEMIES
 		add_child(soldier)
 		var ang: float = TAU * float(i) / float(squad_size)
 		var pos := room_center + Vector3(cos(ang) * 1.5, 0.5, sin(ang) * 1.5)
@@ -531,6 +542,12 @@ func _spawn_wave() -> void:
 		# FAR-скелет отключает коллизии и ходит сквозь стены.
 		sk.set(&"lod_far_distance", 100000.0)
 		sk.set(&"lod_offscreen_half_angle_deg", 90.0)
+		# Зеркало телесности: скелет упирается в гномов, а не проходит сквозь.
+		# Через extra_collision_mask — простое `|=` затиралось бы
+		# Skeleton._apply_lod_physics_mode на LOD-переходах.
+		sk.set(&"extra_collision_mask", Layers.FRIENDLY_UNIT)
+		if sk is CollisionObject3D:
+			(sk as CollisionObject3D).collision_mask |= Layers.FRIENDLY_UNIT
 		add_child(sk)
 		sk.global_position = _edge_spawn_point()
 		var target: Node3D = _random_alive_gnome()

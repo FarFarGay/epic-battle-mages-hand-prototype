@@ -458,6 +458,7 @@ func _apply_soldier_stats(p_type: StringName, stats: Dictionary) -> void:
 	attack_range = float(stats.get("attack_range", attack_range))
 	attack_damage_min = float(stats.get("attack_damage_min", attack_damage_min))
 	attack_damage_max = float(stats.get("attack_damage_max", attack_damage_max))
+	caravan_sprint_speed = float(stats.get("caravan_sprint_speed", caravan_sprint_speed))
 	steer_inertia = float(stats.get("steer_inertia", steer_inertia))
 	steer_grip = float(stats.get("steer_grip", steer_grip))
 	drift_scrub = float(stats.get("drift_scrub", drift_scrub))
