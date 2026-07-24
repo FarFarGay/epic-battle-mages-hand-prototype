@@ -1,4 +1,4 @@
-[gd_scene format=3 uid="uid://dxy7vb1rn5qdb"]
+[gd_scene format=3 uid="uid://bbu2img34lxov"]
 
 [ext_resource type="Script" uid="uid://brhmj3f28qb2f" path="res://scripts/dungeon_sandbox.gd" id="1_script"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="2_skel"]
@@ -92,7 +92,7 @@ roughness = 0.85
 material = SubResource("mat_wood")
 size = Vector3(12, 3, 0.6)
 
-[node name="DungeonSandbox" type="Node3D" unique_id=2001557983]
+[node name="DungeonSuperhot" type="Node3D" unique_id=2001557983]
 script = ExtResource("1_script")
 gnome_speed_scale = 0.75
 gnome_damage_min = 4.0
@@ -102,6 +102,8 @@ ice_grip = 0.65
 skeleton_scene = ExtResource("2_skel")
 cursor_z_min = -104.0
 cursor_z_max = 64.0
+superhot_mode = true
+superhot_min_scale = 0.0
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1875898225]
 environment = SubResource("env_dungeon")
@@ -435,7 +437,7 @@ text = "Убито: 0"
 layout_mode = 2
 text = "Груз: —"
 
-[node name="CraftLabel" type="Label" parent="HUD/Panel/Rows"]
+[node name="CraftLabel" type="Label" parent="HUD/Panel/Rows" unique_id=660411890]
 layout_mode = 2
 text = "Ингредиенты: 0 / 3"
 

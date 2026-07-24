@@ -326,6 +326,11 @@ var _lod_offscreen_cos_exit: float = 0.4
 @onready var _visual: Node3D = _resolve_visual_root()
 ## Все MeshInstance3D тела — цели HitFlash (у GLB их может быть несколько).
 var _visual_meshes: Array[MeshInstance3D] = []
+## Активный scale-punch tween (squash на damage). Держим слот, чтобы серия
+## ударов не стэкалась — новый punch убивает предыдущий. Бьём по _visual
+## (обёртка со scale=1; реальный масштаб модели в дочерней Model — не
+## затирается), симметрично Enemy._hit_punch_tween. См. [take_damage].
+var _hit_punch_tween: Tween = null
 ## NavAgent для path-following вокруг палисадов / палаток / башни. Все
 ## методы движения (`_move_toward_xz`) идут через [_resolve_path_step] —
 ## он возвращает либо следующий waypoint пути, либо сам goal если nav-агент
@@ -749,6 +754,9 @@ func take_damage(amount: float) -> void:
 	damaged.emit(amount)
 	for m in _visual_meshes:
 		HitFlash.flash(m)
+	# Scale-punch (squash) — тот же импакт-язык, что у скелетов на damage'е
+	# (Enemy._on_self_damaged). Единый visual-язык «получил по щам».
+	_hit_punch_tween = HitPunch.punch(_visual, _hit_punch_tween)
 	if hp <= 0.0:
 		_dying = true
 		# Снимаем флаг цели заранее: queue_free отрабатывает только в конце кадра,
@@ -764,8 +772,14 @@ func take_damage(amount: float) -> void:
 		if _visual:
 			_visual.visible = false
 		if _effects_root:
+			# Осколки летят В СТОРОНУ удара (meta last_hit_dir из
+			# Damageable.try_damage) — направленный разлёт как у скелетов, а не
+			# симметричный пшик. Нет направления (AOE/слэм без dir) → радиально.
+			var hit_dir: Vector3 = get_meta(&"last_hit_dir", Vector3.ZERO)
+			var directed: bool = hit_dir.length_squared() > 0.0001
 			ShatterEffect.spawn(_effects_root, global_position, gnome_color,
-				shatter_fragment_count, shatter_lifetime)
+				shatter_fragment_count, shatter_lifetime, hit_dir,
+				1.3 if directed else 1.0)
 		destroyed.emit()
 		queue_free()
 

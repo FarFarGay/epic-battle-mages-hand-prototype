@@ -1810,13 +1810,16 @@ func _perform_strike(_target: Node3D) -> void:
 				var node := raw as Node3D
 				if node == null:
 					continue
-				var d_sq: float = (node.global_position - global_position).length_squared()
+				var to_node: Vector3 = node.global_position - global_position
+				var d_sq: float = to_node.length_squared()
 				# Крупная цель (ядро) шире — её центр дальше strike-радиуса, хотя
 				# скелет вплотную к коллизии. Расширяем радиус на её reach-бонус.
 				var eff: float = strike_radius + target_reach_bonus(node)
 				if d_sq > eff * eff:
 					continue
-				if Damageable.try_damage(node, attack_damage):
+				# hit_dir = вектор ОТ скелета к жертве (правда о направлении удара,
+				# по вектору F1): цель направляет по нему разлёт осколков / тильт.
+				if Damageable.try_damage(node, attack_damage, 0.0, to_node):
 					hits += 1
 					# Alarm-сигнал триггерим только на палатке/мирном гноме —
 					# боевые юниты себя не «зовут». Берём первого, чтобы не

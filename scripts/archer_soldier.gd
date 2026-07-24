@@ -300,6 +300,8 @@ func _active_tick(delta: float) -> void:
 func _try_fire_at_resolved_target(delta: float) -> bool:
 	if hauling:
 		return false  # несёт командный груз — руки заняты, лук за спиной
+	if fire_suppressed:
+		return false  # step-Superhot: шаг не наведён на врага → огонь молчит
 	if _attack_cd > 0.0:
 		return false
 	var target: Node3D = _resolve_target(delta)
@@ -413,6 +415,17 @@ func _resolve_alarm_target() -> Node3D:
 		_alarm_target = null
 		return null
 	return _alarm_target
+
+
+## Внешний приказ «фокус-огонь по цели» (данж-Superhot клик-залп): наводит через
+## alarm-канал (override конуса) на secs секунд, чтобы отряд бил ИМЕННО кликнутого
+## врага, а не «кого видит». Огонь всё равно проходит гейты (fire_suppressed / cd /
+## attack_range) — это только выбор ЦЕЛИ.
+func focus_fire(target: Node3D, secs: float) -> void:
+	if target == null:
+		return
+	_alarm_target = target
+	_alarm_until_msec = Time.get_ticks_msec() + int(secs * 1000.0)
 
 
 ## Cone-скан: PhysicsShapeQuery со сферой cone_vision_radius (broadphase),

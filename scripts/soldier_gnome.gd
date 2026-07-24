@@ -55,6 +55,12 @@ const SOLDIER_GROUP := &"soldier"
 ## входе/выходе дрифт-события; force_stop сбрасывает.
 var drift_active: bool = false
 
+## ЛЁД (данж-песочница): пока > 0 — базовое сцепление руления заменяется на
+## это (низкое) значение → отряд скользит, руль хуже держит, занос сильнее.
+## Ставит/снимает зона льда (Area3D) через body_entered/exited. -1 = не на
+## льду (штатный steer_grip). Копится счётчиком зон (пересечения) в песочнице.
+var ice_grip_override: float = -1.0
+
 ## ЮЗ НА ОТПУСКАНИИ ЛКМ (2026-07-23, отменяет прежний «резкий стоп»):
 ## юнит не замирает, а докатывается — скорость И разгон стекают с
 ## [coast_friction], руления нет, наклон плавно выпрямляется. Ход упал —
@@ -114,6 +120,12 @@ var brake_active: bool = false
 var hauling: bool = false
 ## Замедление носильщика (множитель к скорости, включая спринт).
 const HAUL_SPEED_SCALE := 0.8
+
+## ОГОНЬ ЗАГЛУШЕН извне (step-Superhot, 2026-07-24): гейт в ArcherSoldier рядом с
+## hauling. Дефолт false → основная игра стреляет как всегда. Пошаговая песочница
+## ставит true на «ходовых» шагах (клик в пустоту) и между шагами — «стреляй
+## ТОЛЬКО когда шаг наведён на врага», чтобы отряд не палил почём зря по сторонам.
+var fire_suppressed: bool = false
 
 ## Трение карва, 1/с: в скольжении величина скорости не рубится лерпом
 ## (карв — можно кружить вокруг цели без ПКМ), а СХОДИТСЯ к желаемой с этим
@@ -1491,9 +1503,18 @@ func _move_toward(to_goal_xz: Vector3, dist: float) -> void:
 		# уже смотрит на цель (look_at выше), а едет ещё по старой дуге.
 		# Штатно руль цепкий (steer_grip); в дрифт-событии (drift_active,
 		# ставит внешний детектор) сцепление разом падает до steer_inertia.
-		var rate: float = steer_grip if steer_grip > 0.0 else steer_inertia
-		if drift_active:
+		# Скорость руления (rate доворота velocity к цели). ЛЁД доминирует над
+		# всем: на льду руль всегда вялый (ice_grip_override) — и в обычном
+		# рулении, И в дрифт-событии, иначе вход в дрифт делал бы руль ЦЕПЧЕ
+		# льда (steer_inertia 2.6 > ice 0.7) и лёд «выключался» в заносе.
+		# Вне льда: дрифт → steer_inertia (карв), иначе steer_grip (цепко).
+		var rate: float
+		if ice_grip_override > 0.0:
+			rate = ice_grip_override
+		elif drift_active:
 			rate = steer_inertia
+		else:
+			rate = steer_grip if steer_grip > 0.0 else steer_inertia
 		var dt: float = get_physics_process_delta_time()
 		var k: float = 1.0 - exp(-rate * dt)
 		var old_v := Vector3(velocity.x, 0.0, velocity.z)
