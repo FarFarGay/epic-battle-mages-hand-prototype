@@ -298,6 +298,8 @@ func _active_tick(delta: float) -> void:
 ## True если есть resolved cone/alarm-цель в attack_range и cd готов —
 ## стреляет, ставит cd, возвращает true. Иначе false.
 func _try_fire_at_resolved_target(delta: float) -> bool:
+	if hauling:
+		return false  # несёт командный груз — руки заняты, лук за спиной
 	if _attack_cd > 0.0:
 		return false
 	var target: Node3D = _resolve_target(delta)

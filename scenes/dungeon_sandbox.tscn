@@ -55,7 +55,7 @@ script = ExtResource("1_script")
 gnome_speed_scale = 0.85
 gnome_damage_min = 5.0
 gnome_damage_max = 8.0
-gnome_drift_formation_pull = 9.0
+gnome_drift_formation_pull = 10.0
 skeleton_scene = ExtResource("2_skel")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=970129009]
@@ -178,10 +178,14 @@ text = "Гномов: 7 / 7"
 layout_mode = 2
 text = "Убито: 0"
 
+[node name="CargoLabel" type="Label" parent="HUD/Panel/Rows" unique_id=962239281]
+layout_mode = 2
+text = "Груз: —"
+
 [node name="HintLabel" type="Label" parent="HUD/Panel/Rows" unique_id=1572096417]
 modulate = Color(1, 1, 1, 0.55)
 layout_mode = 2
-text = "ЛКМ (держать) — вести · +ПКМ — тормоз · T — волна · R — рестарт"
+text = "ЛКМ — вести · ПКМ — тормоз · E — груз · T — волна · R — рестарт"
 
 [node name="Center" type="CenterContainer" parent="HUD" unique_id=763170307]
 anchors_preset = 15

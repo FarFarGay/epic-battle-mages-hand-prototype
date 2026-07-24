@@ -107,6 +107,14 @@ var brake_active: bool = false
 ## меньше видимого разъезда.
 @export var drift_formation_pull: float = 2.0
 
+## ГРУЗ ОТРЯДА (данж-песочница, 2026-07-23): гном — носильщик командного
+## предмета. Пока true — НЕ стреляет (руки заняты, гейт в ArcherSoldier)
+## и идёт медленнее (HAUL_SPEED_SCALE). Не путать с _carried_type —
+## это персональная единица ресурса рабочего, другая система.
+var hauling: bool = false
+## Замедление носильщика (множитель к скорости, включая спринт).
+const HAUL_SPEED_SCALE := 0.8
+
 ## Трение карва, 1/с: в скольжении величина скорости не рубится лерпом
 ## (карв — можно кружить вокруг цели без ПКМ), а СХОДИТСЯ к желаемой с этим
 ## темпом. Голый карв без трения разлетался по карте (откат), голый лерп
@@ -1466,6 +1474,8 @@ func _move_toward(to_goal_xz: Vector3, dist: float) -> void:
 	step_dir = step_dir.normalized()
 	look_at(global_position + step_dir, Vector3.UP)
 	var speed: float = _sprint_speed_for(dist)
+	if hauling:
+		speed *= HAUL_SPEED_SCALE
 	var ramp_t: float = 0.0
 	if run_ramp_time > 0.0 and run_speed_boost > 0.0:
 		# Разгон непрерывного бега: стартовали с места (скорость ≈ 0 после

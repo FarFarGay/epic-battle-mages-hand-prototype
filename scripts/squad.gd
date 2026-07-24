@@ -78,6 +78,10 @@ var hold_position: Vector3 = Vector3.ZERO
 ## 0 = штатное кольцо (весь остальной код игры). Ставит dungeon_sandbox.
 var tail_dir: Vector3 = Vector3.ZERO
 var tail_length: float = 0.0
+## ЭКСПЕРИМЕНТ данж-песочницы «черепаха»: стоячий HOLD-строй — плотный
+## прямоугольный блок (ряды поперёк последнего курса tail_dir) вместо
+## кольца. false = штатное кольцо (весь остальной код игры).
+var hold_grid: bool = false
 ## Жёсткий приоритет последней `command_hold`. Пока true — каждый юнит,
 ## не дошедший до своего слота, игнорирует бой и марширует к точке.
 ## Дойдя — естественно начинает стрелять (per-soldier dist ≤ arrival),
@@ -222,6 +226,21 @@ func target_for_member(soldier: SoldierGnome, center: Vector3) -> Vector3:
 	if idx < 0:
 		idx = 0
 	var n: int = maxi(members.size(), 1)
+	if hold_grid and state == State.HOLDING_POSITION and tail_length <= 0.0:
+		# «Черепаха»: плотный блок рядов поперёк последнего курса. Неполный
+		# последний ряд центрируется. Spacing 0.75м — плечом к плечу.
+		var f: Vector3 = tail_dir if tail_dir != Vector3.ZERO else Vector3(0, 0, 1)
+		var side_dir := Vector3(-f.z, 0.0, f.x)
+		var cols: int = ceili(sqrt(float(n)))
+		var rows: int = ceili(float(n) / float(cols))
+		var row: int = idx / cols
+		var col: int = idx % cols
+		var in_row: int = mini(cols, n - row * cols)
+		var spacing: float = 0.75
+		# Блок центрирован и по рядам тоже: центроид строя ≈ center, иначе
+		# слежение точки за центроидом (песочница) утаскивало отряд назад.
+		return center + side_dir * (float(col) - float(in_row - 1) * 0.5) * spacing \
+				- f * (float(row) - float(rows - 1) * 0.5) * spacing
 	if tail_length > 0.0 and state == State.HOLDING_POSITION and tail_dir != Vector3.ZERO:
 		# Хвост кометы: слоты цепочкой позади центра, зигзаг вбок для
 		# читаемости (не идеальная колонна — куча, вытянутая ходом).

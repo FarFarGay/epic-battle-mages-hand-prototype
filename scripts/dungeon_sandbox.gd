@@ -16,6 +16,11 @@ extends Node3D
 ##             (Пин-свинг отключён 2026-07-23 — его код спит в SoldierGnome.)
 ##             Визуал приказа — язык дэш-обводки/aim'а: линия отряд→точка
 ##             (AoeVisual.spawn_ground_line) + кольцо на точке, пульс на отпуск.
+##             E — поднять/бросить ГРУЗ: у груза класс (meta "need") =
+##             сколько гномов несут ОДНОВРЕМЕННО; носильщики не стреляют
+##             (руки заняты) и идут на 80% скорости — жадность физически
+##             ослабляет залп. Павшего носильщика сменяет свободный;
+##             рук меньше нужного — груз падает.
 ##             T — вызвать волну сейчас. R — рестарт сцены.
 ##
 ## Переиспользованы штатные сущности, новых юнитов НЕ заведено:
@@ -93,6 +98,12 @@ const CMD_ARRIVED_DIST := 2.0
 ## Длина «хвоста кометы» на полном разгоне: на бегу строй вытягивается за
 ## точкой (читается «мы летим», проход между столбами), на стопе — ёж-кольцо.
 @export var tail_length_full: float = 4.5
+
+@export_group("Груз (E)")
+## Радиус подбора: E цепляет ближайший груз в этом радиусе от центра отряда.
+@export var cargo_pickup_radius: float = 4.0
+## Высота полёта груза над центром отряда (низ куба).
+@export var cargo_carry_height: float = 1.15
 ## ДРИФТ-СОБЫТИЕ: угол (°) между средней скоростью отряда и направлением на
 ## точку, при котором на скорости врубается скольжение (вход-триггер).
 @export var drift_enter_angle_deg: float = 55.0
@@ -154,6 +165,9 @@ var _game_over: bool = false
 var _lmb_was_down: bool = false
 ## ПКМ-тормоз зажат (транслируется в SoldierGnome.brake_active).
 var _braking: bool = false
+## Несомый груз (Node3D с meta "need") и его носильщики. null = руки пусты.
+var _cargo: Node3D = null
+var _haulers: Array = []
 ## Средний разгон отряда в этом кадре (0..1) — питает все визуалы разгона.
 var _ramp_now: float = 0.0
 var _dust_timer: float = 0.0
@@ -180,6 +194,10 @@ func _ready() -> void:
 	_cmd_ring.visible = false
 	_wave_timer = first_wave_delay
 	_spawn_squad()
+	# Тестовые грузы трёх классов: сколько гномов нужно, чтобы поднять.
+	_spawn_cargo(room_center + Vector3(-6, 0, 5), 1)
+	_spawn_cargo(room_center + Vector3(6, 0, 6), 3)
+	_spawn_cargo(room_center + Vector3(0, 0, -7), 5)
 	_update_labels()
 	print("[DungeonSandbox] boot ok: gnomes=%d, skeleton_scene=%s"
 			% [_alive_gnomes(), skeleton_scene != null])
@@ -238,6 +256,8 @@ func _spawn_squad() -> void:
 		_squad.add_member(soldier)
 		soldier.destroyed.connect(_on_gnome_died)
 	# strict=false: мягкий HOLD — стрельба всегда приоритетнее марша.
+	# Стоячий строй — «черепаха»-блок вместо кольца (фидбек 2026-07-23).
+	_squad.hold_grid = true
 	_squad.command_hold(room_center, false)
 
 
@@ -288,15 +308,21 @@ func _physics_process(delta: float) -> void:
 	_lmb_was_down = lmb
 	if not lmb and _squad != null:
 		# Пока не ведём: точка приказа следует за центроидом — после юза
-		# позиционирование паркует всех в ёж на месте остановки, а не тянет
-		# назад к точке отпускания.
+		# позиционирование паркует всех на месте остановки, а не тянет
+		# назад к точке отпускания. МЁРТВАЯ ЗОНА 0.75м — асимметрия строя
+		# (неполный ряд черепахи) иначе создаёт фидбек-луп «центроид смещён →
+		# точка уехала → строй пополз» и отряд бесконечно пятится.
 		var cc: Vector3 = _squad.compute_center()
 		if cc != Vector3.INF:
-			_squad.hold_position = Vector3(cc.x, 0.0, cc.z)
-			_banner.global_position = _squad.hold_position
+			var dxh: float = cc.x - _squad.hold_position.x
+			var dzh: float = cc.z - _squad.hold_position.z
+			if dxh * dxh + dzh * dzh > 0.5625:
+				_squad.hold_position = Vector3(cc.x, 0.0, cc.z)
+				_banner.global_position = _squad.hold_position
 	_update_drift(lmb)
 	_update_tail(lmb, delta)
 	_tick_dust(delta, lmb)
+	_tick_cargo(delta)
 	_update_cmd_visuals(lmb)
 	if not _game_over:
 		_wave_timer -= delta
@@ -393,6 +419,172 @@ func _set_drifting(on: bool) -> void:
 		_dust_timer = 0.0
 
 
+const CARGO_GROUP := &"dungeon_cargo"
+
+## Груз-куб (RigidBody3D): meta "need" = сколько гномов несут ОДНОВРЕМЕННО.
+## Размер/теплота цвета растут с классом. В руках заморожен (freeze) и
+## ведётся кодом; брошен/выпал — размораживается и летит по уровню физикой
+## (слой ITEMS: пол/стены/скелеты его останавливают, гномы проходят).
+func _spawn_cargo(pos: Vector3, need: int) -> void:
+	var side: float = 0.35 + 0.22 * float(need)
+	var body := RigidBody3D.new()
+	body.collision_layer = Layers.ITEMS
+	body.collision_mask = Layers.TERRAIN | Layers.ITEMS
+	body.mass = 2.0 * float(need)
+	var shape := CollisionShape3D.new()
+	var box_shape := BoxShape3D.new()
+	box_shape.size = Vector3(side, side, side)
+	shape.shape = box_shape
+	body.add_child(shape)
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(side, side, side)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.85, 0.62 - 0.07 * float(need), 0.2, 1.0)
+	mat.emission_enabled = true
+	mat.emission = mat.albedo_color
+	mat.emission_energy_multiplier = 0.6
+	var mesh_inst := MeshInstance3D.new()
+	mesh_inst.mesh = mesh
+	mesh_inst.material_override = mat
+	body.add_child(mesh_inst)
+	body.set_meta(&"need", need)
+	body.add_to_group(CARGO_GROUP)
+	add_child(body)
+	body.global_position = Vector3(pos.x, side * 0.5 + 0.05, pos.z)
+
+
+## E: поднять ближайший груз (если хватает гномов) / бросить несомый.
+func _toggle_cargo() -> void:
+	if _squad == null:
+		return
+	if _cargo != null:
+		_drop_cargo()
+		return
+	var c: Vector3 = _squad.compute_center()
+	if c == Vector3.INF:
+		return
+	var item: Node3D = _nearest_cargo(c)
+	if item == null:
+		return
+	var need: int = int(item.get_meta(&"need", 1))
+	var alive: Array = []
+	for m in _squad.members:
+		if is_instance_valid(m):
+			alive.append(m)
+	if alive.size() < need:
+		# Не хватает рук — короткий красный пульс на грузе (язык «нельзя»).
+		AoeVisual.spawn_ground_ring(self, item.global_position, 0.9, 0.4,
+				Color(1.0, 0.25, 0.25, 0.9))
+		return
+	# Носильщики — ближайшие к грузу N (sticky до смерти/броска).
+	_haulers.clear()
+	while _haulers.size() < need and not alive.is_empty():
+		var w: Node3D = _pop_nearest_unit(alive, item.global_position)
+		w.hauling = true
+		_haulers.append(w)
+	_cargo = item
+	var rb := item as RigidBody3D
+	if rb != null:
+		rb.freeze = true
+		rb.linear_velocity = Vector3.ZERO
+		rb.angular_velocity = Vector3.ZERO
+	AoeVisual.spawn_ground_ring(self, item.global_position, 1.0, 0.4, CMD_COLOR)
+	_update_labels()
+
+
+## Бросок/выпадение: груз размораживается и летит физикой, наследуя средний
+## ход носильщиков (+подброс) — на дрифте его красиво выносит по дуге.
+func _drop_cargo() -> void:
+	if _cargo == null:
+		return
+	var toss := Vector3.ZERO
+	var n: int = 0
+	for h in _haulers:
+		if is_instance_valid(h):
+			toss += Vector3(h.velocity.x, 0.0, h.velocity.z)
+			n += 1
+			h.hauling = false
+	if n > 0:
+		toss /= float(n)
+	_haulers.clear()
+	var rb := _cargo as RigidBody3D
+	if rb != null:
+		rb.freeze = false
+		rb.linear_velocity = toss * 1.1 + Vector3.UP * 2.2
+		rb.angular_velocity = Vector3(randf_range(-2, 2), randf_range(-3, 3), randf_range(-2, 2))
+	_cargo = null
+	_update_labels()
+
+
+## Тик переноски: груз жёстко над центроидом носильщиков; павших сменяют
+## свободные; рук меньше, чем нужно → груз падает сам.
+func _tick_cargo(_delta: float) -> void:
+	if _cargo == null or _squad == null:
+		return
+	var need: int = int(_cargo.get_meta(&"need", 1))
+	var free: Array = []
+	for i in range(_haulers.size() - 1, -1, -1):
+		if not is_instance_valid(_haulers[i]):
+			_haulers.remove_at(i)
+	for m in _squad.members:
+		if is_instance_valid(m) and not (m in _haulers):
+			free.append(m)
+	while _haulers.size() < need and not free.is_empty():
+		var w: Node3D = _pop_nearest_unit(free, _cargo.global_position)
+		w.hauling = true
+		_haulers.append(w)
+	if _haulers.size() < need:
+		_drop_cargo()
+		return
+	# Груз висит над ЦЕНТРОИДОМ НОСИЛЬЩИКОВ (не всего отряда) — видно, кто
+	# именно тащит, и куб мотается вместе с их группой.
+	var c := Vector3.ZERO
+	var cnt: int = 0
+	for h in _haulers:
+		if is_instance_valid(h):
+			c += h.global_position
+			cnt += 1
+	if cnt == 0:
+		_drop_cargo()
+		return
+	c /= float(cnt)
+	# ЖЁСТКАЯ сцепка (фидбек 2026-07-23): без лерпа — сглаживание отставало
+	# на ходу/дрифте («куб вылетает за группу»). Буквально несут в руках.
+	_cargo.global_position = Vector3(c.x, cargo_carry_height, c.z)
+
+
+func _nearest_cargo(near: Vector3) -> Node3D:
+	var best: Node3D = null
+	var best_sq: float = cargo_pickup_radius * cargo_pickup_radius
+	for n in get_tree().get_nodes_in_group(CARGO_GROUP):
+		var e := n as Node3D
+		if e == null or not is_instance_valid(e) or e == _cargo:
+			continue
+		var dx: float = e.global_position.x - near.x
+		var dz: float = e.global_position.z - near.z
+		if dx * dx + dz * dz < best_sq:
+			best_sq = dx * dx + dz * dz
+			best = e
+	return best
+
+
+## Вынуть из массива юнита, ближайшего к point (XZ).
+func _pop_nearest_unit(units: Array, point: Vector3) -> Node3D:
+	var best_i: int = 0
+	var best_d: float = INF
+	for i in range(units.size()):
+		var u: Node3D = units[i]
+		var dx: float = u.global_position.x - point.x
+		var dz: float = u.global_position.z - point.z
+		var d: float = dx * dx + dz * dz
+		if d < best_d:
+			best_d = d
+			best_i = i
+	var out: Node3D = units[best_i]
+	units.remove_at(best_i)
+	return out
+
+
 ## Средний разгон живых членов отряда (0..1).
 func _avg_ramp() -> float:
 	if _squad == null:
@@ -487,6 +679,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif key.keycode == KEY_T and not _game_over:
 		_wave_timer = wave_interval
 		_spawn_wave()
+	elif key.keycode == KEY_E and not _game_over:
+		_toggle_cargo()
 
 
 ## Пересечение луча курсора с плоскостью пола (math, без физики) + кламп в комнату.
@@ -608,3 +802,7 @@ func _update_labels() -> void:
 	($HUD/Panel/Rows/WaveLabel as Label).text = "Волна: %d" % _wave_number
 	($HUD/Panel/Rows/SquadLabel as Label).text = "Гномов: %d / %d" % [_alive_gnomes(), squad_size]
 	($HUD/Panel/Rows/KillLabel as Label).text = "Убито: %d" % _kills
+	var cargo_txt: String = "Груз: —"
+	if _cargo != null:
+		cargo_txt = "Груз: несут %d (стволов −%d)" % [_haulers.size(), _haulers.size()]
+	($HUD/Panel/Rows/CargoLabel as Label).text = cargo_txt
