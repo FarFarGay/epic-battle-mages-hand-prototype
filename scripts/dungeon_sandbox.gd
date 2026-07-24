@@ -194,6 +194,10 @@ const CMD_ARRIVED_DIST := 2.0
 @export var superhot_reach_weight_penalty: float = 1.0
 ## Нижний предел поводка под грузом — короче не станет, как ни нагружай.
 @export var superhot_reach_min: float = 2.5
+## Радиус прилипания ПРИЦЕЛА к врагу (метров от конца поводка): цель захвачена,
+## только когда сам прицел НА враге. Прицел = точка, не сектор — окружённый отряд
+## не красит поводок, пока ты не навёл его на конкретного скелета.
+@export var superhot_aim_snap: float = 1.6
 ## Насколько близко к точке шага = «дошёл» (шаг завершён, мир замирает).
 @export var superhot_arrive_dist: float = 0.8
 ## Клик по врагу в досягаемости = ЗАЛП С МЕСТА (не бежим в мили): столько
@@ -279,6 +283,14 @@ var _shoot_timer: float = 0.0
 ## КЛИКНУТАЯ цель залпа: отряд бьёт ИМЕННО её (фокус-огонь через alarm), а не
 ## «кого видят» лучники. Умерла/истёк beat → залп кончился.
 var _shoot_target: Node3D = null
+## Клик пришёл СОБЫТИЕМ (_unhandled_input) и ждёт разбора в _process. В заморозке
+## time_scale роняет частоту физтиков до ~1.2 Гц — поллинг кнопки там жевал
+## нажатия; событие не теряется никогда.
+var _click_pending: bool = false
+## Пад attack_range поверх поводка: клик-гейт меряет досягаемость от ЦЕНТРА
+## отряда, а стреляет каждый гном от себя — задний ряд черепахи (~1.5м за
+## центром) без пада молчал бы по цели на краю поводка.
+const SH_RANGE_PAD := 2.0
 ## Эффективный поводок этого кадра = superhot_reach минус вес несомого груза
 ## (superhot_reach_weight_penalty). Правит шаг, прицел-детект и attack_range.
 var _effective_reach: float = 9.0
@@ -382,21 +394,32 @@ func _spawn_squad() -> void:
 	_squad.command_hold(room_center, false)
 
 
-func _physics_process(delta: float) -> void:
-	# real_delta = настенное время (Time.get_ticks_usec иммунен к Engine.time_scale)
-	# для сглаживания тайм-скейла и камеры; в step-Superhot time_scale скачет
-	# 0.02↔1, обычный delta тут врёт. Вне режима real_delta == delta.
-	var real_delta: float = delta
-	if superhot_mode:
-		var now_us: int = Time.get_ticks_usec()
-		real_delta = clampf(float(now_us - _sh_last_usec) / 1_000_000.0, 0.0, 0.1)
-		_sh_last_usec = now_us
-	var cursor: Vector3 = _cursor_ground_point()
-	if superhot_mode:
-		# ПОШАГОВАЯ модель Superhot (клик = шаг) — ОТДЕЛЬНЫЙ путь; непрерывная
-		# «тачка» ниже не трогается, чтобы не сломать любимую drift-песочницу.
-		_superhot_physics(delta, real_delta, cursor)
+func _process(_dt: float) -> void:
+	# Superhot: контрол, прицел, тайм-скейл и камера — на РЕНДЕР-частоте.
+	# _process идёт каждый отрисованный кадр независимо от Engine.time_scale
+	# (в отличие от физтиков), поэтому в стоп-кадре прицел/камера плавные, а
+	# клик разбирается мгновенно. real_delta — настенные часы (не scaled _dt).
+	if not superhot_mode:
 		return
+	var now_us: int = Time.get_ticks_usec()
+	var real_delta: float = clampf(float(now_us - _sh_last_usec) / 1_000_000.0, 0.0, 0.1)
+	_sh_last_usec = now_us
+	var cursor: Vector3 = _cursor_ground_point()
+	_superhot_control(real_delta, cursor)
+	_update_superhot(real_delta, _step_moving or _shooting)
+	_update_camera(real_delta, cursor)
+
+
+func _physics_process(delta: float) -> void:
+	if superhot_mode:
+		# Superhot: тут ТОЛЬКО мир (ловушки/крафт/волны) на scaled-темпе —
+		# замерзает вместе со временем, как и должен. Контрол, прицел,
+		# тайм-скейл и камера — в _process: в заморозке time_scale роняет
+		# ЧАСТОТУ физтиков (~1.2 Гц при 0.02) — на физике клики жевались,
+		# прицел и камера дёргались слайд-шоу.
+		_superhot_world_tick(delta)
+		return
+	var cursor: Vector3 = _cursor_ground_point()
 	# Движение по ЛКМ-«поводку»: пока держишь — точка приказа течёт за курсором;
 	# отпустил — фиксируется, отряд доходит и встаёт (ёж на 360°). Постоянное
 	# следование убрано по фидбеку 2026-07-23: стоять/идти — осознанный выбор.
@@ -475,9 +498,7 @@ func _physics_process(delta: float) -> void:
 			if _wave_timer <= 0.0:
 				_wave_timer = wave_interval
 				_spawn_wave()
-	# Камера на real_delta: в Superhot обзор застывшего боя остаётся плавным
-	# (вне режима real_delta == delta, поведение прежнее).
-	_update_camera(real_delta, cursor)
+	_update_camera(delta, cursor)
 
 
 ## Линия отряд→точка + кольцо на точке. Видимы, пока приказ «в исполнении»
@@ -1462,6 +1483,13 @@ func _spawn_soft_dust(pos: Vector3) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# Superhot: ЛКМ ловим СОБЫТИЕМ (разбор в _process). Мышь-события приходят
+	# каждый рендер-кадр независимо от time_scale — клик чёткий даже в стоп-кадре.
+	if superhot_mode and not _game_over:
+		var mb := event as InputEventMouseButton
+		if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			_click_pending = true
+			return
 	var key := event as InputEventKey
 	if key == null or not key.pressed or key.echo:
 		return
@@ -1539,12 +1567,11 @@ func _update_superhot(real_delta: float, active: bool) -> void:
 	Engine.time_scale = _superhot_scale
 
 
-## Пошаговый Superhot: мировые тики те же, что у drift-пути (короткий хвост
-## осознанно продублирован — так «тачка» в _physics_process остаётся нетронутой).
-## Управление — не «поводок-газ», а прицел + клик-шаг (_superhot_step_control).
-func _superhot_physics(delta: float, real_delta: float, cursor: Vector3) -> void:
-	_superhot_step_control(delta, cursor)
-	_update_superhot(real_delta, _step_moving or _shooting)
+## Пошаговый Superhot, физическая половина: ТОЛЬКО мировые тики (те же, что у
+## drift-пути — хвост осознанно продублирован, чтобы «тачка» осталась нетронутой)
+## на scaled-темпе — замерзают вместе со временем. Контрол/прицел/камера — в
+## _process (_superhot_control): физтики в заморозке редкие, им тут не место.
+func _superhot_world_tick(delta: float) -> void:
 	_tick_cargo(delta)
 	_tick_cargo_snap(delta)
 	_tick_door_puzzle(delta)
@@ -1559,28 +1586,27 @@ func _superhot_physics(delta: float, real_delta: float, cursor: Vector3) -> void
 			if _wave_timer <= 0.0:
 				_wave_timer = wave_interval
 				_spawn_wave()
-	_update_camera(real_delta, cursor)
 
 
-## Прицел + клик-ДЕЙСТВИЕ. Мир замер; поводок всегда виден от центра к курсору
-## (обрезан по _effective_reach). КЛИК разбирается по цели: враг в досягаемости
-## под курсором → ЗАЛП С МЕСТА (отряд стоит и палит _shoot_timer world-сек, НЕ
-## бежит в мили); иначе → ХОД (шаг к точке, молча). Оба «оживляют» время (шаг ИЛИ
-## залп); доехал/отстрелялся → мир замирает. attack_range = _effective_reach.
-func _superhot_step_control(delta: float, cursor: Vector3) -> void:
+## Прицел + клик-ДЕЙСТВИЕ (рендер-частота, зовётся из _process). Поводок всегда
+## виден от центра к курсору (обрезан по _effective_reach). КЛИК (событие из
+## _unhandled_input) разбирается по цели ПОД ПРИЦЕЛОМ: есть → ЗАЛП С МЕСТА по ней
+## (стоим, фокус-огонь, НЕ бежим в мили); нет → ХОД (шаг к точке, молча). Оба
+## «оживляют» время (шаг ИЛИ залп); доехал/отстрелялся → мир замирает.
+func _superhot_control(real_delta: float, cursor: Vector3) -> void:
 	if _squad == null:
 		return
 	var c: Vector3 = _squad.compute_center()
-	var lmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not _game_over
 	# Эффективный поводок = базовый reach минус вес несомого груза (meta "need"
 	# 1/3/5): тяжелее → короче шаг И радиус выстрела (единая «длина действия»).
-	# Пусто в руках → полный reach. Пол superhot_reach_min. attack_range лучников
-	# приравниваем к нему каждый кадр — что видишь (поводок), то и достаёшь.
+	# Пусто в руках → полный reach. Пол superhot_reach_min.
 	var load_w: int = int(_cargo.get_meta(&"need", 1)) if _cargo != null else 0
 	_effective_reach = maxf(superhot_reach - superhot_reach_weight_penalty * float(load_w), superhot_reach_min)
+	# attack_range = поводок + пад на глубину строя (SH_RANGE_PAD): красный
+	# поводок должен означать «стреляет ВЕСЬ отряд», включая задний ряд.
 	for m in _squad.members:
 		if is_instance_valid(m):
-			m.attack_range = _effective_reach
+			m.attack_range = _effective_reach + SH_RANGE_PAD
 	# Конец поводка-прицела (обрезан по эфф. reach). По умолчанию — текущая точка.
 	var aim: Vector3 = _squad.hold_position
 	if c != Vector3.INF and cursor != Vector3.INF:
@@ -1590,12 +1616,13 @@ func _superhot_step_control(delta: float, cursor: Vector3) -> void:
 			to *= _effective_reach / d
 		aim = Vector3(c.x, 0.0, c.z) + to
 	_aim_point = aim
-	# КЛИК = ДЕЙСТВИЕ. Достижимая цель под курсором → ЗАЛП С МЕСТА по НЕЙ (стоим,
-	# фокус-огонь, не бежим в мили); иначе → ХОД (шаг к точке, молча).
-	if lmb and not _lmb_was_down and c != Vector3.INF:
-		var tgt: Node3D = _aim_target(c)
+	# Цель под прицелом — ОДИН расчёт на кадр, им живут и клик, и подсветка
+	# (что горит красным, ровно то и будет обстреляно — никаких расхождений).
+	var tgt: Node3D = _aim_target(c)
+	# КЛИК = ДЕЙСТВИЕ (событие не теряется даже в стоп-кадре).
+	if _click_pending and c != Vector3.INF and not _game_over:
 		if tgt != null:
-			# Стрельба с места по КЛИКНУТОЙ цели: НЕ двигаемся, обрубаем недоезд.
+			# Залп с места по КЛИКНУТОЙ цели: НЕ двигаемся, обрубаем недоезд.
 			_shooting = true
 			_shoot_timer = superhot_shoot_beat
 			_shoot_target = tgt
@@ -1609,7 +1636,8 @@ func _superhot_step_control(delta: float, cursor: Vector3) -> void:
 			_banner.global_position = aim
 			_step_moving = true
 			_shooting = false
-	_lmb_was_down = lmb
+			_shoot_target = null
+	_click_pending = false
 	# Ход дошёл → чёткий стоп на точке.
 	if _step_moving and c != Vector3.INF:
 		var rem: float = Vector2(c.x - _squad.hold_position.x, c.z - _squad.hold_position.z).length()
@@ -1618,9 +1646,10 @@ func _superhot_step_control(delta: float, cursor: Vector3) -> void:
 			for m in _squad.members:
 				if is_instance_valid(m):
 					m.force_stop()
-	# Залп кончился: истёк beat (world-время) ИЛИ кликнутая цель умерла → тихо.
+	# Залп: world-секунды на рендер-частоте (real × time_scale). Кончился =
+	# beat истёк ИЛИ кликнутая цель умерла → тихо, мир замрёт сам.
 	if _shooting:
-		_shoot_timer -= delta
+		_shoot_timer -= real_delta * Engine.time_scale
 		if _shoot_timer <= 0.0 or not is_instance_valid(_shoot_target):
 			_shooting = false
 			_shoot_target = null
@@ -1633,12 +1662,13 @@ func _superhot_step_control(delta: float, cursor: Vector3) -> void:
 		m.fire_suppressed = not allow_fire
 		if allow_fire and m.has_method(&"focus_fire"):
 			m.call(&"focus_fire", _shoot_target, 0.3)
-	_update_step_visuals(c)
+	_update_step_visuals(c, tgt)
 
 
 ## Поводок-прицел ВСЕГДА виден (линия центр→конец + кольцо на конце). Краснеет,
-## когда в пределах reach по курсу есть враг — «наведён, будешь стрелять».
-func _update_step_visuals(c: Vector3) -> void:
+## только когда ПОД прицелом есть цель (tgt — тот же расчёт, что решает клик:
+## красный = «клик будет залпом ровно по нему», без расхождений).
+func _update_step_visuals(c: Vector3, tgt: Node3D) -> void:
 	if _cmd_line == null or _cmd_ring == null or c == Vector3.INF or _aim_point == Vector3.INF:
 		if _cmd_line != null:
 			_cmd_line.visible = false
@@ -1650,7 +1680,7 @@ func _update_step_visuals(c: Vector3) -> void:
 	_cmd_ring.global_position = Vector3(_aim_point.x, 0.05, _aim_point.z)
 	AoeVisual.update_ground_line(_cmd_line,
 			Vector3(c.x, 0.0, c.z), Vector3(_aim_point.x, 0.0, _aim_point.z))
-	var hot: bool = _enemy_in_aim(c)
+	var hot: bool = tgt != null
 	var col: Color = Color(1.0, 0.32, 0.28, 1.0) if hot else CMD_COLOR
 	var mat := _cmd_line.material_override as StandardMaterial3D
 	if mat != null:
@@ -1666,35 +1696,33 @@ func _update_step_visuals(c: Vector3) -> void:
 ## Скелет, на которого «наведён» прицел: в пределах _effective_reach от центра И
 ## по направлению прицела (dot > 0.3), из подходящих — БЛИЖАЙШИЙ К ТОЧКЕ ПРИЦЕЛА
 ## (кликнул рядом с врагом → берётся именно он). null = прицел в пустоту.
+## Скелет ПОД ПРИЦЕЛОМ: не дальше superhot_aim_snap от КОНЦА поводка И в
+## _effective_reach от центра (досягаем). Прицел = ТОЧКА, не сектор: старый
+## конус-детект (dot>0.3 ≈ полуугол 72°) в окружении находил врага в любую
+## сторону — поводок горел красным постоянно, юзер отверг. Курсор в пределах
+## поводка совпадает с его концом, так что «навёл НА врага» — буквально.
 func _aim_target(c: Vector3) -> Node3D:
 	if _aim_point == Vector3.INF or c == Vector3.INF:
 		return null
-	var dir := Vector3(_aim_point.x - c.x, 0.0, _aim_point.z - c.z)
-	var aimless: bool = dir.length_squared() < 0.01
-	if not aimless:
-		dir = dir.normalized()
 	var reach_sq: float = _effective_reach * _effective_reach
+	var snap_sq: float = superhot_aim_snap * superhot_aim_snap
 	var best: Node3D = null
 	var best_d: float = INF
 	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		if not is_instance_valid(sk) or not (sk is Node3D):
 			continue
-		var to := Vector3(sk.global_position.x - c.x, 0.0, sk.global_position.z - c.z)
-		var dsq: float = to.length_squared()
-		if dsq > reach_sq:
+		var p: Vector3 = (sk as Node3D).global_position
+		var dxc: float = p.x - c.x
+		var dzc: float = p.z - c.z
+		if dxc * dxc + dzc * dzc > reach_sq:
 			continue
-		if not aimless and dsq >= 0.01 and dir.dot(to.normalized()) <= 0.3:
-			continue
-		var ad: float = (sk.global_position - _aim_point).length_squared()
-		if ad < best_d:
-			best_d = ad
+		var dxa: float = p.x - _aim_point.x
+		var dza: float = p.z - _aim_point.z
+		var d: float = dxa * dxa + dza * dza
+		if d <= snap_sq and d < best_d:
+			best_d = d
 			best = sk
 	return best
-
-
-## Есть ли достижимая цель под прицелом (для подсветки поводка + разбора клика).
-func _enemy_in_aim(c: Vector3) -> bool:
-	return _aim_target(c) != null
 
 
 func _exit_tree() -> void:
