@@ -1,0 +1,588 @@
+[gd_scene format=3 uid="uid://lqi7m8mjwsyq"]
+
+[ext_resource type="Script" uid="uid://brhmj3f28qb2f" path="res://scripts/dungeon_sandbox.gd" id="1_script"]
+[ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="2_skel"]
+
+[sub_resource type="Environment" id="env_dungeon"]
+background_mode = 1
+background_color = Color(0.045, 0.045, 0.075, 1)
+ambient_light_source = 1
+ambient_light_color = Color(0.5, 0.5, 0.62, 1)
+ambient_light_energy = 1.1
+
+[sub_resource type="StandardMaterial3D" id="mat_floor"]
+albedo_color = Color(0.16, 0.15, 0.19, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="mesh_floor"]
+material = SubResource("mat_floor")
+size = Vector3(52, 1, 52)
+
+[sub_resource type="BoxShape3D" id="shape_floor"]
+size = Vector3(52, 1, 52)
+
+[sub_resource type="StandardMaterial3D" id="mat_wall"]
+albedo_color = Color(0.24, 0.21, 0.27, 1)
+roughness = 0.85
+
+[sub_resource type="BoxMesh" id="mesh_wall_z"]
+material = SubResource("mat_wall")
+size = Vector3(52, 3, 1)
+
+[sub_resource type="BoxShape3D" id="shape_wall_z"]
+size = Vector3(52, 3, 1)
+
+[sub_resource type="BoxMesh" id="mesh_wall_x"]
+material = SubResource("mat_wall")
+size = Vector3(1, 3, 52)
+
+[sub_resource type="BoxShape3D" id="shape_wall_x"]
+size = Vector3(1, 3, 52)
+
+[sub_resource type="BoxMesh" id="mesh_wall_seg"]
+material = SubResource("mat_wall")
+size = Vector3(20, 3, 1)
+
+[sub_resource type="BoxShape3D" id="shape_wall_seg"]
+size = Vector3(20, 3, 1)
+
+[sub_resource type="StandardMaterial3D" id="mat_pillar"]
+albedo_color = Color(0.3, 0.26, 0.24, 1)
+roughness = 0.8
+
+[sub_resource type="BoxMesh" id="mesh_pillar"]
+material = SubResource("mat_pillar")
+size = Vector3(2, 2.6, 2)
+
+[sub_resource type="BoxShape3D" id="shape_pillar"]
+size = Vector3(2, 2.6, 2)
+
+[sub_resource type="BoxMesh" id="mesh_corr_floor"]
+material = SubResource("mat_floor")
+size = Vector3(12, 1, 8)
+
+[sub_resource type="BoxShape3D" id="shape_corr_floor"]
+size = Vector3(12, 1, 8)
+
+[sub_resource type="BoxMesh" id="mesh_corr_wall"]
+material = SubResource("mat_wall")
+size = Vector3(1, 3, 8)
+
+[sub_resource type="BoxShape3D" id="shape_corr_wall"]
+size = Vector3(1, 3, 8)
+
+[sub_resource type="StandardMaterial3D" id="mat_metal"]
+albedo_color = Color(0.42, 0.45, 0.5, 1)
+metallic = 0.9
+metallic_specular = 0.7
+roughness = 0.35
+
+[sub_resource type="BoxMesh" id="mesh_door"]
+material = SubResource("mat_metal")
+size = Vector3(12, 3, 0.6)
+
+[sub_resource type="BoxShape3D" id="shape_door"]
+size = Vector3(12, 3, 0.6)
+
+[sub_resource type="StandardMaterial3D" id="mat_wood"]
+albedo_color = Color(0.4, 0.26, 0.13, 1)
+roughness = 0.85
+
+[sub_resource type="BoxMesh" id="mesh_wood_door"]
+material = SubResource("mat_wood")
+size = Vector3(12, 3, 0.6)
+
+[node name="DungeonWasd" type="Node3D" unique_id=2001557983]
+script = ExtResource("1_script")
+wasd_mode = true
+gnome_speed_scale = 0.75
+gnome_damage_min = 4.0
+gnome_damage_max = 6.0
+gnome_drift_formation_pull = 10.0
+ice_grip = 0.65
+skeleton_scene = ExtResource("2_skel")
+cursor_z_min = -104.0
+cursor_z_max = 64.0
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1875898225]
+environment = SubResource("env_dungeon")
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=700128523]
+transform = Transform3D(0.8678192, 0.40704, -0.28497067, 0, 0.57352, 0.8191916, 0.4968801, -0.71091014, 0.49771166, 0, 0, 0)
+light_energy = 0.85
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1317944216]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 21, 51)
+fov = 55.0
+
+[node name="Banner" type="Node3D" parent="." unique_id=164152763]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0, 40)
+
+[node name="Room1" type="Node3D" parent="." unique_id=452451878]
+
+[node name="Floor" type="StaticBody3D" parent="Room1" unique_id=279990499]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, -0.5, 40)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Floor" unique_id=1810567814]
+mesh = SubResource("mesh_floor")
+
+[node name="Collision" type="CollisionShape3D" parent="Room1/Floor" unique_id=525881650]
+shape = SubResource("shape_floor")
+
+[node name="WallS" type="StaticBody3D" parent="Room1" unique_id=677527575]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 1.5, 65.5)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room1/WallS" unique_id=1268814153]
+mesh = SubResource("mesh_wall_z")
+
+[node name="Collision" type="CollisionShape3D" parent="Room1/WallS" unique_id=224321448]
+shape = SubResource("shape_wall_z")
+
+[node name="WallW" type="StaticBody3D" parent="Room1" unique_id=206350495]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14.5, 1.5, 40)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room1/WallW" unique_id=1723235189]
+mesh = SubResource("mesh_wall_x")
+
+[node name="Collision" type="CollisionShape3D" parent="Room1/WallW" unique_id=1130866580]
+shape = SubResource("shape_wall_x")
+
+[node name="WallE" type="StaticBody3D" parent="Room1" unique_id=1643199593]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65.5, 1.5, 40)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room1/WallE" unique_id=1044708764]
+mesh = SubResource("mesh_wall_x")
+
+[node name="Collision" type="CollisionShape3D" parent="Room1/WallE" unique_id=736048055]
+shape = SubResource("shape_wall_x")
+
+[node name="WallN_L" type="StaticBody3D" parent="Room1" unique_id=602812958]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 1.5, 14.5)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room1/WallN_L" unique_id=63803719]
+mesh = SubResource("mesh_wall_seg")
+
+[node name="Collision" type="CollisionShape3D" parent="Room1/WallN_L" unique_id=1143662012]
+shape = SubResource("shape_wall_seg")
+
+[node name="WallN_R" type="StaticBody3D" parent="Room1" unique_id=331084607]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 56, 1.5, 14.5)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room1/WallN_R" unique_id=1506478752]
+mesh = SubResource("mesh_wall_seg")
+
+[node name="Collision" type="CollisionShape3D" parent="Room1/WallN_R" unique_id=780438294]
+shape = SubResource("shape_wall_seg")
+
+[node name="PillarNW" type="StaticBody3D" parent="Room1" unique_id=101452810]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1.3, 31)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room1/PillarNW" unique_id=1382738641]
+mesh = SubResource("mesh_pillar")
+
+[node name="Collision" type="CollisionShape3D" parent="Room1/PillarNW" unique_id=1011340937]
+shape = SubResource("shape_pillar")
+
+[node name="PillarNE" type="StaticBody3D" parent="Room1" unique_id=1813464978]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49, 1.3, 31)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room1/PillarNE" unique_id=1046447180]
+mesh = SubResource("mesh_pillar")
+
+[node name="Collision" type="CollisionShape3D" parent="Room1/PillarNE" unique_id=1884926108]
+shape = SubResource("shape_pillar")
+
+[node name="PillarSW" type="StaticBody3D" parent="Room1" unique_id=2099290089]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 1.3, 49)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room1/PillarSW" unique_id=563203603]
+mesh = SubResource("mesh_pillar")
+
+[node name="Collision" type="CollisionShape3D" parent="Room1/PillarSW" unique_id=7184383]
+shape = SubResource("shape_pillar")
+
+[node name="PillarSE" type="StaticBody3D" parent="Room1" unique_id=746846059]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49, 1.3, 49)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room1/PillarSE" unique_id=629469797]
+mesh = SubResource("mesh_pillar")
+
+[node name="Collision" type="CollisionShape3D" parent="Room1/PillarSE" unique_id=1157212832]
+shape = SubResource("shape_pillar")
+
+[node name="Corr12" type="Node3D" parent="." unique_id=61544245]
+
+[node name="Floor" type="StaticBody3D" parent="Corr12" unique_id=1824908856]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, -0.5, 10)
+
+[node name="Mesh" type="MeshInstance3D" parent="Corr12/Floor" unique_id=1625159573]
+mesh = SubResource("mesh_corr_floor")
+
+[node name="Collision" type="CollisionShape3D" parent="Corr12/Floor" unique_id=1564521961]
+shape = SubResource("shape_corr_floor")
+
+[node name="WallL" type="StaticBody3D" parent="Corr12" unique_id=126749110]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34, 1.5, 10)
+
+[node name="Mesh" type="MeshInstance3D" parent="Corr12/WallL" unique_id=560238834]
+mesh = SubResource("mesh_corr_wall")
+
+[node name="Collision" type="CollisionShape3D" parent="Corr12/WallL" unique_id=1748278216]
+shape = SubResource("shape_corr_wall")
+
+[node name="WallR" type="StaticBody3D" parent="Corr12" unique_id=633282088]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 46, 1.5, 10)
+
+[node name="Mesh" type="MeshInstance3D" parent="Corr12/WallR" unique_id=351892951]
+mesh = SubResource("mesh_corr_wall")
+
+[node name="Collision" type="CollisionShape3D" parent="Corr12/WallR" unique_id=1001949142]
+shape = SubResource("shape_corr_wall")
+
+[node name="Door" type="StaticBody3D" parent="Corr12" unique_id=251986678]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 1.5, 10)
+
+[node name="Mesh" type="MeshInstance3D" parent="Corr12/Door" unique_id=535358599]
+mesh = SubResource("mesh_door")
+
+[node name="Collision" type="CollisionShape3D" parent="Corr12/Door" unique_id=568834530]
+shape = SubResource("shape_door")
+
+[node name="Room2" type="Node3D" parent="." unique_id=268200960]
+
+[node name="Floor" type="StaticBody3D" parent="Room2" unique_id=1687185464]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, -0.5, -20)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room2/Floor" unique_id=1354662600]
+mesh = SubResource("mesh_floor")
+
+[node name="Collision" type="CollisionShape3D" parent="Room2/Floor" unique_id=1302925008]
+shape = SubResource("shape_floor")
+
+[node name="WallS_L" type="StaticBody3D" parent="Room2" unique_id=1099398396]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 1.5, 6)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room2/WallS_L" unique_id=1964785583]
+mesh = SubResource("mesh_wall_seg")
+
+[node name="Collision" type="CollisionShape3D" parent="Room2/WallS_L" unique_id=2114666911]
+shape = SubResource("shape_wall_seg")
+
+[node name="WallS_R" type="StaticBody3D" parent="Room2" unique_id=1937919600]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 56, 1.5, 6)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room2/WallS_R" unique_id=694490955]
+mesh = SubResource("mesh_wall_seg")
+
+[node name="Collision" type="CollisionShape3D" parent="Room2/WallS_R" unique_id=1610967523]
+shape = SubResource("shape_wall_seg")
+
+[node name="WallN_L" type="StaticBody3D" parent="Room2" unique_id=1726482415]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 1.5, -46)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room2/WallN_L" unique_id=1918702884]
+mesh = SubResource("mesh_wall_seg")
+
+[node name="Collision" type="CollisionShape3D" parent="Room2/WallN_L" unique_id=745658024]
+shape = SubResource("shape_wall_seg")
+
+[node name="WallN_R" type="StaticBody3D" parent="Room2" unique_id=284840627]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 56, 1.5, -46)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room2/WallN_R" unique_id=1916282908]
+mesh = SubResource("mesh_wall_seg")
+
+[node name="Collision" type="CollisionShape3D" parent="Room2/WallN_R" unique_id=1059337815]
+shape = SubResource("shape_wall_seg")
+
+[node name="WallW" type="StaticBody3D" parent="Room2" unique_id=572021763]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14.5, 1.5, -20)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room2/WallW" unique_id=1393641688]
+mesh = SubResource("mesh_wall_x")
+
+[node name="Collision" type="CollisionShape3D" parent="Room2/WallW" unique_id=1957760028]
+shape = SubResource("shape_wall_x")
+
+[node name="WallE" type="StaticBody3D" parent="Room2" unique_id=388876255]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65.5, 1.5, -20)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room2/WallE" unique_id=461476312]
+mesh = SubResource("mesh_wall_x")
+
+[node name="Collision" type="CollisionShape3D" parent="Room2/WallE" unique_id=323518195]
+shape = SubResource("shape_wall_x")
+
+[node name="Corr23" type="Node3D" parent="." unique_id=1859172364]
+
+[node name="Floor" type="StaticBody3D" parent="Corr23" unique_id=758070664]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, -0.5, -50)
+
+[node name="Mesh" type="MeshInstance3D" parent="Corr23/Floor" unique_id=1445984609]
+mesh = SubResource("mesh_corr_floor")
+
+[node name="Collision" type="CollisionShape3D" parent="Corr23/Floor" unique_id=624837744]
+shape = SubResource("shape_corr_floor")
+
+[node name="WallL" type="StaticBody3D" parent="Corr23" unique_id=1793493020]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34, 1.5, -50)
+
+[node name="Mesh" type="MeshInstance3D" parent="Corr23/WallL" unique_id=722391552]
+mesh = SubResource("mesh_corr_wall")
+
+[node name="Collision" type="CollisionShape3D" parent="Corr23/WallL" unique_id=94980321]
+shape = SubResource("shape_corr_wall")
+
+[node name="WallR" type="StaticBody3D" parent="Corr23" unique_id=2000680423]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 46, 1.5, -50)
+
+[node name="Mesh" type="MeshInstance3D" parent="Corr23/WallR" unique_id=689254181]
+mesh = SubResource("mesh_corr_wall")
+
+[node name="Collision" type="CollisionShape3D" parent="Corr23/WallR" unique_id=1440799065]
+shape = SubResource("shape_corr_wall")
+
+[node name="Door" type="StaticBody3D" parent="Corr23" unique_id=926188349]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 1.5, -50)
+
+[node name="Mesh" type="MeshInstance3D" parent="Corr23/Door" unique_id=1426030827]
+mesh = SubResource("mesh_wood_door")
+
+[node name="Collision" type="CollisionShape3D" parent="Corr23/Door" unique_id=1302785776]
+shape = SubResource("shape_door")
+
+[node name="Room3" type="Node3D" parent="." unique_id=682158619]
+
+[node name="Floor" type="StaticBody3D" parent="Room3" unique_id=1760523155]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, -0.5, -80)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Floor" unique_id=1532364362]
+mesh = SubResource("mesh_floor")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Floor" unique_id=2070799939]
+shape = SubResource("shape_floor")
+
+[node name="WallS_L" type="StaticBody3D" parent="Room3" unique_id=1296515075]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 1.5, -54)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/WallS_L" unique_id=68663786]
+mesh = SubResource("mesh_wall_seg")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/WallS_L" unique_id=1043635179]
+shape = SubResource("shape_wall_seg")
+
+[node name="WallS_R" type="StaticBody3D" parent="Room3" unique_id=1812986898]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 56, 1.5, -54)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/WallS_R" unique_id=1976090144]
+mesh = SubResource("mesh_wall_seg")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/WallS_R" unique_id=1761421421]
+shape = SubResource("shape_wall_seg")
+
+[node name="WallN" type="StaticBody3D" parent="Room3" unique_id=686106635]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 1.5, -106)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/WallN" unique_id=392743730]
+mesh = SubResource("mesh_wall_z")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/WallN" unique_id=1943225701]
+shape = SubResource("shape_wall_z")
+
+[node name="WallW" type="StaticBody3D" parent="Room3" unique_id=1118732460]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14.5, 1.5, -80)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/WallW" unique_id=1031600647]
+mesh = SubResource("mesh_wall_x")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/WallW" unique_id=701366908]
+shape = SubResource("shape_wall_x")
+
+[node name="WallE" type="StaticBody3D" parent="Room3" unique_id=965948751]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65.5, 1.5, -80)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/WallE" unique_id=1001329588]
+mesh = SubResource("mesh_wall_x")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/WallE" unique_id=2136565661]
+shape = SubResource("shape_wall_x")
+
+[node name="HUD" type="CanvasLayer" parent="." unique_id=850002033]
+
+[node name="Panel" type="MarginContainer" parent="HUD" unique_id=586821937]
+offset_left = 14.0
+offset_top = 12.0
+offset_right = 320.0
+offset_bottom = 130.0
+mouse_filter = 2
+
+[node name="Rows" type="VBoxContainer" parent="HUD/Panel" unique_id=1520977907]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="WaveLabel" type="Label" parent="HUD/Panel/Rows" unique_id=547978247]
+layout_mode = 2
+text = "Волна: 0"
+
+[node name="SquadLabel" type="Label" parent="HUD/Panel/Rows" unique_id=1970368011]
+layout_mode = 2
+text = "Гномов: 7 / 7"
+
+[node name="KillLabel" type="Label" parent="HUD/Panel/Rows" unique_id=1438062689]
+layout_mode = 2
+text = "Убито: 0"
+
+[node name="CargoLabel" type="Label" parent="HUD/Panel/Rows" unique_id=51047173]
+layout_mode = 2
+text = "Груз: —"
+
+[node name="CraftLabel" type="Label" parent="HUD/Panel/Rows"]
+layout_mode = 2
+text = "Ингредиенты: 0 / 3"
+
+[node name="HintLabel" type="Label" parent="HUD/Panel/Rows" unique_id=1644610110]
+modulate = Color(1, 1, 1, 0.55)
+layout_mode = 2
+text = "ЛКМ — вести · ПКМ — тормоз · E — груз · T — волна · R — рестарт"
+
+[node name="Center" type="CenterContainer" parent="HUD" unique_id=1107961916]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="GameOverLabel" type="Label" parent="HUD/Center" unique_id=1958920025]
+visible = false
+layout_mode = 2
+theme_override_font_sizes/font_size = 34
+text = "Отряд погиб — R, чтобы начать заново"
+
+[node name="FocusCards" type="HBoxContainer" parent="HUD"]
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -280.0
+offset_top = -96.0
+offset_right = 280.0
+offset_bottom = -18.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_constants/separation = 12
+mouse_filter = 2
+
+[node name="Card1" type="PanelContainer" parent="HUD/FocusCards"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="V" type="VBoxContainer" parent="HUD/FocusCards/Card1"]
+layout_mode = 2
+theme_override_constants/separation = 3
+mouse_filter = 2
+
+[node name="Header" type="HBoxContainer" parent="HUD/FocusCards/Card1/V"]
+layout_mode = 2
+theme_override_constants/separation = 6
+mouse_filter = 2
+
+[node name="Swatch" type="ColorRect" parent="HUD/FocusCards/Card1/V/Header"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+size_flags_vertical = 4
+color = Color(0.85, 0.55, 0.25, 1)
+
+[node name="Name" type="Label" parent="HUD/FocusCards/Card1/V/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 13
+text = "Копейщики"
+
+[node name="Count" type="Label" parent="HUD/FocusCards/Card1/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Живых: —"
+
+[node name="Key" type="Label" parent="HUD/FocusCards/Card1/V"]
+modulate = Color(1, 1, 1, 0.6)
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "[1] удар по клику"
+
+[node name="Card2" type="PanelContainer" parent="HUD/FocusCards"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="V" type="VBoxContainer" parent="HUD/FocusCards/Card2"]
+layout_mode = 2
+theme_override_constants/separation = 3
+mouse_filter = 2
+
+[node name="Header" type="HBoxContainer" parent="HUD/FocusCards/Card2/V"]
+layout_mode = 2
+theme_override_constants/separation = 6
+mouse_filter = 2
+
+[node name="Swatch" type="ColorRect" parent="HUD/FocusCards/Card2/V/Header"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+size_flags_vertical = 4
+color = Color(0.55, 0.35, 0.75, 1)
+
+[node name="Name" type="Label" parent="HUD/FocusCards/Card2/V/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 13
+text = "Лучники"
+
+[node name="Count" type="Label" parent="HUD/FocusCards/Card2/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Живых: —"
+
+[node name="Key" type="Label" parent="HUD/FocusCards/Card2/V"]
+modulate = Color(1, 1, 1, 0.6)
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "[2] полив по ЛКМ"
+
+[node name="Card3" type="PanelContainer" parent="HUD/FocusCards"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="V" type="VBoxContainer" parent="HUD/FocusCards/Card3"]
+layout_mode = 2
+theme_override_constants/separation = 3
+mouse_filter = 2
+
+[node name="Header" type="HBoxContainer" parent="HUD/FocusCards/Card3/V"]
+layout_mode = 2
+theme_override_constants/separation = 6
+mouse_filter = 2
+
+[node name="Swatch" type="ColorRect" parent="HUD/FocusCards/Card3/V/Header"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+size_flags_vertical = 4
+color = Color(0.7, 0.45, 0.25, 1)
+
+[node name="Name" type="Label" parent="HUD/FocusCards/Card3/V/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 13
+text = "Артель"
+
+[node name="Count" type="Label" parent="HUD/FocusCards/Card3/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Живых: —"
+
+[node name="Key" type="Label" parent="HUD/FocusCards/Card3/V"]
+modulate = Color(1, 1, 1, 0.6)
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "[3] щит по ПКМ"

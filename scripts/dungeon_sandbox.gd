@@ -220,6 +220,68 @@ const CMD_ARRIVED_DIST := 2.0
 @export var superhot_ramp_up: float = 14.0
 @export var superhot_ramp_down: float = 8.0
 
+@export_group("WASD-группа (twin-stick)")
+## ТРЕТЬЯ модель контрола (2026-07-24, «вероятно вернёмся к VS-like»): плотная
+## СМЕШАННАЯ группа едет WASD, курсор = направление выстрела, зажатый ЛКМ =
+## полив стрелков в сторону курсора, ПКМ = артельщик выставляет щит-блок.
+## Копейщики бьют вблизи автоматом (оборона контакта). Принцип «нет полоски
+## HP — есть гномы, визуально отображающие возможности» сохраняется. Сцена
+## dungeon_wasd включает флагом; drift и superhot не тронуты.
+@export var wasd_mode: bool = false
+## Состав группы: лучники (полив по ЛКМ) / копейщики (мили-автобой, передний
+## ряд) / артельщики (щит по ПКМ; живых щитов не больше живых артельщиков).
+@export var wasd_archers: int = 3
+@export var wasd_spearmen: int = 2
+@export var wasd_artel: int = 1
+## Скорость движения точки строя по WASD (м/с). Чуть ВЫШЕ скорости юнитов —
+## тогда они бегут за точкой на полном ходу, без «доехал-жду» вязкости.
+@export var wasd_speed: float = 7.5
+## Скорость самих гномов группы (м/с, всем типам одинаково — группа = тело).
+## Каталожные 1.6–2.2 для twin-stick вязкие.
+@export var wasd_unit_speed: float = 6.0
+## Сцепление руления юнитов (1/с, экспоненциальный догон скорости): выше =
+## резче старт/стоп/повороты. Дефолт отряда 5.5 — «кисель» для twin-stick.
+@export var wasd_grip: float = 12.0
+## Полив: цель = скелет в дальности, ближайший к ЛУЧУ курсора; сектор захвата
+## вокруг направления (дот-порог 0.5 ≈ ±60°) — курсор ведёт огонь как стик.
+@export var wasd_aim_dot: float = 0.5
+## Скорость удара-хлыста копейщиков (м/с, вылет И отскок). 28 ≈ щелчок:
+## цикл клик→укол→в строю ~0.3-0.4с — «классический мили-замах», не пробежка.
+@export var wasd_punch_speed: float = 28.0
+## САМООБОРОНА лучников без фокуса (нерф «в защите разносят всех», 2026-07-24):
+## стреляют только по подошедшим в этот радиус (симметрия с копейщиками — вся
+## оборона бьёт КОНТАКТ) и с растянутым кулдауном. Фокус [2] возвращает полную
+## дальность (gnome_attack_range) и штатный темп.
+@export var wasd_defense_range: float = 4.0
+@export var wasd_defense_cd_mult: float = 1.7
+## Щит артельщика: HP (скелеты-мили грызут), размер плашки и дистанция
+## выставления от центра группы в сторону курсора.
+@export var wasd_shield_hp: float = 120.0
+@export var wasd_shield_size: Vector3 = Vector3(4.0, 1.8, 0.6)
+@export var wasd_shield_dist: float = 2.6
+## КОЛЧАН-ОБОЙМА лучника (изюминка 2026-07-27): конечный боезапас как ритм боя.
+## Полив жжёт стрелы (~4с непрерывного огня), перезарядка тикает ТОЛЬКО в паузах:
+## зажатый ЛКМ на пустом колчане держит её на нуле — отпустить гашетку и есть
+## решение. Ритм: сброс залпа → сушь → окно копейщиков/щита → полив. Колчан на
+## спине пустеет визуально (гномы = дисплей возможностей). 0 = выключить.
+@export var wasd_quiver_size: int = 6
+## Секунд на одну стрелу перезарядки (0.5 → 0.3 по фидбеку 2026-07-28 «увеличь
+## скорость»: пустой→полный 2.4с вместо 3.8с).
+@export var wasd_quiver_reload: float = 0.3
+## Пауза тишины после последнего выстрела до старта перезарядки (с).
+@export var wasd_quiver_delay: float = 0.6
+## СТАМИНА КОПЕЙЩИКОВ (2026-07-28, зеркало колчана): запас ударов — тратят И
+## панч по клику (на вылете, промах тоже стоит), И оборонный укол с места;
+## восстановление только в паузах ударов (сухой КЛИК держит его на нуле, авто-
+## оборона всухую — нет, иначе в окружении не отдышаться). Гонит пинг-понг
+## фокуса: полив→сушь колчана→панчи копейщиками→усталость→обратно на луки
+## (колчан уже полон). Пипсы-заряды на спине. 0 = выключить.
+@export var wasd_stamina_hits: int = 4
+## Секунд на восстановление одного удара.
+@export var wasd_stamina_restore: float = 0.6
+## Пауза без ударов до старта восстановления (с).
+@export var wasd_stamina_delay: float = 0.9
+
 var _squad: Squad = null
 var _banner: Node3D = null
 var _camera: Camera3D = null
@@ -291,6 +353,26 @@ var _click_pending: bool = false
 ## отряда, а стреляет каждый гном от себя — задний ряд черепахи (~1.5м за
 ## центром) без пада молчал бы по цели на краю поводка.
 const SH_RANGE_PAD := 2.0
+## WASD: живые щиты артельщиков (ArtelShield). Ставить новый можно, пока
+## щитов меньше живых артельщиков. ПКМ-событие ждёт разбора в физтике.
+var _shields: Array = []
+var _shield_pending: bool = false
+## WASD: точка строя не отрывается от центра дальше этого (гномы упёрлись в
+## стену → точка не уезжает в бесконечность, строй не «теряет якорь»).
+const WASD_LEASH := 4.0
+## WASD: фокус-группа (клавиши 1/2/3 — экшены спеллов, в данже свободны):
+## 1=копейщики (штурм цели прицела по ЛКМ), 2=лучники (полив по ЛКМ),
+## 3=артель (пока только ПКМ-щит; турели — следующий шаг). Выбранная группа
+## подчиняется ЛКМ; невыбранные — в обороне (лучники: авто-огонь по близким,
+## копейщики: строй + укол с места).
+var _focus_group: int = 2
+## Карточки фокус-групп в HUD (стиль карточек отрядов основной игры): панели
+## порядком групп 1..3 и их StyleBoxFlat для подсветки выбранной. Узлы живут
+## в .tscn (двигаются в редакторе), код только красит и наполняет. Пусто в
+## сценах без FocusCards (drift/superhot).
+var _focus_cards: Array = []
+var _focus_card_boxes: Array = []
+const FOCUS_CARD_COLORS := [Color(0.85, 0.55, 0.25), Color(0.55, 0.35, 0.75), Color(0.7, 0.45, 0.25)]
 ## Эффективный поводок этого кадра = superhot_reach минус вес несомого груза
 ## (superhot_reach_weight_penalty). Правит шаг, прицел-детект и attack_range.
 var _effective_reach: float = 9.0
@@ -331,11 +413,17 @@ func _ready() -> void:
 	_setup_crafting()
 	_setup_barricades()
 	_update_labels()
+	if wasd_mode:
+		_setup_focus_cards()
+		_set_focus_group(_focus_group)  # телеграф стартового выбора в HUD
 	print("[DungeonSandbox] boot ok: gnomes=%d, skeleton_scene=%s"
 			% [_alive_gnomes(), skeleton_scene != null])
 
 
 func _spawn_squad() -> void:
+	if wasd_mode:
+		_spawn_wasd_squad()
+		return
 	var data: Dictionary = SoldierSystem.get_soldier_data(ARCHER_TYPE)
 	if data.is_empty():
 		push_error("[DungeonSandbox] нет %s в SOLDIER_CATALOG" % ARCHER_TYPE)
@@ -394,6 +482,187 @@ func _spawn_squad() -> void:
 	_squad.command_hold(room_center, false)
 
 
+## WASD-группа: СМЕШАННЫЙ состав из штатного каталога (копейщики первыми —
+## передний ряд черепахи, оборона контакта; затем лучники; артельщик замыкает).
+## Один Squad на всех: тип живёт на юните (soldier_type), юниты с разными
+## возможностями = «полоска HP» из живых тел. Скорость ЕДИНАЯ — группа = тело.
+func _spawn_wasd_squad() -> void:
+	var mix: Array = []
+	for i in range(wasd_spearmen):
+		mix.append(&"pikeman")
+	for i in range(wasd_archers):
+		mix.append(ARCHER_TYPE)
+	for i in range(wasd_artel):
+		mix.append(&"worker")
+	_squad = Squad.new()
+	_squad.id = 1
+	_squad.soldier_type = ARCHER_TYPE
+	var idx: int = 0
+	for t in mix:
+		var data: Dictionary = SoldierSystem.get_soldier_data(t)
+		var scene: PackedScene = data.get("scene", null)
+		if scene == null:
+			push_error("[DungeonSandbox] нет сцены для %s в SOLDIER_CATALOG" % t)
+			continue
+		var stats: Dictionary = (data.get("stats", {}) as Dictionary).duplicate()
+		# Бодрый twin-stick: у слота юниты ходят на BASE move_speed (спринт
+		# только вдали) — каталожные 1.6–2.2 давали «вязкую» группу. Единая
+		# скорость всем + резкое сцепление руления.
+		stats["move_speed"] = wasd_unit_speed
+		stats["caravan_sprint_speed"] = wasd_unit_speed * 1.3
+		stats["steer_grip"] = wasd_grip
+		if t == ARCHER_TYPE:
+			# Данж-баланс лучника + steer_inertia>0: выстрел НЕ стопит бег —
+			# полив на ходу, ядро twin-stick-феела.
+			stats["attack_range"] = gnome_attack_range
+			stats["attack_cooldown_min"] = gnome_cooldown_min
+			stats["attack_cooldown_max"] = gnome_cooldown_max
+			stats["attack_damage_min"] = gnome_damage_min
+			stats["attack_damage_max"] = gnome_damage_max
+			stats["steer_inertia"] = gnome_steer_inertia
+		elif t == &"pikeman":
+			# Оборона КОНТАКТА (фидбек 2026-07-24): детект срезан почти до
+			# длины копья — копейщик НЕ бегает по полю за врагами, держит
+			# строй и колет только подошедших вплотную.
+			stats["enemy_detect_radius"] = 3.2
+		var soldier := scene.instantiate() as SoldierGnome
+		if soldier == null:
+			continue
+		# LOD выключен + телесность со скелетами — как у штатного спавна выше.
+		soldier.lod_far_distance = 100000.0
+		soldier.lod_offscreen_half_angle_deg = 90.0
+		soldier.collision_mask |= Layers.ENEMIES
+		add_child(soldier)
+		var ang: float = TAU * float(idx) / float(mix.size())
+		soldier.setup_free(t, stats,
+				room_center + Vector3(cos(ang) * 1.5, 0.5, sin(ang) * 1.5), _banner)
+		if t == ARCHER_TYPE:
+			# С первого кадра под гейтом прицела (до первого тика _wasd_combat
+			# дефолтный false давал 1-2 «левых» выстрела по видимым).
+			soldier.fire_suppressed = true
+			if soldier is ArcherSoldier and wasd_quiver_size > 0:
+				(soldier as ArcherSoldier).setup_quiver(
+						wasd_quiver_size, wasd_quiver_reload, wasd_quiver_delay)
+		elif t == &"pikeman":
+			# Оборона по умолчанию: укол с места, из строя не выходит; клик
+			# при фокусе [1] — удар-хлыст (punch_at, скорость из инспектора).
+			soldier.hold_ground = true
+			soldier.punch_speed = wasd_punch_speed
+			if wasd_stamina_hits > 0:
+				soldier.setup_stamina(wasd_stamina_hits, wasd_stamina_restore, wasd_stamina_delay)
+		elif t == &"worker":
+			_skin_artel(soldier)
+		_squad.add_member(soldier)
+		soldier.destroyed.connect(_on_gnome_died)
+		idx += 1
+	_squad.hold_grid = true
+	_squad.command_hold(room_center, false)
+
+
+## Фокус-группа: выбранная подчиняется ЛКМ, остальные — в обороне. HUD-строка
+## в HintLabel — телеграф выбора (юзер должен видеть, кем рулит).
+func _set_focus_group(g: int) -> void:
+	_focus_group = g
+	var names := {
+		1: "Копейщики — удар по клику",
+		2: "Лучники — полив по ЛКМ",
+		3: "Артель — щит по ПКМ",
+	}
+	var hint := get_node_or_null("HUD/Panel/Rows/HintLabel") as Label
+	if hint != null:
+		hint.text = "Фокус [%d]: %s" % [g, names.get(g, "?")]
+	_refresh_focus_cards()
+
+
+## Стили карточек (как _make_squad_card основной игры: тёмный фон, цветной
+## бордер типа, скругление). Узлы — в .tscn, тут только StyleBox'ы и ссылки.
+func _setup_focus_cards() -> void:
+	_focus_cards.clear()
+	_focus_card_boxes.clear()
+	for i in range(3):
+		var card := get_node_or_null("HUD/FocusCards/Card%d" % (i + 1)) as PanelContainer
+		if card == null:
+			return
+		var box := StyleBoxFlat.new()
+		box.bg_color = Color(0.09, 0.09, 0.13, 0.92)
+		box.border_color = FOCUS_CARD_COLORS[i]
+		box.set_border_width_all(2)
+		box.set_corner_radius_all(4)
+		box.content_margin_left = 8
+		box.content_margin_right = 8
+		box.content_margin_top = 5
+		box.content_margin_bottom = 5
+		card.add_theme_stylebox_override("panel", box)
+		_focus_cards.append(card)
+		_focus_card_boxes.append(box)
+
+
+## Подсветка выбранной карточки (белый бордер + светлее фон) и счётчики живых
+## по типам. Вся группа мертва → карточка гаснет (гномы = видимое HP).
+func _refresh_focus_cards() -> void:
+	if _focus_cards.size() < 3:
+		return
+	var keys := [&"pikeman", ARCHER_TYPE, &"worker"]
+	var totals := [wasd_spearmen, wasd_archers, wasd_artel]
+	var counts := {}
+	if _squad != null:
+		for m in _squad.members:
+			if is_instance_valid(m):
+				counts[m.soldier_type] = int(counts.get(m.soldier_type, 0)) + 1
+	for i in range(3):
+		var card: PanelContainer = _focus_cards[i]
+		var box: StyleBoxFlat = _focus_card_boxes[i]
+		var selected: bool = _focus_group == i + 1
+		var alive: int = int(counts.get(keys[i], 0))
+		box.border_color = Color(1, 1, 1, 0.95) if selected else FOCUS_CARD_COLORS[i]
+		box.bg_color = Color(0.16, 0.15, 0.2, 0.95) if selected else Color(0.09, 0.09, 0.13, 0.92)
+		card.modulate = Color(1, 1, 1, 1.0) if alive > 0 else Color(1, 1, 1, 0.35)
+		var cnt := card.get_node_or_null("V/Count") as Label
+		if cnt != null:
+			cnt.text = "Живых: %d / %d" % [alive, totals[i]]
+
+
+## Блочная моделька артельщика — единый стиль с лучником/копейщиком (фидбек
+## 2026-07-24): жёлтая роба строителя, молоток, заплечная доска. GLB-модель
+## воркера скрываем ТОЛЬКО в данж-группе; в основной игре он как был.
+func _skin_artel(w: SoldierGnome) -> void:
+	var vis := w.get_node_or_null("Visual") as Node3D
+	if vis != null:
+		vis.visible = false
+	var mesh_node := w.get_node_or_null("MeshInstance3D") as MeshInstance3D
+	if mesh_node != null:
+		mesh_node.visible = false
+	var holder := Node3D.new()
+	holder.position = Vector3(0, -0.4, 0)
+	w.add_child(holder)
+	var cloth := _artel_mat(Color(0.85, 0.66, 0.2))
+	var skin := _artel_mat(Color(0.85, 0.7, 0.55))
+	var wood := _artel_mat(Color(0.3, 0.2, 0.12))
+	var steel := _artel_mat(Color(0.72, 0.74, 0.8))
+	_artel_box(holder, Vector3(0.34, 0.5, 0.26), Vector3(0, 0.45, 0), cloth)      # тело
+	_artel_box(holder, Vector3(0.26, 0.26, 0.24), Vector3(0, 0.82, 0), skin)      # голова
+	_artel_box(holder, Vector3(0.05, 0.55, 0.05), Vector3(0.24, 0.6, 0), wood)    # рукоять молотка
+	_artel_box(holder, Vector3(0.16, 0.1, 0.1), Vector3(0.24, 0.92, 0), steel)    # боёк молотка
+	_artel_box(holder, Vector3(0.3, 0.42, 0.06), Vector3(-0.2, 0.55, 0.14), wood) # заплечная доска
+
+
+func _artel_mat(c: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = c
+	m.roughness = 0.85
+	return m
+
+
+func _artel_box(parent: Node3D, size: Vector3, pos: Vector3, mat: StandardMaterial3D) -> void:
+	var bm := BoxMesh.new()
+	bm.size = size
+	bm.material = mat
+	var mi := MeshInstance3D.new()
+	mi.mesh = bm
+	mi.position = pos
+	parent.add_child(mi)
+
+
 func _process(_dt: float) -> void:
 	# Superhot: контрол, прицел, тайм-скейл и камера — на РЕНДЕР-частоте.
 	# _process идёт каждый отрисованный кадр независимо от Engine.time_scale
@@ -411,6 +680,11 @@ func _process(_dt: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if wasd_mode:
+		# ТРЕТЬЯ модель: WASD-тело + курсор-прицел + ЛКМ-полив + ПКМ-щит.
+		# Мир в реальном темпе, без time_scale — обычный физтик.
+		_wasd_physics(delta)
+		return
 	if superhot_mode:
 		# Superhot: тут ТОЛЬКО мир (ловушки/крафт/волны) на scaled-темпе —
 		# замерзает вместе со временем, как и должен. Контрол, прицел,
@@ -1490,6 +1764,25 @@ func _unhandled_input(event: InputEvent) -> void:
 		if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			_click_pending = true
 			return
+	# WASD: ПКМ = щит артельщика; КЛИК ЛКМ = удар-кулак копейщиков при фокусе
+	# [1] (событие — не теряется); 1/2/3 = фокус-группа (спелл-экшены свободны).
+	if wasd_mode and not _game_over:
+		var wb := event as InputEventMouseButton
+		if wb != null and wb.pressed and wb.button_index == MOUSE_BUTTON_RIGHT:
+			_shield_pending = true
+			return
+		if wb != null and wb.pressed and wb.button_index == MOUSE_BUTTON_LEFT:
+			_click_pending = true
+			return
+		if event.is_action_pressed(&"equip_fireball"):
+			_set_focus_group(1)
+			return
+		if event.is_action_pressed(&"equip_firestorm"):
+			_set_focus_group(2)
+			return
+		if event.is_action_pressed(&"equip_mine_scatter"):
+			_set_focus_group(3)
+			return
 	var key := event as InputEventKey
 	if key == null or not key.pressed or key.echo:
 		return
@@ -1725,6 +2018,220 @@ func _aim_target(c: Vector3) -> Node3D:
 	return best
 
 
+## WASD-модель, весь кадр: движение тела, полив, щит, мировые тики, камера.
+## Хвост тиков продублирован с drift/superhot осознанно — три модели остаются
+## независимыми путями, ломать одну ради другой нельзя.
+func _wasd_physics(delta: float) -> void:
+	var cursor: Vector3 = _cursor_ground_point()
+	_wasd_move(delta)
+	_wasd_combat(Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not _game_over, cursor)
+	if _shield_pending:
+		_shield_pending = false
+		_try_place_shield(cursor)
+	_tick_cargo(delta)
+	_tick_cargo_snap(delta)
+	_tick_door_puzzle(delta)
+	_tick_spikes(delta)
+	_tick_apparatus(delta)
+	_tick_bomb(delta)
+	_tick_barricades()
+	if not _game_over:
+		_update_active_room()
+		if _active_room >= 0:
+			_wave_timer -= delta
+			if _wave_timer <= 0.0:
+				_wave_timer = wave_interval
+				_spawn_wave()
+	_update_camera(delta, cursor)
+
+
+## Тело группы: WASD двигает точку строя, гномы штатно едут за ней черепахой
+## (W = вглубь анфилады, −Z). Поводок WASD_LEASH: упёрлись в стену — точка не
+## уезжает от строя в бесконечность. Отпустил — точка паркуется на центроиде
+## (мёртвая зона 0.75м, тот же анти-фидбек-луп, что у drift-пути).
+func _wasd_move(delta: float) -> void:
+	if _squad == null:
+		return
+	var v: Vector2 = Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
+	var c: Vector3 = _squad.compute_center()
+	if v.length_squared() > 0.0001:
+		var hp2: Vector3 = _squad.hold_position + Vector3(v.x, 0.0, v.y) * wasd_speed * delta
+		hp2.x = clampf(hp2.x, room_center.x - room_half + 2.0, room_center.x + room_half - 2.0)
+		hp2.z = clampf(hp2.z, cursor_z_min, cursor_z_max)
+		if c != Vector3.INF:
+			var off := Vector3(hp2.x - c.x, 0.0, hp2.z - c.z)
+			if off.length() > WASD_LEASH:
+				off = off.normalized() * WASD_LEASH
+				hp2 = Vector3(c.x + off.x, 0.0, c.z + off.z)
+		_squad.hold_position = hp2
+		_banner.global_position = hp2
+	elif c != Vector3.INF:
+		var dxh: float = c.x - _squad.hold_position.x
+		var dzh: float = c.z - _squad.hold_position.z
+		if dxh * dxh + dzh * dzh > 0.5625:
+			_squad.hold_position = Vector3(c.x, 0.0, c.z)
+			_banner.global_position = _squad.hold_position
+
+
+## Полив: пока ЛКМ зажат — лучники стреляют В НАПРАВЛЕНИИ курсора своим темпом
+## (try_suppressive_fire: баллистика в точку, цель-нода НЕ нужна — стрелы летят
+## в пустоту и бьют что заденут). Скелет на луче лишь УТОЧНЯЕТ точку (стрелы
+## сходятся в него) и красит прицел. Авто-конус лучника заглушен ВСЕГДА
+## (fire_suppressed) — огонь строго по прицелу игрока, «сам увидел — сам палит»
+## в этой модели выключено. Копейщики мили с детектом-вплотную — их гейт не
+## касается; артельщик не воюет. Полив ограничен КОЛЧАНОМ (wasd_quiver_size):
+## пустой колчан молчит и не перезаряжается, пока ЛКМ зажат — см. блок
+## «КОЛЧАН-ОБОЙМА» в ArcherSoldier.
+func _wasd_combat(lmb: bool, cursor: Vector3) -> void:
+	if _squad == null:
+		return
+	var c: Vector3 = _squad.compute_center()
+	var tgt: Node3D = null
+	var aim: Vector3 = Vector3.INF
+	var aim_dir: Vector3 = Vector3.ZERO
+	if c != Vector3.INF and cursor != Vector3.INF:
+		var to_cur := Vector3(cursor.x - c.x, 0.0, cursor.z - c.z)
+		if to_cur.length_squared() > 0.01:
+			aim_dir = to_cur.normalized()
+		tgt = _ray_target(c, cursor)
+		if tgt != null:
+			aim = (tgt as Node3D).global_position
+		elif aim_dir != Vector3.ZERO:
+			# Точка полива на луче курсора, не дальше дальности; чуть над
+			# полом — плоская дуга баллистики, стрела метёт по направлению.
+			aim = Vector3(c.x, 0.4, c.z) + aim_dir * minf(to_cur.length(), gnome_attack_range)
+	# ВСЯ ГРУППА разворачивается к курсору: строй (черепаха передом — ряды
+	# грида поперёк tail_dir, копейщики в ряду 0) и тела (face_override —
+	# смотрят на прицел и стоя, и на бегу). Строй — со сглаживанием: резкий
+	# флип tail_dir телепортирует слоты, гномы бегали бы кругами за курсором.
+	if aim_dir != Vector3.ZERO:
+		if _squad.tail_dir == Vector3.ZERO:
+			_squad.tail_dir = aim_dir
+		else:
+			_squad.tail_dir = _squad.tail_dir.slerp(aim_dir, minf(1.0, get_physics_process_delta_time() * 3.5)).normalized()
+	# Фокус-группа: выбранная подчиняется ЛКМ, остальные — в обороне.
+	var archers_focused: bool = _focus_group == 2
+	# Копейщики: КЛИК (не hold) = удар-кулак по цели прицела — вылет→укол→
+	# отскок в строй (SoldierGnome.punch_at). ⛔ hold-штурм через полный FSM
+	# отвергнут («не импактно и не управляемо, должен быть УДАР»).
+	var spears_punch: bool = _focus_group == 1 and _click_pending and tgt != null
+	for m in _squad.members:
+		if not is_instance_valid(m):
+			continue
+		m.face_override = aim_dir
+		if m is ArcherSoldier:
+			# Выбраны: авто-конус глушён, огонь ТОЛЬКО поливом по прицелу —
+			# полная дальность и штатный темп. Не выбраны: САМООБОРОНА В УПОР —
+			# авто-конус жив (proximity-override бьёт подошедших даже сбоку),
+			# но дальность срезана до wasd_defense_range и кулдаун растянут:
+			# дальних не трогают, фокус на луках = осознанный выбор.
+			m.fire_suppressed = archers_focused
+			if archers_focused:
+				m.attack_range = gnome_attack_range
+				m.attack_cooldown_min = gnome_cooldown_min
+				m.attack_cooldown_max = gnome_cooldown_max
+				if lmb and aim != Vector3.INF and m.has_method(&"try_suppressive_fire"):
+					m.call(&"try_suppressive_fire", aim)
+			else:
+				m.attack_range = wasd_defense_range
+				m.attack_cooldown_min = gnome_cooldown_min * wasd_defense_cd_mult
+				m.attack_cooldown_max = gnome_cooldown_max * wasd_defense_cd_mult
+		elif m.soldier_type == &"pikeman":
+			# Оборона ВСЕГДА (укол с места, автоскан только вплотную);
+			# удар-кулак — отдельный приказ поверх, обороне не мешает.
+			m.hold_ground = true
+			if spears_punch and m.has_method(&"punch_at"):
+				m.call(&"punch_at", tgt)
+	_click_pending = false
+	_update_wasd_visuals(c, cursor, lmb and tgt != null)
+
+
+## Цель полива: скелет в дальности лучника от центра, в секторе прицела
+## (dot ≥ wasd_aim_dot ≈ ±60°), из подходящих — ближайший к ЛУЧУ курсора
+## (перпендикуляр до линии). Курсор ведёт огонь как стик: точного наведения
+## на тело не нужно, но направление решает.
+func _ray_target(c: Vector3, cursor: Vector3) -> Node3D:
+	var dir := Vector3(cursor.x - c.x, 0.0, cursor.z - c.z)
+	if dir.length_squared() < 0.01:
+		return null
+	dir = dir.normalized()
+	var range_sq: float = gnome_attack_range * gnome_attack_range
+	var best: Node3D = null
+	var best_off: float = INF
+	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if not is_instance_valid(sk) or not (sk is Node3D):
+			continue
+		var to := Vector3((sk as Node3D).global_position.x - c.x, 0.0,
+				(sk as Node3D).global_position.z - c.z)
+		var dsq: float = to.length_squared()
+		if dsq > range_sq or dsq < 0.0001:
+			continue
+		if dir.dot(to / sqrt(dsq)) < wasd_aim_dot:
+			continue
+		var off: float = (to - dir * to.dot(dir)).length()
+		if off < best_off:
+			best_off = off
+			best = sk
+	return best
+
+
+## ПКМ: артельщик выставляет щит-плашку между группой и курсором (поперёк
+## направления). Живых щитов не больше живых артельщиков — сломали/умер мастер
+## → слот меняется. Щит ломаем скелетами-мили (ArtelShield: TARGET_GROUP).
+func _try_place_shield(cursor: Vector3) -> void:
+	if _squad == null:
+		return
+	var c: Vector3 = _squad.compute_center()
+	if c == Vector3.INF or cursor == Vector3.INF:
+		return
+	var artel: int = 0
+	for m in _squad.members:
+		if is_instance_valid(m) and m.soldier_type == &"worker":
+			artel += 1
+	_shields = _shields.filter(func(s): return is_instance_valid(s))
+	if artel <= 0 or _shields.size() >= artel:
+		return
+	var dir := Vector3(cursor.x - c.x, 0.0, cursor.z - c.z)
+	if dir.length_squared() < 0.01:
+		dir = Vector3.FORWARD
+	dir = dir.normalized()
+	var shield := ArtelShield.new()
+	add_child(shield)
+	shield.setup(wasd_shield_size, wasd_shield_hp)
+	shield.global_position = Vector3(c.x, wasd_shield_size.y * 0.5, c.z) + dir * wasd_shield_dist
+	shield.rotation.y = atan2(dir.x, dir.z)
+	_shields.append(shield)
+	AoeVisual.spawn_ground_ring(self,
+			Vector3(shield.global_position.x, 0.0, shield.global_position.z),
+			1.2, 0.4, Color(0.9, 0.7, 0.3, 0.9))
+
+
+## Прицел WASD: линия от центра в сторону курсора (обрезана по дальности
+## лучника), красная — полив реально бьёт (цель под лучом есть).
+func _update_wasd_visuals(c: Vector3, cursor: Vector3, hot: bool) -> void:
+	if _cmd_line == null or _cmd_ring == null or c == Vector3.INF or cursor == Vector3.INF:
+		return
+	var to := Vector3(cursor.x - c.x, 0.0, cursor.z - c.z)
+	var d: float = to.length()
+	if d > gnome_attack_range and d > 0.001:
+		to *= gnome_attack_range / d
+	var tip := Vector3(c.x + to.x, 0.0, c.z + to.z)
+	_cmd_line.visible = true
+	_cmd_ring.visible = true
+	_cmd_ring.global_position = Vector3(tip.x, 0.05, tip.z)
+	AoeVisual.update_ground_line(_cmd_line, Vector3(c.x, 0.0, c.z), tip)
+	var col: Color = Color(1.0, 0.32, 0.28, 1.0) if hot else CMD_COLOR
+	var mat := _cmd_line.material_override as StandardMaterial3D
+	if mat != null:
+		mat.albedo_color = col
+		mat.emission = Color(col.r, col.g, col.b, 1.0)
+		mat.emission_energy_multiplier = 3.5 if hot else 2.0
+	var rmat := _cmd_ring.material_override as StandardMaterial3D
+	if rmat != null:
+		rmat.albedo_color = col
+		rmat.emission = Color(col.r, col.g, col.b, 1.0)
+
+
 func _exit_tree() -> void:
 	# Не утащить замедленное время в другие сцены/редактор.
 	if superhot_mode:
@@ -1821,6 +2328,7 @@ func _alive_gnomes() -> int:
 func _on_gnome_died() -> void:
 	print("[DungeonSandbox] гном пал, осталось %d" % _alive_gnomes())
 	_update_labels()
+	_refresh_focus_cards()
 	if _alive_gnomes() <= 0 and not _game_over:
 		_game_over = true
 		print("[DungeonSandbox] отряд погиб (волна %d, убито %d)" % [_wave_number, _kills])

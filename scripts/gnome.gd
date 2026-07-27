@@ -138,6 +138,11 @@ enum IdlePhase { GOING_TO_FIRE, LIGHTING, AT_FIRE, WANDERING, LOOKING_AROUND }
 ## через override _should_apply_separation — иначе сошли бы со слотов.
 @export_range(0.0, 2.0) var separation_strength: float = 0.3
 
+## Внешний разворот тела к ПРИЦЕЛУ (WASD-данж: вся группа смотрит на курсор,
+## бежит куда угодно — twin-stick). ZERO = выключено (дефолт, осн. игра не
+## тронута) — тогда визуал крутится по направлению движения, как всегда.
+var face_override: Vector3 = Vector3.ZERO
+
 @export_group("Behaviour")
 ## Дальность зрения гнома для XP-орбов (см. _scan_orb). Pile-ам vision_radius
 ## не нужен — гном ищет ближайший глобально, без cap'а. Орбы же исчезают за
@@ -853,6 +858,20 @@ func _physics_process(delta: float) -> void:
 ## (_visual == обёртка Visual): у капсулы-fallback лица нет, а у Pikeman'а
 ## поверх капсулы стоит свой FacingIndicator со своей логикой.
 func _update_visual_facing(delta: float) -> void:
+	# Прицел-override (WASD-данж): разворачиваем КОРЕНЬ тела на прицел КАЖДЫЙ
+	# кадр ПОСЛЕ движения. Движенческие look_at (по курсу) разбросаны по
+	# SoldierGnome и срабатывают раньше в тике — без переписи поверх гном на
+	# бегу смотрел по ходу, а должен пятиться/страфить, стреляя в курсор.
+	# GLB-обёртке при этом гасим её собственный довод к нулю (иначе двойной
+	# поворот: корень на прицел + обёртка по velocity).
+	if face_override.length_squared() > 0.0001:
+		# ЖЁСТКО, не lerp: движенческие look_at сбрасывают yaw КАЖДЫЙ кадр, и
+		# сглаживание отсюда никогда не догоняло прицел (застревало на ~18%
+		# пути «по курсу»). Сам прицел непрерывен (курсор), рывков не даёт.
+		rotation.y = atan2(-face_override.x, -face_override.z)
+		if _visual != null and _visual != _mesh:
+			_visual.rotation.y = lerp_angle(_visual.rotation.y, 0.0, minf(1.0, delta * 12.0))
+		return
 	if _visual == null or _visual == _mesh:
 		return
 	var vx: float = velocity.x

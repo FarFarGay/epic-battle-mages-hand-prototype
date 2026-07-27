@@ -165,6 +165,22 @@ var _target_scan_timer: float = 0.0
 var _alarm_target: Node3D = null
 var _alarm_until_msec: int = 0
 
+## --- КОЛЧАН-ОБОЙМА (данж-WASD, 2026-07-27) -----------------------------------
+## Конечный боезапас как ритм боя: полив жжёт стрелы, перезарядка тикает только
+## в ПАУЗАХ огня. 0 = выключено (бесконечные стрелы) — основная игра (гарнизон/
+## крыша башни/поле) живёт по-старому; данж-сцена включает через [setup_quiver].
+## Колчан отображается стрелами НА СПИНЕ гнома — пустеет визуально, по принципу
+## «нет полоски HP — гномы показывают возможности».
+var quiver_max: int = 0
+## Пауза после последнего выстрела (или сухого спуска) до старта перезарядки, с.
+var quiver_reload_delay: float = 0.6
+## Темп перезарядки: секунд на одну стрелу.
+var quiver_reload_per_arrow: float = 0.3
+var _quiver: int = 0
+var _quiver_idle: float = 0.0   # сколько секунд не стреляли (гейт перезарядки)
+var _quiver_regen: float = 0.0  # аккумулятор времени перезарядки
+var _quiver_shafts: Array = []  # MeshInstance3D стрел на спине (visible по счёту)
+
 
 func _ready() -> void:
 	super._ready()
@@ -302,6 +318,8 @@ func _try_fire_at_resolved_target(delta: float) -> bool:
 		return false  # несёт командный груз — руки заняты, лук за спиной
 	if fire_suppressed:
 		return false  # step-Superhot: шаг не наведён на врага → огонь молчит
+	if not has_arrows():
+		return false  # колчан пуст — авто-путь молчит, перезарядка идёт (idle не трогаем)
 	if _attack_cd > 0.0:
 		return false
 	var target: Node3D = _resolve_target(delta)
@@ -572,6 +590,31 @@ func volley_fire_at(aim_pos: Vector3, dmg: float) -> void:
 	arrow.speed = arrow_speed
 	arrow.shooter_ref = weakref(self)  # kill-credit → XP (см. credit_kill)
 	arrow.setup(global_position + arrow_spawn_offset, aim_pos)
+	_quiver_spend()
+
+
+## Полив по направлению (WASD-данж): выстрел В ТОЧКУ на ШТАТНОМ кулдауне —
+## цель-нода не нужна, стрела летит баллистикой в aim_pos и бьёт что заденет.
+## Внешний приказ сцены (ЛКМ-прицел игрока); авто-конус в этом режиме заглушен
+## fire_suppressed, поэтому здесь его НЕ проверяем — иначе полив молчал бы.
+func try_suppressive_fire(aim_pos: Vector3) -> bool:
+	if hauling:
+		return false
+	if not has_arrows():
+		# Сухой спуск: зажатый ЛКМ на пустом колчане ДЕРЖИТ перезарядку на нуле
+		# (палец на гашетке пустого магазина). Решение игрока «отпустить полив»
+		# и есть старт перезарядки — ядро ритма обоймы.
+		_quiver_idle = 0.0
+		return false
+	if _attack_cd > 0.0:
+		return false
+	var to := Vector3(aim_pos.x - global_position.x, 0.0, aim_pos.z - global_position.z)
+	var dist: float = to.length()
+	if dist > 0.001:
+		_face_horizontal(to, dist)
+	volley_fire_at(aim_pos, randf_range(attack_damage_min, attack_damage_max) * damage_multiplier())
+	_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max) * cooldown_scale()
+	return true
 
 
 ## Спавнит стрелу с разбросом по uniform-в-круге. Опыт +1 на каждый выстрел.
@@ -602,10 +645,100 @@ func _fire_at(target: Node3D) -> void:
 	arrow.shooter_ref = weakref(self)  # kill-credit → XP (см. credit_kill)
 	arrow.setup(spawn, aim_pos)
 	_shots_fired += 1
+	_quiver_spend()
 	if _squad != null:
 		_squad.add_charge(1.0)
 	if debug_log and LogConfig.master_enabled:
 		print("[ArcherSoldier:%s] выстрел в %s (dmg=%.1f, shots=%d)" % [name, target.name, damage, _shots_fired])
+
+
+# --- КОЛЧАН-ОБОЙМА: методы -------------------------------------------------------
+
+
+## Включает колчан (данж-WASD): size стрел, полный при старте, + визуал на спине.
+func setup_quiver(size: int, per_arrow: float, delay: float) -> void:
+	quiver_max = maxi(size, 0)
+	_quiver = quiver_max
+	quiver_reload_per_arrow = per_arrow
+	quiver_reload_delay = delay
+	_build_quiver_visual()
+
+
+## true = можно стрелять (колчан выключен или стрелы есть).
+func has_arrows() -> bool:
+	return quiver_max <= 0 or _quiver > 0
+
+
+## Стрела ушла: минус одна, перезарядка откатывается на ноль. No-op без колчана.
+func _quiver_spend() -> void:
+	if quiver_max <= 0:
+		return
+	_quiver = maxi(_quiver - 1, 0)
+	_quiver_idle = 0.0
+	_quiver_regen = 0.0
+	_refresh_quiver_visual()
+
+
+## Перезарядка: после [quiver_reload_delay] тишины +1 стрела каждые
+## [quiver_reload_per_arrow] секунд. Вызывается каждый физтик из _physics_process.
+func _quiver_tick(delta: float) -> void:
+	if quiver_max <= 0 or _quiver >= quiver_max:
+		return
+	_quiver_idle += delta
+	if _quiver_idle < quiver_reload_delay:
+		return
+	_quiver_regen += delta
+	while _quiver_regen >= quiver_reload_per_arrow and _quiver < quiver_max:
+		_quiver_regen -= quiver_reload_per_arrow
+		_quiver += 1
+		_refresh_quiver_visual()
+	if _quiver >= quiver_max:
+		_quiver_regen = 0.0
+
+
+## Веер стрел на спине: тёмная плашка-колчан + quiver_max шафтов с ярким
+## оперением. Пустеет справа налево при трате, заполняется обратно на
+## перезарядке. Строится на [_visual_holder] (боксовый скин из _apply_visual);
+## без holder'а (теоретический вызов до скина) колчан работает без визуала.
+func _build_quiver_visual() -> void:
+	for s in _quiver_shafts:
+		if is_instance_valid(s):
+			s.queue_free()
+	_quiver_shafts.clear()
+	if _visual_holder == null or quiver_max <= 0:
+		return
+	var leather := _arch_mat(Color(0.32, 0.22, 0.12))
+	var shaft_mat := _arch_mat(Color(0.55, 0.42, 0.25))
+	var fletch_mat := _arch_mat(Color(0.9, 0.25, 0.18))
+	_visual_mats.append(leather)
+	_visual_mats.append(shaft_mat)
+	_visual_mats.append(fletch_mat)
+	_arch_box(_visual_holder, Vector3(0.24, 0.3, 0.06), Vector3(-0.02, 0.5, 0.17), leather)
+	var n: int = quiver_max
+	for i in range(n):
+		var t: float = 0.5 if n <= 1 else float(i) / float(n - 1)
+		var shaft := _arch_box(_visual_holder, Vector3(0.022, 0.36, 0.022),
+				Vector3(lerpf(-0.11, 0.11, t), 0.72, 0.18), shaft_mat)
+		shaft.rotation.x = 0.14
+		shaft.rotation.z = lerpf(-0.12, 0.12, t)
+		var fletch := MeshInstance3D.new()
+		var fb := BoxMesh.new()
+		fb.size = Vector3(0.05, 0.07, 0.05)
+		fletch.mesh = fb
+		fletch.material_override = fletch_mat
+		fletch.position = Vector3(0, 0.19, 0)
+		fletch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		shaft.add_child(fletch)
+		_quiver_shafts.append(shaft)
+	_refresh_quiver_visual()
+
+
+## Стрелы №0.._quiver-1 видимы, остальные скрыты (шафт прячет и своё оперение).
+func _refresh_quiver_visual() -> void:
+	for i in range(_quiver_shafts.size()):
+		var s: MeshInstance3D = _quiver_shafts[i]
+		if is_instance_valid(s):
+			s.visible = i < _quiver
 
 
 # --- Новая модель лучника (Фаза A): коробочный лучник вместо капсулы. Перекрашивает
@@ -658,7 +791,7 @@ func _arch_mat(c: Color) -> StandardMaterial3D:
 	return m
 
 
-func _arch_box(parent: Node3D, size: Vector3, pos: Vector3, mat: StandardMaterial3D) -> void:
+func _arch_box(parent: Node3D, size: Vector3, pos: Vector3, mat: StandardMaterial3D) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	var b := BoxMesh.new()
 	b.size = size
@@ -667,6 +800,7 @@ func _arch_box(parent: Node3D, size: Vector3, pos: Vector3, mat: StandardMateria
 	mi.position = pos
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
+	return mi
 
 
 # --- ГАРНИЗОН СТЕН (барачные лучники) ---------------------------------------------
@@ -725,6 +859,8 @@ func _grn_should_garrison() -> bool:
 
 
 func _physics_process(delta: float) -> void:
+	# Колчан перезаряжается в любом состоянии (no-op при quiver_max=0).
+	_quiver_tick(delta)
 	# Носимое оружие — приоритет над всем (squad-команды/гарнизон не трогают
 	# несомого и установленного лучника; позицией владеет рука/башня).
 	if _hand_carried:

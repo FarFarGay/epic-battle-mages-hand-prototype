@@ -127,6 +127,43 @@ const HAUL_SPEED_SCALE := 0.8
 ## ТОЛЬКО когда шаг наведён на врага», чтобы отряд не палил почём зря по сторонам.
 var fire_suppressed: bool = false
 
+## ОБОРОНА С МЕСТА (WASD-данж, 2026-07-24): мили-атака БЕЗ выхода из строя —
+## ни APPROACH-разгона, ни LUNGE-рывка: цель дальше attack_range игнорируется,
+## в attack_range — замах и укол на месте, сразу в RECOVERY (без заноса).
+## Дефолт false → штатный FSM с рывками, основная игра не тронута.
+var hold_ground: bool = false
+## УДАР-ХЛЫСТ (WASD-данж, фокус-копейщики по клику): вылет к цели на
+## punch_speed → укол → рывок ОБРАТНО в строй. Ни APPROACH-разгона, ни
+## DRIFT-заноса, ни отдышки — щелчок хлыстом, «классический мили-замах».
+## Точка возврата = слот строя (живой, движется с группой); старт — фолбэк.
+var _punch_return: Vector3 = Vector3.ZERO
+## Скорость вылета/отскока (м/с). Песочница ставит свою (wasd_punch_speed);
+## 13 — умеренный дефолт на случай других потребителей.
+var punch_speed: float = 13.0
+## Антиципация удара: короткое сжатие+отдёргивание НАЗАД перед вылетом.
+## Правило импакта: глаз должен прочитать «сейчас выстрелит» — тогда сам
+## выстрел кажется вдвое резче. 0.06с не ощущается как задержка.
+var _punch_windup: float = 0.0
+const PUNCH_WINDUP_TIME := 0.06
+## Предохранитель вылета: цель телепортнулась/умерла далеко — разворот назад.
+const PUNCH_MAX_DIST := 12.0
+
+## СТАМИНА УДАРОВ (данж-WASD, 2026-07-28): конечный запас уколов/панчей —
+## зеркало колчана лучника, ритм «поработал копьями → отдышка → снова», гонит
+## переключение фокус-групп. Тратят И панч по клику, И оборонный укол с места;
+## восстановление тикает только в паузах ударов. 0 = выключено (основная игра
+## и гарнизон стен не тронуты) — данж включает через [setup_stamina]. Запас
+## виден ПИПСАМИ на спине (янтарные заряды) — «гномы показывают возможности».
+var stamina_max: int = 0
+## Пауза тишины после удара (или сухого клика) до старта восстановления, с.
+var stamina_reload_delay: float = 0.9
+## Темп восстановления: секунд на один удар.
+var stamina_reload_per_hit: float = 0.6
+var _stamina: int = 0
+var _stamina_idle: float = 0.0   # сколько секунд не бил (гейт восстановления)
+var _stamina_regen: float = 0.0  # аккумулятор времени восстановления
+var _stamina_pips: Array = []    # MeshInstance3D зарядов на спине
+
 ## Трение карва, 1/с: в скольжении величина скорости не рубится лерпом
 ## (карв — можно кружить вокруг цели без ПКМ), а СХОДИТСЯ к желаемой с этим
 ## темпом. Голый карв без трения разлетался по карте (откат), голый лерп
@@ -321,7 +358,7 @@ func force_stop() -> void:
 ##  - DRIFT: занос. Velocity скидывается с lunge_speed по slight ease-in
 ##    кривой — слабый начальный спад «в заносе», потом гасит до нуля.
 ##  - RECOVERY: стоит, отдыхает, уязвим. После — READY.
-enum CombatState { READY, APPROACH, WINDUP, LUNGE, DRIFT, RECOVERY }
+enum CombatState { READY, APPROACH, WINDUP, LUNGE, DRIFT, RECOVERY, PUNCH_OUT, PUNCH_BACK }
 
 ## Тип солдата из SOLDIER_CATALOG. Ставится в setup_soldier.
 var soldier_type: StringName = &""
@@ -1257,6 +1294,18 @@ func _tick_charge_state(delta: float) -> void:
 				_charge_dir = dir_w  # фиксируем направление на момент release
 			_windup_remaining -= delta
 			if _windup_remaining <= 0.0:
+				if hold_ground:
+					# Оборона с места: укол БЕЗ рывка — цель ещё в пределах
+					# копья (+допуск на её шаг) → удар; ни LUNGE-пролёта, ни
+					# заноса. RECOVERY КОРОТКИЙ (не штатные 0.5с — те для
+					# отдышки после прыжка): защитный укол в упор должен
+					# ощущаться мгновенным, темп держит только _attack_cd.
+					if dist_w <= attack_range + 0.4:
+						_strike_at(_charge_target)
+						_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max)
+						_stamina_spend()  # оборонный укол дышит из того же запаса
+					_enter_recovery(0.12)
+					return
 				# Взрыв: переход в LUNGE с уже коректным направлением. Snap-tween
 				# на lunge-позу за POSE_LUNGE_TIME (40мс) — это и есть «выстрел».
 				_charge_start_pos = global_position
@@ -1304,6 +1353,180 @@ func _tick_charge_state(delta: float) -> void:
 			if _recovery_remaining <= 0.0:
 				_combat_state = CombatState.READY
 				_charge_target = null
+		CombatState.PUNCH_OUT:
+			if not is_instance_valid(_charge_target):
+				_tween_pose_to(POSE_NEUTRAL, POSE_RESTORE_TIME)
+				_combat_state = CombatState.PUNCH_BACK
+				return
+			var to_p := Vector3(
+				_charge_target.global_position.x - global_position.x,
+				0.0,
+				_charge_target.global_position.z - global_position.z,
+			)
+			var dist_p: float = to_p.length()
+			if dist_p > 0.001:
+				_charge_dir = to_p / dist_p
+				look_at(global_position + _charge_dir, Vector3.UP)
+			# Фаза ЗАМАХА (антиципация): сжат, микро-отдёргивание НАЗАД —
+			# «натянул хлыст». Релиз: поза-выстрел (вытянут по ходу) + полная
+			# скорость с первого кадра.
+			if _punch_windup > 0.0:
+				_punch_windup -= delta
+				velocity = -_charge_dir * 3.0
+				if _punch_windup <= 0.0:
+					_tween_pose_to(POSE_LUNGE, POSE_LUNGE_TIME)
+				return
+			velocity = _charge_dir * punch_speed
+			if dist_p <= attack_range:
+				# КОНТАКТ: укол + хитстоп на выжившем (клик игрока = импакт-
+				# сайт) + искры в точке удара; и СРАЗУ отскок, без хвоста.
+				var hit_pos: Vector3 = _charge_target.global_position
+				_strike_at(_charge_target)
+				if is_instance_valid(_charge_target):
+					HitStop.fire_for(_charge_target, 0.05, _charge_dir)
+				AoeVisual.spawn_pulse_sparks(get_parent(),
+						hit_pos + Vector3.UP * 0.5, 0.9, 9.0)
+				_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max)
+				_tween_pose_to(POSE_NEUTRAL, POSE_RESTORE_TIME)
+				_combat_state = CombatState.PUNCH_BACK
+			elif global_position.distance_to(_punch_return) > PUNCH_MAX_DIST:
+				_tween_pose_to(POSE_NEUTRAL, POSE_RESTORE_TIME)
+				_combat_state = CombatState.PUNCH_BACK
+		CombatState.PUNCH_BACK:
+			# Отскок в СТРОЙ: цель возврата — живой слот (едет с группой),
+			# фолбэк — точка старта удара.
+			var back_goal: Vector3 = _punch_return
+			if _squad != null:
+				var center: Vector3 = _resolve_squad_center()
+				if center != Vector3.INF:
+					back_goal = _squad.target_for_member(self, center)
+			var back := Vector3(back_goal.x - global_position.x, 0.0, back_goal.z - global_position.z)
+			var dist_b: float = back.length()
+			if dist_b <= 0.6:
+				velocity = Vector3.ZERO
+				_combat_state = CombatState.READY
+				_charge_target = null
+			else:
+				var dir_b := back / dist_b
+				look_at(global_position + dir_b, Vector3.UP)
+				velocity = dir_b * punch_speed
+
+
+## УДАР-КУЛАК по приказу игрока (WASD-данж): вылет→укол→отскок в строй, всё
+## на punch_speed без фаз штатного чарджа. Игнорируется, если юнит уже в бою
+## или несёт груз. hold_ground удару не мешает — это ПРИКАЗ, не автоскан.
+## Стамина: трата на ВЫЛЕТЕ (клик = обязательство, промах тоже стоит);
+## сухой клик держит восстановление на нуле — как сухой спуск лучника.
+func punch_at(target: Node3D) -> void:
+	if _combat_state != CombatState.READY:
+		return
+	if hauling or target == null or not is_instance_valid(target):
+		return
+	if not has_stamina():
+		_stamina_idle = 0.0
+		return
+	_stamina_spend()
+	_charge_target = target
+	_punch_return = global_position
+	_punch_windup = PUNCH_WINDUP_TIME
+	# Антиципация: корпус сжался (coiled) лицом к цели — «зарядился».
+	var to_t := Vector3(target.global_position.x - global_position.x, 0.0,
+			target.global_position.z - global_position.z)
+	if to_t.length_squared() > 0.001:
+		_charge_dir = to_t.normalized()
+		look_at(global_position + _charge_dir, Vector3.UP)
+	_tween_pose_to(POSE_WINDUP, 0.04)
+	_combat_state = CombatState.PUNCH_OUT
+
+
+# --- СТАМИНА УДАРОВ: методы (поля — рядом с punch_speed выше) ----------------------
+
+
+func _physics_process(delta: float) -> void:
+	# Стамина восстанавливается в любом состоянии (no-op при stamina_max=0).
+	# ⚠ Гарнизонные ветки подклассов (стена/крыша) уходят раньше super — там
+	# стамина всегда выключена, тик не нужен.
+	_stamina_tick(delta)
+	super._physics_process(delta)
+
+
+## Включает стамину (данж-WASD): size ударов, полный запас, пипсы на спине.
+func setup_stamina(size: int, per_hit: float, delay: float) -> void:
+	stamina_max = maxi(size, 0)
+	_stamina = stamina_max
+	stamina_reload_per_hit = per_hit
+	stamina_reload_delay = delay
+	_build_stamina_pips()
+
+
+## true = можно бить (стамина выключена или удары остались).
+func has_stamina() -> bool:
+	return stamina_max <= 0 or _stamina > 0
+
+
+## Удар ушёл: минус один, восстановление откатывается на ноль. No-op без стамины.
+func _stamina_spend() -> void:
+	if stamina_max <= 0:
+		return
+	_stamina = maxi(_stamina - 1, 0)
+	_stamina_idle = 0.0
+	_stamina_regen = 0.0
+	_refresh_stamina_pips()
+
+
+## Восстановление: после [stamina_reload_delay] без ударов +1 удар каждые
+## [stamina_reload_per_hit] секунд.
+func _stamina_tick(delta: float) -> void:
+	if stamina_max <= 0 or _stamina >= stamina_max:
+		return
+	_stamina_idle += delta
+	if _stamina_idle < stamina_reload_delay:
+		return
+	_stamina_regen += delta
+	while _stamina_regen >= stamina_reload_per_hit and _stamina < stamina_max:
+		_stamina_regen -= stamina_reload_per_hit
+		_stamina += 1
+		_refresh_stamina_pips()
+	if _stamina >= stamina_max:
+		_stamina_regen = 0.0
+
+
+## Пипсы-заряды на спине (ряд янтарных светящихся кубиков поперёк плеч): гаснут
+## по мере трат, зажигаются на отдышке. Крепятся к КОРНЮ (не к holder'у скина
+## подкласса) — работают у любого солдата; спина = +Z локали (look_at-конвенция).
+func _build_stamina_pips() -> void:
+	for p in _stamina_pips:
+		if is_instance_valid(p):
+			(p as Node).queue_free()
+	_stamina_pips.clear()
+	if stamina_max <= 0:
+		return
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 0.75, 0.3)
+	mat.emission_enabled = true
+	mat.emission = Color(1.0, 0.75, 0.3)
+	mat.emission_energy_multiplier = 0.7
+	var n: int = stamina_max
+	for i in range(n):
+		var mi := MeshInstance3D.new()
+		var b := BoxMesh.new()
+		b.size = Vector3(0.08, 0.08, 0.08)
+		mi.mesh = b
+		mi.material_override = mat
+		var t: float = 0.5 if n <= 1 else float(i) / float(n - 1)
+		mi.position = Vector3(lerpf(-0.11, 0.11, t), 0.25, 0.17)
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mi)
+		_stamina_pips.append(mi)
+	_refresh_stamina_pips()
+
+
+## Пипсы №0.._stamina-1 видимы, остальные скрыты.
+func _refresh_stamina_pips() -> void:
+	for i in range(_stamina_pips.size()):
+		var p: MeshInstance3D = _stamina_pips[i]
+		if is_instance_valid(p):
+			p.visible = i < _stamina
 
 
 ## Старт атаки: переход в APPROACH. Скорость стартует с 0 и нарастает
@@ -1325,6 +1548,19 @@ func _start_charge(target: Node3D) -> void:
 	if d > 0.001:
 		_charge_dir = to_target / d
 		look_at(global_position + _charge_dir, Vector3.UP)
+	# Оборона с места: дыхание кончилось → уколов нет, стоим. Авто-путь
+	# восстановление НЕ держит (idle не трогаем) — иначе в окружении копейщик
+	# не отдышался бы никогда; выдохшийся колет в темпе восстановления.
+	if hold_ground and not has_stamina():
+		_combat_state = CombatState.READY
+		_charge_target = null
+		return
+	# Оборона с места: цель вне длины копья — НЕ атакуем вовсе (ни шагу из
+	# строя). В пределах — обычный WINDUP (замах стоя, удар решается ниже).
+	if hold_ground and d > attack_range:
+		_combat_state = CombatState.READY
+		_charge_target = null
+		return
 	# Если цель уже в lunge-range — пропускаем разгон, сразу в WINDUP (coiled).
 	# Anticipation важна даже в упор: без неё рывок в трёх метрах от цели
 	# выглядит как «дёрнулся вперёд», а не как удар.
@@ -1661,7 +1897,9 @@ func _strike_at(target: Node3D) -> void:
 			target.call(&"gnome_hit", self)
 		return
 	var damage: float = randf_range(attack_damage_min, attack_damage_max)
-	Damageable.try_damage(target, damage)
+	# hit_dir = направление выпада: смертельный удар даёт НАПРАВЛЕННЫЙ разлёт
+	# осколков (как у скелетов по гномам) — FX врагов универсальны.
+	Damageable.try_damage(target, damage, 0.0, _charge_dir)
 	# Survival-чек через hp: try_damage может вызвать queue_free, но
 	# is_instance_valid останется true до конца кадра. hp поле есть у Enemy.
 	var alive: bool = is_instance_valid(target) and "hp" in target and target.hp > 0.0
