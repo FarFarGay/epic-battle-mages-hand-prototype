@@ -347,6 +347,19 @@ const CMD_ARRIVED_DIST := 2.0
 ## носителям, поэтому каждая потеря сразу видна по силе удара.
 @export var roster_enabled: bool = true
 @export var roster_slots: int = 6
+## ТАКТИЛЬНЫЙ СБОР (2026-07-29): клавиши 1/2/3 чужеродны игре, где всё —
+## «взял рукой и поставил». Жест один и покрывает любой объём: зажал ЛКМ на
+## кучке класса → в горсть НАБИРАЮТСЯ гномы, пока держишь (быстрее с каждым);
+## увёл курсор → несёшь горсть; отпустил над ПЛОЩАДКОЙ СТРОЯ → высыпал.
+## Клик = один гном, удержание = сколько нужно. Единица набора растёт вместе с
+## отрядом — на больших составах поверх этого ляжет «звено» как один предмет.
+## Площадка не «слоты», а превью: гномы встают в ту формацию, в которой пойдут.
+@export var roster_pick_interval: float = 0.28
+## Во сколько раз ускоряется набор за каждого следующего в горсти (0.75 = на
+## четверть быстрее): длинное удержание насыпает горсть, а не тикает по одному.
+@export var roster_pick_accel: float = 0.75
+## Запас гномов в каждой кучке у входа.
+@export var roster_stock: int = 12
 
 @export_group("Желе-строй (WASD)")
 ## Группа как ОДИН упругий организм, а не N юнитов по клеткам (фидбек
@@ -582,6 +595,17 @@ var _card_picker_open: bool = false
 ## Экран сбора отряда: открыт ли и текущая раскладка по классам.
 var _roster_open: bool = false
 var _roster: Dictionary = {}
+## Тактильный сбор: кучки-стойки классов, площадка строя и «горсть» в руке.
+## _roster_stacks: cls → {pos, node, left}. _roster_bodies: болванки на площадке.
+var _roster_stacks: Dictionary = {}
+var _roster_bodies: Array = []
+var _roster_pad: Vector3 = Vector3.INF
+var _roster_pad_node: Node3D = null
+var _drag_class: StringName = &""
+var _drag_count: int = 0
+var _drag_timer: float = 0.0
+var _drag_node: Node3D = null
+var _roster_lmb_prev: bool = false
 
 
 ## КАТАЛОГ карточек-находок. Данные, не механики: почти всё — множители к уже
@@ -594,15 +618,15 @@ var _roster: Dictionary = {}
 const CARD_CATALOG := {
 	# --- Лучники ---
 	&"arch_rate": {
-		"cls": &"archer", "name": "Барабанный темп",
+		"cls": ARCHER_TYPE, "name": "Барабанный темп",
 		"desc": "Скорострельность лучников +20% за каждую карту.",
 	},
 	&"arch_range": {
-		"cls": &"archer", "name": "Дальний глаз",
+		"cls": ARCHER_TYPE, "name": "Дальний глаз",
 		"desc": "Дальность стрельбы +4 м.",
 	},
 	&"arch_shieldbreak": {
-		"cls": &"archer", "name": "Щитобой",
+		"cls": ARCHER_TYPE, "name": "Щитобой",
 		"desc": "ПРАВИЛО: стрелы выедают щиты втрое быстрее.",
 	},
 	# --- Копейщики ---
@@ -2095,7 +2119,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				var step: int = -1 if rk.shift_pressed else 1
 				match rk.keycode:
 					KEY_1:
-						_roster_change(&"archer", step)
+						_roster_change(ARCHER_TYPE, step)
 					KEY_2:
 						_roster_change(&"pikeman", step)
 					KEY_3:
@@ -2370,8 +2394,11 @@ func _aim_target(c: Vector3) -> Node3D:
 ## Хвост тиков продублирован с drift/superhot осознанно — три модели остаются
 ## независимыми путями, ломать одну ради другой нельзя.
 func _wasd_physics(delta: float) -> void:
-	# Пока собираем отряд — мир на паузе: ни движения, ни волн, ни директора.
+	# Пока собираем отряд — мир на паузе: ни движения, ни волн, ни директора;
+	# живёт только сама площадка сбора.
 	if _roster_open:
+		_tick_roster(delta)
+		_update_camera(delta, _cursor_ground_point())
 		return
 	var cursor: Vector3 = _cursor_ground_point()
 	_wasd_move(delta, cursor)
@@ -2434,12 +2461,177 @@ func _wasd_move(delta: float, cursor: Vector3) -> void:
 ## Экран сбора отряда перед заходом. Пока открыт — отряд НЕ заспавнен и мир не
 ## тикает (враги тоже ждут): выбор состава не должен идти под огнём.
 func _open_roster() -> void:
-	_roster = {&"archer": wasd_archers, &"pikeman": wasd_spearmen, &"worker": wasd_artel}
+	# Стартуем с ПУСТОГО строя: отряд собирает игрок, а не «вот тебе дефолт,
+	# правь». Иначе жест необязателен и площадка читается как декорация.
+	_roster = {ARCHER_TYPE: 0, &"pikeman": 0, &"worker": 0}
 	_roster_open = true
+	_build_roster_scene()
+	_refresh_roster_bodies()
 	_refresh_roster()
 	var panel := get_node_or_null("HUD/RosterPicker") as Control
 	if panel != null:
 		panel.visible = true
+
+
+## Физическая сцена сбора: три кучки-стойки классов + площадка строя, всё в
+## мире у входа (не UI-слоты — щупается тем же курсором, что и бой).
+func _build_roster_scene() -> void:
+	var base := room_center + Vector3(0.0, 0.0, 6.0)
+	_roster_pad = base + Vector3(0.0, 0.0, -7.0)
+	_roster_pad_node = AoeVisual.spawn_ground_ring(self, _roster_pad, 4.2, 0.0,
+			Color(0.45, 0.85, 1.0, 0.9))
+	var defs := [
+		[&"pikeman", Vector3(-7.0, 0.0, 0.0), Color(0.85, 0.55, 0.25)],
+		[ARCHER_TYPE, Vector3(0.0, 0.0, 0.0), Color(0.55, 0.35, 0.75)],
+		[&"worker", Vector3(7.0, 0.0, 0.0), Color(0.7, 0.45, 0.25)],
+	]
+	for d in defs:
+		var pos: Vector3 = base + (d[1] as Vector3)
+		AoeVisual.spawn_ground_ring(self, pos, 2.0, 0.0, d[2])
+		_roster_stacks[d[0]] = {"pos": pos, "left": roster_stock, "bodies": []}
+		_refresh_stack(d[0])
+
+
+## Болванки в кучке: сколько осталось в запасе — столько тел (кап 8, дальше
+## куча просто «полная»). Дёшево: капсулы без теней, unshaded.
+func _refresh_stack(cls: StringName) -> void:
+	var st: Dictionary = _roster_stacks[cls]
+	for b in st["bodies"]:
+		if is_instance_valid(b):
+			(b as Node).queue_free()
+	st["bodies"] = []
+	var col: Color = FOCUS_CARD_COLORS[0]
+	if cls == ARCHER_TYPE:
+		col = FOCUS_CARD_COLORS[1]
+	elif cls == &"worker":
+		col = FOCUS_CARD_COLORS[2]
+	var n: int = mini(int(st["left"]), 8)
+	for i in range(n):
+		var ang: float = TAU * float(i) / 8.0
+		var p: Vector3 = (st["pos"] as Vector3) + Vector3(cos(ang) * 1.2, 0.0, sin(ang) * 1.2)
+		st["bodies"].append(_roster_body(p, col))
+
+
+## Одна болванка-гном (капсула на земле).
+func _roster_body(pos: Vector3, col: Color) -> Node3D:
+	var mi := MeshInstance3D.new()
+	var cm := CapsuleMesh.new()
+	cm.radius = 0.28
+	cm.height = 1.1
+	mi.mesh = cm
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = col
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mi.material_override = mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+	mi.global_position = Vector3(pos.x, 0.55, pos.z)
+	return mi
+
+
+## Строй на площадке = ПРЕВЬЮ боевой формации: копейщики впереди (к выходу),
+## лучники за ними, артель с краю. Не «слоты 4/6», а тело, которым пойдёшь.
+func _refresh_roster_bodies() -> void:
+	for b in _roster_bodies:
+		if is_instance_valid(b):
+			(b as Node).queue_free()
+	_roster_bodies.clear()
+	if _roster_pad == Vector3.INF:
+		return
+	var rows := [
+		[&"pikeman", -1.4, FOCUS_CARD_COLORS[0]],
+		[ARCHER_TYPE, 0.2, FOCUS_CARD_COLORS[1]],
+		[&"worker", 1.7, FOCUS_CARD_COLORS[2]],
+	]
+	for r in rows:
+		var n: int = int(_roster.get(r[0], 0))
+		for i in range(n):
+			var x: float = (float(i) - float(n - 1) * 0.5) * 0.95
+			_roster_bodies.append(_roster_body(
+					_roster_pad + Vector3(x, 0.0, float(r[1])), r[2]))
+
+
+## Класс кучки под курсором (null-строка, если мимо).
+func _stack_at(p: Vector3) -> StringName:
+	for cls in _roster_stacks.keys():
+		var sp: Vector3 = _roster_stacks[cls]["pos"]
+		if Vector2(p.x - sp.x, p.z - sp.z).length() <= 2.4:
+			return cls
+	return &""
+
+
+## Тик сбора: набор горсти на удержании, перенос, высыпание на площадку.
+func _tick_roster(delta: float) -> void:
+	var lmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	var cursor: Vector3 = _cursor_ground_point()
+	if cursor == Vector3.INF:
+		return
+	if lmb and not _roster_lmb_prev:
+		var cls: StringName = _stack_at(cursor)
+		if cls != &"" and int(_roster_stacks[cls]["left"]) > 0 \
+				and _roster_total() < roster_slots:
+			_drag_class = cls
+			_drag_count = 0
+			_drag_timer = 0.0
+			_grab_one()
+	elif lmb and _drag_class != &"":
+		# Держим над своей кучкой — горсть НАБИРАЕТСЯ, всё быстрее. Увёл руку —
+		# набор прекращается, несёшь то, что зачерпнул.
+		if _stack_at(cursor) == _drag_class:
+			_drag_timer -= delta
+			if _drag_timer <= 0.0:
+				_grab_one()
+	elif not lmb and _drag_class != &"":
+		var on_pad: bool = Vector2(cursor.x - _roster_pad.x,
+				cursor.z - _roster_pad.z).length() <= 4.6
+		if on_pad:
+			_roster[_drag_class] = int(_roster.get(_drag_class, 0)) + _drag_count
+			AoeVisual.spawn_ground_ring(self, _roster_pad, 4.2, 0.35,
+					Color(0.45, 0.85, 1.0, 0.9))
+			_refresh_roster_bodies()
+		else:
+			# Мимо площадки — горсть возвращается в кучку.
+			var st: Dictionary = _roster_stacks[_drag_class]
+			st["left"] = int(st["left"]) + _drag_count
+			_refresh_stack(_drag_class)
+		_drag_class = &""
+		_drag_count = 0
+		if is_instance_valid(_drag_node):
+			_drag_node.queue_free()
+		_drag_node = null
+		_refresh_roster()
+	# Горсть висит на курсоре.
+	if _drag_class != &"" and is_instance_valid(_drag_node):
+		_drag_node.global_position = Vector3(cursor.x, 0.9, cursor.z)
+	_roster_lmb_prev = lmb
+
+
+## +1 гном в горсть: из запаса кучки, в пределах свободных слотов.
+func _grab_one() -> void:
+	var st: Dictionary = _roster_stacks[_drag_class]
+	if int(st["left"]) <= 0 or _roster_total() + _drag_count >= roster_slots:
+		return
+	st["left"] = int(st["left"]) - 1
+	_drag_count += 1
+	_refresh_stack(_drag_class)
+	# Каждый следующий прилипает быстрее — удержание насыпает, а не капает.
+	_drag_timer = roster_pick_interval * pow(roster_pick_accel, float(_drag_count - 1))
+	var col: Color = FOCUS_CARD_COLORS[0]
+	if _drag_class == ARCHER_TYPE:
+		col = FOCUS_CARD_COLORS[1]
+	elif _drag_class == &"worker":
+		col = FOCUS_CARD_COLORS[2]
+	if is_instance_valid(_drag_node):
+		_drag_node.queue_free()
+	_drag_node = _roster_body(_roster_pad, col)
+	# Горсть = столбик тел: видно, сколько зачерпнул, без цифр.
+	for i in range(_drag_count - 1):
+		var extra := _roster_body(Vector3.ZERO, col)
+		extra.get_parent().remove_child(extra)
+		_drag_node.add_child(extra)
+		extra.position = Vector3(randf_range(-0.25, 0.25), 0.5 + 0.45 * float(i),
+				randf_range(-0.25, 0.25))
+	_refresh_roster()
 
 
 func _roster_total() -> int:
@@ -2457,6 +2649,7 @@ func _roster_change(cls: StringName, delta_n: int) -> void:
 		return
 	_roster[cls] = maxi(int(_roster.get(cls, 0)) + delta_n, 0)
 	_refresh_roster()
+	_refresh_roster_bodies()
 
 
 func _refresh_roster() -> void:
@@ -2466,7 +2659,7 @@ func _refresh_roster() -> void:
 	(panel.get_node("V/Slots") as Label).text = "Слотов занято: %d / %d" % [
 			_roster_total(), roster_slots]
 	var rows := [
-		["V/Rows/Line1", "[1] Лучники", &"archer",
+		["V/Rows/Line1", "[1] Лучники", ARCHER_TYPE,
 			"стрелы по ЛКМ — каждый гном это ещё один ствол"],
 		["V/Rows/Line2", "[2] Копейщики", &"pikeman",
 			"ПРОБЕЛ, удар вокруг — урон %d за каждого" % int(wasd_super_damage_per_gnome)],
@@ -2486,7 +2679,7 @@ func _refresh_roster() -> void:
 func _confirm_roster() -> void:
 	if not _roster_open or _roster_total() <= 0:
 		return
-	wasd_archers = int(_roster.get(&"archer", 0))
+	wasd_archers = int(_roster.get(ARCHER_TYPE, 0))
 	wasd_spearmen = int(_roster.get(&"pikeman", 0))
 	wasd_artel = int(_roster.get(&"worker", 0))
 	squad_size = _roster_total()
@@ -2494,6 +2687,20 @@ func _confirm_roster() -> void:
 	var panel := get_node_or_null("HUD/RosterPicker") as Control
 	if panel != null:
 		panel.visible = false
+	# Реквизит площадки убираем — дальше в комнате только бой.
+	for b in _roster_bodies:
+		if is_instance_valid(b):
+			(b as Node).queue_free()
+	_roster_bodies.clear()
+	for cls in _roster_stacks.keys():
+		for b in _roster_stacks[cls]["bodies"]:
+			if is_instance_valid(b):
+				(b as Node).queue_free()
+	_roster_stacks.clear()
+	if is_instance_valid(_roster_pad_node):
+		_roster_pad_node.queue_free()
+	if is_instance_valid(_drag_node):
+		_drag_node.queue_free()
 	_spawn_squad()
 	_setup_focus_cards()
 	_refresh_hud_hint()
@@ -2545,7 +2752,7 @@ func _offer_cards() -> void:
 	var picker := get_node_or_null("HUD/CardPicker") as Control
 	if picker == null:
 		return
-	var names := {&"archer": "Лучники", &"pikeman": "Копейщики", &"worker": "Артель"}
+	var names := {ARCHER_TYPE: "Лучники", &"pikeman": "Копейщики", &"worker": "Артель"}
 	for i in range(3):
 		var pick := picker.get_node_or_null("V/Cards/Pick%d" % (i + 1)) as Control
 		if pick == null:
