@@ -310,6 +310,12 @@ const CMD_ARRIVED_DIST := 2.0
 ## Скорость удара-хлыста копейщиков (м/с, вылет И отскок). 28 ≈ щелчок:
 ## цикл клик→укол→в строю ~0.3-0.4с — «классический мили-замах», не пробежка.
 @export var wasd_punch_speed: float = 28.0
+## Радиус автоатаки копейщика (м). 0 = НЕ ВОЮЕТ САМ ВООБЩЕ (решение
+## 2026-07-28): копейщик — чистая кнопка ПРОБЕЛ, между суперами он только тело
+## в строю. Ноль надёжно глушит и поиск цели (_find_target_in_leash), и укол с
+## места — вся боевая цепочка стартует от найденной цели. >0 вернёт пассивный
+## укол в упор.
+@export var wasd_spear_detect: float = 0.0
 ## САМООБОРОНА лучников без фокуса (нерф «в защите разносят всех», 2026-07-24):
 ## стреляют только по подошедшим в этот радиус (симметрия с копейщиками — вся
 ## оборона бьёт КОНТАКТ) и с растянутым кулдауном. Фокус [2] возвращает полную
@@ -339,9 +345,10 @@ const CMD_ARRIVED_DIST := 2.0
 ## Внутри — веер ШТАТНЫХ панчей (импакт-пакет punch_at) + ударная волна: не
 ## абстрактный круг урона, а «копейщики выстрелили наружу».
 @export var wasd_super_radius: float = 6.5
-## Замах-телеграф до удара (с): видно кольцо, толпа успевает подойти — «когда
-## жать» становится решением.
-@export var wasd_super_windup: float = 0.4
+## Замах-телеграф до удара (с). 0 = БЕЗ ЗАДЕРЖКИ (фидбек 2026-07-28: «пусть без
+## задержки бьёт»): нажал — грохнуло, кнопка отвечает мгновенно. >0 вернёт
+## кольцо-телеграф с замахом.
+@export var wasd_super_windup: float = 0.0
 @export var wasd_super_cooldown: float = 6.0
 @export var wasd_super_damage: float = 34.0
 @export var wasd_super_knockback: float = 11.0
@@ -621,10 +628,10 @@ func _spawn_wasd_squad() -> void:
 			stats["attack_damage_max"] = gnome_damage_max
 			stats["steer_inertia"] = gnome_steer_inertia
 		elif t == &"pikeman":
-			# Оборона КОНТАКТА (фидбек 2026-07-24): детект срезан почти до
-			# длины копья — копейщик НЕ бегает по полю за врагами, держит
-			# строй и колет только подошедших вплотную.
-			stats["enemy_detect_radius"] = 3.2
+			# Копейщик НЕ ВОЮЕТ САМ (2026-07-28: «чтобы ничего не делали вообще
+			# кроме пробела»). Детект 0 → цель не находится → ни погони, ни
+			# укола: между суперами он тело в строю, вся его работа — ПРОБЕЛ.
+			stats["enemy_detect_radius"] = wasd_spear_detect
 		var soldier := scene.instantiate() as SoldierGnome
 		if soldier == null:
 			continue
@@ -668,7 +675,7 @@ func _spawn_wasd_squad() -> void:
 func _refresh_hud_hint() -> void:
 	var hint := get_node_or_null("HUD/Panel/Rows/HintLabel") as Label
 	if hint != null:
-		hint.text = "WASD — ход · курсор — огонь · ПРОБЕЛ — удар вокруг · ПКМ — щит"
+		hint.text = "WASD — ход · ЛКМ — полив по курсору · ПРОБЕЛ — удар вокруг · ПКМ — щит"
 	_refresh_focus_cards()
 
 
@@ -2191,6 +2198,12 @@ func _request_spear_super() -> void:
 	var c: Vector3 = _squad.compute_center()
 	if c == Vector3.INF:
 		return
+	if wasd_super_windup <= 0.0:
+		# Мгновенный удар: нажал — грохнуло, без промежуточного состояния.
+		_super_cd = wasd_super_cooldown
+		_spear_super_blast(c)
+		_refresh_focus_cards()
+		return
 	_super_windup = wasd_super_windup
 	_super_ring = AoeVisual.spawn_ground_ring(self, c, wasd_super_radius, 0.0,
 			Color(1.0, 0.55, 0.2, 0.9))
@@ -2224,11 +2237,9 @@ func _tick_spear_super(delta: float) -> void:
 		_refresh_focus_cards()
 
 
-## УДАР ВОКРУГ = веер штатных панчей + ударная волна. Каждый живой копейщик
-## физически выстреливает в СВОЮ ближайшую цель (punch_at: замах-хлыст-хитстоп-
-## искры-отскок в строй — импакт-пакет, который уже отлажен), а по всем
-## остальным в радиусе идёт волна: урон + отброс наружу. Не абстрактный круг
-## урона, а «копейщиков выбросило во все стороны».
+## УДАР ВОКРУГ = ударная волна от строя: урон + отброс наружу по всем в радиусе.
+## ⛔ Веер punch_at убран (фидбек 2026-07-28): вылет-хлыст к цели читался как
+## «копейщики побежали ко врагу» — они бьют С МЕСТА, строй не покидают.
 func _spear_super_blast(c: Vector3) -> void:
 	var targets: Array = []
 	var r_sq: float = wasd_super_radius * wasd_super_radius
@@ -2239,16 +2250,6 @@ func _spear_super_blast(c: Vector3) -> void:
 				(sk as Node3D).global_position.z - c.z)
 		if to.length_squared() <= r_sq:
 			targets.append(sk)
-	# Каждому копейщику — своя цель (по кругу, если целей меньше, чем бойцов):
-	# веер, а не куча-мала в одну точку.
-	var idx: int = 0
-	for m in _squad.members:
-		if not is_instance_valid(m) or m.soldier_type != &"pikeman":
-			continue
-		if targets.is_empty() or not m.has_method(&"punch_at"):
-			continue
-		m.call(&"punch_at", targets[idx % targets.size()])
-		idx += 1
 	# Волна: урон + отброс наружу. hit_dir = от центра группы → направленный
 	# shatter на добивании (§6.1 F1), осколки летят «от нас».
 	for sk in targets:
@@ -2326,11 +2327,10 @@ func _wasd_combat(lmb: bool, cursor: Vector3) -> void:
 			_squad.tail_dir = aim_dir
 		else:
 			_squad.tail_dir = _squad.tail_dir.slerp(aim_dir, minf(1.0, get_physics_process_delta_time() * 3.5)).normalized()
-	# ГРУППА СТРЕЛЯЕТ ВСЕГДА (пивот 2026-07-28): огонь больше не гейтится ни
-	# фокусом, ни зажатым ЛКМ — лучники поливают непрерывно ТУДА, КУДА СМОТРИТ
-	# КУРСОР. Это не отвергнутый автобой: автоматика тут в ТЕМПЕ, ручное — в
-	# НАПРАВЛЕНИИ (за спиной группа не бьёт), поэтому позиция и разворот
-	# остаются работой игрока каждую секунду.
+	# Лучники — КАК БЫЛИ: полив по ЗАЖАТОМУ ЛКМ в направлении курсора (гашетка
+	# остаётся в руках игрока). Снят только гейт ФОКУСА: лучники всегда в
+	# «боевом» режиме (полная дальность и темп), их больше не надо выбирать
+	# цифрой. Авто-конус «сам увидел — сам палит» так и остаётся ⛔.
 	var archers_focused: bool = true
 	for m in _squad.members:
 		if not is_instance_valid(m):
@@ -2344,15 +2344,15 @@ func _wasd_combat(lmb: bool, cursor: Vector3) -> void:
 			m.attack_range = gnome_attack_range
 			m.attack_cooldown_min = gnome_cooldown_min
 			m.attack_cooldown_max = gnome_cooldown_max
-			if aim != Vector3.INF and m.has_method(&"try_suppressive_fire"):
+			if lmb and aim != Vector3.INF and m.has_method(&"try_suppressive_fire"):
 				m.call(&"try_suppressive_fire", aim)
 		elif m.soldier_type == &"pikeman":
-			# Копейщики молчать между суперами не должны — иначе передний ряд
-			# станет декорацией, а он телом держит толпу. Автоукол вплотную
-			# (hold_ground + срезанный detect) живёт всегда, ручного клика нет.
+			# hold_ground страхует строй: даже если цель откуда-то возьмётся
+			# (detect подняли в инспекторе), копейщик колет С МЕСТА и не
+			# срывается в погоню. При detect=0 он просто стоит в строю.
 			m.hold_ground = true
 	_click_pending = false
-	_update_wasd_visuals(c, cursor, tgt != null)
+	_update_wasd_visuals(c, cursor, lmb and tgt != null)
 
 
 ## Цель полива: скелет в дальности лучника от центра, в секторе прицела
