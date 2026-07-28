@@ -339,6 +339,15 @@ const CMD_ARRIVED_DIST := 2.0
 @export var wasd_shield_size: Vector3 = Vector3(4.0, 1.8, 0.6)
 @export var wasd_shield_dist: float = 2.6
 
+@export_group("Сбор отряда (WASD)")
+## СОСТАВ = БИЛД (2026-07-29): перед заходом игрок сам раскладывает гномов по
+## классам в пределах общего числа слотов. Смысл не в цифрах, а в связке
+## «кого взял → что умеешь»: класса нет — нет и его кнопки (копейщиков нет →
+## нет ПРОБЕЛА, артели нет → нет ПКМ), а урон способностей = СУММА по живым
+## носителям, поэтому каждая потеря сразу видна по силе удара.
+@export var roster_enabled: bool = true
+@export var roster_slots: int = 6
+
 @export_group("Желе-строй (WASD)")
 ## Группа как ОДИН упругий организм, а не N юнитов по клеткам (фидбек
 ## 2026-07-28). Три слоя поверх штатной раскладки «черепахи», все — деформация
@@ -395,8 +404,16 @@ const CMD_ARRIVED_DIST := 2.0
 @export var wasd_wave_range: float = 20.0
 ## Полуширина вала (м): кого захватывает по сторонам от оси.
 @export var wasd_wave_half_width: float = 1.9
-@export var wasd_wave_damage: float = 45.0
+## Урон вала ЗА КАЖДОГО ЖИВОГО АРТЕЛЬЩИКА (2026-07-29, та же логика, что у
+## копейщиков): один артельщик — вал слабый, трое — таранит толпу.
+@export var wasd_wave_damage_per_gnome: float = 45.0
 @export var wasd_wave_knockback: float = 14.0
+## Карточка «Эхо в камне»: второй вал идёт ИЗ СТРОЯ вдогонку первому через
+## эту паузу (не из точки, где первый разбился — там он бесполезен). Тоньше
+## основного: 3 камня и урон вполсилы.
+@export var wasd_wave_echo_delay: float = 0.35
+@export var wasd_wave_echo_stones: int = 3
+@export var wasd_wave_echo_power: float = 0.55
 ## КОЛЧАН-ОБОЙМА лучника (2026-07-27) — ВЫКЛЮЧЕН фидбеком 2026-07-28: конечный
 ## боезапас «очень сбивает теншен и темп». Причина в природе драйвера: сухой
 ## колчан не даёт РЕШЕНИЕ, он даёт ПРОСТОЙ — игрок стоит и ждёт, пока цифра
@@ -420,10 +437,11 @@ const CMD_ARRIVED_DIST := 2.0
 ## кольцо-телеграф с замахом.
 @export var wasd_super_windup: float = 0.0
 @export var wasd_super_cooldown: float = 6.0
-## Урон волны. Держать ВЫШЕ hp щитовика (45): один пробел должен разваливать
-## его наверняка — иначе связка «вижу ключ-цель → жму кнопку» рвётся ожиданием
-## второго кулдауна, и щитовики читаются как хардкор (фидбек 2026-07-28).
-@export var wasd_super_damage: float = 55.0
+## Урон удара вокруг ЗА КАЖДОГО ЖИВОГО КОПЕЙЩИКА (2026-07-29): сила
+## способности = состав отряда, потеря бойца сразу видна по удару. Держать так,
+## чтобы ПОЛНЫЙ расчёт копейщиков сносил щитовика (45 hp) с одного пробела:
+## 28 × 2 = 56 ✓, а потерял одного — уже не сносит. Это и есть цена потерь.
+@export var wasd_super_damage_per_gnome: float = 28.0
 @export var wasd_super_knockback: float = 11.0
 ## Секунд на одну стрелу перезарядки (0.5 → 0.3 по фидбеку 2026-07-28 «увеличь
 ## скорость»: пустой→полный 2.4с вместо 3.8с).
@@ -541,15 +559,15 @@ var _super_cd: float = 0.0
 var _super_ring: Node3D = null
 var _super_armed_prev: bool = true
 var _super_hud_acc: float = 0.0
-## Каменная волна артели (ПКМ): живой вал, его направление, пройденный путь,
-## уже задетые цели (каждого бьёт ОДИН раз) и кулдаун.
-var _wave_node: Node3D = null
+## Каменная волна артели (ПКМ). Валов может быть НЕСКОЛЬКО разом (первый +
+## догоняющие «эхо»), поэтому список: {node, travelled, half, power, hit}.
+## Направление общее — эхо идёт тем же курсом, что и первый.
+var _waves: Array = []
 var _wave_dir: Vector3 = Vector3.ZERO
-var _wave_travelled: float = 0.0
-var _wave_hit: Dictionary = {}
 var _wave_cd: float = 0.0
-## Сколько «эхо»-валов ещё выпустить после разрушения текущего.
+## Сколько «эхо»-валов ещё выпустить из строя и когда следующий.
 var _wave_echo_left: int = 0
+var _wave_echo_timer: float = 0.0
 ## Желе-строй: прошлая точка строя и её скорость (для расчёта ускорения),
 ## текущий пружинный сдвиг слотов и его скорость.
 var _jelly_prev_hold: Vector3 = Vector3.INF
@@ -561,6 +579,9 @@ var _cards: Dictionary = {}
 ## Что сейчас предложено (массив id) и открыт ли пикер.
 var _card_offer: Array = []
 var _card_picker_open: bool = false
+## Экран сбора отряда: открыт ли и текущая раскладка по классам.
+var _roster_open: bool = false
+var _roster: Dictionary = {}
 
 
 ## КАТАЛОГ карточек-находок. Данные, не механики: почти всё — множители к уже
@@ -649,7 +670,11 @@ func _ready() -> void:
 	# Z-центры трёх комнат анфилады (Room1 старт, шаг −60 вдоль −Z).
 	_room_z = [room_center.z, room_center.z - 60.0, room_center.z - 120.0]
 	_active_room = 0  # старт в Room1 — первая волна через first_wave_delay
-	_spawn_squad()
+	# Экран сбора отряда идёт ПЕРЕД спавном: состав решает игрок, и до его
+	# подтверждения ни отряда, ни врагов на арене нет.
+	var pick_roster: bool = wasd_mode and roster_enabled
+	if not pick_roster:
+		_spawn_squad()
 	# Тестовые грузы трёх классов: сколько гномов нужно, чтобы поднять.
 	_spawn_cargo(room_center + Vector3(-6, 0, 5), 1)
 	_spawn_cargo(room_center + Vector3(6, 0, 6), 3)
@@ -662,14 +687,12 @@ func _ready() -> void:
 	if wasd_mode:
 		_setup_focus_cards()
 		_refresh_hud_hint()  # постоянная раскладка в HUD
-	if _director_active():
+	if pick_roster:
+		_open_roster()
+	else:
 		# СТАРТОВАЯ ПАЧКА (после _spawn_squad — скелетам нужна живая цель):
-		# бой начинается на первой секунде, а не на седьмой. Две кучи вместо
-		# кольца — есть фронт и есть спина.
-		_director_timer = director_drip_interval
-		var pack_half: int = director_start_pack / 2
-		_spawn_cluster(pack_half, director_start_radius)
-		_spawn_cluster(director_start_pack - pack_half, director_start_radius)
+		# бой начинается на первой секунде, а не на седьмой.
+		_start_director_pack()
 	print("[DungeonSandbox] boot ok: gnomes=%d, skeleton_scene=%s"
 			% [_alive_gnomes(), skeleton_scene != null])
 
@@ -2064,6 +2087,24 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 1/2/3 и клик-панч выпилены (2026-07-28): дальний бой работает всегда,
 	# мили сжат в одну кнопку — переключать стало нечего.
 	if wasd_mode and not _game_over:
+		# Сбор отряда модальный: 1/2/3 добавляют гнома в класс, Shift+цифра
+		# убирает, ENTER уводит в подземелье. Тот же язык клавиш, что у находок.
+		if _roster_open:
+			var rk := event as InputEventKey
+			if rk != null and rk.pressed and not rk.echo:
+				var step: int = -1 if rk.shift_pressed else 1
+				match rk.keycode:
+					KEY_1:
+						_roster_change(&"archer", step)
+					KEY_2:
+						_roster_change(&"pikeman", step)
+					KEY_3:
+						_roster_change(&"worker", step)
+					KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+						_confirm_roster()
+					KEY_R:
+						get_tree().reload_current_scene()
+			return
 		# Пикер находок модальный: пока карта не взята, 1/2/3 = выбор (клавиши
 		# освободились после выпила фокус-групп), остальной ввод не мешает.
 		if _card_picker_open:
@@ -2329,6 +2370,9 @@ func _aim_target(c: Vector3) -> Node3D:
 ## Хвост тиков продублирован с drift/superhot осознанно — три модели остаются
 ## независимыми путями, ломать одну ради другой нельзя.
 func _wasd_physics(delta: float) -> void:
+	# Пока собираем отряд — мир на паузе: ни движения, ни волн, ни директора.
+	if _roster_open:
+		return
 	var cursor: Vector3 = _cursor_ground_point()
 	_wasd_move(delta, cursor)
 	_tick_jelly(delta)
@@ -2385,6 +2429,89 @@ func _wasd_move(delta: float, cursor: Vector3) -> void:
 		if dxh * dxh + dzh * dzh > 0.5625:
 			_squad.hold_position = Vector3(c.x, 0.0, c.z)
 			_banner.global_position = _squad.hold_position
+
+
+## Экран сбора отряда перед заходом. Пока открыт — отряд НЕ заспавнен и мир не
+## тикает (враги тоже ждут): выбор состава не должен идти под огнём.
+func _open_roster() -> void:
+	_roster = {&"archer": wasd_archers, &"pikeman": wasd_spearmen, &"worker": wasd_artel}
+	_roster_open = true
+	_refresh_roster()
+	var panel := get_node_or_null("HUD/RosterPicker") as Control
+	if panel != null:
+		panel.visible = true
+
+
+func _roster_total() -> int:
+	var n: int = 0
+	for k in _roster.keys():
+		n += int(_roster[k])
+	return n
+
+
+## 1/2/3 — добавить гнома в класс (пока есть слоты), Shift+цифра — убрать.
+func _roster_change(cls: StringName, delta_n: int) -> void:
+	if not _roster_open:
+		return
+	if delta_n > 0 and _roster_total() >= roster_slots:
+		return
+	_roster[cls] = maxi(int(_roster.get(cls, 0)) + delta_n, 0)
+	_refresh_roster()
+
+
+func _refresh_roster() -> void:
+	var panel := get_node_or_null("HUD/RosterPicker") as Control
+	if panel == null:
+		return
+	(panel.get_node("V/Slots") as Label).text = "Слотов занято: %d / %d" % [
+			_roster_total(), roster_slots]
+	var rows := [
+		["V/Rows/Line1", "[1] Лучники", &"archer",
+			"стрелы по ЛКМ — каждый гном это ещё один ствол"],
+		["V/Rows/Line2", "[2] Копейщики", &"pikeman",
+			"ПРОБЕЛ, удар вокруг — урон %d за каждого" % int(wasd_super_damage_per_gnome)],
+		["V/Rows/Line3", "[3] Артель", &"worker",
+			"ПКМ, каменный вал — урон %d за каждого" % int(wasd_wave_damage_per_gnome)],
+	]
+	for r in rows:
+		var lbl := panel.get_node_or_null(r[0]) as Label
+		if lbl == null:
+			continue
+		var cnt: int = int(_roster.get(r[2], 0))
+		lbl.text = "%s ×%d — %s" % [r[1], cnt, r[3]]
+		lbl.modulate = Color(1, 1, 1, 1.0) if cnt > 0 else Color(1, 1, 1, 0.4)
+
+
+## Подтверждение: состав становится боевым, отряд спавнится, мир оживает.
+func _confirm_roster() -> void:
+	if not _roster_open or _roster_total() <= 0:
+		return
+	wasd_archers = int(_roster.get(&"archer", 0))
+	wasd_spearmen = int(_roster.get(&"pikeman", 0))
+	wasd_artel = int(_roster.get(&"worker", 0))
+	squad_size = _roster_total()
+	_roster_open = false
+	var panel := get_node_or_null("HUD/RosterPicker") as Control
+	if panel != null:
+		panel.visible = false
+	_spawn_squad()
+	_setup_focus_cards()
+	_refresh_hud_hint()
+	_update_labels()
+	_start_director_pack()
+	print("[Roster] отряд: лучников=%d, копейщиков=%d, артели=%d"
+			% [wasd_archers, wasd_spearmen, wasd_artel])
+
+
+## Стартовая пачка врагов — вынесена, чтобы её можно было отложить до сбора
+## отряда (скелетам нужна живая цель, да и выбирать состав под огнём нечестно).
+func _start_director_pack() -> void:
+	if not _director_active():
+		return
+	_director_timer = director_drip_interval
+	var pack_half: int = director_start_pack / 2
+	_spawn_cluster(pack_half, director_start_radius)
+	_spawn_cluster(director_start_pack - pack_half, director_start_radius)
 
 
 ## Сколько раз взята карточка (0 = нет). Единственная точка чтения эффектов —
@@ -2465,7 +2592,7 @@ func _cards_line(cls: StringName) -> String:
 ## нет класса — нет способности). Направление берётся от строя к курсору и
 ## ФИКСИРУЕТСЯ на запуске: вал не подруливает, целиться надо заранее.
 func _request_stone_wave(cursor: Vector3) -> void:
-	if _squad == null or _wave_cd > 0.0 or is_instance_valid(_wave_node):
+	if _squad == null or _wave_cd > 0.0 or not _waves.is_empty():
 		return
 	if _alive_artel() <= 0:
 		EventBus.tutorial_hint.emit("Нет артельщиков — каменная волна недоступна", 1.6)
@@ -2477,18 +2604,23 @@ func _request_stone_wave(cursor: Vector3) -> void:
 	if dir.length_squared() < 0.01:
 		return
 	_wave_dir = dir.normalized()
-	_wave_travelled = 0.0
-	_wave_hit.clear()
-	_wave_echo_left = _card(&"artel_echo")
 	_wave_cd = wasd_wave_cooldown
-	_wave_node = _build_stone_wave(c + _wave_dir * 1.6)
+	# «Эхо в камне»: второй вал идёт ИЗ СТРОЯ вдогонку первому через
+	# wasd_wave_echo_delay — не из точки, где первый разбился (там он бесполезен,
+	# фидбек 2026-07-29). Валы живут параллельно, поэтому список, а не один узел.
+	_wave_echo_left = _card(&"artel_echo")
+	_wave_echo_timer = wasd_wave_echo_delay
+	_spawn_wave_body(c + _wave_dir * 1.6, 5 + 2 * _card(&"artel_wide"),
+			_wave_half_width(), 1.0)
 	AoeVisual.spawn_dust(self, c + _wave_dir * 1.6)
 	EventBus.camera_shake.emit(0.18, c)
 
 
 ## Вал: гребень из плит разной высоты поперёк хода — читается как «поднявшийся
 ## камень», а не снаряд. Unshaded, тени выключены (их тут десятки за забег).
-func _build_stone_wave(pos: Vector3) -> Node3D:
+## `stones` — сколько плит (эхо тоньше основного), `half` — полуширина полосы,
+## `power` — доля урона/отброса от базового.
+func _spawn_wave_body(pos: Vector3, stones: int, half: float, power: float) -> void:
 	var root := Node3D.new()
 	add_child(root)
 	root.global_position = Vector3(pos.x, 0.0, pos.z)
@@ -2496,12 +2628,10 @@ func _build_stone_wave(pos: Vector3) -> Node3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.42, 0.38, 0.34)
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	# Карточка «Ещё по камню»: по одному камню с каждой стороны за карту.
-	var n: int = 5 + 2 * _card(&"artel_wide")
+	var n: int = maxi(stones, 2)
 	for i in range(n):
 		var t: float = float(i) / float(n - 1)
 		var h: float = lerpf(0.7, 1.5, 1.0 - absf(t - 0.5) * 2.0) * randf_range(0.85, 1.15)
-		var half: float = _wave_half_width()
 		var mi := MeshInstance3D.new()
 		var bm := BoxMesh.new()
 		bm.size = Vector3(half * 2.0 / float(n) * 0.95, h, 0.5)
@@ -2512,48 +2642,76 @@ func _build_stone_wave(pos: Vector3) -> Node3D:
 		mi.rotation.z = randf_range(-0.12, 0.12)
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		root.add_child(mi)
-	return root
+	_waves.append({"node": root, "travelled": 0.0, "half": half, "power": power, "hit": {}})
 
 
-## Ход вала: едет вперёд, бьёт КАЖДОГО один раз, рассыпается о стену
-## (raycast по TERRAIN/преградам) или выдохшись на wasd_wave_range.
+## Ход валов: каждый едет вперёд, бьёт КАЖДОГО один раз, рассыпается о стену
+## (raycast по TERRAIN/преградам) или выдохшись на wasd_wave_range. Валов может
+## быть несколько разом — первый и догоняющие «эхо».
 func _tick_stone_wave(delta: float) -> void:
 	if _wave_cd > 0.0:
 		_wave_cd = maxf(_wave_cd - delta, 0.0)
-	if not is_instance_valid(_wave_node):
+	# Эхо стартует ИЗ СТРОЯ через паузу после первого вала — вдогонку, не с
+	# места гибели. 3 камня (уже основного) и урон вполсилы.
+	if _wave_echo_left > 0 and _squad != null:
+		_wave_echo_timer -= delta
+		if _wave_echo_timer <= 0.0:
+			_wave_echo_left -= 1
+			_wave_echo_timer = wasd_wave_echo_delay
+			var c: Vector3 = _squad.compute_center()
+			if c != Vector3.INF:
+				_spawn_wave_body(c + _wave_dir * 1.6, wasd_wave_echo_stones,
+						_wave_half_width() * 0.62, wasd_wave_echo_power)
+	if _waves.is_empty():
 		return
+	var space := get_world_3d().direct_space_state
 	var step: float = wasd_wave_speed * delta
-	var from: Vector3 = _wave_node.global_position + Vector3.UP * 0.6
-	var to: Vector3 = from + _wave_dir * (step + 0.6)
-	var q := PhysicsRayQueryParameters3D.create(from, to,
-			Layers.TERRAIN | Layers.WALL_GATE_BLOCK | Layers.CHASM_BARRIER)
-	var hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(q)
-	_wave_node.global_position += _wave_dir * step
-	_wave_travelled += step
-	_wave_damage_pass()
-	if not hit.is_empty() or _wave_travelled >= wasd_wave_range:
-		_break_stone_wave()
+	for i in range(_waves.size() - 1, -1, -1):
+		var w: Dictionary = _waves[i]
+		var node: Node3D = w["node"]
+		if not is_instance_valid(node):
+			_waves.remove_at(i)
+			continue
+		var from: Vector3 = node.global_position + Vector3.UP * 0.6
+		var q := PhysicsRayQueryParameters3D.create(from, from + _wave_dir * (step + 0.6),
+				Layers.TERRAIN | Layers.WALL_GATE_BLOCK | Layers.CHASM_BARRIER)
+		var blocked: bool = not space.intersect_ray(q).is_empty()
+		node.global_position += _wave_dir * step
+		w["travelled"] = float(w["travelled"]) + step
+		_wave_damage_pass(w)
+		if blocked or float(w["travelled"]) >= wasd_wave_range:
+			_break_stone_wave(w)
+			_waves.remove_at(i)
 
 
 ## Урон по полосе: цель считается задетой, если она в пределах полуширины по
 ## бокам и не дальше полушага по ходу — вал именно СМЕТАЕТ, а не тянет за собой.
-func _wave_damage_pass() -> void:
-	var origin: Vector3 = _wave_node.global_position
+func _wave_damage_pass(w: Dictionary) -> void:
+	var origin: Vector3 = (w["node"] as Node3D).global_position
+	var hit: Dictionary = w["hit"]
+	var power: float = float(w["power"])
 	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
 			continue
-		if _wave_hit.has(sk.get_instance_id()):
+		if hit.has(sk.get_instance_id()):
 			continue
 		var to := Vector3((sk as Node3D).global_position.x - origin.x, 0.0,
 				(sk as Node3D).global_position.z - origin.z)
 		var along: float = to.dot(_wave_dir)
 		var side: float = absf(to.dot(Vector3(-_wave_dir.z, 0.0, _wave_dir.x)))
-		if absf(along) > 1.1 or side > _wave_half_width() + 0.5:
+		if absf(along) > 1.1 or side > float(w["half"]) + 0.5:
 			continue
-		_wave_hit[sk.get_instance_id()] = true
-		Damageable.try_damage(sk, wasd_wave_damage, 0.0, _wave_dir)
+		hit[sk.get_instance_id()] = true
+		Damageable.try_damage(sk, _wave_damage_now() * power, 0.0, _wave_dir)
 		if is_instance_valid(sk) and sk.has_method(&"apply_knockback"):
-			sk.call(&"apply_knockback", _wave_dir * wasd_wave_knockback + Vector3.UP * 2.5, 0.3)
+			sk.call(&"apply_knockback",
+					_wave_dir * wasd_wave_knockback * power + Vector3.UP * 2.5, 0.3)
+
+
+## Урон вала СЕЙЧАС = вклад каждого живого артельщика. Считается в момент
+## попадания, а не на запуске: погиб носитель — вал слабеет на лету.
+func _wave_damage_now() -> float:
+	return wasd_wave_damage_per_gnome * float(_alive_artel())
 
 
 ## Полуширина вала с учётом карточки «Ещё по камню».
@@ -2562,32 +2720,24 @@ func _wave_half_width() -> float:
 
 
 ## Рассыпание: камень летит по ходу вала (направленный shatter, §6.1 F1).
-## Карточки: «Обвал» добавляет взрыв в точке, «Эхо» пускает второй вал следом.
-func _break_stone_wave() -> void:
-	var p: Vector3 = Vector3.INF
-	if is_instance_valid(_wave_node):
-		p = _wave_node.global_position
-		ShatterEffect.spawn(self, p + Vector3.UP * 0.6, Color(0.42, 0.38, 0.34),
-				10 + 4 * _card(&"artel_burst"), 1.6, _wave_dir, 1.2)
-		AoeVisual.spawn_dust(self, p)
-		_wave_node.queue_free()
-	_wave_node = null
-	_wave_hit.clear()
-	if p == Vector3.INF:
+## Карточка «Обвал» добавляет осколочный удар по кругу в точке разрушения.
+func _break_stone_wave(w: Dictionary) -> void:
+	var node: Node3D = w["node"]
+	if not is_instance_valid(node):
 		return
+	var p: Vector3 = node.global_position
+	var power: float = float(w["power"])
+	ShatterEffect.spawn(self, p + Vector3.UP * 0.6, Color(0.42, 0.38, 0.34),
+			int((10 + 4 * _card(&"artel_burst")) * power), 1.6, _wave_dir, 1.2)
+	AoeVisual.spawn_dust(self, p)
+	node.queue_free()
 	if _card(&"artel_burst") > 0:
-		_wave_burst(p)
-	# «Эхо»: второй вал стартует от места обвала НАЗАД к отряду не идёт — он
-	# уходит дальше по тому же курсу (добивает то, что прошло сквозь первый).
-	if _card(&"artel_echo") > 0 and _wave_echo_left > 0:
-		_wave_echo_left -= 1
-		_wave_travelled = 0.0
-		_wave_node = _build_stone_wave(p - _wave_dir * 3.0)
+		_wave_burst(p, power)
 
 
 ## «Обвал»: круговой осколочный удар в точке разрушения вала.
-func _wave_burst(p: Vector3) -> void:
-	var r: float = 4.5
+func _wave_burst(p: Vector3, power: float = 1.0) -> void:
+	var r: float = 4.5 * power
 	var r_sq: float = r * r
 	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
@@ -2597,11 +2747,11 @@ func _wave_burst(p: Vector3) -> void:
 		if to.length_squared() > r_sq:
 			continue
 		var dir: Vector3 = to.normalized() if to.length_squared() > 0.0001 else _wave_dir
-		Damageable.try_damage(sk, wasd_wave_damage * 0.6, 0.0, dir)
+		Damageable.try_damage(sk, _wave_damage_now() * 0.6 * power, 0.0, dir)
 		if is_instance_valid(sk) and sk.has_method(&"apply_knockback"):
-			sk.call(&"apply_knockback", dir * wasd_wave_knockback * 0.7, 0.2)
+			sk.call(&"apply_knockback", dir * wasd_wave_knockback * 0.7 * power, 0.2)
 	AoeVisual.spawn_expanding_ring(self, p, r, 0.25, Color(0.7, 0.65, 0.6, 0.9))
-	EventBus.camera_shake.emit(0.22, p)
+	EventBus.camera_shake.emit(0.22 * power, p)
 
 
 func _alive_artel() -> int:
@@ -2688,7 +2838,7 @@ func _spear_super_blast(c: Vector3) -> void:
 				(sk as Node3D).global_position.z - c.z)
 		var dir: Vector3 = to.normalized() if to.length_squared() > 0.0001 \
 				else Vector3(randf() - 0.5, 0.0, randf() - 0.5).normalized()
-		Damageable.try_damage(sk, wasd_super_damage, 0.0, dir)
+		Damageable.try_damage(sk, wasd_super_damage_per_gnome * float(_alive_pikemen()), 0.0, dir)
 		if is_instance_valid(sk) and sk.has_method(&"apply_knockback"):
 			sk.call(&"apply_knockback", dir * wasd_super_knockback + Vector3.UP * 2.0, 0.25)
 	AoeVisual.spawn_expanding_ring(self, c, radius, 0.25, Color(1.0, 0.6, 0.25, 0.9))

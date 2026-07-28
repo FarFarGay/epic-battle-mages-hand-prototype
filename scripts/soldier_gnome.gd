@@ -823,6 +823,16 @@ func _approach_and_hit(target: Node3D) -> void:
 		_attack_cd = randf_range(attack_cooldown_min, attack_cooldown_max)
 
 
+## Множитель скорости у цели (см. [arrival_damp_radius]). 1.0 = штатный
+## жёсткий подход. ОДИН расчёт на оба пути прибытия: строевые слоты
+## (_tick_squad_positioning) и точка-цель (_approach_point, им идёт артель) —
+## иначе фикс дрожи чинит только половину юнитов.
+func _arrival_speed_mult(dist: float) -> float:
+	if arrival_damp_radius <= SQUAD_TARGET_ARRIVAL or dist >= arrival_damp_radius:
+		return 1.0
+	return clampf(inverse_lerp(SQUAD_TARGET_ARRIVAL, arrival_damp_radius, dist), 0.12, 1.0)
+
+
 ## Идти к точке по навмешу и встать (для idle / ожидания у склада).
 func _approach_point(p: Vector3) -> void:
 	var to := Vector3(p.x - global_position.x, 0.0, p.z - global_position.z)
@@ -830,7 +840,7 @@ func _approach_point(p: Vector3) -> void:
 	if d <= SQUAD_TARGET_ARRIVAL:
 		velocity = Vector3.ZERO
 		return
-	_move_toward(to, d)
+	_move_toward(to, d, _arrival_speed_mult(d))
 
 
 ## Идём за ресурсом на склад башни: дошёл → берём 1 единицу (BUILD_RESOURCE) в руки.
@@ -1203,7 +1213,7 @@ func _active_tick(delta: float) -> void:
 		var to_goal_strict := Vector3(goal_strict.x - global_position.x, 0.0, goal_strict.z - global_position.z)
 		var dist_strict: float = to_goal_strict.length()
 		if dist_strict > SQUAD_TARGET_ARRIVAL:
-			_move_toward(to_goal_strict, dist_strict)
+			_move_toward(to_goal_strict, dist_strict, _arrival_speed_mult(dist_strict))
 			return
 		# Дошёл первый раз — фиксируем и больше strict не блокирует бой.
 		_strict_arrived_at_slot = true
@@ -1246,10 +1256,7 @@ func _active_tick(delta: float) -> void:
 	# и когда слот ДВИЖЕТСЯ НАВСТРЕЧУ (отход строя спиной), гном ловит цикл
 	# стоп-старт-перелёт и дёргается. Дефолт 0 = как было, основная игра не
 	# затронута.
-	var mult: float = 1.0
-	if arrival_damp_radius > SQUAD_TARGET_ARRIVAL and dist < arrival_damp_radius:
-		mult = clampf(inverse_lerp(SQUAD_TARGET_ARRIVAL, arrival_damp_radius, dist), 0.12, 1.0)
-	_move_toward(to_goal_xz, dist, mult)
+	_move_toward(to_goal_xz, dist, _arrival_speed_mult(dist))
 
 
 ## Шаг state machine во всех нон-READY стейтах. Velocity полностью

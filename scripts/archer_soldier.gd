@@ -263,7 +263,7 @@ func _active_tick(delta: float) -> void:
 		var dist_strict: float = to_goal_strict.length()
 		if dist_strict > SQUAD_TARGET_ARRIVAL:
 			_face_horizontal(to_goal_strict, dist_strict)
-			_move_toward(to_goal_strict, dist_strict)
+			_move_toward(to_goal_strict, dist_strict, _arrival_speed_mult(dist_strict))
 			return
 		_strict_arrived_at_slot = true
 
@@ -315,7 +315,10 @@ func _active_tick(delta: float) -> void:
 		_facing = _outward_facing()
 		return
 	_face_horizontal(to_goal_xz, dist)
-	_move_toward(to_goal_xz, dist)
+	# Мягкий подход у слота — тот же расчёт, что у копейщика и артели
+	# (SoldierGnome._arrival_speed_mult): без него на отходе строя спиной слот
+	# наезжает сзади и лучник прыгает «полный ход ↔ стоп».
+	_move_toward(to_goal_xz, dist, _arrival_speed_mult(dist))
 
 
 ## True если есть resolved cone/alarm-цель в attack_range и cd готов —
