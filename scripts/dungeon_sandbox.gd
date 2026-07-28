@@ -143,6 +143,11 @@ const CMD_ARRIVED_DIST := 2.0
 @export var wave_growth: int = 2
 ## Потолок живых скелетов одновременно (защита от каши и просадок).
 @export var max_alive_skeletons: int = 45
+## Волн НА КОМНАТУ (фидбек 2026-07-28 «прошёл и всё — открываешь дверь и идёшь
+## дальше»): комната выдаёт столько волн и затихает; добил последних → WaveLabel
+## «Волны отбиты ✓». Каждая комната считает свои волны отдельно (вернулся в
+## зачищенную — тишина). 0 = бесконечно (старое поведение). Чит T лимит обходит.
+@export var room_wave_limit: int = 5
 
 @export_group("Комната и камера")
 ## Центр комнаты НАМЕРЕННО сдвинут от мирового origin: в сцене нет навмеша,
@@ -287,6 +292,10 @@ var _banner: Node3D = null
 var _camera: Camera3D = null
 var _wave_timer: float = 0.0
 var _wave_number: int = 0
+## Лимит волн: сколько волн выпустила каждая комната и разовый флаг «отбита»
+## (индекс комнаты → int / bool). См. room_wave_limit.
+var _room_waves: Dictionary = {}
+var _room_cleared: Dictionary = {}
 ## Z-центры комнат анфилады (X у всех = room_center.x). Активная = та, в чьём
 ## полу стоит центроид отряда; в коридоре — -1 (волны на паузе).
 var _room_z: Array = []
@@ -1790,7 +1799,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_tree().reload_current_scene()
 	elif key.keycode == KEY_T and not _game_over:
 		_wave_timer = wave_interval
-		_spawn_wave()
+		_spawn_wave(true)
 	elif key.keycode == KEY_E and not _game_over:
 		_toggle_cargo()
 
@@ -2259,10 +2268,16 @@ func _update_active_room() -> void:
 			print("[DungeonSandbox] активная комната → Room%d (волны здесь)" % (now + 1))
 
 
-func _spawn_wave() -> void:
+func _spawn_wave(force: bool = false) -> void:
 	if skeleton_scene == null:
 		push_warning("[DungeonSandbox] skeleton_scene не задан")
 		return
+	# Лимит волн на комнату: выдала свои — затихает навсегда (force = чит T).
+	if not force and room_wave_limit > 0 and _active_room >= 0 \
+			and int(_room_waves.get(_active_room, 0)) >= room_wave_limit:
+		return
+	if _active_room >= 0:
+		_room_waves[_active_room] = int(_room_waves.get(_active_room, 0)) + 1
 	_wave_number += 1
 	var count: int = wave_base_count + wave_growth * (_wave_number - 1)
 	var alive: int = get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP).size()
@@ -2338,10 +2353,36 @@ func _on_gnome_died() -> void:
 func _on_skeleton_died() -> void:
 	_kills += 1
 	_update_labels()
+	# Deferred: destroyed.emit летит ДО queue_free умирающего (Enemy.take_damage) —
+	# синхронная проверка посчитала бы его живым и последний килл не закрывал бы
+	# комнату. К концу кадра он уже помечен на удаление.
+	call_deferred(&"_check_room_cleared")
+
+
+## «Комната отбита»: лимит волн выпущен и живых скелетов не осталось → разовый
+## флаг + салют в WaveLabel («путь свободен» — дальше игрок открывает дверь
+## штатным пазлом). Волны следующей комнаты оживят лейбл обычным «Волна: N».
+func _check_room_cleared() -> void:
+	if room_wave_limit <= 0 or _active_room < 0:
+		return
+	if _room_cleared.get(_active_room, false):
+		return
+	if int(_room_waves.get(_active_room, 0)) < room_wave_limit:
+		return
+	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if is_instance_valid(sk) and not (sk as Node).is_queued_for_deletion():
+			return
+	_room_cleared[_active_room] = true
+	print("[DungeonSandbox] Room%d зачищена (волн: %d, убито всего: %d)"
+			% [_active_room + 1, room_wave_limit, _kills])
+	_update_labels()
 
 
 func _update_labels() -> void:
-	($HUD/Panel/Rows/WaveLabel as Label).text = "Волна: %d" % _wave_number
+	var wave_txt: String = "Волна: %d" % _wave_number
+	if _active_room >= 0 and _room_cleared.get(_active_room, false):
+		wave_txt = "Волны отбиты ✓ — путь свободен"
+	($HUD/Panel/Rows/WaveLabel as Label).text = wave_txt
 	($HUD/Panel/Rows/SquadLabel as Label).text = "Гномов: %d / %d" % [_alive_gnomes(), squad_size]
 	($HUD/Panel/Rows/KillLabel as Label).text = "Убито: %d" % _kills
 	var cargo_txt: String = "Груз: —"
