@@ -295,6 +295,9 @@ const CMD_ARRIVED_DIST := 2.0
 ## Скорость движения точки строя по WASD (м/с). Чуть ВЫШЕ скорости юнитов —
 ## тогда они бегут за точкой на полном ходу, без «доехал-жду» вязкости.
 @export var wasd_speed: float = 7.5
+## Доля скорости при отходе ЗАДОМ (ход строго против прицела). Вбок — среднее
+## между этим и 1.0. 1.0 = выключить. См. [_backpedal_scale].
+@export var wasd_backpedal_speed: float = 0.55
 ## Скорость самих гномов группы (м/с, всем типам одинаково — группа = тело).
 ## Каталожные 1.6–2.2 для twin-stick вязкие.
 @export var wasd_unit_speed: float = 6.0
@@ -326,6 +329,22 @@ const CMD_ARRIVED_DIST := 2.0
 @export var wasd_quiver_size: int = 0
 ## Сколько стрел рисовать на спине, когда лимит выключен (чистый визуал).
 @export var wasd_quiver_decor: int = 6
+## СУПЕР МИЛИ-КЛАССА (ПРОБЕЛ, пивот 2026-07-28). Переключение фокуса 1/2/3
+## выпилено: дальний бой работает ВСЕГДА (по направлению курсора), мили-класс
+## сжат в одну кнопку с делеем и кулдауном. Причина: фокус-группы существовали
+## только чтобы выдавать приказы разным отрядам — когда приказ один, меню
+## становится пустым интерфейсом («жму цифру, чтобы получить право нажать
+## кнопку»). Один жест вместо режима. Гейт — САМ СОСТАВ ОТРЯДА: нет копейщиков
+## → нет супера (билд решает возможности, без второго слоя карточек-абилок).
+## Внутри — веер ШТАТНЫХ панчей (импакт-пакет punch_at) + ударная волна: не
+## абстрактный круг урона, а «копейщики выстрелили наружу».
+@export var wasd_super_radius: float = 6.5
+## Замах-телеграф до удара (с): видно кольцо, толпа успевает подойти — «когда
+## жать» становится решением.
+@export var wasd_super_windup: float = 0.4
+@export var wasd_super_cooldown: float = 6.0
+@export var wasd_super_damage: float = 34.0
+@export var wasd_super_knockback: float = 11.0
 ## Секунд на одну стрелу перезарядки (0.5 → 0.3 по фидбеку 2026-07-28 «увеличь
 ## скорость»: пустой→полный 2.4с вместо 3.8с).
 @export var wasd_quiver_reload: float = 0.3
@@ -432,6 +451,12 @@ const WASD_LEASH := 4.0
 ## 3=артель (пока только ПКМ-щит; турели — следующий шаг). Выбранная группа
 ## подчиняется ЛКМ; невыбранные — в обороне (лучники: авто-огонь по близким,
 ## копейщики: строй + укол с места).
+## Супер мили-класса (ПРОБЕЛ): остаток замаха, кулдаун и кольцо-телеграф.
+var _super_windup: float = 0.0
+var _super_cd: float = 0.0
+var _super_ring: Node3D = null
+var _super_armed_prev: bool = true
+var _super_hud_acc: float = 0.0
 var _focus_group: int = 2
 ## Карточки фокус-групп в HUD (стиль карточек отрядов основной игры): панели
 ## порядком групп 1..3 и их StyleBoxFlat для подсветки выбранной. Узлы живут
@@ -482,7 +507,7 @@ func _ready() -> void:
 	_update_labels()
 	if wasd_mode:
 		_setup_focus_cards()
-		_set_focus_group(_focus_group)  # телеграф стартового выбора в HUD
+		_refresh_hud_hint()  # постоянная раскладка в HUD
 	if _director_active():
 		# СТАРТОВАЯ ПАЧКА (после _spawn_squad — скелетам нужна живая цель):
 		# бой начинается на первой секунде, а не на седьмой. Две кучи вместо
@@ -638,18 +663,12 @@ func _spawn_wasd_squad() -> void:
 	_squad.command_hold(room_center, false)
 
 
-## Фокус-группа: выбранная подчиняется ЛКМ, остальные — в обороне. HUD-строка
-## в HintLabel — телеграф выбора (юзер должен видеть, кем рулит).
-func _set_focus_group(g: int) -> void:
-	_focus_group = g
-	var names := {
-		1: "Копейщики — удар по клику",
-		2: "Лучники — полив по ЛКМ",
-		3: "Артель — щит по ПКМ",
-	}
+## Раскладка постоянная (выбирать больше нечего): подсказка вместо телеграфа
+## фокуса. Лучники льют сами по курсору, мили — ПРОБЕЛ, артель — ПКМ.
+func _refresh_hud_hint() -> void:
 	var hint := get_node_or_null("HUD/Panel/Rows/HintLabel") as Label
 	if hint != null:
-		hint.text = "Фокус [%d]: %s" % [g, names.get(g, "?")]
+		hint.text = "WASD — ход · курсор — огонь · ПРОБЕЛ — удар вокруг · ПКМ — щит"
 	_refresh_focus_cards()
 
 
@@ -676,8 +695,9 @@ func _setup_focus_cards() -> void:
 		_focus_card_boxes.append(box)
 
 
-## Подсветка выбранной карточки (белый бордер + светлее фон) и счётчики живых
-## по типам. Вся группа мертва → карточка гаснет (гномы = видимое HP).
+## Карточки больше НЕ выбор, а дисплей состава: счётчик живых по типам (вся
+## группа мертва → карточка гаснет, гномы = видимое HP) + готовность супера на
+## карточке копейщиков. Подсветки выбранной нет — выбирать нечего.
 func _refresh_focus_cards() -> void:
 	if _focus_cards.size() < 3:
 		return
@@ -691,14 +711,19 @@ func _refresh_focus_cards() -> void:
 	for i in range(3):
 		var card: PanelContainer = _focus_cards[i]
 		var box: StyleBoxFlat = _focus_card_boxes[i]
-		var selected: bool = _focus_group == i + 1
 		var alive: int = int(counts.get(keys[i], 0))
-		box.border_color = Color(1, 1, 1, 0.95) if selected else FOCUS_CARD_COLORS[i]
-		box.bg_color = Color(0.16, 0.15, 0.2, 0.95) if selected else Color(0.09, 0.09, 0.13, 0.92)
+		# Копейщики: бордер белеет, когда ПРОБЕЛ готов — телеграф способности
+		# на самой карточке (кнопка вспыхивает, а не полоска кулдауна).
+		var armed: bool = i == 0 and alive > 0 and _super_cd <= 0.0 and _super_windup <= 0.0
+		box.border_color = Color(1, 1, 1, 0.95) if armed else FOCUS_CARD_COLORS[i]
+		box.bg_color = Color(0.16, 0.15, 0.2, 0.95) if armed else Color(0.09, 0.09, 0.13, 0.92)
 		card.modulate = Color(1, 1, 1, 1.0) if alive > 0 else Color(1, 1, 1, 0.35)
 		var cnt := card.get_node_or_null("V/Count") as Label
 		if cnt != null:
-			cnt.text = "Живых: %d / %d" % [alive, totals[i]]
+			var txt: String = "Живых: %d / %d" % [alive, totals[i]]
+			if i == 0 and alive > 0:
+				txt += "\n[ПРОБЕЛ] готов" if armed else "\n[ПРОБЕЛ] %.1fс" % _super_cd
+			cnt.text = txt
 
 
 ## Блочная моделька артельщика — единый стиль с лучником/копейщиком (фидбек
@@ -1843,24 +1868,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			_click_pending = true
 			return
-	# WASD: ПКМ = щит артельщика; КЛИК ЛКМ = удар-кулак копейщиков при фокусе
-	# [1] (событие — не теряется); 1/2/3 = фокус-группа (спелл-экшены свободны).
+	# WASD: ПКМ = щит артельщика; ПРОБЕЛ = супер мили-класса. ⛔ Фокус-группы
+	# 1/2/3 и клик-панч выпилены (2026-07-28): дальний бой работает всегда,
+	# мили сжат в одну кнопку — переключать стало нечего.
 	if wasd_mode and not _game_over:
 		var wb := event as InputEventMouseButton
 		if wb != null and wb.pressed and wb.button_index == MOUSE_BUTTON_RIGHT:
 			_shield_pending = true
 			return
-		if wb != null and wb.pressed and wb.button_index == MOUSE_BUTTON_LEFT:
-			_click_pending = true
-			return
-		if event.is_action_pressed(&"equip_fireball"):
-			_set_focus_group(1)
-			return
-		if event.is_action_pressed(&"equip_firestorm"):
-			_set_focus_group(2)
-			return
-		if event.is_action_pressed(&"equip_mine_scatter"):
-			_set_focus_group(3)
+		var sk_key := event as InputEventKey
+		if sk_key != null and sk_key.pressed and not sk_key.echo \
+				and sk_key.keycode == KEY_SPACE:
+			_request_spear_super()
 			return
 	var key := event as InputEventKey
 	if key == null or not key.pressed or key.echo:
@@ -2105,11 +2124,12 @@ func _aim_target(c: Vector3) -> Node3D:
 ## независимыми путями, ломать одну ради другой нельзя.
 func _wasd_physics(delta: float) -> void:
 	var cursor: Vector3 = _cursor_ground_point()
-	_wasd_move(delta)
+	_wasd_move(delta, cursor)
 	_wasd_combat(Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not _game_over, cursor)
 	if _shield_pending:
 		_shield_pending = false
 		_try_place_shield(cursor)
+	_tick_spear_super(delta)
 	_tick_cargo(delta)
 	_tick_cargo_snap(delta)
 	_tick_door_puzzle(delta)
@@ -2134,13 +2154,14 @@ func _wasd_physics(delta: float) -> void:
 ## (W = вглубь анфилады, −Z). Поводок WASD_LEASH: упёрлись в стену — точка не
 ## уезжает от строя в бесконечность. Отпустил — точка паркуется на центроиде
 ## (мёртвая зона 0.75м, тот же анти-фидбек-луп, что у drift-пути).
-func _wasd_move(delta: float) -> void:
+func _wasd_move(delta: float, cursor: Vector3) -> void:
 	if _squad == null:
 		return
 	var v: Vector2 = Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
 	var c: Vector3 = _squad.compute_center()
 	if v.length_squared() > 0.0001:
-		var hp2: Vector3 = _squad.hold_position + Vector3(v.x, 0.0, v.y) * wasd_speed * delta
+		var speed: float = wasd_speed * _backpedal_scale(Vector3(v.x, 0.0, v.y), c, cursor)
+		var hp2: Vector3 = _squad.hold_position + Vector3(v.x, 0.0, v.y) * speed * delta
 		hp2.x = clampf(hp2.x, room_center.x - room_half + 2.0, room_center.x + room_half - 2.0)
 		hp2.z = clampf(hp2.z, cursor_z_min, cursor_z_max)
 		if c != Vector3.INF:
@@ -2156,6 +2177,117 @@ func _wasd_move(delta: float) -> void:
 		if dxh * dxh + dzh * dzh > 0.5625:
 			_squad.hold_position = Vector3(c.x, 0.0, c.z)
 			_banner.global_position = _squad.hold_position
+
+
+## ПРОБЕЛ: заявка на супер мили-класса. Гейт — состав отряда: нет живых
+## копейщиков → нет способности (билд решает возможности). Замах не стопит
+## группу: она продолжает идти и стрелять, кольцо-телеграф едет с ней.
+func _request_spear_super() -> void:
+	if _squad == null or _super_windup > 0.0 or _super_cd > 0.0:
+		return
+	if _alive_pikemen() <= 0:
+		EventBus.tutorial_hint.emit("Нет копейщиков — удар вокруг недоступен", 1.6)
+		return
+	var c: Vector3 = _squad.compute_center()
+	if c == Vector3.INF:
+		return
+	_super_windup = wasd_super_windup
+	_super_ring = AoeVisual.spawn_ground_ring(self, c, wasd_super_radius, 0.0,
+			Color(1.0, 0.55, 0.2, 0.9))
+
+
+## Тик замаха: кольцо следует за группой (взрыв идёт по АКТУАЛЬНОМУ центру —
+## иначе на ходу волна отставала бы от отряда), по нулю — удар.
+func _tick_spear_super(delta: float) -> void:
+	if _super_cd > 0.0:
+		_super_cd = maxf(_super_cd - delta, 0.0)
+	if _super_windup > 0.0:
+		var c: Vector3 = _squad.compute_center() if _squad != null else Vector3.INF
+		if is_instance_valid(_super_ring) and c != Vector3.INF:
+			_super_ring.global_position = c
+		_super_windup -= delta
+		if _super_windup <= 0.0:
+			_super_windup = 0.0
+			_super_cd = wasd_super_cooldown
+			if is_instance_valid(_super_ring):
+				_super_ring.queue_free()
+			_super_ring = null
+			if c != Vector3.INF:
+				_spear_super_blast(c)
+	# HUD: тикающий отсчёт на карточке (раз в 0.1с — строки не жжём каждый кадр)
+	# + мгновенная вспышка бордера на переходе «готов».
+	var armed: bool = _super_cd <= 0.0 and _super_windup <= 0.0 and _alive_pikemen() > 0
+	_super_hud_acc += delta
+	if armed != _super_armed_prev or (not armed and _super_hud_acc >= 0.1):
+		_super_armed_prev = armed
+		_super_hud_acc = 0.0
+		_refresh_focus_cards()
+
+
+## УДАР ВОКРУГ = веер штатных панчей + ударная волна. Каждый живой копейщик
+## физически выстреливает в СВОЮ ближайшую цель (punch_at: замах-хлыст-хитстоп-
+## искры-отскок в строй — импакт-пакет, который уже отлажен), а по всем
+## остальным в радиусе идёт волна: урон + отброс наружу. Не абстрактный круг
+## урона, а «копейщиков выбросило во все стороны».
+func _spear_super_blast(c: Vector3) -> void:
+	var targets: Array = []
+	var r_sq: float = wasd_super_radius * wasd_super_radius
+	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if not is_instance_valid(sk) or not (sk is Node3D) or (sk as Node).is_queued_for_deletion():
+			continue
+		var to := Vector3((sk as Node3D).global_position.x - c.x, 0.0,
+				(sk as Node3D).global_position.z - c.z)
+		if to.length_squared() <= r_sq:
+			targets.append(sk)
+	# Каждому копейщику — своя цель (по кругу, если целей меньше, чем бойцов):
+	# веер, а не куча-мала в одну точку.
+	var idx: int = 0
+	for m in _squad.members:
+		if not is_instance_valid(m) or m.soldier_type != &"pikeman":
+			continue
+		if targets.is_empty() or not m.has_method(&"punch_at"):
+			continue
+		m.call(&"punch_at", targets[idx % targets.size()])
+		idx += 1
+	# Волна: урон + отброс наружу. hit_dir = от центра группы → направленный
+	# shatter на добивании (§6.1 F1), осколки летят «от нас».
+	for sk in targets:
+		var to := Vector3((sk as Node3D).global_position.x - c.x, 0.0,
+				(sk as Node3D).global_position.z - c.z)
+		var dir: Vector3 = to.normalized() if to.length_squared() > 0.0001 \
+				else Vector3(randf() - 0.5, 0.0, randf() - 0.5).normalized()
+		Damageable.try_damage(sk, wasd_super_damage, 0.0, dir)
+		if is_instance_valid(sk) and sk.has_method(&"apply_knockback"):
+			sk.call(&"apply_knockback", dir * wasd_super_knockback + Vector3.UP * 2.0, 0.25)
+	AoeVisual.spawn_expanding_ring(self, c, wasd_super_radius, 0.25,
+			Color(1.0, 0.6, 0.25, 0.9))
+	AoeVisual.spawn_dust(self, c)
+	EventBus.camera_shake.emit(0.3, c)
+
+
+func _alive_pikemen() -> int:
+	if _squad == null:
+		return 0
+	var n: int = 0
+	for m in _squad.members:
+		if is_instance_valid(m) and m.soldier_type == &"pikeman":
+			n += 1
+	return n
+
+
+## ОТХОД СПИНОЙ СТОИТ ТЕМПА: группа всегда развёрнута к курсору, поэтому шаг
+## против взгляда — это пятиться задом, а не бежать. Множитель по dot(ход,
+## прицел): вперёд ×1, назад ×wasd_backpedal_speed, вбок ровно между ними.
+## Тормозим ТОЧКУ СТРОЯ, а не юнитов — группа остаётся одним телом, строй не
+## растягивается. Даёт цену за кайт и делает разворот осмысленным решением.
+func _backpedal_scale(move_dir: Vector3, center: Vector3, cursor: Vector3) -> float:
+	if wasd_backpedal_speed >= 1.0 or center == Vector3.INF or cursor == Vector3.INF:
+		return 1.0
+	var aim := Vector3(cursor.x - center.x, 0.0, cursor.z - center.z)
+	if aim.length_squared() < 0.01 or move_dir.length_squared() < 0.0001:
+		return 1.0
+	var d: float = move_dir.normalized().dot(aim.normalized())
+	return lerpf(wasd_backpedal_speed, 1.0, (d + 1.0) * 0.5)
 
 
 ## Полив: пока ЛКМ зажат — лучники стреляют В НАПРАВЛЕНИИ курсора своим темпом
@@ -2194,41 +2326,33 @@ func _wasd_combat(lmb: bool, cursor: Vector3) -> void:
 			_squad.tail_dir = aim_dir
 		else:
 			_squad.tail_dir = _squad.tail_dir.slerp(aim_dir, minf(1.0, get_physics_process_delta_time() * 3.5)).normalized()
-	# Фокус-группа: выбранная подчиняется ЛКМ, остальные — в обороне.
-	var archers_focused: bool = _focus_group == 2
-	# Копейщики: КЛИК (не hold) = удар-кулак по цели прицела — вылет→укол→
-	# отскок в строй (SoldierGnome.punch_at). ⛔ hold-штурм через полный FSM
-	# отвергнут («не импактно и не управляемо, должен быть УДАР»).
-	var spears_punch: bool = _focus_group == 1 and _click_pending and tgt != null
+	# ГРУППА СТРЕЛЯЕТ ВСЕГДА (пивот 2026-07-28): огонь больше не гейтится ни
+	# фокусом, ни зажатым ЛКМ — лучники поливают непрерывно ТУДА, КУДА СМОТРИТ
+	# КУРСОР. Это не отвергнутый автобой: автоматика тут в ТЕМПЕ, ручное — в
+	# НАПРАВЛЕНИИ (за спиной группа не бьёт), поэтому позиция и разворот
+	# остаются работой игрока каждую секунду.
+	var archers_focused: bool = true
 	for m in _squad.members:
 		if not is_instance_valid(m):
 			continue
 		m.face_override = aim_dir
 		if m is ArcherSoldier:
-			# Выбраны: авто-конус глушён, огонь ТОЛЬКО поливом по прицелу —
-			# полная дальность и штатный темп. Не выбраны: САМООБОРОНА В УПОР —
-			# авто-конус жив (proximity-override бьёт подошедших даже сбоку),
-			# но дальность срезана до wasd_defense_range и кулдаун растянут:
-			# дальних не трогают, фокус на луках = осознанный выбор.
+			# fire_suppressed глушит АВТО-КОНУС («сам увидел — сам палит» ⛔):
+			# огонь идёт только через try_suppressive_fire по прицелу игрока —
+			# полная дальность и штатный темп, но строго в сектор курсора.
 			m.fire_suppressed = archers_focused
-			if archers_focused:
-				m.attack_range = gnome_attack_range
-				m.attack_cooldown_min = gnome_cooldown_min
-				m.attack_cooldown_max = gnome_cooldown_max
-				if lmb and aim != Vector3.INF and m.has_method(&"try_suppressive_fire"):
-					m.call(&"try_suppressive_fire", aim)
-			else:
-				m.attack_range = wasd_defense_range
-				m.attack_cooldown_min = gnome_cooldown_min * wasd_defense_cd_mult
-				m.attack_cooldown_max = gnome_cooldown_max * wasd_defense_cd_mult
+			m.attack_range = gnome_attack_range
+			m.attack_cooldown_min = gnome_cooldown_min
+			m.attack_cooldown_max = gnome_cooldown_max
+			if aim != Vector3.INF and m.has_method(&"try_suppressive_fire"):
+				m.call(&"try_suppressive_fire", aim)
 		elif m.soldier_type == &"pikeman":
-			# Оборона ВСЕГДА (укол с места, автоскан только вплотную);
-			# удар-кулак — отдельный приказ поверх, обороне не мешает.
+			# Копейщики молчать между суперами не должны — иначе передний ряд
+			# станет декорацией, а он телом держит толпу. Автоукол вплотную
+			# (hold_ground + срезанный detect) живёт всегда, ручного клика нет.
 			m.hold_ground = true
-			if spears_punch and m.has_method(&"punch_at"):
-				m.call(&"punch_at", tgt)
 	_click_pending = false
-	_update_wasd_visuals(c, cursor, lmb and tgt != null)
+	_update_wasd_visuals(c, cursor, tgt != null)
 
 
 ## Цель полива: скелет в дальности лучника от центра, в секторе прицела
