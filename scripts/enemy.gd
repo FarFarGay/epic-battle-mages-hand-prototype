@@ -100,11 +100,37 @@ static func _maybe_refresh_target_grid(tree: SceneTree) -> bool:
 enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 
 @export var hp: float = 30.0
-## КЛЮЧ-ЦЕЛЬ «щитовик» (данж-WASD 2026-07-28): стрелы звенят о щит и не наносят
-## урона — берётся только контактным ударом (панч копейщика). Аддитивное поле с
-## дефолтом ВЫКЛ: основная игра не затронута, ставится per-instance при спавне.
-## Гейт живёт в Arrow._on_body_entered (мили-урон идёт мимо него штатно).
+## КЛЮЧ-ЦЕЛЬ «щитовик» (данж-WASD 2026-07-28): стрелы не наносят урона ТЕЛУ —
+## они выедают ЩИТ. Аддитивное поле с дефолтом ВЫКЛ: основная игра не затронута,
+## ставится per-instance при спавне. Гейт живёт в Arrow._on_body_entered
+## (мили/AOE-урон идёт мимо него штатно).
 var arrow_proof: bool = false
+## Прочность щита. Абсолютный щит («стрелы не берут, и точка») пробовали и сняли
+## в тот же день: когда на поле оставались одни щитовики, лучники выключались и
+## игрок бегал кругами, ожидая кулдаун — тот же мёртвый простой, что убил
+## колчан. Теперь полив ВСЕГДА даёт прогресс: сбил щит → перед тобой обычный
+## скелет. Ключ-цель осталась (в лоб её не расстрелять мгновенно), простой ушёл.
+var shield_hp: float = 0.0
+
+
+## Стрела в щит: съедает прочность, красит плиту по остатку, на нуле — щит
+## отваливается и враг становится обычным. true = удар поглощён щитом.
+## Плита ищется по имени `ShieldPlate` (её вешает тот, кто спавнит ключ-цель).
+func hit_shield(amount: float) -> bool:
+	if not arrow_proof:
+		return false
+	shield_hp -= maxf(amount, 0.0)
+	var plate := get_node_or_null("ShieldPlate") as MeshInstance3D
+	if shield_hp <= 0.0:
+		arrow_proof = false
+		if plate != null:
+			plate.queue_free()
+	elif plate != null:
+		# Щит темнеет и «трескается» цветом — прогресс виден без полосок.
+		var mat := plate.material_override as StandardMaterial3D
+		if mat != null:
+			mat.albedo_color = mat.albedo_color.lerp(Color(0.45, 0.12, 0.08), 0.18)
+	return true
 @export var move_speed: float = 4.0
 @export var gravity: float = 20.0
 @export var attack_range: float = 1.5

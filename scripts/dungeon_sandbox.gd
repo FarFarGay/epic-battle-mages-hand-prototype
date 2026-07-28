@@ -195,9 +195,14 @@ const CMD_ARRIVED_DIST := 2.0
 ## нигде не проваливается. Типы подаются КУЧЕЙ (идёт группа щитовиков — это
 ## читается), доли ниже. Гейт по времени = DK `minRunWeight`: первые секунды
 ## чистый полив, ключ-цели входят, когда игрок освоился.
-## Щитовики: стрелы звенят и гаснут (Enemy.arrow_proof) → только панч [1].
+## Щитовики: стрелы уходят в щит, не в тело → ответ либо пробел (сносит разом),
+## либо полив, выедающий плиту. Абсолютный щит снят — он выключал лучников и
+## заставлял ЖДАТЬ кулдаун (тот же простой, что убил колчан).
 @export var director_shieldman_share: float = 0.3
 @export var director_shieldman_after: float = 12.0
+## Прочность щита. При 3 лучниках (~30 урона/с) 45 = ~1.5с полива на плиту:
+## заметно, но не душит; пробел остаётся быстрым ответом, не единственным.
+@export var director_shield_hp: float = 45.0
 ## Бегуны: вдвое быстрее, хилые, лезут В СПИНУ (сектор фронт+180°) → щит [3]
 ## или разворот группы. Дают дальнему бою цену за «стоять и лить вперёд».
 @export var director_runner_share: float = 0.25
@@ -298,6 +303,10 @@ const CMD_ARRIVED_DIST := 2.0
 ## Доля скорости при отходе ЗАДОМ (ход строго против прицела). Вбок — среднее
 ## между этим и 1.0. 1.0 = выключить. См. [_backpedal_scale].
 @export var wasd_backpedal_speed: float = 0.55
+## Зона мягкого подхода гнома к слоту строя (м). Лечит дрожь на отходе спиной:
+## слот наезжает сзади, и без демпфирования гном скачет «полный ход ↔ стоп».
+## 0 = штатное жёсткое прибытие. См. SoldierGnome.arrival_damp_radius.
+@export var wasd_arrival_damp: float = 1.6
 ## Скорость самих гномов группы (м/с, всем типам одинаково — группа = тело).
 ## Каталожные 1.6–2.2 для twin-stick вязкие.
 @export var wasd_unit_speed: float = 6.0
@@ -322,11 +331,72 @@ const CMD_ARRIVED_DIST := 2.0
 ## дальность (gnome_attack_range) и штатный темп.
 @export var wasd_defense_range: float = 4.0
 @export var wasd_defense_cd_mult: float = 1.7
-## Щит артельщика: HP (скелеты-мили грызут), размер плашки и дистанция
-## выставления от центра группы в сторону курсора.
+## Щит артельщика ⛔ ЗАМЕНЁН каменной волной (2026-07-28): у каждого класса своя
+## атака — ЛКМ лучники, ПРОБЕЛ копейщики, ПКМ артель. Плашка-стена была
+## пассивной («поставил и жди»), волна — действие. Код щита оставлен на случай
+## возврата (_try_place_shield), с ПКМ снят.
 @export var wasd_shield_hp: float = 120.0
 @export var wasd_shield_size: Vector3 = Vector3(4.0, 1.8, 0.6)
 @export var wasd_shield_dist: float = 2.6
+
+@export_group("Желе-строй (WASD)")
+## Группа как ОДИН упругий организм, а не N юнитов по клеткам (фидбек
+## 2026-07-28). Три слоя поверх штатной раскладки «черепахи», все — деформация
+## СЛОТОВ, движение юнитов не переписано:
+##  1. пружина инерции: изменение скорости толкает строй против хода (стартовал
+##     — отстали, встал — накатились), дальше затухающее колебание = желе;
+##  2. вытяжение вдоль курса + поджатие поперёк на скорости (капля);
+##  3. волна: задние ряды отстают сильнее передних.
+## Плюс хвост строя рулит мягче головы (grip по индексу) — тело «перетекает».
+@export var jelly_enabled: bool = true
+## Сила инерционного толчка от смены скорости. Амплитуда качка ≈ Δv×inertia/√spring:
+## на 0.09/42 выходило 4 см при шаге строя 75 см — не читалось; 0.2/32 даёт
+## ~25 см, видно, но строй не разваливается (до предела 1.2 м далеко).
+@export var jelly_inertia: float = 0.2
+## Пружина возврата: жёсткость и затухание. Меньше damp = дольше колышется.
+## 4.2 при 32 = ζ≈0.37: два-три видимых качка, потом покой (желе, не кисель).
+@export var jelly_spring: float = 32.0
+@export var jelly_damp: float = 4.2
+## Предел сдвига строя (м) — чтобы желе не расползалось в кисель.
+@export var jelly_max_offset: float = 1.2
+## Вытяжение вдоль хода на полной скорости (0.35 = +35% длины, поперёк −16%).
+@export var jelly_stretch: float = 0.35
+## Отставание КАЖДОГО следующего ряда (м) на полной скорости — волна по телу.
+@export var jelly_row_lag: float = 0.13
+## Доля руления у хвоста от головного (1.0 = все одинаковые, 0.45 = хвост
+## заметно вязче и запаздывает).
+@export var jelly_grip_tail: float = 0.45
+
+@export_group("Карточки-находки")
+## КРИВАЯ РОСТА ВНУТРИ ЗАБЕГА (пивот 2026-07-28). Не VS-левелапы по опыту — их
+## пришлось бы тащить в этап с башней (разные балансы, гномы, жесть), — а
+## НАХОДКИ: зачистил комнату → выбери одну из трёх карточек. Комната = уровень,
+## три комнаты = три выбора, полоска опыта не нужна.
+## ⚠ Карточки живут ТОЛЬКО внутри данж-забега и наружу НЕ уходят: в башню, как
+## и раньше, уезжают ресурсы/свитки/чертежи. Поэтому баланс башни не трогается.
+## Вешаются на КАТЕГОРИЮ (все лучники), не на конкретного гнома — иначе
+## микроменеджмент и боль при потерях.
+@export var cards_enabled: bool = true
+## Сцена горящего пятна для карточки «Выжженная земля» (штатный BurnPatch).
+@export var burn_patch_scene: PackedScene = preload("res://scenes/burn_patch.tscn")
+## Сколько предлагать на выбор и потолок на категорию (дефицит слотов = выбор,
+## DK-урок §7.4). Категория заполнена — её карточки больше не выпадают.
+@export var cards_offer_count: int = 3
+@export var cards_limit_per_class: int = 3
+
+@export_group("Каменная волна артели (ПКМ)")
+## СУПЕР АРТЕЛИ: вал камня уходит от строя ПО ПРИЦЕЛУ, сметает всё на пути и
+## рассыпается — о стену или выдохшись. Заряжается долго: это не расходник на
+## каждую стычку, а «расчистить коридор», когда прижали спереди.
+## Гейт — живой артельщик в отряде (как копейщик для ПРОБЕЛА).
+@export var wasd_wave_cooldown: float = 14.0
+@export var wasd_wave_speed: float = 13.0
+## Сколько метров пролетит, если не встретит стену.
+@export var wasd_wave_range: float = 20.0
+## Полуширина вала (м): кого захватывает по сторонам от оси.
+@export var wasd_wave_half_width: float = 1.9
+@export var wasd_wave_damage: float = 45.0
+@export var wasd_wave_knockback: float = 14.0
 ## КОЛЧАН-ОБОЙМА лучника (2026-07-27) — ВЫКЛЮЧЕН фидбеком 2026-07-28: конечный
 ## боезапас «очень сбивает теншен и темп». Причина в природе драйвера: сухой
 ## колчан не даёт РЕШЕНИЕ, он даёт ПРОСТОЙ — игрок стоит и ждёт, пока цифра
@@ -350,7 +420,10 @@ const CMD_ARRIVED_DIST := 2.0
 ## кольцо-телеграф с замахом.
 @export var wasd_super_windup: float = 0.0
 @export var wasd_super_cooldown: float = 6.0
-@export var wasd_super_damage: float = 34.0
+## Урон волны. Держать ВЫШЕ hp щитовика (45): один пробел должен разваливать
+## его наверняка — иначе связка «вижу ключ-цель → жму кнопку» рвётся ожиданием
+## второго кулдауна, и щитовики читаются как хардкор (фидбек 2026-07-28).
+@export var wasd_super_damage: float = 55.0
 @export var wasd_super_knockback: float = 11.0
 ## Секунд на одну стрелу перезарядки (0.5 → 0.3 по фидбеку 2026-07-28 «увеличь
 ## скорость»: пустой→полный 2.4с вместо 3.8с).
@@ -426,6 +499,10 @@ var _door_wood: Node3D = null
 var _wood_broken: bool = false
 ## Фаза пульсации подсветки правильных ингредиентов (визуал «нужное светится»).
 var _craft_pulse: float = 0.0
+## Рецепт аппарата: цвета шаров ПО ПОРЯДКУ. Горловина светится тем, что ждёт
+## сейчас (_craft_current_need); принимается только он, остальные выплёвываются
+## и лежат дальше — принесёшь позже, когда кольцо их попросит.
+var _craft_need: Array = []
 ## Superhot: текущий сглаженный тайм-скейл мира. 1.0 = реальное время.
 var _superhot_scale: float = 1.0
 ## Superhot-пошаг: отряд ИСПОЛНЯЕТ шаг (идёт к точке; на это время мир живёт).
@@ -464,6 +541,76 @@ var _super_cd: float = 0.0
 var _super_ring: Node3D = null
 var _super_armed_prev: bool = true
 var _super_hud_acc: float = 0.0
+## Каменная волна артели (ПКМ): живой вал, его направление, пройденный путь,
+## уже задетые цели (каждого бьёт ОДИН раз) и кулдаун.
+var _wave_node: Node3D = null
+var _wave_dir: Vector3 = Vector3.ZERO
+var _wave_travelled: float = 0.0
+var _wave_hit: Dictionary = {}
+var _wave_cd: float = 0.0
+## Сколько «эхо»-валов ещё выпустить после разрушения текущего.
+var _wave_echo_left: int = 0
+## Желе-строй: прошлая точка строя и её скорость (для расчёта ускорения),
+## текущий пружинный сдвиг слотов и его скорость.
+var _jelly_prev_hold: Vector3 = Vector3.INF
+var _jelly_prev_vel: Vector3 = Vector3.ZERO
+var _jelly_offset: Vector3 = Vector3.ZERO
+var _jelly_offset_vel: Vector3 = Vector3.ZERO
+## Взятые карточки: id → сколько раз взята (повторы разрешены, пока есть слот).
+var _cards: Dictionary = {}
+## Что сейчас предложено (массив id) и открыт ли пикер.
+var _card_offer: Array = []
+var _card_picker_open: bool = false
+
+
+## КАТАЛОГ карточек-находок. Данные, не механики: почти всё — множители к уже
+## существующим ручкам (темп стрельбы, радиус супера, ширина вала), поэтому
+## новых систем не заводится. Держать перевес за ПРАВИЛАМИ (меняют поведение
+## кнопки), а не за процентами: «+15% чего-нибудь» фила не даёт — проверено на
+## колчане и стамине.
+##   cls   — категория-владелец (archer / pikeman / worker)
+## Эффекты читаются в местах применения через _card(id).
+const CARD_CATALOG := {
+	# --- Лучники ---
+	&"arch_rate": {
+		"cls": &"archer", "name": "Барабанный темп",
+		"desc": "Скорострельность лучников +20% за каждую карту.",
+	},
+	&"arch_range": {
+		"cls": &"archer", "name": "Дальний глаз",
+		"desc": "Дальность стрельбы +4 м.",
+	},
+	&"arch_shieldbreak": {
+		"cls": &"archer", "name": "Щитобой",
+		"desc": "ПРАВИЛО: стрелы выедают щиты втрое быстрее.",
+	},
+	# --- Копейщики ---
+	&"pike_radius": {
+		"cls": &"pikeman", "name": "Шире размах",
+		"desc": "Радиус удара вокруг +2 м.",
+	},
+	&"pike_cd": {
+		"cls": &"pikeman", "name": "Второе дыхание",
+		"desc": "Откат удара вокруг −2 с.",
+	},
+	&"pike_burn": {
+		"cls": &"pikeman", "name": "Выжженная земля",
+		"desc": "ПРАВИЛО: после удара земля горит 5 с.",
+	},
+	# --- Артель ---
+	&"artel_wide": {
+		"cls": &"worker", "name": "Ещё по камню",
+		"desc": "ПРАВИЛО: вал получает по камню с каждой стороны — полоса шире.",
+	},
+	&"artel_burst": {
+		"cls": &"worker", "name": "Обвал",
+		"desc": "ПРАВИЛО: врезавшись, вал взрывается осколками по кругу.",
+	},
+	&"artel_echo": {
+		"cls": &"worker", "name": "Эхо в камне",
+		"desc": "ПРАВИЛО: следом идёт второй вал, послабее.",
+	},
+}
 var _focus_group: int = 2
 ## Карточки фокус-групп в HUD (стиль карточек отрядов основной игры): панели
 ## порядком групп 1..3 и их StyleBoxFlat для подсветки выбранной. Узлы живут
@@ -639,6 +786,9 @@ func _spawn_wasd_squad() -> void:
 		soldier.lod_far_distance = 100000.0
 		soldier.lod_offscreen_half_angle_deg = 90.0
 		soldier.collision_mask |= Layers.ENEMIES
+		# Мягкий подход к слоту: лечит дрожь при отходе строя спиной (слот
+		# наезжает на гнома сзади → бинарный «ход/стоп» давал стоп-старт).
+		soldier.arrival_damp_radius = wasd_arrival_damp
 		add_child(soldier)
 		var ang: float = TAU * float(idx) / float(mix.size())
 		soldier.setup_free(t, stats,
@@ -675,7 +825,7 @@ func _spawn_wasd_squad() -> void:
 func _refresh_hud_hint() -> void:
 	var hint := get_node_or_null("HUD/Panel/Rows/HintLabel") as Label
 	if hint != null:
-		hint.text = "WASD — ход · ЛКМ — полив по курсору · ПРОБЕЛ — удар вокруг · ПКМ — щит"
+		hint.text = "WASD — ход · ЛКМ — полив · ПРОБЕЛ — удар вокруг · ПКМ — каменная волна"
 	_refresh_focus_cards()
 
 
@@ -719,9 +869,13 @@ func _refresh_focus_cards() -> void:
 		var card: PanelContainer = _focus_cards[i]
 		var box: StyleBoxFlat = _focus_card_boxes[i]
 		var alive: int = int(counts.get(keys[i], 0))
-		# Копейщики: бордер белеет, когда ПРОБЕЛ готов — телеграф способности
-		# на самой карточке (кнопка вспыхивает, а не полоска кулдауна).
-		var armed: bool = i == 0 and alive > 0 and _super_cd <= 0.0 and _super_windup <= 0.0
+		# Классы со способностью (копейщики — ПРОБЕЛ, артель — ПКМ): бордер
+		# белеет, когда кнопка готова — телеграф на самой карточке, а не полоска.
+		var armed: bool = false
+		if i == 0:
+			armed = alive > 0 and _super_cd <= 0.0 and _super_windup <= 0.0
+		elif i == 2:
+			armed = alive > 0 and _wave_cd <= 0.0
 		box.border_color = Color(1, 1, 1, 0.95) if armed else FOCUS_CARD_COLORS[i]
 		box.bg_color = Color(0.16, 0.15, 0.2, 0.95) if armed else Color(0.09, 0.09, 0.13, 0.92)
 		card.modulate = Color(1, 1, 1, 1.0) if alive > 0 else Color(1, 1, 1, 0.35)
@@ -730,6 +884,10 @@ func _refresh_focus_cards() -> void:
 			var txt: String = "Живых: %d / %d" % [alive, totals[i]]
 			if i == 0 and alive > 0:
 				txt += "\n[ПРОБЕЛ] готов" if armed else "\n[ПРОБЕЛ] %.1fс" % _super_cd
+			elif i == 2 and alive > 0:
+				txt += "\n[ПКМ] готов" if armed else "\n[ПКМ] %.1fс" % _wave_cd
+			# Набранные находки категории — прямо на её карточке.
+			txt += _cards_line(keys[i])
 			cnt.text = txt
 
 
@@ -1438,22 +1596,28 @@ func _setup_crafting() -> void:
 	_door_wood = get_node_or_null("Corr23/Door")
 	var r2 := Vector3(room_center.x, 0.0, room_center.z - 60.0)
 	_apparatus_pos = r2 + Vector3(-16, 0, 0)  # (24,·,-20) — западная часть Room2
+	# Рецепт задаётся ДО аппарата: горловина сразу зажигается цветом первого
+	# требуемого шара (фидбек 2026-07-28 «пусть показывает на своём кольце цвет
+	# нужного ей шара») — загадка сама себя объясняет, без текста и гадания.
+	_craft_need = [Color(0.9, 0.8, 0.2, 1), Color(0.2, 0.2, 0.22, 1), Color(0.92, 0.92, 0.95, 1)]
 	_spawn_apparatus(_apparatus_pos)
-	# Ингредиенты: 3 правильных (correct=true) + 3 отвлекающих, разбросаны.
+	_refresh_apparatus_ring()
+	# Ингредиенты: 3 из рецепта + 3 отвлекающих, разбросаны. Цвет — в meta:
+	# по нему аппарат и решает, принять или выплюнуть (правильность больше не
+	# флаг, а СОВПАДЕНИЕ С ТЕМ, ЧТО СЕЙЧАС ПОКАЗАНО НА КОЛЬЦЕ).
 	var spots := [
 		r2 + Vector3(16, 0, 12), r2 + Vector3(20, 0, -14), r2 + Vector3(11, 0, 18),
 		r2 + Vector3(-14, 0, 16), r2 + Vector3(-18, 0, -14), r2 + Vector3(4, 0, -20),
 	]
-	var correct := [Color(0.9, 0.8, 0.2, 1), Color(0.2, 0.2, 0.22, 1), Color(0.92, 0.92, 0.95, 1)]
 	var distract := [Color(0.2, 0.5, 0.95, 1), Color(0.3, 0.85, 0.4, 1), Color(0.95, 0.4, 0.75, 1)]
 	var idx := 0
-	for c in correct:
+	for c in _craft_need:
 		var it := _spawn_item(spots[idx], &"ingredient", c, true, 0.6)
-		it.set_meta(&"correct", true)
+		it.set_meta(&"color", c)
 		idx += 1
 	for c in distract:
 		var it := _spawn_item(spots[idx], &"ingredient", c, true, 0.6)
-		it.set_meta(&"correct", false)
+		it.set_meta(&"color", c)
 		idx += 1
 
 
@@ -1504,15 +1668,19 @@ func _tick_apparatus(delta: float) -> void:
 	if _apparatus_pos == Vector3.INF:
 		return
 	_craft_pulse += delta
-	# Подсветка «нужное»: правильные ингредиенты пульсируют свечением (дышат),
-	# отвлекающие статичны — видно, что кидать, без гадания.
+	# Подсветка «нужное» согласована с кольцом: дышит ТОЛЬКО шар того цвета,
+	# что сейчас горит на горловине. Одна подсказка в двух местах — игрок
+	# сверяет цвет, а не запоминает список.
 	var glow: float = 1.4 + 1.6 * (0.5 + 0.5 * sin(_craft_pulse * 4.0))
+	var need: Color = _craft_current_need()
 	for n in get_tree().get_nodes_in_group(CARGO_GROUP):
 		if n == _cargo or not is_instance_valid(n):
 			continue
 		if n.get_meta(&"kind", &"cube") != &"ingredient":
 			continue
-		if bool(n.get_meta(&"correct", false)):
+		var col: Color = n.get_meta(&"color", Color.BLACK)
+		var wanted: bool = _collected < _craft_need.size() and col.is_equal_approx(need)
+		if wanted:
 			var m := (n.get_child(1) as MeshInstance3D).material_override as StandardMaterial3D
 			if m != null:
 				m.emission_energy_multiplier = glow
@@ -1520,14 +1688,12 @@ func _tick_apparatus(delta: float) -> void:
 		var dz: float = n.global_position.z - _apparatus_pos.z
 		if dx * dx + dz * dz > 2.2 * 2.2:
 			continue
-		if bool(n.get_meta(&"correct", false)):
+		if wanted:
 			_collected += 1
 			AoeVisual.spawn_ground_ring(self, _apparatus_pos + Vector3(0, 0.05, 0), 1.6, 0.4,
 					Color(0.3, 1.0, 0.45, 0.9))
-			if _apparatus_mat != null:
-				var t: float = float(_collected) / float(INGREDIENTS_NEEDED)
-				_apparatus_mat.emission = Color(0.4, 0.6, 0.9, 1).lerp(Color(1.0, 0.55, 0.15, 1), t)
 			n.queue_free()
+			_refresh_apparatus_ring()  # горловина перекрашивается в СЛЕДУЮЩИЙ цвет
 			_update_labels()
 			if _collected >= INGREDIENTS_NEEDED and _bomb == null:
 				_spawn_bomb(_apparatus_pos + Vector3(0, 0, 3.2))
@@ -1541,6 +1707,25 @@ func _tick_apparatus(delta: float) -> void:
 				away = away.normalized() if away.length_squared() > 0.01 else Vector3(0, 0, 1)
 				rb.freeze = false
 				rb.linear_velocity = away * 5.0 + Vector3.UP * 2.0
+
+
+## Какой шар аппарат ждёт СЕЙЧАС (по порядку рецепта). Рецепт кончился —
+## возвращаем «готово»-оранжевый, он же горит на кольце.
+func _craft_current_need() -> Color:
+	if _collected < _craft_need.size():
+		return _craft_need[_collected]
+	return Color(1.0, 0.55, 0.15, 1)
+
+
+## Горловина = дисплей требования: светится ровно тем цветом, который сейчас
+## нужен. Пустой рецепт → оранжевое «готово».
+func _refresh_apparatus_ring() -> void:
+	if _apparatus_mat == null:
+		return
+	var need: Color = _craft_current_need()
+	_apparatus_mat.albedo_color = need
+	_apparatus_mat.emission = need
+	_apparatus_mat.emission_energy_multiplier = 1.6
 
 
 ## Бомба (kind bomb) — тёмная сфера, берётся как груз. Появляется у аппарата.
@@ -1875,10 +2060,24 @@ func _unhandled_input(event: InputEvent) -> void:
 		if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			_click_pending = true
 			return
-	# WASD: ПКМ = щит артельщика; ПРОБЕЛ = супер мили-класса. ⛔ Фокус-группы
+	# WASD: ПКМ = каменная волна артели; ПРОБЕЛ = супер мили-класса. ⛔ Фокус-группы
 	# 1/2/3 и клик-панч выпилены (2026-07-28): дальний бой работает всегда,
 	# мили сжат в одну кнопку — переключать стало нечего.
 	if wasd_mode and not _game_over:
+		# Пикер находок модальный: пока карта не взята, 1/2/3 = выбор (клавиши
+		# освободились после выпила фокус-групп), остальной ввод не мешает.
+		if _card_picker_open:
+			var ck := event as InputEventKey
+			if ck != null and ck.pressed and not ck.echo:
+				if ck.keycode == KEY_1:
+					_take_card(0)
+					return
+				if ck.keycode == KEY_2:
+					_take_card(1)
+					return
+				if ck.keycode == KEY_3:
+					_take_card(2)
+					return
 		var wb := event as InputEventMouseButton
 		if wb != null and wb.pressed and wb.button_index == MOUSE_BUTTON_RIGHT:
 			_shield_pending = true
@@ -2132,11 +2331,13 @@ func _aim_target(c: Vector3) -> Node3D:
 func _wasd_physics(delta: float) -> void:
 	var cursor: Vector3 = _cursor_ground_point()
 	_wasd_move(delta, cursor)
+	_tick_jelly(delta)
 	_wasd_combat(Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not _game_over, cursor)
 	if _shield_pending:
 		_shield_pending = false
-		_try_place_shield(cursor)
+		_request_stone_wave(cursor)
 	_tick_spear_super(delta)
+	_tick_stone_wave(delta)
 	_tick_cargo(delta)
 	_tick_cargo_snap(delta)
 	_tick_door_puzzle(delta)
@@ -2186,6 +2387,233 @@ func _wasd_move(delta: float, cursor: Vector3) -> void:
 			_banner.global_position = _squad.hold_position
 
 
+## Сколько раз взята карточка (0 = нет). Единственная точка чтения эффектов —
+## места применения спрашивают ЗДЕСЬ, а не хранят копии множителей.
+func _card(id: StringName) -> int:
+	return int(_cards.get(id, 0))
+
+
+func _cards_in_class(cls: StringName) -> int:
+	var n: int = 0
+	for id in _cards.keys():
+		if CARD_CATALOG[id]["cls"] == cls:
+			n += int(_cards[id])
+	return n
+
+
+## Предложение после зачистки комнаты: cards_offer_count разных карточек из
+## категорий, где ещё есть слот. Слотов нигде нет → пикер не открывается.
+func _offer_cards() -> void:
+	if not cards_enabled or _card_picker_open:
+		return
+	var pool: Array = []
+	for id in CARD_CATALOG.keys():
+		if _cards_in_class(CARD_CATALOG[id]["cls"]) < cards_limit_per_class:
+			pool.append(id)
+	if pool.is_empty():
+		return
+	pool.shuffle()
+	_card_offer = pool.slice(0, mini(cards_offer_count, pool.size()))
+	_card_picker_open = true
+	var picker := get_node_or_null("HUD/CardPicker") as Control
+	if picker == null:
+		return
+	var names := {&"archer": "Лучники", &"pikeman": "Копейщики", &"worker": "Артель"}
+	for i in range(3):
+		var pick := picker.get_node_or_null("V/Cards/Pick%d" % (i + 1)) as Control
+		if pick == null:
+			continue
+		pick.visible = i < _card_offer.size()
+		if i >= _card_offer.size():
+			continue
+		var data: Dictionary = CARD_CATALOG[_card_offer[i]]
+		(pick.get_node("V/Class") as Label).text = str(names.get(data["cls"], "?"))
+		(pick.get_node("V/Title") as Label).text = str(data["name"])
+		(pick.get_node("V/Desc") as Label).text = str(data["desc"])
+	picker.visible = true
+
+
+## Выбор клавишей 1/2/3 (освободились после выпила фокус-групп).
+func _take_card(index: int) -> void:
+	if not _card_picker_open or index < 0 or index >= _card_offer.size():
+		return
+	var id: StringName = _card_offer[index]
+	_cards[id] = _card(id) + 1
+	_card_picker_open = false
+	_card_offer.clear()
+	var picker := get_node_or_null("HUD/CardPicker") as Control
+	if picker != null:
+		picker.visible = false
+	EventBus.tutorial_hint.emit("Взято: %s" % CARD_CATALOG[id]["name"], 2.5)
+	print("[Cards] взята %s (%s), всего в категории: %d"
+			% [id, CARD_CATALOG[id]["cls"], _cards_in_class(CARD_CATALOG[id]["cls"])])
+	_refresh_focus_cards()
+
+
+## Строка взятых карточек для карточки класса в HUD (гномы = дисплей).
+func _cards_line(cls: StringName) -> String:
+	var parts: Array = []
+	for id in _cards.keys():
+		if CARD_CATALOG[id]["cls"] != cls:
+			continue
+		var n: int = int(_cards[id])
+		parts.append(str(CARD_CATALOG[id]["name"]) + ("" if n <= 1 else " ×%d" % n))
+	return "" if parts.is_empty() else "\n" + ", ".join(parts)
+
+
+## ПКМ: каменная волна артели. Гейт — живой артельщик (симметрия с ПРОБЕЛОМ:
+## нет класса — нет способности). Направление берётся от строя к курсору и
+## ФИКСИРУЕТСЯ на запуске: вал не подруливает, целиться надо заранее.
+func _request_stone_wave(cursor: Vector3) -> void:
+	if _squad == null or _wave_cd > 0.0 or is_instance_valid(_wave_node):
+		return
+	if _alive_artel() <= 0:
+		EventBus.tutorial_hint.emit("Нет артельщиков — каменная волна недоступна", 1.6)
+		return
+	var c: Vector3 = _squad.compute_center()
+	if c == Vector3.INF or cursor == Vector3.INF:
+		return
+	var dir := Vector3(cursor.x - c.x, 0.0, cursor.z - c.z)
+	if dir.length_squared() < 0.01:
+		return
+	_wave_dir = dir.normalized()
+	_wave_travelled = 0.0
+	_wave_hit.clear()
+	_wave_echo_left = _card(&"artel_echo")
+	_wave_cd = wasd_wave_cooldown
+	_wave_node = _build_stone_wave(c + _wave_dir * 1.6)
+	AoeVisual.spawn_dust(self, c + _wave_dir * 1.6)
+	EventBus.camera_shake.emit(0.18, c)
+
+
+## Вал: гребень из плит разной высоты поперёк хода — читается как «поднявшийся
+## камень», а не снаряд. Unshaded, тени выключены (их тут десятки за забег).
+func _build_stone_wave(pos: Vector3) -> Node3D:
+	var root := Node3D.new()
+	add_child(root)
+	root.global_position = Vector3(pos.x, 0.0, pos.z)
+	root.look_at(root.global_position + _wave_dir, Vector3.UP)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.42, 0.38, 0.34)
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	# Карточка «Ещё по камню»: по одному камню с каждой стороны за карту.
+	var n: int = 5 + 2 * _card(&"artel_wide")
+	for i in range(n):
+		var t: float = float(i) / float(n - 1)
+		var h: float = lerpf(0.7, 1.5, 1.0 - absf(t - 0.5) * 2.0) * randf_range(0.85, 1.15)
+		var half: float = _wave_half_width()
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(half * 2.0 / float(n) * 0.95, h, 0.5)
+		mi.mesh = bm
+		mi.material_override = mat
+		# Локальный X — поперёк хода (root смотрит вдоль _wave_dir).
+		mi.position = Vector3(lerpf(-half, half, t), h * 0.5, 0.0)
+		mi.rotation.z = randf_range(-0.12, 0.12)
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		root.add_child(mi)
+	return root
+
+
+## Ход вала: едет вперёд, бьёт КАЖДОГО один раз, рассыпается о стену
+## (raycast по TERRAIN/преградам) или выдохшись на wasd_wave_range.
+func _tick_stone_wave(delta: float) -> void:
+	if _wave_cd > 0.0:
+		_wave_cd = maxf(_wave_cd - delta, 0.0)
+	if not is_instance_valid(_wave_node):
+		return
+	var step: float = wasd_wave_speed * delta
+	var from: Vector3 = _wave_node.global_position + Vector3.UP * 0.6
+	var to: Vector3 = from + _wave_dir * (step + 0.6)
+	var q := PhysicsRayQueryParameters3D.create(from, to,
+			Layers.TERRAIN | Layers.WALL_GATE_BLOCK | Layers.CHASM_BARRIER)
+	var hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(q)
+	_wave_node.global_position += _wave_dir * step
+	_wave_travelled += step
+	_wave_damage_pass()
+	if not hit.is_empty() or _wave_travelled >= wasd_wave_range:
+		_break_stone_wave()
+
+
+## Урон по полосе: цель считается задетой, если она в пределах полуширины по
+## бокам и не дальше полушага по ходу — вал именно СМЕТАЕТ, а не тянет за собой.
+func _wave_damage_pass() -> void:
+	var origin: Vector3 = _wave_node.global_position
+	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
+			continue
+		if _wave_hit.has(sk.get_instance_id()):
+			continue
+		var to := Vector3((sk as Node3D).global_position.x - origin.x, 0.0,
+				(sk as Node3D).global_position.z - origin.z)
+		var along: float = to.dot(_wave_dir)
+		var side: float = absf(to.dot(Vector3(-_wave_dir.z, 0.0, _wave_dir.x)))
+		if absf(along) > 1.1 or side > _wave_half_width() + 0.5:
+			continue
+		_wave_hit[sk.get_instance_id()] = true
+		Damageable.try_damage(sk, wasd_wave_damage, 0.0, _wave_dir)
+		if is_instance_valid(sk) and sk.has_method(&"apply_knockback"):
+			sk.call(&"apply_knockback", _wave_dir * wasd_wave_knockback + Vector3.UP * 2.5, 0.3)
+
+
+## Полуширина вала с учётом карточки «Ещё по камню».
+func _wave_half_width() -> float:
+	return wasd_wave_half_width + 0.85 * float(_card(&"artel_wide"))
+
+
+## Рассыпание: камень летит по ходу вала (направленный shatter, §6.1 F1).
+## Карточки: «Обвал» добавляет взрыв в точке, «Эхо» пускает второй вал следом.
+func _break_stone_wave() -> void:
+	var p: Vector3 = Vector3.INF
+	if is_instance_valid(_wave_node):
+		p = _wave_node.global_position
+		ShatterEffect.spawn(self, p + Vector3.UP * 0.6, Color(0.42, 0.38, 0.34),
+				10 + 4 * _card(&"artel_burst"), 1.6, _wave_dir, 1.2)
+		AoeVisual.spawn_dust(self, p)
+		_wave_node.queue_free()
+	_wave_node = null
+	_wave_hit.clear()
+	if p == Vector3.INF:
+		return
+	if _card(&"artel_burst") > 0:
+		_wave_burst(p)
+	# «Эхо»: второй вал стартует от места обвала НАЗАД к отряду не идёт — он
+	# уходит дальше по тому же курсу (добивает то, что прошло сквозь первый).
+	if _card(&"artel_echo") > 0 and _wave_echo_left > 0:
+		_wave_echo_left -= 1
+		_wave_travelled = 0.0
+		_wave_node = _build_stone_wave(p - _wave_dir * 3.0)
+
+
+## «Обвал»: круговой осколочный удар в точке разрушения вала.
+func _wave_burst(p: Vector3) -> void:
+	var r: float = 4.5
+	var r_sq: float = r * r
+	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
+			continue
+		var to := Vector3((sk as Node3D).global_position.x - p.x, 0.0,
+				(sk as Node3D).global_position.z - p.z)
+		if to.length_squared() > r_sq:
+			continue
+		var dir: Vector3 = to.normalized() if to.length_squared() > 0.0001 else _wave_dir
+		Damageable.try_damage(sk, wasd_wave_damage * 0.6, 0.0, dir)
+		if is_instance_valid(sk) and sk.has_method(&"apply_knockback"):
+			sk.call(&"apply_knockback", dir * wasd_wave_knockback * 0.7, 0.2)
+	AoeVisual.spawn_expanding_ring(self, p, r, 0.25, Color(0.7, 0.65, 0.6, 0.9))
+	EventBus.camera_shake.emit(0.22, p)
+
+
+func _alive_artel() -> int:
+	if _squad == null:
+		return 0
+	var n: int = 0
+	for m in _squad.members:
+		if is_instance_valid(m) and m.soldier_type == &"worker":
+			n += 1
+	return n
+
+
 ## ПРОБЕЛ: заявка на супер мили-класса. Гейт — состав отряда: нет живых
 ## копейщиков → нет способности (билд решает возможности). Замах не стопит
 ## группу: она продолжает идти и стрелять, кольцо-телеграф едет с ней.
@@ -2200,7 +2628,7 @@ func _request_spear_super() -> void:
 		return
 	if wasd_super_windup <= 0.0:
 		# Мгновенный удар: нажал — грохнуло, без промежуточного состояния.
-		_super_cd = wasd_super_cooldown
+		_super_cd = _super_cooldown()
 		_spear_super_blast(c)
 		_refresh_focus_cards()
 		return
@@ -2221,15 +2649,16 @@ func _tick_spear_super(delta: float) -> void:
 		_super_windup -= delta
 		if _super_windup <= 0.0:
 			_super_windup = 0.0
-			_super_cd = wasd_super_cooldown
+			_super_cd = _super_cooldown()
 			if is_instance_valid(_super_ring):
 				_super_ring.queue_free()
 			_super_ring = null
 			if c != Vector3.INF:
 				_spear_super_blast(c)
-	# HUD: тикающий отсчёт на карточке (раз в 0.1с — строки не жжём каждый кадр)
-	# + мгновенная вспышка бордера на переходе «готов».
-	var armed: bool = _super_cd <= 0.0 and _super_windup <= 0.0 and _alive_pikemen() > 0
+	# HUD обеих способностей: тикающий отсчёт на карточках (раз в 0.1с — строки
+	# не жжём каждый кадр) + мгновенная вспышка бордера на переходе «готов».
+	var armed: bool = _super_cd <= 0.0 and _super_windup <= 0.0 and _alive_pikemen() > 0 \
+			and _wave_cd <= 0.0
 	_super_hud_acc += delta
 	if armed != _super_armed_prev or (not armed and _super_hud_acc >= 0.1):
 		_super_armed_prev = armed
@@ -2242,7 +2671,9 @@ func _tick_spear_super(delta: float) -> void:
 ## «копейщики побежали ко врагу» — они бьют С МЕСТА, строй не покидают.
 func _spear_super_blast(c: Vector3) -> void:
 	var targets: Array = []
-	var r_sq: float = wasd_super_radius * wasd_super_radius
+	# Карточка «Шире размах»: радиус растёт за каждую взятую.
+	var radius: float = wasd_super_radius + 2.0 * float(_card(&"pike_radius"))
+	var r_sq: float = radius * radius
 	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		if not is_instance_valid(sk) or not (sk is Node3D) or (sk as Node).is_queued_for_deletion():
 			continue
@@ -2260,10 +2691,31 @@ func _spear_super_blast(c: Vector3) -> void:
 		Damageable.try_damage(sk, wasd_super_damage, 0.0, dir)
 		if is_instance_valid(sk) and sk.has_method(&"apply_knockback"):
 			sk.call(&"apply_knockback", dir * wasd_super_knockback + Vector3.UP * 2.0, 0.25)
-	AoeVisual.spawn_expanding_ring(self, c, wasd_super_radius, 0.25,
-			Color(1.0, 0.6, 0.25, 0.9))
+	AoeVisual.spawn_expanding_ring(self, c, radius, 0.25, Color(1.0, 0.6, 0.25, 0.9))
 	AoeVisual.spawn_dust(self, c)
 	EventBus.camera_shake.emit(0.3, c)
+	# Карточка «Выжженная земля»: на месте удара остаётся горящее пятно.
+	if _card(&"pike_burn") > 0:
+		_spawn_burn(c, radius * 0.8, 5.0)
+
+
+## Откат супера с учётом карточки «Второе дыхание» (пол 1.5с — кнопка не должна
+## выродиться в спам, она про «когда», а не «как часто»).
+func _super_cooldown() -> float:
+	return maxf(wasd_super_cooldown - 2.0 * float(_card(&"pike_cd")), 1.5)
+
+
+## Горящее пятно на земле (штатный BurnPatch, тот же, что у фаербола).
+func _spawn_burn(pos: Vector3, radius: float, duration: float) -> void:
+	if burn_patch_scene == null:
+		return
+	var bp := burn_patch_scene.instantiate() as Node3D
+	if bp == null:
+		return
+	add_child(bp)
+	bp.global_position = Vector3(pos.x, 0.05, pos.z)
+	if bp.has_method(&"setup"):
+		bp.call(&"setup", radius, 7.0, 0.5, duration, Layers.ENEMIES | Layers.COLD_ENEMY)
 
 
 func _alive_pikemen() -> int:
@@ -2274,6 +2726,43 @@ func _alive_pikemen() -> int:
 		if is_instance_valid(m) and m.soldier_type == &"pikeman":
 			n += 1
 	return n
+
+
+## ЖЕЛЕ: физика упругого тела на слотах строя. Считается от точки строя (её
+## ведёт WASD), а не от центроида — иначе получилась бы обратная связь «слоты
+## двинули гномов → центроид поехал → слоты двинулись ещё» и строй раскачивало
+## бы само себя.
+func _tick_jelly(delta: float) -> void:
+	if _squad == null or delta <= 0.0:
+		return
+	if not jelly_enabled:
+		_squad.jelly_offset = Vector3.ZERO
+		_squad.jelly_along = 1.0
+		_squad.jelly_across = 1.0
+		_squad.jelly_row_lag = 0.0
+		return
+	var hold: Vector3 = _squad.hold_position
+	if _jelly_prev_hold == Vector3.INF:
+		_jelly_prev_hold = hold
+	var vel: Vector3 = (hold - _jelly_prev_hold) / delta
+	vel.y = 0.0
+	_jelly_prev_hold = hold
+	# Ускорение толкает строй ПРОТИВ хода: рванули — тело отстаёт, встали —
+	# накатывается вперёд. Дальше пружина-демпфер возвращает его к нулю, и
+	# именно её затухающий перелёт читается как «желе».
+	var accel: Vector3 = (vel - _jelly_prev_vel) / delta
+	_jelly_prev_vel = vel
+	_jelly_offset_vel -= accel * jelly_inertia * delta
+	_jelly_offset_vel += (-_jelly_offset * jelly_spring - _jelly_offset_vel * jelly_damp) * delta
+	_jelly_offset += _jelly_offset_vel * delta
+	if _jelly_offset.length() > jelly_max_offset:
+		_jelly_offset = _jelly_offset.normalized() * jelly_max_offset
+		_jelly_offset_vel *= 0.5
+	var speed01: float = clampf(vel.length() / maxf(wasd_speed, 0.001), 0.0, 1.0)
+	_squad.jelly_offset = _jelly_offset
+	_squad.jelly_along = 1.0 + jelly_stretch * speed01
+	_squad.jelly_across = 1.0 - jelly_stretch * 0.45 * speed01
+	_squad.jelly_row_lag = jelly_row_lag * speed01
 
 
 ## ОТХОД СПИНОЙ СТОИТ ТЕМПА: группа всегда развёрнута к курсору, поэтому шаг
@@ -2332,18 +2821,31 @@ func _wasd_combat(lmb: bool, cursor: Vector3) -> void:
 	# «боевом» режиме (полная дальность и темп), их больше не надо выбирать
 	# цифрой. Авто-конус «сам увидел — сам палит» так и остаётся ⛔.
 	var archers_focused: bool = true
+	var member_idx: int = 0
+	var member_last: float = maxf(float(_squad.members.size() - 1), 1.0)
 	for m in _squad.members:
 		if not is_instance_valid(m):
 			continue
 		m.face_override = aim_dir
+		# Желе: голова строя рулит жёстко, хвост вязче и запаздывает — тело
+		# «перетекает» за поворотом, а не поворачивается целиком, как доска.
+		if jelly_enabled:
+			m.steer_grip = lerpf(wasd_grip, wasd_grip * jelly_grip_tail,
+					float(member_idx) / member_last)
+		member_idx += 1
 		if m is ArcherSoldier:
 			# fire_suppressed глушит АВТО-КОНУС («сам увидел — сам палит» ⛔):
 			# огонь идёт только через try_suppressive_fire по прицелу игрока —
 			# полная дальность и штатный темп, но строго в сектор курсора.
 			m.fire_suppressed = archers_focused
-			m.attack_range = gnome_attack_range
-			m.attack_cooldown_min = gnome_cooldown_min
-			m.attack_cooldown_max = gnome_cooldown_max
+			# Карточки лучников: темп и дальность — прямо здесь, без копий
+			# состояния (значения и так переустанавливаются каждый тик).
+			var rate: float = pow(0.8, float(_card(&"arch_rate")))
+			m.attack_range = gnome_attack_range + 4.0 * float(_card(&"arch_range"))
+			m.attack_cooldown_min = gnome_cooldown_min * rate
+			m.attack_cooldown_max = gnome_cooldown_max * rate
+			if m is ArcherSoldier:
+				(m as ArcherSoldier).shield_damage_mult = 1.0 + 2.0 * float(_card(&"arch_shieldbreak"))
 			if lmb and aim != Vector3.INF and m.has_method(&"try_suppressive_fire"):
 				m.call(&"try_suppressive_fire", aim)
 		elif m.soldier_type == &"pikeman":
@@ -2530,12 +3032,16 @@ func _spawn_skeleton_at(pos: Vector3, kind: StringName = &"grunt") -> void:
 func _apply_kind(sk: Node3D, kind: StringName) -> void:
 	match kind:
 		&"shieldman":
-			# Медленный танк, которого не берут стрелы: ждёт панча копейщика.
+			# Медленный танк: стрелы уходят в ЩИТ (прочность director_shield_hp),
+			# сбил плиту — дальше обычный скелет. Пробел сносит целиком.
 			sk.set(&"arrow_proof", true)
+			sk.set(&"shield_hp", director_shield_hp)
 			sk.set(&"hp", 45.0)
 			sk.set(&"move_speed", 1.5)
-			_add_kind_decor(sk, Vector3(1.15, 1.25, 0.16), Vector3(0.0, 0.95, -0.55),
-					Color(0.22, 0.26, 0.34))
+			var plate := _add_kind_decor(sk, Vector3(1.15, 1.25, 0.16),
+					Vector3(0.0, 0.95, -0.55), Color(0.22, 0.26, 0.34))
+			# Имя — контракт с Enemy.hit_shield (красит по остатку, сносит в ноль).
+			plate.name = "ShieldPlate"
 		&"runner":
 			# Хилый спринтер в спину: цена за «стою и лью вперёд».
 			sk.set(&"hp", 16.0)
@@ -2548,7 +3054,7 @@ func _apply_kind(sk: Node3D, kind: StringName) -> void:
 
 ## Деталь силуэта ключ-цели: unshaded-коробка на теле (щит спереди / гребень
 ## сверху). Локальный −Z = «вперёд» скелета (он делает look_at по ходу).
-func _add_kind_decor(sk: Node3D, size: Vector3, pos: Vector3, color: Color) -> void:
+func _add_kind_decor(sk: Node3D, size: Vector3, pos: Vector3, color: Color) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	var bm := BoxMesh.new()
 	bm.size = size
@@ -2560,6 +3066,7 @@ func _add_kind_decor(sk: Node3D, size: Vector3, pos: Vector3, color: Color) -> v
 	mi.position = pos
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	sk.add_child(mi)
+	return mi
 
 
 ## Живые скелеты. Через is_queued_for_deletion: destroyed.emit летит ДО
@@ -2731,6 +3238,8 @@ func _check_room_cleared() -> void:
 	if _alive_skeletons() > 0:
 		return
 	_room_cleared[_active_room] = true
+	# Комната = уровень: за зачистку игрок берёт находку (кривая роста в забеге).
+	_offer_cards()
 	print("[DungeonSandbox] Room%d зачищена (выдано: %d, убито всего: %d)"
 			% [_active_room + 1,
 			int(_room_spawned.get(_active_room, 0)) if _director_active() else room_wave_limit,

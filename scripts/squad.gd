@@ -82,6 +82,19 @@ var tail_length: float = 0.0
 ## прямоугольный блок (ряды поперёк последнего курса tail_dir) вместо
 ## кольца. false = штатное кольцо (весь остальной код игры).
 var hold_grid: bool = false
+## ЖЕЛЕ-СТРОЙ (данж-WASD 2026-07-28): слои деформации слотов, чтобы группа
+## читалась как ОДНО упругое тело, а не как N юнитов по клеткам. Дефолты
+## нейтральны (сдвиг 0, масштабы 1, лага нет) — основная игра не затронута;
+## владелец (песочница) считает физику и обновляет эти поля каждый тик.
+## - jelly_offset: общий сдвиг слотов, пружина инерции (стартовали — строй
+##   отстал назад, встали — накатился вперёд и качнулся обратно);
+## - jelly_along/across: вытяжение вдоль курса и поджатие поперёк на скорости
+##   (капля вытягивается по ходу, на стопе снова круглая);
+## - jelly_row_lag: доп. отставание задних рядов — волна по телу.
+var jelly_offset: Vector3 = Vector3.ZERO
+var jelly_along: float = 1.0
+var jelly_across: float = 1.0
+var jelly_row_lag: float = 0.0
 ## Жёсткий приоритет последней `command_hold`. Пока true — каждый юнит,
 ## не дошедший до своего слота, игнорирует бой и марширует к точке.
 ## Дойдя — естественно начинает стрелять (per-soldier dist ≤ arrival),
@@ -239,8 +252,12 @@ func target_for_member(soldier: SoldierGnome, center: Vector3) -> Vector3:
 		var spacing: float = 0.75
 		# Блок центрирован и по рядам тоже: центроид строя ≈ center, иначе
 		# слежение точки за центроидом (песочница) утаскивало отряд назад.
-		return center + side_dir * (float(col) - float(in_row - 1) * 0.5) * spacing \
-				- f * (float(row) - float(rows - 1) * 0.5) * spacing
+		# Поверх — желе: поджатие поперёк, вытяжение вдоль, отставание задних
+		# рядов и общий пружинный сдвиг (см. jelly_* выше).
+		var lat: float = (float(col) - float(in_row - 1) * 0.5) * spacing * jelly_across
+		var fwd: float = (float(row) - float(rows - 1) * 0.5) * spacing * jelly_along
+		return center + side_dir * lat - f * (fwd + jelly_row_lag * float(row)) \
+				+ jelly_offset
 	if tail_length > 0.0 and state == State.HOLDING_POSITION and tail_dir != Vector3.ZERO:
 		# Хвост кометы: слоты цепочкой позади центра, зигзаг вбок для
 		# читаемости (не идеальная колонна — куча, вытянутая ходом).

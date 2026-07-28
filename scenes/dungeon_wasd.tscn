@@ -586,3 +586,142 @@ modulate = Color(1, 1, 1, 0.6)
 layout_mode = 2
 theme_override_font_sizes/font_size = 11
 text = "[3] щит по ПКМ"
+
+[node name="CardPicker" type="PanelContainer" parent="HUD"]
+visible = false
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -340.0
+offset_top = -140.0
+offset_right = 340.0
+offset_bottom = 140.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="V" type="VBoxContainer" parent="HUD/CardPicker"]
+layout_mode = 2
+theme_override_constants/separation = 10
+mouse_filter = 2
+
+[node name="Title" type="Label" parent="HUD/CardPicker/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+horizontal_alignment = 1
+text = "Комната зачищена — возьми находку"
+
+[node name="Cards" type="HBoxContainer" parent="HUD/CardPicker/V"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+mouse_filter = 2
+
+[node name="Pick1" type="PanelContainer" parent="HUD/CardPicker/V/Cards"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="V" type="VBoxContainer" parent="HUD/CardPicker/V/Cards/Pick1"]
+layout_mode = 2
+theme_override_constants/separation = 6
+mouse_filter = 2
+
+[node name="Class" type="Label" parent="HUD/CardPicker/V/Cards/Pick1/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="Title" type="Label" parent="HUD/CardPicker/V/Cards/Pick1/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 15
+autowrap_mode = 2
+text = "—"
+
+[node name="Desc" type="Label" parent="HUD/CardPicker/V/Cards/Pick1/V"]
+modulate = Color(1, 1, 1, 0.75)
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_font_sizes/font_size = 12
+autowrap_mode = 2
+text = "—"
+
+[node name="Key" type="Label" parent="HUD/CardPicker/V/Cards/Pick1/V"]
+modulate = Color(1, 1, 1, 0.6)
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+horizontal_alignment = 1
+text = "[1]"
+
+[node name="Pick2" type="PanelContainer" parent="HUD/CardPicker/V/Cards"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="V" type="VBoxContainer" parent="HUD/CardPicker/V/Cards/Pick2"]
+layout_mode = 2
+theme_override_constants/separation = 6
+mouse_filter = 2
+
+[node name="Class" type="Label" parent="HUD/CardPicker/V/Cards/Pick2/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="Title" type="Label" parent="HUD/CardPicker/V/Cards/Pick2/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 15
+autowrap_mode = 2
+text = "—"
+
+[node name="Desc" type="Label" parent="HUD/CardPicker/V/Cards/Pick2/V"]
+modulate = Color(1, 1, 1, 0.75)
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_font_sizes/font_size = 12
+autowrap_mode = 2
+text = "—"
+
+[node name="Key" type="Label" parent="HUD/CardPicker/V/Cards/Pick2/V"]
+modulate = Color(1, 1, 1, 0.6)
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+horizontal_alignment = 1
+text = "[2]"
+
+[node name="Pick3" type="PanelContainer" parent="HUD/CardPicker/V/Cards"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="V" type="VBoxContainer" parent="HUD/CardPicker/V/Cards/Pick3"]
+layout_mode = 2
+theme_override_constants/separation = 6
+mouse_filter = 2
+
+[node name="Class" type="Label" parent="HUD/CardPicker/V/Cards/Pick3/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "—"
+
+[node name="Title" type="Label" parent="HUD/CardPicker/V/Cards/Pick3/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 15
+autowrap_mode = 2
+text = "—"
+
+[node name="Desc" type="Label" parent="HUD/CardPicker/V/Cards/Pick3/V"]
+modulate = Color(1, 1, 1, 0.75)
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_font_sizes/font_size = 12
+autowrap_mode = 2
+text = "—"
+
+[node name="Key" type="Label" parent="HUD/CardPicker/V/Cards/Pick3/V"]
+modulate = Color(1, 1, 1, 0.6)
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+horizontal_alignment = 1
+text = "[3]"

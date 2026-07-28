@@ -122,9 +122,16 @@ func _on_body_entered(body: Node) -> void:
 	# Попали в Damageable (скелет) — урон и исчезаем (цель рассыпается, стреле не
 	# в чем торчать). Kill credit идёт через EventBus.enemy_destroyed → XpOrbSpawner
 	# (autoload), поэтому стрела сама про XP ничего не знает (этап 49).
-	# ЩИТОВИК: стрела звенит о щит и гаснет — урона нет. Читается как «этого
-	# луками не взять, зови копейщика» (Enemy.arrow_proof, дефолт выкл).
+	# ЩИТОВИК: стрела не бьёт тело, а ВЫЕДАЕТ ЩИТ (Enemy.hit_shield). Звон-искра
+	# на месте касания, урон уходит в прочность плиты; сбил — дальше обычный враг.
 	if body is Enemy and (body as Enemy).arrow_proof:
+		# Множитель по щиту — свойство стрелка (карточка «Щитобой»).
+		var shield_mult: float = 1.0
+		if shooter_ref != null:
+			var sh: Object = shooter_ref.get_ref()
+			if sh != null and sh is ArcherSoldier:
+				shield_mult = (sh as ArcherSoldier).shield_damage_mult
+		(body as Enemy).hit_shield(damage * shield_mult)
 		_ricochet()
 		return
 	if Damageable.is_damageable(body):

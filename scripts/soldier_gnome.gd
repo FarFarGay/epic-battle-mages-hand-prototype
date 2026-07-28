@@ -422,6 +422,12 @@ var _windup_remaining: float = 0.0
 ## Расстояние «прибытия» к squad-target'у. Меньше — стоим (squad-positioning
 ## не jitter'ит на под-метровых отклонениях).
 const SQUAD_TARGET_ARRIVAL: float = 0.4
+## Зона мягкого подхода к слоту строя (м): внутри неё скорость падает
+## пропорционально остатку пути, вместо «полный ход до порога, потом стоп».
+## 0 = выключено (штатное поведение основной игры). Данж-WASD включает —
+## иначе при отходе строя спиной слоты наезжают на гномов сзади и те дрожат
+## в цикле стоп-старт-перелёт.
+var arrival_damp_radius: float = 0.0
 
 ## Squash & stretch — две выраженные позы вокруг lunge'а. Контраст между
 ## ними (особенно по Z) даёт визуальный «всплеск»: глаз чётко отделяет
@@ -1235,7 +1241,15 @@ func _active_tick(delta: float) -> void:
 	if dist <= SQUAD_TARGET_ARRIVAL:
 		velocity = Vector3.ZERO
 		return
-	_move_toward(to_goal_xz, dist)
+	# МЯГКИЙ ПОДХОД (arrival_damp_radius > 0): у самого слота скорость гасится
+	# пропорционально остатку. Без него подход бинарный — «полный ход или стоп»,
+	# и когда слот ДВИЖЕТСЯ НАВСТРЕЧУ (отход строя спиной), гном ловит цикл
+	# стоп-старт-перелёт и дёргается. Дефолт 0 = как было, основная игра не
+	# затронута.
+	var mult: float = 1.0
+	if arrival_damp_radius > SQUAD_TARGET_ARRIVAL and dist < arrival_damp_radius:
+		mult = clampf(inverse_lerp(SQUAD_TARGET_ARRIVAL, arrival_damp_radius, dist), 0.12, 1.0)
+	_move_toward(to_goal_xz, dist, mult)
 
 
 ## Шаг state machine во всех нон-READY стейтах. Velocity полностью
@@ -1711,7 +1725,7 @@ func _tower_center() -> Vector3:
 ## через [Gnome._resolve_path_step] — обходит стены/палатки. Скорость
 ## sprint'а считается от **финальной** дистанции, не от шага path'а:
 ## юнит не должен замедляться на промежуточных waypoint'ах.
-func _move_toward(to_goal_xz: Vector3, dist: float) -> void:
+func _move_toward(to_goal_xz: Vector3, dist: float, speed_mult: float = 1.0) -> void:
 	var final_goal: Vector3 = global_position + to_goal_xz
 	var step_target: Vector3 = _resolve_path_step(final_goal)
 	var step_dir: Vector3 = step_target - global_position
@@ -1721,7 +1735,7 @@ func _move_toward(to_goal_xz: Vector3, dist: float) -> void:
 		return
 	step_dir = step_dir.normalized()
 	look_at(global_position + step_dir, Vector3.UP)
-	var speed: float = _sprint_speed_for(dist)
+	var speed: float = _sprint_speed_for(dist) * speed_mult
 	if hauling:
 		speed *= HAUL_SPEED_SCALE
 	var ramp_t: float = 0.0
