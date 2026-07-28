@@ -2187,6 +2187,12 @@ func _cursor_ground_point() -> Vector3:
 	if hit == null:
 		return Vector3.INF
 	var p: Vector3 = hit
+	# Сбор отряда: кламп по ПРЕДБАННИКУ. Боевой диапазон (cursor_z_min/max)
+	# не включает его z, и рука не дотянулась бы ни до кучек, ни до ячеек.
+	if _roster_open and _roster_pad != Vector3.INF:
+		p.x = clampf(p.x, _roster_pad.x - 14.0, _roster_pad.x + 14.0)
+		p.z = clampf(p.z, _roster_pad.z - 10.0, _roster_pad.z + 10.0)
+		return p
 	p.x = clampf(p.x, room_center.x - room_half + 2.0, room_center.x + room_half - 2.0)
 	p.z = clampf(p.z, cursor_z_min, cursor_z_max)
 	return p
@@ -2194,7 +2200,12 @@ func _cursor_ground_point() -> Vector3:
 
 func _update_camera(delta: float, cursor: Vector3) -> void:
 	var center: Vector3 = room_center
-	if _squad != null:
+	# Сбор отряда: держим ПРЕДБАННИК. Иначе камера каждый кадр лерпилась к
+	# room_center (отряда ещё нет) и уползала обратно в первую комнату, перебивая
+	# постановку из _build_roster_scene.
+	if _roster_open and _roster_pad != Vector3.INF:
+		center = _roster_pad
+	elif _squad != null:
 		var c: Vector3 = _squad.compute_center()
 		if c != Vector3.INF:
 			center = c
