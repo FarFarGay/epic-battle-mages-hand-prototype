@@ -100,6 +100,11 @@ static func _maybe_refresh_target_grid(tree: SceneTree) -> bool:
 enum AttackState { APPROACH, WINDUP, STRIKE, COOLDOWN }
 
 @export var hp: float = 30.0
+## КЛЮЧ-ЦЕЛЬ «щитовик» (данж-WASD 2026-07-28): стрелы звенят о щит и не наносят
+## урона — берётся только контактным ударом (панч копейщика). Аддитивное поле с
+## дефолтом ВЫКЛ: основная игра не затронута, ставится per-instance при спавне.
+## Гейт живёт в Arrow._on_body_entered (мили-урон идёт мимо него штатно).
+var arrow_proof: bool = false
 @export var move_speed: float = 4.0
 @export var gravity: float = 20.0
 @export var attack_range: float = 1.5

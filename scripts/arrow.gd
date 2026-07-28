@@ -122,6 +122,11 @@ func _on_body_entered(body: Node) -> void:
 	# Попали в Damageable (скелет) — урон и исчезаем (цель рассыпается, стреле не
 	# в чем торчать). Kill credit идёт через EventBus.enemy_destroyed → XpOrbSpawner
 	# (autoload), поэтому стрела сама про XP ничего не знает (этап 49).
+	# ЩИТОВИК: стрела звенит о щит и гаснет — урона нет. Читается как «этого
+	# луками не взять, зови копейщика» (Enemy.arrow_proof, дефолт выкл).
+	if body is Enemy and (body as Enemy).arrow_proof:
+		_ricochet()
+		return
 	if Damageable.is_damageable(body):
 		# Kill-credit: смерть врага СИНХРОННА внутри try_damage (hp≤0 →
 		# destroyed.emit + queue_free), поэтому «убил ли этот выстрел» видно
@@ -138,6 +143,15 @@ func _on_body_entered(body: Node) -> void:
 		return
 	# Terrain/преграда: стрела ВТЫКАЕТСЯ и торчит пару секунд, потом исчезает.
 	_stick()
+
+
+## РИКОШЕТ о щитовика: холодная искра-звон на месте касания, стрела отлетает
+## назад-вверх и гаснет. Задача чисто читаемостная — «луки его не берут» должно
+## быть видно с первого выстрела, без полосок и текста.
+func _ricochet() -> void:
+	AoeVisual.spawn_muzzle_flash(get_tree().current_scene, global_position,
+			Color(0.75, 0.85, 1.0), 2.5, 3.0, 0.1)
+	queue_free()
 
 
 ## Воткнуться: заморозить полёт, чуть утопить носом, погасить трейл/свет/туман-метку.

@@ -180,6 +180,9 @@ var _quiver: int = 0
 var _quiver_idle: float = 0.0   # сколько секунд не стреляли (гейт перезарядки)
 var _quiver_regen: float = 0.0  # аккумулятор времени перезарядки
 var _quiver_shafts: Array = []  # MeshInstance3D стрел на спине (visible по счёту)
+## Сколько стрел рисовать на спине, когда колчан-ЛИМИТ выключен (quiver_max=0):
+## чистый декор, всегда полный. См. [setup_quiver_decor].
+var _quiver_decor: int = 0
 
 
 func _ready() -> void:
@@ -655,6 +658,16 @@ func _fire_at(target: Node3D) -> void:
 # --- КОЛЧАН-ОБОЙМА: методы -------------------------------------------------------
 
 
+## Колчан как ДЕКОР, без лимита (фидбек 2026-07-28: «патроны сбивают теншен и
+## темп, но сами колчаны визуально смешные»). Стрелы на спине есть и всегда
+## полные, боезапас бесконечный — стрельбу ничто не гейтит.
+func setup_quiver_decor(size: int) -> void:
+	quiver_max = 0
+	_quiver = 0
+	_quiver_decor = maxi(size, 0)
+	_build_quiver_visual()
+
+
 ## Включает колчан (данж-WASD): size стрел, полный при старте, + визуал на спине.
 func setup_quiver(size: int, per_arrow: float, delay: float) -> void:
 	quiver_max = maxi(size, 0)
@@ -705,7 +718,8 @@ func _build_quiver_visual() -> void:
 		if is_instance_valid(s):
 			s.queue_free()
 	_quiver_shafts.clear()
-	if _visual_holder == null or quiver_max <= 0:
+	var n: int = quiver_max if quiver_max > 0 else _quiver_decor
+	if _visual_holder == null or n <= 0:
 		return
 	var leather := _arch_mat(Color(0.32, 0.22, 0.12))
 	var shaft_mat := _arch_mat(Color(0.55, 0.42, 0.25))
@@ -714,7 +728,6 @@ func _build_quiver_visual() -> void:
 	_visual_mats.append(shaft_mat)
 	_visual_mats.append(fletch_mat)
 	_arch_box(_visual_holder, Vector3(0.24, 0.3, 0.06), Vector3(-0.02, 0.5, 0.17), leather)
-	var n: int = quiver_max
 	for i in range(n):
 		var t: float = 0.5 if n <= 1 else float(i) / float(n - 1)
 		var shaft := _arch_box(_visual_holder, Vector3(0.022, 0.36, 0.022),
@@ -734,11 +747,13 @@ func _build_quiver_visual() -> void:
 
 
 ## Стрелы №0.._quiver-1 видимы, остальные скрыты (шафт прячет и своё оперение).
+## Декор-режим (лимита нет) — колчан всегда полный.
 func _refresh_quiver_visual() -> void:
+	var shown: int = _quiver if quiver_max > 0 else _quiver_shafts.size()
 	for i in range(_quiver_shafts.size()):
 		var s: MeshInstance3D = _quiver_shafts[i]
 		if is_instance_valid(s):
-			s.visible = i < _quiver
+			s.visible = i < shown
 
 
 # --- Новая модель лучника (Фаза A): коробочный лучник вместо капсулы. Перекрашивает

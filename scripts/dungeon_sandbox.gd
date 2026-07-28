@@ -149,6 +149,60 @@ const CMD_ARRIVED_DIST := 2.0
 ## зачищенную — тишина). 0 = бесконечно (старое поведение). Чит T лимит обходит.
 @export var room_wave_limit: int = 5
 
+@export_group("Директор давления (WASD)")
+## ЗАМЕНА волн-по-таймеру (фидбек 2026-07-28 «весело должно быть с первых
+## секунд»). Диагноз старой подачи: 3с пауза + скелет 2.0 м/с идёт от стены
+## 22м ≈ 11с → первые ~7 секунд игроку НЕЧЕГО делать; 4 скелета с четырёх
+## разных стен = 12 стрел за 10с, колчан/стамина/щит не включаются вовсе.
+## Директор вместо этого ДЕРЖИТ давление: кривая говорит, сколько врага должно
+## быть в лицо ПРЯМО СЕЙЧАС, долив идёт поштучно и непрерывно. Пустых пауз нет;
+## передышка = провал кривой, а не мёртвый таймер. Одна модель вместо четырёх
+## ручек (interval/base/growth/limit) = DK-урок weight-бюджета (DESIGN §3.2).
+## Только wasd_mode: модели 1/2 живут на старых волнах (§6.2 «ветки независимы»).
+@export var director_enabled: bool = true
+## Стартовая пачка: столько скелетов УЖЕ на арене в t=0 (пустой старт не бывает
+## весёлым). Делится на две кучи — есть куда стрелять и от чего пятиться.
+@export var director_start_pack: int = 7
+## Радиус стартовой пачки от центра комнаты. Внутри дальности лучника (12м):
+## первое действие игрока на ПЕРВОЙ секунде — зажал ЛКМ, что-то развалилось.
+@export var director_start_radius: float = 9.5
+## Кривая давления (живых скелетов): сразу после входа в комнату → к чему растём.
+@export var director_pressure_start: float = 8.0
+@export var director_pressure_peak: float = 18.0
+## За сколько секунд ПОД ДАВЛЕНИЕМ (время в комнате) кривая идёт start → peak.
+@export var director_ramp_time: float = 75.0
+## Как часто директор проверяет добор (с) и сколько доливает за раз. Долив КУЧЕЙ,
+## а не по одному: толпа читается, фокус-огонь имеет смысл.
+@export var director_drip_interval: float = 0.9
+@export var director_drip_max: int = 3
+## Бюджет комнаты: сколько скелетов она выдаёт ВСЕГО, потом затихает и после
+## добивания последних → «Волны отбиты ✓». Замена room_wave_limit в этом режиме
+## (старое = 5 волн по 4+2N ≈ 40 суммарно).
+@export var director_room_budget: int = 55
+## ФРОНТ: направление от центра комнаты, ОТКУДА лезут. −Z = из глубины анфилады,
+## навстречу ходу игрока → у группы есть «перед» и «спина», отход осмыслен.
+## Старый спавн раскидывал по случайной из 4 стен: пятиться некуда, фокус-огонь
+## бессмыслен, twin-stick не работает.
+@export var director_front_dir: Vector3 = Vector3(0.0, 0.0, -1.0)
+## Полуугол фронтового сектора (°): 0 = строго одна точка, 180 = снова кругом.
+@export var director_front_arc_deg: float = 55.0
+## Дистанция долива от центра комнаты и разброс кучи внутри сектора (°).
+@export var director_spawn_radius: float = 19.0
+@export var director_cluster_spread_deg: float = 8.0
+## КЛЮЧ-ЦЕЛИ (2026-07-28, замена колчану/стамине): что заставляет переключать
+## фокус 1↔2↔3 — не счётчик патронов, а ВРАГ НА ЭКРАНЕ, которого текущий
+## инструмент не берёт. Драйвер «тянуть», а не «толкать»: причина видна, темп
+## нигде не проваливается. Типы подаются КУЧЕЙ (идёт группа щитовиков — это
+## читается), доли ниже. Гейт по времени = DK `minRunWeight`: первые секунды
+## чистый полив, ключ-цели входят, когда игрок освоился.
+## Щитовики: стрелы звенят и гаснут (Enemy.arrow_proof) → только панч [1].
+@export var director_shieldman_share: float = 0.3
+@export var director_shieldman_after: float = 12.0
+## Бегуны: вдвое быстрее, хилые, лезут В СПИНУ (сектор фронт+180°) → щит [3]
+## или разворот группы. Дают дальнему бою цену за «стоять и лить вперёд».
+@export var director_runner_share: float = 0.25
+@export var director_runner_after: float = 20.0
+
 @export_group("Комната и камера")
 ## Центр комнаты НАМЕРЕННО сдвинут от мирового origin: в сцене нет навмеша,
 ## пустая нав-карта снапит цели в точный (0,0,0), а zero-guard в
@@ -264,24 +318,23 @@ const CMD_ARRIVED_DIST := 2.0
 @export var wasd_shield_hp: float = 120.0
 @export var wasd_shield_size: Vector3 = Vector3(4.0, 1.8, 0.6)
 @export var wasd_shield_dist: float = 2.6
-## КОЛЧАН-ОБОЙМА лучника (изюминка 2026-07-27): конечный боезапас как ритм боя.
-## Полив жжёт стрелы (~4с непрерывного огня), перезарядка тикает ТОЛЬКО в паузах:
-## зажатый ЛКМ на пустом колчане держит её на нуле — отпустить гашетку и есть
-## решение. Ритм: сброс залпа → сушь → окно копейщиков/щита → полив. Колчан на
-## спине пустеет визуально (гномы = дисплей возможностей). 0 = выключить.
-@export var wasd_quiver_size: int = 6
+## КОЛЧАН-ОБОЙМА лучника (2026-07-27) — ВЫКЛЮЧЕН фидбеком 2026-07-28: конечный
+## боезапас «очень сбивает теншен и темп». Причина в природе драйвера: сухой
+## колчан не даёт РЕШЕНИЕ, он даёт ПРОСТОЙ — игрок стоит и ждёт, пока цифра
+## натикает, а переключение фокуса становится повинностью, а не манёвром.
+## Стрелы на спине остались как декор (wasd_quiver_decor). >0 = вернуть лимит.
+@export var wasd_quiver_size: int = 0
+## Сколько стрел рисовать на спине, когда лимит выключен (чистый визуал).
+@export var wasd_quiver_decor: int = 6
 ## Секунд на одну стрелу перезарядки (0.5 → 0.3 по фидбеку 2026-07-28 «увеличь
 ## скорость»: пустой→полный 2.4с вместо 3.8с).
 @export var wasd_quiver_reload: float = 0.3
 ## Пауза тишины после последнего выстрела до старта перезарядки (с).
 @export var wasd_quiver_delay: float = 0.6
-## СТАМИНА КОПЕЙЩИКОВ (2026-07-28, зеркало колчана): запас ударов — тратят И
-## панч по клику (на вылете, промах тоже стоит), И оборонный укол с места;
-## восстановление только в паузах ударов (сухой КЛИК держит его на нуле, авто-
-## оборона всухую — нет, иначе в окружении не отдышаться). Гонит пинг-понг
-## фокуса: полив→сушь колчана→панчи копейщиками→усталость→обратно на луки
-## (колчан уже полон). Пипсы-заряды на спине. 0 = выключить.
-@export var wasd_stamina_hits: int = 4
+## СТАМИНА КОПЕЙЩИКОВ (2026-07-28, зеркало колчана) — ВЫКЛЮЧЕНА тем же фидбеком:
+## выдохшийся копейщик так же обнуляет темп (машешь мышью, а удара нет). Пипсы
+## на спине не строятся при 0. >0 = вернуть запас ударов.
+@export var wasd_stamina_hits: int = 0
 ## Секунд на восстановление одного удара.
 @export var wasd_stamina_restore: float = 0.6
 ## Пауза без ударов до старта восстановления (с).
@@ -296,6 +349,11 @@ var _wave_number: int = 0
 ## (индекс комнаты → int / bool). См. room_wave_limit.
 var _room_waves: Dictionary = {}
 var _room_cleared: Dictionary = {}
+## Директор давления: таймер долива, выданный бюджет по комнатам и время,
+## проведённое отрядом в комнате (аргумент кривой давления).
+var _director_timer: float = 0.0
+var _room_spawned: Dictionary = {}
+var _room_time: Dictionary = {}
 ## Z-центры комнат анфилады (X у всех = room_center.x). Активная = та, в чьём
 ## полу стоит центроид отряда; в коридоре — -1 (волны на паузе).
 var _room_z: Array = []
@@ -425,6 +483,14 @@ func _ready() -> void:
 	if wasd_mode:
 		_setup_focus_cards()
 		_set_focus_group(_focus_group)  # телеграф стартового выбора в HUD
+	if _director_active():
+		# СТАРТОВАЯ ПАЧКА (после _spawn_squad — скелетам нужна живая цель):
+		# бой начинается на первой секунде, а не на седьмой. Две кучи вместо
+		# кольца — есть фронт и есть спина.
+		_director_timer = director_drip_interval
+		var pack_half: int = director_start_pack / 2
+		_spawn_cluster(pack_half, director_start_radius)
+		_spawn_cluster(director_start_pack - pack_half, director_start_radius)
 	print("[DungeonSandbox] boot ok: gnomes=%d, skeleton_scene=%s"
 			% [_alive_gnomes(), skeleton_scene != null])
 
@@ -549,9 +615,13 @@ func _spawn_wasd_squad() -> void:
 			# С первого кадра под гейтом прицела (до первого тика _wasd_combat
 			# дефолтный false давал 1-2 «левых» выстрела по видимым).
 			soldier.fire_suppressed = true
-			if soldier is ArcherSoldier and wasd_quiver_size > 0:
-				(soldier as ArcherSoldier).setup_quiver(
-						wasd_quiver_size, wasd_quiver_reload, wasd_quiver_delay)
+			if soldier is ArcherSoldier:
+				if wasd_quiver_size > 0:
+					(soldier as ArcherSoldier).setup_quiver(
+							wasd_quiver_size, wasd_quiver_reload, wasd_quiver_delay)
+				else:
+					# Лимит выключен, но стрелы на спине остаются (декор).
+					(soldier as ArcherSoldier).setup_quiver_decor(wasd_quiver_decor)
 		elif t == &"pikeman":
 			# Оборона по умолчанию: укол с места, из строя не выходит; клик
 			# при фокусе [1] — удар-хлыст (punch_at, скорость из инспектора).
@@ -1798,8 +1868,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if key.keycode == KEY_R:
 		get_tree().reload_current_scene()
 	elif key.keycode == KEY_T and not _game_over:
-		_wave_timer = wave_interval
-		_spawn_wave(true)
+		if _director_active():
+			_director_burst()
+		else:
+			_wave_timer = wave_interval
+			_spawn_wave(true)
 	elif key.keycode == KEY_E and not _game_over:
 		_toggle_cargo()
 
@@ -2047,10 +2120,13 @@ func _wasd_physics(delta: float) -> void:
 	if not _game_over:
 		_update_active_room()
 		if _active_room >= 0:
-			_wave_timer -= delta
-			if _wave_timer <= 0.0:
-				_wave_timer = wave_interval
-				_spawn_wave()
+			if _director_active():
+				_tick_director(delta)
+			else:
+				_wave_timer -= delta
+				if _wave_timer <= 0.0:
+					_wave_timer = wave_interval
+					_spawn_wave()
 	_update_camera(delta, cursor)
 
 
@@ -2266,6 +2342,13 @@ func _update_active_room() -> void:
 		if now >= 0:
 			_wave_timer = wave_interval
 			print("[DungeonSandbox] активная комната → Room%d (волны здесь)" % (now + 1))
+			# Новая комната встречает так же, как старт забега: пачка сразу, без
+			# пустой паузы. Возврат в начатую/зачищенную — тихо (бюджет уже тронут).
+			if _director_active() and int(_room_spawned.get(now, 0)) == 0:
+				_director_timer = director_drip_interval
+				var pack_half: int = director_start_pack / 2
+				_spawn_cluster(pack_half, director_start_radius)
+				_spawn_cluster(director_start_pack - pack_half, director_start_radius)
 
 
 func _spawn_wave(force: bool = false) -> void:
@@ -2280,32 +2363,177 @@ func _spawn_wave(force: bool = false) -> void:
 		_room_waves[_active_room] = int(_room_waves.get(_active_room, 0)) + 1
 	_wave_number += 1
 	var count: int = wave_base_count + wave_growth * (_wave_number - 1)
-	var alive: int = get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP).size()
+	var alive: int = _alive_skeletons()
 	count = mini(count, maxi(max_alive_skeletons - alive, 0))
 	for i in range(count):
-		var sk := skeleton_scene.instantiate() as Node3D
-		if sk == null:
-			continue
-		# LOD выключен по той же причине, что у гномов (см. _spawn_squad):
-		# FAR-скелет отключает коллизии и ходит сквозь стены.
-		sk.set(&"lod_far_distance", 100000.0)
-		sk.set(&"lod_offscreen_half_angle_deg", 90.0)
-		# Зеркало телесности: скелет упирается в гномов, а не проходит сквозь.
-		# Через extra_collision_mask — простое `|=` затиралось бы
-		# Skeleton._apply_lod_physics_mode на LOD-переходах.
-		sk.set(&"extra_collision_mask", Layers.FRIENDLY_UNIT)
-		if sk is CollisionObject3D:
-			(sk as CollisionObject3D).collision_mask |= Layers.FRIENDLY_UNIT
-		add_child(sk)
-		sk.global_position = _edge_spawn_point()
-		var target: Node3D = _random_alive_gnome()
-		if target != null and sk.has_method(&"set_forced_target"):
-			sk.call(&"set_forced_target", target)
-		if sk.has_signal(&"destroyed"):
-			sk.connect(&"destroyed", _on_skeleton_died)
+		_spawn_skeleton_at(_edge_spawn_point())
 	var c: Vector3 = _squad.compute_center() if _squad != null else Vector3.INF
 	print("[DungeonSandbox] волна %d: +%d скелетов, отряд @ (%.1f, %.1f), цель @ (%.1f, %.1f)"
 			% [_wave_number, count, c.x, c.z, _squad.hold_position.x, _squad.hold_position.z])
+	_update_labels()
+
+
+## Один скелет в точке — общее тело спавна для волн И директора (настройки
+## LOD/телесности/цели/сигнала живут в ОДНОМ месте). `kind` = ключ-цель:
+## параметризованный ШТАТНЫЙ Skeleton, не новый класс (ПЕРЕИСПОЛЬЗУЙ, не плоди).
+func _spawn_skeleton_at(pos: Vector3, kind: StringName = &"grunt") -> void:
+	var sk := skeleton_scene.instantiate() as Node3D
+	if sk == null:
+		return
+	# LOD выключен по той же причине, что у гномов (см. _spawn_squad):
+	# FAR-скелет отключает коллизии и ходит сквозь стены.
+	sk.set(&"lod_far_distance", 100000.0)
+	sk.set(&"lod_offscreen_half_angle_deg", 90.0)
+	# Зеркало телесности: скелет упирается в гномов, а не проходит сквозь.
+	# Через extra_collision_mask — простое `|=` затиралось бы
+	# Skeleton._apply_lod_physics_mode на LOD-переходах.
+	sk.set(&"extra_collision_mask", Layers.FRIENDLY_UNIT)
+	if sk is CollisionObject3D:
+		(sk as CollisionObject3D).collision_mask |= Layers.FRIENDLY_UNIT
+	_apply_kind(sk, kind)
+	add_child(sk)
+	sk.global_position = pos
+	var target: Node3D = _random_alive_gnome()
+	if target != null and sk.has_method(&"set_forced_target"):
+		sk.call(&"set_forced_target", target)
+	if sk.has_signal(&"destroyed"):
+		sk.connect(&"destroyed", _on_skeleton_died)
+
+
+## Ключ-цель = статы + ОДНА читаемая деталь силуэта (декор-ребёнок, а не scale/
+## перекраска корня: hit-flash, scale-punch и shatter скелета остаются как есть).
+## Вызывать ДО add_child — Skeleton кэширует часть параметров в _ready.
+func _apply_kind(sk: Node3D, kind: StringName) -> void:
+	match kind:
+		&"shieldman":
+			# Медленный танк, которого не берут стрелы: ждёт панча копейщика.
+			sk.set(&"arrow_proof", true)
+			sk.set(&"hp", 45.0)
+			sk.set(&"move_speed", 1.5)
+			_add_kind_decor(sk, Vector3(1.15, 1.25, 0.16), Vector3(0.0, 0.95, -0.55),
+					Color(0.22, 0.26, 0.34))
+		&"runner":
+			# Хилый спринтер в спину: цена за «стою и лью вперёд».
+			sk.set(&"hp", 16.0)
+			sk.set(&"move_speed", 4.6)
+			_add_kind_decor(sk, Vector3(0.18, 0.5, 0.18), Vector3(0.0, 1.5, 0.0),
+					Color(0.95, 0.45, 0.12))
+		_:
+			pass
+
+
+## Деталь силуэта ключ-цели: unshaded-коробка на теле (щит спереди / гребень
+## сверху). Локальный −Z = «вперёд» скелета (он делает look_at по ходу).
+func _add_kind_decor(sk: Node3D, size: Vector3, pos: Vector3, color: Color) -> void:
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	mi.mesh = bm
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mi.material_override = mat
+	mi.position = pos
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	sk.add_child(mi)
+
+
+## Живые скелеты. Через is_queued_for_deletion: destroyed.emit летит ДО
+## queue_free, «мёртвый» кадр ещё числится в группе и раздувал бы давление.
+func _alive_skeletons() -> int:
+	var n: int = 0
+	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if is_instance_valid(sk) and not (sk as Node).is_queued_for_deletion():
+			n += 1
+	return n
+
+
+func _director_active() -> bool:
+	return wasd_mode and director_enabled and skeleton_scene != null
+
+
+## Кривая давления: сколько живых держим прямо сейчас (линейно start → peak за
+## director_ramp_time секунд ПОД ДАВЛЕНИЕМ в этой комнате).
+func _director_target() -> float:
+	if _active_room < 0:
+		return 0.0
+	var t: float = float(_room_time.get(_active_room, 0.0))
+	return lerpf(director_pressure_start, director_pressure_peak,
+			clampf(t / maxf(director_ramp_time, 0.001), 0.0, 1.0))
+
+
+## Долив до кривой: не «пачка раз в N секунд», а «на арене всегда столько,
+## сколько велит кривая». Бюджет комнаты кончился → тишина и «отбито ✓».
+func _tick_director(delta: float) -> void:
+	_room_time[_active_room] = float(_room_time.get(_active_room, 0.0)) + delta
+	_director_timer -= delta
+	if _director_timer > 0.0:
+		return
+	_director_timer = director_drip_interval
+	var budget_left: int = director_room_budget - int(_room_spawned.get(_active_room, 0))
+	if budget_left <= 0:
+		return
+	var alive: int = _alive_skeletons()
+	var lack: int = int(ceilf(_director_target())) - alive
+	if lack <= 0:
+		return
+	var n: int = mini(mini(lack, director_drip_max), budget_left)
+	n = mini(n, maxi(max_alive_skeletons - alive, 0))
+	_spawn_cluster(n, director_spawn_radius, _pick_kind())
+
+
+## Чит T в режиме директора: внеплановая куча СВЕРХ бюджета (проверить пик).
+func _director_burst() -> void:
+	_spawn_cluster(maxi(director_drip_max * 2, 1), director_spawn_radius, _pick_kind(), false)
+
+
+## Тип кучи по долям + гейт по времени в комнате (DK `minRunWeight`): ключ-цели
+## входят не с первой секунды — сперва игрок осваивает полив.
+func _pick_kind() -> StringName:
+	var t: float = float(_room_time.get(_active_room, 0.0))
+	var roll: float = randf()
+	var acc: float = 0.0
+	if t >= director_shieldman_after:
+		acc += director_shieldman_share
+		if roll < acc:
+			return &"shieldman"
+	if t >= director_runner_after:
+		acc += director_runner_share
+		if roll < acc:
+			return &"runner"
+	return &"grunt"
+
+
+## Куча из n скелетов ОДНОГО типа: один угол на кучу + мелкий разброс → приходят
+## узлом, а не поодиночке с четырёх сторон. Сектор — фронтовой; бегуны заходят
+## С ТЫЛА (фронт + 180°), поэтому «стоять и лить вперёд» перестаёт быть даром.
+func _spawn_cluster(n: int, radius: float, kind: StringName = &"grunt",
+		count_budget: bool = true) -> void:
+	if n <= 0 or skeleton_scene == null or _active_room < 0:
+		return
+	var front: Vector3 = director_front_dir
+	if front.length_squared() < 0.0001:
+		front = Vector3.FORWARD
+	if kind == &"runner":
+		front = -front
+	var base_ang: float = atan2(front.z, front.x) \
+			+ deg_to_rad(randf_range(-director_front_arc_deg, director_front_arc_deg))
+	var cz: float = float(_room_z[_active_room])
+	for i in range(n):
+		var a: float = base_ang \
+				+ deg_to_rad(randf_range(-director_cluster_spread_deg, director_cluster_spread_deg))
+		var r: float = radius * randf_range(0.85, 1.0)
+		var edge: float = room_half - 2.5
+		var p := Vector3(
+				clampf(room_center.x + cos(a) * r, room_center.x - edge, room_center.x + edge),
+				0.6,
+				clampf(cz + sin(a) * r, cz - edge, cz + edge))
+		_spawn_skeleton_at(p, kind)
+	if count_budget:
+		_room_spawned[_active_room] = int(_room_spawned.get(_active_room, 0)) + n
+	print("[Director] Room%d +%d %s (живых %d, кривая %.1f, выдано %d/%d)"
+			% [_active_room + 1, n, kind, _alive_skeletons(), _director_target(),
+			int(_room_spawned.get(_active_room, 0)), director_room_budget])
 	_update_labels()
 
 
@@ -2363,23 +2591,37 @@ func _on_skeleton_died() -> void:
 ## флаг + салют в WaveLabel («путь свободен» — дальше игрок открывает дверь
 ## штатным пазлом). Волны следующей комнаты оживят лейбл обычным «Волна: N».
 func _check_room_cleared() -> void:
-	if room_wave_limit <= 0 or _active_room < 0:
+	if _active_room < 0:
 		return
 	if _room_cleared.get(_active_room, false):
 		return
-	if int(_room_waves.get(_active_room, 0)) < room_wave_limit:
-		return
-	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
-		if is_instance_valid(sk) and not (sk as Node).is_queued_for_deletion():
+	# Директор: комната отбита, когда ВЫДАН весь её бюджет (аналог лимита волн).
+	if _director_active():
+		if int(_room_spawned.get(_active_room, 0)) < director_room_budget:
 			return
+	else:
+		if room_wave_limit <= 0:
+			return
+		if int(_room_waves.get(_active_room, 0)) < room_wave_limit:
+			return
+	if _alive_skeletons() > 0:
+		return
 	_room_cleared[_active_room] = true
-	print("[DungeonSandbox] Room%d зачищена (волн: %d, убито всего: %d)"
-			% [_active_room + 1, room_wave_limit, _kills])
+	print("[DungeonSandbox] Room%d зачищена (выдано: %d, убито всего: %d)"
+			% [_active_room + 1,
+			int(_room_spawned.get(_active_room, 0)) if _director_active() else room_wave_limit,
+			_kills])
 	_update_labels()
 
 
 func _update_labels() -> void:
 	var wave_txt: String = "Волна: %d" % _wave_number
+	if _director_active() and _active_room >= 0:
+		# «Волна N» в режиме директора не значит ничего: показываем натиск
+		# (живых / сколько велит кривая) и остаток бюджета комнаты.
+		wave_txt = "Натиск: %d/%d · в запасе %d" % [
+				_alive_skeletons(), int(ceilf(_director_target())),
+				maxi(director_room_budget - int(_room_spawned.get(_active_room, 0)), 0)]
 	if _active_room >= 0 and _room_cleared.get(_active_room, false):
 		wave_txt = "Волны отбиты ✓ — путь свободен"
 	($HUD/Panel/Rows/WaveLabel as Label).text = wave_txt
