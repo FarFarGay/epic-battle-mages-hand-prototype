@@ -593,6 +593,10 @@ var _cards: Dictionary = {}
 ## Что сейчас предложено (массив id) и открыт ли пикер.
 var _card_offer: Array = []
 var _card_picker_open: bool = false
+## Заслуженные, но ещё не показанные выдачи (пикер был занят).
+var _card_queue: int = 0
+## Сундуки-находки по комнатам: [{node, taken}].
+var _chests: Array = []
 ## Экран сбора отряда: открыт ли и текущая раскладка по классам.
 var _roster_open: bool = false
 var _roster: Dictionary = {}
@@ -716,6 +720,7 @@ func _ready() -> void:
 	_setup_traps()
 	_setup_crafting()
 	_setup_barricades()
+	_setup_chests()
 	_update_labels()
 	if wasd_mode:
 		_setup_focus_cards()
@@ -2429,6 +2434,7 @@ func _wasd_physics(delta: float) -> void:
 		_request_stone_wave(cursor)
 	_tick_spear_super(delta)
 	_tick_stone_wave(delta)
+	_tick_chests()
 	_tick_cargo(delta)
 	_tick_cargo_snap(delta)
 	_tick_door_puzzle(delta)
@@ -2865,10 +2871,17 @@ func _refresh_roster() -> void:
 	(panel.get_node("V/Archers") as Label).text = \
 			"Лучники ×%d — залп %d стрел, урон %d–%d за стрелу" % [
 			arch, arch, int(gnome_damage_min), int(gnome_damage_max)]
-	(panel.get_node("V/Pikes") as Label).text = \
-			"Копейщики ×%d — ПРОБЕЛ: %d урона в радиусе %.1f м, откат %.0f с" % [
+	var pikes := panel.get_node("V/Pikes") as Label
+	pikes.text = "Копейщики ×%d — ПРОБЕЛ: %d урона в радиусе %.1f м, откат %.0f с" % [
 			pike, int(wasd_super_damage_per_gnome) * pike, wasd_super_radius,
 			wasd_super_cooldown]
+	# Билд без мили РАЗРЕШЁН (это осознанно тяжёлый выбор, а не ошибка), но
+	# должен читаться заранее: щитовиков придётся выедать стрелами через щит.
+	if pike == 0:
+		pikes.text += "\n⚠ без них щитовиков придётся долго выедать стрелами"
+		pikes.modulate = Color(1.0, 0.75, 0.4)
+	else:
+		pikes.modulate = Color(1, 1, 1)
 	(panel.get_node("V/Artel") as Label).text = \
 			"Артель ×%d — ПКМ: вал %d урона, полоса %.1f м, откат %.0f с" % [
 			art, int(wasd_wave_damage_per_gnome) * art, _wave_half_width() * 2.0,
@@ -2933,6 +2946,76 @@ func _start_director_pack() -> void:
 	_spawn_cluster(director_start_pack - pack_half, director_start_radius)
 
 
+## СУНДУКИ (2026-07-29): второй источник находок помимо зачистки — три выбора
+## за забег было мало для ощущения роста. Сундук стоит в стороне от маршрута:
+## дошёл отрядом — открыл. Награда за «полазить», а не за бой.
+func _setup_chests() -> void:
+	if not cards_enabled or not wasd_mode:
+		return
+	for i in range(_room_z.size()):
+		# По углам комнат, вразнобой — за сундуком надо СВЕРНУТЬ с прямого пути.
+		var side: float = -1.0 if i % 2 == 0 else 1.0
+		var p := Vector3(room_center.x + side * (room_half - 6.0), 0.0,
+				float(_room_z[i]) + (room_half - 7.0) * (-side))
+		_chests.append({"node": _spawn_chest(p), "taken": false})
+
+
+## Сундук: тёмный ящик с золотой крышкой + кольцо-подсветка на полу.
+func _spawn_chest(pos: Vector3) -> Node3D:
+	var root := Node3D.new()
+	add_child(root)
+	root.global_position = Vector3(pos.x, 0.0, pos.z)
+	var box := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(1.3, 0.8, 0.9)
+	box.mesh = bm
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.28, 0.18, 0.1)
+	box.material_override = mat
+	box.position = Vector3(0.0, 0.4, 0.0)
+	root.add_child(box)
+	var lid := MeshInstance3D.new()
+	var lm := BoxMesh.new()
+	lm.size = Vector3(1.4, 0.22, 1.0)
+	lid.mesh = lm
+	var lmat := StandardMaterial3D.new()
+	lmat.albedo_color = Color(0.95, 0.75, 0.25)
+	lmat.emission_enabled = true
+	lmat.emission = Color(0.95, 0.75, 0.25)
+	lmat.emission_energy_multiplier = 0.9
+	lid.material_override = lmat
+	lid.position = Vector3(0.0, 0.9, 0.0)
+	root.add_child(lid)
+	AoeVisual.spawn_ground_ring(self, pos, 1.6, 0.0, Color(0.95, 0.75, 0.25, 0.8))
+	return root
+
+
+## Отряд дошёл до сундука — открылся, выдал находку и исчез.
+func _tick_chests() -> void:
+	if _chests.is_empty() or _squad == null:
+		return
+	var c: Vector3 = _squad.compute_center()
+	if c == Vector3.INF:
+		return
+	for ch in _chests:
+		if bool(ch["taken"]):
+			continue
+		var node: Node3D = ch["node"]
+		if not is_instance_valid(node):
+			ch["taken"] = true
+			continue
+		if Vector2(node.global_position.x - c.x, node.global_position.z - c.z).length() > 2.8:
+			continue
+		ch["taken"] = true
+		AoeVisual.spawn_ground_ring(self, node.global_position, 2.4, 0.4,
+				Color(0.95, 0.75, 0.25, 0.9))
+		AoeVisual.spawn_muzzle_flash(self, node.global_position + Vector3.UP,
+				Color(1.0, 0.85, 0.4), 3.0, 6.0, 0.25)
+		node.queue_free()
+		EventBus.tutorial_hint.emit("Сундук: находка!", 2.0)
+		_offer_cards()
+
+
 ## Сколько раз взята карточка (0 = нет). Единственная точка чтения эффектов —
 ## места применения спрашивают ЗДЕСЬ, а не хранят копии множителей.
 func _card(id: StringName) -> int:
@@ -2950,7 +3033,12 @@ func _cards_in_class(cls: StringName) -> int:
 ## Предложение после зачистки комнаты: cards_offer_count разных карточек из
 ## категорий, где ещё есть слот. Слотов нигде нет → пикер не открывается.
 func _offer_cards() -> void:
-	if not cards_enabled or _card_picker_open:
+	if not cards_enabled:
+		return
+	# Выдача пришла, пока прошлая ещё висит (зачистил комнату, не взяв карту за
+	# предыдущую) — ставим в ОЧЕРЕДЬ, а не теряем: находка заслужена.
+	if _card_picker_open:
+		_card_queue += 1
 		return
 	var pool: Array = []
 	for id in CARD_CATALOG.keys():
@@ -2994,6 +3082,10 @@ func _take_card(index: int) -> void:
 	print("[Cards] взята %s (%s), всего в категории: %d"
 			% [id, CARD_CATALOG[id]["cls"], _cards_in_class(CARD_CATALOG[id]["cls"])])
 	_refresh_focus_cards()
+	# Отложенная выдача (пикер был занят) — показываем следующую.
+	if _card_queue > 0:
+		_card_queue -= 1
+		call_deferred(&"_offer_cards")
 
 
 ## Строка взятых карточек для карточки класса в HUD (гномы = дисплей).
