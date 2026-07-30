@@ -182,6 +182,13 @@ func _tick_magnetized(delta: float) -> void:
 		# НЕ через сбор орба. Орб даёт только ману — топливо для кастов.
 		_grant_mana()
 		_grant_gold()
+		# ЕДИНАЯ СЕМАНТИКА (2026-07-30): орб = XP. Сцена-получатель (группа
+		# orb_collector, данж) копит опыт с орбов — там сундуки выменивают его на
+		# находки. В мире башни получателя нет; мана выше — легаси до патронной
+		# переделки кастов.
+		var collector := get_tree().get_first_node_in_group(&"orb_collector")
+		if collector != null and collector.has_method(&"on_orb_collected"):
+			collector.call(&"on_orb_collected", amount, global_position)
 		collected.emit(amount, global_position)
 		queue_free()
 		return

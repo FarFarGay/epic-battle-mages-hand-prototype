@@ -1,4 +1,4 @@
-[gd_scene format=3 uid="uid://lqi7m8mjwsyq"]
+[gd_scene format=3 uid="uid://cgfe6it7kbr0s"]
 
 [ext_resource type="Script" uid="uid://brhmj3f28qb2f" path="res://scripts/dungeon_sandbox.gd" id="1_script"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="2_skel"]
@@ -92,9 +92,11 @@ roughness = 0.85
 material = SubResource("mat_wood")
 size = Vector3(12, 3, 0.6)
 
-[node name="DungeonWasd" type="Node3D" unique_id=2001557983]
+[node name="DungeonIntro" type="Node3D" unique_id=2001557983]
 script = ExtResource("1_script")
 wasd_mode = true
+intro_mode = true
+roster_enabled = false
 gnome_speed_scale = 0.75
 gnome_damage_min = 4.0
 gnome_damage_max = 6.0

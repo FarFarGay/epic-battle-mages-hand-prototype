@@ -97,15 +97,20 @@ func _on_enemy_destroyed(enemy: Node3D) -> void:
 ## Хитстоп по цели: оглушает её на `duration` сек, если она «весомая» и не в
 ## рефракторе. Удар по рядовому скелету/лучнику игнорируется. `hit_dir` (travel
 ## снаряда, мир) задаёт сторону тильт-реакции — см. Enemy.apply_hitstop.
-func fire_for(target: Object, duration: float, hit_dir: Vector3 = Vector3.ZERO) -> void:
+## `force` — явное исключение из политики «только весомые»: для РЕДКИХ осознанных
+## ударов (данж: вал/супер с кулдаунами), где заморозка пачки фоддера и есть
+## импакт. Постоянные потоки урона (стрелы, DoT) форсить нельзя — будет каша.
+func fire_for(target: Object, duration: float, hit_dir: Vector3 = Vector3.ZERO,
+		force: bool = false) -> void:
 	if duration <= 0.0 or not (target is Node):
 		return
 	var node := target as Node
-	var heavy := false
-	for g in HEAVY_GROUPS:
-		if node.is_in_group(g):
-			heavy = true
-			break
+	var heavy := force
+	if not heavy:
+		for g in HEAVY_GROUPS:
+			if node.is_in_group(g):
+				heavy = true
+				break
 	if not heavy or not node.has_method(&"apply_hitstop"):
 		return
 	var now := Time.get_ticks_msec()

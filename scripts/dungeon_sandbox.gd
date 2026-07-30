@@ -238,6 +238,12 @@ const CMD_ARRIVED_DIST := 2.0
 @export_range(0.0, 1.0) var camera_sway: float = 0.08
 ## Скорость догона камеры (экспоненциальное сглаживание).
 @export var camera_follow_speed: float = 5.0
+## ИМПАКТ (2026-07-30): данж-камера слушает EventBus.camera_shake сама — CameraRig
+## в этой сцене нет, и эмиты вала/супера уходили в пустоту. Паттерн CameraRig:
+## травма копится и гаснет, смещение/крен ∝ травма². Макс. смещение (м); 0 = выкл.
+@export var camera_shake_amp: float = 0.7
+## Спад травмы (1/с) — как быстро гаснет тряска.
+@export var camera_shake_decay: float = 1.6
 
 @export_group("Superhot — пошаговый шаг")
 ## ПОШАГОВАЯ модель (юзер 2026-07-24, «как Superhot, но пошагово»): мир по
@@ -299,23 +305,36 @@ const CMD_ARRIVED_DIST := 2.0
 @export var wasd_artel: int = 1
 ## Скорость движения точки строя по WASD (м/с). Чуть ВЫШЕ скорости юнитов —
 ## тогда они бегут за точкой на полном ходу, без «доехал-жду» вязкости.
-@export var wasd_speed: float = 7.5
+@export var wasd_speed: float = 10.0
 ## Доля скорости при отходе ЗАДОМ (ход строго против прицела). Вбок — среднее
 ## между этим и 1.0. 1.0 = выключить. См. [_backpedal_scale].
 @export var wasd_backpedal_speed: float = 0.55
+## ИНЕРЦИЯ ТОЧКИ СТРОЯ (рецепт Pathogenic, 2026-07-30): скорость точки не
+## телепортируется в цель, а догоняет её экспонентой. Единственная ручка
+## отзывчивости (1/с): выше — резче разгон и руль, ниже — валкое тяжёлое тело.
+## 6.0 ≈ 63% хода за 0.17с. 0 = вернуть старую мгновенную модель.
+@export var wasd_handling: float = 6.0
+## Тормоз мягче разгона: множитель wasd_handling при отпущенном WASD. Даёт
+## короткий накат-глайд после отпускания (вес тела); 1.0 = тормоз как разгон.
+@export var wasd_brake_mult: float = 0.45
 ## Зона мягкого подхода гнома к слоту строя (м). Лечит дрожь на отходе спиной:
 ## слот наезжает сзади, и без демпфирования гном скачет «полный ход ↔ стоп».
 ## 0 = штатное жёсткое прибытие. См. SoldierGnome.arrival_damp_radius.
 @export var wasd_arrival_damp: float = 1.6
 ## Скорость самих гномов группы (м/с, всем типам одинаково — группа = тело).
 ## Каталожные 1.6–2.2 для twin-stick вязкие.
-@export var wasd_unit_speed: float = 6.0
+@export var wasd_unit_speed: float = 8.0
 ## Сцепление руления юнитов (1/с, экспоненциальный догон скорости): выше =
 ## резче старт/стоп/повороты. Дефолт отряда 5.5 — «кисель» для twin-stick.
 @export var wasd_grip: float = 12.0
 ## Полив: цель = скелет в дальности, ближайший к ЛУЧУ курсора; сектор захвата
 ## вокруг направления (дот-порог 0.5 ≈ ±60°) — курсор ведёт огонь как стик.
 @export var wasd_aim_dot: float = 0.5
+## ИМПАКТ (2026-07-30): микро-отдача полива — пинок скорости точки строя против
+## выстрела за КАЖДУЮ выпущенную стрелу (м/с). Держать КРОШЕЧНЫМ: полив идёт
+## постоянно, тело должно едва «упираться» в собственный огонь (дрейф назад
+## ~0.3 м/с при стрельбе стоя), а не дрожать и не уезжать. 0 = выкл.
+@export var wasd_shot_recoil: float = 0.15
 ## Скорость удара-хлыста копейщиков (м/с, вылет И отскок). 28 ≈ щелчок:
 ## цикл клик→укол→в строю ~0.3-0.4с — «классический мили-замах», не пробежка.
 @export var wasd_punch_speed: float = 28.0
@@ -338,6 +357,38 @@ const CMD_ARRIVED_DIST := 2.0
 @export var wasd_shield_hp: float = 120.0
 @export var wasd_shield_size: Vector3 = Vector3(4.0, 1.8, 0.6)
 @export var wasd_shield_dist: float = 2.6
+
+@export_group("Тайник (WASD)")
+## СЕКРЕТ-НИША (2026-07-30, по образцу secret rooms Pathogenic): глухой карман
+## в углу ОДНОЙ случайной комнаты забега, запечатан стенками. Во входной стенке —
+## ТРЕЩИНА без всякой подсветки: тайник надо ЗАМЕТИТЬ и догадаться ударить силой
+## (вал камня или супер ломают её). После пролома внутри поднимается сундук со
+## штатной находкой. До пролома карман пуст — сверху интригу держит сама трещина.
+@export var secret_enabled: bool = true
+## Сторона квадратного кармана (м).
+@export var secret_size: float = 4.5
+## ЦЕНА обычного сундука в XP (2026-07-30, «орб = опыт ВЕЗДЕ»): орбы со смертей
+## (по 10 XP) пылесосятся отрядом, сундук ВЫМЕНИВАЕТ опыт на находку — буквально
+## «потратить опыт на левелап». Тайниковый сундук БЕСПЛАТЕН (оплачен смекалкой
+## при проломе). 0 = сундуки даром.
+@export var chest_xp_cost: int = 50
+
+@export_group("Интро-сценарий «Из недр — к Ладье»")
+## СЦЕНАРИЙ СТАРТА ИГРЫ (канон: docs/scenario_dungeon_intro.md; 1-я итерация
+## 2026-07-30). Включает копия-сцена dungeon_intro.tscn; в остальных = false.
+## Готовый отряд без сбора; директор и штатные волны молчат — подача АВТОРСКАЯ:
+## К1 три скелета на середине + дверь-ТОЛКАЧ; К2 обеденный зал (мебель ломается
+## валом/супером) + 2 волны + рычаг; К3 машина патронов → бомба → ЗАВАЛ;
+## финал — ангар с последней Ладьёй: посадка под давлением, бой ДЭШАМИ
+## (дэш = оружие ближнего боя Ладьи), рык → пусковой коридор → выход.
+@export var intro_mode: bool = false
+## Ладья: крейсер (м/с), скорость дэша (м/с), кулдаун дэша (с), урон и радиус
+## сноса дэша (скелеты в радиусе от корпуса во время рывка).
+@export var ladya_speed: float = 8.0
+@export var ladya_dash_speed: float = 30.0
+@export var ladya_dash_cooldown: float = 1.0
+@export var ladya_dash_damage: float = 200.0
+@export var ladya_dash_radius: float = 3.0
 
 @export_group("Сбор отряда (WASD)")
 ## СОСТАВ = БИЛД (2026-07-29): перед заходом игрок сам раскладывает гномов по
@@ -422,6 +473,11 @@ const CMD_ARRIVED_DIST := 2.0
 ## копейщиков): один артельщик — вал слабый, трое — таранит толпу.
 @export var wasd_wave_damage_per_gnome: float = 45.0
 @export var wasd_wave_knockback: float = 14.0
+## ИМПАКТ (2026-07-30): отдача запуска вала — пинок скорости точки строя ПРОТИВ
+## хода вала (м/с). Работает через инерцию wasd_handling; 0 = выкл.
+@export var wasd_wave_recoil: float = 7.0
+## ИМПАКТ: хитстоп жертвам вала (сек заморозки на попадании, см. HitStop). 0 = выкл.
+@export var wasd_wave_hitstop: float = 0.06
 ## Карточка «Эхо в камне»: второй вал идёт ИЗ СТРОЯ вдогонку первому через
 ## эту паузу (не из точки, где первый разбился — там он бесполезен). Тоньше
 ## основного: 3 камня и урон вполсилы.
@@ -457,6 +513,11 @@ const CMD_ARRIVED_DIST := 2.0
 ## 28 × 2 = 56 ✓, а потерял одного — уже не сносит. Это и есть цена потерь.
 @export var wasd_super_damage_per_gnome: float = 28.0
 @export var wasd_super_knockback: float = 11.0
+## ИМПАКТ (2026-07-30): «упёрлись в землю» — множитель скорости точки строя в
+## момент удара (0.2 = срез до 20%, короткая просадка темпа). 1.0 = выкл.
+@export var wasd_super_brake: float = 0.2
+## ИМПАКТ: хитстоп жертвам супера (сек заморозки на попадании). 0 = выкл.
+@export var wasd_super_hitstop: float = 0.08
 ## Секунд на одну стрелу перезарядки (0.5 → 0.3 по фидбеку 2026-07-28 «увеличь
 ## скорость»: пустой→полный 2.4с вместо 3.8с).
 @export var wasd_quiver_reload: float = 0.3
@@ -491,6 +552,10 @@ var _room_z: Array = []
 var _active_room: int = -1
 var _kills: int = 0
 var _look_target: Vector3 = Vector3.ZERO
+## Импакт: накопленная травма тряски данж-камеры (0..1, см. camera_shake_amp)
+## и наложенное в прошлый кадр смещение (снимается перед лерпом базы).
+var _cam_trauma: float = 0.0
+var _cam_shake_offset: Vector3 = Vector3.ZERO
 var _game_over: bool = false
 var _lmb_was_down: bool = false
 ## ПКМ-тормоз зажат (транслируется в SoldierGnome.brake_active).
@@ -582,6 +647,8 @@ var _wave_cd: float = 0.0
 ## Сколько «эхо»-валов ещё выпустить из строя и когда следующий.
 var _wave_echo_left: int = 0
 var _wave_echo_timer: float = 0.0
+## Инерция точки строя (wasd_handling): текущая скорость между кадрами.
+var _wasd_vel: Vector3 = Vector3.ZERO
 ## Желе-строй: прошлая точка строя и её скорость (для расчёта ускорения),
 ## текущий пружинный сдвиг слотов и его скорость.
 var _jelly_prev_hold: Vector3 = Vector3.INF
@@ -594,9 +661,48 @@ var _cards: Dictionary = {}
 var _card_offer: Array = []
 var _card_picker_open: bool = false
 ## Заслуженные, но ещё не показанные выдачи (пикер был занят).
-var _card_queue: int = 0
+## Очередь отложенных выдач: ЗАГОЛОВКИ пикера (источник находки — зачистка/
+## сундук/тайник; выдача пришла при открытом пикере → заголовок ждёт своей).
+var _card_queue: Array[String] = []
 ## Сундуки-находки по комнатам: [{node, taken}].
 var _chests: Array = []
+## Опыт отряда (XP с собранных орбов — валюта обмена в сундуках) и троттл
+## подсказки «не хватает опыта».
+var _xp: int = 0
+var _chest_hint_msec: int = 0
+## Тайник: индекс комнаты, XZ-границы кармана (исключение спавна скелетов),
+## ломаемая входная стенка (null после пролома).
+var _secret_room: int = -1
+var _secret_bounds: AABB
+var _secret_wall: StaticBody3D = null
+## --- Интро-сценарий (intro_mode) ---
+## Дверь-толкач К1: прогресс навала (с) и флаг «продавили».
+var _push_t: float = 0.0
+var _push_door_open: bool = false
+## Рычаг К2 (нода) и его дверь Corr23; флаг «дёрнут».
+var _lever: Node3D = null
+var _lever_door: Node3D = null
+var _lever_pulled: bool = false
+## Авторская подача: остаток выдач по комнатам [К1, К2-волны, К3] и таймер
+## поджима второй волны К2 («зачистил ИЛИ таймер», паттерн Pathogenic).
+var _intro_left: Array[int] = []
+var _intro_timer: float = 0.0
+## Ангар: Ладья (нода/материал корпуса), режим езды, стадия волн ангара
+## (0 нет / 1 входная / 2 посадочная), рык случился, заслонка коридора, финиш.
+var _ladya: Node3D = null
+var _ladya_mat: StandardMaterial3D = null
+var _intro_ride: bool = false
+var _hangar_wave: int = 0
+var _roar_done: bool = false
+var _launch_gate: Node3D = null
+var _intro_finished: bool = false
+var _ladya_vel: Vector3 = Vector3.ZERO
+var _ladya_dash_target: Vector3 = Vector3.INF
+var _ladya_dash_cd: float = 0.0
+## Геометрия финала: ангар z −106..−150, пусковой коридор до −208, финиш.
+const INTRO_HANGAR_ENTER_Z := -104.0
+const INTRO_CORRIDOR_Z := -150.0
+const INTRO_FINISH_Z := -200.0
 ## Экран сбора отряда: открыт ли и текущая раскладка по классам.
 var _roster_open: bool = false
 var _roster: Dictionary = {}
@@ -691,6 +797,12 @@ func _ready() -> void:
 	Engine.time_scale = 1.0
 	_sh_last_usec = Time.get_ticks_usec()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	# time_scale переживает reload_current_scene: перезапуск с открытым пикером
+	# (мир заморожен) без сброса оставил бы новую сцену вечно замершей.
+	Engine.time_scale = 1.0
+	# Данж копит XP с орбов (орб на прибытии ищет эту группу): орб = опыт ВЕЗДЕ,
+	# в данже опыт выменивается сундуками на находки.
+	add_to_group(&"orb_collector")
 	_banner = $Banner
 	_camera = $Camera3D
 	_banner.global_position = room_center
@@ -699,6 +811,9 @@ func _ready() -> void:
 	# вращения). look_at каждый кадр в догоняющую точку давал качку —
 	# направление взгляда подруливало, пока позиция отстаёт («укачивает»).
 	_camera.look_at_from_position(room_center + camera_offset, room_center, Vector3.UP)
+	# Импакт: без этой подписки эмиты вала/супера некому слушать (CameraRig
+	# в данж-сцене отсутствует).
+	EventBus.camera_shake.connect(_on_dungeon_shake)
 	_cmd_line = AoeVisual.spawn_ground_line(self, room_center, room_center, CMD_COLOR, 0.16)
 	_cmd_ring = AoeVisual.spawn_ground_ring(self, room_center, CMD_RING_RADIUS, 0.0, CMD_COLOR)
 	_cmd_line.visible = false
@@ -708,19 +823,24 @@ func _ready() -> void:
 	_room_z = [room_center.z, room_center.z - 60.0, room_center.z - 120.0]
 	_active_room = 0  # старт в Room1 — первая волна через first_wave_delay
 	# Экран сбора отряда идёт ПЕРЕД спавном: состав решает игрок, и до его
-	# подтверждения ни отряда, ни врагов на арене нет.
-	var pick_roster: bool = wasd_mode and roster_enabled
+	# подтверждения ни отряда, ни врагов на арене нет. Интро: отряд ГОТОВЫЙ
+	# (сценарий §3 — сработавшаяся артель, сбора в первом отрезке нет).
+	var pick_roster: bool = wasd_mode and roster_enabled and not intro_mode
 	if not pick_roster:
 		_spawn_squad()
-	# Тестовые грузы трёх классов: сколько гномов нужно, чтобы поднять.
-	_spawn_cargo(room_center + Vector3(-6, 0, 5), 1)
-	_spawn_cargo(room_center + Vector3(6, 0, 6), 3)
-	_spawn_cargo(room_center + Vector3(0, 0, -7), 5)
-	_setup_door_puzzle()
-	_setup_traps()
-	_setup_crafting()
-	_setup_barricades()
+	if not intro_mode:
+		# Тестовые грузы трёх классов: сколько гномов нужно, чтобы поднять.
+		_spawn_cargo(room_center + Vector3(-6, 0, 5), 1)
+		_spawn_cargo(room_center + Vector3(6, 0, 6), 3)
+		_spawn_cargo(room_center + Vector3(0, 0, -7), 5)
+		_setup_door_puzzle()
+		_setup_traps()
+		_setup_crafting()
+		_setup_barricades()
 	_setup_chests()
+	_setup_secret()
+	if intro_mode:
+		_intro_setup()
 	_update_labels()
 	if wasd_mode:
 		_setup_focus_cards()
@@ -2178,7 +2298,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_wave_timer = wave_interval
 			_spawn_wave(true)
 	elif key.keycode == KEY_E and not _game_over:
-		_toggle_cargo()
+		# Интро: рычаг у выхода К2 приоритетнее грузов (E рядом с ним = дёрнуть).
+		if not _intro_try_lever():
+			_toggle_cargo()
 
 
 ## Пересечение луча курсора с плоскостью пола (math, без физики) + кламп в комнату.
@@ -2198,7 +2320,9 @@ func _cursor_ground_point() -> Vector3:
 		p.x = clampf(p.x, _roster_pad.x - 14.0, _roster_pad.x + 14.0)
 		p.z = clampf(p.z, _roster_pad.z - 10.0, _roster_pad.z + 10.0)
 		return p
-	p.x = clampf(p.x, room_center.x - room_half + 2.0, room_center.x + room_half - 2.0)
+	# Интро: восточнее штатной ширины лежит секретная мини-комната (за трещиной).
+	p.x = clampf(p.x, room_center.x - room_half + 2.0,
+			room_center.x + room_half - 2.0 + (18.0 if intro_mode else 0.0))
 	p.z = clampf(p.z, cursor_z_min, cursor_z_max)
 	return p
 
@@ -2221,12 +2345,39 @@ func _update_camera(delta: float, cursor: Vector3) -> void:
 		goal = center.lerp(Vector3(cursor.x, 0.0, cursor.z), camera_cursor_bias)
 	var k: float = 1.0 - exp(-camera_follow_speed * delta)
 	_look_target = _look_target.lerp(goal, k)
+	# Тряска накладывается ПОВЕРХ базового пути: прошлое смещение снимаем до
+	# лерпа, иначе random walk тряски дрейфует саму базу камеры.
+	_camera.global_position -= _cam_shake_offset
+	_cam_shake_offset = Vector3.ZERO
 	_camera.global_position = _camera.global_position.lerp(_look_target + camera_offset, k)
 	# Микро-качка взгляда: aim — смесь «нулевой» точки (позиция минус offset,
 	# даёт неподвижный ракурс) и живой догоняющей точки. camera_sway дозирует
 	# амплитуду вращения, не меняя характер движения.
 	var aim: Vector3 = (_camera.global_position - camera_offset).lerp(_look_target, camera_sway)
 	_camera.look_at(aim, Vector3.UP)
+	# Травма² → экранное смещение + крен (паттерн CameraRig._apply_shake). Крен
+	# не копится: look_at выше каждый кадр пересобирает базис заново.
+	if _cam_trauma > 0.0:
+		_cam_trauma = maxf(_cam_trauma - camera_shake_decay * delta, 0.0)
+		var s: float = _cam_trauma * _cam_trauma
+		if s > 0.0 and camera_shake_amp > 0.0:
+			var b: Basis = _camera.global_transform.basis
+			_cam_shake_offset = (b.x * randf_range(-1.0, 1.0)
+					+ b.y * randf_range(-1.0, 1.0)) * (camera_shake_amp * s)
+			_camera.global_position += _cam_shake_offset
+			_camera.rotate_object_local(Vector3(0.0, 0.0, 1.0),
+					randf_range(-1.0, 1.0) * deg_to_rad(2.2) * s)
+
+
+## Импакт: приём травмы тряски (эмиты вала/супера/эха уже стояли в коде, но без
+## CameraRig их никто не слушал). Затухание по дистанции от точки взгляда —
+## дальние события трясут слабее (те же радиусы, что у CameraRig).
+func _on_dungeon_shake(amount: float, position: Vector3) -> void:
+	if _camera == null or camera_shake_amp <= 0.0:
+		return
+	var falloff: float = 1.0 - smoothstep(18.0, 65.0, _look_target.distance_to(position))
+	if falloff > 0.0:
+		_cam_trauma = clampf(_cam_trauma + amount * falloff, 0.0, 1.0)
 
 
 ## Superhot: тайм-скейл мира. Мишень = бо́льшее из (скорость_отряда / ref) и
@@ -2425,6 +2576,13 @@ func _wasd_physics(delta: float) -> void:
 		_tick_roster(delta)
 		_update_camera(delta, _cursor_ground_point())
 		return
+	# Интро: после посадки в Ладью управление и камера — у неё; пеший слой
+	# (полив/строй/грузы) не тикает. До посадки — обычный кадр + интро-сценарий.
+	if intro_mode and _intro_ride:
+		_intro_tick_ride(delta)
+		return
+	if intro_mode:
+		_intro_tick(delta)
 	var cursor: Vector3 = _cursor_ground_point()
 	_wasd_move(delta, cursor)
 	_tick_jelly(delta)
@@ -2459,15 +2617,28 @@ func _wasd_physics(delta: float) -> void:
 ## (W = вглубь анфилады, −Z). Поводок WASD_LEASH: упёрлись в стену — точка не
 ## уезжает от строя в бесконечность. Отпустил — точка паркуется на центроиде
 ## (мёртвая зона 0.75м, тот же анти-фидбек-луп, что у drift-пути).
+## ИНЕРЦИЯ (Pathogenic, 2026-07-30): скорость точки догоняет цель экспонентой
+## (wasd_handling), при отпущенном WASD глайдит и тормозит мягче (wasd_brake_mult),
+## паркуемся на центроиде только когда накат погас.
 func _wasd_move(delta: float, cursor: Vector3) -> void:
 	if _squad == null:
 		return
 	var v: Vector2 = Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
 	var c: Vector3 = _squad.compute_center()
-	if v.length_squared() > 0.0001:
-		var speed: float = wasd_speed * _backpedal_scale(Vector3(v.x, 0.0, v.y), c, cursor)
-		var hp2: Vector3 = _squad.hold_position + Vector3(v.x, 0.0, v.y) * speed * delta
-		hp2.x = clampf(hp2.x, room_center.x - room_half + 2.0, room_center.x + room_half - 2.0)
+	var has_input: bool = v.length_squared() > 0.0001
+	var target := Vector3.ZERO
+	if has_input:
+		var move_dir := Vector3(v.x, 0.0, v.y)
+		target = move_dir * wasd_speed * _backpedal_scale(move_dir, c, cursor)
+	if wasd_handling <= 0.0:
+		_wasd_vel = target
+	else:
+		var rate: float = wasd_handling * (1.0 if has_input else wasd_brake_mult)
+		_wasd_vel = _wasd_vel.lerp(target, 1.0 - exp(-rate * delta))
+	if _wasd_vel.length_squared() > 0.0004:
+		var hp2: Vector3 = _squad.hold_position + _wasd_vel * delta
+		hp2.x = clampf(hp2.x, room_center.x - room_half + 2.0,
+				room_center.x + room_half - 2.0 + (18.0 if intro_mode else 0.0))
 		hp2.z = clampf(hp2.z, cursor_z_min, cursor_z_max)
 		if c != Vector3.INF:
 			var off := Vector3(hp2.x - c.x, 0.0, hp2.z - c.z)
@@ -2476,7 +2647,8 @@ func _wasd_move(delta: float, cursor: Vector3) -> void:
 				hp2 = Vector3(c.x + off.x, 0.0, c.z + off.z)
 		_squad.hold_position = hp2
 		_banner.global_position = hp2
-	elif c != Vector3.INF:
+	elif not has_input and c != Vector3.INF:
+		_wasd_vel = Vector3.ZERO
 		var dxh: float = c.x - _squad.hold_position.x
 		var dzh: float = c.z - _squad.hold_position.z
 		if dxh * dxh + dzh * dzh > 0.5625:
@@ -2952,12 +3124,157 @@ func _start_director_pack() -> void:
 func _setup_chests() -> void:
 	if not cards_enabled or not wasd_mode:
 		return
+	# Интро: сундуков-обмена нет (решение 2026-07-30) — единственный сундук
+	# лежит в секретной мини-комнате и бесплатен (спавнится при проломе).
+	if intro_mode:
+		return
 	for i in range(_room_z.size()):
 		# По углам комнат, вразнобой — за сундуком надо СВЕРНУТЬ с прямого пути.
 		var side: float = -1.0 if i % 2 == 0 else 1.0
 		var p := Vector3(room_center.x + side * (room_half - 6.0), 0.0,
 				float(_room_z[i]) + (room_half - 7.0) * (-side))
 		_chests.append({"node": _spawn_chest(p), "taken": false})
+
+
+## Тайник: карман в углу случайной комнаты, ДИАГОНАЛЬНО противоположном сундуку
+## этой комнаты (два «свёртка с маршрута» не слипаются в один угол). Две стенки
+## запечатывают угол: одна сплошная, входная — с трещиной, ломается силой.
+func _setup_secret() -> void:
+	if not secret_enabled or not wasd_mode or _room_z.is_empty():
+		return
+	# Интро: тайник — не карман в углу, а МИНИ-КОМНАТА за трещиной в восточной
+	# стене обеденного зала, вход через короткий коридорчик (фидбек 2026-07-30).
+	if intro_mode:
+		_intro_secret_room()
+		return
+	var i: int = randi() % _room_z.size()
+	_secret_room = i
+	var rz: float = float(_room_z[i])
+	# Сундук комнаты сидит в углу (side_x=side, side_z=-side) — берём диагональ.
+	var side: float = -1.0 if i % 2 == 0 else 1.0
+	var sx: float = -side
+	var sz: float = side
+	var s: float = secret_size
+	var corner := Vector3(room_center.x + sx * room_half, 0.0, rz + sz * room_half)
+	var inner := Vector3(room_center.x + sx * (room_half - s), 0.0, rz + sz * (room_half - s))
+	_secret_bounds = AABB(
+			Vector3(minf(corner.x, inner.x), 0.0, minf(corner.z, inner.z)),
+			Vector3(s, 3.0, s))
+	# Стенка A — вдоль Z (на внутренней грани по X), B — вдоль X (по Z).
+	var a_center := Vector3(inner.x, 1.2, rz + sz * (room_half - s * 0.5))
+	var b_center := Vector3(room_center.x + sx * (room_half - s * 0.5), 1.2, inner.z)
+	var a_size := Vector3(0.4, 2.4, s)
+	var b_size := Vector3(s, 2.4, 0.4)
+	# Входная (ломаемая) — случайная из двух; лицо трещины смотрит В комнату.
+	if randi() % 2 == 0:
+		_secret_wall = _secret_wall_body(a_center, a_size, true, Vector3(-sx, 0.0, 0.0))
+		_secret_wall_body(b_center, b_size, false, Vector3(0.0, 0.0, -sz))
+	else:
+		_secret_wall_body(a_center, a_size, false, Vector3(-sx, 0.0, 0.0))
+		_secret_wall = _secret_wall_body(b_center, b_size, true, Vector3(0.0, 0.0, -sz))
+
+
+## Интро-тайник: МИНИ-КОМНАТА восточнее обеденного зала. Восточная стена Room2
+## заменяется сегментами с проёмом; проём заперт ТРЕЩИНОЙ (ломается валом/
+## супером через штатные хуки _secret_wall), за ней — коридорчик и комнатка с
+## бесплатным сундуком (встаёт при проломе, см. _break_secret_wall).
+func _intro_secret_room() -> void:
+	_secret_room = 1
+	var r2z: float = room_center.z - 60.0
+	var wall := get_node_or_null("Room2/WallE")
+	if wall != null:
+		wall.queue_free()
+	var wx: float = room_center.x + room_half - 0.5  # 65.5 — линия старой стены
+	# Сегменты стены: проём z −24..−16 (в мировых: r2z−4 ± 4).
+	_secret_wall_body(Vector3(wx, 1.5, r2z + 15.0), Vector3(1.0, 3.0, 22.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(wx, 1.5, r2z - 15.0), Vector3(1.0, 3.0, 22.0), false, Vector3.FORWARD)
+	# Трещина в проёме, лицом в зал (запад).
+	_secret_wall = _secret_wall_body(Vector3(wx, 1.2, r2z), Vector3(1.0, 2.4, 8.2), true, Vector3(-1.0, 0.0, 0.0))
+	# Коридорчик на восток.
+	_secret_wall_body(Vector3(wx + 3.5, -0.25, r2z), Vector3(7.5, 0.5, 5.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(wx + 3.5, 1.5, r2z - 2.9), Vector3(7.5, 3.0, 1.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(wx + 3.5, 1.5, r2z + 2.9), Vector3(7.5, 3.0, 1.0), false, Vector3.FORWARD)
+	# Мини-комната 10×10.
+	var cx: float = wx + 11.5
+	_secret_wall_body(Vector3(cx, -0.25, r2z), Vector3(10.0, 0.5, 10.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(cx + 5.5, 1.5, r2z), Vector3(1.0, 3.0, 11.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(cx, 1.5, r2z - 5.5), Vector3(11.0, 3.0, 1.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(cx, 1.5, r2z + 5.5), Vector3(11.0, 3.0, 1.0), false, Vector3.FORWARD)
+	# Щёки у входа (между коридорчиком и углами комнатки).
+	_secret_wall_body(Vector3(cx - 5.5, 1.5, r2z - 4.0), Vector3(1.0, 3.0, 2.5), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(cx - 5.5, 1.5, r2z + 4.0), Vector3(1.0, 3.0, 2.5), false, Vector3.FORWARD)
+	_secret_bounds = AABB(Vector3(cx - 5.0, 0.0, r2z - 5.0), Vector3(10.0, 3.0, 10.0))
+
+
+## Стенка кармана: StaticBody на TERRAIN (юниты упираются, ray вала её видит).
+## cracked = трещина на грани face_dir (тонкие тёмные полосы со случайным
+## наклоном) — единственная метка тайника, никакого свечения.
+func _secret_wall_body(center: Vector3, size: Vector3, cracked: bool,
+		face_dir: Vector3) -> StaticBody3D:
+	var body := StaticBody3D.new()
+	add_child(body)
+	body.collision_layer = Layers.TERRAIN
+	body.collision_mask = 0
+	body.global_position = center
+	var cs := CollisionShape3D.new()
+	var bs := BoxShape3D.new()
+	bs.size = size
+	cs.shape = bs
+	body.add_child(cs)
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	mi.mesh = bm
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.4, 0.37, 0.34)
+	mi.material_override = mat
+	body.add_child(mi)
+	if not cracked:
+		return body
+	var along_x: bool = size.x > size.z
+	var face_off: float = (size.z if along_x else size.x) * 0.5 + 0.02
+	var cmat := StandardMaterial3D.new()
+	cmat.albedo_color = Color(0.09, 0.08, 0.07)
+	cmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	for k in range(3):
+		var strip := MeshInstance3D.new()
+		var sm := BoxMesh.new()
+		var h: float = randf_range(0.9, 1.5)
+		# Ширина полосы лежит вдоль стенки, тонкая сторона — в глубину.
+		sm.size = Vector3(0.07, h, 0.04) if along_x else Vector3(0.04, h, 0.07)
+		strip.mesh = sm
+		strip.material_override = cmat
+		var t: float = (float(k) - 1.0) * 0.55 + randf_range(-0.2, 0.2)
+		var local := face_dir * face_off + Vector3(0.0, randf_range(-0.35, 0.35), 0.0)
+		if along_x:
+			local.x = t
+		else:
+			local.z = t
+		strip.position = local
+		# Наклон в плоскости стенки — зигзаг трещины, не решётка.
+		if along_x:
+			strip.rotation.z = randf_range(-0.5, 0.5)
+		else:
+			strip.rotation.x = randf_range(-0.5, 0.5)
+		body.add_child(strip)
+	return body
+
+
+## Пролом тайника: стенка рассыпается (shatter + пыль + толчок), из-под пола
+## встаёт штатный сундук — дальше его ведёт общий _tick_chests (очередь выдач).
+func _break_secret_wall() -> void:
+	if _secret_wall == null or not is_instance_valid(_secret_wall):
+		return
+	var p: Vector3 = _secret_wall.global_position
+	_secret_wall.queue_free()
+	_secret_wall = null
+	ShatterEffect.spawn(self, p, Color(0.4, 0.37, 0.34), 14, 1.4, Vector3.ZERO, 1.1)
+	AoeVisual.spawn_dust(self, p)
+	EventBus.camera_shake.emit(0.35, p)
+	EventBus.tutorial_hint.emit("Тайник вскрыт!", 2.0)
+	var c: Vector3 = _secret_bounds.get_center()
+	_chests.append({"node": _spawn_chest(Vector3(c.x, 0.0, c.z)), "taken": false,
+			"secret": true})
 
 
 ## Сундук: тёмный ящик с золотой крышкой + кольцо-подсветка на полу.
@@ -3006,14 +3323,29 @@ func _tick_chests() -> void:
 			continue
 		if Vector2(node.global_position.x - c.x, node.global_position.z - c.z).length() > 2.8:
 			continue
+		# Обычный сундук ВЫМЕНИВАЕТ опыт на находку (тайниковый — бесплатен,
+		# оплачен проломом). Не хватает XP — подсказка с троттлом, сундук ждёт.
+		if not bool(ch.get("secret", false)) and chest_xp_cost > 0:
+			if _xp < chest_xp_cost:
+				var now: int = Time.get_ticks_msec()
+				if now >= _chest_hint_msec:
+					_chest_hint_msec = now + 1500
+					EventBus.tutorial_hint.emit(
+							"Сундук: нужно опыта %d (есть %d)" % [chest_xp_cost, _xp], 1.4)
+				continue
+			_xp -= chest_xp_cost
+			_update_labels()
 		ch["taken"] = true
 		AoeVisual.spawn_ground_ring(self, node.global_position, 2.4, 0.4,
 				Color(0.95, 0.75, 0.25, 0.9))
 		AoeVisual.spawn_muzzle_flash(self, node.global_position + Vector3.UP,
 				Color(1.0, 0.85, 0.4), 3.0, 6.0, 0.25)
 		node.queue_free()
-		EventBus.tutorial_hint.emit("Сундук: находка!", 2.0)
-		_offer_cards()
+		# Заголовок пикера — по источнику: тайниковый сундук хвастается отдельно.
+		if bool(ch.get("secret", false)):
+			_offer_cards("Тайник! Возьми находку")
+		else:
+			_offer_cards("Сундук открыт — возьми находку")
 
 
 ## Сколько раз взята карточка (0 = нет). Единственная точка чтения эффектов —
@@ -3030,15 +3362,19 @@ func _cards_in_class(cls: StringName) -> int:
 	return n
 
 
-## Предложение после зачистки комнаты: cards_offer_count разных карточек из
-## категорий, где ещё есть слот. Слотов нигде нет → пикер не открывается.
-func _offer_cards() -> void:
+## Предложение находки: cards_offer_count разных карточек из категорий, где ещё
+## есть слот. Слотов нигде нет → пикер не открывается. `title` — ЗАГОЛОВОК по
+## источнику (зачистка/сундук/тайник): «Комната зачищена» на сундуке — враньё.
+## Пока пикер открыт — МИР ЗАМИРАЕТ (time_scale=0): находку можно взять в гуще
+## боя, и читать выбор под ударами игрок не обязан. Ввод пикера живёт в
+## _unhandled_input и от time_scale не зависит.
+func _offer_cards(title: String = "Комната зачищена — возьми находку") -> void:
 	if not cards_enabled:
 		return
 	# Выдача пришла, пока прошлая ещё висит (зачистил комнату, не взяв карту за
 	# предыдущую) — ставим в ОЧЕРЕДЬ, а не теряем: находка заслужена.
 	if _card_picker_open:
-		_card_queue += 1
+		_card_queue.append(title)
 		return
 	var pool: Array = []
 	for id in CARD_CATALOG.keys():
@@ -3052,6 +3388,9 @@ func _offer_cards() -> void:
 	var picker := get_node_or_null("HUD/CardPicker") as Control
 	if picker == null:
 		return
+	var title_label := picker.get_node_or_null("V/Title") as Label
+	if title_label != null:
+		title_label.text = title
 	var names := {ARCHER_TYPE: "Лучники", &"pikeman": "Копейщики", &"worker": "Артель"}
 	for i in range(3):
 		var pick := picker.get_node_or_null("V/Cards/Pick%d" % (i + 1)) as Control
@@ -3065,6 +3404,7 @@ func _offer_cards() -> void:
 		(pick.get_node("V/Title") as Label).text = str(data["name"])
 		(pick.get_node("V/Desc") as Label).text = str(data["desc"])
 	picker.visible = true
+	Engine.time_scale = 0.0
 
 
 ## Выбор клавишей 1/2/3 (освободились после выпила фокус-групп).
@@ -3082,10 +3422,13 @@ func _take_card(index: int) -> void:
 	print("[Cards] взята %s (%s), всего в категории: %d"
 			% [id, CARD_CATALOG[id]["cls"], _cards_in_class(CARD_CATALOG[id]["cls"])])
 	_refresh_focus_cards()
-	# Отложенная выдача (пикер был занят) — показываем следующую.
-	if _card_queue > 0:
-		_card_queue -= 1
-		call_deferred(&"_offer_cards")
+	# Отложенная выдача (пикер был занят) — показываем следующую С ЕЁ заголовком;
+	# мир остаётся замершим до последнего выбора. Пусто → время миру.
+	if not _card_queue.is_empty():
+		var next_title: String = _card_queue.pop_front()
+		call_deferred(&"_offer_cards", next_title)
+	else:
+		Engine.time_scale = 1.0
 
 
 ## Строка взятых карточек для карточки класса в HUD (гномы = дисплей).
@@ -3124,7 +3467,12 @@ func _request_stone_wave(cursor: Vector3) -> void:
 	_spawn_wave_body(c + _wave_dir * 1.6, 5 + 2 * _card(&"artel_wide"),
 			_wave_half_width(), 1.0)
 	AoeVisual.spawn_dust(self, c + _wave_dir * 1.6)
-	EventBus.camera_shake.emit(0.18, c)
+	# 0.18 → 0.5 (2026-07-30): смещение ∝ травма², старые значения давали
+	# сантиметры на камере в 24 м — тряска существовала только на бумаге.
+	EventBus.camera_shake.emit(0.5, c)
+	# Отдача: тело отшатывается от собственного залпа (эхо-валы не пинают —
+	# один осознанный запуск = один толчок).
+	_wasd_vel -= _wave_dir * wasd_wave_recoil
 
 
 ## Вал: гребень из плит разной высоты поперёк хода — читается как «поднявшийся
@@ -3186,7 +3534,12 @@ func _tick_stone_wave(delta: float) -> void:
 		var from: Vector3 = node.global_position + Vector3.UP * 0.6
 		var q := PhysicsRayQueryParameters3D.create(from, from + _wave_dir * (step + 0.6),
 				Layers.TERRAIN | Layers.WALL_GATE_BLOCK | Layers.CHASM_BARRIER)
-		var blocked: bool = not space.intersect_ray(q).is_empty()
+		var ray: Dictionary = space.intersect_ray(q)
+		var blocked: bool = not ray.is_empty()
+		# Вал разбился о треснувшую стенку тайника → вскрыл её (сам тоже гибнет —
+		# камень об камень).
+		if blocked and _secret_wall != null and ray.get("collider") == _secret_wall:
+			_break_secret_wall()
 		node.global_position += _wave_dir * step
 		w["travelled"] = float(w["travelled"]) + step
 		_wave_damage_pass(w)
@@ -3201,6 +3554,7 @@ func _wave_damage_pass(w: Dictionary) -> void:
 	var origin: Vector3 = (w["node"] as Node3D).global_position
 	var hit: Dictionary = w["hit"]
 	var power: float = float(w["power"])
+	var kills: int = 0
 	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
 			continue
@@ -3213,10 +3567,26 @@ func _wave_damage_pass(w: Dictionary) -> void:
 		if absf(along) > 1.1 or side > float(w["half"]) + 0.5:
 			continue
 		hit[sk.get_instance_id()] = true
-		Damageable.try_damage(sk, _wave_damage_now() * power, 0.0, _wave_dir)
-		if is_instance_valid(sk) and sk.has_method(&"apply_knockback"):
+		Damageable.try_damage(sk, _wave_damage_now() * power, wasd_wave_hitstop, _wave_dir, true)
+		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
+			kills += 1
+		elif sk.has_method(&"apply_knockback"):
 			sk.call(&"apply_knockback",
 					_wave_dir * wasd_wave_knockback * power + Vector3.UP * 2.5, 0.3)
+	# Интро: мебель обеденного зала на пути вала — в щепу (та же полоса; вал о
+	# мебель НЕ разбивается — она не TERRAIN, «просека» сквозь столы = хаос).
+	for b in get_tree().get_nodes_in_group(&"intro_breakable"):
+		if not is_instance_valid(b) or (b as Node).is_queued_for_deletion():
+			continue
+		var tob := Vector3((b as Node3D).global_position.x - origin.x, 0.0,
+				(b as Node3D).global_position.z - origin.z)
+		if absf(tob.dot(_wave_dir)) <= 1.4 \
+				and absf(tob.dot(Vector3(-_wave_dir.z, 0.0, _wave_dir.x))) <= float(w["half"]) + 0.8:
+			_intro_break_box(b as Node3D, _wave_dir)
+	# Кульминация как у фаербола башни: пачка (3+) одним проходом → слоумо-бит.
+	# slowmo_beat сам не стакается, если время уже искажено.
+	if kills >= 3:
+		HitStop.slowmo_beat(HitStop.BEAT_MULTIKILL_SCALE, HitStop.BEAT_MULTIKILL_TIME)
 
 
 ## Урон вала СЕЙЧАС = вклад каждого живого артельщика. Считается в момент
@@ -3250,6 +3620,7 @@ func _break_stone_wave(w: Dictionary) -> void:
 func _wave_burst(p: Vector3, power: float = 1.0) -> void:
 	var r: float = 4.5 * power
 	var r_sq: float = r * r
+	var kills: int = 0
 	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
 			continue
@@ -3258,11 +3629,16 @@ func _wave_burst(p: Vector3, power: float = 1.0) -> void:
 		if to.length_squared() > r_sq:
 			continue
 		var dir: Vector3 = to.normalized() if to.length_squared() > 0.0001 else _wave_dir
-		Damageable.try_damage(sk, _wave_damage_now() * 0.6 * power, 0.0, dir)
-		if is_instance_valid(sk) and sk.has_method(&"apply_knockback"):
+		# «Обвал» — вторичный удар, заморозка вполовину от основного вала.
+		Damageable.try_damage(sk, _wave_damage_now() * 0.6 * power, wasd_wave_hitstop * 0.5, dir, true)
+		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
+			kills += 1
+		elif sk.has_method(&"apply_knockback"):
 			sk.call(&"apply_knockback", dir * wasd_wave_knockback * 0.7 * power, 0.2)
+	if kills >= 3:
+		HitStop.slowmo_beat(HitStop.BEAT_MULTIKILL_SCALE, HitStop.BEAT_MULTIKILL_TIME)
 	AoeVisual.spawn_expanding_ring(self, p, r, 0.25, Color(0.7, 0.65, 0.6, 0.9))
-	EventBus.camera_shake.emit(0.22 * power, p)
+	EventBus.camera_shake.emit(0.45 * power, p)
 
 
 func _alive_artel() -> int:
@@ -3344,17 +3720,39 @@ func _spear_super_blast(c: Vector3) -> void:
 			targets.append(sk)
 	# Волна: урон + отброс наружу. hit_dir = от центра группы → направленный
 	# shatter на добивании (§6.1 F1), осколки летят «от нас».
+	var kills: int = 0
 	for sk in targets:
 		var to := Vector3((sk as Node3D).global_position.x - c.x, 0.0,
 				(sk as Node3D).global_position.z - c.z)
 		var dir: Vector3 = to.normalized() if to.length_squared() > 0.0001 \
 				else Vector3(randf() - 0.5, 0.0, randf() - 0.5).normalized()
-		Damageable.try_damage(sk, wasd_super_damage_per_gnome * float(_alive_pikemen()), 0.0, dir)
-		if is_instance_valid(sk) and sk.has_method(&"apply_knockback"):
+		Damageable.try_damage(sk, wasd_super_damage_per_gnome * float(_alive_pikemen()), wasd_super_hitstop, dir, true)
+		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
+			kills += 1
+		elif sk.has_method(&"apply_knockback"):
 			sk.call(&"apply_knockback", dir * wasd_super_knockback + Vector3.UP * 2.0, 0.25)
+	if kills >= 3:
+		HitStop.slowmo_beat(HitStop.BEAT_MULTIKILL_SCALE, HitStop.BEAT_MULTIKILL_TIME)
+	# Ударная волна достаёт и до треснувшей стенки тайника.
+	if _secret_wall != null and is_instance_valid(_secret_wall):
+		var to_wall := Vector3(_secret_wall.global_position.x - c.x, 0.0,
+				_secret_wall.global_position.z - c.z)
+		if to_wall.length() <= radius + 0.5:
+			_break_secret_wall()
+	# Интро: мебель в радиусе супера — в щепу (осколки от центра).
+	for b in get_tree().get_nodes_in_group(&"intro_breakable"):
+		if not is_instance_valid(b) or (b as Node).is_queued_for_deletion():
+			continue
+		var tob := Vector3((b as Node3D).global_position.x - c.x, 0.0,
+				(b as Node3D).global_position.z - c.z)
+		if tob.length_squared() <= r_sq:
+			_intro_break_box(b as Node3D, tob.normalized() if tob.length_squared() > 0.01 else Vector3.FORWARD)
 	AoeVisual.spawn_expanding_ring(self, c, radius, 0.25, Color(1.0, 0.6, 0.25, 0.9))
 	AoeVisual.spawn_dust(self, c)
-	EventBus.camera_shake.emit(0.3, c)
+	EventBus.camera_shake.emit(0.75, c)
+	# «Упёрлись в землю»: удар вокруг на бегу режет ход тела — копейщики бьют
+	# с места, и телу положено на миг просесть в темпе.
+	_wasd_vel *= clampf(wasd_super_brake, 0.0, 1.0)
 	# Карточка «Выжженная земля»: на месте удара остаётся горящее пятно.
 	if _card(&"pike_burn") > 0:
 		_spawn_burn(c, radius * 0.8, 5.0)
@@ -3508,7 +3906,9 @@ func _wasd_combat(lmb: bool, cursor: Vector3) -> void:
 			if m is ArcherSoldier:
 				(m as ArcherSoldier).shield_damage_mult = 1.0 + 2.0 * float(_card(&"arch_shieldbreak"))
 			if lmb and aim != Vector3.INF and m.has_method(&"try_suppressive_fire"):
-				m.call(&"try_suppressive_fire", aim)
+				# true = стрела реально ушла (не сухой спуск/кулдаун) → отдача в тело.
+				if m.call(&"try_suppressive_fire", aim) and wasd_shot_recoil > 0.0:
+					_wasd_vel -= aim_dir * wasd_shot_recoil
 		elif m.soldier_type == &"pikeman":
 			# hold_ground страхует строй: даже если цель откуда-то возьмётся
 			# (detect подняли в инспекторе), копейщик колет С МЕСТА и не
@@ -3572,6 +3972,7 @@ func _try_place_shield(cursor: Vector3) -> void:
 	shield.setup(wasd_shield_size, wasd_shield_hp)
 	shield.global_position = Vector3(c.x, wasd_shield_size.y * 0.5, c.z) + dir * wasd_shield_dist
 	shield.rotation.y = atan2(dir.x, dir.z)
+	shield.destroyed.connect(_on_shield_broken.bind(shield))
 	_shields.append(shield)
 	AoeVisual.spawn_ground_ring(self,
 			Vector3(shield.global_position.x, 0.0, shield.global_position.z),
@@ -3641,6 +4042,9 @@ func _update_active_room() -> void:
 func _spawn_wave(force: bool = false) -> void:
 	if skeleton_scene == null:
 		push_warning("[DungeonSandbox] skeleton_scene не задан")
+		return
+	# Интро: штатный волновой таймер молчит — вся подача авторская (_intro_tick).
+	if intro_mode and not force:
 		return
 	# Лимит волн на комнату: выдала свои — затихает навсегда (force = чит T).
 	if not force and room_wave_limit > 0 and _active_room >= 0 \
@@ -3741,7 +4145,8 @@ func _alive_skeletons() -> int:
 
 
 func _director_active() -> bool:
-	return wasd_mode and director_enabled and skeleton_scene != null
+	# Интро: подача АВТОРСКАЯ (сценарий, _intro_tick) — директор молчит.
+	return wasd_mode and director_enabled and skeleton_scene != null and not intro_mode
 
 
 ## Кривая давления: сколько живых держим прямо сейчас (линейно start → peak за
@@ -3833,15 +4238,31 @@ func _spawn_cluster(n: int, radius: float, kind: StringName = &"grunt",
 ## (наземный Y) — волны лезут из стен той комнаты, где сейчас отряд.
 func _edge_spawn_point() -> Vector3:
 	var rz: float = float(_room_z[_active_room]) if _active_room >= 0 else room_center.z
-	var t: float = randf_range(-room_half + 3.0, room_half - 3.0)
-	var edge: float = room_half - 2.5
-	var local: Vector3
-	match randi() % 4:
-		0: local = Vector3(t, 0.6, -edge)
-		1: local = Vector3(t, 0.6, edge)
-		2: local = Vector3(-edge, 0.6, t)
-		_: local = Vector3(edge, 0.6, t)
-	return Vector3(room_center.x, 0.0, rz) + local
+	var p: Vector3
+	# Карман тайника исключён: заспавнившийся ВНУТРИ скелет недосягаем до пролома
+	# и вешает зачистку комнаты. Несколько попыток, потом честный фолбэк.
+	for _try in range(8):
+		var t: float = randf_range(-room_half + 3.0, room_half - 3.0)
+		var edge: float = room_half - 2.5
+		var local: Vector3
+		match randi() % 4:
+			0: local = Vector3(t, 0.6, -edge)
+			1: local = Vector3(t, 0.6, edge)
+			2: local = Vector3(-edge, 0.6, t)
+			_: local = Vector3(edge, 0.6, t)
+		p = Vector3(room_center.x, 0.0, rz) + local
+		if not _in_secret_pocket(p):
+			return p
+	return p
+
+
+## Точка внутри кармана тайника (с запасом на радиус тела скелета)?
+func _in_secret_pocket(p: Vector3) -> bool:
+	if _secret_room < 0 or _secret_room != _active_room:
+		return false
+	var b := _secret_bounds.grow(1.0)
+	return p.x >= b.position.x and p.x <= b.end.x \
+			and p.z >= b.position.z and p.z <= b.end.z
 
 
 func _random_alive_gnome() -> Node3D:
@@ -3860,14 +4281,36 @@ func _alive_gnomes() -> int:
 	return _squad.count_alive() if _squad != null else 0
 
 
+## XpOrb прибыл к солдату — опыт в кошелёк отряда (обменный курс сундуков).
+func on_orb_collected(amount: int, _world_pos: Vector3) -> void:
+	_xp += amount
+	_update_labels()
+
+
 func _on_gnome_died() -> void:
 	print("[DungeonSandbox] гном пал, осталось %d" % _alive_gnomes())
+	# Потеря бойца — «ох» всего экрана (рецепт Pathogenic: урон по игроку искажает
+	# время, а не только тратит HP): слоумо-провал + толчок камеры. В superhot-
+	# режиме time_scale уже искажён — slowmo_beat сам себя гейтит и не мешает.
+	HitStop.slowmo_beat(0.2, 0.2)
+	if _squad != null:
+		var c: Vector3 = _squad.compute_center()
+		if c != Vector3.INF:
+			EventBus.camera_shake.emit(0.45, c)
 	_update_labels()
 	_refresh_focus_cards()
 	if _alive_gnomes() <= 0 and not _game_over:
 		_game_over = true
 		print("[DungeonSandbox] отряд погиб (волна %d, убито %d)" % [_wave_number, _kills])
 		($HUD/Center/GameOverLabel as Label).visible = true
+
+
+## Щит лопнул — бит легче гибели гнома: короче и мельче, но с толчком в точке
+## пролома (игрок теряет укрытие — это событие, а не фон).
+func _on_shield_broken(shield: Node3D) -> void:
+	HitStop.slowmo_beat(0.4, 0.12)
+	if is_instance_valid(shield):
+		EventBus.camera_shake.emit(0.3, shield.global_position)
 
 
 func _on_skeleton_died() -> void:
@@ -3888,7 +4331,11 @@ func _check_room_cleared() -> void:
 	if _room_cleared.get(_active_room, false):
 		return
 	# Директор: комната отбита, когда ВЫДАН весь её бюджет (аналог лимита волн).
-	if _director_active():
+	if intro_mode:
+		# Интро: комната отбита, когда авторская подача выдана целиком.
+		if _active_room < _intro_left.size() and _intro_left[_active_room] > 0:
+			return
+	elif _director_active():
 		if int(_room_spawned.get(_active_room, 0)) < director_room_budget:
 			return
 	else:
@@ -3921,6 +4368,11 @@ func _update_labels() -> void:
 	($HUD/Panel/Rows/WaveLabel as Label).text = wave_txt
 	($HUD/Panel/Rows/SquadLabel as Label).text = "Гномов: %d / %d" % [_alive_gnomes(), squad_size]
 	($HUD/Panel/Rows/KillLabel as Label).text = "Убито: %d" % _kills
+	# XpLabel есть только в dungeon_wasd.tscn (скрипт делят и другие данж-сцены).
+	var xp_label := $HUD/Panel/Rows.get_node_or_null("XpLabel") as Label
+	if xp_label != null:
+		xp_label.text = ("Опыт: %d (сундук: %d)" % [_xp, chest_xp_cost]) \
+				if chest_xp_cost > 0 else "Опыт: %d" % _xp
 	var cargo_txt: String = "Груз: —"
 	if _cargo != null:
 		cargo_txt = "Груз: несут %d (стволов −%d)" % [_haulers.size(), _haulers.size()]
@@ -3929,9 +4381,549 @@ func _update_labels() -> void:
 	if _wood_broken:
 		craft_txt = "Бомба: дверь взорвана ✓"
 	elif _bomb != null:
-		craft_txt = "Бомба готова — к деревянной двери!"
+		craft_txt = "Бомба готова — неси к завалу!" if intro_mode else "Бомба готова — к деревянной двери!"
 	else:
 		craft_txt = "Ингредиенты: %d / %d" % [_collected, INGREDIENTS_NEEDED]
 	var cl := $HUD/Panel/Rows.get_node_or_null("CraftLabel") as Label
 	if cl != null:
 		cl.text = craft_txt
+
+
+# =============================================================================
+# ИНТРО-СЦЕНАРИЙ «Из недр — к Ладье» (intro_mode, канон docs/scenario_dungeon_intro.md)
+# =============================================================================
+
+## Постройка всего интро-контента поверх штатной анфилады. Штатные системы
+## (пазл веса, ловушки, крафт в К2, баррикады, грузы-тест) в интро не зовутся.
+func _intro_setup() -> void:
+	# Курсор и точка строя должны дотягиваться до ангара и пускового коридора.
+	cursor_z_min = INTRO_FINISH_Z - 12.0
+	_intro_left = [1, 2, 1]
+	# К1 = МАЛАЯ СТАРТ-КАМЕРА (юг Room1) + извилистый путь до выхода (фидбек
+	# 2026-07-30: «небольшая комната и из неё извилистый коридор в обеденный зал»).
+	_intro_maze()
+	_intro_campfire(room_center + Vector3(4.0, 0.0, 18.0))
+	# Отряд стартует в камере у костра, а не в центре Room1.
+	var start := room_center + Vector3(0.0, 0.0, 17.0)
+	if _squad != null:
+		var k: int = 0
+		for m in _squad.members:
+			if is_instance_valid(m):
+				(m as Node3D).global_position = start \
+						+ Vector3(float(k % 3 - 1) * 1.2, 0.0, float(k / 3 - 1) * 1.2)
+				k += 1
+		_squad.command_hold(start, false)
+		_squad.hold_position = start
+	_banner.global_position = start
+	_look_target = start
+	# К1: дверь Corr12 открывается ТОЛКАНИЕМ отряда (см. _intro_tick_push_door).
+	_door = get_node_or_null("Corr12/Door") as Node3D
+	if _door != null:
+		_door_closed_y = _door.position.y
+	# К2: обеденный зал + рычаг у выхода (дверь Corr23 поднимает рычаг, не бомба).
+	_intro_spawn_furniture()
+	_lever_door = get_node_or_null("Corr23/Door") as Node3D
+	_intro_spawn_lever(Vector3(room_center.x - 5.5, 0.0, room_center.z - 60.0 - 22.0))
+	# К3: машина патронов (реюз крафт-котла) + завал вместо северной стены.
+	_intro_setup_forge()
+	_intro_build_hangar()
+	EventBus.tutorial_hint.emit("Артель собралась у костра. WASD — в путь, курсор — прицел", 5.0)
+
+
+## К1: баффл-стены внутри Room1 — старт-камера на юге и S-змейка до северного
+## выхода. Путь: камера → проём на ЗАПАДЕ → средняя зона (зуб посередине) →
+## проём на ВОСТОКЕ → северная зона → дверь-толкач. Первый бой — в средней зоне.
+func _intro_maze() -> void:
+	# Стена А (юг, z=+10 от центра): отделяет старт-камеру, проём на западе x 16..24.
+	_secret_wall_body(room_center + Vector3(5.0, 1.5, 10.0), Vector3(42.0, 3.0, 1.0), false, Vector3.FORWARD)
+	# Стена Б (север, z=−6): проём на востоке x 56..64.
+	_secret_wall_body(room_center + Vector3(-5.0, 1.5, -6.0), Vector3(42.0, 3.0, 1.0), false, Vector3.FORWARD)
+	# Зуб в средней зоне — путь петляет, а не идёт по прямой.
+	_secret_wall_body(room_center + Vector3(-14.0, 1.5, 2.0), Vector3(16.0, 3.0, 1.0), false, Vector3.FORWARD)
+
+
+## Костёр пролога: угли + поленья + тёплый свет. Чистый визуал.
+func _intro_campfire(pos: Vector3) -> void:
+	var root := Node3D.new()
+	add_child(root)
+	root.global_position = pos
+	var wood_mat := StandardMaterial3D.new()
+	wood_mat.albedo_color = Color(0.25, 0.17, 0.1)
+	for i in range(3):
+		var log_mesh := BoxMesh.new()
+		log_mesh.size = Vector3(1.4, 0.22, 0.22)
+		var mi := MeshInstance3D.new()
+		mi.mesh = log_mesh
+		mi.material_override = wood_mat
+		mi.position = Vector3(0.0, 0.12, 0.0)
+		mi.rotation.y = float(i) * TAU / 3.0
+		root.add_child(mi)
+	var ember := SphereMesh.new()
+	ember.radius = 0.3
+	ember.height = 0.45
+	var emat := StandardMaterial3D.new()
+	emat.albedo_color = Color(1.0, 0.5, 0.15)
+	emat.emission_enabled = true
+	emat.emission = Color(1.0, 0.45, 0.1)
+	emat.emission_energy_multiplier = 2.2
+	var emi := MeshInstance3D.new()
+	emi.mesh = ember
+	emi.material_override = emat
+	emi.position = Vector3(0.0, 0.2, 0.0)
+	root.add_child(emi)
+	var light := OmniLight3D.new()
+	light.light_color = Color(1.0, 0.6, 0.25)
+	light.light_energy = 2.0
+	light.omni_range = 9.0
+	light.position = Vector3(0.0, 1.2, 0.0)
+	root.add_child(light)
+
+
+## Обеденный зал К2: столы со стульями. Ломаются валом и супером (группа
+## intro_breakable), юниты упираются (ITEMS — вал о них НЕ разбивается).
+func _intro_spawn_furniture() -> void:
+	var r2 := Vector3(room_center.x, 0.0, room_center.z - 60.0)
+	var tables := [
+		Vector3(-9, 0, -6), Vector3(8, 0, 4), Vector3(-2, 0, 10),
+		Vector3(10, 0, -10), Vector3(-13, 0, 7),
+	]
+	for t in tables:
+		var tp: Vector3 = r2 + (t as Vector3)
+		_intro_breakable_box(tp, Vector3(2.6, 1.0, 1.4), Color(0.42, 0.3, 0.18))
+		_intro_breakable_box(tp + Vector3(1.9, 0, 1.3), Vector3(0.65, 0.85, 0.65), Color(0.5, 0.36, 0.22))
+		_intro_breakable_box(tp + Vector3(-1.9, 0, -1.3), Vector3(0.65, 0.85, 0.65), Color(0.5, 0.36, 0.22))
+
+
+func _intro_breakable_box(pos: Vector3, size: Vector3, col: Color) -> void:
+	var body := StaticBody3D.new()
+	body.collision_layer = Layers.ITEMS
+	body.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	var bs := BoxShape3D.new()
+	bs.size = size
+	cs.shape = bs
+	body.add_child(cs)
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	mi.mesh = bm
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = col
+	mi.material_override = mat
+	body.add_child(mi)
+	body.add_to_group(&"intro_breakable")
+	body.set_meta(&"break_color", col)
+	add_child(body)
+	body.global_position = pos + Vector3(0.0, size.y * 0.5, 0.0)
+
+
+## Щепки: мебель ломается одним касанием силы (без HP — хаос должен быть дешёвым).
+func _intro_break_box(b: Node3D, dir: Vector3) -> void:
+	if not is_instance_valid(b) or b.is_queued_for_deletion():
+		return
+	ShatterEffect.spawn(self, b.global_position, b.get_meta(&"break_color", Color(0.45, 0.33, 0.2)),
+			8, 1.2, dir, 1.0)
+	b.queue_free()
+
+
+## Рычаг К2: столбик с ручкой у выхода. E рядом → гном-делегат подскакивает и
+## дёргает, дверь Corr23 поднимается (см. _intro_try_lever / _intro_tick).
+func _intro_spawn_lever(pos: Vector3) -> void:
+	_lever = Node3D.new()
+	add_child(_lever)
+	_lever.global_position = pos
+	var post_mat := StandardMaterial3D.new()
+	post_mat.albedo_color = Color(0.3, 0.3, 0.34)
+	post_mat.metallic = 0.5
+	var post := MeshInstance3D.new()
+	var pm := BoxMesh.new()
+	pm.size = Vector3(0.35, 1.1, 0.35)
+	post.mesh = pm
+	post.material_override = post_mat
+	post.position = Vector3(0.0, 0.55, 0.0)
+	_lever.add_child(post)
+	var handle := MeshInstance3D.new()
+	var hm := BoxMesh.new()
+	hm.size = Vector3(0.12, 1.0, 0.12)
+	handle.mesh = hm
+	var hmat := StandardMaterial3D.new()
+	hmat.albedo_color = Color(0.85, 0.2, 0.15)
+	hmat.emission_enabled = true
+	hmat.emission = Color(0.85, 0.2, 0.15)
+	hmat.emission_energy_multiplier = 0.8
+	handle.material_override = hmat
+	handle.name = "Handle"
+	handle.position = Vector3(0.0, 1.4, -0.3)
+	handle.rotation.x = -0.6
+	_lever.add_child(handle)
+	AoeVisual.spawn_ground_ring(self, pos, 1.4, 0.0, Color(0.85, 0.4, 0.2, 0.6))
+
+
+## E возле рычага: ближайший гном подскакивает, ручка падает, дверь вверх.
+## true = событие E съедено рычагом (грузы не трогаем).
+func _intro_try_lever() -> bool:
+	if not intro_mode or _lever_pulled or _lever == null or _squad == null:
+		return false
+	var c: Vector3 = _squad.compute_center()
+	if c == Vector3.INF:
+		return false
+	if Vector2(_lever.global_position.x - c.x, _lever.global_position.z - c.z).length() > 3.5:
+		return false
+	_lever_pulled = true
+	# Гном-делегат: ближайший к рычагу скачком к нему (чистый твин-визуал).
+	var best: Node3D = null
+	var best_d: float = INF
+	for m in _squad.members:
+		if not is_instance_valid(m):
+			continue
+		var d: float = (m as Node3D).global_position.distance_to(_lever.global_position)
+		if d < best_d:
+			best_d = d
+			best = m
+	if best != null:
+		var tw := create_tween()
+		var jump := _lever.global_position + Vector3(0.0, 0.0, 0.9)
+		tw.tween_property(best, "global_position", jump + Vector3.UP * 1.2, 0.14)
+		tw.tween_property(best, "global_position", jump, 0.1)
+	var handle := _lever.get_node_or_null("Handle") as Node3D
+	if handle != null:
+		var tw2 := create_tween()
+		tw2.tween_property(handle, "rotation:x", 0.6, 0.2).set_delay(0.24)
+	EventBus.camera_shake.emit(0.15, _lever.global_position)
+	EventBus.tutorial_hint.emit("Рычаг дёрнут — решётка ползёт вверх!", 2.5)
+	return true
+
+
+## К3: машина патронов = штатный крафт-котёл, перенесённый в Room3; продукт —
+## бомба; цель бомбы — ЗАВАЛ (реюз _door_wood: фитиль/взрыв уже умеют всё).
+func _intro_setup_forge() -> void:
+	var r3 := Vector3(room_center.x, 0.0, room_center.z - 120.0)
+	_apparatus_pos = r3 + Vector3(-12.0, 0.0, 4.0)
+	_craft_need = [Color(0.9, 0.8, 0.2, 1), Color(0.2, 0.2, 0.22, 1), Color(0.92, 0.92, 0.95, 1)]
+	_spawn_apparatus(_apparatus_pos)
+	_refresh_apparatus_ring()
+	var spots := [
+		r3 + Vector3(12, 0, 10), r3 + Vector3(-12, 0, -12), r3 + Vector3(10, 0, -14),
+		r3 + Vector3(-10, 0, 14), r3 + Vector3(4, 0, 18), r3 + Vector3(16, 0, -4),
+	]
+	var distract := [Color(0.2, 0.5, 0.95, 1), Color(0.3, 0.85, 0.4, 1), Color(0.95, 0.4, 0.75, 1)]
+	var idx := 0
+	for col in _craft_need:
+		var it := _spawn_item(spots[idx], &"ingredient", col, true, 0.6)
+		it.set_meta(&"color", col)
+		idx += 1
+	for col in distract:
+		var it := _spawn_item(spots[idx], &"ingredient", col, true, 0.6)
+		it.set_meta(&"color", col)
+		idx += 1
+	# Северная стена Room3 → два сегмента + ЗАВАЛ по центру (его рвёт бомба).
+	var wall := get_node_or_null("Room3/WallN")
+	if wall != null:
+		wall.queue_free()
+	var wz: float = room_center.z - 146.0
+	_secret_wall_body(Vector3(room_center.x - 16.0, 1.5, wz), Vector3(20.0, 3.0, 1.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(room_center.x + 16.0, 1.5, wz), Vector3(20.0, 3.0, 1.0), false, Vector3.FORWARD)
+	_door_wood = _intro_spawn_rubble(Vector3(room_center.x, 0.0, wz))
+
+
+## Завал: один коллайдер + куча камней-мешей. Ломается ТОЛЬКО бомбой
+## (вал/супер его не берут — он не в intro_breakable и не тайник).
+func _intro_spawn_rubble(pos: Vector3) -> Node3D:
+	var body := StaticBody3D.new()
+	body.collision_layer = Layers.TERRAIN
+	body.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	var bs := BoxShape3D.new()
+	bs.size = Vector3(12.5, 3.0, 1.8)
+	cs.shape = bs
+	cs.position = Vector3(0.0, 1.5, 0.0)
+	body.add_child(cs)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.38, 0.35, 0.32)
+	for i in range(6):
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		var s: float = randf_range(1.6, 2.8)
+		bm.size = Vector3(s, randf_range(1.2, 2.6), randf_range(1.2, 1.8))
+		mi.mesh = bm
+		mi.material_override = mat
+		mi.position = Vector3(-5.0 + 2.0 * float(i) + randf_range(-0.4, 0.4),
+				bm.size.y * 0.5, randf_range(-0.3, 0.3))
+		mi.rotation.y = randf_range(-0.4, 0.4)
+		body.add_child(mi)
+	add_child(body)
+	body.global_position = pos
+	return body
+
+
+## Ангар с Ладьёй: пол, стены, четыре дока-зажима (три пустых — лор без слов),
+## Ладья-плейсхолдер в дальнем, заслонка пускового коридора и сам коридор.
+func _intro_build_hangar() -> void:
+	var hzc: float = room_center.z - 168.0  # центр ангара по Z (−128 при z=40)
+	# Пол ангара и коридора.
+	_secret_wall_body(Vector3(room_center.x, -0.25, hzc), Vector3(64.0, 0.5, 44.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(room_center.x, -0.25, room_center.z - 219.0), Vector3(14.0, 0.5, 62.0), false, Vector3.FORWARD)
+	# Стены ангара: запад/восток, север с проёмом (заслонка отдельно).
+	_secret_wall_body(Vector3(room_center.x - 32.0, 1.5, hzc), Vector3(1.0, 3.0, 44.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(room_center.x + 32.0, 1.5, hzc), Vector3(1.0, 3.0, 44.0), false, Vector3.FORWARD)
+	var nz: float = room_center.z + INTRO_CORRIDOR_Z - 40.0  # −150 при z=40
+	_secret_wall_body(Vector3(room_center.x - 19.0, 1.5, nz), Vector3(26.0, 3.0, 1.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(room_center.x + 19.0, 1.5, nz), Vector3(26.0, 3.0, 1.0), false, Vector3.FORWARD)
+	_launch_gate = _secret_wall_body(Vector3(room_center.x, 1.5, nz), Vector3(12.5, 3.0, 1.0), false, Vector3.FORWARD)
+	# Стены пускового коридора.
+	_secret_wall_body(Vector3(room_center.x - 6.0, 1.5, room_center.z - 219.0), Vector3(1.0, 3.0, 60.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(room_center.x + 6.0, 1.5, room_center.z - 219.0), Vector3(1.0, 3.0, 60.0), false, Vector3.FORWARD)
+	# Доки-зажимы вдоль западной стены: пары колонн, три пустых + один с Ладьёй.
+	var pillar_mat := StandardMaterial3D.new()
+	pillar_mat.albedo_color = Color(0.28, 0.3, 0.36)
+	pillar_mat.metallic = 0.6
+	var dock_zs := [-6.0, -18.0, -30.0, -40.0]  # локально от z −106
+	for dz in dock_zs:
+		for side in [-3.5, 3.5]:
+			var mi := MeshInstance3D.new()
+			var bm := BoxMesh.new()
+			bm.size = Vector3(1.0, 4.2, 1.0)
+			mi.mesh = bm
+			mi.material_override = pillar_mat
+			add_child(mi)
+			mi.global_position = Vector3(room_center.x - 24.0 + float(side), 2.1,
+					room_center.z - 146.0 + float(dz))
+	# Ладья — в последнем доке, тёмная до посадки.
+	_ladya = Node3D.new()
+	add_child(_ladya)
+	_ladya.global_position = Vector3(room_center.x - 24.0, 0.0, room_center.z - 186.0)
+	_ladya_mat = StandardMaterial3D.new()
+	_ladya_mat.albedo_color = Color(0.16, 0.17, 0.21)
+	_ladya_mat.metallic = 0.4
+	var hull := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 1.9
+	cyl.bottom_radius = 2.3
+	cyl.height = 4.6
+	hull.mesh = cyl
+	hull.material_override = _ladya_mat
+	hull.position = Vector3(0.0, 2.3, 0.0)
+	_ladya.add_child(hull)
+	var dome := MeshInstance3D.new()
+	var sph := SphereMesh.new()
+	sph.radius = 1.9
+	sph.height = 2.4
+	dome.mesh = sph
+	dome.material_override = _ladya_mat
+	dome.position = Vector3(0.0, 4.8, 0.0)
+	_ladya.add_child(dome)
+
+
+## Интро-тик пешего слоя: авторская подача по прогрессу + двери + ангар.
+func _intro_tick(delta: float) -> void:
+	if _squad == null:
+		return
+	var c: Vector3 = _squad.compute_center()
+	if c == Vector3.INF:
+		return
+	# К1: отряд вышел из старт-камеры в среднюю зону змейки → три скелета
+	# из-за поворота у восточного прохода — первый бой.
+	if _intro_left[0] > 0 and c.z < room_center.z + 8.0:
+		_intro_left[0] = 0
+		_spawn_skeleton_at(room_center + Vector3(16.0, 0.6, 2.0))
+		_spawn_skeleton_at(room_center + Vector3(20.0, 0.6, 4.0))
+		_spawn_skeleton_at(room_center + Vector3(12.0, 0.6, -2.0))
+		EventBus.tutorial_hint.emit("Скелеты! Держи ЛКМ — лучники польют по курсору", 4.0)
+	# К2: две волны — вторая по зачистке ИЛИ таймеру (паттерн Pathogenic).
+	if _active_room == 1 and not _intro_left.is_empty():
+		if _intro_left[1] == 2:
+			_intro_left[1] = 1
+			_intro_timer = 9.0
+			_intro_spawn_pack(5)
+			EventBus.tutorial_hint.emit("Толпа вплотную — ПРОБЕЛ; толпа в проходе — ПКМ-вал", 4.5)
+		elif _intro_left[1] == 1:
+			_intro_timer -= delta
+			if _intro_timer <= 0.0 or _alive_skeletons() == 0:
+				_intro_left[1] = 0
+				_intro_spawn_pack(7)
+	# К3: одна волна на входе, дальше — работа с машиной.
+	if _active_room == 2 and not _intro_left.is_empty() and _intro_left[2] > 0:
+		_intro_left[2] = 0
+		_intro_spawn_pack(4)
+		EventBus.tutorial_hint.emit("Отбейся — и собери бомбу в машине патронов", 4.0)
+	_intro_tick_push_door(delta, c)
+	# Решётка рычага ползёт вверх (дерев. дверь Corr23 в интро не бомбится).
+	if _lever_pulled and _lever_door != null and is_instance_valid(_lever_door):
+		_lever_door.position.y = lerpf(_lever_door.position.y, 4.6, 1.0 - exp(-4.0 * delta))
+	_intro_tick_hangar(c)
+
+
+## Пачка бегущих из стен активной комнаты (авторская волна).
+func _intro_spawn_pack(n: int) -> void:
+	for i in range(n):
+		_spawn_skeleton_at(_edge_spawn_point())
+	_update_labels()
+
+
+## Дверь-толкач К1: после зачистки отряд наваливается телом (стоишь вплотную и
+## жмёшь ход) ~1с — дверь поддаётся и уезжает вниз.
+func _intro_tick_push_door(delta: float, c: Vector3) -> void:
+	if _door == null or not is_instance_valid(_door):
+		return
+	if _push_door_open:
+		_door.position.y = lerpf(_door.position.y, _door_closed_y - 3.6, 1.0 - exp(-5.0 * delta))
+		return
+	if not _room_cleared.get(0, false):
+		return
+	var d: float = Vector2(_door.global_position.x - c.x, _door.global_position.z - c.z).length()
+	var has_input: bool = Input.get_vector(&"move_left", &"move_right",
+			&"move_forward", &"move_back").length_squared() > 0.01
+	if d < 4.5 and has_input:
+		if _push_t <= 0.0:
+			EventBus.tutorial_hint.emit("Дверь заклинило — НАВАЛИСЬ (держи ход в дверь)", 2.5)
+		_push_t += delta
+		if randf() < 0.25:
+			EventBus.camera_shake.emit(0.05, _door.global_position)
+		if _push_t >= 1.0:
+			_push_door_open = true
+			EventBus.camera_shake.emit(0.3, _door.global_position)
+			AoeVisual.spawn_dust(self, _door.global_position)
+			EventBus.tutorial_hint.emit("Поддалась!", 2.0)
+	else:
+		_push_t = maxf(_push_t - delta * 2.0, 0.0)
+
+
+## Ангар: входная волна на пороге, посадка при подходе к Ладье.
+func _intro_tick_hangar(c: Vector3) -> void:
+	if _ladya == null or _intro_ride:
+		return
+	if _hangar_wave == 0 and c.z < room_center.z + INTRO_HANGAR_ENTER_Z - 40.0:
+		_hangar_wave = 1
+		for i in range(6):
+			_spawn_skeleton_at(Vector3(room_center.x - 26.0 + 10.0 * float(i), 0.6,
+					room_center.z - 188.0 + randf_range(0.0, 4.0)))
+		EventBus.tutorial_hint.emit("АНГАР. Зажимы пусты… кроме одного. ДОБЕГИ до Ладьи!", 5.0)
+	if _hangar_wave >= 1 \
+			and Vector2(_ladya.global_position.x - c.x, _ladya.global_position.z - c.z).length() < 5.0:
+		_intro_board()
+
+
+## Посадка: гномы прячутся в корпус (едут с Ладьёй, скелеты продолжают их
+## «видеть» → бегут за Ладьёй), корпус оживает, волна на посадку.
+func _intro_board() -> void:
+	_intro_ride = true
+	for m in _squad.members:
+		if not is_instance_valid(m):
+			continue
+		(m as Node3D).visible = false
+		m.set_physics_process(false)
+		if m is CollisionObject3D:
+			(m as CollisionObject3D).collision_layer = 0
+			(m as CollisionObject3D).collision_mask = 0
+		(m as Node3D).global_position = _ladya.global_position + Vector3(0.0, 4.5, 0.0)
+	_ladya_mat.emission_enabled = true
+	_ladya_mat.emission = Color(0.3, 0.6, 1.0)
+	_ladya_mat.emission_energy_multiplier = 1.4
+	var light := OmniLight3D.new()
+	light.light_color = Color(0.4, 0.65, 1.0)
+	light.light_energy = 2.5
+	light.omni_range = 14.0
+	light.position = Vector3(0.0, 5.0, 0.0)
+	_ladya.add_child(light)
+	_banner.visible = false
+	if _cmd_line != null:
+		_cmd_line.visible = false
+	if _cmd_ring != null:
+		_cmd_ring.visible = false
+	EventBus.camera_shake.emit(0.6, _ladya.global_position)
+	AoeVisual.spawn_expanding_ring(self, _ladya.global_position, 8.0, 0.4, Color(0.4, 0.7, 1.0, 0.9))
+	EventBus.tutorial_hint.emit("ЛАДЬЯ ТВОЯ. WASD — ход, ЛКМ — ДЭШ: её оружие ближнего боя", 6.0)
+	_hangar_wave = 2
+	var corners := [
+		Vector3(room_center.x - 28.0, 0.6, room_center.z - 150.0),
+		Vector3(room_center.x + 28.0, 0.6, room_center.z - 150.0),
+		Vector3(room_center.x - 28.0, 0.6, room_center.z - 186.0),
+		Vector3(room_center.x + 28.0, 0.6, room_center.z - 186.0),
+	]
+	for p in corners:
+		_spawn_skeleton_at(p)
+		_spawn_skeleton_at((p as Vector3) + Vector3(2.0, 0.0, 2.0))
+
+
+## Езда на Ладье: WASD с инерцией, ЛКМ-дэш сносит скелетов, рык открывает
+## пусковой коридор, конец коридора = финиш интро.
+func _intro_tick_ride(delta: float) -> void:
+	if _ladya == null:
+		return
+	_ladya_dash_cd = maxf(_ladya_dash_cd - delta, 0.0)
+	var cursor: Vector3 = _cursor_ground_point()
+	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and _ladya_dash_cd <= 0.0 \
+			and cursor != Vector3.INF and _ladya_dash_target == Vector3.INF:
+		_ladya_dash_target = _intro_clamp_ladya(Vector3(cursor.x, 0.0, cursor.z))
+		_ladya_dash_cd = ladya_dash_cooldown
+		_ladya_vel = Vector3.ZERO
+		EventBus.camera_shake.emit(0.25, _ladya.global_position)
+	if _ladya_dash_target != Vector3.INF:
+		var to := _ladya_dash_target - _ladya.global_position
+		to.y = 0.0
+		var step: float = ladya_dash_speed * delta
+		if to.length() <= step:
+			_ladya.global_position = _ladya_dash_target
+			_ladya_dash_target = Vector3.INF
+			EventBus.camera_shake.emit(0.2, _ladya.global_position)
+			AoeVisual.spawn_dust(self, _ladya.global_position)
+		else:
+			_ladya.global_position = _intro_clamp_ladya(_ladya.global_position + to.normalized() * step)
+		_intro_dash_hit(to.normalized() if to.length() > 0.01 else Vector3.FORWARD)
+	else:
+		var v: Vector2 = Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
+		var target := Vector3(v.x, 0.0, v.y) * ladya_speed
+		_ladya_vel = _ladya_vel.lerp(target, 1.0 - exp(-6.0 * delta))
+		if _ladya_vel.length_squared() > 0.001:
+			_ladya.global_position = _intro_clamp_ladya(_ladya.global_position + _ladya_vel * delta)
+	# Гномы едут в корпусе — скелеты бегут за Ладьёй, камера держит центр отряда.
+	for m in _squad.members:
+		if is_instance_valid(m):
+			(m as Node3D).global_position = _ladya.global_position + Vector3(0.0, 4.5, 0.0)
+	# Рык: посадочная волна перебита → заслонка рвётся, коридор открыт.
+	if not _roar_done and _hangar_wave == 2 and _alive_skeletons() == 0:
+		_roar_done = true
+		EventBus.camera_shake.emit(0.9, _ladya.global_position)
+		AoeVisual.spawn_screen_flash(get_tree(), Color(1.0, 0.25, 0.15), 0.22, 0.35)
+		if _launch_gate != null and is_instance_valid(_launch_gate):
+			ShatterEffect.spawn(self, _launch_gate.global_position, Color(0.4, 0.37, 0.34), 16, 1.6,
+					Vector3(0, 0, -1), 1.2)
+			_launch_gate.queue_free()
+			_launch_gate = null
+		EventBus.tutorial_hint.emit("РРРЫК ИЗ ГЛУБИН!.. Пусковой коридор открыт — ГОНИ!", 5.0)
+	if not _intro_finished and _ladya.global_position.z < room_center.z + INTRO_FINISH_Z - 40.0:
+		_intro_finished = true
+		HitStop.slowmo_beat(0.3, 0.45)
+		AoeVisual.spawn_screen_flash(get_tree(), Color(1.0, 0.97, 0.9), 0.5, 0.8)
+		EventBus.tutorial_hint.emit("СВЕТ. Большой мир. Конец интро-прототипа ✓", 8.0)
+		print("[Intro] ФИНИШ: Ладья вырвалась из недр")
+	_update_camera(delta, cursor)
+
+
+## Кламп хода Ладьи: ангар, до рыка коридор закрыт, в коридоре — узко.
+func _intro_clamp_ladya(p: Vector3) -> Vector3:
+	var corr_z: float = room_center.z + INTRO_CORRIDOR_Z - 40.0
+	if not _roar_done:
+		p.z = maxf(p.z, corr_z + 2.5)
+	if p.z < corr_z + 1.0 and absf(p.x - room_center.x) > 4.2:
+		p.z = maxf(p.z, corr_z + 1.0)
+	p.x = clampf(p.x, room_center.x - 30.0, room_center.x + 30.0)
+	if p.z < corr_z:
+		p.x = clampf(p.x, room_center.x - 4.2, room_center.x + 4.2)
+	p.z = clampf(p.z, room_center.z + INTRO_FINISH_Z - 48.0, room_center.z - 148.0)
+	return p
+
+
+## Дэш-снос: скелеты у корпуса во время рывка получают урон и отлетают.
+func _intro_dash_hit(dir: Vector3) -> void:
+	var r_sq: float = ladya_dash_radius * ladya_dash_radius
+	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
+			continue
+		var to := Vector3((sk as Node3D).global_position.x - _ladya.global_position.x, 0.0,
+				(sk as Node3D).global_position.z - _ladya.global_position.z)
+		if to.length_squared() > r_sq:
+			continue
+		Damageable.try_damage(sk, ladya_dash_damage, 0.08, dir, true)
+		if is_instance_valid(sk) and sk.has_method(&"apply_knockback"):
+			sk.call(&"apply_knockback", dir * 12.0 + Vector3.UP * 3.0, 0.3)
