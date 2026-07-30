@@ -94,9 +94,6 @@ size = Vector3(12, 3, 0.6)
 
 [node name="DungeonIntro" type="Node3D" unique_id=2001557983]
 script = ExtResource("1_script")
-wasd_mode = true
-intro_mode = true
-roster_enabled = false
 gnome_speed_scale = 0.75
 gnome_damage_min = 4.0
 gnome_damage_max = 6.0
@@ -105,6 +102,9 @@ ice_grip = 0.65
 skeleton_scene = ExtResource("2_skel")
 cursor_z_min = -104.0
 cursor_z_max = 64.0
+wasd_mode = true
+intro_mode = true
+roster_enabled = false
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1875898225]
 environment = SubResource("env_dungeon")
@@ -434,7 +434,7 @@ text = "Гномов: 7 / 7"
 layout_mode = 2
 text = "Убито: 0"
 
-[node name="XpLabel" type="Label" parent="HUD/Panel/Rows"]
+[node name="XpLabel" type="Label" parent="HUD/Panel/Rows" unique_id=1897532550]
 layout_mode = 2
 text = "Опыт: 0"
 
@@ -442,7 +442,7 @@ text = "Опыт: 0"
 layout_mode = 2
 text = "Груз: —"
 
-[node name="CraftLabel" type="Label" parent="HUD/Panel/Rows"]
+[node name="CraftLabel" type="Label" parent="HUD/Panel/Rows" unique_id=1737007712]
 layout_mode = 2
 text = "Ингредиенты: 0 / 3"
 
@@ -465,7 +465,8 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 34
 text = "Отряд погиб — R, чтобы начать заново"
 
-[node name="FocusCards" type="HBoxContainer" parent="HUD"]
+[node name="FocusCards" type="HBoxContainer" parent="HUD" unique_id=2126172620]
+anchors_preset = 7
 anchor_left = 0.5
 anchor_top = 1.0
 anchor_right = 0.5
@@ -476,125 +477,126 @@ offset_right = 280.0
 offset_bottom = -18.0
 grow_horizontal = 2
 grow_vertical = 0
-theme_override_constants/separation = 12
 mouse_filter = 2
+theme_override_constants/separation = 12
 
-[node name="Card1" type="PanelContainer" parent="HUD/FocusCards"]
+[node name="Card1" type="PanelContainer" parent="HUD/FocusCards" unique_id=1051112472]
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
 
-[node name="V" type="VBoxContainer" parent="HUD/FocusCards/Card1"]
+[node name="V" type="VBoxContainer" parent="HUD/FocusCards/Card1" unique_id=1132824294]
 layout_mode = 2
+mouse_filter = 2
 theme_override_constants/separation = 3
-mouse_filter = 2
 
-[node name="Header" type="HBoxContainer" parent="HUD/FocusCards/Card1/V"]
+[node name="Header" type="HBoxContainer" parent="HUD/FocusCards/Card1/V" unique_id=1249036423]
 layout_mode = 2
-theme_override_constants/separation = 6
 mouse_filter = 2
+theme_override_constants/separation = 6
 
-[node name="Swatch" type="ColorRect" parent="HUD/FocusCards/Card1/V/Header"]
+[node name="Swatch" type="ColorRect" parent="HUD/FocusCards/Card1/V/Header" unique_id=426661438]
 custom_minimum_size = Vector2(14, 14)
 layout_mode = 2
 size_flags_vertical = 4
 color = Color(0.85, 0.55, 0.25, 1)
 
-[node name="Name" type="Label" parent="HUD/FocusCards/Card1/V/Header"]
+[node name="Name" type="Label" parent="HUD/FocusCards/Card1/V/Header" unique_id=1303851631]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 13
 text = "Копейщики"
 
-[node name="Count" type="Label" parent="HUD/FocusCards/Card1/V"]
+[node name="Count" type="Label" parent="HUD/FocusCards/Card1/V" unique_id=1837921528]
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "Живых: —"
 
-[node name="Key" type="Label" parent="HUD/FocusCards/Card1/V"]
+[node name="Key" type="Label" parent="HUD/FocusCards/Card1/V" unique_id=1436963012]
 modulate = Color(1, 1, 1, 0.6)
 layout_mode = 2
 theme_override_font_sizes/font_size = 11
 text = "[1] удар по клику"
 
-[node name="Card2" type="PanelContainer" parent="HUD/FocusCards"]
+[node name="Card2" type="PanelContainer" parent="HUD/FocusCards" unique_id=515288021]
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
 
-[node name="V" type="VBoxContainer" parent="HUD/FocusCards/Card2"]
+[node name="V" type="VBoxContainer" parent="HUD/FocusCards/Card2" unique_id=1813707761]
 layout_mode = 2
+mouse_filter = 2
 theme_override_constants/separation = 3
-mouse_filter = 2
 
-[node name="Header" type="HBoxContainer" parent="HUD/FocusCards/Card2/V"]
+[node name="Header" type="HBoxContainer" parent="HUD/FocusCards/Card2/V" unique_id=1024163669]
 layout_mode = 2
-theme_override_constants/separation = 6
 mouse_filter = 2
+theme_override_constants/separation = 6
 
-[node name="Swatch" type="ColorRect" parent="HUD/FocusCards/Card2/V/Header"]
+[node name="Swatch" type="ColorRect" parent="HUD/FocusCards/Card2/V/Header" unique_id=1080301737]
 custom_minimum_size = Vector2(14, 14)
 layout_mode = 2
 size_flags_vertical = 4
 color = Color(0.55, 0.35, 0.75, 1)
 
-[node name="Name" type="Label" parent="HUD/FocusCards/Card2/V/Header"]
+[node name="Name" type="Label" parent="HUD/FocusCards/Card2/V/Header" unique_id=256249192]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 13
 text = "Лучники"
 
-[node name="Count" type="Label" parent="HUD/FocusCards/Card2/V"]
+[node name="Count" type="Label" parent="HUD/FocusCards/Card2/V" unique_id=1457614870]
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "Живых: —"
 
-[node name="Key" type="Label" parent="HUD/FocusCards/Card2/V"]
+[node name="Key" type="Label" parent="HUD/FocusCards/Card2/V" unique_id=1334630462]
 modulate = Color(1, 1, 1, 0.6)
 layout_mode = 2
 theme_override_font_sizes/font_size = 11
 text = "[2] полив по ЛКМ"
 
-[node name="Card3" type="PanelContainer" parent="HUD/FocusCards"]
+[node name="Card3" type="PanelContainer" parent="HUD/FocusCards" unique_id=431697210]
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
 
-[node name="V" type="VBoxContainer" parent="HUD/FocusCards/Card3"]
+[node name="V" type="VBoxContainer" parent="HUD/FocusCards/Card3" unique_id=710879523]
 layout_mode = 2
+mouse_filter = 2
 theme_override_constants/separation = 3
-mouse_filter = 2
 
-[node name="Header" type="HBoxContainer" parent="HUD/FocusCards/Card3/V"]
+[node name="Header" type="HBoxContainer" parent="HUD/FocusCards/Card3/V" unique_id=1450978686]
 layout_mode = 2
-theme_override_constants/separation = 6
 mouse_filter = 2
+theme_override_constants/separation = 6
 
-[node name="Swatch" type="ColorRect" parent="HUD/FocusCards/Card3/V/Header"]
+[node name="Swatch" type="ColorRect" parent="HUD/FocusCards/Card3/V/Header" unique_id=1622899383]
 custom_minimum_size = Vector2(14, 14)
 layout_mode = 2
 size_flags_vertical = 4
 color = Color(0.7, 0.45, 0.25, 1)
 
-[node name="Name" type="Label" parent="HUD/FocusCards/Card3/V/Header"]
+[node name="Name" type="Label" parent="HUD/FocusCards/Card3/V/Header" unique_id=1119824728]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 13
 text = "Артель"
 
-[node name="Count" type="Label" parent="HUD/FocusCards/Card3/V"]
+[node name="Count" type="Label" parent="HUD/FocusCards/Card3/V" unique_id=1052720666]
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "Живых: —"
 
-[node name="Key" type="Label" parent="HUD/FocusCards/Card3/V"]
+[node name="Key" type="Label" parent="HUD/FocusCards/Card3/V" unique_id=1820789939]
 modulate = Color(1, 1, 1, 0.6)
 layout_mode = 2
 theme_override_font_sizes/font_size = 11
 text = "[3] щит по ПКМ"
 
-[node name="RosterStats" type="PanelContainer" parent="HUD"]
+[node name="RosterStats" type="PanelContainer" parent="HUD" unique_id=221628446]
 visible = false
+anchors_preset = 6
 anchor_left = 1.0
 anchor_top = 0.5
 anchor_right = 1.0
@@ -607,44 +609,45 @@ grow_horizontal = 0
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="V" type="VBoxContainer" parent="HUD/RosterStats"]
+[node name="V" type="VBoxContainer" parent="HUD/RosterStats" unique_id=563495211]
 layout_mode = 2
-theme_override_constants/separation = 7
 mouse_filter = 2
+theme_override_constants/separation = 7
 
-[node name="Cap" type="Label" parent="HUD/RosterStats/V"]
+[node name="Cap" type="Label" parent="HUD/RosterStats/V" unique_id=2062087323]
 layout_mode = 2
 theme_override_font_sizes/font_size = 18
 text = "Ячейки: 0 / 6"
 
-[node name="Archers" type="Label" parent="HUD/RosterStats/V"]
+[node name="Archers" type="Label" parent="HUD/RosterStats/V" unique_id=827085639]
 layout_mode = 2
 theme_override_font_sizes/font_size = 13
-autowrap_mode = 2
 text = "—"
+autowrap_mode = 2
 
-[node name="Pikes" type="Label" parent="HUD/RosterStats/V"]
+[node name="Pikes" type="Label" parent="HUD/RosterStats/V" unique_id=1562852564]
 layout_mode = 2
 theme_override_font_sizes/font_size = 13
-autowrap_mode = 2
 text = "—"
+autowrap_mode = 2
 
-[node name="Artel" type="Label" parent="HUD/RosterStats/V"]
+[node name="Artel" type="Label" parent="HUD/RosterStats/V" unique_id=2074309760]
 layout_mode = 2
 theme_override_font_sizes/font_size = 13
-autowrap_mode = 2
 text = "—"
+autowrap_mode = 2
 
-[node name="Keys" type="Label" parent="HUD/RosterStats/V"]
+[node name="Keys" type="Label" parent="HUD/RosterStats/V" unique_id=433186572]
 modulate = Color(1, 1, 1, 0.6)
 layout_mode = 2
 size_flags_vertical = 8
 theme_override_font_sizes/font_size = 11
-autowrap_mode = 2
 text = "ЛКМ на кучке — набрать в руку · ЛКМ по сетке — расставить · ЛКМ мимо — вернуть · ПКМ по ячейке — вынуть · ENTER — в подземелье"
+autowrap_mode = 2
 
-[node name="CardPicker" type="PanelContainer" parent="HUD"]
+[node name="CardPicker" type="PanelContainer" parent="HUD" unique_id=1601995995]
 visible = false
+anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
@@ -657,127 +660,127 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="V" type="VBoxContainer" parent="HUD/CardPicker"]
+[node name="V" type="VBoxContainer" parent="HUD/CardPicker" unique_id=760238607]
 layout_mode = 2
-theme_override_constants/separation = 10
 mouse_filter = 2
+theme_override_constants/separation = 10
 
-[node name="Title" type="Label" parent="HUD/CardPicker/V"]
+[node name="Title" type="Label" parent="HUD/CardPicker/V" unique_id=620274036]
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
-horizontal_alignment = 1
 text = "Комната зачищена — возьми находку"
+horizontal_alignment = 1
 
-[node name="Cards" type="HBoxContainer" parent="HUD/CardPicker/V"]
+[node name="Cards" type="HBoxContainer" parent="HUD/CardPicker/V" unique_id=185551213]
 layout_mode = 2
 size_flags_vertical = 3
+mouse_filter = 2
 theme_override_constants/separation = 12
-mouse_filter = 2
 
-[node name="Pick1" type="PanelContainer" parent="HUD/CardPicker/V/Cards"]
+[node name="Pick1" type="PanelContainer" parent="HUD/CardPicker/V/Cards" unique_id=653014656]
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
 
-[node name="V" type="VBoxContainer" parent="HUD/CardPicker/V/Cards/Pick1"]
+[node name="V" type="VBoxContainer" parent="HUD/CardPicker/V/Cards/Pick1" unique_id=550701990]
 layout_mode = 2
-theme_override_constants/separation = 6
 mouse_filter = 2
+theme_override_constants/separation = 6
 
-[node name="Class" type="Label" parent="HUD/CardPicker/V/Cards/Pick1/V"]
+[node name="Class" type="Label" parent="HUD/CardPicker/V/Cards/Pick1/V" unique_id=447478293]
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "—"
 
-[node name="Title" type="Label" parent="HUD/CardPicker/V/Cards/Pick1/V"]
+[node name="Title" type="Label" parent="HUD/CardPicker/V/Cards/Pick1/V" unique_id=473041525]
 layout_mode = 2
 theme_override_font_sizes/font_size = 15
-autowrap_mode = 2
 text = "—"
+autowrap_mode = 2
 
-[node name="Desc" type="Label" parent="HUD/CardPicker/V/Cards/Pick1/V"]
+[node name="Desc" type="Label" parent="HUD/CardPicker/V/Cards/Pick1/V" unique_id=1864389113]
 modulate = Color(1, 1, 1, 0.75)
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_font_sizes/font_size = 12
-autowrap_mode = 2
 text = "—"
+autowrap_mode = 2
 
-[node name="Key" type="Label" parent="HUD/CardPicker/V/Cards/Pick1/V"]
+[node name="Key" type="Label" parent="HUD/CardPicker/V/Cards/Pick1/V" unique_id=1288776769]
 modulate = Color(1, 1, 1, 0.6)
 layout_mode = 2
 theme_override_font_sizes/font_size = 11
-horizontal_alignment = 1
 text = "[1]"
+horizontal_alignment = 1
 
-[node name="Pick2" type="PanelContainer" parent="HUD/CardPicker/V/Cards"]
+[node name="Pick2" type="PanelContainer" parent="HUD/CardPicker/V/Cards" unique_id=273728361]
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
 
-[node name="V" type="VBoxContainer" parent="HUD/CardPicker/V/Cards/Pick2"]
+[node name="V" type="VBoxContainer" parent="HUD/CardPicker/V/Cards/Pick2" unique_id=2083644927]
 layout_mode = 2
-theme_override_constants/separation = 6
 mouse_filter = 2
+theme_override_constants/separation = 6
 
-[node name="Class" type="Label" parent="HUD/CardPicker/V/Cards/Pick2/V"]
+[node name="Class" type="Label" parent="HUD/CardPicker/V/Cards/Pick2/V" unique_id=552034908]
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "—"
 
-[node name="Title" type="Label" parent="HUD/CardPicker/V/Cards/Pick2/V"]
+[node name="Title" type="Label" parent="HUD/CardPicker/V/Cards/Pick2/V" unique_id=322919820]
 layout_mode = 2
 theme_override_font_sizes/font_size = 15
-autowrap_mode = 2
 text = "—"
+autowrap_mode = 2
 
-[node name="Desc" type="Label" parent="HUD/CardPicker/V/Cards/Pick2/V"]
+[node name="Desc" type="Label" parent="HUD/CardPicker/V/Cards/Pick2/V" unique_id=1901768351]
 modulate = Color(1, 1, 1, 0.75)
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_font_sizes/font_size = 12
-autowrap_mode = 2
 text = "—"
+autowrap_mode = 2
 
-[node name="Key" type="Label" parent="HUD/CardPicker/V/Cards/Pick2/V"]
+[node name="Key" type="Label" parent="HUD/CardPicker/V/Cards/Pick2/V" unique_id=1925159646]
 modulate = Color(1, 1, 1, 0.6)
 layout_mode = 2
 theme_override_font_sizes/font_size = 11
-horizontal_alignment = 1
 text = "[2]"
+horizontal_alignment = 1
 
-[node name="Pick3" type="PanelContainer" parent="HUD/CardPicker/V/Cards"]
+[node name="Pick3" type="PanelContainer" parent="HUD/CardPicker/V/Cards" unique_id=759078771]
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
 
-[node name="V" type="VBoxContainer" parent="HUD/CardPicker/V/Cards/Pick3"]
+[node name="V" type="VBoxContainer" parent="HUD/CardPicker/V/Cards/Pick3" unique_id=679365965]
 layout_mode = 2
-theme_override_constants/separation = 6
 mouse_filter = 2
+theme_override_constants/separation = 6
 
-[node name="Class" type="Label" parent="HUD/CardPicker/V/Cards/Pick3/V"]
+[node name="Class" type="Label" parent="HUD/CardPicker/V/Cards/Pick3/V" unique_id=164131935]
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "—"
 
-[node name="Title" type="Label" parent="HUD/CardPicker/V/Cards/Pick3/V"]
+[node name="Title" type="Label" parent="HUD/CardPicker/V/Cards/Pick3/V" unique_id=1518983780]
 layout_mode = 2
 theme_override_font_sizes/font_size = 15
-autowrap_mode = 2
 text = "—"
+autowrap_mode = 2
 
-[node name="Desc" type="Label" parent="HUD/CardPicker/V/Cards/Pick3/V"]
+[node name="Desc" type="Label" parent="HUD/CardPicker/V/Cards/Pick3/V" unique_id=540809226]
 modulate = Color(1, 1, 1, 0.75)
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_font_sizes/font_size = 12
-autowrap_mode = 2
 text = "—"
+autowrap_mode = 2
 
-[node name="Key" type="Label" parent="HUD/CardPicker/V/Cards/Pick3/V"]
+[node name="Key" type="Label" parent="HUD/CardPicker/V/Cards/Pick3/V" unique_id=643165504]
 modulate = Color(1, 1, 1, 0.6)
 layout_mode = 2
 theme_override_font_sizes/font_size = 11
-horizontal_alignment = 1
 text = "[3]"
+horizontal_alignment = 1

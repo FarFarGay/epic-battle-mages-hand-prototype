@@ -4347,7 +4347,10 @@ func _check_room_cleared() -> void:
 		return
 	_room_cleared[_active_room] = true
 	# Комната = уровень: за зачистку игрок берёт находку (кривая роста в забеге).
-	_offer_cards()
+	# Интро: НЕ выдаём (фидбек 2026-07-30 «ощущаются получения неверно») —
+	# единственная находка интро лежит в тайнике.
+	if not intro_mode:
+		_offer_cards()
 	print("[DungeonSandbox] Room%d зачищена (выдано: %d, убито всего: %d)"
 			% [_active_room + 1,
 			int(_room_spawned.get(_active_room, 0)) if _director_active() else room_wave_limit,
@@ -4402,9 +4405,9 @@ func _intro_setup() -> void:
 	# К1 = МАЛАЯ СТАРТ-КАМЕРА (юг Room1) + извилистый путь до выхода (фидбек
 	# 2026-07-30: «небольшая комната и из неё извилистый коридор в обеденный зал»).
 	_intro_maze()
-	_intro_campfire(room_center + Vector3(4.0, 0.0, 18.0))
-	# Отряд стартует в камере у костра, а не в центре Room1.
-	var start := room_center + Vector3(0.0, 0.0, 17.0)
+	_intro_campfire(Vector3(59.0, 0.0, 58.0))
+	# Отряд стартует на площадке у костра, а не в центре Room1.
+	var start := Vector3(56.0, 0.0, 57.0)
 	if _squad != null:
 		var k: int = 0
 		for m in _squad.members:
@@ -4430,16 +4433,62 @@ func _intro_setup() -> void:
 	EventBus.tutorial_hint.emit("Артель собралась у костра. WASD — в путь, курсор — прицел", 5.0)
 
 
-## К1: баффл-стены внутри Room1 — старт-камера на юге и S-змейка до северного
-## выхода. Путь: камера → проём на ЗАПАДЕ → средняя зона (зуб посередине) →
-## проём на ВОСТОКЕ → северная зона → дверь-толкач. Первый бой — в средней зоне.
+## К1 (фидбек 2026-07-30 «только коридор с полом, стенами не обносить, пол не
+## растягивать, извилистый»): штатная геометрия Room1 СНОСИТСЯ целиком, вместо
+## неё — ЛЕНТА ПОЛА над пустотой: старт-площадка (костёр) → колено на запад →
+## колено на север → колено на восток → площадка перед дверью-толкачом.
+## Видимых стен нет; края ленты держат НЕВИДИМЫЕ барьеры (гномы и скелеты не
+## сыплются в бездну — паттерн «пропасть фейковая»).
 func _intro_maze() -> void:
-	# Стена А (юг, z=+10 от центра): отделяет старт-камеру, проём на западе x 16..24.
-	_secret_wall_body(room_center + Vector3(5.0, 1.5, 10.0), Vector3(42.0, 3.0, 1.0), false, Vector3.FORWARD)
-	# Стена Б (север, z=−6): проём на востоке x 56..64.
-	_secret_wall_body(room_center + Vector3(-5.0, 1.5, -6.0), Vector3(42.0, 3.0, 1.0), false, Vector3.FORWARD)
-	# Зуб в средней зоне — путь петляет, а не идёт по прямой.
-	_secret_wall_body(room_center + Vector3(-14.0, 1.5, 2.0), Vector3(16.0, 3.0, 1.0), false, Vector3.FORWARD)
+	var r1 := get_node_or_null("Room1")
+	if r1 != null:
+		r1.queue_free()
+	# Лента: 5 сегментов пола (мировые прямоугольники, ширина колен 10).
+	_secret_wall_body(Vector3(56.0, -0.25, 57.0), Vector3(16.0, 0.5, 14.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(35.0, -0.25, 57.0), Vector3(30.0, 0.5, 10.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(25.0, -0.25, 39.0), Vector3(10.0, 0.5, 30.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(40.0, -0.25, 29.0), Vector3(24.0, 0.5, 10.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(40.0, -0.25, 19.75), Vector3(16.0, 0.5, 12.5), false, Vector3.FORWARD)
+	# Борта-стены по контуру ленты (обход от двери; дверной проём x 34..46
+	# на z=14.5 открыт).
+	var rails := [
+		[Vector2(32, 14.5), Vector2(34, 14.5)], [Vector2(32, 14.5), Vector2(32, 24)],
+		[Vector2(20, 24), Vector2(32, 24)], [Vector2(20, 24), Vector2(20, 62)],
+		[Vector2(20, 62), Vector2(48, 62)], [Vector2(48, 62), Vector2(48, 64)],
+		[Vector2(48, 64), Vector2(64, 64)], [Vector2(64, 50), Vector2(64, 64)],
+		[Vector2(48, 50), Vector2(64, 50)], [Vector2(48, 50), Vector2(48, 52)],
+		[Vector2(30, 52), Vector2(48, 52)], [Vector2(30, 34), Vector2(30, 52)],
+		[Vector2(30, 34), Vector2(52, 34)], [Vector2(52, 24), Vector2(52, 34)],
+		[Vector2(48, 24), Vector2(52, 24)], [Vector2(48, 14.5), Vector2(48, 24)],
+		[Vector2(46, 14.5), Vector2(48, 14.5)],
+	]
+	for r in rails:
+		_intro_rail(r[0], r[1])
+
+
+## Стена-борт ленты от точки A до B (осевой отрезок, XZ в метрах мира):
+## коллайдер + видимый мех в цвете стен анфилады.
+func _intro_rail(a: Vector2, b: Vector2) -> void:
+	var size := Vector3(maxf(absf(b.x - a.x), 1.0), 3.0, maxf(absf(b.y - a.y), 1.0))
+	var body := StaticBody3D.new()
+	body.collision_layer = Layers.TERRAIN
+	body.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	var bs := BoxShape3D.new()
+	bs.size = size
+	cs.shape = bs
+	body.add_child(cs)
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	mi.mesh = bm
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.24, 0.21, 0.27)
+	mat.roughness = 0.85
+	mi.material_override = mat
+	body.add_child(mi)
+	add_child(body)
+	body.global_position = Vector3((a.x + b.x) * 0.5, 1.5, (a.y + b.y) * 0.5)
 
 
 ## Костёр пролога: угли + поленья + тёплый свет. Чистый визуал.
@@ -4721,13 +4770,13 @@ func _intro_tick(delta: float) -> void:
 	var c: Vector3 = _squad.compute_center()
 	if c == Vector3.INF:
 		return
-	# К1: отряд вышел из старт-камеры в среднюю зону змейки → три скелета
-	# из-за поворота у восточного прохода — первый бой.
-	if _intro_left[0] > 0 and c.z < room_center.z + 8.0:
+	# К1: отряд повернул в северное колено ленты → три скелета выныривают
+	# из-за следующего поворота (восточное колено) — первый бой в коридоре.
+	if _intro_left[0] > 0 and c.x < 34.0 and c.z < 56.0:
 		_intro_left[0] = 0
-		_spawn_skeleton_at(room_center + Vector3(16.0, 0.6, 2.0))
-		_spawn_skeleton_at(room_center + Vector3(20.0, 0.6, 4.0))
-		_spawn_skeleton_at(room_center + Vector3(12.0, 0.6, -2.0))
+		_spawn_skeleton_at(Vector3(34.0, 0.6, 30.0))
+		_spawn_skeleton_at(Vector3(30.0, 0.6, 27.0))
+		_spawn_skeleton_at(Vector3(37.0, 0.6, 31.0))
 		EventBus.tutorial_hint.emit("Скелеты! Держи ЛКМ — лучники польют по курсору", 4.0)
 	# К2: две волны — вторая по зачистке ИЛИ таймеру (паттерн Pathogenic).
 	if _active_room == 1 and not _intro_left.is_empty():
