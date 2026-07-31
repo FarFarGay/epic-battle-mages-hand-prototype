@@ -392,6 +392,16 @@ const CMD_ARRIVED_DIST := 2.0
 @export var ladya_dash_cooldown: float = 1.0
 @export var ladya_dash_damage: float = 200.0
 @export var ladya_dash_radius: float = 3.0
+## СОКРОВИЩА (2026-08-01, разводка добычи по режимам: башня копает камень/железо,
+## гномий режим добывает ДЕНЬГИ): монеты-RigidBody кучками по коридорам, сундуки
+## сокровищ в комнатах (E → фонтан импульсами). Радиус ВСАСЫВАНИЯ пылесоса (м).
+@export var coin_pickup_radius: float = 3.2
+## Скорость полёта монеты к сборщику (м/с) и разгон доворота (м/с²): больше
+## разгон = послушнее рой, меньше = монеты дольше огибают по инерции.
+@export var coin_suck_speed: float = 11.0
+@export var coin_suck_accel: float = 50.0
+## Монет в фонтане одного сундука сокровищ.
+@export var loot_chest_coins: int = 12
 
 @export_group("Сбор отряда (WASD)")
 ## СОСТАВ = БИЛД (2026-07-29): перед заходом игрок сам раскладывает гномов по
@@ -671,7 +681,9 @@ var _card_picker_open: bool = false
 ## Заслуженные, но ещё не показанные выдачи (пикер был занят).
 ## Очередь отложенных выдач: ЗАГОЛОВКИ пикера (источник находки — зачистка/
 ## сундук/тайник; выдача пришла при открытом пикере → заголовок ждёт своей).
-var _card_queue: Array[String] = []
+## Очередь отложенных выдач пикера: [{title: String, fixed: Array}] — fixed
+## непустой = конкретные карты вместо случайного пула (фикс-находка тайника).
+var _card_queue: Array = []
 ## Сундуки-находки по комнатам: [{node, taken}].
 var _chests: Array = []
 ## Опыт отряда (XP с собранных орбов — валюта обмена в сундуках) и троттл
@@ -687,6 +699,13 @@ var _secret_wall: StaticBody3D = null
 ## Завал камней на выходе К1 (null после слома): разбивается СИЛОЙ — супер
 ## копейщиков или вал артели (замена двери-толкача, 2026-07-31).
 var _k1_rubble: StaticBody3D = null
+## Сокровища: живые монеты [{node, phase, air?}], казна забега и сундуки
+## сокровищ [{node, lid, opened, hinted?}] (не путать с _chests — те про карты).
+var _coins: Array = []
+var _coin_total: int = 0
+var _loot_chests: Array = []
+var _coin_mat: StandardMaterial3D = null
+var _coin_phys: PhysicsMaterial = null
 ## Рычаг К2 (нода) и его дверь Corr23; флаг «дёрнут».
 var _lever: Node3D = null
 var _lever_door: Node3D = null
@@ -1124,6 +1143,10 @@ func _artel_box(parent: Node3D, size: Vector3, pos: Vector3, mat: StandardMateri
 
 
 func _process(_dt: float) -> void:
+	# Пикер находок: ховер-подсветка карты под курсором. Живёт в _process —
+	# он рендер-частотный и работает при Engine.time_scale=0 (мир на паузе).
+	if _card_picker_open:
+		_update_picker_hover()
 	# Superhot: контрол, прицел, тайм-скейл и камера — на РЕНДЕР-частоте.
 	# _process идёт каждый отрисованный кадр независимо от Engine.time_scale
 	# (в отличие от физтиков), поэтому в стоп-кадре прицел/камера плавные, а
@@ -2275,9 +2298,16 @@ func _unhandled_input(event: InputEvent) -> void:
 					KEY_R:
 						get_tree().reload_current_scene()
 			return
-		# Пикер находок модальный: пока карта не взята, 1/2/3 = выбор (клавиши
-		# освободились после выпила фокус-групп), остальной ввод не мешает.
+		# Пикер находок модальный: мир на паузе, выбор КУРСОРОМ (клик по карте;
+		# ховер подсвечивает в _update_picker_hover). Клавиши 1/2/3 живы как
+		# запасной путь. Прочий ввод мыши пикер съедает — полив не дёргается.
 		if _card_picker_open:
+			var cm := event as InputEventMouseButton
+			if cm != null and cm.pressed and cm.button_index == MOUSE_BUTTON_LEFT:
+				var hover: int = _picker_card_under_mouse()
+				if hover >= 0:
+					_take_card(hover)
+				return
 			var ck := event as InputEventKey
 			if ck != null and ck.pressed and not ck.echo:
 				if ck.keycode == KEY_1:
@@ -2310,8 +2340,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_wave_timer = wave_interval
 			_spawn_wave(true)
 	elif key.keycode == KEY_E and not _game_over:
-		# Интро: рычаг у выхода К2 приоритетнее грузов (E рядом с ним = дёрнуть).
-		if not _intro_try_lever():
+		# Интро: контекст E по близости — рычаг, потом сундук сокровищ, потом грузы.
+		if not _intro_try_lever() and not _intro_try_loot_chest():
 			_toggle_cargo()
 
 
@@ -2589,7 +2619,10 @@ func _wasd_physics(delta: float) -> void:
 		_update_camera(delta, _cursor_ground_point())
 		return
 	# Интро: после посадки в Ладью управление и камера — у неё; пеший слой
-	# (полив/строй/грузы) не тикает. До посадки — обычный кадр + интро-сценарий.
+	# (полив/строй/грузы) не тикает. Монеты тикают В ОБОИХ слоях (Ладья
+	# пылесосит сокровища ангара корпусом). До посадки — обычный кадр + сценарий.
+	if intro_mode:
+		_tick_coins(delta)
 	if intro_mode and _intro_ride:
 		_intro_tick_ride(delta)
 		return
@@ -3186,36 +3219,15 @@ func _setup_secret() -> void:
 		_secret_wall = _secret_wall_body(b_center, b_size, true, Vector3(0.0, 0.0, -sz))
 
 
-## Интро-тайник: МИНИ-КОМНАТА восточнее обеденного зала. Восточная стена Room2
-## заменяется сегментами с проёмом; проём заперт ТРЕЩИНОЙ (ломается валом/
-## супером через штатные хуки _secret_wall), за ней — коридорчик и комнатка с
-## бесплатным сундуком (встаёт при проломе, см. _break_secret_wall).
+## Интро: сокровищница К2 = ниша за восточной стеной зала (геометрия УЗЛАМИ в
+## dungeon_intro.tscn: Room2/WallE_N|S с проёмом z −24..−16 + Niche*). Код
+## ставит только ЗАВАЛ КАМНЕЙ в проём — ломается валом/супером через штатные
+## хуки _secret_wall; при проломе в нише встаёт бесплатный сундук-находка.
 func _intro_secret_room() -> void:
 	_secret_room = 1
 	var r2z: float = room_center.z - 60.0
-	var wall := get_node_or_null("Room2/WallE")
-	if wall != null:
-		wall.queue_free()
-	var wx: float = room_center.x + room_half - 0.5  # 65.5 — линия старой стены
-	# Сегменты стены: проём z −24..−16 (в мировых: r2z−4 ± 4).
-	_secret_wall_body(Vector3(wx, 1.5, r2z + 15.0), Vector3(1.0, 3.0, 22.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(wx, 1.5, r2z - 15.0), Vector3(1.0, 3.0, 22.0), false, Vector3.FORWARD)
-	# Трещина в проёме, лицом в зал (запад).
-	_secret_wall = _secret_wall_body(Vector3(wx, 1.2, r2z), Vector3(1.0, 2.4, 8.2), true, Vector3(-1.0, 0.0, 0.0))
-	# Коридорчик на восток.
-	_secret_wall_body(Vector3(wx + 3.5, -0.25, r2z), Vector3(7.5, 0.5, 5.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(wx + 3.5, 1.5, r2z - 2.9), Vector3(7.5, 3.0, 1.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(wx + 3.5, 1.5, r2z + 2.9), Vector3(7.5, 3.0, 1.0), false, Vector3.FORWARD)
-	# Мини-комната 10×10.
-	var cx: float = wx + 11.5
-	_secret_wall_body(Vector3(cx, -0.25, r2z), Vector3(10.0, 0.5, 10.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(cx + 5.5, 1.5, r2z), Vector3(1.0, 3.0, 11.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(cx, 1.5, r2z - 5.5), Vector3(11.0, 3.0, 1.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(cx, 1.5, r2z + 5.5), Vector3(11.0, 3.0, 1.0), false, Vector3.FORWARD)
-	# Щёки у входа (между коридорчиком и углами комнатки).
-	_secret_wall_body(Vector3(cx - 5.5, 1.5, r2z - 4.0), Vector3(1.0, 3.0, 2.5), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(cx - 5.5, 1.5, r2z + 4.0), Vector3(1.0, 3.0, 2.5), false, Vector3.FORWARD)
-	_secret_bounds = AABB(Vector3(cx - 5.0, 0.0, r2z - 5.0), Vector3(10.0, 3.0, 10.0))
+	_secret_wall = _intro_spawn_rubble(Vector3(56.0, 0.0, r2z), PI / 2.0, 9.0)
+	_secret_bounds = AABB(Vector3(56.5, 0.0, r2z - 5.5), Vector3(11.0, 3.0, 11.0))
 
 
 ## Стенка кармана: StaticBody на TERRAIN (юниты упираются, ray вала её видит).
@@ -3286,7 +3298,9 @@ func _break_secret_wall() -> void:
 	ShatterEffect.spawn(self, p, Color(0.4, 0.37, 0.34), 14, 1.4, Vector3.ZERO, 1.1)
 	AoeVisual.spawn_dust(self, p)
 	EventBus.camera_shake.emit(0.35, p)
-	EventBus.tutorial_hint.emit("Тайник вскрыт!", 2.0)
+	# В интро «тайник» — явный проход под завалом, хвастаемся честно.
+	EventBus.tutorial_hint.emit(
+			"Завал разнесён — сокровищница открыта!" if intro_mode else "Тайник вскрыт!", 2.0)
 	var c: Vector3 = _secret_bounds.get_center()
 	_chests.append({"node": _spawn_chest(Vector3(c.x, 0.0, c.z)), "taken": false,
 			"secret": true})
@@ -3358,7 +3372,12 @@ func _tick_chests() -> void:
 		node.queue_free()
 		# Заголовок пикера — по источнику: тайниковый сундук хвастается отдельно.
 		if bool(ch.get("secret", false)):
-			_offer_cards("Тайник! Возьми находку")
+			# Интро: сокровищница предлагает РОВНО ОДНУ фикс-карту (скорострельность
+			# лучников) — но через тот же пикер: игрок видит, ЧТО взял, и берёт сам.
+			if intro_mode:
+				_offer_cards("Тайник! Возьми находку", [&"arch_rate"])
+			else:
+				_offer_cards("Тайник! Возьми находку")
 		else:
 			_offer_cards("Сундук открыт — возьми находку")
 
@@ -3383,22 +3402,28 @@ func _cards_in_class(cls: StringName) -> int:
 ## Пока пикер открыт — МИР ЗАМИРАЕТ (time_scale=0): находку можно взять в гуще
 ## боя, и читать выбор под ударами игрок не обязан. Ввод пикера живёт в
 ## _unhandled_input и от time_scale не зависит.
-func _offer_cards(title: String = "Комната зачищена — возьми находку") -> void:
+## fixed непустой — предложить РОВНО эти карты (фикс-находка тайника интро):
+## ритуал выбора и пауза мира те же, случайного пула нет.
+func _offer_cards(title: String = "Комната зачищена — возьми находку",
+		fixed: Array = []) -> void:
 	if not cards_enabled:
 		return
 	# Выдача пришла, пока прошлая ещё висит (зачистил комнату, не взяв карту за
 	# предыдущую) — ставим в ОЧЕРЕДЬ, а не теряем: находка заслужена.
 	if _card_picker_open:
-		_card_queue.append(title)
+		_card_queue.append({"title": title, "fixed": fixed})
 		return
-	var pool: Array = []
-	for id in CARD_CATALOG.keys():
-		if _cards_in_class(CARD_CATALOG[id]["cls"]) < cards_limit_per_class:
-			pool.append(id)
-	if pool.is_empty():
-		return
-	pool.shuffle()
-	_card_offer = pool.slice(0, mini(cards_offer_count, pool.size()))
+	if fixed.is_empty():
+		var pool: Array = []
+		for id in CARD_CATALOG.keys():
+			if _cards_in_class(CARD_CATALOG[id]["cls"]) < cards_limit_per_class:
+				pool.append(id)
+		if pool.is_empty():
+			return
+		pool.shuffle()
+		_card_offer = pool.slice(0, mini(cards_offer_count, pool.size()))
+	else:
+		_card_offer = fixed.duplicate()
 	_card_picker_open = true
 	var picker := get_node_or_null("HUD/CardPicker") as Control
 	if picker == null:
@@ -3412,6 +3437,7 @@ func _offer_cards(title: String = "Комната зачищена — возь�
 		if pick == null:
 			continue
 		pick.visible = i < _card_offer.size()
+		pick.modulate = Color(1, 1, 1)  # сброс ховера прошлого показа
 		if i >= _card_offer.size():
 			continue
 		var data: Dictionary = CARD_CATALOG[_card_offer[i]]
@@ -3440,10 +3466,34 @@ func _take_card(index: int) -> void:
 	# Отложенная выдача (пикер был занят) — показываем следующую С ЕЁ заголовком;
 	# мир остаётся замершим до последнего выбора. Пусто → время миру.
 	if not _card_queue.is_empty():
-		var next_title: String = _card_queue.pop_front()
-		call_deferred(&"_offer_cards", next_title)
+		var next: Dictionary = _card_queue.pop_front()
+		call_deferred(&"_offer_cards", next["title"], next["fixed"])
 	else:
 		Engine.time_scale = 1.0
+
+
+## Индекс карты пикера под курсором (−1 = мимо). Хит-тест по глобальным ректам
+## руками: у карточек mouse_filter=IGNORE (HUD не должен красть mouselook),
+## поэтому штатный gui_input сюда не приходит.
+func _picker_card_under_mouse() -> int:
+	var mp: Vector2 = get_viewport().get_mouse_position()
+	for i in range(3):
+		var pick := get_node_or_null("HUD/CardPicker/V/Cards/Pick%d" % (i + 1)) as Control
+		if pick != null and pick.visible and pick.get_global_rect().has_point(mp):
+			return i
+	return -1
+
+
+## Ховер: карта под курсором светлеет и чуть приподнимается тоном, остальные
+## пригашены — читается «щёлкни меня» без единого нового узла.
+func _update_picker_hover() -> void:
+	var hover: int = _picker_card_under_mouse()
+	for i in range(3):
+		var pick := get_node_or_null("HUD/CardPicker/V/Cards/Pick%d" % (i + 1)) as Control
+		if pick == null or not pick.visible:
+			continue
+		pick.modulate = Color(1.18, 1.18, 1.05) if i == hover else \
+				(Color(1, 1, 1) if hover < 0 else Color(0.82, 0.82, 0.82))
 
 
 ## Строка взятых карточек для карточки класса в HUD (гномы = дисплей).
@@ -4318,6 +4368,9 @@ func _edge_spawn_point() -> Vector3:
 			2: local = Vector3(-edge, 0.6, t)
 			_: local = Vector3(edge, 0.6, t)
 		p = Vector3(room_center.x, 0.0, rz) + local
+		# Интро-зал К2 УЖЕ штатных комнат (x 24..56) — спавн зажимается в него.
+		if intro_mode and _active_room == 1:
+			p.x = clampf(p.x, 27.0, 53.0)
 		if not _in_secret_pocket(p):
 			return p
 	return p
@@ -4443,6 +4496,9 @@ func _update_labels() -> void:
 	if xp_label != null:
 		xp_label.text = ("Опыт: %d (сундук: %d)" % [_xp, chest_xp_cost]) \
 				if chest_xp_cost > 0 else "Опыт: %d" % _xp
+	var coin_label := $HUD/Panel/Rows.get_node_or_null("CoinLabel") as Label
+	if coin_label != null:
+		coin_label.text = "Монеты: %d" % _coin_total
 	var cargo_txt: String = "Груз: —"
 	if _cargo != null:
 		cargo_txt = "Груз: несут %d (стволов −%d)" % [_haulers.size(), _haulers.size()]
@@ -4500,13 +4556,14 @@ func _intro_setup() -> void:
 	if old_door != null:
 		old_door.queue_free()
 	_k1_rubble = _intro_spawn_rubble(Vector3(room_center.x, 0.0, 14.5))
-	# К2: обеденный зал + рычаг у выхода (дверь Corr23 поднимает рычаг, не бомба).
-	_intro_spawn_furniture()
+	# К2: зал со столом-скамьями УЗЛАМИ в tscn (Room2/TableSeg*/Bench* — группа
+	# intro_breakable, ломаются секциями); код ставит только рычаг у выхода.
 	_lever_door = get_node_or_null("Corr23/Door") as Node3D
 	_intro_spawn_lever(Vector3(room_center.x - 5.5, 0.0, room_center.z - 60.0 - 22.0))
 	# К3: машина патронов (реюз крафт-котла) + завал вместо северной стены.
 	_intro_setup_forge()
 	_intro_build_hangar()
+	_intro_spawn_treasure()
 	EventBus.tutorial_hint.emit("Артель собралась у костра. WASD — в путь, курсор — прицел", 5.0)
 
 
@@ -4547,45 +4604,9 @@ func _intro_campfire(pos: Vector3) -> void:
 	root.add_child(light)
 
 
-## Обеденный зал К2: столы со стульями. Ломаются валом и супером (группа
-## intro_breakable), юниты упираются (ITEMS — вал о них НЕ разбивается).
-func _intro_spawn_furniture() -> void:
-	var r2 := Vector3(room_center.x, 0.0, room_center.z - 60.0)
-	var tables := [
-		Vector3(-9, 0, -6), Vector3(8, 0, 4), Vector3(-2, 0, 10),
-		Vector3(10, 0, -10), Vector3(-13, 0, 7),
-	]
-	for t in tables:
-		var tp: Vector3 = r2 + (t as Vector3)
-		_intro_breakable_box(tp, Vector3(2.6, 1.0, 1.4), Color(0.42, 0.3, 0.18))
-		_intro_breakable_box(tp + Vector3(1.9, 0, 1.3), Vector3(0.65, 0.85, 0.65), Color(0.5, 0.36, 0.22))
-		_intro_breakable_box(tp + Vector3(-1.9, 0, -1.3), Vector3(0.65, 0.85, 0.65), Color(0.5, 0.36, 0.22))
-
-
-func _intro_breakable_box(pos: Vector3, size: Vector3, col: Color) -> void:
-	var body := StaticBody3D.new()
-	body.collision_layer = Layers.ITEMS
-	body.collision_mask = 0
-	var cs := CollisionShape3D.new()
-	var bs := BoxShape3D.new()
-	bs.size = size
-	cs.shape = bs
-	body.add_child(cs)
-	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = size
-	mi.mesh = bm
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = col
-	mi.material_override = mat
-	body.add_child(mi)
-	body.add_to_group(&"intro_breakable")
-	body.set_meta(&"break_color", col)
-	add_child(body)
-	body.global_position = pos + Vector3(0.0, size.y * 0.5, 0.0)
-
-
 ## Щепки: мебель ломается одним касанием силы (без HP — хаос должен быть дешёвым).
+## Мебель зала К2 живёт УЗЛАМИ в dungeon_intro.tscn: StaticBody на ITEMS в
+## группе intro_breakable + metadata/break_color (цвет щепок).
 func _intro_break_box(b: Node3D, dir: Vector3) -> void:
 	if not is_instance_valid(b) or b.is_queued_for_deletion():
 		return
@@ -4698,13 +4719,15 @@ func _intro_setup_forge() -> void:
 
 ## Завал: один коллайдер + куча камней-мешей. Ломается ТОЛЬКО бомбой
 ## (вал/супер его не берут — он не в intro_breakable и не тайник).
-func _intro_spawn_rubble(pos: Vector3) -> Node3D:
+## rot_y — поворот кучи (проёмы вдоль Z запираются rot_y=PI/2), width — длина
+## кучи вдоль её оси (по ширине проёма).
+func _intro_spawn_rubble(pos: Vector3, rot_y: float = 0.0, width: float = 12.5) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	body.collision_layer = Layers.TERRAIN
 	body.collision_mask = 0
 	var cs := CollisionShape3D.new()
 	var bs := BoxShape3D.new()
-	bs.size = Vector3(12.5, 3.0, 1.8)
+	bs.size = Vector3(width, 3.0, 1.8)
 	cs.shape = bs
 	cs.position = Vector3(0.0, 1.5, 0.0)
 	body.add_child(cs)
@@ -4717,12 +4740,13 @@ func _intro_spawn_rubble(pos: Vector3) -> Node3D:
 		bm.size = Vector3(s, randf_range(1.2, 2.6), randf_range(1.2, 1.8))
 		mi.mesh = bm
 		mi.material_override = mat
-		mi.position = Vector3(-5.0 + 2.0 * float(i) + randf_range(-0.4, 0.4),
+		mi.position = Vector3(-width * 0.4 + width * 0.8 * float(i) / 5.0 + randf_range(-0.4, 0.4),
 				bm.size.y * 0.5, randf_range(-0.3, 0.3))
 		mi.rotation.y = randf_range(-0.4, 0.4)
 		body.add_child(mi)
 	add_child(body)
 	body.global_position = pos
+	body.rotation.y = rot_y
 	return body
 
 
@@ -4784,6 +4808,259 @@ func _intro_build_hangar() -> void:
 	_ladya.add_child(dome)
 
 
+# --- СОКРОВИЩА: монетки-крошки + сундуки на E (2026-08-01) -------------------
+
+
+## Одна монета: мелкий RigidBody-диск — падает, катится и стукается о пол
+## ПО-НАСТОЯЩЕМУ. Слой 0 (никто её не сканирует), маска TERRAIN: мир держит,
+## юниты/враги проходят сквозь. impulse != ZERO — стартовый разлёт с вращением
+## (фонтан сундука). Подбор — пылесосом в _tick_coins.
+func _spawn_coin(pos: Vector3, impulse: Vector3 = Vector3.ZERO) -> void:
+	if _coin_mat == null:
+		_coin_mat = StandardMaterial3D.new()
+		_coin_mat.albedo_color = Color(1.0, 0.82, 0.3)
+		_coin_mat.emission_enabled = true
+		_coin_mat.emission = Color(1.0, 0.7, 0.2)
+		_coin_mat.emission_energy_multiplier = 0.8
+	if _coin_phys == null:
+		_coin_phys = PhysicsMaterial.new()
+		_coin_phys.bounce = 0.25
+		_coin_phys.friction = 0.9
+	var body := RigidBody3D.new()
+	body.collision_layer = 0
+	body.collision_mask = Layers.TERRAIN
+	body.mass = 0.08
+	body.angular_damp = 3.0
+	body.physics_material_override = _coin_phys
+	var cs := CollisionShape3D.new()
+	var cyl := CylinderShape3D.new()
+	cyl.radius = 0.12
+	cyl.height = 0.05
+	cs.shape = cyl
+	body.add_child(cs)
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.12
+	cm.bottom_radius = 0.12
+	cm.height = 0.04
+	mi.mesh = cm
+	mi.material_override = _coin_mat
+	body.add_child(mi)
+	add_child(body)
+	body.global_position = pos
+	body.rotation.y = randf() * TAU
+	if impulse != Vector3.ZERO:
+		body.linear_velocity = impulse
+		body.angular_velocity = Vector3(randf_range(-6.0, 6.0),
+				randf_range(-6.0, 6.0), randf_range(-6.0, 6.0))
+	else:
+		# Лежит с рождения: тонкий диск, упавший с высоты, микро-дребезжит и
+		# НЕ ЗАСЫПАЕТ никогда (70 вечно-активных тел = 10-30мс физики, лаги).
+		body.sleeping = true
+	_coins.append({"node": body, "mesh": mi})
+
+
+## Кучка монет: count штук лежат по кругу ~0.7 м, спящие с рождения — физика
+## включается только пылесосом или фонтаном сундука.
+func _coin_pile(center: Vector3, count: int) -> void:
+	for i in range(count):
+		var ang: float = randf() * TAU
+		var r: float = sqrt(randf()) * 0.7
+		_spawn_coin(center + Vector3(cos(ang) * r, 0.03, sin(ang) * r))
+
+
+## Кучки монет вдоль ломаной: раз в ~step м небольшая горстка (2-4 монеты)
+## чуть в стороне от осевой — ведут по коридору, как обронённое.
+func _coin_trail(points: Array, step: float) -> void:
+	for i in range(points.size() - 1):
+		var a: Vector3 = points[i]
+		var b: Vector3 = points[i + 1]
+		var seg_len: float = a.distance_to(b)
+		var n: int = maxi(int(seg_len / step), 1)
+		for k in range(n):
+			var p: Vector3 = a.lerp(b, float(k) / float(n))
+			_coin_pile(p + Vector3(randf_range(-1.2, 1.2), 0.0, randf_range(-1.2, 1.2)),
+					2 + randi() % 3)
+
+
+## Сундук СОКРОВИЩ — про деньги, открывается на E. НЕ путать с сундуком-находкой
+## (_spawn_chest): у того золотая КРЫШКА и кольцо на полу — язык карт. У этого
+## крышка тёмная, а золото — ОБРУЧАМИ на корпусе (один язык = один смысл).
+func _spawn_loot_chest(pos: Vector3) -> void:
+	var root := Node3D.new()
+	add_child(root)
+	root.global_position = Vector3(pos.x, 0.0, pos.z)
+	var wood := StandardMaterial3D.new()
+	wood.albedo_color = Color(0.24, 0.15, 0.09)
+	var band_mat := StandardMaterial3D.new()
+	band_mat.albedo_color = Color(0.95, 0.75, 0.25)
+	band_mat.emission_enabled = true
+	band_mat.emission = Color(0.95, 0.7, 0.2)
+	band_mat.emission_energy_multiplier = 0.7
+	var box := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(1.3, 0.7, 0.9)
+	box.mesh = bm
+	box.material_override = wood
+	box.position = Vector3(0.0, 0.35, 0.0)
+	root.add_child(box)
+	for bx in [-0.38, 0.38]:
+		var band := MeshInstance3D.new()
+		var bb := BoxMesh.new()
+		bb.size = Vector3(0.14, 0.78, 0.98)
+		band.mesh = bb
+		band.material_override = band_mat
+		band.position = Vector3(float(bx), 0.37, 0.0)
+		root.add_child(band)
+	var lid := MeshInstance3D.new()
+	var lm := BoxMesh.new()
+	lm.size = Vector3(1.34, 0.2, 0.94)
+	lid.mesh = lm
+	lid.material_override = wood
+	lid.position = Vector3(0.0, 0.8, 0.0)
+	root.add_child(lid)
+	_loot_chests.append({"node": root, "lid": lid, "opened": false})
+
+
+## E у сундука сокровищ: крышка отлетает, монеты фонтаном раскатываются вокруг —
+## дальше подбор проходом, как у дорожек. true = сундук съел нажатие.
+func _intro_try_loot_chest() -> bool:
+	if not intro_mode or _squad == null:
+		return false
+	var c: Vector3 = _squad.compute_center()
+	if c == Vector3.INF:
+		return false
+	for ch in _loot_chests:
+		if bool(ch["opened"]):
+			continue
+		var node_v: Variant = ch["node"]
+		if node_v == null or not is_instance_valid(node_v):
+			ch["opened"] = true
+			continue
+		var node: Node3D = node_v
+		if Vector2(node.global_position.x - c.x, node.global_position.z - c.z).length() > 3.0:
+			continue
+		ch["opened"] = true
+		var lid_v: Variant = ch["lid"]
+		if lid_v != null and is_instance_valid(lid_v):
+			var lid: Node3D = lid_v
+			var tw := create_tween()
+			tw.set_parallel(true)
+			tw.tween_property(lid, "position", Vector3(0.0, 1.05, -0.55), 0.22) \
+					.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+			tw.tween_property(lid, "rotation:x", -1.9, 0.22)
+		AoeVisual.spawn_muzzle_flash(self, node.global_position + Vector3.UP * 0.9,
+				Color(1.0, 0.85, 0.4), 3.0, 5.0, 0.2)
+		_cam_trauma = clampf(_cam_trauma + 0.25, 0.0, 1.0)
+		# Фонтан: монеты вылетают из горловины НАСТОЯЩИМИ импульсами — скачут,
+		# звенят о стены и раскатываются, дальше их стягивает пылесос.
+		for i in range(loot_chest_coins):
+			var ang: float = randf() * TAU
+			var out := Vector3(cos(ang), 0.0, sin(ang))
+			_spawn_coin(node.global_position + Vector3.UP * 0.9 + out * 0.25,
+					out * randf_range(2.2, 4.0) + Vector3.UP * randf_range(3.2, 5.2))
+		return true
+	return false
+
+
+## Монеты: ПЫЛЕСОС ПО ФИЗИКЕ. В радиусе всасывания монета теряет гравитацию и
+## её скорость доворачивается на сборщика (грудь отряда / корпус Ладьи) —
+## монеты слетаются роем, огибая инерцией. Вышел из радиуса — гравитация
+## возвращается, монета шлёпается где летела. Сквозь стены не тянет (LOS).
+func _tick_coins(delta: float) -> void:
+	if _coins.is_empty():
+		return
+	var c: Vector3 = Vector3.INF
+	if _intro_ride and _ladya != null and is_instance_valid(_ladya):
+		c = _ladya.global_position
+	elif _squad != null:
+		c = _squad.compute_center()
+	if c == Vector3.INF:
+		return
+	var target := Vector3(c.x, 0.8, c.z)
+	for i in range(_coins.size() - 1, -1, -1):
+		var entry: Dictionary = _coins[i]
+		var node_v: Variant = entry["node"]
+		if node_v == null or not is_instance_valid(node_v):
+			_coins.remove_at(i)
+			continue
+		var coin: RigidBody3D = node_v
+		var to := target - coin.global_position
+		if Vector2(to.x, to.z).length() > coin_pickup_radius \
+				or not _los_clear(c, coin.global_position):
+			if entry.get("suck", false):
+				entry["suck"] = false
+				coin.gravity_scale = 1.0
+			# Принудительный отбой: почти замершую монету укладываем спать —
+			# сами тонкие диски дребезжат вечно и держат физику активной.
+			elif not coin.sleeping and coin.linear_velocity.length_squared() < 0.05 \
+					and coin.angular_velocity.length_squared() < 0.2:
+				coin.sleeping = true
+			continue
+		if to.length() < 0.7:
+			_coins.remove_at(i)
+			_collect_coin(coin, entry)
+			continue
+		entry["suck"] = true
+		coin.sleeping = false
+		coin.gravity_scale = 0.0
+		coin.linear_velocity = coin.linear_velocity.move_toward(
+				to.normalized() * coin_suck_speed, coin_suck_accel * delta)
+
+
+## Долетела: казна +1, тельце замирает и схлопывается.
+func _collect_coin(coin: RigidBody3D, entry: Dictionary) -> void:
+	_coin_total += 1
+	_update_labels()
+	coin.freeze = true
+	var mesh_v: Variant = entry.get("mesh")
+	var shrink: Node3D = mesh_v if (mesh_v != null and is_instance_valid(mesh_v)) else coin
+	var tw := create_tween()
+	tw.tween_property(shrink, "scale", Vector3.ONE * 0.15, 0.1)
+	tw.tween_callback(coin.queue_free)
+
+
+## Подсказка у первого неоткрытого сундука рядом (раз на сундук).
+func _tick_loot_hint(c: Vector3) -> void:
+	for ch in _loot_chests:
+		if bool(ch["opened"]) or bool(ch.get("hinted", false)):
+			continue
+		var node_v: Variant = ch["node"]
+		if node_v == null or not is_instance_valid(node_v):
+			continue
+		if Vector2((node_v as Node3D).global_position.x - c.x,
+				(node_v as Node3D).global_position.z - c.z).length() <= 4.5:
+			ch["hinted"] = true
+			EventBus.tutorial_hint.emit("Сундук сокровищ — жми E", 2.5)
+
+
+## Раскладка сокровищ интро: дорожки монет по коленам К1 и коридорам анфилады,
+## сундуки сокровищ — по комнатам. Коридорчик тайника тоже подсвечен монетками
+## (приманка: за трещиной блестит).
+func _intro_spawn_treasure() -> void:
+	var r2z: float = room_center.z - 60.0
+	# К1: крошки вдоль всей ленты (точки — по центрам колен).
+	_coin_trail([
+		Vector3(64.0, 0.0, 89.0), Vector3(46.0, 0.0, 89.0), Vector3(31.0, 0.0, 85.0),
+		Vector3(31.0, 0.0, 68.0), Vector3(36.0, 0.0, 65.0), Vector3(60.0, 0.0, 65.0),
+		Vector3(63.0, 0.0, 60.0), Vector3(63.0, 0.0, 44.0), Vector3(58.0, 0.0, 41.0),
+		Vector3(32.0, 0.0, 41.0), Vector3(29.0, 0.0, 36.0), Vector3(29.0, 0.0, 30.0),
+		Vector3(35.0, 0.0, 26.0), Vector3(40.0, 0.0, 22.0),
+	], 7.0)
+	# Коридоры анфилады: Corr12 (за завалом) и Corr23.
+	_coin_trail([Vector3(room_center.x, 0.0, 12.0), Vector3(room_center.x, 0.0, 4.0)], 5.0)
+	_coin_trail([Vector3(room_center.x, 0.0, -48.0), Vector3(room_center.x, 0.0, -56.0)], 5.0)
+	# Сокровищница К2: горстка перед завалом в зале + кучки в нише за ним.
+	_coin_pile(Vector3(52.5, 0.0, r2z), 3)
+	_coin_trail([Vector3(58.0, 0.0, r2z), Vector3(66.0, 0.0, r2z)], 4.0)
+	# Сундуки: предкомнатка К1, два угла зала К2, мастерская К3, ангар.
+	_spawn_loot_chest(Vector3(45.5, 0.0, 27.0))
+	_spawn_loot_chest(Vector3(27.0, 0.0, -2.0))
+	_spawn_loot_chest(Vector3(52.0, 0.0, -38.0))
+	_spawn_loot_chest(Vector3(21.0, 0.0, -99.0))
+	_spawn_loot_chest(Vector3(52.0, 0.0, -120.0))
+
+
 ## Интро-тик пешего слоя: авторская подача по прогрессу + двери + ангар.
 func _intro_tick(delta: float) -> void:
 	if _squad == null:
@@ -4794,6 +5071,7 @@ func _intro_tick(delta: float) -> void:
 	# Флоу-филд ведёт врагов к отряду.
 	if _flow != null:
 		_flow.call(&"set_target", c)
+	_tick_loot_hint(c)
 	# К1: ТРИ встречи вдоль коридора (рутина игры = стрельба, учим её объёмом).
 	# КАЖДАЯ живёт в своём ПРЯМОМ колене: триггер — вход отряда в колено,
 	# спавн — дальний конец колена (25+ м = ЗА кадром, камера видит ~±13 м;
