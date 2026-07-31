@@ -100,8 +100,37 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 		return
 	_velocity.y -= gravity * delta
+	var prev := global_position
 	global_position += _velocity * delta
 	_orient_along_velocity()
+	_sweep_world(prev)
+
+
+## Статичная геометрия мира, о которую стрела обязана останавливаться.
+const WORLD_SWEEP_BITS := Layers.TERRAIN | Layers.PALISADE_OBSTACLE | Layers.WALL_GATE_BLOCK
+
+
+## CCD по миру: Area3D-оверлап ДВИЖУЩЕЙСЯ зоны о StaticBody в 4.7 пары не
+## создаёт (пробник, стоящий в стене, тело видит; летящая HitArea — нет,
+## проверено 2026-07-31 на стенах данж-интро), поэтому стены/пол ловим лучом
+## prev→pos. Area остаётся для живых тел (Character/RigidBody — там пары есть).
+## Маска луча = пересечение маски HitArea со статикой: дружественная стрела
+## метёт только TERRAIN, вражеская — ещё и палисад, ничего нового не появляется.
+func _sweep_world(prev: Vector3) -> void:
+	var mask: int = _hit_area.collision_mask & WORLD_SWEEP_BITS
+	if mask == 0 or prev.is_equal_approx(global_position):
+		return
+	var hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(
+			PhysicsRayQueryParameters3D.create(prev, global_position, mask))
+	if hit.is_empty():
+		return
+	global_position = hit.get("position", global_position)
+	var col: Object = hit.get("collider")
+	if col is Node:
+		_on_body_entered(col as Node)
+	else:
+		_consumed = true
+		_stick()
 
 
 ## Сколько секунд воткнувшаяся в землю стрела остаётся торчать («земля помнит бой»).

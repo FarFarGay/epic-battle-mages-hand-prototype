@@ -38,6 +38,9 @@ extends Node3D
 
 const ARCHER_TYPE := &"archer_squad"
 
+## Флоу-филд навигации данжа (скрипт без class_name — подключение preload'ом,
+## кэш классов не трогаем).
+const FLOW_FIELD_SCRIPT := preload("res://scripts/dungeon_flow_field.gd")
 ## Цвет приказов отряду — тот же голубой, что у aim-ring'а HandSquadAim:
 ## один визуальный язык «команда отряду» по всей игре.
 const CMD_COLOR := Color(0.4, 0.85, 1.0, 0.9)
@@ -478,6 +481,11 @@ const CMD_ARRIVED_DIST := 2.0
 @export var wasd_wave_recoil: float = 7.0
 ## ИМПАКТ: хитстоп жертвам вала (сек заморозки на попадании, см. HitStop). 0 = выкл.
 @export var wasd_wave_hitstop: float = 0.06
+## ИМПАКТ (2026-07-31): вал-заклинание РОКОЧЕТ весь полёт — непрерывный подсып
+## травмы тряски, спадающий с удалением вала от отряда (вплотную грохот, на
+## излёте wasd_wave_range — тишина). Значение = травма/сек вплотную; равновесие
+## с camera_shake_decay даёт ровную дрожь, потолок 0.6 ниже разовых ударов. 0 = выкл.
+@export var wasd_wave_travel_shake: float = 1.2
 ## Карточка «Эхо в камне»: второй вал идёт ИЗ СТРОЯ вдогонку первому через
 ## эту паузу (не из точки, где первый разбился — там он бесполезен). Тоньше
 ## основного: 3 камня и урон вполсилы.
@@ -676,9 +684,9 @@ var _secret_room: int = -1
 var _secret_bounds: AABB
 var _secret_wall: StaticBody3D = null
 ## --- Интро-сценарий (intro_mode) ---
-## Дверь-толкач К1: прогресс навала (с) и флаг «продавили».
-var _push_t: float = 0.0
-var _push_door_open: bool = false
+## Завал камней на выходе К1 (null после слома): разбивается СИЛОЙ — супер
+## копейщиков или вал артели (замена двери-толкача, 2026-07-31).
+var _k1_rubble: StaticBody3D = null
 ## Рычаг К2 (нода) и его дверь Corr23; флаг «дёрнут».
 var _lever: Node3D = null
 var _lever_door: Node3D = null
@@ -703,6 +711,8 @@ var _ladya_dash_cd: float = 0.0
 const INTRO_HANGAR_ENTER_Z := -104.0
 const INTRO_CORRIDOR_Z := -150.0
 const INTRO_FINISH_Z := -200.0
+## Флоу-филд (интро): скелеты обходят повороты коридоров по полю.
+var _flow: Node3D = null
 ## Экран сбора отряда: открыт ли и текущая раскладка по классам.
 var _roster_open: bool = false
 var _roster: Dictionary = {}
@@ -1952,12 +1962,14 @@ func _detonate_bomb() -> void:
 	for s in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		if is_instance_valid(s) and s.global_position.distance_to(pos) <= 5.0:
 			Damageable.try_damage(s, 200.0, 0.0, s.global_position - pos)
-	# Сломать деревянную дверь, если рядом.
+	# Сломать деревянную дверь/завал, если рядом.
 	if _door_wood != null and is_instance_valid(_door_wood) and not _wood_broken:
 		if _door_wood.global_position.distance_to(pos) <= 6.0:
 			_wood_broken = true
 			ShatterEffect.spawn(self, _door_wood.global_position, Color(0.4, 0.26, 0.13, 1),
 					16, 1.6, Vector3(0, 0, -1), 1.6)
+			if _flow != null:
+				_flow.call(&"refresh_around", _door_wood.global_position, 10.0)
 			_door_wood.queue_free()
 			print("[DungeonSandbox] деревянная дверь ВЗОРВАНА")
 	_bomb.queue_free()
@@ -3268,6 +3280,9 @@ func _break_secret_wall() -> void:
 	var p: Vector3 = _secret_wall.global_position
 	_secret_wall.queue_free()
 	_secret_wall = null
+	# Пролом меняет проходимость — поле обязано узнать.
+	if _flow != null:
+		_flow.call(&"refresh_around", p, 8.0)
 	ShatterEffect.spawn(self, p, Color(0.4, 0.37, 0.34), 14, 1.4, Vector3.ZERO, 1.1)
 	AoeVisual.spawn_dust(self, p)
 	EventBus.camera_shake.emit(0.35, p)
@@ -3525,6 +3540,20 @@ func _tick_stone_wave(delta: float) -> void:
 		return
 	var space := get_world_3d().direct_space_state
 	var step: float = wasd_wave_speed * delta
+	# Рокот катящегося вала: тряска камеры живёт всё время полёта и глохнет с
+	# удалением вала от отряда — «грохот уходит вдаль». Подсып только ДО своего
+	# потолка: разовые удары (травма выше потолка) не гасятся клампом.
+	if wasd_wave_travel_shake > 0.0 and _squad != null:
+		var sc: Vector3 = _squad.compute_center()
+		if sc != Vector3.INF:
+			var near_fall: float = 0.0
+			for wv in _waves:
+				var wn: Node3D = wv["node"]
+				if is_instance_valid(wn):
+					near_fall = maxf(near_fall, 1.0 - clampf(
+							wn.global_position.distance_to(sc) / wasd_wave_range, 0.0, 1.0))
+			if near_fall > 0.0 and _cam_trauma < 0.6:
+				_cam_trauma = minf(_cam_trauma + wasd_wave_travel_shake * near_fall * delta, 0.6)
 	for i in range(_waves.size() - 1, -1, -1):
 		var w: Dictionary = _waves[i]
 		var node: Node3D = w["node"]
@@ -3536,10 +3565,12 @@ func _tick_stone_wave(delta: float) -> void:
 				Layers.TERRAIN | Layers.WALL_GATE_BLOCK | Layers.CHASM_BARRIER)
 		var ray: Dictionary = space.intersect_ray(q)
 		var blocked: bool = not ray.is_empty()
-		# Вал разбился о треснувшую стенку тайника → вскрыл её (сам тоже гибнет —
-		# камень об камень).
+		# Вал разбился о треснувшую стенку тайника или завал К1 → вскрыл их
+		# (сам тоже гибнет — камень об камень).
 		if blocked and _secret_wall != null and ray.get("collider") == _secret_wall:
 			_break_secret_wall()
+		elif blocked and _k1_rubble != null and ray.get("collider") == _k1_rubble:
+			_break_k1_rubble()
 		node.global_position += _wave_dir * step
 		w["travelled"] = float(w["travelled"]) + step
 		_wave_damage_pass(w)
@@ -3627,6 +3658,9 @@ func _wave_burst(p: Vector3, power: float = 1.0) -> void:
 		var to := Vector3((sk as Node3D).global_position.x - p.x, 0.0,
 				(sk as Node3D).global_position.z - p.z)
 		if to.length_squared() > r_sq:
+			continue
+		# Осколки «Обвала» тоже не пробивают стены.
+		if not _los_clear(p, (sk as Node3D).global_position):
 			continue
 		var dir: Vector3 = to.normalized() if to.length_squared() > 0.0001 else _wave_dir
 		# «Обвал» — вторичный удар, заморозка вполовину от основного вала.
@@ -3716,7 +3750,8 @@ func _spear_super_blast(c: Vector3) -> void:
 			continue
 		var to := Vector3((sk as Node3D).global_position.x - c.x, 0.0,
 				(sk as Node3D).global_position.z - c.z)
-		if to.length_squared() <= r_sq:
+		# Стена между строем и целью держит удар — радиус сквозь стены не бьёт.
+		if to.length_squared() <= r_sq and _los_clear(c, (sk as Node3D).global_position):
 			targets.append(sk)
 	# Волна: урон + отброс наружу. hit_dir = от центра группы → направленный
 	# shatter на добивании (§6.1 F1), осколки летят «от нас».
@@ -3733,12 +3768,17 @@ func _spear_super_blast(c: Vector3) -> void:
 			sk.call(&"apply_knockback", dir * wasd_super_knockback + Vector3.UP * 2.0, 0.25)
 	if kills >= 3:
 		HitStop.slowmo_beat(HitStop.BEAT_MULTIKILL_SCALE, HitStop.BEAT_MULTIKILL_TIME)
-	# Ударная волна достаёт и до треснувшей стенки тайника.
+	# Ударная волна достаёт и до треснувшей стенки тайника, и до завала К1.
 	if _secret_wall != null and is_instance_valid(_secret_wall):
 		var to_wall := Vector3(_secret_wall.global_position.x - c.x, 0.0,
 				_secret_wall.global_position.z - c.z)
 		if to_wall.length() <= radius + 0.5:
 			_break_secret_wall()
+	if _k1_rubble != null and is_instance_valid(_k1_rubble):
+		var to_rub := Vector3(_k1_rubble.global_position.x - c.x, 0.0,
+				_k1_rubble.global_position.z - c.z)
+		if to_rub.length() <= radius + 1.0:
+			_break_k1_rubble()
 	# Интро: мебель в радиусе супера — в щепу (осколки от центра).
 	for b in get_tree().get_nodes_in_group(&"intro_breakable"):
 		if not is_instance_valid(b) or (b as Node).is_queued_for_deletion():
@@ -3756,6 +3796,16 @@ func _spear_super_blast(c: Vector3) -> void:
 	# Карточка «Выжженная земля»: на месте удара остаётся горящее пятно.
 	if _card(&"pike_burn") > 0:
 		_spawn_burn(c, radius * 0.8, 5.0)
+
+
+## Прямая видимость между двумя точками на высоте груди (стены TERRAIN и
+## гейты). Радиальная магия и выстрелы не проходят сквозь стены; пол
+## горизонтальный луч не задевает, мебель (ITEMS) выстрелам не мешает.
+func _los_clear(a: Vector3, b: Vector3) -> bool:
+	var q := PhysicsRayQueryParameters3D.create(
+			Vector3(a.x, 0.9, a.z), Vector3(b.x, 0.9, b.z),
+			Layers.TERRAIN | Layers.WALL_GATE_BLOCK)
+	return get_world_3d().direct_space_state.intersect_ray(q).is_empty()
 
 
 ## Откат супера с учётом карточки «Второе дыхание» (пол 1.5с — кнопка не должна
@@ -3866,6 +3916,18 @@ func _wasd_combat(lmb: bool, cursor: Vector3) -> void:
 			# Точка полива на луче курсора, не дальше дальности; чуть над
 			# полом — плоская дуга баллистики, стрела метёт по направлению.
 			aim = Vector3(c.x, 0.4, c.z) + aim_dir * minf(to_cur.length(), gnome_attack_range)
+		# СТЕНЫ ДЕРЖАТ ВЫСТРЕЛЫ (2026-07-30): прицел обрезается по первой
+		# преграде на луче — полив не заходит за стену, стрелы втыкаются в неё,
+		# а не в цель за ней. Цель за стеной не «горит» красным.
+		if aim != Vector3.INF and aim_dir != Vector3.ZERO:
+			var wall_hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(
+					PhysicsRayQueryParameters3D.create(
+					Vector3(c.x, 0.9, c.z), Vector3(aim.x, 0.9, aim.z),
+					Layers.TERRAIN | Layers.WALL_GATE_BLOCK))
+			if not wall_hit.is_empty():
+				var wp: Vector3 = wall_hit.get("position", aim)
+				aim = Vector3(wp.x, 0.4, wp.z) - aim_dir * 0.6
+				tgt = null
 	# ВСЯ ГРУППА разворачивается к курсору: строй (черепаха передом — ряды
 	# грида поперёк tail_dir, копейщики в ряду 0) и тела (face_override —
 	# смотрят на прицел и стоя, и на бегу). Строй — со сглаживанием: резкий
@@ -4078,10 +4140,15 @@ func _spawn_skeleton_at(pos: Vector3, kind: StringName = &"grunt") -> void:
 	# Зеркало телесности: скелет упирается в гномов, а не проходит сквозь.
 	# Через extra_collision_mask — простое `|=` затиралось бы
 	# Skeleton._apply_lod_physics_mode на LOD-переходах.
-	sk.set(&"extra_collision_mask", Layers.FRIENDLY_UNIT)
+	# + ENEMIES (2026-07-31): скелеты телесны ДРУГ К ДРУГУ — толпа не сбивается
+	# «модель в модель» (в осн. игре skel-skel выключено ради перфа орд).
+	sk.set(&"extra_collision_mask", Layers.FRIENDLY_UNIT | Layers.ENEMIES)
 	if sk is CollisionObject3D:
-		(sk as CollisionObject3D).collision_mask |= Layers.FRIENDLY_UNIT
+		(sk as CollisionObject3D).collision_mask |= Layers.FRIENDLY_UNIT | Layers.ENEMIES
 	_apply_kind(sk, kind)
+	# Интро: скелет ведётся флоу-филдом вокруг стен коридоров.
+	if _flow != null:
+		sk.set(&"flow_provider", _flow)
 	add_child(sk)
 	sk.global_position = pos
 	var target: Node3D = _random_alive_gnome()
@@ -4401,13 +4468,17 @@ func _update_labels() -> void:
 func _intro_setup() -> void:
 	# Курсор и точка строя должны дотягиваться до ангара и пускового коридора.
 	cursor_z_min = INTRO_FINISH_Z - 12.0
-	_intro_left = [1, 2, 1]
-	# К1 = МАЛАЯ СТАРТ-КАМЕРА (юг Room1) + извилистый путь до выхода (фидбек
-	# 2026-07-30: «небольшая комната и из неё извилистый коридор в обеденный зал»).
-	_intro_maze()
-	_intro_campfire(Vector3(59.0, 0.0, 58.0))
+	# К1 = 3 встречи, К2 = 2 волны, К3 = 1 волна.
+	_intro_left = [3, 2, 1]
+	# Флоу-филд на весь интро-мир: лента + анфилада + ангар + пусковой коридор.
+	_flow = FLOW_FIELD_SCRIPT.new()
+	add_child(_flow)
+	_flow.call(&"setup", 12.0, -214.0, 84.0, 100.0)
+	# К1 — лента-коридор: геометрия живёт УЗЛАМИ в dungeon_intro.tscn (Room1/
+	# Floor*/Wall*), юзер двигает её в редакторе; код только ставит костёр.
+	_intro_campfire(Vector3(73.0, 0.0, 91.0))
 	# Отряд стартует на площадке у костра, а не в центре Room1.
-	var start := Vector3(56.0, 0.0, 57.0)
+	var start := Vector3(70.0, 0.0, 89.0)
 	if _squad != null:
 		var k: int = 0
 		for m in _squad.members:
@@ -4419,10 +4490,16 @@ func _intro_setup() -> void:
 		_squad.hold_position = start
 	_banner.global_position = start
 	_look_target = start
-	# К1: дверь Corr12 открывается ТОЛКАНИЕМ отряда (см. _intro_tick_push_door).
-	_door = get_node_or_null("Corr12/Door") as Node3D
-	if _door != null:
-		_door_closed_y = _door.position.y
+	# Стартовый ракурс сразу на костёр (иначе камера секунду едет от центра).
+	if _camera != null:
+		_camera.look_at_from_position(start + camera_offset, start, Vector3.UP)
+	# К1: выход из предкомнатки заперт ЗАВАЛОМ КАМНЕЙ (вместо двери-толкача):
+	# разбивается СИЛОЙ — супером копейщиков или валом артели. Жест «сила
+	# вскрывает камень» учится с первой комнаты и рифмуется с тайником.
+	var old_door := get_node_or_null("Corr12/Door")
+	if old_door != null:
+		old_door.queue_free()
+	_k1_rubble = _intro_spawn_rubble(Vector3(room_center.x, 0.0, 14.5))
 	# К2: обеденный зал + рычаг у выхода (дверь Corr23 поднимает рычаг, не бомба).
 	_intro_spawn_furniture()
 	_lever_door = get_node_or_null("Corr23/Door") as Node3D
@@ -4431,64 +4508,6 @@ func _intro_setup() -> void:
 	_intro_setup_forge()
 	_intro_build_hangar()
 	EventBus.tutorial_hint.emit("Артель собралась у костра. WASD — в путь, курсор — прицел", 5.0)
-
-
-## К1 (фидбек 2026-07-30 «только коридор с полом, стенами не обносить, пол не
-## растягивать, извилистый»): штатная геометрия Room1 СНОСИТСЯ целиком, вместо
-## неё — ЛЕНТА ПОЛА над пустотой: старт-площадка (костёр) → колено на запад →
-## колено на север → колено на восток → площадка перед дверью-толкачом.
-## Видимых стен нет; края ленты держат НЕВИДИМЫЕ барьеры (гномы и скелеты не
-## сыплются в бездну — паттерн «пропасть фейковая»).
-func _intro_maze() -> void:
-	var r1 := get_node_or_null("Room1")
-	if r1 != null:
-		r1.queue_free()
-	# Лента: 5 сегментов пола (мировые прямоугольники, ширина колен 10).
-	_secret_wall_body(Vector3(56.0, -0.25, 57.0), Vector3(16.0, 0.5, 14.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(35.0, -0.25, 57.0), Vector3(30.0, 0.5, 10.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(25.0, -0.25, 39.0), Vector3(10.0, 0.5, 30.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(40.0, -0.25, 29.0), Vector3(24.0, 0.5, 10.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(40.0, -0.25, 19.75), Vector3(16.0, 0.5, 12.5), false, Vector3.FORWARD)
-	# Борта-стены по контуру ленты (обход от двери; дверной проём x 34..46
-	# на z=14.5 открыт).
-	var rails := [
-		[Vector2(32, 14.5), Vector2(34, 14.5)], [Vector2(32, 14.5), Vector2(32, 24)],
-		[Vector2(20, 24), Vector2(32, 24)], [Vector2(20, 24), Vector2(20, 62)],
-		[Vector2(20, 62), Vector2(48, 62)], [Vector2(48, 62), Vector2(48, 64)],
-		[Vector2(48, 64), Vector2(64, 64)], [Vector2(64, 50), Vector2(64, 64)],
-		[Vector2(48, 50), Vector2(64, 50)], [Vector2(48, 50), Vector2(48, 52)],
-		[Vector2(30, 52), Vector2(48, 52)], [Vector2(30, 34), Vector2(30, 52)],
-		[Vector2(30, 34), Vector2(52, 34)], [Vector2(52, 24), Vector2(52, 34)],
-		[Vector2(48, 24), Vector2(52, 24)], [Vector2(48, 14.5), Vector2(48, 24)],
-		[Vector2(46, 14.5), Vector2(48, 14.5)],
-	]
-	for r in rails:
-		_intro_rail(r[0], r[1])
-
-
-## Стена-борт ленты от точки A до B (осевой отрезок, XZ в метрах мира):
-## коллайдер + видимый мех в цвете стен анфилады.
-func _intro_rail(a: Vector2, b: Vector2) -> void:
-	var size := Vector3(maxf(absf(b.x - a.x), 1.0), 3.0, maxf(absf(b.y - a.y), 1.0))
-	var body := StaticBody3D.new()
-	body.collision_layer = Layers.TERRAIN
-	body.collision_mask = 0
-	var cs := CollisionShape3D.new()
-	var bs := BoxShape3D.new()
-	bs.size = size
-	cs.shape = bs
-	body.add_child(cs)
-	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = size
-	mi.mesh = bm
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.24, 0.21, 0.27)
-	mat.roughness = 0.85
-	mi.material_override = mat
-	body.add_child(mi)
-	add_child(body)
-	body.global_position = Vector3((a.x + b.x) * 0.5, 1.5, (a.y + b.y) * 0.5)
 
 
 ## Костёр пролога: угли + поленья + тёплый свет. Чистый визуал.
@@ -4640,6 +4659,8 @@ func _intro_try_lever() -> bool:
 		tw2.tween_property(handle, "rotation:x", 0.6, 0.2).set_delay(0.24)
 	EventBus.camera_shake.emit(0.15, _lever.global_position)
 	EventBus.tutorial_hint.emit("Рычаг дёрнут — решётка ползёт вверх!", 2.5)
+	if _flow != null and _lever_door != null and is_instance_valid(_lever_door):
+		_flow.call(&"refresh_around", _lever_door.global_position, 5.0, 1.5)
 	return true
 
 
@@ -4770,14 +4791,58 @@ func _intro_tick(delta: float) -> void:
 	var c: Vector3 = _squad.compute_center()
 	if c == Vector3.INF:
 		return
-	# К1: отряд повернул в северное колено ленты → три скелета выныривают
-	# из-за следующего поворота (восточное колено) — первый бой в коридоре.
-	if _intro_left[0] > 0 and c.x < 34.0 and c.z < 56.0:
-		_intro_left[0] = 0
-		_spawn_skeleton_at(Vector3(34.0, 0.6, 30.0))
-		_spawn_skeleton_at(Vector3(30.0, 0.6, 27.0))
-		_spawn_skeleton_at(Vector3(37.0, 0.6, 31.0))
-		EventBus.tutorial_hint.emit("Скелеты! Держи ЛКМ — лучники польют по курсору", 4.0)
+	# Флоу-филд ведёт врагов к отряду.
+	if _flow != null:
+		_flow.call(&"set_target", c)
+	# К1: ТРИ встречи вдоль коридора (рутина игры = стрельба, учим её объёмом).
+	# КАЖДАЯ живёт в своём ПРЯМОМ колене: триггер — вход отряда в колено,
+	# спавн — дальний конец колена (25+ м = ЗА кадром, камера видит ~±13 м;
+	# скелеты появляются вне экрана и уже топают навстречу — не «из пустоты»,
+	# фидбек 2026-07-30). Спавн за поворотами нельзя: навмеша нет, застрянут.
+	# 1: поток по восточному колену; 2: спереди из западного + тройка ВДОГОН
+	# из пройденного северного (разворот огня курсором); 3: заслон у двери.
+	if not _intro_left.is_empty() and _intro_left[0] > 0:
+		match _intro_left[0]:
+			3:
+				if c.z < 72.0 and c.x > 32.0:
+					_intro_left[0] = 2
+					# Дальний конец восточного колена + хвост ИЗ-ЗА поворота
+					# на север (флоу-филд их выведет).
+					_spawn_skeleton_at(Vector3(58.0, 0.6, 63.0))
+					_spawn_skeleton_at(Vector3(63.0, 0.6, 67.0))
+					_spawn_skeleton_at(Vector3(66.0, 0.6, 64.0))
+					_spawn_skeleton_at(Vector3(61.0, 0.6, 62.0))
+					_spawn_skeleton_at(Vector3(63.0, 0.6, 55.0))
+					_spawn_skeleton_at(Vector3(61.0, 0.6, 50.0))
+					_spawn_skeleton_at(Vector3(65.0, 0.6, 46.0))
+					EventBus.tutorial_hint.emit("Скелеты! Держи ЛКМ — лучники польют по курсору", 4.0)
+			2:
+				if c.x < 56.0 and c.z < 48.0:
+					_intro_left[0] = 1
+					# Спереди: конец западного колена и следующее северное.
+					_spawn_skeleton_at(Vector3(27.0, 0.6, 39.0))
+					_spawn_skeleton_at(Vector3(25.0, 0.6, 44.0))
+					_spawn_skeleton_at(Vector3(31.0, 0.6, 41.0))
+					_spawn_skeleton_at(Vector3(29.0, 0.6, 33.0))
+					_spawn_skeleton_at(Vector3(27.0, 0.6, 27.0))
+					_spawn_skeleton_at(Vector3(31.0, 0.6, 24.0))
+					# Вдогон: из уже пройденного восточного колена, из-за угла.
+					_spawn_skeleton_at(Vector3(52.0, 0.6, 64.0))
+					_spawn_skeleton_at(Vector3(46.0, 0.6, 66.0))
+					_spawn_skeleton_at(Vector3(56.0, 0.6, 67.0))
+					EventBus.tutorial_hint.emit("Сзади тоже! Курсор разворачивает огонь на ходу", 4.0)
+			1:
+				if c.x < 34.0 and c.z < 40.0:
+					_intro_left[0] = 0
+					# Заслон в предкомнатке + пара вдогон из западного колена.
+					_spawn_skeleton_at(Vector3(44.0, 0.6, 19.0))
+					_spawn_skeleton_at(Vector3(38.0, 0.6, 16.0))
+					_spawn_skeleton_at(Vector3(46.0, 0.6, 24.0))
+					_spawn_skeleton_at(Vector3(41.0, 0.6, 21.0))
+					_spawn_skeleton_at(Vector3(36.0, 0.6, 26.0))
+					_spawn_skeleton_at(Vector3(48.0, 0.6, 40.0))
+					_spawn_skeleton_at(Vector3(54.0, 0.6, 43.0))
+					EventBus.tutorial_hint.emit("Впереди ЗАВАЛ — разнеси его ПРОБЕЛОМ или ПКМ-валом", 4.5)
 	# К2: две волны — вторая по зачистке ИЛИ таймеру (паттерн Pathogenic).
 	if _active_room == 1 and not _intro_left.is_empty():
 		if _intro_left[1] == 2:
@@ -4795,7 +4860,6 @@ func _intro_tick(delta: float) -> void:
 		_intro_left[2] = 0
 		_intro_spawn_pack(4)
 		EventBus.tutorial_hint.emit("Отбейся — и собери бомбу в машине патронов", 4.0)
-	_intro_tick_push_door(delta, c)
 	# Решётка рычага ползёт вверх (дерев. дверь Corr23 в интро не бомбится).
 	if _lever_pulled and _lever_door != null and is_instance_valid(_lever_door):
 		_lever_door.position.y = lerpf(_lever_door.position.y, 4.6, 1.0 - exp(-4.0 * delta))
@@ -4809,32 +4873,20 @@ func _intro_spawn_pack(n: int) -> void:
 	_update_labels()
 
 
-## Дверь-толкач К1: после зачистки отряд наваливается телом (стоишь вплотную и
-## жмёшь ход) ~1с — дверь поддаётся и уезжает вниз.
-func _intro_tick_push_door(delta: float, c: Vector3) -> void:
-	if _door == null or not is_instance_valid(_door):
+## Завал К1 сломан силой (вал разбился об него или супер достал): камни в
+## разлёт, поле узнаёт о проходе.
+func _break_k1_rubble() -> void:
+	if _k1_rubble == null or not is_instance_valid(_k1_rubble):
 		return
-	if _push_door_open:
-		_door.position.y = lerpf(_door.position.y, _door_closed_y - 3.6, 1.0 - exp(-5.0 * delta))
-		return
-	if not _room_cleared.get(0, false):
-		return
-	var d: float = Vector2(_door.global_position.x - c.x, _door.global_position.z - c.z).length()
-	var has_input: bool = Input.get_vector(&"move_left", &"move_right",
-			&"move_forward", &"move_back").length_squared() > 0.01
-	if d < 4.5 and has_input:
-		if _push_t <= 0.0:
-			EventBus.tutorial_hint.emit("Дверь заклинило — НАВАЛИСЬ (держи ход в дверь)", 2.5)
-		_push_t += delta
-		if randf() < 0.25:
-			EventBus.camera_shake.emit(0.05, _door.global_position)
-		if _push_t >= 1.0:
-			_push_door_open = true
-			EventBus.camera_shake.emit(0.3, _door.global_position)
-			AoeVisual.spawn_dust(self, _door.global_position)
-			EventBus.tutorial_hint.emit("Поддалась!", 2.0)
-	else:
-		_push_t = maxf(_push_t - delta * 2.0, 0.0)
+	var p: Vector3 = _k1_rubble.global_position + Vector3.UP * 1.0
+	ShatterEffect.spawn(self, p, Color(0.38, 0.35, 0.32), 16, 1.6, Vector3(0, 0, -1), 1.3)
+	AoeVisual.spawn_dust(self, _k1_rubble.global_position)
+	EventBus.camera_shake.emit(0.4, _k1_rubble.global_position)
+	EventBus.tutorial_hint.emit("Завал разнесён — путь открыт!", 2.5)
+	if _flow != null:
+		_flow.call(&"refresh_around", _k1_rubble.global_position, 9.0)
+	_k1_rubble.queue_free()
+	_k1_rubble = null
 
 
 ## Ангар: входная волна на пороге, посадка при подходе к Ладье.
@@ -4929,6 +4981,8 @@ func _intro_tick_ride(delta: float) -> void:
 	for m in _squad.members:
 		if is_instance_valid(m):
 			(m as Node3D).global_position = _ladya.global_position + Vector3(0.0, 4.5, 0.0)
+	if _flow != null:
+		_flow.call(&"set_target", _ladya.global_position)
 	# Рык: посадочная волна перебита → заслонка рвётся, коридор открыт.
 	if not _roar_done and _hangar_wave == 2 and _alive_skeletons() == 0:
 		_roar_done = true
@@ -4937,6 +4991,8 @@ func _intro_tick_ride(delta: float) -> void:
 		if _launch_gate != null and is_instance_valid(_launch_gate):
 			ShatterEffect.spawn(self, _launch_gate.global_position, Color(0.4, 0.37, 0.34), 16, 1.6,
 					Vector3(0, 0, -1), 1.2)
+			if _flow != null:
+				_flow.call(&"refresh_around", _launch_gate.global_position, 9.0)
 			_launch_gate.queue_free()
 			_launch_gate = null
 		EventBus.tutorial_hint.emit("РРРЫК ИЗ ГЛУБИН!.. Пусковой коридор открыт — ГОНИ!", 5.0)

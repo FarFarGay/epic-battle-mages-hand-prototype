@@ -569,6 +569,10 @@ const DETOUR_THRESHOLD: float = 2.0
 ## false — идёт прямо. Пересчитывается на смене цели через [_recompute_path_decision].
 var _should_path_around: bool = false
 @onready var _nav_agent: NavigationAgent3D = get_node_or_null("NavigationAgent3D") as NavigationAgent3D
+## ДАНЖ: флоу-филд-провайдер (узел с методом flow_dir; выставляет данж-сцена,
+## навмеша там нет). null = основная игра, ветка мертва. Провайдер возвращает
+## ZERO («иди прямо») близко к цели или вне сетки — прямой ход остаётся базой.
+var flow_provider: Node3D = null
 
 ## Stuck-detector для приоритизации препятствия. Если скелет идёт к гному и
 ## упирается в стену (физически не движется ≥STUCK_DURATION секунд) — он
@@ -876,7 +880,15 @@ func _approach_target(target: Node3D) -> void:
 		# напрямую в ring-точку — упрёмся в стену и будем её ломать
 		# (стена в skeleton_target → STRIKE damage'нет её на следующем тике).
 		var step_target: Vector3 = goal
-		if _should_path_around and _nav_agent != null:
+		# Данж: флоу-филд ведёт вокруг стен коридоров (одно поле на всю толпу).
+		# ZERO от провайдера = «прямая лучше» — падаем в штатные ветки ниже.
+		var flow_done: bool = false
+		if flow_provider != null and is_instance_valid(flow_provider):
+			var fd: Vector3 = flow_provider.call(&"flow_dir", global_position)
+			if fd != Vector3.ZERO:
+				step_target = global_position + fd * 3.0
+				flow_done = true
+		if not flow_done and _should_path_around and _nav_agent != null:
 			_nav_agent.target_position = goal
 			if not _nav_agent.is_navigation_finished():
 				step_target = _nav_agent.get_next_path_position()
