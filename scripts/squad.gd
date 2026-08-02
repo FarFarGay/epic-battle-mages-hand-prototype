@@ -241,15 +241,27 @@ func target_for_member(soldier: SoldierGnome, center: Vector3) -> Vector3:
 	var n: int = maxi(members.size(), 1)
 	if hold_grid and state == State.HOLDING_POSITION and tail_length <= 0.0:
 		# «Черепаха»: плотный блок рядов поперёк последнего курса. Неполный
-		# последний ряд центрируется. Spacing 0.75м — плечом к плечу.
+		# последний ряд центрируется.
+		# Слоты — по ЖИВЫМ (2026-08-01): мёртвые в members оставляли дыры в
+		# гриде, и поредевший отряд стоял РЕДКО, на слотах прежней численности.
+		var alive_idx: int = 0
+		var alive_n: int = 0
+		for m in members:
+			if is_instance_valid(m):
+				if m == soldier:
+					alive_idx = alive_n
+				alive_n += 1
+		var an: int = maxi(alive_n, 1)
 		var f: Vector3 = tail_dir if tail_dir != Vector3.ZERO else Vector3(0, 0, 1)
 		var side_dir := Vector3(-f.z, 0.0, f.x)
-		var cols: int = ceili(sqrt(float(n)))
-		var rows: int = ceili(float(n) / float(cols))
-		var row: int = idx / cols
-		var col: int = idx % cols
-		var in_row: int = mini(cols, n - row * cols)
-		var spacing: float = 0.75
+		var cols: int = ceili(sqrt(float(an)))
+		var rows: int = ceili(float(an) / float(cols))
+		var row: int = alive_idx / cols
+		var col: int = alive_idx % cols
+		var in_row: int = mini(cols, an - row * cols)
+		# Шаг АДАПТИВНЫЙ: меньше гномов — плечи ближе (2026-08-01 «почти плечом
+		# к плечу»): 3 и меньше — 0.5м, 7 и больше — 0.7м.
+		var spacing: float = 0.5 + 0.2 * clampf((float(an) - 3.0) / 4.0, 0.0, 1.0)
 		# Блок центрирован и по рядам тоже: центроид строя ≈ center, иначе
 		# слежение точки за центроидом (песочница) утаскивало отряд назад.
 		# Поверх — желе: поджатие поперёк, вытяжение вдоль, отставание задних

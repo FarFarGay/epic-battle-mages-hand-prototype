@@ -402,6 +402,9 @@ const CMD_ARRIVED_DIST := 2.0
 @export var coin_suck_accel: float = 50.0
 ## Монет в фонтане одного сундука сокровищ.
 @export var loot_chest_coins: int = 12
+## Цена найма артели в хижине (монеты за ДВУХ гномов). Интро стартует без
+## артели — ПКМ-вал покупается здесь.
+@export var artel_hire_cost: int = 20
 
 @export_group("Сбор отряда (WASD)")
 ## СОСТАВ = БИЛД (2026-07-29): перед заходом игрок сам раскладывает гномов по
@@ -710,6 +713,15 @@ var _coin_phys: PhysicsMaterial = null
 var _lever: Node3D = null
 var _lever_door: Node3D = null
 var _lever_pulled: bool = false
+## Пазл выхода К2: блок на кнопке запитывает рычаг (однократная защёлка).
+var _k2_powered: bool = false
+var _k2_block: RigidBody3D = null
+var _k2_button_pos: Vector3 = Vector3.INF
+var _k2_button_mat: StandardMaterial3D = null
+var _lever_hint_msec: int = 0
+## Хижина гномов в нише К2 (найм артели) + переиспользуемый DialogUI башни.
+var _hut: Node3D = null
+var _dialog_ui: CanvasLayer = null
 ## Авторская подача: остаток выдач по комнатам [К1, К2-волны, К3] и таймер
 ## поджима второй волны К2 («зачистил ИЛИ таймер», паттерн Pathogenic).
 var _intro_left: Array[int] = []
@@ -963,71 +975,79 @@ func _spawn_wasd_squad() -> void:
 	_squad.soldier_type = ARCHER_TYPE
 	var idx: int = 0
 	for t in mix:
-		var data: Dictionary = SoldierSystem.get_soldier_data(t)
-		var scene: PackedScene = data.get("scene", null)
-		if scene == null:
-			push_error("[DungeonSandbox] нет сцены для %s в SOLDIER_CATALOG" % t)
-			continue
-		var stats: Dictionary = (data.get("stats", {}) as Dictionary).duplicate()
-		# Бодрый twin-stick: у слота юниты ходят на BASE move_speed (спринт
-		# только вдали) — каталожные 1.6–2.2 давали «вязкую» группу. Единая
-		# скорость всем + резкое сцепление руления.
-		stats["move_speed"] = wasd_unit_speed
-		stats["caravan_sprint_speed"] = wasd_unit_speed * 1.3
-		stats["steer_grip"] = wasd_grip
-		if t == ARCHER_TYPE:
-			# Данж-баланс лучника + steer_inertia>0: выстрел НЕ стопит бег —
-			# полив на ходу, ядро twin-stick-феела.
-			stats["attack_range"] = gnome_attack_range
-			stats["attack_cooldown_min"] = gnome_cooldown_min
-			stats["attack_cooldown_max"] = gnome_cooldown_max
-			stats["attack_damage_min"] = gnome_damage_min
-			stats["attack_damage_max"] = gnome_damage_max
-			stats["steer_inertia"] = gnome_steer_inertia
-		elif t == &"pikeman":
-			# Копейщик НЕ ВОЮЕТ САМ (2026-07-28: «чтобы ничего не делали вообще
-			# кроме пробела»). Детект 0 → цель не находится → ни погони, ни
-			# укола: между суперами он тело в строю, вся его работа — ПРОБЕЛ.
-			stats["enemy_detect_radius"] = wasd_spear_detect
-		var soldier := scene.instantiate() as SoldierGnome
-		if soldier == null:
-			continue
-		# LOD выключен + телесность со скелетами — как у штатного спавна выше.
-		soldier.lod_far_distance = 100000.0
-		soldier.lod_offscreen_half_angle_deg = 90.0
-		soldier.collision_mask |= Layers.ENEMIES
-		# Мягкий подход к слоту: лечит дрожь при отходе строя спиной (слот
-		# наезжает на гнома сзади → бинарный «ход/стоп» давал стоп-старт).
-		soldier.arrival_damp_radius = wasd_arrival_damp
-		add_child(soldier)
 		var ang: float = TAU * float(idx) / float(mix.size())
-		soldier.setup_free(t, stats,
-				room_center + Vector3(cos(ang) * 1.5, 0.5, sin(ang) * 1.5), _banner)
-		if t == ARCHER_TYPE:
-			# С первого кадра под гейтом прицела (до первого тика _wasd_combat
-			# дефолтный false давал 1-2 «левых» выстрела по видимым).
-			soldier.fire_suppressed = true
-			if soldier is ArcherSoldier:
-				if wasd_quiver_size > 0:
-					(soldier as ArcherSoldier).setup_quiver(
-							wasd_quiver_size, wasd_quiver_reload, wasd_quiver_delay)
-				else:
-					# Лимит выключен, но стрелы на спине остаются (декор).
-					(soldier as ArcherSoldier).setup_quiver_decor(wasd_quiver_decor)
-		elif t == &"pikeman":
-			# Оборона по умолчанию: укол с места, из строя не выходит; клик
-			# при фокусе [1] — удар-хлыст (punch_at, скорость из инспектора).
-			soldier.hold_ground = true
-			soldier.punch_speed = wasd_punch_speed
-			if wasd_stamina_hits > 0:
-				soldier.setup_stamina(wasd_stamina_hits, wasd_stamina_restore, wasd_stamina_delay)
-		elif t == &"worker":
-			_skin_artel(soldier)
-		_squad.add_member(soldier)
-		soldier.destroyed.connect(_on_gnome_died)
+		_create_wasd_soldier(t, room_center + Vector3(cos(ang) * 1.5, 0.5, sin(ang) * 1.5))
 		idx += 1
+	# Стоячий строй — «черепаха»-блок вместо кольца (фидбек 2026-07-23).
+	# strict=false: мягкий HOLD — стрельба всегда приоритетнее марша.
 	_squad.hold_grid = true
 	_squad.command_hold(room_center, false)
+
+
+## Один боец wasd-отряда: каталожная сцена + данж-статы + вступление в _squad.
+## Общая точка СТАРТОВОГО спавна и НАЙМА по ходу (хижина артели в интро).
+func _create_wasd_soldier(t: StringName, at: Vector3) -> SoldierGnome:
+	var data: Dictionary = SoldierSystem.get_soldier_data(t)
+	var scene: PackedScene = data.get("scene", null)
+	if scene == null:
+		push_error("[DungeonSandbox] нет сцены для %s в SOLDIER_CATALOG" % t)
+		return null
+	var stats: Dictionary = (data.get("stats", {}) as Dictionary).duplicate()
+	# Бодрый twin-stick: у слота юниты ходят на BASE move_speed (спринт
+	# только вдали) — каталожные 1.6–2.2 давали «вязкую» группу. Единая
+	# скорость всем + резкое сцепление руления.
+	stats["move_speed"] = wasd_unit_speed
+	stats["caravan_sprint_speed"] = wasd_unit_speed * 1.3
+	stats["steer_grip"] = wasd_grip
+	if t == ARCHER_TYPE:
+		# Данж-баланс лучника + steer_inertia>0: выстрел НЕ стопит бег —
+		# полив на ходу, ядро twin-stick-феела.
+		stats["attack_range"] = gnome_attack_range
+		stats["attack_cooldown_min"] = gnome_cooldown_min
+		stats["attack_cooldown_max"] = gnome_cooldown_max
+		stats["attack_damage_min"] = gnome_damage_min
+		stats["attack_damage_max"] = gnome_damage_max
+		stats["steer_inertia"] = gnome_steer_inertia
+	elif t == &"pikeman":
+		# Копейщик НЕ ВОЮЕТ САМ (2026-07-28: «чтобы ничего не делали вообще
+		# кроме пробела»). Детект 0 → цель не находится → ни погони, ни
+		# укола: между суперами он тело в строю, вся его работа — ПРОБЕЛ.
+		stats["enemy_detect_radius"] = wasd_spear_detect
+	var soldier := scene.instantiate() as SoldierGnome
+	if soldier == null:
+		return null
+	# LOD выключен + телесность со скелетами — как у штатного спавна выше.
+	soldier.lod_far_distance = 100000.0
+	soldier.lod_offscreen_half_angle_deg = 90.0
+	soldier.collision_mask |= Layers.ENEMIES
+	# Мягкий подход к слоту: лечит дрожь при отходе строя спиной (слот
+	# наезжает на гнома сзади → бинарный «ход/стоп» давал стоп-старт).
+	soldier.arrival_damp_radius = wasd_arrival_damp
+	add_child(soldier)
+	soldier.setup_free(t, stats, at, _banner)
+	if t == ARCHER_TYPE:
+		# С первого кадра под гейтом прицела (до первого тика _wasd_combat
+		# дефолтный false давал 1-2 «левых» выстрела по видимым).
+		soldier.fire_suppressed = true
+		if soldier is ArcherSoldier:
+			if wasd_quiver_size > 0:
+				(soldier as ArcherSoldier).setup_quiver(
+						wasd_quiver_size, wasd_quiver_reload, wasd_quiver_delay)
+			else:
+				# Лимит выключен, но стрелы на спине остаются (декор).
+				(soldier as ArcherSoldier).setup_quiver_decor(wasd_quiver_decor)
+	elif t == &"pikeman":
+		# Оборона по умолчанию: укол с места, из строя не выходит; клик
+		# при фокусе [1] — удар-хлыст (punch_at, скорость из инспектора).
+		soldier.hold_ground = true
+		soldier.punch_speed = wasd_punch_speed
+		if wasd_stamina_hits > 0:
+			soldier.setup_stamina(wasd_stamina_hits, wasd_stamina_restore, wasd_stamina_delay)
+	elif t == &"worker":
+		_skin_artel(soldier)
+	_squad.add_member(soldier)
+	soldier.destroyed.connect(_on_gnome_died)
+	return soldier
 
 
 ## Раскладка постоянная (выбирать больше нечего): подсказка вместо телеграфа
@@ -1347,6 +1367,37 @@ func _set_drifting(on: bool) -> void:
 
 const CARGO_GROUP := &"dungeon_cargo"
 
+
+## Маркер «[E]» над активируемым предметом (груз/сундук/запитанный рычаг):
+## биллборд-надпись, мягко покачивается. Ребёнок предмета — живёт и умирает
+## с ним; на время переноски прячется (_toggle_cargo/_drop_cargo).
+func _spawn_e_marker(parent: Node3D, height: float) -> void:
+	var lbl := Label3D.new()
+	lbl.name = "EMarker"
+	lbl.text = "[E]"
+	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lbl.no_depth_test = true
+	lbl.font_size = 64
+	lbl.pixel_size = 0.008
+	lbl.modulate = Color(1.0, 0.9, 0.45)
+	lbl.outline_size = 14
+	lbl.outline_modulate = Color(0.12, 0.08, 0.0, 0.85)
+	lbl.position = Vector3(0.0, height, 0.0)
+	parent.add_child(lbl)
+	var tw := lbl.create_tween().set_loops()
+	tw.tween_property(lbl, "position:y", height + 0.16, 0.7) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tw.tween_property(lbl, "position:y", height, 0.7) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+
+## Единый «блик активации» (юзер 2026-08-01): вспышка + расходящаяся волна.
+## Зовётся на настоящих активациях — кнопка нажата, рычаг дёрнут, сундук открыт.
+func _activate_ping(pos: Vector3) -> void:
+	AoeVisual.spawn_muzzle_flash(self, pos + Vector3.UP * 0.8,
+			Color(1.0, 0.95, 0.7), 2.6, 4.5, 0.18)
+	AoeVisual.spawn_ground_ring(self, pos, 2.2, 0.45, Color(1.0, 0.9, 0.55, 0.9))
+
 ## Груз-куб (RigidBody3D): meta "need" = сколько гномов несут ОДНОВРЕМЕННО.
 ## Размер/теплота цвета растут с классом. В руках заморожен (freeze) и
 ## ведётся кодом; брошен/выпал — размораживается и летит по уровню физикой
@@ -1378,6 +1429,7 @@ func _spawn_cargo(pos: Vector3, need: int) -> void:
 	body.add_to_group(CARGO_GROUP)
 	add_child(body)
 	body.global_position = Vector3(pos.x, side * 0.5 + 0.05, pos.z)
+	_spawn_e_marker(body, side * 0.5 + 0.65)
 
 
 ## Общий носимый груз произвольного вида (ингредиент/бомба). Тот же RigidBody +
@@ -1421,6 +1473,7 @@ func _spawn_item(pos: Vector3, kind: StringName, color: Color, sphere: bool = fa
 	body.add_to_group(CARGO_GROUP)
 	add_child(body)
 	body.global_position = Vector3(pos.x, side * 0.5 + 0.05, pos.z)
+	_spawn_e_marker(body, side * 0.5 + 0.65)
 	return body
 
 
@@ -1459,6 +1512,9 @@ func _toggle_cargo() -> void:
 		rb.freeze = true
 		rb.linear_velocity = Vector3.ZERO
 		rb.angular_velocity = Vector3.ZERO
+	var mk := item.get_node_or_null("EMarker")
+	if mk != null:
+		(mk as Node3D).visible = false
 	AoeVisual.spawn_ground_ring(self, item.global_position, 1.0, 0.4, CMD_COLOR)
 	_update_labels()
 
@@ -1483,6 +1539,29 @@ func _drop_cargo() -> void:
 		rb.freeze = false
 		rb.linear_velocity = toss * 1.1 + Vector3.UP * 2.2
 		rb.angular_velocity = Vector3(randf_range(-2, 2), randf_range(-3, 3), randf_range(-2, 2))
+	var mk := _cargo.get_node_or_null("EMarker")
+	if mk != null:
+		(mk as Node3D).visible = true
+	# Пазл К2: блок отпущен в зоне гнезда → примагничивается в точку постановки
+	# (не заставляем выцеливать сантиметры; бросок перехватывается доводкой).
+	if rb != null and rb == _k2_block and not _k2_powered \
+			and _k2_button_pos != Vector3.INF \
+			and Vector2(rb.global_position.x - _k2_button_pos.x,
+					rb.global_position.z - _k2_button_pos.z).length() < 2.2:
+		rb.freeze = true
+		rb.linear_velocity = Vector3.ZERO
+		rb.angular_velocity = Vector3.ZERO
+		var seat := create_tween()
+		seat.set_parallel(true)
+		seat.tween_property(rb, "global_position",
+				Vector3(_k2_button_pos.x, 0.46, _k2_button_pos.z), 0.22) \
+				.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		seat.tween_property(rb, "global_rotation", Vector3.ZERO, 0.22)
+		var ref: WeakRef = weakref(rb)
+		seat.chain().tween_callback(func() -> void:
+			var seated: Object = ref.get_ref()
+			if seated != null and is_instance_valid(seated):
+				(seated as RigidBody3D).freeze = false)
 	_cargo = null
 	_update_labels()
 
@@ -1985,6 +2064,10 @@ func _detonate_bomb() -> void:
 	for s in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		if is_instance_valid(s) and s.global_position.distance_to(pos) <= 5.0:
 			Damageable.try_damage(s, 200.0, 0.0, s.global_position - pos)
+	# Пороховые бочки рядом детонируют (симметрия: взрыв есть взрыв).
+	for brl in get_tree().get_nodes_in_group(&"powder_barrel"):
+		if is_instance_valid(brl) and (brl as Node3D).global_position.distance_to(pos) <= 5.0:
+			Damageable.try_damage(brl, 99.0)
 	# Сломать деревянную дверь/завал, если рядом.
 	if _door_wood != null and is_instance_valid(_door_wood) and not _wood_broken:
 		if _door_wood.global_position.distance_to(pos) <= 6.0:
@@ -2039,6 +2122,7 @@ func _spawn_barricade(pos: Vector3) -> void:
 	body.add_to_group(CARGO_GROUP)
 	add_child(body)
 	body.global_position = Vector3(pos.x, 0.8, pos.z)
+	_spawn_e_marker(body, 1.6)
 
 
 ## Лежащая баррикада (не несомая, покой, низко) → freeze + выравнивание ровно
@@ -2340,8 +2424,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			_wave_timer = wave_interval
 			_spawn_wave(true)
 	elif key.keycode == KEY_E and not _game_over:
-		# Интро: контекст E по близости — рычаг, потом сундук сокровищ, потом грузы.
-		if not _intro_try_lever() and not _intro_try_loot_chest():
+		# Интро: контекст E по близости — рычаг, хижина, сундук сокровищ, грузы.
+		if not _intro_try_lever() and not _intro_try_hut() and not _intro_try_loot_chest():
 			_toggle_cargo()
 
 
@@ -3219,15 +3303,19 @@ func _setup_secret() -> void:
 		_secret_wall = _secret_wall_body(b_center, b_size, true, Vector3(0.0, 0.0, -sz))
 
 
-## Интро: сокровищница К2 = ниша за восточной стеной зала (геометрия УЗЛАМИ в
-## dungeon_intro.tscn: Room2/WallE_N|S с проёмом z −24..−16 + Niche*). Код
-## ставит только ЗАВАЛ КАМНЕЙ в проём — ломается валом/супером через штатные
-## хуки _secret_wall; при проломе в нише встаёт бесплатный сундук-находка.
+## Интро: ниша за восточной стеной зала (геометрия УЗЛАМИ в dungeon_intro.tscn:
+## Room2/WallE_N|S с проёмом z −24..−16 + Niche*), заперта ЗАВАЛОМ (ломается
+## валом/супером через штатные хуки _secret_wall). Внутри — ХИЖИНА ГНОМОВ
+## (2026-08-01, вместо ларца-находки): диалог по E, найм 2 артельщиков за
+## монеты. Старт интро БЕЗ артели — вал покупается здесь.
 func _intro_secret_room() -> void:
 	_secret_room = 1
 	var r2z: float = room_center.z - 60.0
 	_secret_wall = _intro_spawn_rubble(Vector3(56.0, 0.0, r2z), PI / 2.0, 9.0)
 	_secret_bounds = AABB(Vector3(56.5, 0.0, r2z - 5.5), Vector3(11.0, 3.0, 11.0))
+	# Хижина — узел Intro/Hut в tscn (инстанс gnome_house.tscn, двигается в
+	# редакторе); диалог-найм на нашем E-триггере, не на руке.
+	_hut = get_node_or_null("Intro/Hut") as Node3D
 
 
 ## Стенка кармана: StaticBody на TERRAIN (юниты упираются, ray вала её видит).
@@ -3298,12 +3386,17 @@ func _break_secret_wall() -> void:
 	ShatterEffect.spawn(self, p, Color(0.4, 0.37, 0.34), 14, 1.4, Vector3.ZERO, 1.1)
 	AoeVisual.spawn_dust(self, p)
 	EventBus.camera_shake.emit(0.35, p)
-	# В интро «тайник» — явный проход под завалом, хвастаемся честно.
-	EventBus.tutorial_hint.emit(
-			"Завал разнесён — сокровищница открыта!" if intro_mode else "Тайник вскрыт!", 2.0)
-	var c: Vector3 = _secret_bounds.get_center()
-	_chests.append({"node": _spawn_chest(Vector3(c.x, 0.0, c.z)), "taken": false,
-			"secret": true})
+	if intro_mode:
+		# В интро за завалом — хижина гномов (найм артели), не ларец. Маркер [E]
+		# вешаем только СЕЙЧАС: no_depth_test светил бы сквозь стену до пролома.
+		EventBus.tutorial_hint.emit("Завал разнесён — за ним хижина гномов!", 2.5)
+		if _hut != null and is_instance_valid(_hut):
+			_spawn_e_marker(_hut, 2.4)
+	else:
+		EventBus.tutorial_hint.emit("Тайник вскрыт!", 2.0)
+		var c: Vector3 = _secret_bounds.get_center()
+		_chests.append({"node": _spawn_chest(Vector3(c.x, 0.0, c.z)), "taken": false,
+				"secret": true})
 
 
 ## Сундук: тёмный ящик с золотой крышкой + кольцо-подсветка на полу.
@@ -3371,13 +3464,9 @@ func _tick_chests() -> void:
 				Color(1.0, 0.85, 0.4), 3.0, 6.0, 0.25)
 		node.queue_free()
 		# Заголовок пикера — по источнику: тайниковый сундук хвастается отдельно.
+		# (Интро сюда не попадает: его карты живут в сундуках сокровищ, а в нише — хижина.)
 		if bool(ch.get("secret", false)):
-			# Интро: сокровищница предлагает РОВНО ОДНУ фикс-карту (скорострельность
-			# лучников) — но через тот же пикер: игрок видит, ЧТО взял, и берёт сам.
-			if intro_mode:
-				_offer_cards("Тайник! Возьми находку", [&"arch_rate"])
-			else:
-				_offer_cards("Тайник! Возьми находку")
+			_offer_cards("Тайник! Возьми находку")
 		else:
 			_offer_cards("Сундук открыт — возьми находку")
 
@@ -3621,6 +3710,10 @@ func _tick_stone_wave(delta: float) -> void:
 			_break_secret_wall()
 		elif blocked and _k1_rubble != null and ray.get("collider") == _k1_rubble:
 			_break_k1_rubble()
+		elif blocked and ray.get("collider") is Node \
+				and (ray.get("collider") as Node).is_in_group(&"powder_barrel"):
+			# Вал доехал до бочки: сам гибнет о неё, но подрывает — честный размен.
+			Damageable.try_damage(ray.get("collider"), 99.0)
 		node.global_position += _wave_dir * step
 		w["travelled"] = float(w["travelled"]) + step
 		_wave_damage_pass(w)
@@ -3837,6 +3930,11 @@ func _spear_super_blast(c: Vector3) -> void:
 				(b as Node3D).global_position.z - c.z)
 		if tob.length_squared() <= r_sq:
 			_intro_break_box(b as Node3D, tob.normalized() if tob.length_squared() > 0.01 else Vector3.FORWARD)
+	# Пороховые бочки в радиусе — подрыв (симметрия сил: бьёт вал — бьёт и супер).
+	for brl in get_tree().get_nodes_in_group(&"powder_barrel"):
+		if is_instance_valid(brl) and Vector2((brl as Node3D).global_position.x - c.x,
+				(brl as Node3D).global_position.z - c.z).length() <= radius:
+			Damageable.try_damage(brl, 99.0)
 	AoeVisual.spawn_expanding_ring(self, c, radius, 0.25, Color(1.0, 0.6, 0.25, 0.9))
 	AoeVisual.spawn_dust(self, c)
 	EventBus.camera_shake.emit(0.75, c)
@@ -4556,15 +4654,28 @@ func _intro_setup() -> void:
 	if old_door != null:
 		old_door.queue_free()
 	_k1_rubble = _intro_spawn_rubble(Vector3(room_center.x, 0.0, 14.5))
-	# К2: зал со столом-скамьями УЗЛАМИ в tscn (Room2/TableSeg*/Bench* — группа
-	# intro_breakable, ломаются секциями); код ставит только рычаг у выхода.
+	# К2: зал со столом-скамьями УЗЛАМИ в tscn (Room2/TableSeg*/Bench*); пазл
+	# выхода — тоже узлами, ветка Intro/ (юзер двигает в редакторе): Lever
+	# (инстанс lever.tscn), Button (плита-гнездо), BlockSpot (точка спавна
+	# блока-груза), Chest* (маркеры сундуков, metadata/card = карта внутри).
 	_lever_door = get_node_or_null("Corr23/Door") as Node3D
-	_intro_spawn_lever(Vector3(room_center.x - 5.5, 0.0, room_center.z - 60.0 - 22.0))
+	_intro_bind_lever()
+	_intro_bind_button()
+	var block_spot := get_node_or_null("Intro/BlockSpot") as Node3D
+	if block_spot != null:
+		_k2_block = _spawn_item(block_spot.global_position, &"cube",
+				Color(0.72, 0.52, 0.28), false, 0.8)
+		_k2_block.set_meta(&"need", 1)
 	# К3: машина патронов (реюз крафт-котла) + завал вместо северной стены.
 	_intro_setup_forge()
 	_intro_build_hangar()
 	_intro_spawn_treasure()
-	EventBus.tutorial_hint.emit("Артель собралась у костра. WASD — в путь, курсор — прицел", 5.0)
+	# Диалог хижины — ПЕРЕИСПОЛЬЗУЕМ DialogUI башенной карты (пауза дерева,
+	# кнопки-ветки; сам UI живёт на паузе PROCESS_MODE_ALWAYS).
+	_dialog_ui = preload("res://scenes/dialog_ui.tscn").instantiate() as CanvasLayer
+	add_child(_dialog_ui)
+	_dialog_ui.connect(&"effect_selected", _on_intro_dialog_effect)
+	EventBus.tutorial_hint.emit("Отряд собрался у костра. WASD — в путь, курсор — прицел", 5.0)
 
 
 ## Костёр пролога: угли + поленья + тёплый свет. Чистый визуал.
@@ -4605,58 +4716,72 @@ func _intro_campfire(pos: Vector3) -> void:
 
 
 ## Щепки: мебель ломается одним касанием силы (без HP — хаос должен быть дешёвым).
-## Мебель зала К2 живёт УЗЛАМИ в dungeon_intro.tscn: StaticBody на ITEMS в
+## Мебель К2/К3 живёт УЗЛАМИ в dungeon_intro.tscn: StaticBody на ITEMS в
 ## группе intro_breakable + metadata/break_color (цвет щепок).
 func _intro_break_box(b: Node3D, dir: Vector3) -> void:
 	if not is_instance_valid(b) or b.is_queued_for_deletion():
 		return
 	ShatterEffect.spawn(self, b.global_position, b.get_meta(&"break_color", Color(0.45, 0.33, 0.2)),
 			8, 1.2, dir, 1.0)
+	# Разбудить грузы, лежавшие НА ломаемом: спящий RigidBody НЕ просыпается,
+	# когда из-под него исчезает опора (ловушка как с монетами) — ингредиент
+	# висел бы в воздухе. Заодно подкидываем: падение читается взрывом.
+	var push: Vector3 = dir.normalized() if dir.length_squared() > 0.01 else Vector3.ZERO
+	for n in get_tree().get_nodes_in_group(CARGO_GROUP):
+		var rb := n as RigidBody3D
+		if rb == null or not is_instance_valid(rb) or rb.freeze:
+			continue
+		if rb.global_position.distance_to(b.global_position) <= 2.6:
+			rb.sleeping = false
+			rb.linear_velocity += push * 1.5 + Vector3.UP * 2.5
+			rb.angular_velocity += Vector3(randf_range(-3.0, 3.0),
+					randf_range(-3.0, 3.0), randf_range(-3.0, 3.0))
 	b.queue_free()
 
 
-## Рычаг К2: столбик с ручкой у выхода. E рядом → гном-делегат подскакивает и
-## дёргает, дверь Corr23 поднимается (см. _intro_try_lever / _intro_tick).
-func _intro_spawn_lever(pos: Vector3) -> void:
-	_lever = Node3D.new()
-	add_child(_lever)
-	_lever.global_position = pos
-	var post_mat := StandardMaterial3D.new()
-	post_mat.albedo_color = Color(0.3, 0.3, 0.34)
-	post_mat.metallic = 0.5
-	var post := MeshInstance3D.new()
-	var pm := BoxMesh.new()
-	pm.size = Vector3(0.35, 1.1, 0.35)
-	post.mesh = pm
-	post.material_override = post_mat
-	post.position = Vector3(0.0, 0.55, 0.0)
-	_lever.add_child(post)
-	var handle := MeshInstance3D.new()
-	var hm := BoxMesh.new()
-	hm.size = Vector3(0.12, 1.0, 0.12)
-	handle.mesh = hm
-	var hmat := StandardMaterial3D.new()
-	hmat.albedo_color = Color(0.85, 0.2, 0.15)
-	hmat.emission_enabled = true
-	hmat.emission = Color(0.85, 0.2, 0.15)
-	hmat.emission_energy_multiplier = 0.8
-	handle.material_override = hmat
-	handle.name = "Handle"
-	handle.position = Vector3(0.0, 1.4, -0.3)
-	handle.rotation.x = -0.6
-	_lever.add_child(handle)
-	AoeVisual.spawn_ground_ring(self, pos, 1.4, 0.0, Color(0.85, 0.4, 0.2, 0.6))
+## Рычаг К2 — узел Intro/Lever в tscn (инстанс lever.tscn башенной карты: стойка
+## с перекидной рукоятью, серый пока мёртв / жёлтый когда запитан). До нажатия
+## КНОПКИ блоком обесточен (enable зовёт пазл в _intro_tick); дёргается E →
+## гном-делегат + Lever.gnome_hit (штатная анимация). gnome_pullable НЕ ставим:
+## в wasd-строю авто-страйк по группе сорвал бы гнома со слота — E-делегат наш.
+func _intro_bind_lever() -> void:
+	_lever = get_node_or_null("Intro/Lever") as Node3D
+	if _lever != null:
+		AoeVisual.spawn_ground_ring(self, _lever.global_position, 1.4, 0.0,
+				Color(0.85, 0.4, 0.2, 0.6))
 
 
-## E возле рычага: ближайший гном подскакивает, ручка падает, дверь вверх.
-## true = событие E съедено рычагом (грузы не трогаем).
+## Кнопка пазла К2 — узел Intro/Button в tscn: плита-«гнездо», блок кладётся в
+## неё. БЕЗ коллизии (чистый визуал): CharacterBody гномов не умеет step-up —
+## о физическую плиту носильщик врезался и не мог занести блок; блок ложится
+## на пол внутри рамки. Краснеет-ждёт; нажата — зеленеет (мутируем материал).
+func _intro_bind_button() -> void:
+	var btn := get_node_or_null("Intro/Button") as Node3D
+	if btn == null:
+		return
+	_k2_button_pos = btn.global_position
+	var mi := btn.get_node_or_null("Mesh") as MeshInstance3D
+	if mi != null:
+		_k2_button_mat = mi.material_override as StandardMaterial3D
+	AoeVisual.spawn_ground_ring(self, _k2_button_pos, 1.1, 0.0, Color(0.9, 0.3, 0.25, 0.6))
+
+
+## E возле рычага: запитан → ближайший гном подскакивает и перекидывает
+## (Lever.gnome_hit), решётка вверх. Мёртв → подсказка, E НЕ съедается (рядом
+## же ставится блок на кнопку). true = событие E съедено рычагом.
 func _intro_try_lever() -> bool:
 	if not intro_mode or _lever_pulled or _lever == null or _squad == null:
 		return false
 	var c: Vector3 = _squad.compute_center()
 	if c == Vector3.INF:
 		return false
-	if Vector2(_lever.global_position.x - c.x, _lever.global_position.z - c.z).length() > 3.5:
+	if Vector2(_lever.global_position.x - c.x, _lever.global_position.z - c.z).length() > 4.0:
+		return false
+	if not _k2_powered:
+		var now: int = Time.get_ticks_msec()
+		if now >= _lever_hint_msec:
+			_lever_hint_msec = now + 1800
+			EventBus.tutorial_hint.emit("Механизм мёртв — поставь БЛОК на кнопку (E — нести)", 2.2)
 		return false
 	_lever_pulled = true
 	# Гном-делегат: ближайший к рычагу скачком к нему (чистый твин-визуал).
@@ -4674,10 +4799,11 @@ func _intro_try_lever() -> bool:
 		var jump := _lever.global_position + Vector3(0.0, 0.0, 0.9)
 		tw.tween_property(best, "global_position", jump + Vector3.UP * 1.2, 0.14)
 		tw.tween_property(best, "global_position", jump, 0.1)
-	var handle := _lever.get_node_or_null("Handle") as Node3D
-	if handle != null:
-		var tw2 := create_tween()
-		tw2.tween_property(handle, "rotation:x", 0.6, 0.2).set_delay(0.24)
+	(_lever as Lever).gnome_hit()
+	var lever_mk := _lever.get_node_or_null("EMarker")
+	if lever_mk != null:
+		lever_mk.queue_free()
+	_activate_ping(_lever.global_position)
 	EventBus.camera_shake.emit(0.15, _lever.global_position)
 	EventBus.tutorial_hint.emit("Рычаг дёрнут — решётка ползёт вверх!", 2.5)
 	if _flow != null and _lever_door != null and is_instance_valid(_lever_door):
@@ -4685,28 +4811,101 @@ func _intro_try_lever() -> bool:
 	return true
 
 
-## К3: машина патронов = штатный крафт-котёл, перенесённый в Room3; продукт —
-## бомба; цель бомбы — ЗАВАЛ (реюз _door_wood: фитиль/взрыв уже умеют всё).
+## Диалог хижины гномов (ниша К2). Ветки в формате DialogUI башенной карты;
+## цена в тексте подставляется в _intro_try_hut (export artel_hire_cost).
+const INTRO_HUT_DIALOG := {
+	&"root": {
+		"text": "Из хижины выглядывает седой артельщик: «Живые! А мы уж думали, одни костяки остались. Мы тут вдвоём засели, когда завалы легли. Руки у нас крепкие — камень катать, щиты держать. Возьмёшь в артель, командир?»",
+		"choices": [
+			{ "label": "Нанять артель — 2 гнома, {cost} монет", "next": &"", "effect": &"dungeon_hire_artel" },
+			{ "label": "Кто вы такие?", "next": &"who" },
+			{ "label": "Позже.", "next": &"" },
+		],
+	},
+	&"who": {
+		"text": "«Артельщики мы, подземный люд: рубим, носим, а главное — КАМЕННУЮ ВОЛНУ катим. Прижмёт толпа — махнёшь нам, мы вал пустим. Без нас такого не сможешь, командир.»",
+		"choices": [
+			{ "label": "К делу.", "next": &"root" },
+		],
+	},
+}
+
+
+## E возле хижины: открыть диалог найма (DialogUI башни — мир на честной паузе,
+## кнопки-ветки мышью). true = событие съедено.
+func _intro_try_hut() -> bool:
+	if not intro_mode or _hut == null or not is_instance_valid(_hut) or _squad == null:
+		return false
+	# Пока завал цел, до хижины не дойти — гейт не нужен, решает дистанция.
+	var c: Vector3 = _squad.compute_center()
+	if c == Vector3.INF:
+		return false
+	if Vector2(_hut.global_position.x - c.x, _hut.global_position.z - c.z).length() > 3.5:
+		return false
+	if _dialog_ui == null or not is_instance_valid(_dialog_ui):
+		return false
+	if bool(_dialog_ui.call(&"is_open")):
+		return true
+	# Цена в тексте кнопки — из export'а, чтобы не расползлась с логикой найма.
+	var dlg: Dictionary = INTRO_HUT_DIALOG.duplicate(true)
+	for node_id in dlg:
+		for ch in dlg[node_id]["choices"]:
+			ch["label"] = String(ch["label"]).replace("{cost}", str(artel_hire_cost))
+	_dialog_ui.call(&"open", dlg, &"root")
+	return true
+
+
+## Эффекты веток диалога данжа (DialogUI.effect_selected).
+func _on_intro_dialog_effect(effect_id: StringName) -> void:
+	if effect_id != &"dungeon_hire_artel":
+		return
+	if _alive_artel() >= 2:
+		EventBus.tutorial_hint.emit("Артель уже с тобой (2/2)", 2.5)
+		return
+	if _coin_total < artel_hire_cost:
+		EventBus.tutorial_hint.emit(
+				"Не хватает монет: артель стоит %d (есть %d)" % [artel_hire_cost, _coin_total], 3.0)
+		return
+	_coin_total -= artel_hire_cost
+	var base: Vector3 = _hut.global_position if (_hut != null and is_instance_valid(_hut)) \
+			else _squad.compute_center()
+	for i in range(2):
+		_create_wasd_soldier(&"worker", base + Vector3(-1.5, 0.2, -1.0 + 2.0 * float(i)))
+	_activate_ping(base)
+	_refresh_focus_cards()
+	_update_labels()
+	EventBus.tutorial_hint.emit("Артель нанята! ПКМ — каменная волна теперь доступна", 4.0)
+
+
+## К3: МАСТЕРСКАЯ. Машина патронов (штатный крафт-котёл), продукт — бомба, цель
+## бомбы — ЗАВАЛ (реюз _door_wood). Арена — ряды СТЕЛЛАЖЕЙ (узлы Room3/Shelf*,
+## intro_breakable — вал/супер рушат): ингредиенты лежат НА стеллажах с
+## metadata/ingredient (0-2 = нужные, 3-5 = отвлекающие), пустые — просто
+## укрытия. Пороховые БОЧКИ (Room3/Barrel*, powder_barrel.tscn) рвутся от
+## любого урона — см. _on_barrel_exploded.
 func _intro_setup_forge() -> void:
 	var r3 := Vector3(room_center.x, 0.0, room_center.z - 120.0)
 	_apparatus_pos = r3 + Vector3(-12.0, 0.0, 4.0)
 	_craft_need = [Color(0.9, 0.8, 0.2, 1), Color(0.2, 0.2, 0.22, 1), Color(0.92, 0.92, 0.95, 1)]
 	_spawn_apparatus(_apparatus_pos)
 	_refresh_apparatus_ring()
-	var spots := [
-		r3 + Vector3(12, 0, 10), r3 + Vector3(-12, 0, -12), r3 + Vector3(10, 0, -14),
-		r3 + Vector3(-10, 0, 14), r3 + Vector3(4, 0, 18), r3 + Vector3(16, 0, -4),
-	]
 	var distract := [Color(0.2, 0.5, 0.95, 1), Color(0.3, 0.85, 0.4, 1), Color(0.95, 0.4, 0.75, 1)]
-	var idx := 0
-	for col in _craft_need:
-		var it := _spawn_item(spots[idx], &"ingredient", col, true, 0.6)
+	var palette: Array = _craft_need + distract
+	for b in get_tree().get_nodes_in_group(&"intro_breakable"):
+		if not String((b as Node).name).begins_with("Shelf") or not (b as Node).has_meta(&"ingredient"):
+			continue
+		var ci: int = int((b as Node).get_meta(&"ingredient"))
+		if ci < 0 or ci >= palette.size():
+			continue
+		var col: Color = palette[ci]
+		var it := _spawn_item((b as Node3D).global_position, &"ingredient", col, true, 0.6)
 		it.set_meta(&"color", col)
-		idx += 1
-	for col in distract:
-		var it := _spawn_item(spots[idx], &"ingredient", col, true, 0.6)
-		it.set_meta(&"color", col)
-		idx += 1
+		# _spawn_item кладёт на пол — поднимаем НА стеллаж (верх 1.5), физика
+		# уложит; рухнул стеллаж — ингредиент сам падает на пол.
+		it.global_position.y = 1.85
+	# Бочки: сигнал взрыва → AOE-обработчик сцены.
+	for brl in get_tree().get_nodes_in_group(&"powder_barrel"):
+		(brl as Node).connect(&"exploded", _on_barrel_exploded)
 	# Северная стена Room3 → два сегмента + ЗАВАЛ по центру (его рвёт бомба).
 	var wall := get_node_or_null("Room3/WallN")
 	if wall != null:
@@ -4715,6 +4914,36 @@ func _intro_setup_forge() -> void:
 	_secret_wall_body(Vector3(room_center.x - 16.0, 1.5, wz), Vector3(20.0, 3.0, 1.0), false, Vector3.FORWARD)
 	_secret_wall_body(Vector3(room_center.x + 16.0, 1.5, wz), Vector3(20.0, 3.0, 1.0), false, Vector3.FORWARD)
 	_door_wood = _intro_spawn_rubble(Vector3(room_center.x, 0.0, wz))
+
+
+## Взрыв пороховой бочки: AOE по ВСЕМ без исключений (гномам тоже — отводи),
+## рушит стеллажи рядом, детонирует соседние бочки ЦЕПОЧКОЙ с паузой
+## (читаемость каскада), поле узнаёт об освободившейся клетке. Завал НЕ ломает
+## (его берёт только бомба — обход финала комнаты закрыт).
+func _on_barrel_exploded(pos: Vector3) -> void:
+	AoeVisual.spawn_explosion(self, pos, 4.5)
+	_cam_trauma = clampf(_cam_trauma + 0.45, 0.0, 1.0)
+	for g in get_tree().get_nodes_in_group(&"soldier"):
+		if is_instance_valid(g) and (g as Node3D).global_position.distance_to(pos) <= 4.5:
+			(g as Node).take_damage(25.0)
+	for s in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if is_instance_valid(s) and (s as Node3D).global_position.distance_to(pos) <= 4.5:
+			Damageable.try_damage(s, 150.0, 0.0, (s as Node3D).global_position - pos)
+	for b in get_tree().get_nodes_in_group(&"intro_breakable"):
+		if is_instance_valid(b) and not (b as Node).is_queued_for_deletion() \
+				and (b as Node3D).global_position.distance_to(pos) <= 3.6:
+			_intro_break_box(b as Node3D, (b as Node3D).global_position - pos)
+	for brl in get_tree().get_nodes_in_group(&"powder_barrel"):
+		if not is_instance_valid(brl) \
+				or (brl as Node3D).global_position.distance_to(pos) > 4.5:
+			continue
+		var ref: WeakRef = weakref(brl)
+		get_tree().create_timer(0.18).timeout.connect(func() -> void:
+			var nb: Object = ref.get_ref()
+			if nb != null and is_instance_valid(nb):
+				Damageable.try_damage(nb, 99.0))
+	if _flow != null:
+		_flow.call(&"refresh_around", pos, 4.0)
 
 
 ## Завал: один коллайдер + куча камней-мешей. Ломается ТОЛЬКО бомбой
@@ -4886,7 +5115,10 @@ func _coin_trail(points: Array, step: float) -> void:
 ## Сундук СОКРОВИЩ — про деньги, открывается на E. НЕ путать с сундуком-находкой
 ## (_spawn_chest): у того золотая КРЫШКА и кольцо на полу — язык карт. У этого
 ## крышка тёмная, а золото — ОБРУЧАМИ на корпусе (один язык = один смысл).
-func _spawn_loot_chest(pos: Vector3) -> void:
+## card != "" — внутри ЕЩЁ и карточка-находка: после фонтана монет открывается
+## штатный пикер с этой картой (решение 2026-08-01: карты живут в обычных
+## сундуках с деньгами, особый ларец-находка из интро выпилен).
+func _spawn_loot_chest(pos: Vector3, card: StringName = &"") -> void:
 	var root := Node3D.new()
 	add_child(root)
 	root.global_position = Vector3(pos.x, 0.0, pos.z)
@@ -4919,7 +5151,8 @@ func _spawn_loot_chest(pos: Vector3) -> void:
 	lid.material_override = wood
 	lid.position = Vector3(0.0, 0.8, 0.0)
 	root.add_child(lid)
-	_loot_chests.append({"node": root, "lid": lid, "opened": false})
+	_spawn_e_marker(root, 1.7)
+	_loot_chests.append({"node": root, "lid": lid, "opened": false, "card": card})
 
 
 ## E у сундука сокровищ: крышка отлетает, монеты фонтаном раскатываются вокруг —
@@ -4949,9 +5182,11 @@ func _intro_try_loot_chest() -> bool:
 			tw.tween_property(lid, "position", Vector3(0.0, 1.05, -0.55), 0.22) \
 					.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 			tw.tween_property(lid, "rotation:x", -1.9, 0.22)
-		AoeVisual.spawn_muzzle_flash(self, node.global_position + Vector3.UP * 0.9,
-				Color(1.0, 0.85, 0.4), 3.0, 5.0, 0.2)
+		_activate_ping(node.global_position)
 		_cam_trauma = clampf(_cam_trauma + 0.25, 0.0, 1.0)
+		var chest_mk := node.get_node_or_null("EMarker")
+		if chest_mk != null:
+			chest_mk.queue_free()
 		# Фонтан: монеты вылетают из горловины НАСТОЯЩИМИ импульсами — скачут,
 		# звенят о стены и раскатываются, дальше их стягивает пылесос.
 		for i in range(loot_chest_coins):
@@ -4959,6 +5194,11 @@ func _intro_try_loot_chest() -> bool:
 			var out := Vector3(cos(ang), 0.0, sin(ang))
 			_spawn_coin(node.global_position + Vector3.UP * 0.9 + out * 0.25,
 					out * randf_range(2.2, 4.0) + Vector3.UP * randf_range(3.2, 5.2))
+		# Карточка внутри: поверх фонтана открывается пикер (мир замирает, монеты
+		# повисают стоп-кадром — доберёшь пылесосом после выбора).
+		var chest_card: StringName = ch.get("card", &"")
+		if chest_card != &"":
+			_offer_cards("Сундук: находка внутри!", [chest_card])
 		return true
 	return false
 
@@ -5053,12 +5293,14 @@ func _intro_spawn_treasure() -> void:
 	# Сокровищница К2: горстка перед завалом в зале + кучки в нише за ним.
 	_coin_pile(Vector3(52.5, 0.0, r2z), 3)
 	_coin_trail([Vector3(58.0, 0.0, r2z), Vector3(66.0, 0.0, r2z)], 4.0)
-	# Сундуки: предкомнатка К1, два угла зала К2, мастерская К3, ангар.
-	_spawn_loot_chest(Vector3(45.5, 0.0, 27.0))
-	_spawn_loot_chest(Vector3(27.0, 0.0, -2.0))
-	_spawn_loot_chest(Vector3(52.0, 0.0, -38.0))
-	_spawn_loot_chest(Vector3(21.0, 0.0, -99.0))
-	_spawn_loot_chest(Vector3(52.0, 0.0, -120.0))
+	# Сундуки сокровищ — по маркерам Intro/Chest* (двигаются в редакторе;
+	# metadata/card = карта внутри). Дублируй маркер — будет ещё сундук.
+	var intro_root := get_node_or_null("Intro")
+	if intro_root != null:
+		for child in intro_root.get_children():
+			if child is Marker3D and String(child.name).begins_with("Chest"):
+				_spawn_loot_chest((child as Node3D).global_position,
+						StringName(str(child.get_meta(&"card", ""))))
 
 
 ## Интро-тик пешего слоя: авторская подача по прогрессу + двери + ангар.
@@ -5120,7 +5362,7 @@ func _intro_tick(delta: float) -> void:
 					_spawn_skeleton_at(Vector3(36.0, 0.6, 26.0))
 					_spawn_skeleton_at(Vector3(48.0, 0.6, 40.0))
 					_spawn_skeleton_at(Vector3(54.0, 0.6, 43.0))
-					EventBus.tutorial_hint.emit("Впереди ЗАВАЛ — разнеси его ПРОБЕЛОМ или ПКМ-валом", 4.5)
+					EventBus.tutorial_hint.emit("Впереди ЗАВАЛ — разнеси его СУПЕРОМ копейщиков (ПРОБЕЛ)", 4.5)
 	# К2: две волны — вторая по зачистке ИЛИ таймеру (паттерн Pathogenic).
 	if _active_room == 1 and not _intro_left.is_empty():
 		if _intro_left[1] == 2:
@@ -5138,6 +5380,24 @@ func _intro_tick(delta: float) -> void:
 		_intro_left[2] = 0
 		_intro_spawn_pack(4)
 		EventBus.tutorial_hint.emit("Отбейся — и собери бомбу в машине патронов", 4.0)
+	# Пазл К2: блок ЛЕЖИТ на кнопке (не несётся, осел) → рычаг запитан.
+	# Однократная защёлка — снятие блока рычаг не глушит (туториал, не головоломка).
+	if not _k2_powered and _k2_block != null and is_instance_valid(_k2_block) \
+			and _k2_block != _cargo and _k2_button_pos != Vector3.INF:
+		var bp: Vector3 = _k2_block.global_position
+		if Vector2(bp.x - _k2_button_pos.x, bp.z - _k2_button_pos.z).length() < 0.9 \
+				and bp.y < 0.8 and _k2_block.linear_velocity.length() < 0.6:
+			_k2_powered = true
+			if _lever is Lever:
+				(_lever as Lever).enable()
+				_spawn_e_marker(_lever, 2.3)
+			if _k2_button_mat != null:
+				_k2_button_mat.albedo_color = Color(0.2, 0.55, 0.25)
+				_k2_button_mat.emission = Color(0.3, 0.95, 0.4)
+				_k2_button_mat.emission_energy_multiplier = 1.4
+			_activate_ping(_k2_button_pos)
+			EventBus.camera_shake.emit(0.12, _k2_button_pos)
+			EventBus.tutorial_hint.emit("Механизм ожил! E у рычага — дёрнуть", 3.0)
 	# Решётка рычага ползёт вверх (дерев. дверь Corr23 в интро не бомбится).
 	if _lever_pulled and _lever_door != null and is_instance_valid(_lever_door):
 		_lever_door.position.y = lerpf(_lever_door.position.y, 4.6, 1.0 - exp(-4.0 * delta))

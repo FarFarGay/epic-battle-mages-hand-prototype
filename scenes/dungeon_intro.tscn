@@ -2,6 +2,9 @@
 
 [ext_resource type="Script" uid="uid://brhmj3f28qb2f" path="res://scripts/dungeon_sandbox.gd" id="1_script"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="2_skel"]
+[ext_resource type="PackedScene" uid="uid://dn2nlohvi0aii" path="res://scenes/lever.tscn" id="3_lever"]
+[ext_resource type="PackedScene" uid="uid://gnomehouse01" path="res://scenes/gnome_house.tscn" id="4_hut"]
+[ext_resource type="PackedScene" path="res://scenes/powder_barrel.tscn" id="5_barrel"]
 
 [sub_resource type="Environment" id="env_dungeon"]
 background_mode = 1
@@ -67,6 +70,13 @@ size = Vector3(2, 3, 1)
 [sub_resource type="BoxShape3D" id="shape_k1_wx2"]
 size = Vector3(2, 3, 1)
 
+[sub_resource type="BoxMesh" id="mesh_k1_wz75"]
+material = SubResource("mat_wall")
+size = Vector3(1, 3, 7.5)
+
+[sub_resource type="BoxShape3D" id="shape_k1_wz75"]
+size = Vector3(1, 3, 7.5)
+
 [sub_resource type="BoxMesh" id="mesh_k1_wx8"]
 material = SubResource("mat_wall")
 size = Vector3(8, 3, 1)
@@ -74,19 +84,26 @@ size = Vector3(8, 3, 1)
 [sub_resource type="BoxShape3D" id="shape_k1_wx8"]
 size = Vector3(8, 3, 1)
 
-[sub_resource type="BoxMesh" id="mesh_k1_wx14"]
+[sub_resource type="BoxMesh" id="mesh_k1_wz24"]
 material = SubResource("mat_wall")
-size = Vector3(14, 3, 1)
+size = Vector3(1, 3, 24)
 
-[sub_resource type="BoxShape3D" id="shape_k1_wx14"]
-size = Vector3(14, 3, 1)
+[sub_resource type="BoxShape3D" id="shape_k1_wz24"]
+size = Vector3(1, 3, 24)
 
-[sub_resource type="BoxMesh" id="mesh_k1_wx16"]
+[sub_resource type="BoxMesh" id="mesh_k1_wx34"]
 material = SubResource("mat_wall")
-size = Vector3(16, 3, 1)
+size = Vector3(34, 3, 1)
 
-[sub_resource type="BoxShape3D" id="shape_k1_wx16"]
-size = Vector3(16, 3, 1)
+[sub_resource type="BoxShape3D" id="shape_k1_wx34"]
+size = Vector3(34, 3, 1)
+
+[sub_resource type="BoxMesh" id="mesh_k1_wz14"]
+material = SubResource("mat_wall")
+size = Vector3(1, 3, 14)
+
+[sub_resource type="BoxShape3D" id="shape_k1_wz14"]
+size = Vector3(1, 3, 14)
 
 [sub_resource type="BoxMesh" id="mesh_k1_wx24"]
 material = SubResource("mat_wall")
@@ -94,6 +111,27 @@ size = Vector3(24, 3, 1)
 
 [sub_resource type="BoxShape3D" id="shape_k1_wx24"]
 size = Vector3(24, 3, 1)
+
+[sub_resource type="BoxMesh" id="mesh_k1_wz2"]
+material = SubResource("mat_wall")
+size = Vector3(1, 3, 2)
+
+[sub_resource type="BoxShape3D" id="shape_k1_wz2"]
+size = Vector3(1, 3, 2)
+
+[sub_resource type="BoxMesh" id="mesh_k1_wz8"]
+material = SubResource("mat_wall")
+size = Vector3(1, 3, 8)
+
+[sub_resource type="BoxShape3D" id="shape_k1_wz8"]
+size = Vector3(1, 3, 8)
+
+[sub_resource type="BoxMesh" id="mesh_k1_wx16"]
+material = SubResource("mat_wall")
+size = Vector3(16, 3, 1)
+
+[sub_resource type="BoxShape3D" id="shape_k1_wx16"]
+size = Vector3(16, 3, 1)
 
 [sub_resource type="BoxMesh" id="mesh_k1_wx26"]
 material = SubResource("mat_wall")
@@ -109,19 +147,12 @@ size = Vector3(32, 3, 1)
 [sub_resource type="BoxShape3D" id="shape_k1_wx32"]
 size = Vector3(32, 3, 1)
 
-[sub_resource type="BoxMesh" id="mesh_k1_wx34"]
+[sub_resource type="BoxMesh" id="mesh_k1_wz32"]
 material = SubResource("mat_wall")
-size = Vector3(34, 3, 1)
+size = Vector3(1, 3, 32)
 
-[sub_resource type="BoxShape3D" id="shape_k1_wx34"]
-size = Vector3(34, 3, 1)
-
-[sub_resource type="BoxMesh" id="mesh_k1_wz2"]
-material = SubResource("mat_wall")
-size = Vector3(1, 3, 2)
-
-[sub_resource type="BoxShape3D" id="shape_k1_wz2"]
-size = Vector3(1, 3, 2)
+[sub_resource type="BoxShape3D" id="shape_k1_wz32"]
+size = Vector3(1, 3, 32)
 
 [sub_resource type="BoxMesh" id="mesh_k1_wz6"]
 material = SubResource("mat_wall")
@@ -130,26 +161,12 @@ size = Vector3(1, 3, 6)
 [sub_resource type="BoxShape3D" id="shape_k1_wz6"]
 size = Vector3(1, 3, 6)
 
-[sub_resource type="BoxMesh" id="mesh_k1_wz75"]
+[sub_resource type="BoxMesh" id="mesh_k1_wx14"]
 material = SubResource("mat_wall")
-size = Vector3(1, 3, 7.5)
+size = Vector3(14, 3, 1)
 
-[sub_resource type="BoxShape3D" id="shape_k1_wz75"]
-size = Vector3(1, 3, 7.5)
-
-[sub_resource type="BoxMesh" id="mesh_k1_wz8"]
-material = SubResource("mat_wall")
-size = Vector3(1, 3, 8)
-
-[sub_resource type="BoxShape3D" id="shape_k1_wz8"]
-size = Vector3(1, 3, 8)
-
-[sub_resource type="BoxMesh" id="mesh_k1_wz14"]
-material = SubResource("mat_wall")
-size = Vector3(1, 3, 14)
-
-[sub_resource type="BoxShape3D" id="shape_k1_wz14"]
-size = Vector3(1, 3, 14)
+[sub_resource type="BoxShape3D" id="shape_k1_wx14"]
+size = Vector3(14, 3, 1)
 
 [sub_resource type="BoxMesh" id="mesh_k1_wz155"]
 material = SubResource("mat_wall")
@@ -157,20 +174,6 @@ size = Vector3(1, 3, 15.5)
 
 [sub_resource type="BoxShape3D" id="shape_k1_wz155"]
 size = Vector3(1, 3, 15.5)
-
-[sub_resource type="BoxMesh" id="mesh_k1_wz24"]
-material = SubResource("mat_wall")
-size = Vector3(1, 3, 24)
-
-[sub_resource type="BoxShape3D" id="shape_k1_wz24"]
-size = Vector3(1, 3, 24)
-
-[sub_resource type="BoxMesh" id="mesh_k1_wz32"]
-material = SubResource("mat_wall")
-size = Vector3(1, 3, 32)
-
-[sub_resource type="BoxShape3D" id="shape_k1_wz32"]
-size = Vector3(1, 3, 32)
 
 [sub_resource type="BoxMesh" id="mesh_corr_floor"]
 material = SubResource("mat_floor")
@@ -199,27 +202,6 @@ size = Vector3(12, 3, 0.6)
 [sub_resource type="BoxShape3D" id="shape_door"]
 size = Vector3(12, 3, 0.6)
 
-[sub_resource type="BoxMesh" id="mesh_floor"]
-material = SubResource("mat_floor")
-size = Vector3(52, 1, 52)
-
-[sub_resource type="BoxShape3D" id="shape_floor"]
-size = Vector3(52, 1, 52)
-
-[sub_resource type="BoxMesh" id="mesh_wall_seg"]
-material = SubResource("mat_wall")
-size = Vector3(20, 3, 1)
-
-[sub_resource type="BoxShape3D" id="shape_wall_seg"]
-size = Vector3(20, 3, 1)
-
-[sub_resource type="BoxMesh" id="mesh_wall_x"]
-material = SubResource("mat_wall")
-size = Vector3(1, 3, 52)
-
-[sub_resource type="BoxShape3D" id="shape_wall_x"]
-size = Vector3(1, 3, 52)
-
 [sub_resource type="BoxMesh" id="mesh_k2_floor"]
 material = SubResource("mat_floor")
 size = Vector3(32, 1, 52)
@@ -233,6 +215,13 @@ size = Vector3(10, 3, 1)
 
 [sub_resource type="BoxShape3D" id="shape_k2_wx10"]
 size = Vector3(10, 3, 1)
+
+[sub_resource type="BoxMesh" id="mesh_wall_x"]
+material = SubResource("mat_wall")
+size = Vector3(1, 3, 52)
+
+[sub_resource type="BoxShape3D" id="shape_wall_x"]
+size = Vector3(1, 3, 52)
 
 [sub_resource type="BoxMesh" id="mesh_k2_wz22"]
 material = SubResource("mat_wall")
@@ -290,6 +279,20 @@ roughness = 0.85
 material = SubResource("mat_wood")
 size = Vector3(12, 3, 0.6)
 
+[sub_resource type="BoxMesh" id="mesh_floor"]
+material = SubResource("mat_floor")
+size = Vector3(52, 1, 52)
+
+[sub_resource type="BoxShape3D" id="shape_floor"]
+size = Vector3(52, 1, 52)
+
+[sub_resource type="BoxMesh" id="mesh_wall_seg"]
+material = SubResource("mat_wall")
+size = Vector3(20, 3, 1)
+
+[sub_resource type="BoxShape3D" id="shape_wall_seg"]
+size = Vector3(20, 3, 1)
+
 [sub_resource type="BoxMesh" id="mesh_wall_z"]
 material = SubResource("mat_wall")
 size = Vector3(52, 3, 1)
@@ -297,10 +300,30 @@ size = Vector3(52, 3, 1)
 [sub_resource type="BoxShape3D" id="shape_wall_z"]
 size = Vector3(52, 3, 1)
 
+[sub_resource type="StandardMaterial3D" id="mat_k3_shelf"]
+albedo_color = Color(0.36, 0.27, 0.17, 1)
+roughness = 0.85
+
+[sub_resource type="BoxMesh" id="mesh_k3_shelf"]
+material = SubResource("mat_k3_shelf")
+size = Vector3(3.2, 1.5, 0.9)
+
+[sub_resource type="BoxShape3D" id="shape_k3_shelf"]
+size = Vector3(3.2, 1.5, 0.9)
+
+[sub_resource type="StandardMaterial3D" id="mat_k2_button"]
+albedo_color = Color(0.5, 0.2, 0.18, 1)
+emission_enabled = true
+emission = Color(0.9, 0.25, 0.2, 1)
+emission_energy_multiplier = 0.7
+
+[sub_resource type="BoxMesh" id="mesh_k2_button"]
+size = Vector3(1.2, 0.12, 1.2)
+
 [node name="DungeonIntro" type="Node3D" unique_id=2001557983]
 script = ExtResource("1_script")
 gnome_speed_scale = 0.75
-gnome_damage_min = 4.0
+gnome_damage_min = 40.0
 gnome_damage_max = 6.0
 gnome_drift_formation_pull = 10.0
 ice_grip = 0.65
@@ -308,6 +331,7 @@ skeleton_scene = ExtResource("2_skel")
 cursor_z_min = -104.0
 cursor_z_max = 100.0
 wasd_mode = true
+wasd_artel = 0
 intro_mode = true
 roster_enabled = false
 
@@ -327,337 +351,337 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0, 40)
 
 [node name="Room1" type="Node3D" parent="." unique_id=452451878]
 
-[node name="FloorStart" type="StaticBody3D" parent="Room1"]
+[node name="FloorStart" type="StaticBody3D" parent="Room1" unique_id=1073025090]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 70, -0.5, 89)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorStart"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorStart" unique_id=875007816]
 mesh = SubResource("mesh_k1_f16x14")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/FloorStart"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/FloorStart" unique_id=130656227]
 shape = SubResource("shape_k1_f16x14")
 
-[node name="FloorWest1" type="StaticBody3D" parent="Room1"]
+[node name="FloorWest1" type="StaticBody3D" parent="Room1" unique_id=647670655]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 46, -0.5, 89)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorWest1"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorWest1" unique_id=773434764]
 mesh = SubResource("mesh_k1_f36x10")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/FloorWest1"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/FloorWest1" unique_id=832539424]
 shape = SubResource("shape_k1_f36x10")
 
-[node name="FloorNorth1" type="StaticBody3D" parent="Room1"]
+[node name="FloorNorth1" type="StaticBody3D" parent="Room1" unique_id=1534042437]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, -0.5, 74)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorNorth1"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorNorth1" unique_id=783173153]
 mesh = SubResource("mesh_k1_f10x24")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/FloorNorth1"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/FloorNorth1" unique_id=1522670042]
 shape = SubResource("shape_k1_f10x24")
 
-[node name="FloorEast1" type="StaticBody3D" parent="Room1"]
+[node name="FloorEast1" type="StaticBody3D" parent="Room1" unique_id=911459714]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 51, -0.5, 65)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorEast1"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorEast1" unique_id=1846624272]
 mesh = SubResource("mesh_k1_f34x10")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/FloorEast1"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/FloorEast1" unique_id=628581739]
 shape = SubResource("shape_k1_f34x10")
 
-[node name="FloorNorth2" type="StaticBody3D" parent="Room1"]
+[node name="FloorNorth2" type="StaticBody3D" parent="Room1" unique_id=1361838741]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 63, -0.5, 50)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorNorth2"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorNorth2" unique_id=1915251475]
 mesh = SubResource("mesh_k1_f10x24")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/FloorNorth2"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/FloorNorth2" unique_id=1222081697]
 shape = SubResource("shape_k1_f10x24")
 
-[node name="FloorWest2" type="StaticBody3D" parent="Room1"]
+[node name="FloorWest2" type="StaticBody3D" parent="Room1" unique_id=478814494]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 42, -0.5, 41)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorWest2"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorWest2" unique_id=1297878094]
 mesh = SubResource("mesh_k1_f36x10")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/FloorWest2"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/FloorWest2" unique_id=1985334901]
 shape = SubResource("shape_k1_f36x10")
 
-[node name="FloorNorth3" type="StaticBody3D" parent="Room1"]
+[node name="FloorNorth3" type="StaticBody3D" parent="Room1" unique_id=1846564384]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29, -0.5, 30)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorNorth3"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorNorth3" unique_id=45677032]
 mesh = SubResource("mesh_k1_f10x16")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/FloorNorth3"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/FloorNorth3" unique_id=52938663]
 shape = SubResource("shape_k1_f10x16")
 
-[node name="FloorDoor" type="StaticBody3D" parent="Room1"]
+[node name="FloorDoor" type="StaticBody3D" parent="Room1" unique_id=1741583926]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, -0.5, 22.25)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorDoor"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/FloorDoor" unique_id=1742615248]
 mesh = SubResource("mesh_k1_f16x155")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/FloorDoor"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/FloorDoor" unique_id=821663011]
 shape = SubResource("shape_k1_f16x155")
 
-[node name="Wall01" type="StaticBody3D" parent="Room1"]
+[node name="Wall01" type="StaticBody3D" parent="Room1" unique_id=1274487676]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33, 1.5, 14.5)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall01"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall01" unique_id=26042076]
 mesh = SubResource("mesh_k1_wx2")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall01"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall01" unique_id=1624153072]
 shape = SubResource("shape_k1_wx2")
 
-[node name="Wall02" type="StaticBody3D" parent="Room1"]
+[node name="Wall02" type="StaticBody3D" parent="Room1" unique_id=457146438]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 1.5, 18.25)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall02"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall02" unique_id=1563640499]
 mesh = SubResource("mesh_k1_wz75")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall02"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall02" unique_id=1519850999]
 shape = SubResource("shape_k1_wz75")
 
-[node name="Wall03" type="StaticBody3D" parent="Room1"]
+[node name="Wall03" type="StaticBody3D" parent="Room1" unique_id=1961383477]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 1.5, 22)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall03"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall03" unique_id=415992306]
 mesh = SubResource("mesh_k1_wx8")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall03"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall03" unique_id=1621299920]
 shape = SubResource("shape_k1_wx8")
 
-[node name="Wall04" type="StaticBody3D" parent="Room1"]
+[node name="Wall04" type="StaticBody3D" parent="Room1" unique_id=1418411756]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 24, 1.5, 34)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall04"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall04" unique_id=1045463859]
 mesh = SubResource("mesh_k1_wz24")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall04"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall04" unique_id=884548324]
 shape = SubResource("shape_k1_wz24")
 
-[node name="Wall05" type="StaticBody3D" parent="Room1"]
+[node name="Wall05" type="StaticBody3D" parent="Room1" unique_id=1996261799]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1.5, 46)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall05"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall05" unique_id=1081025195]
 mesh = SubResource("mesh_k1_wx34")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall05"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall05" unique_id=234866336]
 shape = SubResource("shape_k1_wx34")
 
-[node name="Wall06" type="StaticBody3D" parent="Room1"]
+[node name="Wall06" type="StaticBody3D" parent="Room1" unique_id=947162369]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 58, 1.5, 53)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall06"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall06" unique_id=1061874998]
 mesh = SubResource("mesh_k1_wz14")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall06"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall06" unique_id=1393274805]
 shape = SubResource("shape_k1_wz14")
 
-[node name="Wall07" type="StaticBody3D" parent="Room1"]
+[node name="Wall07" type="StaticBody3D" parent="Room1" unique_id=1005604466]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 46, 1.5, 60)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall07"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall07" unique_id=1818162939]
 mesh = SubResource("mesh_k1_wx24")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall07"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall07" unique_id=712265615]
 shape = SubResource("shape_k1_wx24")
 
-[node name="Wall08" type="StaticBody3D" parent="Room1"]
+[node name="Wall08" type="StaticBody3D" parent="Room1" unique_id=1482183480]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34, 1.5, 61)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall08"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall08" unique_id=1673374782]
 mesh = SubResource("mesh_k1_wz2")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall08"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall08" unique_id=1107894136]
 shape = SubResource("shape_k1_wz2")
 
-[node name="Wall09" type="StaticBody3D" parent="Room1"]
+[node name="Wall09" type="StaticBody3D" parent="Room1" unique_id=898706399]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 1.5, 62)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall09"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall09" unique_id=2060632542]
 mesh = SubResource("mesh_k1_wx8")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall09"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall09" unique_id=1813514453]
 shape = SubResource("shape_k1_wx8")
 
-[node name="Wall10" type="StaticBody3D" parent="Room1"]
+[node name="Wall10" type="StaticBody3D" parent="Room1" unique_id=1433769941]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 26, 1.5, 74)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall10"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall10" unique_id=1633040078]
 mesh = SubResource("mesh_k1_wz24")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall10"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall10" unique_id=1696129149]
 shape = SubResource("shape_k1_wz24")
 
-[node name="Wall11" type="StaticBody3D" parent="Room1"]
+[node name="Wall11" type="StaticBody3D" parent="Room1" unique_id=1601080129]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 1.5, 86)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall11"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall11" unique_id=1213676587]
 mesh = SubResource("mesh_k1_wx2")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall11"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall11" unique_id=434969115]
 shape = SubResource("shape_k1_wx2")
 
-[node name="Wall12" type="StaticBody3D" parent="Room1"]
+[node name="Wall12" type="StaticBody3D" parent="Room1" unique_id=1667797220]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 1.5, 90)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall12"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall12" unique_id=2077409191]
 mesh = SubResource("mesh_k1_wz8")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall12"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall12" unique_id=1151719499]
 shape = SubResource("shape_k1_wz8")
 
-[node name="Wall13" type="StaticBody3D" parent="Room1"]
+[node name="Wall13" type="StaticBody3D" parent="Room1" unique_id=1578439562]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 45, 1.5, 94)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall13"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall13" unique_id=68326392]
 mesh = SubResource("mesh_k1_wx34")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall13"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall13" unique_id=495588586]
 shape = SubResource("shape_k1_wx34")
 
-[node name="Wall14" type="StaticBody3D" parent="Room1"]
+[node name="Wall14" type="StaticBody3D" parent="Room1" unique_id=1132074997]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 62, 1.5, 95)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall14"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall14" unique_id=172129956]
 mesh = SubResource("mesh_k1_wz2")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall14"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall14" unique_id=523217697]
 shape = SubResource("shape_k1_wz2")
 
-[node name="Wall15" type="StaticBody3D" parent="Room1"]
+[node name="Wall15" type="StaticBody3D" parent="Room1" unique_id=508425768]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 70, 1.5, 96)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall15"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall15" unique_id=1720566852]
 mesh = SubResource("mesh_k1_wx16")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall15"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall15" unique_id=2002541887]
 shape = SubResource("shape_k1_wx16")
 
-[node name="Wall16" type="StaticBody3D" parent="Room1"]
+[node name="Wall16" type="StaticBody3D" parent="Room1" unique_id=1205532640]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 78, 1.5, 89)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall16"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall16" unique_id=1459371806]
 mesh = SubResource("mesh_k1_wz14")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall16"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall16" unique_id=895324559]
 shape = SubResource("shape_k1_wz14")
 
-[node name="Wall17" type="StaticBody3D" parent="Room1"]
+[node name="Wall17" type="StaticBody3D" parent="Room1" unique_id=372636071]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 70, 1.5, 82)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall17"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall17" unique_id=521322959]
 mesh = SubResource("mesh_k1_wx16")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall17"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall17" unique_id=2091198372]
 shape = SubResource("shape_k1_wx16")
 
-[node name="Wall18" type="StaticBody3D" parent="Room1"]
+[node name="Wall18" type="StaticBody3D" parent="Room1" unique_id=395806521]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 62, 1.5, 83)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall18"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall18" unique_id=187482706]
 mesh = SubResource("mesh_k1_wz2")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall18"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall18" unique_id=339887739]
 shape = SubResource("shape_k1_wz2")
 
-[node name="Wall19" type="StaticBody3D" parent="Room1"]
+[node name="Wall19" type="StaticBody3D" parent="Room1" unique_id=885160143]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49, 1.5, 84)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall19"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall19" unique_id=1784638071]
 mesh = SubResource("mesh_k1_wx26")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall19"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall19" unique_id=1609626902]
 shape = SubResource("shape_k1_wx26")
 
-[node name="Wall20" type="StaticBody3D" parent="Room1"]
+[node name="Wall20" type="StaticBody3D" parent="Room1" unique_id=94555235]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36, 1.5, 77)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall20"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall20" unique_id=1297151662]
 mesh = SubResource("mesh_k1_wz14")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall20"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall20" unique_id=1575276159]
 shape = SubResource("shape_k1_wz14")
 
-[node name="Wall21" type="StaticBody3D" parent="Room1"]
+[node name="Wall21" type="StaticBody3D" parent="Room1" unique_id=1981021569]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 52, 1.5, 70)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall21"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall21" unique_id=35217177]
 mesh = SubResource("mesh_k1_wx32")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall21"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall21" unique_id=2104191845]
 shape = SubResource("shape_k1_wx32")
 
-[node name="Wall22" type="StaticBody3D" parent="Room1"]
+[node name="Wall22" type="StaticBody3D" parent="Room1" unique_id=1892798065]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 68, 1.5, 54)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall22"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall22" unique_id=1416174130]
 mesh = SubResource("mesh_k1_wz32")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall22"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall22" unique_id=476360810]
 shape = SubResource("shape_k1_wz32")
 
-[node name="Wall23" type="StaticBody3D" parent="Room1"]
+[node name="Wall23" type="StaticBody3D" parent="Room1" unique_id=216618538]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 64, 1.5, 38)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall23"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall23" unique_id=427015031]
 mesh = SubResource("mesh_k1_wx8")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall23"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall23" unique_id=1168806197]
 shape = SubResource("shape_k1_wx8")
 
-[node name="Wall24" type="StaticBody3D" parent="Room1"]
+[node name="Wall24" type="StaticBody3D" parent="Room1" unique_id=1421127885]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 60, 1.5, 37)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall24"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall24" unique_id=1184724384]
 mesh = SubResource("mesh_k1_wz2")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall24"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall24" unique_id=552846263]
 shape = SubResource("shape_k1_wz2")
 
-[node name="Wall25" type="StaticBody3D" parent="Room1"]
+[node name="Wall25" type="StaticBody3D" parent="Room1" unique_id=388065854]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 47, 1.5, 36)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall25"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall25" unique_id=654611886]
 mesh = SubResource("mesh_k1_wx26")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall25"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall25" unique_id=1725750527]
 shape = SubResource("shape_k1_wx26")
 
-[node name="Wall26" type="StaticBody3D" parent="Room1"]
+[node name="Wall26" type="StaticBody3D" parent="Room1" unique_id=1387027510]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 34, 1.5, 33)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall26"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall26" unique_id=1374198965]
 mesh = SubResource("mesh_k1_wz6")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall26"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall26" unique_id=869479587]
 shape = SubResource("shape_k1_wz6")
 
-[node name="Wall27" type="StaticBody3D" parent="Room1"]
+[node name="Wall27" type="StaticBody3D" parent="Room1" unique_id=1518661711]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 41, 1.5, 30)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall27"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall27" unique_id=1367104028]
 mesh = SubResource("mesh_k1_wx14")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall27"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall27" unique_id=80206451]
 shape = SubResource("shape_k1_wx14")
 
-[node name="Wall28" type="StaticBody3D" parent="Room1"]
+[node name="Wall28" type="StaticBody3D" parent="Room1" unique_id=724300685]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 48, 1.5, 22.25)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall28"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall28" unique_id=405277980]
 mesh = SubResource("mesh_k1_wz155")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall28"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall28" unique_id=112766917]
 shape = SubResource("shape_k1_wz155")
 
-[node name="Wall29" type="StaticBody3D" parent="Room1"]
+[node name="Wall29" type="StaticBody3D" parent="Room1" unique_id=1021130182]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 47, 1.5, 14.5)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall29"]
+[node name="Mesh" type="MeshInstance3D" parent="Room1/Wall29" unique_id=534772892]
 mesh = SubResource("mesh_k1_wx2")
 
-[node name="Collision" type="CollisionShape3D" parent="Room1/Wall29"]
+[node name="Collision" type="CollisionShape3D" parent="Room1/Wall29" unique_id=1016515871]
 shape = SubResource("shape_k1_wx2")
 
 [node name="Corr12" type="Node3D" parent="." unique_id=61544245]
@@ -763,409 +787,409 @@ mesh = SubResource("mesh_k2_wz22")
 [node name="Collision" type="CollisionShape3D" parent="Room2/WallE_N" unique_id=323518195]
 shape = SubResource("shape_k2_wz22")
 
-[node name="WallE_S" type="StaticBody3D" parent="Room2"]
+[node name="WallE_S" type="StaticBody3D" parent="Room2" unique_id=1737421955]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 56, 1.5, -35)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/WallE_S"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/WallE_S" unique_id=709826082]
 mesh = SubResource("mesh_k2_wz22")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/WallE_S"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/WallE_S" unique_id=1002471911]
 shape = SubResource("shape_k2_wz22")
 
-[node name="NicheFloor" type="StaticBody3D" parent="Room2"]
+[node name="NicheFloor" type="StaticBody3D" parent="Room2" unique_id=1607694337]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 62, -0.5, -20)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/NicheFloor"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/NicheFloor" unique_id=458635451]
 mesh = SubResource("mesh_k2_niche_floor")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/NicheFloor"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/NicheFloor" unique_id=98061502]
 shape = SubResource("shape_k2_niche_floor")
 
-[node name="NicheWallN" type="StaticBody3D" parent="Room2"]
+[node name="NicheWallN" type="StaticBody3D" parent="Room2" unique_id=1276048656]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 62, 1.5, -14)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/NicheWallN"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/NicheWallN" unique_id=457677061]
 mesh = SubResource("mesh_k2_wx12")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/NicheWallN"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/NicheWallN" unique_id=1792032998]
 shape = SubResource("shape_k2_wx12")
 
-[node name="NicheWallS" type="StaticBody3D" parent="Room2"]
+[node name="NicheWallS" type="StaticBody3D" parent="Room2" unique_id=1994837000]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 62, 1.5, -26)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/NicheWallS"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/NicheWallS" unique_id=226117490]
 mesh = SubResource("mesh_k2_wx12")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/NicheWallS"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/NicheWallS" unique_id=2059355254]
 shape = SubResource("shape_k2_wx12")
 
-[node name="NicheWallE" type="StaticBody3D" parent="Room2"]
+[node name="NicheWallE" type="StaticBody3D" parent="Room2" unique_id=379651799]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 68, 1.5, -20)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/NicheWallE"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/NicheWallE" unique_id=1131629576]
 mesh = SubResource("mesh_k2_wz13")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/NicheWallE"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/NicheWallE" unique_id=369008390]
 shape = SubResource("shape_k2_wz13")
 
-[node name="TableSeg1" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="TableSeg1" type="StaticBody3D" parent="Room2" unique_id=80138858 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0.475, -35.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.42, 0.3, 0.18, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg1"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg1" unique_id=1305631832]
 mesh = SubResource("mesh_k2_table_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg1"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg1" unique_id=743983812]
 shape = SubResource("shape_k2_table_seg")
 
-[node name="TableSeg2" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="TableSeg2" type="StaticBody3D" parent="Room2" unique_id=790798237 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0.475, -32.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.42, 0.3, 0.18, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg2"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg2" unique_id=292107873]
 mesh = SubResource("mesh_k2_table_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg2"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg2" unique_id=1900355179]
 shape = SubResource("shape_k2_table_seg")
 
-[node name="TableSeg3" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="TableSeg3" type="StaticBody3D" parent="Room2" unique_id=121328921 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0.475, -28.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.42, 0.3, 0.18, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg3"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg3" unique_id=1694009423]
 mesh = SubResource("mesh_k2_table_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg3"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg3" unique_id=221439676]
 shape = SubResource("shape_k2_table_seg")
 
-[node name="TableSeg4" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="TableSeg4" type="StaticBody3D" parent="Room2" unique_id=258289400 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0.475, -25.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.42, 0.3, 0.18, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg4"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg4" unique_id=827468537]
 mesh = SubResource("mesh_k2_table_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg4"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg4" unique_id=1606374249]
 shape = SubResource("shape_k2_table_seg")
 
-[node name="TableSeg5" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="TableSeg5" type="StaticBody3D" parent="Room2" unique_id=908585016 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0.475, -21.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.42, 0.3, 0.18, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg5"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg5" unique_id=1470407072]
 mesh = SubResource("mesh_k2_table_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg5"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg5" unique_id=1307832533]
 shape = SubResource("shape_k2_table_seg")
 
-[node name="TableSeg6" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="TableSeg6" type="StaticBody3D" parent="Room2" unique_id=988430738 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0.475, -18.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.42, 0.3, 0.18, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg6"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg6" unique_id=970032125]
 mesh = SubResource("mesh_k2_table_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg6"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg6" unique_id=1017751353]
 shape = SubResource("shape_k2_table_seg")
 
-[node name="TableSeg7" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="TableSeg7" type="StaticBody3D" parent="Room2" unique_id=286619275 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0.475, -14.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.42, 0.3, 0.18, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg7"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg7" unique_id=1035143545]
 mesh = SubResource("mesh_k2_table_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg7"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg7" unique_id=1760329736]
 shape = SubResource("shape_k2_table_seg")
 
-[node name="TableSeg8" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="TableSeg8" type="StaticBody3D" parent="Room2" unique_id=479057423 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0.475, -11.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.42, 0.3, 0.18, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg8"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg8" unique_id=776168570]
 mesh = SubResource("mesh_k2_table_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg8"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg8" unique_id=548155546]
 shape = SubResource("shape_k2_table_seg")
 
-[node name="TableSeg9" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="TableSeg9" type="StaticBody3D" parent="Room2" unique_id=1874814190 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0.475, -7.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.42, 0.3, 0.18, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg9"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg9" unique_id=1402635685]
 mesh = SubResource("mesh_k2_table_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg9"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg9" unique_id=1493551529]
 shape = SubResource("shape_k2_table_seg")
 
-[node name="TableSeg10" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="TableSeg10" type="StaticBody3D" parent="Room2" unique_id=204049729 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0.475, -4.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.42, 0.3, 0.18, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg10"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/TableSeg10" unique_id=1227652782]
 mesh = SubResource("mesh_k2_table_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg10"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/TableSeg10" unique_id=1504488055]
 shape = SubResource("shape_k2_table_seg")
 
-[node name="BenchW1" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchW1" type="StaticBody3D" parent="Room2" unique_id=604353798 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.6, 0.275, -35.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW1"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW1" unique_id=1158650287]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW1"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW1" unique_id=235734451]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchW2" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchW2" type="StaticBody3D" parent="Room2" unique_id=884289961 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.6, 0.275, -32.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW2"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW2" unique_id=254991722]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW2"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW2" unique_id=63669941]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchW3" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchW3" type="StaticBody3D" parent="Room2" unique_id=2029700739 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.6, 0.275, -28.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW3"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW3" unique_id=1507347483]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW3"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW3" unique_id=685086726]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchW4" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchW4" type="StaticBody3D" parent="Room2" unique_id=1410037973 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.6, 0.275, -25.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW4"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW4" unique_id=1800118055]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW4"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW4" unique_id=643063995]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchW5" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchW5" type="StaticBody3D" parent="Room2" unique_id=367976765 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.6, 0.275, -21.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW5"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW5" unique_id=1879435706]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW5"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW5" unique_id=196779695]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchW6" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchW6" type="StaticBody3D" parent="Room2" unique_id=300945224 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.6, 0.275, -18.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW6"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW6" unique_id=1404044271]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW6"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW6" unique_id=1311121722]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchW7" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchW7" type="StaticBody3D" parent="Room2" unique_id=1274010329 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.6, 0.275, -14.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW7"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW7" unique_id=1345248001]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW7"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW7" unique_id=1861134412]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchW8" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchW8" type="StaticBody3D" parent="Room2" unique_id=230126048 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.6, 0.275, -11.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW8"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW8" unique_id=741901277]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW8"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW8" unique_id=440682246]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchW9" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchW9" type="StaticBody3D" parent="Room2" unique_id=670766580 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.6, 0.275, -7.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW9"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW9" unique_id=417840141]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW9"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW9" unique_id=1997587067]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchW10" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchW10" type="StaticBody3D" parent="Room2" unique_id=1204197767 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36.6, 0.275, -4.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW10"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchW10" unique_id=1852911013]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW10"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchW10" unique_id=2022212641]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchE1" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchE1" type="StaticBody3D" parent="Room2" unique_id=1598026097 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 43.4, 0.275, -35.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE1"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE1" unique_id=560227265]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE1"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE1" unique_id=611691382]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchE2" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchE2" type="StaticBody3D" parent="Room2" unique_id=1466575651 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 43.4, 0.275, -32.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE2"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE2" unique_id=731131922]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE2"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE2" unique_id=915913998]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchE3" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchE3" type="StaticBody3D" parent="Room2" unique_id=228705884 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 43.4, 0.275, -28.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE3"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE3" unique_id=1666362386]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE3"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE3" unique_id=1485634093]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchE4" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchE4" type="StaticBody3D" parent="Room2" unique_id=18111339 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 43.4, 0.275, -25.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE4"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE4" unique_id=1095164376]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE4"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE4" unique_id=1990470355]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchE5" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchE5" type="StaticBody3D" parent="Room2" unique_id=636147352 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 43.4, 0.275, -21.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE5"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE5" unique_id=561663774]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE5"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE5" unique_id=473807204]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchE6" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchE6" type="StaticBody3D" parent="Room2" unique_id=486102959 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 43.4, 0.275, -18.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE6"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE6" unique_id=150621297]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE6"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE6" unique_id=20443021]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchE7" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchE7" type="StaticBody3D" parent="Room2" unique_id=2031643551 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 43.4, 0.275, -14.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE7"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE7" unique_id=2011455760]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE7"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE7" unique_id=774100097]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchE8" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchE8" type="StaticBody3D" parent="Room2" unique_id=864684629 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 43.4, 0.275, -11.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE8"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE8" unique_id=194106681]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE8"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE8" unique_id=578297536]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchE9" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchE9" type="StaticBody3D" parent="Room2" unique_id=334483601 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 43.4, 0.275, -7.8)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE9"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE9" unique_id=1257224136]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE9"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE9" unique_id=1351224461]
 shape = SubResource("shape_k2_bench_seg")
 
-[node name="BenchE10" type="StaticBody3D" parent="Room2" groups=["intro_breakable"]]
+[node name="BenchE10" type="StaticBody3D" parent="Room2" unique_id=2081207450 groups=["intro_breakable"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 43.4, 0.275, -4.3)
 collision_layer = 514
 collision_mask = 0
 metadata/break_color = Color(0.5, 0.36, 0.22, 1)
 
-[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE10"]
+[node name="Mesh" type="MeshInstance3D" parent="Room2/BenchE10" unique_id=737131284]
 mesh = SubResource("mesh_k2_bench_seg")
 
-[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE10"]
+[node name="Collision" type="CollisionShape3D" parent="Room2/BenchE10" unique_id=302705067]
 shape = SubResource("shape_k2_bench_seg")
 
 [node name="Corr23" type="Node3D" parent="." unique_id=1859172364]
@@ -1262,6 +1286,291 @@ mesh = SubResource("mesh_wall_x")
 [node name="Collision" type="CollisionShape3D" parent="Room3/WallE" unique_id=2136565661]
 shape = SubResource("shape_wall_x")
 
+[node name="Shelf01" type="StaticBody3D" parent="Room3" unique_id=782464766 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 22, 0.75, -64)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf01" unique_id=663347085]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf01" unique_id=1651097808]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf02" type="StaticBody3D" parent="Room3" unique_id=595886027 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 25.4, 0.75, -64)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+metadata/ingredient = 3
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf02" unique_id=1796122775]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf02" unique_id=1963484959]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf03" type="StaticBody3D" parent="Room3" unique_id=548640272 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28.8, 0.75, -64)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf03" unique_id=993172001]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf03" unique_id=251270569]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf04" type="StaticBody3D" parent="Room3" unique_id=810317059 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 48, 0.75, -64)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf04" unique_id=562348479]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf04" unique_id=1586533693]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf05" type="StaticBody3D" parent="Room3" unique_id=1089306118 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 51.4, 0.75, -64)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf05" unique_id=1974705698]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf05" unique_id=1322898161]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf06" type="StaticBody3D" parent="Room3" unique_id=341750659 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 54.8, 0.75, -64)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf06" unique_id=917626734]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf06" unique_id=1803392074]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf07" type="StaticBody3D" parent="Room3" unique_id=773866762 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 36, 0.75, -74)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf07" unique_id=957937631]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf07" unique_id=144975823]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf08" type="StaticBody3D" parent="Room3" unique_id=1007971353 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39.4, 0.75, -74)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+metadata/ingredient = 4
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf08" unique_id=1647865193]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf08" unique_id=1788553486]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf09" type="StaticBody3D" parent="Room3" unique_id=513870568 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 42.8, 0.75, -74)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf09" unique_id=1923145700]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf09" unique_id=1285023204]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf10" type="StaticBody3D" parent="Room3" unique_id=944330336 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 52, 0.75, -74)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf10" unique_id=1286054344]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf10" unique_id=117357916]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf11" type="StaticBody3D" parent="Room3" unique_id=711147987 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 55.4, 0.75, -74)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf11" unique_id=1406106301]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf11" unique_id=1597937821]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf12" type="StaticBody3D" parent="Room3" unique_id=1675720335 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 0.75, -86)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf12" unique_id=1068579724]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf12" unique_id=1353613232]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf13" type="StaticBody3D" parent="Room3" unique_id=1877315034 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 23.4, 0.75, -86)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+metadata/ingredient = 2
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf13" unique_id=1454489404]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf13" unique_id=209023387]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf14" type="StaticBody3D" parent="Room3" unique_id=1993784649 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 26.8, 0.75, -86)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf14" unique_id=930678676]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf14" unique_id=782525197]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf15" type="StaticBody3D" parent="Room3" unique_id=1250911394 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0.75, -86)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf15" unique_id=299928947]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf15" unique_id=294961299]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf16" type="StaticBody3D" parent="Room3" unique_id=1844433440 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 43.4, 0.75, -86)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf16" unique_id=2131184075]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf16" unique_id=1030224827]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf17" type="StaticBody3D" parent="Room3" unique_id=1614200756 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 46.8, 0.75, -86)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+metadata/ingredient = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf17" unique_id=1125506298]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf17" unique_id=1959142241]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf18" type="StaticBody3D" parent="Room3" unique_id=726645770 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 30, 0.75, -96)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf18" unique_id=538018882]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf18" unique_id=728412350]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf19" type="StaticBody3D" parent="Room3" unique_id=2021422204 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 33.4, 0.75, -96)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf19" unique_id=608139979]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf19" unique_id=1954511254]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf20" type="StaticBody3D" parent="Room3" unique_id=895017076 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 48, 0.75, -96)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+metadata/ingredient = 1
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf20" unique_id=1450824942]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf20" unique_id=699489357]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf21" type="StaticBody3D" parent="Room3" unique_id=1445473507 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 51.4, 0.75, -96)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf21" unique_id=980727650]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf21" unique_id=1828250134]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Shelf22" type="StaticBody3D" parent="Room3" unique_id=386707417 groups=["intro_breakable"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 54.8, 0.75, -96)
+collision_layer = 514
+collision_mask = 0
+metadata/break_color = Color(0.36, 0.27, 0.17, 1)
+metadata/ingredient = 5
+
+[node name="Mesh" type="MeshInstance3D" parent="Room3/Shelf22" unique_id=87541392]
+mesh = SubResource("mesh_k3_shelf")
+
+[node name="Collision" type="CollisionShape3D" parent="Room3/Shelf22" unique_id=968723307]
+shape = SubResource("shape_k3_shelf")
+
+[node name="Barrel1" parent="Room3" unique_id=603912552 instance=ExtResource("5_barrel")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18, 0, -60)
+
+[node name="Barrel2" parent="Room3" unique_id=785753197 instance=ExtResource("5_barrel")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 58, 0, -70)
+
+[node name="Barrel3" parent="Room3" unique_id=1668227155 instance=ExtResource("5_barrel")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 0, -94)
+
+[node name="Barrel4" parent="Room3" unique_id=1484557542 instance=ExtResource("5_barrel")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 52, 0, -84)
+
+[node name="Barrel5" parent="Room3" unique_id=86555595 instance=ExtResource("5_barrel")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 0, -98)
+
 [node name="HUD" type="CanvasLayer" parent="." unique_id=850002033]
 
 [node name="Panel" type="MarginContainer" parent="HUD" unique_id=586821937]
@@ -1291,7 +1600,7 @@ text = "Убито: 0"
 layout_mode = 2
 text = "Опыт: 0"
 
-[node name="CoinLabel" type="Label" parent="HUD/Panel/Rows"]
+[node name="CoinLabel" type="Label" parent="HUD/Panel/Rows" unique_id=323978164]
 layout_mode = 2
 text = "Монеты: 0"
 
@@ -1641,3 +1950,38 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 11
 text = "[3]"
 horizontal_alignment = 1
+
+[node name="Intro" type="Node3D" parent="." unique_id=446188253]
+
+[node name="Lever" parent="Intro" unique_id=1992316176 instance=ExtResource("3_lever")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 26.5, 0, -34)
+
+[node name="Hut" parent="Intro" unique_id=623307652 instance=ExtResource("4_hut")]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 64, 0, -20)
+
+[node name="Button" type="Node3D" parent="Intro" unique_id=1796196013]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29.5, 0, -34)
+
+[node name="Mesh" type="MeshInstance3D" parent="Intro/Button" unique_id=402377088]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18.771961, 0.06, -9.534908)
+material_override = SubResource("mat_k2_button")
+mesh = SubResource("mesh_k2_button")
+
+[node name="BlockSpot" type="Marker3D" parent="Intro" unique_id=709263610]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 51, 0, -12)
+
+[node name="ChestK1" type="Marker3D" parent="Intro" unique_id=140050264]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 45.5, 0, 27)
+metadata/card = "arch_rate"
+
+[node name="ChestK2W" type="Marker3D" parent="Intro" unique_id=360871607]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 27, 0, -2)
+
+[node name="ChestK2S" type="Marker3D" parent="Intro" unique_id=763400569]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 52, 0, -38)
+
+[node name="ChestK3" type="Marker3D" parent="Intro" unique_id=1360039648]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 0, -99)
+
+[node name="ChestHangar" type="Marker3D" parent="Intro" unique_id=943745304]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 52, 0, -120)
