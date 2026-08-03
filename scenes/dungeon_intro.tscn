@@ -1954,16 +1954,16 @@ horizontal_alignment = 1
 [node name="Intro" type="Node3D" parent="." unique_id=446188253]
 
 [node name="Lever" parent="Intro" unique_id=1992316176 instance=ExtResource("3_lever")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 26.5, 0, -34)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 49, 0, -43.5)
 
 [node name="Hut" parent="Intro" unique_id=623307652 instance=ExtResource("4_hut")]
 transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, 64, 0, -20)
 
 [node name="Button" type="Node3D" parent="Intro" unique_id=1796196013]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 29.5, 0, -34)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 31, 0, -43.5)
 
 [node name="Mesh" type="MeshInstance3D" parent="Intro/Button" unique_id=402377088]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18.771961, 0.06, -9.534908)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.3253059, 0.06, -0.009304047)
 material_override = SubResource("mat_k2_button")
 mesh = SubResource("mesh_k2_button")
 
