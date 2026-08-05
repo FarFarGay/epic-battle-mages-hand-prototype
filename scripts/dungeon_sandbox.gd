@@ -3357,17 +3357,23 @@ func _teardown_roster_scene() -> void:
 
 ## Открыть замену: бой замирает (тела заморожены, тики _wasd_physics глушит
 ## _roster_open), камера уезжает на площадку в стороне. Ячейки уже заняты
-## ЖИВЫМ составом; в кучке — покупные огневики. Жест тот же, что при сборе:
-## ПКМ по ячейке снять, ЛКМ из кучки посадить, ENTER — применить.
-func _open_swap_roster() -> void:
+## ЖИВЫМ составом. fire_stock — сколько ПОКУПНЫХ огневиков положить в кучку
+## (покупка при полном отряде); 0 = «Перенастроить отряд», чистая перестановка.
+## Жест тот же, что при сборе: ПКМ по ячейке снять, ЛКМ из кучки посадить,
+## ENTER — применить.
+func _open_swap_roster(fire_stock: int = 0) -> void:
 	_swap_mode = true
 	_set_combat_frozen(true)
 	roster_slots = intro_squad_cap
 	_roster_open = true
-	_build_swap_scene()
+	_build_swap_scene(fire_stock)
 	_sync_roster_from_cells()
-	EventBus.tutorial_hint.emit(
-			"Отряд полон! ПКМ по ячейке — снять гнома, ЛКМ — взять огневика из кучки, ENTER — готово", 7.0)
+	if fire_stock > 0:
+		EventBus.tutorial_hint.emit(
+				"Отряд полон! ПКМ по ячейке — снять гнома, ЛКМ — взять огневика из кучки, ENTER — готово", 7.0)
+	else:
+		EventBus.tutorial_hint.emit(
+				"Перестройка: ПКМ по ячейке — снять, ЛКМ — посадить из кучки, ENTER — готово", 6.0)
 
 
 ## Заморозка боя на время экрана: гномы и скелеты перестают тикать (по образцу
@@ -3384,8 +3390,8 @@ func _set_combat_frozen(f: bool) -> void:
 
 ## Площадка замены: как _build_roster_scene, но 4 кучки классов, ячеек —
 ## intro_squad_cap, и ячейки ПРЕДЗАПОЛНЕНЫ живым составом (копья→луки→артель→
-## огонь). В кучке огневиков — только недостающие до пары.
-func _build_swap_scene() -> void:
+## огонь). fire_stock — покупные огневики в кучке (0 = чистая перестановка).
+func _build_swap_scene(fire_stock: int = 0) -> void:
 	var c := Vector3(room_center.x + 70.0, 0.0, room_center.z - 166.0)
 	_roster_pad = c
 	_roster_room = Node3D.new()
@@ -3412,9 +3418,7 @@ func _build_swap_scene() -> void:
 		var ring := AoeVisual.spawn_ground_ring(self, pos, 2.2, 0.0, d[2])
 		if ring != null:
 			_roster_props.append(ring)
-		var stock: int = 0
-		if d[0] == &"fire_mage":
-			stock = maxi(2 - _alive_fire_mages(), 0)
+		var stock: int = fire_stock if d[0] == &"fire_mage" else 0
 		_roster_stacks[d[0]] = {"pos": pos, "left": stock, "bodies": []}
 		_refresh_stack(d[0])
 	var idx: int = 0
@@ -5155,6 +5159,7 @@ const INTRO_HUT_DIALOG := {
 		"text": "Из хижины выглядывает седой артельщик: «Живые! А мы уж думали, одни костяки остались. Мы тут вдвоём засели, когда завалы легли. Руки у нас крепкие — камень катать, щиты держать. Возьмёшь в артель, командир?»",
 		"choices": [
 			{ "label": "Нанять артель — 2 гнома, {cost} монет", "next": &"", "effect": &"dungeon_hire_artel" },
+			{ "label": "Перенастроить отряд", "next": &"", "effect": &"dungeon_manage_squad" },
 			{ "label": "Кто вы такие?", "next": &"who" },
 			{ "label": "Позже.", "next": &"" },
 		],
@@ -5175,6 +5180,7 @@ const INTRO_FIRE_HUT_DIALOG := {
 		"text": "В домике, вросшем в лёд, греются гномы в алых робах: «Замёрз, командир? Лёд тут злой — шипами оброс, проход глыбами запечатал. Мы огневики: фаербол как у Ладьи, только в ладонь. Плати — и жар твой.»",
 		"choices": [
 			{ "label": "Нанять огневиков — 2 гнома, {cost} монет", "next": &"", "effect": &"dungeon_hire_fire" },
+			{ "label": "Перенастроить отряд", "next": &"", "effect": &"dungeon_manage_squad" },
 			{ "label": "Что умеет ваш огонь?", "next": &"who" },
 			{ "label": "Позже.", "next": &"" },
 		],
@@ -5228,6 +5234,11 @@ func _on_intro_dialog_effect(effect_id: StringName) -> void:
 	if effect_id == &"dungeon_hire_fire":
 		_intro_hire_fire()
 		return
+	if effect_id == &"dungeon_manage_squad":
+		# «Перенастроить отряд»: тот же экран, но БЕЗ покупного стока — чистое
+		# перераспределение уже выбранных гномов (найм — отдельными пунктами).
+		_open_swap_roster(0)
+		return
 	if effect_id != &"dungeon_hire_artel":
 		return
 	if _alive_artel() >= 2:
@@ -5260,7 +5271,7 @@ func _intro_hire_fire() -> void:
 		if is_instance_valid(m):
 			alive_total += 1
 	if alive_total + 2 > intro_squad_cap:
-		_open_swap_roster()
+		_open_swap_roster(maxi(2 - _alive_fire_mages(), 0))
 		return
 	var cost: int = fire_hire_cost_each * 2
 	if _coin_total < cost:

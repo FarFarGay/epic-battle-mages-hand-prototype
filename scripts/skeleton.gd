@@ -577,6 +577,10 @@ var flow_provider: Node3D = null
 ## (скелета несёт по инерции, широкие заносы на поворотах); 0 = штатное
 ## мгновенное руление, основная игра не задета. Выставляет данж-сцена по зоне льда.
 var ice_grip: float = 0.0
+## Собственный стейт заноса (XZ). НЕЛЬЗЯ лерпить от текущей velocity: LOD-батчинг
+## умножает её на divisor (один move_and_slide на N тиков), и блендинг подхватывал
+## раздутое значение — скорость копилась лавиной, скелеты «летали» по льду.
+var _ice_vel: Vector2 = Vector2.ZERO
 
 ## Stuck-detector для приоритизации препятствия. Если скелет идёт к гному и
 ## упирается в стену (физически не движется ≥STUCK_DURATION секунд) — он
@@ -906,14 +910,19 @@ func _approach_target(target: Node3D) -> void:
 			var vx: float = (to_goal.x / to_goal_len) * move_speed
 			var vz: float = (to_goal.z / to_goal_len) * move_speed
 			if ice_grip > 0.0:
-				# Лёд: скорость догоняет желаемую экспонентой — занос вместо
-				# мгновенного разворота (см. ice_grip выше).
+				# Лёд: СВОЙ стейт заноса догоняет желаемую скорость экспонентой
+				# (занос вместо мгновенного разворота) и клампится модулем
+				# move_speed — множители батчинга в него не просачиваются.
 				var a: float = 1.0 - exp(-ice_grip * get_physics_process_delta_time())
-				velocity.x = lerpf(velocity.x, vx, a)
-				velocity.z = lerpf(velocity.z, vz, a)
+				_ice_vel = _ice_vel.lerp(Vector2(vx, vz), a)
+				if _ice_vel.length_squared() > move_speed * move_speed:
+					_ice_vel = _ice_vel.normalized() * move_speed
+				velocity.x = _ice_vel.x
+				velocity.z = _ice_vel.y
 			else:
 				velocity.x = vx
 				velocity.z = vz
+				_ice_vel = Vector2(vx, vz)  # вход на лёд стартует с текущего хода
 	else:
 		velocity.x = 0.0
 		velocity.z = 0.0
