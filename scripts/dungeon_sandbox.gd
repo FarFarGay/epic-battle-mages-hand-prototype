@@ -423,8 +423,8 @@ const CMD_ARRIVED_DIST := 2.0
 ## Цена ОДНОГО огневика (пара при прямом найме = 2×). При полном отряде (кап
 ## ниже) покупка открывает экран замены состава — предбанник посреди похода.
 @export var fire_hire_cost_each: int = 15
-## ⛔ Кап отряда числом ВЫПИЛЕН (2026-08-06): кап = ПЛОЩАДЬ доски-трюма
-## (BOARD_CELLS, прямоугольник 4×2 = 8 клеток), найм гейтится площадью фигур.
+## ⛔ Кап отряда числом ВЫПИЛЕН (2026-08-06): состав = три слота-кнопки
+## (по группе на кнопку), найм гейтится занятостью слота ПКМ.
 ## Мини-фаербол огневика — ТРИ слоя урона (баланс 2026-08-05):
 ##  1. ПРЯМОЕ попадание бьёт сильно: бонус ближайшей цели в direct_radius
 ##     от точки взрыва (тот, «в кого прилетел»);
@@ -812,22 +812,19 @@ var _flow: Node3D = null
 ## Экран сбора отряда: открыт ли и текущая раскладка по классам.
 var _roster_open: bool = false
 var _roster: Dictionary = {}
-## Полимино-сбор: кучки-стойки фигур классов, доска-«трюм» и фигура в руке.
-## _roster_stacks: cls → {pos, queue: Array[int] (alive снятых/свежих фигур),
-## bodies}. _cells: клетки доски [{pos, grid, body, cls, piece, tile}] —
-## единственный источник правды по занятости; состав считается по _pieces.
+## Слот-кнопка-сбор: кучки-стойки групп классов, три пятака-слота и группа
+## в руке. _roster_stacks: cls → {pos, queue: Array[int] (alive снятых/свежих
+## групп), bodies}. _slots: [{id, pos, cls, alive, bodies, ring}] — слот =
+## кнопка, состав считается по слотам.
 var _roster_stacks: Dictionary = {}
-var _cells: Array = []
-## Стоящие фигуры: [{cls, cells: Array[int], alive, bodies}].
-var _pieces: Array = []
+var _slots: Array = []
 var _roster_pad: Vector3 = Vector3.INF
 var _roster_room: Node3D = null
 var _roster_props: Array = []
 ## Насколько предбанник отнесён от боевой комнаты (по +Z, анфилада идёт в −Z).
 const ROSTER_ROOM_OFFSET: float = 62.0
-## Фигура в руке: cls (&"" = руки пусты), поворот 0-3, живых в фигуре, тела.
+## Группа в руке: cls (&"" = руки пусты), живых в группе, тела кучкой.
 var _drag_class: StringName = &""
-var _drag_rot: int = 0
 var _drag_alive: int = 0
 var _drag_bodies: Array = []
 var _roster_lmb_prev: bool = false
@@ -2472,7 +2469,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		# Сбор отряда модальный: 1/2/3 добавляют гнома в класс, Shift+цифра
 		# убирает, ENTER уводит в подземелье. Тот же язык клавиш, что у находок.
 		if _roster_open:
-			# R в сборе = ПОВОРОТ фигуры (рестарт сцены на R живёт вне сбора).
 			var rk := event as InputEventKey
 			if rk != null and rk.pressed and not rk.echo:
 				var step: int = -1 if rk.shift_pressed else 1
@@ -2485,16 +2481,10 @@ func _unhandled_input(event: InputEvent) -> void:
 						_roster_change(&"worker", step)
 					KEY_4:
 						_roster_change(&"fire_mage", step)
-					KEY_R:
-						_rotate_drag(1)
 					KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 						_confirm_roster()
-			var rw := event as InputEventMouseButton
-			if rw != null and rw.pressed:
-				if rw.button_index == MOUSE_BUTTON_WHEEL_UP:
-					_rotate_drag(1)
-				elif rw.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-					_rotate_drag(-1)
+					KEY_R:
+						get_tree().reload_current_scene()
 			return
 		# Пикер находок модальный: мир на паузе, выбор КУРСОРОМ (клик по карте;
 		# ховер подсвечивает в _update_picker_hover). Клавиши 1/2/3 живы как
@@ -2931,9 +2921,9 @@ func _build_roster_scene() -> void:
 	add_child(_roster_room)
 	_roster_room.global_position = Vector3.ZERO
 	_roster_floor(c, Vector2(34.0, 22.0))
-	# Доска-трюм: отряд собирается ФИГУРАМИ (полимино), а не гномами по одному.
-	_build_board(c)
-	# Кучки фигур вдоль дальней стены, с подписями «класс · кнопка».
+	# Три пятака-слота: отряд собирается ГРУППАМИ, слот = кнопка.
+	_build_slots(c)
+	# Кучки групп вдоль дальней стены, с подписями «класс · кнопка».
 	var defs := [
 		[&"pikeman", Vector3(-8.5, 0.0, 5.0), "Копейщики · ПРОБЕЛ"],
 		[ARCHER_TYPE, Vector3(0.0, 0.0, 5.0), "Лучники · ЛКМ"],
@@ -2946,9 +2936,8 @@ func _build_roster_scene() -> void:
 		var ring := AoeVisual.spawn_ground_ring(self, pos, 2.2, 0.0, col)
 		if ring != null:
 			_roster_props.append(ring)
-		# Свежий сток: две полные фигуры на класс (alive = размер фигуры).
-		var full: int = (PIECE_SHAPES[cls] as Array).size()
-		_roster_stacks[cls] = {"pos": pos, "queue": [full, full], "bodies": []}
+		# Свежий сток: одна полная группа на класс (слот-то один).
+		_roster_stacks[cls] = {"pos": pos, "queue": [int(GROUP_SIZES[cls])], "bodies": []}
 		_refresh_stack(cls)
 		_stack_label(pos, String(d[2]), col)
 	# Камера смотрит в предбанник, пока собираемся.
@@ -2957,23 +2946,23 @@ func _build_roster_scene() -> void:
 	_look_target = c
 
 
-## ПОЛИМИНО-СБОР (пивот 2026-08-06, «по принципу стройки»): отряд класса =
-## ЦЕЛЬНАЯ ФИГУРА из клеток (клетка = гном), доска-«трюм» = кап отряда
-## площадью. Конфликт ПКМ решает МЕСТО: огневикам-паре нужна смежная пара
-## клеток — при полном составе её нет, пока не снимешь артель.
-## Доска — ПРЯМОУГОЛЬНИК 4×2 (фидбек 2026-08-06: «как в полимино», пирамида
-## отвергнута): 8 мест, стартовый состав занимает 7, одна клетка — манёвр.
-const BOARD_CELLS: Array = [
-	Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0), Vector2i(3, 0),
-	Vector2i(0, 1), Vector2i(1, 1), Vector2i(2, 1), Vector2i(3, 1),
+## СБОР = СЛОТ-КНОПКА (финал 2026-08-06 после двух отвергнутых итераций —
+## ряды-зоны и полимино: «расстановка нужна, но порядок не важен»). В строю
+## ТРИ больших пятака-слота, слот = КНОПКА отряда: [ЛКМ] лучники / [ПРОБЕЛ]
+## копейщики / [ПКМ] спецы (артель ИЛИ огневики). Группу кидаешь «в кучу» —
+## она САМА ложится в слот своей кнопки; сидит другой класс — выпрыгивает
+## в кучку. Одна кнопка = один класс structurally, дубль невозможен.
+const ROSTER_SLOTS := [
+	{"id": &"space", "label": "[ПРОБЕЛ] удар вокруг", "off": Vector3(-6.5, 0.0, -2.6)},
+	{"id": &"lkm", "label": "[ЛКМ] полив", "off": Vector3(0.0, 0.0, -2.6)},
+	{"id": &"rmb", "label": "[ПКМ] вал / залп", "off": Vector3(6.5, 0.0, -2.6)},
 ]
-## Фигуры отрядов: лучники — уголок из 3, остальные — домино из 2.
-## Стартовый состав (уголок + 2 домино) заполняет доску ВПРИТЫК.
-const PIECE_SHAPES := {
-	&"pikeman": [Vector2i(0, 0), Vector2i(1, 0)],
-	&"archer_squad": [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1)],
-	&"worker": [Vector2i(0, 0), Vector2i(1, 0)],
-	&"fire_mage": [Vector2i(0, 0), Vector2i(1, 0)],
+## Размер группы класса (гномов в полном отряде).
+const GROUP_SIZES := {
+	&"pikeman": 2,
+	&"archer_squad": 3,
+	&"worker": 2,
+	&"fire_mage": 2,
 }
 const PIECE_COLORS := {
 	&"pikeman": Color(0.85, 0.55, 0.25),
@@ -2981,154 +2970,103 @@ const PIECE_COLORS := {
 	&"worker": Color(0.7, 0.45, 0.25),
 	&"fire_mage": Color(0.95, 0.4, 0.2),
 }
-## Базовые цвета плитки: свободная / подсветка «фигура встанет» / «не встанет».
-const TILE_FREE := Color(0.3, 0.45, 0.6)
-const TILE_OK := Color(0.35, 0.85, 0.4)
-const TILE_BAD := Color(0.9, 0.3, 0.25)
+const SLOT_FREE := Color(0.4, 0.45, 0.55, 0.7)
 
 
-## Доска-трюм: 7 плиток по BOARD_CELLS + лежащая подпись. Ячейка знает свой
-## grid — посадка фигур идёт по сетке (grid + повёрнутые офсеты).
-func _build_board(c: Vector3) -> void:
-	_cells.clear()
-	_pieces.clear()
-	for g in BOARD_CELLS:
-		var p := c + Vector3((float(g.x) - 1.5) * 2.2, 0.0, -4.8 + float(g.y) * 2.2)
-		_cells.append({"pos": p, "grid": g, "body": null, "cls": &"", "piece": -1,
-				"tile": _roster_tile(p)})
-	var lbl := Label3D.new()
-	lbl.text = "ТРЮМ ОТРЯДА · %d мест · R/колесо — поворот" % BOARD_CELLS.size()
-	lbl.font_size = 56
-	lbl.pixel_size = 0.011
-	lbl.modulate = Color(0.85, 0.88, 0.95, 0.9)
-	lbl.outline_size = 10
-	lbl.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
-	_roster_room.add_child(lbl)
-	lbl.global_position = Vector3(c.x, 0.05, c.z - 7.2)
+## Слот какой кнопки кормит этот класс.
+func _slot_for_class(cls: StringName) -> StringName:
+	if cls == ARCHER_TYPE:
+		return &"lkm"
+	if cls == &"pikeman":
+		return &"space"
+	return &"rmb"  # worker и fire_mage — спецы одной кнопки
 
 
-func _cell_at_grid(g: Vector2i) -> int:
-	for i in range(_cells.size()):
-		if _cells[i]["grid"] == g:
-			return i
-	return -1
+## Три пятака-слота с подписями кнопок. Слот держит одну группу {cls, alive}.
+func _build_slots(c: Vector3) -> void:
+	_slots.clear()
+	for sd in ROSTER_SLOTS:
+		var pos: Vector3 = c + (sd["off"] as Vector3)
+		var ring := AoeVisual.spawn_ground_ring(self, pos, 2.4, 0.0, SLOT_FREE)
+		if ring != null:
+			_roster_props.append(ring)
+		var lbl := Label3D.new()
+		lbl.text = sd["label"]
+		lbl.font_size = 56
+		lbl.pixel_size = 0.011
+		lbl.modulate = Color(0.85, 0.88, 0.95, 0.9)
+		lbl.outline_size = 10
+		lbl.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+		_roster_room.add_child(lbl)
+		lbl.global_position = Vector3(pos.x, 0.05, pos.z + 3.1)
+		_slots.append({"id": sd["id"], "pos": pos, "cls": &"", "alive": 0,
+				"bodies": [], "ring": ring})
+	var title := Label3D.new()
+	title.text = "СТРОЙ: кинь отряд — он сам займёт свою кнопку"
+	title.font_size = 48
+	title.pixel_size = 0.011
+	title.modulate = Color(0.85, 0.88, 0.95, 0.8)
+	title.outline_size = 10
+	title.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+	_roster_room.add_child(title)
+	title.global_position = Vector3(c.x, 0.05, c.z - 6.4)
 
 
-## Офсеты фигуры, повёрнутые на rot × 90°: (x,y) → (-y,x).
-func _rotated_offsets(cls: StringName, rot: int) -> Array:
-	var offs: Array = (PIECE_SHAPES.get(cls, [Vector2i.ZERO]) as Array).duplicate()
-	for r in range(((rot % 4) + 4) % 4):
-		for i in range(offs.size()):
-			var o: Vector2i = offs[i]
-			offs[i] = Vector2i(-o.y, o.x)
-	return offs
+func _slot_by_id(id: StringName) -> Dictionary:
+	for s in _slots:
+		if s["id"] == id:
+			return s
+	return {}
 
 
-## Влезет ли фигура с якорем в ячейке anchor_idx: все клетки существуют и пусты.
-func _piece_fits(anchor_idx: int, offsets: Array) -> bool:
-	var base: Vector2i = _cells[anchor_idx]["grid"]
-	for off in offsets:
-		var ci: int = _cell_at_grid(base + (off as Vector2i))
-		if ci < 0 or _cells[ci]["cls"] != &"":
-			return false
-	return true
-
-
-## Поставить фигуру: клетки занимаются классом, статуи — на первых alive
-## клетках (потери видны пустыми клетками фигуры).
-func _place_piece(cls: StringName, anchor_idx: int, offsets: Array, alive: int) -> void:
-	var base: Vector2i = _cells[anchor_idx]["grid"]
-	var piece_id: int = _pieces.size()
-	var covered: Array = []
-	var bodies: Array = []
-	for off in offsets:
-		var ci: int = _cell_at_grid(base + (off as Vector2i))
-		covered.append(ci)
-		_cells[ci]["cls"] = cls
-		_cells[ci]["piece"] = piece_id
-		if bodies.size() < alive:
-			var b := _roster_body(cls, _cells[ci]["pos"])
-			if b != null:
-				_cells[ci]["body"] = b
-				bodies.append(b)
-	_pieces.append({"cls": cls, "cells": covered, "alive": alive, "bodies": bodies})
+## Поставить группу в слот её кнопки. Занят другим классом — тот выпрыгивает
+## в свою кучку (с его живым счётом). Тела группы встают кружком на пятаке.
+func _slot_place(cls: StringName, alive: int) -> void:
+	var slot: Dictionary = _slot_by_id(_slot_for_class(cls))
+	if slot.is_empty():
+		return
+	if slot["cls"] != &"":
+		_slot_remove(slot)
+	slot["cls"] = cls
+	slot["alive"] = alive
+	var pos: Vector3 = slot["pos"]
+	for i in range(alive):
+		var ang: float = TAU * float(i) / float(maxi(alive, 1))
+		var b := _roster_body(cls, pos + Vector3(cos(ang) * 1.1, 0.0, sin(ang) * 1.1))
+		if b != null:
+			(slot["bodies"] as Array).append(b)
+	_ring_tint(slot)
 	_sync_roster_from_cells()
 
 
-## Авто-постановка ОДНОЙ фигуры (клавиши): первый влезающий якорь × поворот.
-func _auto_place_piece(cls: StringName, alive: int) -> bool:
-	for rot in range(4):
-		var offs: Array = _rotated_offsets(cls, rot)
-		for i in range(_cells.size()):
-			if _piece_fits(i, offs):
-				_place_piece(cls, i, offs, alive)
-				return true
-	return false
-
-
-## Префилл НАБОРА фигур: бэктрекинг по якорям×поворотам (доска 7 клеток, фигур
-## ≤4 — мгновенно). Жадная расстановка ломалась: домино посреди доски отрезало
-## место уголку лучников, и фигура молча пропадала.
-func _prefill_pieces(want: Array) -> void:
-	var placements: Array = []
-	if _solve_fill(want, 0, placements):
-		for p in placements:
-			_place_piece(p["cls"], p["anchor"], p["offsets"], p["alive"])
-	else:
-		# Полного замощения нет (нестандартный состав) — жадно, сколько влезет.
-		for w in want:
-			_auto_place_piece(w["cls"], w["alive"])
-
-
-func _solve_fill(want: Array, idx: int, out: Array) -> bool:
-	if idx >= want.size():
-		return true
-	var cls: StringName = want[idx]["cls"]
-	for rot in range(4):
-		var offs: Array = _rotated_offsets(cls, rot)
-		for i in range(_cells.size()):
-			if not _piece_fits(i, offs):
-				continue
-			# Пробная занятость; реальную постановку делает _place_piece позже.
-			var base: Vector2i = _cells[i]["grid"]
-			var taken: Array = []
-			for off in offs:
-				var ci: int = _cell_at_grid(base + (off as Vector2i))
-				_cells[ci]["cls"] = cls
-				taken.append(ci)
-			out.append({"cls": cls, "anchor": i, "offsets": offs,
-					"alive": want[idx]["alive"]})
-			var solved: bool = _solve_fill(want, idx + 1, out)
-			for ci in taken:
-				_cells[ci]["cls"] = &""
-			if solved:
-				return true
-			out.pop_back()
-	return false
-
-
-## Снять фигуру с доски В КУЧКУ (с её живым счётом — потери не лечатся
-## перестановкой: кучка хранит очередь снятых фигур с их alive).
-func _remove_piece(piece_id: int) -> void:
-	if piece_id < 0 or piece_id >= _pieces.size():
+## Снять группу со слота в её кучку (живой счёт уезжает в очередь кучки).
+func _slot_remove(slot: Dictionary) -> void:
+	var cls: StringName = slot["cls"]
+	if cls == &"":
 		return
-	var pc: Dictionary = _pieces[piece_id]
-	var cls: StringName = pc["cls"]
-	for ci in pc["cells"]:
-		_cells[ci]["cls"] = &""
-		_cells[ci]["piece"] = -1
-		_cells[ci]["body"] = null
-	for b in pc["bodies"]:
+	if _roster_stacks.has(cls):
+		(_roster_stacks[cls]["queue"] as Array).push_back(int(slot["alive"]))
+	for b in slot["bodies"]:
 		if is_instance_valid(b):
 			_run_back(b, cls)
-	if _roster_stacks.has(cls):
-		(_roster_stacks[cls]["queue"] as Array).push_back(int(pc["alive"]))
-	# Сдвиг id в клетках после выкидывания из массива.
-	_pieces.remove_at(piece_id)
-	for cell in _cells:
-		if int(cell["piece"]) > piece_id:
-			cell["piece"] = int(cell["piece"]) - 1
+	slot["bodies"] = []
+	slot["cls"] = &""
+	slot["alive"] = 0
+	_ring_tint(slot)
 	_sync_roster_from_cells()
+
+
+## Цвет кольца слота: класс занявшего или серый пустой.
+func _ring_tint(slot: Dictionary) -> void:
+	var ring := slot["ring"] as MeshInstance3D
+	if ring == null or not is_instance_valid(ring):
+		return
+	var mat := ring.material_override as StandardMaterial3D
+	if mat == null:
+		return
+	var cls: StringName = slot["cls"]
+	var col: Color = SLOT_FREE if cls == &"" else PIECE_COLORS.get(cls, Color.WHITE)
+	mat.albedo_color = Color(col.r, col.g, col.b, 0.85 if cls != &"" else 0.5)
 
 
 ## Подпись кучки класса — лежит на полу под кучкой.
@@ -3166,45 +3104,24 @@ func _roster_floor(c: Vector3, size: Vector2) -> void:
 	body.global_position = Vector3(c.x, -0.2, c.z)
 
 
-## Плитка ячейки: тёмная рамка на полу, светлеет когда занята.
-func _roster_tile(pos: Vector3) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(1.7, 0.06, 1.7)
-	mi.mesh = bm
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.3, 0.45, 0.6)
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mi.material_override = mat
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_roster_room.add_child(mi)
-	mi.global_position = Vector3(pos.x, 0.03, pos.z)
-	return mi
-
-
-## Кучка = фигуры, ЛЕЖАЩИЕ СВОЕЙ ФОРМОЙ (не кольцо тел): каждая ждущая фигура
-## выложена мини-полимино (шаг 0.9), гномы стоят «как встанут в строю»; павшие
-## клетки фигуры пустуют. Показываем до 3 фигур очереди, друг под другом.
+## Кучка = гномы КУЧЕЙ (кружком, сумма живых по очереди групп, кап 8) —
+## порядок не важен, никакой формы. Дёшево: статуи без теней и коллизий.
 func _refresh_stack(cls: StringName) -> void:
 	var st: Dictionary = _roster_stacks[cls]
 	for b in st["bodies"]:
 		if is_instance_valid(b):
 			(b as Node).queue_free()
 	st["bodies"] = []
-	var offs: Array = PIECE_SHAPES.get(cls, [Vector2i.ZERO])
-	var q: Array = st["queue"]
-	for k in range(mini(q.size(), 3)):
-		var alive: int = int(q[k])
-		var base: Vector3 = (st["pos"] as Vector3) \
-				+ Vector3(-0.45, 0.0, -0.9 + float(k) * 2.4)
-		for j in range(offs.size()):
-			if j >= alive:
-				break
-			var off: Vector2i = offs[j]
-			var b := _roster_body(cls,
-					base + Vector3(float(off.x) * 0.9, 0.0, float(off.y) * 0.9))
-			if b != null:
-				st["bodies"].append(b)
+	var total: int = 0
+	for a in st["queue"]:
+		total += int(a)
+	var n: int = mini(total, 8)
+	for i in range(n):
+		var ang: float = TAU * float(i) / 8.0
+		var p: Vector3 = (st["pos"] as Vector3) + Vector3(cos(ang) * 1.1, 0.0, sin(ang) * 1.1)
+		var b := _roster_body(cls, p)
+		if b != null:
+			st["bodies"].append(b)
 
 
 ## Гном-статуя для площадки сбора: ШТАТНАЯ модель класса (та же сцена, что
@@ -3243,62 +3160,20 @@ func _sync_roster_from_cells() -> void:
 	_roster = {}
 	for cls in _roster_stacks.keys():
 		_roster[cls] = 0
-	for pc in _pieces:
-		var cls: StringName = pc["cls"]
-		_roster[cls] = int(_roster.get(cls, 0)) + int(pc["alive"])
+	for s in _slots:
+		var cls: StringName = s["cls"]
+		if cls != &"":
+			_roster[cls] = int(_roster.get(cls, 0)) + int(s["alive"])
 	_refresh_roster()
 
 
-## Якорная клетка призрака: ближайшая к курсору (занятость не важна — красный
-## призрак сам объяснит). -1 = курсор не над доской.
-func _ghost_anchor(cursor: Vector3) -> int:
-	var best: int = -1
-	var best_d: float = 2.8
-	for i in range(_cells.size()):
-		var cp: Vector3 = _cells[i]["pos"]
-		var d: float = Vector2(cp.x - cursor.x, cp.z - cursor.z).length()
-		if d < best_d:
-			best_d = d
-			best = i
-	return best
-
-
-## Перекраска плиток каждый тик: база (свободно/цвет класса фигуры) + призрак
-## фигуры из руки (зелёный — встанет, красный — нет).
-func _recolor_tiles(anchor: int, offsets: Array) -> void:
-	for cell in _cells:
-		var tile: MeshInstance3D = cell["tile"]
-		if not is_instance_valid(tile):
-			continue
-		var mat := tile.material_override as StandardMaterial3D
-		if mat == null:
-			continue
-		var cls: StringName = cell["cls"]
-		mat.albedo_color = TILE_FREE if cls == &"" \
-				else (PIECE_COLORS.get(cls, Color.WHITE) as Color).darkened(0.15)
-	if _drag_class == &"" or anchor < 0:
-		return
-	var ok: bool = _piece_fits(anchor, offsets)
-	var base: Vector2i = _cells[anchor]["grid"]
-	for off in offsets:
-		var ci: int = _cell_at_grid(base + (off as Vector2i))
-		if ci < 0:
-			continue
-		var tile: MeshInstance3D = _cells[ci]["tile"]
-		if is_instance_valid(tile):
-			var mat := tile.material_override as StandardMaterial3D
-			if mat != null:
-				mat.albedo_color = TILE_OK if ok else TILE_BAD
-
-
-## Взять фигуру из кучки в руку (очередь: сперва снятые с их alive, потом
+## Взять группу из кучки в руку (очередь: сперва снятые с их alive, потом
 ## свежие/покупные полные).
 func _take_piece(cls: StringName) -> void:
 	var q: Array = _roster_stacks[cls]["queue"]
 	if q.is_empty():
 		return
 	_drag_class = cls
-	_drag_rot = 0
 	_drag_alive = int(q.pop_front())
 	_refresh_stack(cls)
 	for i in range(_drag_alive):
@@ -3307,7 +3182,7 @@ func _take_piece(cls: StringName) -> void:
 			_drag_bodies.append(b)
 
 
-## Вернуть фигуру из руки обратно в кучку (клик мимо доски).
+## Вернуть группу из руки обратно в кучку (клик мимо строя).
 func _return_drag_to_stack() -> void:
 	if _drag_class == &"":
 		return
@@ -3319,25 +3194,15 @@ func _return_drag_to_stack() -> void:
 	_drag_class = &""
 
 
-## Поворот фигуры в руке (R / колесо мыши).
-func _rotate_drag(dir: int) -> void:
-	if _drag_class != &"":
-		_drag_rot = ((_drag_rot + dir) % 4 + 4) % 4
-
-
-## Занятая ячейка, ближайшая к точке (для ПКМ-изъятия).
-func _taken_cell_near(p: Vector3) -> int:
-	var best: int = -1
-	var best_d: float = INF
-	for i in range(_cells.size()):
-		if _cells[i]["cls"] == &"":
+## Занятый слот, ближайший к точке (для ПКМ-снятия). {} = мимо.
+func _taken_slot_near(p: Vector3) -> Dictionary:
+	for s in _slots:
+		if s["cls"] == &"":
 			continue
-		var cp: Vector3 = _cells[i]["pos"]
-		var d: float = Vector2(cp.x - p.x, cp.z - p.z).length()
-		if d < best_d:
-			best_d = d
-			best = i
-	return best
+		var sp: Vector3 = s["pos"]
+		if Vector2(p.x - sp.x, p.z - sp.z).length() <= 2.8:
+			return s
+	return {}
 
 
 ## Класс кучки под курсором (null-строка, если мимо).
@@ -3349,10 +3214,19 @@ func _stack_at(p: Vector3) -> StringName:
 	return &""
 
 
-## Тик сбора ФИГУРАМИ. Клик по кучке — фигура целиком в руку (висит формой над
-## курсором), R/колесо — поворот, клик по доске — постановка (призрак заранее
-## красит клетки зелёным/красным), клик мимо доски — фигура бежит в кучку.
-## ПКМ по фигуре на доске — снять её целиком.
+## Курсор в зоне строя (рядом с любым слотом)?
+func _near_slots(p: Vector3) -> bool:
+	for s in _slots:
+		var sp: Vector3 = s["pos"]
+		if Vector2(p.x - sp.x, p.z - sp.z).length() <= 4.5:
+			return true
+	return false
+
+
+## Тик сбора ГРУППАМИ, порядок не важен. Клик по кучке — группа в руку (толпой
+## над курсором), клик по строю — группа САМА ложится в слот своей кнопки
+## (чужой класс в слоте выпрыгивает в кучку), клик мимо — назад в кучку.
+## ПКМ по слоту — снять группу.
 func _tick_roster(_delta: float) -> void:
 	var lmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 	var rmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
@@ -3361,42 +3235,35 @@ func _tick_roster(_delta: float) -> void:
 		return
 	var lmb_click: bool = lmb and not _roster_lmb_prev
 	var rmb_click: bool = rmb and not _roster_rmb_prev
-	var offs: Array = _rotated_offsets(_drag_class, _drag_rot) if _drag_class != &"" else []
-	var anchor: int = _ghost_anchor(cursor)
-	_recolor_tiles(anchor, offs)
 	if _drag_class == &"":
 		if lmb_click:
 			var cls: StringName = _stack_at(cursor)
 			if cls != &"":
 				_take_piece(cls)
 		if rmb_click:
-			# ПКМ по фигуре на доске — снять целиком в кучку.
-			var ci: int = _taken_cell_near(cursor)
-			if ci >= 0 and Vector2((_cells[ci]["pos"] as Vector3).x - cursor.x,
-					(_cells[ci]["pos"] as Vector3).z - cursor.z).length() <= 2.4:
-				_remove_piece(int(_cells[ci]["piece"]))
+			var slot: Dictionary = _taken_slot_near(cursor)
+			if not slot.is_empty():
+				_slot_remove(slot)
 	elif lmb_click:
-		if anchor >= 0 and _piece_fits(anchor, offs):
-			# Тела руки гасим — _place_piece ставит статуи прямо в клетки.
+		if _near_slots(cursor):
+			# Тела руки гасим — _slot_place ставит статуи кружком на пятаке.
 			for b in _drag_bodies:
 				if is_instance_valid(b):
 					(b as Node).queue_free()
 			_drag_bodies.clear()
-			_place_piece(_drag_class, anchor, offs, _drag_alive)
+			var cls_placed: StringName = _drag_class
 			_drag_class = &""
-		elif anchor < 0:
-			# Клик мимо доски — фигура возвращается в кучку.
+			_slot_place(cls_placed, _drag_alive)
+		else:
 			_return_drag_to_stack()
-		# Клик по доске, но не влезло — ничего: красный призрак уже объяснил.
-	# Фигура в руке висит НАД доской СВОЕЙ ФОРМОЙ (не столбиком) — видно,
-	# как ляжет с текущим поворотом.
+	# Группа в руке висит толпой над курсором.
 	if _drag_class != &"":
 		for i in range(_drag_bodies.size()):
 			var b: Node3D = _drag_bodies[i]
-			if is_instance_valid(b) and i < offs.size():
-				var off: Vector2i = offs[i]
-				b.global_position = Vector3(cursor.x + float(off.x) * 2.2, 1.1,
-						cursor.z + float(off.y) * 2.2)
+			if is_instance_valid(b):
+				var ang: float = TAU * float(i) / float(maxi(_drag_bodies.size(), 1))
+				b.global_position = Vector3(cursor.x + cos(ang) * 0.8, 1.1,
+						cursor.z + sin(ang) * 0.8)
 	_roster_lmb_prev = lmb
 	_roster_rmb_prev = rmb
 
@@ -3418,13 +3285,6 @@ func _run_back(b: Node3D, cls: StringName) -> void:
 			_refresh_stack(cls))
 
 
-## Гном спрыгивает с руки в свою ячейку.
-func _hop_to(b: Node3D, pos: Vector3) -> void:
-	var tw := b.create_tween()
-	tw.tween_property(b, "global_position",
-			Vector3(pos.x, 0.5, pos.z), 0.22).set_trans(Tween.TRANS_QUAD)
-
-
 func _roster_total() -> int:
 	var n: int = 0
 	for k in _roster.keys():
@@ -3432,8 +3292,8 @@ func _roster_total() -> int:
 	return n
 
 
-## 1/2/3/4 — поставить ФИГУРУ класса (авто-место с подбором поворота),
-## Shift+цифра — снять её. Запасной путь к тому же, что делает рука.
+## 1/2/3/4 — поставить группу класса в её слот-кнопку, Shift+цифра — снять.
+## Запасной путь к тому же, что делает рука.
 func _roster_change(cls: StringName, delta_n: int) -> void:
 	if not _roster_open or not _roster_stacks.has(cls):
 		return
@@ -3441,14 +3301,13 @@ func _roster_change(cls: StringName, delta_n: int) -> void:
 		var q: Array = _roster_stacks[cls]["queue"]
 		if q.is_empty():
 			return
-		if _auto_place_piece(cls, int(q[0])):
-			q.pop_front()
-			_refresh_stack(cls)
+		var alive: int = int(q.pop_front())
+		_refresh_stack(cls)
+		_slot_place(cls, alive)
 	else:
-		for i in range(_pieces.size() - 1, -1, -1):
-			if _pieces[i]["cls"] == cls:
-				_remove_piece(i)
-				break
+		var slot: Dictionary = _slot_by_id(_slot_for_class(cls))
+		if not slot.is_empty() and slot["cls"] == cls:
+			_slot_remove(slot)
 
 
 ## Состояние сбора — ОДНОЙ строкой в угловом HUD. Центральная плашка убрана
@@ -3463,8 +3322,7 @@ func _refresh_roster() -> void:
 	var arch: int = int(_roster.get(ARCHER_TYPE, 0))
 	var pike: int = int(_roster.get(&"pikeman", 0))
 	var art: int = int(_roster.get(&"worker", 0))
-	(panel.get_node("V/Cap") as Label).text = "Трюм: %d / %d гномов" % [
-			_roster_total(), BOARD_CELLS.size()]
+	(panel.get_node("V/Cap") as Label).text = "В строю: %d гномов" % _roster_total()
 	# Числа те же, по которым способности считаются в бою — панель не «описание
 	# классов», а прямой предпросмотр силы удара от состава.
 	(panel.get_node("V/Archers") as Label).text = \
@@ -3519,11 +3377,11 @@ func _confirm_roster() -> void:
 ## Общая точка выхода: сбор перед заходом (_confirm_roster) и замена в походе
 ## (_confirm_swap).
 func _teardown_roster_scene() -> void:
-	for cell in _cells:
-		var b: Node3D = cell["body"]
-		if is_instance_valid(b):
-			b.queue_free()
-	_cells.clear()
+	for s in _slots:
+		for b in s["bodies"]:
+			if is_instance_valid(b):
+				(b as Node).queue_free()
+	_slots.clear()
 	for cls in _roster_stacks.keys():
 		for b in _roster_stacks[cls]["bodies"]:
 			if is_instance_valid(b):
@@ -3542,9 +3400,7 @@ func _teardown_roster_scene() -> void:
 	var stats := get_node_or_null("HUD/RosterStats") as Control
 	if stats != null:
 		stats.visible = false
-	_pieces.clear()
 	_drag_class = &""
-	_drag_rot = 0
 	_drag_alive = 0
 
 
@@ -3554,9 +3410,9 @@ func _teardown_roster_scene() -> void:
 
 ## Открыть замену: бой замирает (тела заморожены, тики _wasd_physics глушит
 ## _roster_open), камера уезжает на доску-трюм в стороне. Фигуры живых классов
-## уже стоят. fire_stock — покупных ФИГУР огневиков в кучке (покупка при полном
-## трюме); 0 = «Перенастроить отряд», чистая перестройка. Жест как при сборе:
-## ПКМ снять фигуру, ЛКМ из кучки, R/колесо поворот, ENTER — применить.
+## уже стоят в слотах своих кнопок. fire_stock — покупных ГРУПП огневиков в
+## кучке (покупка при занятом ПКМ); 0 = «Перенастроить отряд». Жест как при
+## сборе: ЛКМ кучка→строй (слот сам), ПКМ по слоту — снять, ENTER — применить.
 func _open_swap_roster(fire_stock: int = 0) -> void:
 	_swap_mode = true
 	_set_combat_frozen(true)
@@ -3565,10 +3421,10 @@ func _open_swap_roster(fire_stock: int = 0) -> void:
 	_sync_roster_from_cells()
 	if fire_stock > 0:
 		EventBus.tutorial_hint.emit(
-				"Трюм тесен! ПКМ — снять фигуру, ЛКМ — взять огневиков, R — поворот, ENTER — готово", 7.0)
+				"Кнопка ПКМ занята! Кинь огневиков в строй — артель уступит место. ENTER — готово", 7.0)
 	else:
 		EventBus.tutorial_hint.emit(
-				"Перестройка: ПКМ — снять фигуру, ЛКМ — из кучки, R — поворот, ENTER — готово", 6.0)
+				"Перестройка: ЛКМ кучка → строй (кнопка сама), ПКМ по слоту — снять, ENTER — готово", 6.0)
 
 
 ## Заморозка боя на время экрана: гномы и скелеты перестают тикать (по образцу
@@ -3593,8 +3449,8 @@ func _build_swap_scene(fire_stock: int = 0) -> void:
 	add_child(_roster_room)
 	_roster_room.global_position = Vector3.ZERO
 	_roster_floor(c, Vector2(38.0, 22.0))
-	# Тот же трюм, что и в сборе песочницы — один язык экрана.
-	_build_board(c)
+	# Те же три пятака-слота, что и в сборе песочницы — один язык экрана.
+	_build_slots(c)
 	var defs := [
 		[&"pikeman", Vector3(-11.5, 0.0, 5.0), "Копейщики · ПРОБЕЛ"],
 		[ARCHER_TYPE, Vector3(-4.0, 0.0, 5.0), "Лучники · ЛКМ"],
@@ -3612,21 +3468,18 @@ func _build_swap_scene(fire_stock: int = 0) -> void:
 		var q: Array = []
 		if cls == &"fire_mage":
 			for i in range(fire_stock):
-				q.append((PIECE_SHAPES[cls] as Array).size())  # покупные — полные пары
+				q.append(int(GROUP_SIZES[cls]))  # покупные — полные пары
 		_roster_stacks[cls] = {"pos": pos, "queue": q, "bodies": []}
 		_refresh_stack(cls)
 		_stack_label(pos, String(d[2]), col)
-	# Префилл: фигуры живых классов встают на доску со своим alive — солвером
-	# (жадный порядок мог не найти замощение и «терять» фигуру).
-	var want: Array = []
+	# Префилл: группа каждого живого класса уже стоит в слоте своей кнопки.
 	for cls in [&"pikeman", ARCHER_TYPE, &"worker", &"fire_mage"]:
 		var alive: int = 0
 		for m in _squad.members:
 			if is_instance_valid(m) and m.soldier_type == cls:
 				alive += 1
 		if alive > 0:
-			want.append({"cls": cls, "alive": alive})
-	_prefill_pieces(want)
+			_slot_place(cls, alive)
 	if _camera != null:
 		_camera.look_at_from_position(c + camera_offset, c, Vector3.UP)
 	_look_target = c
@@ -5469,16 +5322,9 @@ func _intro_hire_fire() -> void:
 	if _alive_fire_mages() >= 2:
 		EventBus.tutorial_hint.emit("Огневики уже с тобой (2/2)", 2.5)
 		return
-	# Гейт прямого найма — ПЛОЩАДЬЮ фигур, не головами: фигура класса ест свои
-	# клетки целиком, даже если в ней есть павшие (домино артели 1/2 = 2 клетки).
-	var used_cells: int = 0
-	for cls in [&"pikeman", ARCHER_TYPE, &"worker", &"fire_mage"]:
-		for m in _squad.members:
-			if is_instance_valid(m) and m.soldier_type == cls:
-				used_cells += (PIECE_SHAPES[cls] as Array).size()
-				break
-	if used_cells + (PIECE_SHAPES[&"fire_mage"] as Array).size() > BOARD_CELLS.size():
-		# Трюм тесен: экран с покупной фигурой огневиков (если их ещё нет).
+	# Гейт прямого найма: слот ПКМ занят артелью → экран замены (там огневики
+	# в кучке, кинул в строй — артель выпрыгнула). Слот свободен — пара сразу.
+	if _alive_artel() > 0:
 		_open_swap_roster(1 if _alive_fire_mages() <= 0 else 0)
 		return
 	var cost: int = fire_hire_cost_each * 2
