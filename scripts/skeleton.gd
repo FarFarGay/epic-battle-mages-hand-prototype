@@ -573,6 +573,10 @@ var _should_path_around: bool = false
 ## навмеша там нет). null = основная игра, ветка мертва. Провайдер возвращает
 ## ZERO («иди прямо») близко к цели или вне сетки — прямой ход остаётся базой.
 var flow_provider: Node3D = null
+## ДАНЖ: «сцепление» на льду (1/с). >0 — скорость ДОГОНЯЕТ желаемую экспонентой
+## (скелета несёт по инерции, широкие заносы на поворотах); 0 = штатное
+## мгновенное руление, основная игра не задета. Выставляет данж-сцена по зоне льда.
+var ice_grip: float = 0.0
 
 ## Stuck-detector для приоритизации препятствия. Если скелет идёт к гному и
 ## упирается в стену (физически не движется ≥STUCK_DURATION секунд) — он
@@ -899,8 +903,17 @@ func _approach_target(target: Node3D) -> void:
 		)
 		var to_goal_len: float = to_goal.length()
 		if to_goal_len > 0.001:
-			velocity.x = (to_goal.x / to_goal_len) * move_speed
-			velocity.z = (to_goal.z / to_goal_len) * move_speed
+			var vx: float = (to_goal.x / to_goal_len) * move_speed
+			var vz: float = (to_goal.z / to_goal_len) * move_speed
+			if ice_grip > 0.0:
+				# Лёд: скорость догоняет желаемую экспонентой — занос вместо
+				# мгновенного разворота (см. ice_grip выше).
+				var a: float = 1.0 - exp(-ice_grip * get_physics_process_delta_time())
+				velocity.x = lerpf(velocity.x, vx, a)
+				velocity.z = lerpf(velocity.z, vz, a)
+			else:
+				velocity.x = vx
+				velocity.z = vz
 	else:
 		velocity.x = 0.0
 		velocity.z = 0.0

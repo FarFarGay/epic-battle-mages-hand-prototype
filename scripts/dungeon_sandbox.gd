@@ -41,6 +41,9 @@ const ARCHER_TYPE := &"archer_squad"
 ## Флоу-филд навигации данжа (скрипт без class_name — подключение preload'ом,
 ## кэш классов не трогаем).
 const FLOW_FIELD_SCRIPT := preload("res://scripts/dungeon_flow_field.gd")
+## Снаряд огневиков — ТОТ ЖЕ fireball.tscn, что у башни/меха/шквала: та же
+## баллистика и визуал, отличаются только цифры setup'а (мини-копия).
+const FIREBALL_SCENE: PackedScene = preload("res://scenes/fireball.tscn")
 ## Цвет приказов отряду — тот же голубой, что у aim-ring'а HandSquadAim:
 ## один визуальный язык «команда отряду» по всей игре.
 const CMD_COLOR := Color(0.4, 0.85, 1.0, 0.9)
@@ -306,6 +309,8 @@ const CMD_ARRIVED_DIST := 2.0
 @export var wasd_archers: int = 3
 @export var wasd_spearmen: int = 2
 @export var wasd_artel: int = 1
+## Гномы-огневики (залп фаерболов по ПКМ; нанимаются в хижине К4-ледника).
+@export var wasd_fire_mages: int = 0
 ## Скорость движения точки строя по WASD (м/с). Чуть ВЫШЕ скорости юнитов —
 ## тогда они бегут за точкой на полном ходу, без «доехал-жду» вязкости.
 @export var wasd_speed: float = 10.0
@@ -405,6 +410,38 @@ const CMD_ARRIVED_DIST := 2.0
 ## Цена найма артели в хижине (монеты за ДВУХ гномов). Интро стартует без
 ## артели — ПКМ-вал покупается здесь.
 @export var artel_hire_cost: int = 20
+
+@export_group("К4 «Ледник» (интро)")
+## ЛЕДЯНАЯ КОМНАТА после мастерской (2026-08-04): пол залит льдом (скользко
+## ВСЕМ — отряд и скелеты заносит), вдоль стен и на колоннах ледяные ШИПЫ
+## (контакт режет всех симметрично), выход завален ГЛЫБАМИ ЛЬДА. Ключ — гномы-
+## огневики из хижины: ПКМ-залп мини-фаерболов (копия выстрела Ладьи) топит
+## лёд: сегменты шипастых стен, колонны, глыбы завала и САМ ЛЁД под ногами
+## (талое пятно = остров сцепления).
+## Цена ОДНОГО огневика (пара при прямом найме = 2×). При полном отряде (кап
+## ниже) покупка открывает экран замены состава — предбанник посреди похода.
+@export var fire_hire_cost_each: int = 15
+## Кап отряда интро (2 копейщика + 3 лучника + 2 артели = 7; мастер-кап артели).
+@export var intro_squad_cap: int = 7
+## Мини-фаербол огневика: урон в центре AOE, радиус взрыва, откат залпа (жмут
+## все живые огневики разом, по снаряду с гнома).
+@export var mage_fire_damage: float = 16.0
+@export var mage_fire_radius: float = 1.7
+@export var mage_fire_cooldown: float = 5.0
+## Скольжение: множитель руления точки строя на льду (wasd_handling ×) и
+## «сцепление» юнитов/скелетов на льду (1/с экспоненциального догона скорости;
+## штатные значения — wasd_grip у гномов и мгновенный разворот у скелетов).
+@export var ice_handling_mult: float = 0.3
+@export var ice_unit_grip: float = 3.5
+@export var skeleton_ice_grip: float = 2.2
+## Ледяные шипы: урон за тик касания (гномам и скелетам одинаково) + период.
+@export var ice_spike_damage: float = 9.0
+@export var ice_spike_tick_interval: float = 0.45
+## Прочность льда В ФАЕРБОЛАХ: сегмент стены шипов / колонна / глыбы завала.
+@export var ice_wall_hits: int = 2
+@export var ice_boulder_hits: int = 4
+## Радиус талого пятна на полу от одного взрыва.
+@export var melt_patch_radius: float = 2.4
 
 @export_group("Сбор отряда (WASD)")
 ## СОСТАВ = БИЛД (2026-07-29): перед заходом игрок сам раскладывает гномов по
@@ -738,10 +775,27 @@ var _intro_finished: bool = false
 var _ladya_vel: Vector3 = Vector3.ZERO
 var _ladya_dash_target: Vector3 = Vector3.INF
 var _ladya_dash_cd: float = 0.0
-## Геометрия финала: ангар z −106..−150, пусковой коридор до −208, финиш.
-const INTRO_HANGAR_ENTER_Z := -104.0
-const INTRO_CORRIDOR_Z := -150.0
-const INTRO_FINISH_Z := -200.0
+## Геометрия финала (сдвиг −40 по Z с 2026-08-04: между К3 и ангаром вставлен
+## К4-ледник z −106..−146): ангар z −146..−190, пусковой коридор до −250, финиш.
+const INTRO_HANGAR_ENTER_Z := -144.0
+const INTRO_CORRIDOR_Z := -190.0
+const INTRO_FINISH_Z := -240.0
+## К4 «Ледник»: границы льда (мировые XZ, Rect2 position+size), талые пятна
+## [{pos, r}] — острова сцепления, прожжённые фаерболами. Ледяные объекты
+## живут в группе &"ice_meltable" (meta melt_hits/spike/melt_reach), шипастые
+## пилят контактом ВСЕХ (симметрия взаимодействий). _fire_cd — откат залпа ПКМ.
+var _ice_rect: Rect2 = Rect2()
+var _melt_patches: Array = []
+var _fire_cd: float = 0.0
+var _ice_hut: Node3D = null
+var _ice_boulders: StaticBody3D = null
+var _k4_wave: int = 0
+var _spike_tick: float = 0.0
+## Экран ЗАМЕНЫ состава посреди похода (найм огневиков при полном отряде):
+## реюз предбанника (_roster_*), _swap_mode ветвит confirm; _swap_frozen —
+## замороженные на время экрана тела (скелеты + отряд).
+var _swap_mode: bool = false
+var _swap_frozen: Array = []
 ## Флоу-филд (интро): скелеты обходят повороты коридоров по полю.
 var _flow: Node3D = null
 ## Экран сбора отряда: открыт ли и текущая раскладка по классам.
@@ -823,7 +877,7 @@ var _focus_group: int = 2
 ## сценах без FocusCards (drift/superhot).
 var _focus_cards: Array = []
 var _focus_card_boxes: Array = []
-const FOCUS_CARD_COLORS := [Color(0.85, 0.55, 0.25), Color(0.55, 0.35, 0.75), Color(0.7, 0.45, 0.25)]
+const FOCUS_CARD_COLORS := [Color(0.85, 0.55, 0.25), Color(0.55, 0.35, 0.75), Color(0.7, 0.45, 0.25), Color(0.95, 0.4, 0.2)]
 ## Эффективный поводок этого кадра = superhot_reach минус вес несомого груза
 ## (superhot_reach_weight_penalty). Правит шаг, прицел-детект и attack_range.
 var _effective_reach: float = 9.0
@@ -970,6 +1024,8 @@ func _spawn_wasd_squad() -> void:
 		mix.append(ARCHER_TYPE)
 	for i in range(wasd_artel):
 		mix.append(&"worker")
+	for i in range(wasd_fire_mages):
+		mix.append(&"fire_mage")
 	_squad = Squad.new()
 	_squad.id = 1
 	_squad.soldier_type = ARCHER_TYPE
@@ -1045,6 +1101,8 @@ func _create_wasd_soldier(t: StringName, at: Vector3) -> SoldierGnome:
 			soldier.setup_stamina(wasd_stamina_hits, wasd_stamina_restore, wasd_stamina_delay)
 	elif t == &"worker":
 		_skin_artel(soldier)
+	elif t == &"fire_mage":
+		_skin_fire_mage(soldier)
 	_squad.add_member(soldier)
 	soldier.destroyed.connect(_on_gnome_died)
 	return soldier
@@ -1055,7 +1113,7 @@ func _create_wasd_soldier(t: StringName, at: Vector3) -> SoldierGnome:
 func _refresh_hud_hint() -> void:
 	var hint := get_node_or_null("HUD/Panel/Rows/HintLabel") as Label
 	if hint != null:
-		hint.text = "WASD — ход · ЛКМ — полив · ПРОБЕЛ — удар вокруг · ПКМ — каменная волна"
+		hint.text = "WASD — ход · ЛКМ — полив · ПРОБЕЛ — удар вокруг · ПКМ — вал / залп огня"
 	_refresh_focus_cards()
 
 
@@ -1064,7 +1122,7 @@ func _refresh_hud_hint() -> void:
 func _setup_focus_cards() -> void:
 	_focus_cards.clear()
 	_focus_card_boxes.clear()
-	for i in range(3):
+	for i in range(4):
 		var card := get_node_or_null("HUD/FocusCards/Card%d" % (i + 1)) as PanelContainer
 		if card == null:
 			return
@@ -1088,17 +1146,21 @@ func _setup_focus_cards() -> void:
 func _refresh_focus_cards() -> void:
 	if _focus_cards.size() < 3:
 		return
-	var keys := [&"pikeman", ARCHER_TYPE, &"worker"]
-	var totals := [wasd_spearmen, wasd_archers, wasd_artel]
+	var keys := [&"pikeman", ARCHER_TYPE, &"worker", &"fire_mage"]
+	var totals := [wasd_spearmen, wasd_archers, wasd_artel, wasd_fire_mages]
 	var counts := {}
 	if _squad != null:
 		for m in _squad.members:
 			if is_instance_valid(m):
 				counts[m.soldier_type] = int(counts.get(m.soldier_type, 0)) + 1
-	for i in range(3):
+	for i in range(_focus_cards.size()):
 		var card: PanelContainer = _focus_cards[i]
 		var box: StyleBoxFlat = _focus_card_boxes[i]
 		var alive: int = int(counts.get(keys[i], 0))
+		# Карточка огневиков скрыта, пока их не нанял (паттерн F-призыва:
+		# карточка появляется вместе с классом, а не висит пустой).
+		if i == 3:
+			card.visible = totals[3] > 0 or alive > 0
 		# Классы со способностью (копейщики — ПРОБЕЛ, артель — ПКМ): бордер
 		# белеет, когда кнопка готова — телеграф на самой карточке, а не полоска.
 		var armed: bool = false
@@ -1106,6 +1168,8 @@ func _refresh_focus_cards() -> void:
 			armed = alive > 0 and _super_cd <= 0.0 and _super_windup <= 0.0
 		elif i == 2:
 			armed = alive > 0 and _wave_cd <= 0.0
+		elif i == 3:
+			armed = alive > 0 and _fire_cd <= 0.0
 		box.border_color = Color(1, 1, 1, 0.95) if armed else FOCUS_CARD_COLORS[i]
 		box.bg_color = Color(0.16, 0.15, 0.2, 0.95) if armed else Color(0.09, 0.09, 0.13, 0.92)
 		card.modulate = Color(1, 1, 1, 1.0) if alive > 0 else Color(1, 1, 1, 0.35)
@@ -1116,6 +1180,8 @@ func _refresh_focus_cards() -> void:
 				txt += "\n[ПРОБЕЛ] готов" if armed else "\n[ПРОБЕЛ] %.1fс" % _super_cd
 			elif i == 2 and alive > 0:
 				txt += "\n[ПКМ] готов" if armed else "\n[ПКМ] %.1fс" % _wave_cd
+			elif i == 3 and alive > 0:
+				txt += "\n[ПКМ] готов" if armed else "\n[ПКМ] %.1fс" % _fire_cd
 			# Набранные находки категории — прямо на её карточке.
 			txt += _cards_line(keys[i])
 			cnt.text = txt
@@ -1143,6 +1209,33 @@ func _skin_artel(w: SoldierGnome) -> void:
 	_artel_box(holder, Vector3(0.05, 0.55, 0.05), Vector3(0.24, 0.6, 0), wood)    # рукоять молотка
 	_artel_box(holder, Vector3(0.16, 0.1, 0.1), Vector3(0.24, 0.92, 0), steel)    # боёк молотка
 	_artel_box(holder, Vector3(0.3, 0.42, 0.06), Vector3(-0.2, 0.55, 0.14), wood) # заплечная доска
+
+
+## Блочная моделька огневика — единый стиль с артельщиком: алая роба мага,
+## посох с тлеющим навершием. Тот же приём скрытия GLB-тела, что у артели.
+func _skin_fire_mage(w: SoldierGnome) -> void:
+	var vis := w.get_node_or_null("Visual") as Node3D
+	if vis != null:
+		vis.visible = false
+	var mesh_node := w.get_node_or_null("MeshInstance3D") as MeshInstance3D
+	if mesh_node != null:
+		mesh_node.visible = false
+	var holder := Node3D.new()
+	holder.position = Vector3(0, -0.4, 0)
+	w.add_child(holder)
+	var robe := _artel_mat(Color(0.78, 0.2, 0.12))
+	var skin := _artel_mat(Color(0.85, 0.7, 0.55))
+	var wood := _artel_mat(Color(0.3, 0.2, 0.12))
+	var ember := _artel_mat(Color(1.0, 0.55, 0.15))
+	ember.emission_enabled = true
+	ember.emission = Color(1.0, 0.45, 0.1)
+	ember.emission_energy_multiplier = 1.6
+	_artel_box(holder, Vector3(0.34, 0.5, 0.26), Vector3(0, 0.45, 0), robe)       # роба
+	_artel_box(holder, Vector3(0.26, 0.26, 0.24), Vector3(0, 0.82, 0), skin)      # голова
+	_artel_box(holder, Vector3(0.2, 0.16, 0.2), Vector3(0, 0.98, 0), robe)        # капюшон
+	_artel_box(holder, Vector3(0.05, 0.9, 0.05), Vector3(0.24, 0.55, 0), wood)    # посох
+	_artel_box(holder, Vector3(0.12, 0.12, 0.12), Vector3(0.24, 1.05, 0), ember)  # навершие
+	w.set_meta(&"fire_mage_ember", ember)
 
 
 func _artel_mat(c: Color) -> StandardMaterial3D:
@@ -2377,6 +2470,8 @@ func _unhandled_input(event: InputEvent) -> void:
 						_roster_change(&"pikeman", step)
 					KEY_3:
 						_roster_change(&"worker", step)
+					KEY_4:
+						_roster_change(&"fire_mage", step)
 					KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 						_confirm_roster()
 					KEY_R:
@@ -2718,9 +2813,10 @@ func _wasd_physics(delta: float) -> void:
 	_wasd_combat(Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not _game_over, cursor)
 	if _shield_pending:
 		_shield_pending = false
-		_request_stone_wave(cursor)
+		_request_worker_action(cursor)
 	_tick_spear_super(delta)
 	_tick_stone_wave(delta)
+	_tick_ice(delta)
 	_tick_chests()
 	_tick_cargo(delta)
 	_tick_cargo_snap(delta)
@@ -2763,6 +2859,10 @@ func _wasd_move(delta: float, cursor: Vector3) -> void:
 		_wasd_vel = target
 	else:
 		var rate: float = wasd_handling * (1.0 if has_input else wasd_brake_mult)
+		# ЛЁД (К4): руление вязнет — тело НЕСЁТ по инерции. Талое пятно от
+		# фаербола возвращает штатное сцепление (остров манёвра).
+		if _is_on_ice(_squad.hold_position):
+			rate *= ice_handling_mult
 		_wasd_vel = _wasd_vel.lerp(target, 1.0 - exp(-rate * delta))
 	if _wasd_vel.length_squared() > 0.0004:
 		var hp2: Vector3 = _squad.hold_position + _wasd_vel * delta
@@ -2909,6 +3009,8 @@ func _roster_body(cls: StringName, pos: Vector3) -> Node3D:
 			Vector3(pos.x, 0.5, pos.z), _banner)
 	if cls == &"worker":
 		_skin_artel(g)  # тот же жёлтый скин артельщика, что и в бою
+	elif cls == &"fire_mage":
+		_skin_fire_mage(g)  # алая роба + посох, как в бою
 	# Статуя: без тика и без тела — стоит и ждёт, пока её возьмут.
 	g.set_physics_process(false)
 	g.set_process(false)
@@ -2922,7 +3024,10 @@ func _roster_body(cls: StringName, pos: Vector3) -> Node3D:
 ## Состав пересчитывается ИЗ ЯЧЕЕК — они единственный источник правды, поэтому
 ## «занято 6 из 6» видно телами, а не счётчиком.
 func _sync_roster_from_cells() -> void:
-	_roster = {ARCHER_TYPE: 0, &"pikeman": 0, &"worker": 0}
+	# Ключи — из кучек: пре-ран несёт 3 класса, экран замены в походе — 4.
+	_roster = {}
+	for cls in _roster_stacks.keys():
+		_roster[cls] = 0
 	for cell in _cells:
 		var cls: StringName = cell["cls"]
 		if cls != &"":
@@ -3193,13 +3298,32 @@ func _refresh_roster() -> void:
 func _confirm_roster() -> void:
 	if not _roster_open or _roster_total() <= 0:
 		return
+	if _swap_mode:
+		_confirm_swap()
+		return
 	wasd_archers = int(_roster.get(ARCHER_TYPE, 0))
 	wasd_spearmen = int(_roster.get(&"pikeman", 0))
 	wasd_artel = int(_roster.get(&"worker", 0))
 	squad_size = _roster_total()
 	_roster_open = false
-	# Предбанник сносится ЦЕЛИКОМ — ни ячеек, ни кучек в бою на глаза не
-	# попадётся (ради этого он и вынесен в отдельную комнату).
+	_teardown_roster_scene()
+	# Камера возвращается к боевой комнате.
+	if _camera != null:
+		_camera.look_at_from_position(room_center + camera_offset, room_center, Vector3.UP)
+	_look_target = room_center
+	_spawn_squad()
+	_setup_focus_cards()
+	_refresh_hud_hint()
+	_update_labels()
+	_start_director_pack()
+	print("[Roster] отряд: лучников=%d, копейщиков=%d, артели=%d"
+			% [wasd_archers, wasd_spearmen, wasd_artel])
+
+
+## Снос предбанника ЦЕЛИКОМ — ни ячеек, ни кучек в бою на глаза не попадётся.
+## Общая точка выхода: сбор перед заходом (_confirm_roster) и замена в походе
+## (_confirm_swap).
+func _teardown_roster_scene() -> void:
 	for cell in _cells:
 		var b: Node3D = cell["body"]
 		if is_instance_valid(b):
@@ -3223,17 +3347,143 @@ func _confirm_roster() -> void:
 	var stats := get_node_or_null("HUD/RosterStats") as Control
 	if stats != null:
 		stats.visible = false
-	# Камера возвращается к боевой комнате.
+	_drag_class = &""
+	_drag_count = 0
+
+
+# =============================================================================
+# ЭКРАН ЗАМЕНЫ СОСТАВА в походе (найм огневиков при полном отряде, К4)
+# =============================================================================
+
+## Открыть замену: бой замирает (тела заморожены, тики _wasd_physics глушит
+## _roster_open), камера уезжает на площадку в стороне. Ячейки уже заняты
+## ЖИВЫМ составом; в кучке — покупные огневики. Жест тот же, что при сборе:
+## ПКМ по ячейке снять, ЛКМ из кучки посадить, ENTER — применить.
+func _open_swap_roster() -> void:
+	_swap_mode = true
+	_set_combat_frozen(true)
+	roster_slots = intro_squad_cap
+	_roster_open = true
+	_build_swap_scene()
+	_sync_roster_from_cells()
+	EventBus.tutorial_hint.emit(
+			"Отряд полон! ПКМ по ячейке — снять гнома, ЛКМ — взять огневика из кучки, ENTER — готово", 7.0)
+
+
+## Заморозка боя на время экрана: гномы и скелеты перестают тикать (по образцу
+## посадки в Ладью). Статуи предбанника (meta roster_cls) не трогаем.
+func _set_combat_frozen(f: bool) -> void:
+	for grp in [&"soldier", Skeleton.SKELETON_GROUP]:
+		for n in get_tree().get_nodes_in_group(grp):
+			if not is_instance_valid(n) or (n as Node).is_queued_for_deletion():
+				continue
+			if (n as Node).has_meta(&"roster_cls"):
+				continue
+			(n as Node).set_physics_process(not f)
+
+
+## Площадка замены: как _build_roster_scene, но 4 кучки классов, ячеек —
+## intro_squad_cap, и ячейки ПРЕДЗАПОЛНЕНЫ живым составом (копья→луки→артель→
+## огонь). В кучке огневиков — только недостающие до пары.
+func _build_swap_scene() -> void:
+	var c := Vector3(room_center.x + 70.0, 0.0, room_center.z - 166.0)
+	_roster_pad = c
+	_roster_room = Node3D.new()
+	add_child(_roster_room)
+	_roster_room.global_position = Vector3.ZERO
+	_roster_floor(c, Vector2(34.0, 22.0))
+	_cells.clear()
+	var cols: int = ceili(float(roster_slots) / 2.0)
+	for i in range(roster_slots):
+		var row: int = i / cols
+		var col: int = i % cols
+		var p := c + Vector3((float(col) - float(cols - 1) * 0.5) * 2.2,
+				0.0, -3.2 + float(row) * 2.2)
+		_cells.append({"pos": p, "body": null, "cls": &"", "tile": _roster_tile(p)})
+	var defs := [
+		[&"pikeman", Vector3(-11.5, 0.0, 5.0), Color(0.85, 0.55, 0.25)],
+		[ARCHER_TYPE, Vector3(-4.0, 0.0, 5.0), Color(0.55, 0.35, 0.75)],
+		[&"worker", Vector3(4.0, 0.0, 5.0), Color(0.7, 0.45, 0.25)],
+		[&"fire_mage", Vector3(11.5, 0.0, 5.0), Color(0.95, 0.4, 0.2)],
+	]
+	_roster_stacks.clear()
+	for d in defs:
+		var pos: Vector3 = c + (d[1] as Vector3)
+		var ring := AoeVisual.spawn_ground_ring(self, pos, 2.2, 0.0, d[2])
+		if ring != null:
+			_roster_props.append(ring)
+		var stock: int = 0
+		if d[0] == &"fire_mage":
+			stock = maxi(2 - _alive_fire_mages(), 0)
+		_roster_stacks[d[0]] = {"pos": pos, "left": stock, "bodies": []}
+		_refresh_stack(d[0])
+	var idx: int = 0
+	for cls in [&"pikeman", ARCHER_TYPE, &"worker", &"fire_mage"]:
+		for m in _squad.members:
+			if idx >= _cells.size():
+				break
+			if is_instance_valid(m) and m.soldier_type == cls:
+				_cells[idx]["cls"] = cls
+				_cells[idx]["body"] = _roster_body(cls, _cells[idx]["pos"])
+				idx += 1
 	if _camera != null:
-		_camera.look_at_from_position(room_center + camera_offset, room_center, Vector3.UP)
-	_look_target = room_center
-	_spawn_squad()
-	_setup_focus_cards()
-	_refresh_hud_hint()
+		_camera.look_at_from_position(c + camera_offset, c, Vector3.UP)
+	_look_target = c
+
+
+## Применить замену: диф между ячейками и живым отрядом. Платим ТОЛЬКО за
+## новых огневиков в строю; снятые гномы распускаются (пуф — «остались греться
+## в хижине»), рефанда нет. Не хватает монет — остаёмся в экране.
+func _confirm_swap() -> void:
+	var want := {}
+	for cls in _roster_stacks.keys():
+		want[cls] = int(_roster.get(cls, 0))
+	var have := {}
+	for m in _squad.members:
+		if is_instance_valid(m):
+			have[m.soldier_type] = int(have.get(m.soldier_type, 0)) + 1
+	var new_mages: int = int(want.get(&"fire_mage", 0)) - int(have.get(&"fire_mage", 0))
+	var cost: int = maxi(new_mages, 0) * fire_hire_cost_each
+	if cost > _coin_total:
+		EventBus.tutorial_hint.emit(
+				"Не хватает монет: огневик стоит %d, нужно %d (есть %d)"
+				% [fire_hire_cost_each, cost, _coin_total], 3.0)
+		return
+	_coin_total -= cost
+	var hut_base: Vector3 = _ice_hut.global_position \
+			if (_ice_hut != null and is_instance_valid(_ice_hut)) else _squad.compute_center()
+	for cls in want.keys():
+		var diff: int = int(want[cls]) - int(have.get(cls, 0))
+		while diff < 0:
+			for i in range(_squad.members.size() - 1, -1, -1):
+				var m = _squad.members[i]
+				if is_instance_valid(m) and m.soldier_type == cls:
+					AoeVisual.spawn_dust(self, (m as Node3D).global_position)
+					if (m as Node).is_connected(&"destroyed", _on_gnome_died):
+						(m as Node).disconnect(&"destroyed", _on_gnome_died)
+					_squad.members.remove_at(i)
+					(m as Node).queue_free()
+					break
+			diff += 1
+		var spawned: int = 0
+		while diff > 0:
+			_create_wasd_soldier(cls, hut_base + Vector3(-1.5, 0.2, -1.5 + 1.5 * float(spawned)))
+			spawned += 1
+			diff -= 1
+	wasd_spearmen = int(want.get(&"pikeman", 0))
+	wasd_archers = int(want.get(ARCHER_TYPE, 0))
+	wasd_artel = int(want.get(&"worker", 0))
+	wasd_fire_mages = int(want.get(&"fire_mage", 0))
+	_roster_open = false
+	_swap_mode = false
+	_teardown_roster_scene()
+	_set_combat_frozen(false)
+	_refresh_focus_cards()
 	_update_labels()
-	_start_director_pack()
-	print("[Roster] отряд: лучников=%d, копейщиков=%d, артели=%d"
-			% [wasd_archers, wasd_spearmen, wasd_artel])
+	if wasd_fire_mages > 0:
+		EventBus.tutorial_hint.emit("Огневики в строю! ПКМ — залп фаерболов: жги лёд и врагов", 4.0)
+	print("[Swap] отряд: копья=%d луки=%d артель=%d огонь=%d"
+			% [wasd_spearmen, wasd_archers, wasd_artel, wasd_fire_mages])
 
 
 ## Стартовая пачка врагов — вынесена, чтобы её можно было отложить до сбора
@@ -3594,6 +3844,91 @@ func _cards_line(cls: StringName) -> String:
 		var n: int = int(_cards[id])
 		parts.append(str(CARD_CATALOG[id]["name"]) + ("" if n <= 1 else " ×%d" % n))
 	return "" if parts.is_empty() else "\n" + ", ".join(parts)
+
+
+## ПКМ = способность «рабочего» слота, контекст по составу: артель катит ВАЛ,
+## огневики дают ЗАЛП ФАЕРБОЛОВ в точку курсора. Смешанный состав жмёт обе —
+## у каждой свой откат, один осознанный клик = вся магия спецов.
+func _request_worker_action(cursor: Vector3) -> void:
+	var artel: int = _alive_artel()
+	var mages: int = _alive_fire_mages()
+	if artel <= 0 and mages <= 0:
+		EventBus.tutorial_hint.emit("ПКМ некому исполнять: ни артели (вал), ни огневиков (залп)", 1.6)
+		return
+	if artel > 0:
+		_request_stone_wave(cursor)
+	if mages > 0:
+		_request_fire_volley(cursor)
+
+
+## Залп огневиков: каждый живой маг пускает мини-фаербол (тот же fireball.tscn,
+## что у Ладьи — «уменьшенная копия выстрела башни») в точку курсора с лёгким
+## рассеянием. Взрыв бьёт врагов И ТОПИТ ЛЁД (стены шипов, глыбы, пол ледника —
+## см. _on_mage_fireball_hit). Целиться можно в любую точку — в том числе в лёд.
+func _request_fire_volley(cursor: Vector3) -> void:
+	if _squad == null or _fire_cd > 0.0 or cursor == Vector3.INF:
+		return
+	var mages: Array = []
+	for m in _squad.members:
+		if is_instance_valid(m) and m.soldier_type == &"fire_mage":
+			mages.append(m)
+	if mages.is_empty():
+		return
+	_fire_cd = mage_fire_cooldown
+	var target := Vector3(cursor.x, 0.0, cursor.z)
+	for i in range(mages.size()):
+		var jitter := Vector3.ZERO
+		if mages.size() > 1:
+			jitter = Vector3(randf_range(-1.2, 1.2), 0.0, randf_range(-1.2, 1.2))
+		_launch_mage_fireball((mages[i] as Node3D).global_position, target + jitter)
+	var c: Vector3 = _squad.compute_center()
+	if c != Vector3.INF:
+		EventBus.camera_shake.emit(0.2, c)
+	_refresh_focus_cards()
+
+
+## Один мини-фаербол огневика: короткая пологая дуга из рук мага, взрыв малым
+## AOE. Детонирует и о преграду по пути (TERRAIN) — прицел в стену честно
+## взрывается о стену, лёд топится там, куда реально попал.
+func _launch_mage_fireball(from: Vector3, target: Vector3) -> void:
+	var fb := FIREBALL_SCENE.instantiate() as Fireball
+	if fb == null:
+		return
+	add_child(fb)
+	fb.add_to_group(&"player_projectile")
+	fb.setup(
+		from + Vector3(0.0, 1.1, 0.0),
+		target,
+		0.22,   # boost: короткий подскок из рук
+		5.5,    # вверх
+		5.0,    # вперёд
+		16.0,   # gravity дуги
+		1.0,    # sway
+		9.0,    # homing initial
+		26.0,   # accel
+		20.0,   # max speed
+		6.0,    # drift angle
+		9.0,    # turn rate
+		mage_fire_damage,
+		mage_fire_radius,
+		Layers.MASK_HAND_SLAM,
+		8.0,    # knockback
+		0.35,   # lift
+		0.25,   # duration
+	)
+	fb.set_collide_in_flight(true, Layers.TERRAIN)
+	fb.shake_amount = 0.12
+	fb.hit.connect(_on_mage_fireball_hit)
+
+
+func _alive_fire_mages() -> int:
+	if _squad == null:
+		return 0
+	var n: int = 0
+	for m in _squad.members:
+		if is_instance_valid(m) and m.soldier_type == &"fire_mage":
+			n += 1
+	return n
 
 
 ## ПКМ: каменная волна артели. Гейт — живой артельщик (симметрия с ПРОБЕЛОМ:
@@ -4624,10 +4959,10 @@ func _intro_setup() -> void:
 	cursor_z_min = INTRO_FINISH_Z - 12.0
 	# К1 = 3 встречи, К2 = 2 волны, К3 = 1 волна.
 	_intro_left = [3, 2, 1]
-	# Флоу-филд на весь интро-мир: лента + анфилада + ангар + пусковой коридор.
+	# Флоу-филд на весь интро-мир: лента + анфилада + ледник + ангар + коридор.
 	_flow = FLOW_FIELD_SCRIPT.new()
 	add_child(_flow)
-	_flow.call(&"setup", 12.0, -214.0, 84.0, 100.0)
+	_flow.call(&"setup", 12.0, -254.0, 84.0, 100.0)
 	# К1 — лента-коридор: геометрия живёт УЗЛАМИ в dungeon_intro.tscn (Room1/
 	# Floor*/Wall*), юзер двигает её в редакторе; код только ставит костёр.
 	_intro_campfire(Vector3(73.0, 0.0, 91.0))
@@ -4668,6 +5003,8 @@ func _intro_setup() -> void:
 		_k2_block.set_meta(&"need", 1)
 	# К3: машина патронов (реюз крафт-котла) + завал вместо северной стены.
 	_intro_setup_forge()
+	# К4: ледник — скользкий лёд, шипы, хижина огневиков, завал из глыб.
+	_intro_setup_ice_room()
 	_intro_build_hangar()
 	_intro_spawn_treasure()
 	# Диалог хижины — ПЕРЕИСПОЛЬЗУЕМ DialogUI башенной карты (пауза дерева,
@@ -4831,32 +5168,66 @@ const INTRO_HUT_DIALOG := {
 }
 
 
+## Диалог хижины ОГНЕВИКОВ (К4-ледник). Формат тот же; цена подставляется
+## в _intro_try_hut (2 × fire_hire_cost_each).
+const INTRO_FIRE_HUT_DIALOG := {
+	&"root": {
+		"text": "В домике, вросшем в лёд, греются гномы в алых робах: «Замёрз, командир? Лёд тут злой — шипами оброс, проход глыбами запечатал. Мы огневики: фаербол как у Ладьи, только в ладонь. Плати — и жар твой.»",
+		"choices": [
+			{ "label": "Нанять огневиков — 2 гнома, {cost} монет", "next": &"", "effect": &"dungeon_hire_fire" },
+			{ "label": "Что умеет ваш огонь?", "next": &"who" },
+			{ "label": "Позже.", "next": &"" },
+		],
+	},
+	&"who": {
+		"text": "«ПКМ — и мы жжём залпом в точку прицела. Огонь ТОПИТ лёд: стены шипов, глыбы завала, да и сам каток — кинь под ноги, будет талый пятак, где сапог держит.»",
+		"choices": [
+			{ "label": "К делу.", "next": &"root" },
+		],
+	},
+}
+
+
 ## E возле хижины: открыть диалог найма (DialogUI башни — мир на честной паузе,
-## кнопки-ветки мышью). true = событие съедено.
+## кнопки-ветки мышью). Хижин теперь две — артель (К2) и огневики (К4-ледник),
+## какая ближе к отряду, та и говорит. true = событие съедено.
 func _intro_try_hut() -> bool:
-	if not intro_mode or _hut == null or not is_instance_valid(_hut) or _squad == null:
+	if not intro_mode or _squad == null:
 		return false
-	# Пока завал цел, до хижины не дойти — гейт не нужен, решает дистанция.
 	var c: Vector3 = _squad.compute_center()
 	if c == Vector3.INF:
 		return false
-	if Vector2(_hut.global_position.x - c.x, _hut.global_position.z - c.z).length() > 3.5:
+	# Пока завалы целы, до хижин не дойти — гейт не нужен, решает дистанция.
+	var target_hut: Node3D = null
+	var fire_hut: bool = false
+	if _hut != null and is_instance_valid(_hut) \
+			and Vector2(_hut.global_position.x - c.x, _hut.global_position.z - c.z).length() <= 3.5:
+		target_hut = _hut
+	elif _ice_hut != null and is_instance_valid(_ice_hut) \
+			and Vector2(_ice_hut.global_position.x - c.x, _ice_hut.global_position.z - c.z).length() <= 3.5:
+		target_hut = _ice_hut
+		fire_hut = true
+	if target_hut == null:
 		return false
 	if _dialog_ui == null or not is_instance_valid(_dialog_ui):
 		return false
 	if bool(_dialog_ui.call(&"is_open")):
 		return true
 	# Цена в тексте кнопки — из export'а, чтобы не расползлась с логикой найма.
-	var dlg: Dictionary = INTRO_HUT_DIALOG.duplicate(true)
+	var dlg: Dictionary = (INTRO_FIRE_HUT_DIALOG if fire_hut else INTRO_HUT_DIALOG).duplicate(true)
+	var cost: int = fire_hire_cost_each * 2 if fire_hut else artel_hire_cost
 	for node_id in dlg:
 		for ch in dlg[node_id]["choices"]:
-			ch["label"] = String(ch["label"]).replace("{cost}", str(artel_hire_cost))
+			ch["label"] = String(ch["label"]).replace("{cost}", str(cost))
 	_dialog_ui.call(&"open", dlg, &"root")
 	return true
 
 
 ## Эффекты веток диалога данжа (DialogUI.effect_selected).
 func _on_intro_dialog_effect(effect_id: StringName) -> void:
+	if effect_id == &"dungeon_hire_fire":
+		_intro_hire_fire()
+		return
 	if effect_id != &"dungeon_hire_artel":
 		return
 	if _alive_artel() >= 2:
@@ -4875,6 +5246,37 @@ func _on_intro_dialog_effect(effect_id: StringName) -> void:
 	_refresh_focus_cards()
 	_update_labels()
 	EventBus.tutorial_hint.emit("Артель нанята! ПКМ — каменная волна теперь доступна", 4.0)
+
+
+## Найм огневиков (хижина К4). Свободные слоты есть (кап intro_squad_cap) —
+## пара встаёт в строй сразу; отряд ПОЛОН — пауза и ЭКРАН ЗАМЕНЫ (тот же
+## предбанник-жест, что сбор в песочнице): кого-то придётся отпустить.
+func _intro_hire_fire() -> void:
+	if _alive_fire_mages() >= 2:
+		EventBus.tutorial_hint.emit("Огневики уже с тобой (2/2)", 2.5)
+		return
+	var alive_total: int = 0
+	for m in _squad.members:
+		if is_instance_valid(m):
+			alive_total += 1
+	if alive_total + 2 > intro_squad_cap:
+		_open_swap_roster()
+		return
+	var cost: int = fire_hire_cost_each * 2
+	if _coin_total < cost:
+		EventBus.tutorial_hint.emit(
+				"Не хватает монет: огневики стоят %d (есть %d)" % [cost, _coin_total], 3.0)
+		return
+	_coin_total -= cost
+	var base: Vector3 = _ice_hut.global_position if (_ice_hut != null and is_instance_valid(_ice_hut)) \
+			else _squad.compute_center()
+	for i in range(2):
+		_create_wasd_soldier(&"fire_mage", base + Vector3(-1.5, 0.2, -1.0 + 2.0 * float(i)))
+	wasd_fire_mages = 2
+	_activate_ping(base)
+	_refresh_focus_cards()
+	_update_labels()
+	EventBus.tutorial_hint.emit("Огневики в строю! ПКМ — залп фаерболов: жги лёд и врагов", 4.0)
 
 
 ## К3: МАСТЕРСКАЯ. Машина патронов (штатный крафт-котёл), продукт — бомба, цель
@@ -4979,28 +5381,373 @@ func _intro_spawn_rubble(pos: Vector3, rot_y: float = 0.0, width: float = 12.5) 
 	return body
 
 
+# =============================================================================
+# К4 «ЛЕДНИК» (интро): скользкий лёд + шипы + огневики (канон DESIGN/сценарий)
+# =============================================================================
+
+## Постройка ледяной комнаты между К3 и ангаром (z −106..−146 при rc.z=40).
+## Юг — северная стена К3 с завалом (бомба). Пол под слоем льда: скольжение —
+## код (_tick_ice/_wasd_move), визуал — полупрозрачная плита. Вдоль стен —
+## сегменты ЛЕДЯНЫХ ШИПОВ (контакт режет всех), в центре колонны с шипами
+## (по маркерам Intro/IceCol*), выход на север завален ГЛЫБАМИ ЛЬДА. Всё
+## ледяное топится ТОЛЬКО фаерболами огневиков (группа ice_meltable).
+func _intro_setup_ice_room() -> void:
+	var zc: float = room_center.z - 166.0
+	_ice_rect = Rect2(room_center.x - 16.0, room_center.z - 186.0, 32.0, 40.0)
+	# Пол и каменные стены короба.
+	_secret_wall_body(Vector3(room_center.x, -0.25, zc), Vector3(34.0, 0.5, 40.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(room_center.x - 16.0, 1.5, zc), Vector3(1.0, 3.0, 40.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(room_center.x + 16.0, 1.5, zc), Vector3(1.0, 3.0, 40.0), false, Vector3.FORWARD)
+	# Северная стена: два сегмента + завал из глыб льда по центру (проём в ангар).
+	var nz2: float = room_center.z - 186.0
+	_secret_wall_body(Vector3(room_center.x - 11.2, 1.5, nz2), Vector3(9.5, 3.0, 1.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(room_center.x + 11.2, 1.5, nz2), Vector3(9.5, 3.0, 1.0), false, Vector3.FORWARD)
+	# Боковины юга ангара (раньше юг ангару закрывала стена К3).
+	_secret_wall_body(Vector3(room_center.x - 24.0, 1.5, nz2), Vector3(16.0, 3.0, 1.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(room_center.x + 24.0, 1.5, nz2), Vector3(16.0, 3.0, 1.0), false, Vector3.FORWARD)
+	_ice_boulders = _spawn_ice_rubble(Vector3(room_center.x, 0.0, nz2))
+	# Ледяная плита пола — чистый визуал (скольжение делает код по _ice_rect).
+	var sheet := MeshInstance3D.new()
+	var sheet_mesh := BoxMesh.new()
+	sheet_mesh.size = Vector3(32.0, 0.06, 40.0)
+	sheet.mesh = sheet_mesh
+	sheet.material_override = _ice_mat(0.45)
+	sheet.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(sheet)
+	sheet.global_position = Vector3(room_center.x, 0.03, zc)
+	# Стены шипов: 4 сегмента вдоль каждой боковой стены, чуть отступив внутрь.
+	for i in range(4):
+		var seg_z: float = zc - 15.0 + 10.0 * float(i)
+		_spawn_spike_wall(Vector3(room_center.x - 14.6, 0.0, seg_z), 1.0)
+		_spawn_spike_wall(Vector3(room_center.x + 14.6, 0.0, seg_z), -1.0)
+	# Колонны с шипами — по маркерам Intro/IceCol* (двигаются в редакторе).
+	var intro_root := get_node_or_null("Intro")
+	if intro_root != null:
+		for child in intro_root.get_children():
+			if child is Marker3D and String(child.name).begins_with("IceCol"):
+				_spawn_spike_column((child as Node3D).global_position)
+	# Хижина огневиков — узел Intro/HutFire (инстанс gnome_house.tscn).
+	# [E]-маркер сразу: дом виден с порога, интригу держит завал, не хижина.
+	_ice_hut = get_node_or_null("Intro/HutFire") as Node3D
+	if _ice_hut != null:
+		_spawn_e_marker(_ice_hut, 2.4)
+	# Деньги ледника: кучки у входа и дорожка к хижине (30 = пара огневиков).
+	_coin_pile(Vector3(room_center.x - 6.0, 0.0, room_center.z - 150.0), 3)
+	_coin_trail([
+		Vector3(room_center.x + 4.0, 0.0, room_center.z - 158.0),
+		Vector3(room_center.x + 8.0, 0.0, room_center.z - 170.0),
+	], 5.0)
+
+
+## Материал льда: полупрозрачная голубая толща с бликом.
+func _ice_mat(alpha: float) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.62, 0.8, 0.95, alpha)
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.roughness = 0.08
+	m.metallic = 0.15
+	return m
+
+
+## Сегмент шипастой ледяной стены: коллайдер-плита + наросты-шипы ВНУТРЬ
+## комнаты (side: 1 = шипы на +X, −1 = на −X). Топится фаерболом за
+## ice_wall_hits попаданий; касание режет всех (meta spike, см. _tick_ice_spikes).
+func _spawn_spike_wall(pos: Vector3, side: float) -> void:
+	var body := StaticBody3D.new()
+	body.collision_layer = Layers.TERRAIN
+	body.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	var bs := BoxShape3D.new()
+	bs.size = Vector3(0.9, 2.4, 9.6)
+	cs.shape = bs
+	cs.position = Vector3(0.0, 1.2, 0.0)
+	body.add_child(cs)
+	var slab := MeshInstance3D.new()
+	var slab_mesh := BoxMesh.new()
+	slab_mesh.size = Vector3(0.9, 2.4, 9.6)
+	slab.mesh = slab_mesh
+	slab.material_override = _ice_mat(0.7)
+	slab.position = Vector3(0.0, 1.2, 0.0)
+	body.add_child(slab)
+	var spike_mat := _ice_mat(0.9)
+	for i in range(5):
+		var cone := CylinderMesh.new()
+		cone.top_radius = 0.0
+		cone.bottom_radius = 0.22
+		cone.height = 0.9
+		var mi := MeshInstance3D.new()
+		mi.mesh = cone
+		mi.material_override = spike_mat
+		mi.rotation.z = -side * PI / 2.0
+		mi.position = Vector3(side * 0.75, randf_range(0.5, 1.6),
+				-3.8 + 1.9 * float(i) + randf_range(-0.3, 0.3))
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		body.add_child(mi)
+	add_child(body)
+	body.global_position = pos
+	body.add_to_group(&"ice_meltable")
+	body.set_meta(&"melt_hits", ice_wall_hits)
+	body.set_meta(&"melt_reach", 5.4)
+	body.set_meta(&"spike", true)
+	body.set_meta(&"spike_half", Vector2(0.45, 4.8))
+
+
+## Колонна льда с радиальными шипами (центр комнаты, по маркерам IceCol*).
+func _spawn_spike_column(pos: Vector3) -> void:
+	var body := StaticBody3D.new()
+	body.collision_layer = Layers.TERRAIN
+	body.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	var cyl := CylinderShape3D.new()
+	cyl.radius = 1.1
+	cyl.height = 2.6
+	cs.shape = cyl
+	cs.position = Vector3(0.0, 1.3, 0.0)
+	body.add_child(cs)
+	var trunk := MeshInstance3D.new()
+	var trunk_mesh := CylinderMesh.new()
+	trunk_mesh.top_radius = 0.7
+	trunk_mesh.bottom_radius = 1.1
+	trunk_mesh.height = 2.6
+	trunk.mesh = trunk_mesh
+	trunk.material_override = _ice_mat(0.7)
+	trunk.position = Vector3(0.0, 1.3, 0.0)
+	body.add_child(trunk)
+	var spike_mat := _ice_mat(0.9)
+	for i in range(6):
+		var ang: float = TAU * float(i) / 6.0
+		var cone := CylinderMesh.new()
+		cone.top_radius = 0.0
+		cone.bottom_radius = 0.2
+		cone.height = 0.85
+		var mi := MeshInstance3D.new()
+		mi.mesh = cone
+		mi.material_override = spike_mat
+		mi.position = Vector3(cos(ang) * 1.25, randf_range(0.5, 1.4), sin(ang) * 1.25)
+		# Конус лежит «наружу»: поворот вокруг Y на угол сектора + наклон в бок.
+		mi.rotation.y = -ang
+		mi.rotation.z = -PI / 2.0
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		body.add_child(mi)
+	add_child(body)
+	body.global_position = pos
+	body.add_to_group(&"ice_meltable")
+	body.set_meta(&"melt_hits", ice_wall_hits)
+	body.set_meta(&"melt_reach", 1.9)
+	body.set_meta(&"spike", true)
+	body.set_meta(&"spike_radius", 1.35)
+
+
+## Завал из глыб льда (по образцу _intro_spawn_rubble, но лёд): берётся ТОЛЬКО
+## огнём — ice_boulder_hits фаерболов. Вал/супер/бомба его не трогают.
+func _spawn_ice_rubble(pos: Vector3) -> StaticBody3D:
+	var body := StaticBody3D.new()
+	body.collision_layer = Layers.TERRAIN
+	body.collision_mask = 0
+	var cs := CollisionShape3D.new()
+	var bs := BoxShape3D.new()
+	bs.size = Vector3(12.5, 3.0, 1.8)
+	cs.shape = bs
+	cs.position = Vector3(0.0, 1.5, 0.0)
+	body.add_child(cs)
+	var mat := _ice_mat(0.75)
+	for i in range(6):
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		var s: float = randf_range(1.6, 2.8)
+		bm.size = Vector3(s, randf_range(1.2, 2.6), randf_range(1.2, 1.8))
+		mi.mesh = bm
+		mi.material_override = mat
+		mi.position = Vector3(-5.0 + 10.0 * float(i) / 5.0 + randf_range(-0.4, 0.4),
+				bm.size.y * 0.5, randf_range(-0.3, 0.3))
+		mi.rotation.y = randf_range(-0.4, 0.4)
+		body.add_child(mi)
+	add_child(body)
+	body.global_position = pos
+	body.add_to_group(&"ice_meltable")
+	body.set_meta(&"melt_hits", ice_boulder_hits)
+	body.set_meta(&"melt_reach", 7.0)
+	body.set_meta(&"spike", false)
+	return body
+
+
+## Взрыв мини-фаербола: топим лёд. Сегменты/колонны/глыбы в радиусе теряют
+## «хит» (пар + усадка как телеграф), на нуле — тают целиком. Попадание в
+## ледяной пол прожигает ТАЛОЕ ПЯТНО — остров штатного сцепления.
+func _on_mage_fireball_hit(origin: Vector3, radius: float) -> void:
+	for n in get_tree().get_nodes_in_group(&"ice_meltable"):
+		if not is_instance_valid(n) or (n as Node).is_queued_for_deletion():
+			continue
+		var nd := n as Node3D
+		var d: float = Vector2(nd.global_position.x - origin.x,
+				nd.global_position.z - origin.z).length()
+		if d > radius + float((n as Node).get_meta(&"melt_reach", 1.8)):
+			continue
+		var hits: int = int((n as Node).get_meta(&"melt_hits", 1)) - 1
+		(n as Node).set_meta(&"melt_hits", hits)
+		if hits <= 0:
+			_melt_ice_node(nd)
+		else:
+			AoeVisual.spawn_dust(self, nd.global_position + Vector3.UP * 0.8)
+			for ch in nd.get_children():
+				if ch is MeshInstance3D:
+					(ch as Node3D).scale *= 0.9
+	if _ice_rect.has_point(Vector2(origin.x, origin.z)):
+		_add_melt_patch(Vector3(origin.x, 0.0, origin.z))
+
+
+## Лёд растаял целиком: осколки-брызги, пар, поле узнаёт о проходе.
+func _melt_ice_node(n: Node3D) -> void:
+	var p: Vector3 = n.global_position + Vector3.UP * 1.0
+	ShatterEffect.spawn(self, p, Color(0.75, 0.88, 1.0), 14, 1.4, Vector3(0, 0, -1), 1.1)
+	AoeVisual.spawn_dust(self, n.global_position)
+	if _flow != null:
+		_flow.call(&"refresh_around", n.global_position, 7.0)
+	if n == _ice_boulders:
+		_ice_boulders = null
+		EventBus.tutorial_hint.emit("Глыбы растоплены — путь к ангару открыт!", 3.5)
+	n.queue_free()
+
+
+## Талое пятно: тёмный мокрый камень поверх льда, в границах пятна сцепление
+## штатное (см. _is_on_ice). Пятна навсегда — прожжённая тропа остаётся.
+func _add_melt_patch(pos: Vector3) -> void:
+	for p in _melt_patches:
+		if (p["pos"] as Vector3).distance_to(pos) < 1.2:
+			return
+	_melt_patches.append({"pos": pos, "r": melt_patch_radius})
+	var mi := MeshInstance3D.new()
+	var disc := CylinderMesh.new()
+	disc.top_radius = melt_patch_radius
+	disc.bottom_radius = melt_patch_radius
+	disc.height = 0.05
+	mi.mesh = disc
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.13, 0.14, 0.17)
+	m.roughness = 0.25
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+	mi.global_position = Vector3(pos.x, 0.07, pos.z)
+	AoeVisual.spawn_dust(self, pos)
+
+
+## На льду ли точка: в прямоугольнике ледника и НЕ на талом пятне.
+func _is_on_ice(p: Vector3) -> bool:
+	if _ice_rect.size == Vector2.ZERO or not _ice_rect.has_point(Vector2(p.x, p.z)):
+		return false
+	for patch in _melt_patches:
+		var pp: Vector3 = patch["pos"]
+		var r: float = patch["r"]
+		if Vector2(p.x - pp.x, p.z - pp.z).length_squared() < r * r:
+			return false
+	return true
+
+
+## Тик ледника: откат залпа, сцепление юнитов/скелетов по зоне, шипы.
+## Скольжение гномов — через ШТАТНЫЙ механизм SoldierGnome.ice_grip_override
+## (лёд доминирует над рулением); ветка инерции включается steer_inertia > 0.
+func _tick_ice(delta: float) -> void:
+	if _fire_cd > 0.0:
+		_fire_cd = maxf(_fire_cd - delta, 0.0)
+	if _ice_rect.size == Vector2.ZERO:
+		return
+	if _squad != null:
+		for m in _squad.members:
+			if not is_instance_valid(m):
+				continue
+			if not m.has_meta(&"base_steer_inertia"):
+				m.set_meta(&"base_steer_inertia", m.steer_inertia)
+			var base: float = float(m.get_meta(&"base_steer_inertia"))
+			var on: bool = _is_on_ice((m as Node3D).global_position)
+			m.ice_grip_override = ice_unit_grip if on else -1.0
+			m.steer_inertia = (base if base > 0.0 else ice_unit_grip) if on else base
+	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if is_instance_valid(sk) and not (sk as Node).is_queued_for_deletion():
+			(sk as Node).set(&"ice_grip",
+					skeleton_ice_grip if _is_on_ice((sk as Node3D).global_position) else 0.0)
+	_tick_ice_spikes(delta)
+
+
+## Шипы режут КОНТАКТ — всех одинаково (симметрия взаимодействий): гномов и
+## скелетов, зазевавшихся у стен/колонн. Урон тиком + отброс от шипа.
+func _tick_ice_spikes(delta: float) -> void:
+	_spike_tick -= delta
+	if _spike_tick > 0.0:
+		return
+	_spike_tick = ice_spike_tick_interval
+	var spikes: Array = []
+	for n in get_tree().get_nodes_in_group(&"ice_meltable"):
+		if is_instance_valid(n) and not (n as Node).is_queued_for_deletion() \
+				and bool((n as Node).get_meta(&"spike", false)):
+			spikes.append(n)
+	if spikes.is_empty():
+		return
+	for grp in [&"soldier", Skeleton.SKELETON_GROUP]:
+		for u in get_tree().get_nodes_in_group(grp):
+			if not is_instance_valid(u) or (u as Node).is_queued_for_deletion():
+				continue
+			var up: Vector3 = (u as Node3D).global_position
+			if not _ice_rect.has_point(Vector2(up.x, up.z)):
+				continue
+			var nearest: Node3D = null
+			var nearest_d: float = 0.5  # порог касания шипов
+			for s in spikes:
+				if not is_instance_valid(s):
+					continue
+				var d: float = _spike_distance(up, s as Node3D)
+				if d < nearest_d:
+					nearest_d = d
+					nearest = s as Node3D
+			if nearest == null:
+				continue
+			var away: Vector3 = up - nearest.global_position
+			away.y = 0.0
+			# У стены отталкиваем строго от плоскости (центр сегмента далеко по Z).
+			if nearest.has_meta(&"spike_half"):
+				away = Vector3(signf(up.x - nearest.global_position.x), 0.0, 0.0)
+			away = away.normalized() if away.length_squared() > 0.01 else Vector3.FORWARD
+			if grp == &"soldier":
+				(u as Node).take_damage(ice_spike_damage)
+			else:
+				Damageable.try_damage(u, ice_spike_damage, 0.0, away)
+			Pushable.try_push(u, away * 7.0 + Vector3.UP * 0.5, 0.25)
+			AoeVisual.spawn_dust(self, up)
+
+
+## Дистанция точки до шипастого объекта в XZ: кольцо колонны или грань плиты.
+func _spike_distance(p: Vector3, s: Node3D) -> float:
+	if s.has_meta(&"spike_radius"):
+		return Vector2(p.x - s.global_position.x, p.z - s.global_position.z).length() \
+				- float(s.get_meta(&"spike_radius"))
+	var half: Vector2 = s.get_meta(&"spike_half", Vector2(0.5, 0.5))
+	var dx: float = maxf(absf(p.x - s.global_position.x) - half.x, 0.0)
+	var dz: float = maxf(absf(p.z - s.global_position.z) - half.y, 0.0)
+	return Vector2(dx, dz).length()
+
+
 ## Ангар с Ладьёй: пол, стены, четыре дока-зажима (три пустых — лор без слов),
 ## Ладья-плейсхолдер в дальнем, заслонка пускового коридора и сам коридор.
 func _intro_build_hangar() -> void:
-	var hzc: float = room_center.z - 168.0  # центр ангара по Z (−128 при z=40)
+	var hzc: float = room_center.z - 208.0  # центр ангара по Z (−168 при z=40; сдвиг −40 под К4-ледник)
 	# Пол ангара и коридора.
 	_secret_wall_body(Vector3(room_center.x, -0.25, hzc), Vector3(64.0, 0.5, 44.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(room_center.x, -0.25, room_center.z - 219.0), Vector3(14.0, 0.5, 62.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(room_center.x, -0.25, room_center.z - 259.0), Vector3(14.0, 0.5, 62.0), false, Vector3.FORWARD)
 	# Стены ангара: запад/восток, север с проёмом (заслонка отдельно).
 	_secret_wall_body(Vector3(room_center.x - 32.0, 1.5, hzc), Vector3(1.0, 3.0, 44.0), false, Vector3.FORWARD)
 	_secret_wall_body(Vector3(room_center.x + 32.0, 1.5, hzc), Vector3(1.0, 3.0, 44.0), false, Vector3.FORWARD)
-	var nz: float = room_center.z + INTRO_CORRIDOR_Z - 40.0  # −150 при z=40
+	var nz: float = room_center.z + INTRO_CORRIDOR_Z - 40.0  # −190 при z=40
 	_secret_wall_body(Vector3(room_center.x - 19.0, 1.5, nz), Vector3(26.0, 3.0, 1.0), false, Vector3.FORWARD)
 	_secret_wall_body(Vector3(room_center.x + 19.0, 1.5, nz), Vector3(26.0, 3.0, 1.0), false, Vector3.FORWARD)
 	_launch_gate = _secret_wall_body(Vector3(room_center.x, 1.5, nz), Vector3(12.5, 3.0, 1.0), false, Vector3.FORWARD)
 	# Стены пускового коридора.
-	_secret_wall_body(Vector3(room_center.x - 6.0, 1.5, room_center.z - 219.0), Vector3(1.0, 3.0, 60.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(room_center.x + 6.0, 1.5, room_center.z - 219.0), Vector3(1.0, 3.0, 60.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(room_center.x - 6.0, 1.5, room_center.z - 259.0), Vector3(1.0, 3.0, 60.0), false, Vector3.FORWARD)
+	_secret_wall_body(Vector3(room_center.x + 6.0, 1.5, room_center.z - 259.0), Vector3(1.0, 3.0, 60.0), false, Vector3.FORWARD)
 	# Доки-зажимы вдоль западной стены: пары колонн, три пустых + один с Ладьёй.
 	var pillar_mat := StandardMaterial3D.new()
 	pillar_mat.albedo_color = Color(0.28, 0.3, 0.36)
 	pillar_mat.metallic = 0.6
-	var dock_zs := [-6.0, -18.0, -30.0, -40.0]  # локально от z −106
+	var dock_zs := [-6.0, -18.0, -30.0, -40.0]  # локально от z −146 (юг ангара)
 	for dz in dock_zs:
 		for side in [-3.5, 3.5]:
 			var mi := MeshInstance3D.new()
@@ -5010,11 +5757,11 @@ func _intro_build_hangar() -> void:
 			mi.material_override = pillar_mat
 			add_child(mi)
 			mi.global_position = Vector3(room_center.x - 24.0 + float(side), 2.1,
-					room_center.z - 146.0 + float(dz))
+					room_center.z - 186.0 + float(dz))
 	# Ладья — в последнем доке, тёмная до посадки.
 	_ladya = Node3D.new()
 	add_child(_ladya)
-	_ladya.global_position = Vector3(room_center.x - 24.0, 0.0, room_center.z - 186.0)
+	_ladya.global_position = Vector3(room_center.x - 24.0, 0.0, room_center.z - 226.0)
 	_ladya_mat = StandardMaterial3D.new()
 	_ladya_mat.albedo_color = Color(0.16, 0.17, 0.21)
 	_ladya_mat.metallic = 0.4
@@ -5380,6 +6127,20 @@ func _intro_tick(delta: float) -> void:
 		_intro_left[2] = 0
 		_intro_spawn_pack(4)
 		EventBus.tutorial_hint.emit("Отбейся — и собери бомбу в машине патронов", 4.0)
+	# К4-ледник: встреча на пороге (скелеты уже НА льду — их тоже несёт) +
+	# вдогон с юга, когда отряд втянулся к колоннам. Урок комнаты телесный:
+	# скольжение, шипы у стен, и только потом — покупка огня.
+	if _k4_wave == 0 and c.z < room_center.z - 147.0:
+		_k4_wave = 1
+		for i in range(5):
+			_spawn_skeleton_at(Vector3(room_center.x - 8.0 + 4.0 * float(i), 0.6,
+					room_center.z - 181.0))
+		EventBus.tutorial_hint.emit("ЛЕДНИК. Лёд несёт, шипы у стен РЕЖУТ — правь заранее!", 5.0)
+	elif _k4_wave == 1 and c.z < room_center.z - 166.0:
+		_k4_wave = 2
+		for i in range(4):
+			_spawn_skeleton_at(Vector3(room_center.x - 6.0 + 4.0 * float(i), 0.6,
+					room_center.z - 149.0))
 	# Пазл К2: блок ЛЕЖИТ на кнопке (не несётся, осел) → рычаг запитан.
 	# Однократная защёлка — снятие блока рычаг не глушит (туториал, не головоломка).
 	if not _k2_powered and _k2_block != null and is_instance_valid(_k2_block) \
@@ -5435,7 +6196,7 @@ func _intro_tick_hangar(c: Vector3) -> void:
 		_hangar_wave = 1
 		for i in range(6):
 			_spawn_skeleton_at(Vector3(room_center.x - 26.0 + 10.0 * float(i), 0.6,
-					room_center.z - 188.0 + randf_range(0.0, 4.0)))
+					room_center.z - 228.0 + randf_range(0.0, 4.0)))
 		EventBus.tutorial_hint.emit("АНГАР. Зажимы пусты… кроме одного. ДОБЕГИ до Ладьи!", 5.0)
 	if _hangar_wave >= 1 \
 			and Vector2(_ladya.global_position.x - c.x, _ladya.global_position.z - c.z).length() < 5.0:
@@ -5474,10 +6235,10 @@ func _intro_board() -> void:
 	EventBus.tutorial_hint.emit("ЛАДЬЯ ТВОЯ. WASD — ход, ЛКМ — ДЭШ: её оружие ближнего боя", 6.0)
 	_hangar_wave = 2
 	var corners := [
-		Vector3(room_center.x - 28.0, 0.6, room_center.z - 150.0),
-		Vector3(room_center.x + 28.0, 0.6, room_center.z - 150.0),
-		Vector3(room_center.x - 28.0, 0.6, room_center.z - 186.0),
-		Vector3(room_center.x + 28.0, 0.6, room_center.z - 186.0),
+		Vector3(room_center.x - 28.0, 0.6, room_center.z - 190.0),
+		Vector3(room_center.x + 28.0, 0.6, room_center.z - 190.0),
+		Vector3(room_center.x - 28.0, 0.6, room_center.z - 226.0),
+		Vector3(room_center.x + 28.0, 0.6, room_center.z - 226.0),
 	]
 	for p in corners:
 		_spawn_skeleton_at(p)
@@ -5553,7 +6314,7 @@ func _intro_clamp_ladya(p: Vector3) -> Vector3:
 	p.x = clampf(p.x, room_center.x - 30.0, room_center.x + 30.0)
 	if p.z < corr_z:
 		p.x = clampf(p.x, room_center.x - 4.2, room_center.x + 4.2)
-	p.z = clampf(p.z, room_center.z + INTRO_FINISH_Z - 48.0, room_center.z - 148.0)
+	p.z = clampf(p.z, room_center.z + INTRO_FINISH_Z - 48.0, room_center.z - 188.0)
 	return p
 
 

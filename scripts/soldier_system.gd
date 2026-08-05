@@ -141,6 +141,31 @@ const SOLDIER_CATALOG: Dictionary = {
 			"color": Color(0.7, 0.45, 0.25, 1.0),
 		},
 	},
+	&"fire_mage": {
+		"name": "Гномы-огневики",
+		"description": "Волшебники огня: залп фаерболов — мини-копий выстрела Ладьи. Огонь топит лёд. Сами не воюют — чистая кнопка ПКМ.",
+		"icon_color": Color(0.95, 0.4, 0.2, 1.0),
+		"squad_size": 2,
+		"squad_cap": 7,
+		# Тело гнома (soldier_worker.tscn, generic SoldierGnome); алый скин
+		# красит данж-сцена (_skin_fire_mage). soldier_type != worker → рабочие
+		# ветки (руб-неси-строй) не задеваются.
+		"scene": WORKER_SCENE,
+		"stats": {
+			# Squishy caster: тоньше артельщика, прячь за копейщиками.
+			"hp": 60.0,
+			# 0 = сам НЕ воюет вообще (симметрия с копейщиком данжа): весь его
+			# вклад — залп по ПКМ, между залпами он тело в строю.
+			"enemy_detect_radius": 0.0,
+			"attack_range": 2.0,
+			"attack_damage_min": 2.0,
+			"attack_damage_max": 4.0,
+			"attack_cooldown_min": 1.0,
+			"attack_cooldown_max": 1.4,
+			"move_speed": 2.2,
+			"color": Color(0.95, 0.4, 0.2, 1.0),
+		},
+	},
 }
 
 
