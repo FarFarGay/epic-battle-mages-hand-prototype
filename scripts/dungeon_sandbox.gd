@@ -3056,7 +3056,7 @@ func _place_piece(cls: StringName, anchor_idx: int, offsets: Array, alive: int) 
 	_sync_roster_from_cells()
 
 
-## Авто-постановка (префилл замены, клавиши): первый влезающий якорь × поворот.
+## Авто-постановка ОДНОЙ фигуры (клавиши): первый влезающий якорь × поворот.
 func _auto_place_piece(cls: StringName, alive: int) -> bool:
 	for rot in range(4):
 		var offs: Array = _rotated_offsets(cls, rot)
@@ -3064,6 +3064,47 @@ func _auto_place_piece(cls: StringName, alive: int) -> bool:
 			if _piece_fits(i, offs):
 				_place_piece(cls, i, offs, alive)
 				return true
+	return false
+
+
+## Префилл НАБОРА фигур: бэктрекинг по якорям×поворотам (доска 7 клеток, фигур
+## ≤4 — мгновенно). Жадная расстановка ломалась: домино посреди доски отрезало
+## место уголку лучников, и фигура молча пропадала.
+func _prefill_pieces(want: Array) -> void:
+	var placements: Array = []
+	if _solve_fill(want, 0, placements):
+		for p in placements:
+			_place_piece(p["cls"], p["anchor"], p["offsets"], p["alive"])
+	else:
+		# Полного замощения нет (нестандартный состав) — жадно, сколько влезет.
+		for w in want:
+			_auto_place_piece(w["cls"], w["alive"])
+
+
+func _solve_fill(want: Array, idx: int, out: Array) -> bool:
+	if idx >= want.size():
+		return true
+	var cls: StringName = want[idx]["cls"]
+	for rot in range(4):
+		var offs: Array = _rotated_offsets(cls, rot)
+		for i in range(_cells.size()):
+			if not _piece_fits(i, offs):
+				continue
+			# Пробная занятость; реальную постановку делает _place_piece позже.
+			var base: Vector2i = _cells[i]["grid"]
+			var taken: Array = []
+			for off in offs:
+				var ci: int = _cell_at_grid(base + (off as Vector2i))
+				_cells[ci]["cls"] = cls
+				taken.append(ci)
+			out.append({"cls": cls, "anchor": i, "offsets": offs,
+					"alive": want[idx]["alive"]})
+			var solved: bool = _solve_fill(want, idx + 1, out)
+			for ci in taken:
+				_cells[ci]["cls"] = &""
+			if solved:
+				return true
+			out.pop_back()
 	return false
 
 
@@ -3142,24 +3183,29 @@ func _roster_tile(pos: Vector3) -> MeshInstance3D:
 	return mi
 
 
-## Болванки в кучке: тел — по СУММЕ живых в фигурах очереди (кап 8, дальше
-## куча просто «полная»). Дёшево: статуи без теней и коллизий.
+## Кучка = фигуры, ЛЕЖАЩИЕ СВОЕЙ ФОРМОЙ (не кольцо тел): каждая ждущая фигура
+## выложена мини-полимино (шаг 0.9), гномы стоят «как встанут в строю»; павшие
+## клетки фигуры пустуют. Показываем до 3 фигур очереди, друг под другом.
 func _refresh_stack(cls: StringName) -> void:
 	var st: Dictionary = _roster_stacks[cls]
 	for b in st["bodies"]:
 		if is_instance_valid(b):
 			(b as Node).queue_free()
 	st["bodies"] = []
-	var total: int = 0
-	for a in st["queue"]:
-		total += int(a)
-	var n: int = mini(total, 8)
-	for i in range(n):
-		var ang: float = TAU * float(i) / 8.0
-		var p: Vector3 = (st["pos"] as Vector3) + Vector3(cos(ang) * 1.2, 0.0, sin(ang) * 1.2)
-		var b := _roster_body(cls, p)
-		if b != null:
-			st["bodies"].append(b)
+	var offs: Array = PIECE_SHAPES.get(cls, [Vector2i.ZERO])
+	var q: Array = st["queue"]
+	for k in range(mini(q.size(), 3)):
+		var alive: int = int(q[k])
+		var base: Vector3 = (st["pos"] as Vector3) \
+				+ Vector3(-0.45, 0.0, -0.9 + float(k) * 2.4)
+		for j in range(offs.size()):
+			if j >= alive:
+				break
+			var off: Vector2i = offs[j]
+			var b := _roster_body(cls,
+					base + Vector3(float(off.x) * 0.9, 0.0, float(off.y) * 0.9))
+			if b != null:
+				st["bodies"].append(b)
 
 
 ## Гном-статуя для площадки сбора: ШТАТНАЯ модель класса (та же сцена, что
@@ -3571,14 +3617,17 @@ func _build_swap_scene(fire_stock: int = 0) -> void:
 		_roster_stacks[cls] = {"pos": pos, "queue": q, "bodies": []}
 		_refresh_stack(cls)
 		_stack_label(pos, String(d[2]), col)
-	# Префилл: фигура каждого живого класса встаёт на доску со своим alive.
+	# Префилл: фигуры живых классов встают на доску со своим alive — солвером
+	# (жадный порядок мог не найти замощение и «терять» фигуру).
+	var want: Array = []
 	for cls in [&"pikeman", ARCHER_TYPE, &"worker", &"fire_mage"]:
 		var alive: int = 0
 		for m in _squad.members:
 			if is_instance_valid(m) and m.soldier_type == cls:
 				alive += 1
 		if alive > 0:
-			_auto_place_piece(cls, alive)
+			want.append({"cls": cls, "alive": alive})
+	_prefill_pieces(want)
 	if _camera != null:
 		_camera.look_at_from_position(c + camera_offset, c, Vector3.UP)
 	_look_target = c
