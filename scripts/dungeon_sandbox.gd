@@ -5385,47 +5385,38 @@ func _intro_spawn_rubble(pos: Vector3, rot_y: float = 0.0, width: float = 12.5) 
 # К4 «ЛЕДНИК» (интро): скользкий лёд + шипы + огневики (канон DESIGN/сценарий)
 # =============================================================================
 
-## Постройка ледяной комнаты между К3 и ангаром (z −106..−146 при rc.z=40).
-## Юг — северная стена К3 с завалом (бомба). Пол под слоем льда: скольжение —
-## код (_tick_ice/_wasd_move), визуал — полупрозрачная плита. Вдоль стен —
-## сегменты ЛЕДЯНЫХ ШИПОВ (контакт режет всех), в центре колонны с шипами
-## (по маркерам Intro/IceCol*), выход на север завален ГЛЫБАМИ ЛЬДА. Всё
-## ледяное топится ТОЛЬКО фаерболами огневиков (группа ice_meltable).
+## Ледяная комната между К3 и ангаром (z −106..−146 при rc.z=40). ВСЯ геометрия
+## живёт УЗЛАМИ в tscn (ветка Room4: Floor/Wall*/IceSheet/SpikeWall*/IceCol*/
+## IceRubble) — юзер двигает её в редакторе; код только БИНДИТ: группы, меты
+## плавкости/шипов (числа — из export'ов), зону льда. Скольжение — код
+## (_tick_ice/_wasd_move) по _ice_rect. Всё ледяное топится ТОЛЬКО фаерболами
+## огневиков (группа ice_meltable, см. _on_mage_fireball_hit).
 func _intro_setup_ice_room() -> void:
-	var zc: float = room_center.z - 166.0
 	_ice_rect = Rect2(room_center.x - 16.0, room_center.z - 186.0, 32.0, 40.0)
-	# Пол и каменные стены короба.
-	_secret_wall_body(Vector3(room_center.x, -0.25, zc), Vector3(34.0, 0.5, 40.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(room_center.x - 16.0, 1.5, zc), Vector3(1.0, 3.0, 40.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(room_center.x + 16.0, 1.5, zc), Vector3(1.0, 3.0, 40.0), false, Vector3.FORWARD)
-	# Северная стена: два сегмента + завал из глыб льда по центру (проём в ангар).
-	var nz2: float = room_center.z - 186.0
-	_secret_wall_body(Vector3(room_center.x - 11.2, 1.5, nz2), Vector3(9.5, 3.0, 1.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(room_center.x + 11.2, 1.5, nz2), Vector3(9.5, 3.0, 1.0), false, Vector3.FORWARD)
-	# Боковины юга ангара (раньше юг ангару закрывала стена К3).
-	_secret_wall_body(Vector3(room_center.x - 24.0, 1.5, nz2), Vector3(16.0, 3.0, 1.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(room_center.x + 24.0, 1.5, nz2), Vector3(16.0, 3.0, 1.0), false, Vector3.FORWARD)
-	_ice_boulders = _spawn_ice_rubble(Vector3(room_center.x, 0.0, nz2))
-	# Ледяная плита пола — чистый визуал (скольжение делает код по _ice_rect).
-	var sheet := MeshInstance3D.new()
-	var sheet_mesh := BoxMesh.new()
-	sheet_mesh.size = Vector3(32.0, 0.06, 40.0)
-	sheet.mesh = sheet_mesh
-	sheet.material_override = _ice_mat(0.45)
-	sheet.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(sheet)
-	sheet.global_position = Vector3(room_center.x, 0.03, zc)
-	# Стены шипов: 4 сегмента вдоль каждой боковой стены, чуть отступив внутрь.
-	for i in range(4):
-		var seg_z: float = zc - 15.0 + 10.0 * float(i)
-		_spawn_spike_wall(Vector3(room_center.x - 14.6, 0.0, seg_z), 1.0)
-		_spawn_spike_wall(Vector3(room_center.x + 14.6, 0.0, seg_z), -1.0)
-	# Колонны с шипами — по маркерам Intro/IceCol* (двигаются в редакторе).
-	var intro_root := get_node_or_null("Intro")
-	if intro_root != null:
-		for child in intro_root.get_children():
-			if child is Marker3D and String(child.name).begins_with("IceCol"):
-				_spawn_spike_column((child as Node3D).global_position)
+	var r4 := get_node_or_null("Room4")
+	if r4 == null:
+		push_error("[DungeonSandbox] нет ветки Room4 в tscn — ледник пуст")
+		return
+	for child in r4.get_children():
+		var nm := String(child.name)
+		if nm.begins_with("SpikeWall"):
+			(child as Node).add_to_group(&"ice_meltable")
+			child.set_meta(&"melt_hits", ice_wall_hits)
+			child.set_meta(&"melt_reach", 5.4)
+			child.set_meta(&"spike", true)
+			child.set_meta(&"spike_half", Vector2(0.45, 4.8))
+		elif nm.begins_with("IceCol"):
+			(child as Node).add_to_group(&"ice_meltable")
+			child.set_meta(&"melt_hits", ice_wall_hits)
+			child.set_meta(&"melt_reach", 1.9)
+			child.set_meta(&"spike", true)
+			child.set_meta(&"spike_radius", 1.35)
+		elif nm == "IceRubble":
+			_ice_boulders = child as StaticBody3D
+			(child as Node).add_to_group(&"ice_meltable")
+			child.set_meta(&"melt_hits", ice_boulder_hits)
+			child.set_meta(&"melt_reach", 7.0)
+			child.set_meta(&"spike", false)
 	# Хижина огневиков — узел Intro/HutFire (инстанс gnome_house.tscn).
 	# [E]-маркер сразу: дом виден с порога, интригу держит завал, не хижина.
 	_ice_hut = get_node_or_null("Intro/HutFire") as Node3D
@@ -5437,138 +5428,6 @@ func _intro_setup_ice_room() -> void:
 		Vector3(room_center.x + 4.0, 0.0, room_center.z - 158.0),
 		Vector3(room_center.x + 8.0, 0.0, room_center.z - 170.0),
 	], 5.0)
-
-
-## Материал льда: полупрозрачная голубая толща с бликом.
-func _ice_mat(alpha: float) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = Color(0.62, 0.8, 0.95, alpha)
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.roughness = 0.08
-	m.metallic = 0.15
-	return m
-
-
-## Сегмент шипастой ледяной стены: коллайдер-плита + наросты-шипы ВНУТРЬ
-## комнаты (side: 1 = шипы на +X, −1 = на −X). Топится фаерболом за
-## ice_wall_hits попаданий; касание режет всех (meta spike, см. _tick_ice_spikes).
-func _spawn_spike_wall(pos: Vector3, side: float) -> void:
-	var body := StaticBody3D.new()
-	body.collision_layer = Layers.TERRAIN
-	body.collision_mask = 0
-	var cs := CollisionShape3D.new()
-	var bs := BoxShape3D.new()
-	bs.size = Vector3(0.9, 2.4, 9.6)
-	cs.shape = bs
-	cs.position = Vector3(0.0, 1.2, 0.0)
-	body.add_child(cs)
-	var slab := MeshInstance3D.new()
-	var slab_mesh := BoxMesh.new()
-	slab_mesh.size = Vector3(0.9, 2.4, 9.6)
-	slab.mesh = slab_mesh
-	slab.material_override = _ice_mat(0.7)
-	slab.position = Vector3(0.0, 1.2, 0.0)
-	body.add_child(slab)
-	var spike_mat := _ice_mat(0.9)
-	for i in range(5):
-		var cone := CylinderMesh.new()
-		cone.top_radius = 0.0
-		cone.bottom_radius = 0.22
-		cone.height = 0.9
-		var mi := MeshInstance3D.new()
-		mi.mesh = cone
-		mi.material_override = spike_mat
-		mi.rotation.z = -side * PI / 2.0
-		mi.position = Vector3(side * 0.75, randf_range(0.5, 1.6),
-				-3.8 + 1.9 * float(i) + randf_range(-0.3, 0.3))
-		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		body.add_child(mi)
-	add_child(body)
-	body.global_position = pos
-	body.add_to_group(&"ice_meltable")
-	body.set_meta(&"melt_hits", ice_wall_hits)
-	body.set_meta(&"melt_reach", 5.4)
-	body.set_meta(&"spike", true)
-	body.set_meta(&"spike_half", Vector2(0.45, 4.8))
-
-
-## Колонна льда с радиальными шипами (центр комнаты, по маркерам IceCol*).
-func _spawn_spike_column(pos: Vector3) -> void:
-	var body := StaticBody3D.new()
-	body.collision_layer = Layers.TERRAIN
-	body.collision_mask = 0
-	var cs := CollisionShape3D.new()
-	var cyl := CylinderShape3D.new()
-	cyl.radius = 1.1
-	cyl.height = 2.6
-	cs.shape = cyl
-	cs.position = Vector3(0.0, 1.3, 0.0)
-	body.add_child(cs)
-	var trunk := MeshInstance3D.new()
-	var trunk_mesh := CylinderMesh.new()
-	trunk_mesh.top_radius = 0.7
-	trunk_mesh.bottom_radius = 1.1
-	trunk_mesh.height = 2.6
-	trunk.mesh = trunk_mesh
-	trunk.material_override = _ice_mat(0.7)
-	trunk.position = Vector3(0.0, 1.3, 0.0)
-	body.add_child(trunk)
-	var spike_mat := _ice_mat(0.9)
-	for i in range(6):
-		var ang: float = TAU * float(i) / 6.0
-		var cone := CylinderMesh.new()
-		cone.top_radius = 0.0
-		cone.bottom_radius = 0.2
-		cone.height = 0.85
-		var mi := MeshInstance3D.new()
-		mi.mesh = cone
-		mi.material_override = spike_mat
-		mi.position = Vector3(cos(ang) * 1.25, randf_range(0.5, 1.4), sin(ang) * 1.25)
-		# Конус лежит «наружу»: поворот вокруг Y на угол сектора + наклон в бок.
-		mi.rotation.y = -ang
-		mi.rotation.z = -PI / 2.0
-		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		body.add_child(mi)
-	add_child(body)
-	body.global_position = pos
-	body.add_to_group(&"ice_meltable")
-	body.set_meta(&"melt_hits", ice_wall_hits)
-	body.set_meta(&"melt_reach", 1.9)
-	body.set_meta(&"spike", true)
-	body.set_meta(&"spike_radius", 1.35)
-
-
-## Завал из глыб льда (по образцу _intro_spawn_rubble, но лёд): берётся ТОЛЬКО
-## огнём — ice_boulder_hits фаерболов. Вал/супер/бомба его не трогают.
-func _spawn_ice_rubble(pos: Vector3) -> StaticBody3D:
-	var body := StaticBody3D.new()
-	body.collision_layer = Layers.TERRAIN
-	body.collision_mask = 0
-	var cs := CollisionShape3D.new()
-	var bs := BoxShape3D.new()
-	bs.size = Vector3(12.5, 3.0, 1.8)
-	cs.shape = bs
-	cs.position = Vector3(0.0, 1.5, 0.0)
-	body.add_child(cs)
-	var mat := _ice_mat(0.75)
-	for i in range(6):
-		var mi := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		var s: float = randf_range(1.6, 2.8)
-		bm.size = Vector3(s, randf_range(1.2, 2.6), randf_range(1.2, 1.8))
-		mi.mesh = bm
-		mi.material_override = mat
-		mi.position = Vector3(-5.0 + 10.0 * float(i) / 5.0 + randf_range(-0.4, 0.4),
-				bm.size.y * 0.5, randf_range(-0.3, 0.3))
-		mi.rotation.y = randf_range(-0.4, 0.4)
-		body.add_child(mi)
-	add_child(body)
-	body.global_position = pos
-	body.add_to_group(&"ice_meltable")
-	body.set_meta(&"melt_hits", ice_boulder_hits)
-	body.set_meta(&"melt_reach", 7.0)
-	body.set_meta(&"spike", false)
-	return body
 
 
 ## Взрыв мини-фаербола: топим лёд. Сегменты/колонны/глыбы в радиусе теряют
