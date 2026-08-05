@@ -2533,6 +2533,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		# Интро: контекст E по близости — рычаг, хижина, сундук сокровищ, грузы.
 		if not _intro_try_lever() and not _intro_try_hut() and not _intro_try_loot_chest():
 			_toggle_cargo()
+	elif key.keycode == KEY_J and not _game_over and wasd_mode \
+			and not _roster_open and _squad != null:
+		# ЧИТ (тест): J открывает перестройку отряда без похода к хижине.
+		# Сток огневиков как при покупке — проверяются и вытеснение, и оплата.
+		_open_swap_roster(maxi(2 - _alive_fire_mages(), 0))
 
 
 ## Пересечение луча курсора с плоскостью пола (math, без физики) + кламп в комнату.
