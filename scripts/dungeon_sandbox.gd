@@ -44,6 +44,8 @@ const FLOW_FIELD_SCRIPT := preload("res://scripts/dungeon_flow_field.gd")
 ## Снаряд огневиков — ТОТ ЖЕ fireball.tscn, что у башни/меха/шквала: та же
 ## баллистика и визуал, отличаются только цифры setup'а (мини-копия).
 const FIREBALL_SCENE: PackedScene = preload("res://scenes/fireball.tscn")
+## Горящая земля после взрыва — штатный burn-пятак башенного фаербола.
+const BURN_PATCH_SCENE: PackedScene = preload("res://scenes/burn_patch.tscn")
 ## Цвет приказов отряду — тот же голубой, что у aim-ring'а HandSquadAim:
 ## один визуальный язык «команда отряду» по всей игре.
 const CMD_COLOR := Color(0.4, 0.85, 1.0, 0.9)
@@ -423,11 +425,20 @@ const CMD_ARRIVED_DIST := 2.0
 @export var fire_hire_cost_each: int = 15
 ## Кап отряда интро (2 копейщика + 3 лучника + 2 артели = 7; мастер-кап артели).
 @export var intro_squad_cap: int = 7
-## Мини-фаербол огневика: урон в центре AOE, радиус взрыва, откат залпа (жмут
-## все живые огневики разом, по снаряду с гнома).
-@export var mage_fire_damage: float = 16.0
-@export var mage_fire_radius: float = 1.7
+## Мини-фаербол огневика — ТРИ слоя урона (баланс 2026-08-05):
+##  1. ПРЯМОЕ попадание бьёт сильно: бонус ближайшей цели в direct_radius
+##     от точки взрыва (тот, «в кого прилетел»);
+##  2. урон ПО ПЛОЩАДИ слабый: mage_fire_damage в центре AOE, falloff к краю;
+##  3. ГОРЕНИЕ добивает: burn-пятно на месте взрыва тикает по врагам.
+## Откат залпа общий (жмут все живые огневики разом, по снаряду с гнома).
+@export var mage_fire_direct_damage: float = 30.0
+@export var mage_fire_direct_radius: float = 1.0
+@export var mage_fire_damage: float = 10.0
+@export var mage_fire_radius: float = 2.6
 @export var mage_fire_cooldown: float = 5.0
+@export var mage_burn_damage_per_tick: float = 4.0
+@export var mage_burn_tick_interval: float = 0.5
+@export var mage_burn_duration: float = 3.0
 ## Скольжение: множитель руления точки строя на льду (wasd_handling ×) и
 ## «сцепление» юнитов/скелетов на льду (1/с экспоненциального догона скорости;
 ## штатные значения — wasd_grip у гномов и мгновенный разворот у скелетов).
@@ -3922,6 +3933,10 @@ func _launch_mage_fireball(from: Vector3, target: Vector3) -> void:
 	)
 	fb.set_collide_in_flight(true, Layers.TERRAIN)
 	fb.shake_amount = 0.12
+	# Земля горит: штатный burn-пятак (радиус чуть уже AOE), тикает по врагам —
+	# слой «горение добивает» в трёхслойном балансе урона огневика.
+	fb.setup_burn(BURN_PATCH_SCENE, mage_fire_radius * 0.85,
+			mage_burn_damage_per_tick, mage_burn_tick_interval, mage_burn_duration)
 	fb.hit.connect(_on_mage_fireball_hit)
 
 
@@ -4208,10 +4223,12 @@ func _tick_spear_super(delta: float) -> void:
 			_super_ring = null
 			if c != Vector3.INF:
 				_spear_super_blast(c)
-	# HUD обеих способностей: тикающий отсчёт на карточках (раз в 0.1с — строки
+	# HUD способностей: тикающий отсчёт на карточках (раз в 0.1с — строки
 	# не жжём каждый кадр) + мгновенная вспышка бордера на переходе «готов».
+	# _fire_cd в агрегате обязателен: иначе с готовыми супером/валом карточка
+	# огневиков не тикала (рефреш шёл только пока «не всё готово»).
 	var armed: bool = _super_cd <= 0.0 and _super_windup <= 0.0 and _alive_pikemen() > 0 \
-			and _wave_cd <= 0.0
+			and _wave_cd <= 0.0 and _fire_cd <= 0.0
 	_super_hud_acc += delta
 	if armed != _super_armed_prev or (not armed and _super_hud_acc >= 0.1):
 		_super_armed_prev = armed
@@ -5441,10 +5458,28 @@ func _intro_setup_ice_room() -> void:
 	], 5.0)
 
 
-## Взрыв мини-фаербола: топим лёд. Сегменты/колонны/глыбы в радиусе теряют
-## «хит» (пар + усадка как телеграф), на нуле — тают целиком. Попадание в
-## ледяной пол прожигает ТАЛОЕ ПЯТНО — остров штатного сцепления.
+## Взрыв мини-фаербола. ПРЯМОЕ ПОПАДАНИЕ: ближайший враг у точки взрыва
+## (mage_fire_direct_radius) получает бонус-урон — «в кого прилетел, тому
+## больно»; AOE взрыва слабый (маленький damage в setup), горение добивает.
+## Плюс топим лёд: сегменты/колонны/глыбы в радиусе теряют «хит» (пар +
+## усадка как телеграф), на нуле тают целиком. Попадание в ледяной пол
+## прожигает ТАЛОЕ ПЯТНО — остров штатного сцепления.
 func _on_mage_fireball_hit(origin: Vector3, radius: float) -> void:
+	var direct: Node3D = null
+	var direct_d: float = mage_fire_direct_radius
+	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
+			continue
+		var sd: float = Vector2((sk as Node3D).global_position.x - origin.x,
+				(sk as Node3D).global_position.z - origin.z).length()
+		if sd < direct_d:
+			direct_d = sd
+			direct = sk as Node3D
+	if direct != null:
+		var dir: Vector3 = direct.global_position - origin
+		dir.y = 0.0
+		Damageable.try_damage(direct, mage_fire_direct_damage, HitStop.LIGHT,
+				dir if dir.length_squared() > 0.01 else Vector3.FORWARD)
 	for n in get_tree().get_nodes_in_group(&"ice_meltable"):
 		if not is_instance_valid(n) or (n as Node).is_queued_for_deletion():
 			continue
