@@ -2917,22 +2917,14 @@ func _build_roster_scene() -> void:
 	_roster_room = Node3D.new()
 	add_child(_roster_room)
 	_roster_room.global_position = Vector3.ZERO
-	_roster_floor(c, Vector2(30.0, 22.0))
-	# Сетка ячеек: 2 ряда, слева направо. Гном встаёт В ячейку, а не «куда-то
-	# на площадку» — заполненность читается плитками.
-	_cells.clear()
-	var cols: int = ceili(float(roster_slots) / 2.0)
-	for i in range(roster_slots):
-		var row: int = i / cols
-		var col: int = i % cols
-		var p := c + Vector3((float(col) - float(cols - 1) * 0.5) * 2.2,
-				0.0, -3.2 + float(row) * 2.2)
-		_cells.append({"pos": p, "body": null, "cls": &"", "tile": _roster_tile(p)})
-	# Кучки классов вдоль дальней стены предбанника.
+	_roster_floor(c, Vector2(34.0, 22.0))
+	# Ряды-зоны ПО КНОПКАМ: собираешь не «гномов в сетку», а наполнение кнопок.
+	_build_zone_cells(c)
+	# Кучки классов вдоль дальней стены предбанника, с подписями.
 	var defs := [
-		[&"pikeman", Vector3(-8.5, 0.0, 5.0), Color(0.85, 0.55, 0.25)],
-		[ARCHER_TYPE, Vector3(0.0, 0.0, 5.0), Color(0.55, 0.35, 0.75)],
-		[&"worker", Vector3(8.5, 0.0, 5.0), Color(0.7, 0.45, 0.25)],
+		[&"pikeman", Vector3(-8.5, 0.0, 5.0), Color(0.85, 0.55, 0.25), "Копейщики"],
+		[ARCHER_TYPE, Vector3(0.0, 0.0, 5.0), Color(0.55, 0.35, 0.75), "Лучники"],
+		[&"worker", Vector3(8.5, 0.0, 5.0), Color(0.7, 0.45, 0.25), "Артель · вал"],
 	]
 	for d in defs:
 		var pos: Vector3 = c + (d[1] as Vector3)
@@ -2941,10 +2933,80 @@ func _build_roster_scene() -> void:
 			_roster_props.append(ring)
 		_roster_stacks[d[0]] = {"pos": pos, "left": roster_stock, "bodies": []}
 		_refresh_stack(d[0])
+		_stack_label(pos, String(d[3]), d[2])
 	# Камера смотрит в предбанник, пока собираемся.
 	if _camera != null:
 		_camera.look_at_from_position(c + camera_offset, c, Vector3.UP)
 	_look_target = c
+
+
+## Зоны-кнопки экрана сбора/замены: РЯД ячеек = КНОПКА отряда. Класс садится
+## только в ряд своей кнопки; ПКМ-ряд делят спецы (артель/огневики) — при
+## посадке одного типа другой ВЫТЕСНЯЕТСЯ в кучку: одна кнопка = один класс.
+const ROSTER_ZONES := [
+	{"id": &"space", "label": "[ПРОБЕЛ] удар вокруг", "color": Color(0.85, 0.55, 0.25)},
+	{"id": &"lkm", "label": "[ЛКМ] полив по курсору", "color": Color(0.55, 0.35, 0.75)},
+	{"id": &"rmb", "label": "[ПКМ] вал камня / залп огня", "color": Color(0.9, 0.45, 0.2)},
+]
+
+
+## Ряд какой кнопки кормит этот класс.
+func _zone_for_class(cls: StringName) -> StringName:
+	if cls == ARCHER_TYPE:
+		return &"lkm"
+	if cls == &"pikeman":
+		return &"space"
+	return &"rmb"  # worker и fire_mage — спецы одной кнопки
+
+
+## Три ряда ячеек (по roster_slots в каждом), у каждого цветная подложка-полоса
+## и лежащая на полу подпись кнопки. Кап отряда ОБЩИЙ (roster_slots), ряды без
+## своих капов — свободный микс, лишь бы всего ≤ капа.
+func _build_zone_cells(c: Vector3) -> void:
+	_cells.clear()
+	for zi in range(ROSTER_ZONES.size()):
+		var zone: Dictionary = ROSTER_ZONES[zi]
+		var zcol: Color = zone["color"]
+		var zc := c + Vector3(0.0, 0.0, -5.6 + 2.4 * float(zi))
+		var strip := MeshInstance3D.new()
+		var sm := BoxMesh.new()
+		sm.size = Vector3(float(roster_slots) * 2.2 + 0.7, 0.02, 2.1)
+		strip.mesh = sm
+		var smat := StandardMaterial3D.new()
+		smat.albedo_color = Color(zcol.r, zcol.g, zcol.b, 0.16)
+		smat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		smat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		strip.material_override = smat
+		strip.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_roster_room.add_child(strip)
+		strip.global_position = Vector3(zc.x, 0.015, zc.z)
+		var lbl := Label3D.new()
+		lbl.text = zone["label"]
+		lbl.font_size = 72
+		lbl.pixel_size = 0.011
+		lbl.modulate = Color(zcol.r, zcol.g, zcol.b, 0.95)
+		lbl.outline_size = 10
+		lbl.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		_roster_room.add_child(lbl)
+		lbl.global_position = Vector3(zc.x - float(roster_slots) * 1.1 - 1.0, 0.05, zc.z)
+		for i in range(roster_slots):
+			var p := zc + Vector3((float(i) - float(roster_slots - 1) * 0.5) * 2.2, 0.0, 0.0)
+			_cells.append({"pos": p, "body": null, "cls": &"", "tile": _roster_tile(p),
+					"zone": zone["id"]})
+
+
+## Подпись кучки класса — лежит на полу под кучкой.
+func _stack_label(pos: Vector3, text: String, color: Color) -> void:
+	var lbl := Label3D.new()
+	lbl.text = text
+	lbl.font_size = 56
+	lbl.pixel_size = 0.011
+	lbl.modulate = Color(color.r, color.g, color.b, 0.95)
+	lbl.outline_size = 10
+	lbl.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+	_roster_room.add_child(lbl)
+	lbl.global_position = Vector3(pos.x, 0.05, pos.z + 2.7)
 
 
 ## Пол предбанника — простая плита с коллизией (гномы-статуи стоят, курсор
@@ -3053,11 +3115,15 @@ func _sync_roster_from_cells() -> void:
 
 
 ## Свободная ячейка, ближайшая к точке (сначала та, куда целишься).
-func _free_cell_near(p: Vector3) -> int:
+func _free_cell_near(p: Vector3, cls: StringName) -> int:
+	# Только ряд СВОЕЙ кнопки + общий кап отряда (ряды без своих капов).
+	if _cells_taken_total() >= roster_slots:
+		return -1
+	var zone: StringName = _zone_for_class(cls)
 	var best: int = -1
 	var best_d: float = INF
 	for i in range(_cells.size()):
-		if _cells[i]["cls"] != &"":
+		if _cells[i]["cls"] != &"" or _cells[i].get("zone", zone) != zone:
 			continue
 		var cp: Vector3 = _cells[i]["pos"]
 		var d: float = Vector2(cp.x - p.x, cp.z - p.z).length()
@@ -3065,6 +3131,73 @@ func _free_cell_near(p: Vector3) -> int:
 			best_d = d
 			best = i
 	return best
+
+
+## Первая свободная ячейка ряда класса (слева направо) — для префилла и клавиш.
+func _first_free_zone_cell(cls: StringName) -> int:
+	if _cells_taken_total() >= roster_slots:
+		return -1
+	var zone: StringName = _zone_for_class(cls)
+	for i in range(_cells.size()):
+		if _cells[i]["cls"] == &"" and _cells[i].get("zone", &"") == zone:
+			return i
+	return -1
+
+
+func _cells_taken_total() -> int:
+	var n: int = 0
+	for cell in _cells:
+		if cell["cls"] != &"":
+			n += 1
+	return n
+
+
+## Вытеснить из ряда кнопки ВСЕХ гномов другого типа (спец-ряд ПКМ: артель ↔
+## огневики). Вытесненные бегут в свою кучку — вернуть можно, просто посади назад.
+func _eject_zone_conflicts(zone: StringName, keep: StringName) -> void:
+	var ejected: bool = false
+	for cell in _cells:
+		if cell.get("zone", &"") != zone:
+			continue
+		var cls: StringName = cell["cls"]
+		if cls == &"" or cls == keep:
+			continue
+		var body: Node3D = cell["body"]
+		cell["cls"] = &""
+		cell["body"] = null
+		if _roster_stacks.has(cls):
+			_roster_stacks[cls]["left"] = int(_roster_stacks[cls]["left"]) + 1
+		if is_instance_valid(body):
+			_run_back(body, cls)
+		ejected = true
+	if ejected:
+		_sync_roster_from_cells()
+
+
+## Сколько ещё можно набрать в горсть этого класса: общий кап минус занятые,
+## но ЧУЖОЙ тип в спец-ряду не считаем — посадка его всё равно вытеснит.
+func _hand_cap_left(cls: StringName) -> int:
+	var zone: StringName = _zone_for_class(cls)
+	var taken: int = 0
+	for cell in _cells:
+		if cell["cls"] == &"":
+			continue
+		if cell.get("zone", &"") == zone and cell["cls"] != cls:
+			continue
+		taken += 1
+	return roster_slots - taken - _drag_count
+
+
+## Можно ли начать набор класса: есть свободная ячейка его ряда ИЛИ ряд занят
+## другим типом (посадка вытеснит его — брать в руку можно).
+func _can_take(cls: StringName) -> bool:
+	if _first_free_zone_cell(cls) >= 0:
+		return true
+	var zone: StringName = _zone_for_class(cls)
+	for cell in _cells:
+		if cell.get("zone", &"") == zone and cell["cls"] != &"" and cell["cls"] != cls:
+			return true
+	return false
 
 
 ## Занятая ячейка, ближайшая к точке (для ПКМ-изъятия).
@@ -3106,7 +3239,7 @@ func _tick_roster(delta: float) -> void:
 		# Руки пусты: клик по кучке начинает набор, удержание доливает.
 		var cls: StringName = _stack_at(cursor)
 		if lmb_click and cls != &"" and int(_roster_stacks[cls]["left"]) > 0 \
-				and _free_cell_near(cursor) >= 0:
+				and _can_take(cls):
 			_drag_class = cls
 			_drag_count = 0
 			_drag_timer = 0.0
@@ -3146,14 +3279,19 @@ func _tick_roster(delta: float) -> void:
 ## Клик рукой с гномами: над сеткой — по свободным ячейкам (сколько влезет,
 ## остальные бегут назад), мимо — все бегут назад в кучку.
 func _place_hand(cursor: Vector3) -> void:
+	# Клик у сетки: спец-ряд ПКМ сперва вытесняет чужой тип (кнопка не делится),
+	# потом горсть садится в ряд СВОЕЙ кнопки — даже если клик по соседнему ряду.
+	if not _drag_bodies.is_empty() \
+			and Vector2(cursor.x - _roster_pad.x, cursor.z - _roster_pad.z).length() <= 12.0:
+		_eject_zone_conflicts(_zone_for_class(_drag_class), _drag_class)
 	var placed: int = 0
 	for b in _drag_bodies:
 		if not is_instance_valid(b):
 			continue
-		var idx: int = _free_cell_near(cursor)
+		var idx: int = _free_cell_near(cursor, _drag_class)
 		var near_grid: bool = idx >= 0 and Vector2(
 				(_cells[idx]["pos"] as Vector3).x - cursor.x,
-				(_cells[idx]["pos"] as Vector3).z - cursor.z).length() <= 5.0
+				(_cells[idx]["pos"] as Vector3).z - cursor.z).length() <= 6.0
 		if not near_grid:
 			_run_back(b, _drag_class)
 			continue
@@ -3198,8 +3336,9 @@ func _hop_to(b: Node3D, pos: Vector3) -> void:
 ## +1 гном в горсть: из запаса кучки, в пределах свободных слотов.
 func _grab_one() -> void:
 	var st: Dictionary = _roster_stacks[_drag_class]
-	# Больше, чем есть свободных ячеек, в руку не набрать — кап держится сеткой.
-	if int(st["left"]) <= 0 or _roster_total() + _drag_count >= roster_slots:
+	# Больше, чем влезет, в руку не набрать; чужой тип в спец-ряду не в счёт —
+	# его всё равно вытеснит посадка.
+	if int(st["left"]) <= 0 or _hand_cap_left(_drag_class) <= 0:
 		return
 	st["left"] = int(st["left"]) - 1
 	_drag_count += 1
@@ -3247,9 +3386,13 @@ func _roster_change(cls: StringName, delta_n: int) -> void:
 	if not _roster_open:
 		return
 	if delta_n > 0:
-		var idx: int = _free_cell_near(_roster_pad)
 		var st: Dictionary = _roster_stacks.get(cls, {})
-		if idx < 0 or int(st.get("left", 0)) <= 0:
+		if int(st.get("left", 0)) <= 0 or not _can_take(cls):
+			return
+		# Спец-ряд: чужой тип вытесняется — кнопка не делится между классами.
+		_eject_zone_conflicts(_zone_for_class(cls), cls)
+		var idx: int = _first_free_zone_cell(cls)
+		if idx < 0:
 			return
 		st["left"] = int(st["left"]) - 1
 		_refresh_stack(cls)
@@ -3408,20 +3551,14 @@ func _build_swap_scene(fire_stock: int = 0) -> void:
 	_roster_room = Node3D.new()
 	add_child(_roster_room)
 	_roster_room.global_position = Vector3.ZERO
-	_roster_floor(c, Vector2(34.0, 22.0))
-	_cells.clear()
-	var cols: int = ceili(float(roster_slots) / 2.0)
-	for i in range(roster_slots):
-		var row: int = i / cols
-		var col: int = i % cols
-		var p := c + Vector3((float(col) - float(cols - 1) * 0.5) * 2.2,
-				0.0, -3.2 + float(row) * 2.2)
-		_cells.append({"pos": p, "body": null, "cls": &"", "tile": _roster_tile(p)})
+	_roster_floor(c, Vector2(38.0, 22.0))
+	# Те же ряды-кнопки, что и в сборе песочницы — один язык экрана.
+	_build_zone_cells(c)
 	var defs := [
-		[&"pikeman", Vector3(-11.5, 0.0, 5.0), Color(0.85, 0.55, 0.25)],
-		[ARCHER_TYPE, Vector3(-4.0, 0.0, 5.0), Color(0.55, 0.35, 0.75)],
-		[&"worker", Vector3(4.0, 0.0, 5.0), Color(0.7, 0.45, 0.25)],
-		[&"fire_mage", Vector3(11.5, 0.0, 5.0), Color(0.95, 0.4, 0.2)],
+		[&"pikeman", Vector3(-11.5, 0.0, 5.0), Color(0.85, 0.55, 0.25), "Копейщики"],
+		[ARCHER_TYPE, Vector3(-4.0, 0.0, 5.0), Color(0.55, 0.35, 0.75), "Лучники"],
+		[&"worker", Vector3(4.0, 0.0, 5.0), Color(0.7, 0.45, 0.25), "Артель · вал"],
+		[&"fire_mage", Vector3(11.5, 0.0, 5.0), Color(0.95, 0.4, 0.2), "Огневики · залп"],
 	]
 	_roster_stacks.clear()
 	for d in defs:
@@ -3432,15 +3569,18 @@ func _build_swap_scene(fire_stock: int = 0) -> void:
 		var stock: int = fire_stock if d[0] == &"fire_mage" else 0
 		_roster_stacks[d[0]] = {"pos": pos, "left": stock, "bodies": []}
 		_refresh_stack(d[0])
-	var idx: int = 0
+		_stack_label(pos, String(d[3]), d[2])
+	# Префилл: живые садятся в ряды СВОИХ кнопок — видно, какая кнопка чем
+	# заряжена и где пустует.
 	for cls in [&"pikeman", ARCHER_TYPE, &"worker", &"fire_mage"]:
 		for m in _squad.members:
-			if idx >= _cells.size():
+			if not is_instance_valid(m) or m.soldier_type != cls:
+				continue
+			var idx: int = _first_free_zone_cell(cls)
+			if idx < 0:
 				break
-			if is_instance_valid(m) and m.soldier_type == cls:
-				_cells[idx]["cls"] = cls
-				_cells[idx]["body"] = _roster_body(cls, _cells[idx]["pos"])
-				idx += 1
+			_cells[idx]["cls"] = cls
+			_cells[idx]["body"] = _roster_body(cls, _cells[idx]["pos"])
 	if _camera != null:
 		_camera.look_at_from_position(c + camera_offset, c, Vector3.UP)
 	_look_target = c
