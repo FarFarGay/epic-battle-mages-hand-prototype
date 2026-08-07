@@ -1,6 +1,7 @@
 [gd_scene format=3 uid="uid://cgfe6it7kbr0s"]
 
 [ext_resource type="Script" uid="uid://brhmj3f28qb2f" path="res://scripts/dungeon_sandbox.gd" id="1_script"]
+[ext_resource type="PackedScene" path="res://scenes/intro_hangar.tscn" id="1_hangar"]
 [ext_resource type="PackedScene" path="res://scenes/skeleton.tscn" id="2_skel"]
 [ext_resource type="PackedScene" uid="uid://dn2nlohvi0aii" path="res://scenes/lever.tscn" id="3_lever"]
 [ext_resource type="PackedScene" uid="uid://gnomehouse01" path="res://scenes/gnome_house.tscn" id="4_hut"]
@@ -2674,3 +2675,5 @@ mesh = SubResource("mesh_k4_boulder_b")
 [node name="Boulder6" type="MeshInstance3D" parent="Room4/IceRubble"]
 transform = Transform3D(0.980067, 0, -0.198669, 0, 1, 0, 0.198669, 0, 0.980067, 5, 0.95, 0)
 mesh = SubResource("mesh_k4_boulder_c")
+
+[node name="Hangar" parent="." groups=["intro_hangar"] instance=ExtResource("1_hangar")]

@@ -405,11 +405,15 @@ const CMD_ARRIVED_DIST := 2.0
 @export var secret_enabled: bool = true
 ## Сторона квадратного кармана (м).
 @export var secret_size: float = 4.5
-## ЦЕНА обычного сундука в XP (2026-07-30, «орб = опыт ВЕЗДЕ»): орбы со смертей
-## (по 10 XP) пылесосятся отрядом, сундук ВЫМЕНИВАЕТ опыт на находку — буквально
-## «потратить опыт на левелап». Тайниковый сундук БЕСПЛАТЕН (оплачен смекалкой
-## при проломе). 0 = сундуки даром.
-@export var chest_xp_cost: int = 50
+## ЦЕНА обычного сундука в XP. ⭐ 0 с 2026-08-07: сундуки открываются ДАРОМ —
+## награда за то, что нашёл и дошёл. Опыт никуда не делся, он переехал в
+## хижины: там за него берут УЛУЧШЕНИЕ (см. hut_card_cost). Так две валюты
+## получили разные двери — сундук платит за исследование, хижина за прокачку.
+@export var chest_xp_cost: int = 0
+## ЦЕНА УЛУЧШЕНИЯ в хижине гномов (в опыте с орбов). Хижина — единственное
+## место, где опыт тратится: пришёл к своим, вложил добытое, выбрал одну из
+## трёх карточек.
+@export var hut_card_cost: int = 50
 
 @export_group("Интро-сценарий «Из недр — к Ладье»")
 ## СЦЕНАРИЙ СТАРТА ИГРЫ (канон: docs/scenario_dungeon_intro.md; 1-я итерация
@@ -422,6 +426,27 @@ const CMD_ARRIVED_DIST := 2.0
 @export var intro_mode: bool = false
 ## Ладья: крейсер (м/с), скорость дэша (м/с), кулдаун дэша (с), урон и радиус
 ## сноса дэша (скелеты в радиусе от корпуса во время рывка).
+## Сцена башни ОСНОВНОГО уровня — она же Ладья в финале интро. Один объект на
+## оба эпизода: игрок садится ровно в ту башню, которой поедет в большом мире.
+const TOWER_SCENE := preload("res://scenes/tower.tscn")
+## ⭐ ОСТАЛЬНОЙ КОНТРОЛЛЕР БАШНИ (2026-08-07). Посадка — это ПЕРЕКЛЮЧЕНИЕ
+## контроллеров, а не «башня поехала по WASD»: вместе с корпусом игроку обязаны
+## переехать рука (мышь), штатная камера (зум/орбита/шейк) и HUD (мана, слоты
+## заклинаний). Раньше ехал только корпус, и в финале игрок терял половину
+## глаголов, которыми будет играть весь большой мир.
+##
+## Те же сцены, что стоят в level_rooms — не копии и не заглушки: игрок садится
+## в ту машину, на которой выедет, целиком.
+const HAND_SCENE: PackedScene = preload("res://scenes/hand.tscn")
+const CAMERA_RIG_SCENE: PackedScene = preload("res://scenes/camera_rig.tscn")
+const TOWER_HUD_SCENE: PackedScene = preload("res://scenes/gameplay_hud.tscn")
+## Куда переезжаем из тоннеля. Пусто = остаться в интро (старое поведение).
+@export_file("*.tscn") var intro_exit_scene: String = "res://scenes/level_rooms.tscn"
+## Высота башни в доке: у tower.tscn коллайдер 6 м с origin ПОСЕРЕДИНЕ, поэтому
+## на полу ангара она стоит на +3. Вынесено ручкой — модель могут подменить.
+@export var intro_tower_y: float = 3.0
+## Пауза между «выехал из тоннеля» и загрузкой мира (с) — под вспышку финала.
+@export var intro_exit_delay: float = 1.1
 @export var ladya_speed: float = 8.0
 @export var ladya_dash_speed: float = 30.0
 @export var ladya_dash_cooldown: float = 1.0
@@ -735,6 +760,10 @@ const SH_RANGE_PAD := 2.0
 ## щитов меньше живых артельщиков. ПКМ-событие ждёт разбора в физтике.
 var _shields: Array = []
 var _shield_pending: bool = false
+## Нажат ПРОБЕЛ (событие, как и ПКМ) — приказ уходит своим на этой кнопке.
+var _space_pending: bool = false
+## Хижина, чей диалог открыт сейчас: улучшение продаётся по одному НА ХИЖИНУ.
+var _active_hut: Node3D = null
 ## WASD: точка строя не отрывается от центра дальше этого (гномы упёрлись в
 ## стену → точка не уезжает в бесконечность, строй не «теряет якорь»).
 const WASD_LEASH := 4.0
@@ -824,18 +853,33 @@ var _intro_timer: float = 0.0
 ## Ангар: Ладья (нода/материал корпуса), режим езды, стадия волн ангара
 ## (0 нет / 1 входная / 2 посадочная), рык случился, заслонка коридора, финиш.
 var _ladya: Node3D = null
+## Инстанс НАСТОЯЩЕЙ башни внутри Ладьи (см. _intro_build_hangar).
+var _intro_tower: Node3D = null
+## Ветка ангара: либо узел из .tscn (группа intro_hangar), либо собранная кодом.
+var _hangar_root: Node = null
 var _ladya_mat: StandardMaterial3D = null
 var _intro_ride: bool = false
 var _hangar_wave: int = 0
 var _roar_done: bool = false
 var _launch_gate: Node3D = null
 var _intro_finished: bool = false
+## Отложенный переход в большой мир: ждём, пока догорит вспышка финала.
+var _intro_exit_pending: bool = false
+var _intro_exit_timer: float = 0.0
 var _ladya_vel: Vector3 = Vector3.ZERO
 var _ladya_dash_target: Vector3 = Vector3.INF
 var _ladya_dash_cd: float = 0.0
+## Контроллер башни, приехавший на посадке (см. _spawn_tower_controller). Пока
+## они живы, пеший слой данжа камерой и вводом не рулит.
+var _rig: Node3D = null
+var _hand: Node3D = null
+var _tower_hud: CanvasLayer = null
 ## Геометрия финала (сдвиг −40 по Z с 2026-08-04: между К3 и ангаром вставлен
 ## К4-ледник z −106..−146): ангар z −146..−190, пусковой коридор до −250, финиш.
 const INTRO_HANGAR_ENTER_Z := -144.0
+## Дистанция посадки в башню (м): и маркер [E], и сама посадка меряют её —
+## одно число, чтобы «вижу подсказку, но не сажусь» стало невозможным.
+const INTRO_BOARD_DIST := 6.0
 const INTRO_CORRIDOR_Z := -190.0
 const INTRO_FINISH_Z := -240.0
 ## К4 «Ледник»: границы льда (мировые XZ, Rect2 position+size), талые пятна
@@ -1160,6 +1204,8 @@ func _create_wasd_soldier(t: StringName, at: Vector3) -> SoldierGnome:
 		_skin_artel(soldier)
 	elif t == &"fire_mage":
 		_skin_fire_mage(soldier)
+	# Дефолтный бинд по классу — прежняя раскладка кнопок «из коробки».
+	soldier.bind_slot = _default_bind_for(t)
 	_squad.add_member(soldier)
 	soldier.destroyed.connect(_on_gnome_died)
 	if soldier is ArcherSoldier:
@@ -2536,7 +2582,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	# WASD: ПКМ = каменная волна артели; ПРОБЕЛ = супер мили-класса. ⛔ Фокус-группы
 	# 1/2/3 и клик-панч выпилены (2026-07-28): дальний бой работает всегда,
 	# мили сжат в одну кнопку — переключать стало нечего.
-	if wasd_mode and not _game_over:
+	# Сели в башню — мышь и ПРОБЕЛ принадлежат её контроллеру (рука колдует ПКМ,
+	# башня рвётся ПРОБЕЛОМ). Пеший слой отдаёт ввод целиком: иначе один клик
+	# читали бы двое, и щит артели срабатывал бы «из ниоткуда» посреди финала.
+	if wasd_mode and not _game_over and not _intro_ride:
 		# Сбор отряда модальный: 1/2/3 добавляют гнома в класс, Shift+цифра
 		# убирает, ENTER уводит в подземелье. Тот же язык клавиш, что у находок.
 		if _roster_open:
@@ -2585,7 +2634,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		var sk_key := event as InputEventKey
 		if sk_key != null and sk_key.pressed and not sk_key.echo \
 				and sk_key.keycode == KEY_SPACE:
-			_request_spear_super()
+			# Свободный бинд: ПРОБЕЛ поднимает СВОИХ, кем бы они ни были —
+			# приказ идёт через общий диспетчер, как и ПКМ.
+			_space_pending = true
 			return
 	var key := event as InputEventKey
 	if key == null or not key.pressed or key.echo:
@@ -2599,8 +2650,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			_wave_timer = wave_interval
 			_spawn_wave(true)
 	elif key.keycode == KEY_E and not _game_over:
-		# Интро: контекст E по близости — рычаг, хижина, сундук сокровищ, грузы.
-		if not _intro_try_lever() and not _intro_try_hut() and not _intro_try_loot_chest():
+		# Интро: контекст E по близости — башня (посадка), рычаг, хижина,
+		# сундук сокровищ, грузы. Башня ПЕРВАЯ: в ангаре рядом с ней ничего
+		# другого нет, а перепутать посадку с подъёмом груза — обидно.
+		if not _intro_try_board() and not _intro_try_lever() and not _intro_try_hut() \
+				and not _intro_try_loot_chest():
 			_toggle_cargo()
 	elif key.keycode == KEY_J and not _game_over and wasd_mode \
 			and not _roster_open and _squad != null:
@@ -2898,7 +2952,10 @@ func _wasd_physics(delta: float) -> void:
 	_wasd_combat(Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not _game_over, cursor)
 	if _shield_pending:
 		_shield_pending = false
-		_request_worker_action(cursor)
+		_press_bind(BIND_RMB, cursor)
+	if _space_pending:
+		_space_pending = false
+		_press_bind(BIND_SPACE, cursor)
 	_tick_spear_super(delta)
 	_tick_stone_wave(delta)
 	_tick_ice(delta)
@@ -3017,10 +3074,12 @@ func _build_roster_scene() -> void:
 	# Три пятака-слота: отряд собирается ГРУППАМИ, слот = кнопка.
 	_build_slots(c)
 	# Кучки групп вдоль дальней стены, с подписями «класс · кнопка».
+	# Подписи БЕЗ кнопок: кнопка больше не закреплена за классом, её выбирает
+	# игрок броском. Осталось имя класса и то, что он умеет.
 	var defs := [
-		[&"pikeman", Vector3(-8.5, 0.0, 5.0), "Копейщики · ПРОБЕЛ"],
-		[ARCHER_TYPE, Vector3(0.0, 0.0, 5.0), "Лучники · ЛКМ"],
-		[&"worker", Vector3(8.5, 0.0, 5.0), "Артель · ПКМ вал"],
+		[&"pikeman", Vector3(-8.5, 0.0, 5.0), "Копейщики · удар вокруг"],
+		[ARCHER_TYPE, Vector3(0.0, 0.0, 5.0), "Лучники · полив"],
+		[&"worker", Vector3(8.5, 0.0, 5.0), "Артель · каменный вал"],
 	]
 	for d in defs:
 		var cls: StringName = d[0]
@@ -3029,8 +3088,8 @@ func _build_roster_scene() -> void:
 		var ring := AoeVisual.spawn_ground_ring(self, pos, 2.2, 0.0, col)
 		if ring != null:
 			_roster_props.append(ring)
-		# Свежий сток: одна полная группа на класс (слот-то один).
-		_roster_stacks[cls] = {"pos": pos, "queue": [int(GROUP_SIZES[cls])], "bodies": []}
+		# Свежий сток: гномы ПОШТУЧНО (прежний размер группы = столько же голов).
+		_roster_stacks[cls] = {"pos": pos, "count": int(GROUP_SIZES[cls]), "bodies": []}
 		_refresh_stack(cls)
 		_stack_label(pos, String(d[2]), col)
 	# Камера смотрит в предбанник, пока собираемся.
@@ -3046,9 +3105,9 @@ func _build_roster_scene() -> void:
 ## она САМА ложится в слот своей кнопки; сидит другой класс — выпрыгивает
 ## в кучку. Одна кнопка = один класс structurally, дубль невозможен.
 const ROSTER_SLOTS := [
-	{"id": &"space", "label": "[ПРОБЕЛ] удар вокруг", "off": Vector3(-6.5, 0.0, -2.6)},
-	{"id": &"lkm", "label": "[ЛКМ] полив", "off": Vector3(0.0, 0.0, -2.6)},
-	{"id": &"rmb", "label": "[ПКМ] вал / залп", "off": Vector3(6.5, 0.0, -2.6)},
+	{"id": &"space", "label": "[ПРОБЕЛ]", "off": Vector3(-6.5, 0.0, -2.6)},
+	{"id": &"lkm", "label": "[ЛКМ]", "off": Vector3(0.0, 0.0, -2.6)},
+	{"id": &"rmb", "label": "[ПКМ]", "off": Vector3(6.5, 0.0, -2.6)},
 ]
 ## Размер группы класса (гномов в полном отряде).
 const GROUP_SIZES := {
@@ -3066,13 +3125,61 @@ const PIECE_COLORS := {
 const SLOT_FREE := Color(0.4, 0.45, 0.55, 0.7)
 
 
-## Слот какой кнопки кормит этот класс.
+## Индексы кнопок бинда (SoldierGnome.bind_slot). Кнопка называет НЕ способность,
+## а «кто по ней работает» — на одной кнопке типы можно мешать.
+const BIND_LKM: int = 0
+const BIND_SPACE: int = 1
+const BIND_RMB: int = 2
+const BIND_IDS: Array[StringName] = [&"lkm", &"space", &"rmb"]
+## Подписи кнопок для панели предпросмотра — порядок строго как в BIND_IDS.
+const BIND_LABELS: Array[String] = ["[ЛКМ]", "[ПРОБЕЛ]", "[ПКМ]"]
+## Куда класс попадает ПО УМОЛЧАНИЮ (пока игрок не перебиндил). Ровно прежняя
+## жёсткая раскладка: без перенастройки игра ведёт себя как до свободного бинда.
+const DEFAULT_BIND := {
+	&"archer_squad": BIND_LKM,
+	&"pikeman": BIND_SPACE,
+	&"worker": BIND_RMB,
+	&"fire_mage": BIND_RMB,
+}
+
+
+func _default_bind_for(cls: StringName) -> int:
+	return int(DEFAULT_BIND.get(cls, BIND_LKM))
+
+
+## Зажата ли кнопка бинда. Нужна ИМЕННО удерживаемость: полив лучника живёт,
+## пока держишь, и при свободном бинде он может сидеть на любой из трёх.
+func _bind_held(slot: int) -> bool:
+	match slot:
+		BIND_LKM:
+			return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not _game_over
+		BIND_SPACE:
+			return Input.is_key_pressed(KEY_SPACE) and not _game_over
+		BIND_RMB:
+			return Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not _game_over
+	return false
+
+
+## Слот какой кнопки кормит этот класс ПО УМОЛЧАНИЮ (экран состава при первой
+## раскладке). После перебинда состав слота произвольный — см. bind_slot.
 func _slot_for_class(cls: StringName) -> StringName:
-	if cls == ARCHER_TYPE:
-		return &"lkm"
-	if cls == &"pikeman":
-		return &"space"
-	return &"rmb"  # worker и fire_mage — спецы одной кнопки
+	return BIND_IDS[_default_bind_for(cls)]
+
+
+## Живые гномы класса cls, назначенные на кнопку slot. Пустой cls = любой класс.
+## Единая точка выборки для всех приказов: кнопка спрашивает «кто мой», а не
+## «сколько всего таких в отряде».
+func _bound_members(slot: int, cls: StringName = &"") -> Array:
+	var out: Array = []
+	if _squad == null:
+		return out
+	for m in _squad.members:
+		if not is_instance_valid(m) or m.bind_slot != slot:
+			continue
+		if cls != &"" and m.soldier_type != cls:
+			continue
+		out.append(m)
+	return out
 
 
 ## Три пятака-слота с подписями кнопок. Слот держит одну группу {cls, alive}.
@@ -3092,10 +3199,10 @@ func _build_slots(c: Vector3) -> void:
 		lbl.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 		_roster_room.add_child(lbl)
 		lbl.global_position = Vector3(pos.x, 0.05, pos.z + 3.1)
-		_slots.append({"id": sd["id"], "pos": pos, "cls": &"", "alive": 0,
+		_slots.append({"id": sd["id"], "pos": pos, "units": [],
 				"bodies": [], "ring": ring})
 	var title := Label3D.new()
-	title.text = "СТРОЙ: кинь отряд — он сам займёт свою кнопку"
+	title.text = "СТРОЙ: клади гномов на любую кнопку · ПКМ по кнопке — снять"
 	title.font_size = 48
 	title.pixel_size = 0.011
 	title.modulate = Color(0.85, 0.88, 0.95, 0.8)
@@ -3112,44 +3219,73 @@ func _slot_by_id(id: StringName) -> Dictionary:
 	return {}
 
 
-## Поставить группу в слот её кнопки. Занят другим классом — тот выпрыгивает
-## в свою кучку (с его живым счётом). Тела группы встают кружком на пятаке.
+## ⭐ СВОБОДНЫЙ БИНД (2026-08-07): слот держит СПИСОК гномов (units), а не одну
+## группу класса. Кладём ПО ОДНОМУ и КУДА БРОСИЛИ — типы на кнопке мешаются.
+## Прежняя авто-маршрутизация «группа сама уходит в слот своего класса» ушла
+## вместе с правилом «одна кнопка = один класс».
+func _slot_add(slot: Dictionary, cls: StringName) -> void:
+	if slot.is_empty():
+		return
+	(slot["units"] as Array).append(cls)
+	_refresh_slot_bodies(slot)
+	_sync_roster_from_cells()
+
+
+## Снять со слота ОДНОГО гнома (последнего) обратно в его кучку. Ровно обратный
+## жест к постановке: положил по одному — снимаешь по одному.
+func _slot_pop(slot: Dictionary) -> void:
+	var units: Array = slot["units"]
+	if units.is_empty():
+		return
+	var cls: StringName = units.pop_back()
+	if _roster_stacks.has(cls):
+		_roster_stacks[cls]["count"] = int(_roster_stacks[cls]["count"]) + 1
+		_refresh_stack(cls)
+	_refresh_slot_bodies(slot)
+	_sync_roster_from_cells()
+
+
+## Совместимость со старыми вызовами (префилл экрана замены, цифры 1/2/3):
+## положить n гномов класса в слот, который у класса дефолтный.
 func _slot_place(cls: StringName, alive: int) -> void:
 	var slot: Dictionary = _slot_by_id(_slot_for_class(cls))
 	if slot.is_empty():
 		return
-	if slot["cls"] != &"":
-		_slot_remove(slot)
-	slot["cls"] = cls
-	slot["alive"] = alive
-	var pos: Vector3 = slot["pos"]
 	for i in range(alive):
-		var ang: float = TAU * float(i) / float(maxi(alive, 1))
-		var b := _roster_body(cls, pos + Vector3(cos(ang) * 1.1, 0.0, sin(ang) * 1.1))
+		(slot["units"] as Array).append(cls)
+	_refresh_slot_bodies(slot)
+	_sync_roster_from_cells()
+
+
+## Перестроить статуи слота: кружком по числу гномов, КАЖДАЯ своего класса
+## (слот может быть смешанным). Дешевле и надёжнее, чем точечно добавлять и
+## удалять тела: состав слота меняется редко, а рассинхрон тел с units —
+## именно тот баг, который потом ловится глазами полдня.
+func _refresh_slot_bodies(slot: Dictionary) -> void:
+	for b in slot["bodies"]:
+		if is_instance_valid(b):
+			(b as Node).queue_free()
+	slot["bodies"] = []
+	var units: Array = slot["units"]
+	var pos: Vector3 = slot["pos"]
+	for i in range(units.size()):
+		var ang: float = TAU * float(i) / float(maxi(units.size(), 1))
+		var b := _roster_body(units[i], pos + Vector3(cos(ang) * 1.1, 0.0, sin(ang) * 1.1))
 		if b != null:
 			(slot["bodies"] as Array).append(b)
 	_ring_tint(slot)
-	_sync_roster_from_cells()
 
 
-## Снять группу со слота в её кучку (живой счёт уезжает в очередь кучки).
+## Снять со слота ВСЕХ (снос экрана, пересборка префилла).
 func _slot_remove(slot: Dictionary) -> void:
-	var cls: StringName = slot["cls"]
-	if cls == &"":
-		return
-	if _roster_stacks.has(cls):
-		(_roster_stacks[cls]["queue"] as Array).push_back(int(slot["alive"]))
-	for b in slot["bodies"]:
-		if is_instance_valid(b):
-			_run_back(b, cls)
-	slot["bodies"] = []
-	slot["cls"] = &""
-	slot["alive"] = 0
-	_ring_tint(slot)
-	_sync_roster_from_cells()
+	var units: Array = slot["units"]
+	while not units.is_empty():
+		_slot_pop(slot)
 
 
-## Цвет кольца слота: класс занявшего или серый пустой.
+## Цвет кольца слота: пустой — серый, один класс — его цвет, СМЕШАННЫЙ —
+## усреднённый. Смесь и должна выглядеть смесью: это теперь легальное
+## состояние, а не ошибка расстановки.
 func _ring_tint(slot: Dictionary) -> void:
 	var ring := slot["ring"] as MeshInstance3D
 	if ring == null or not is_instance_valid(ring):
@@ -3157,9 +3293,16 @@ func _ring_tint(slot: Dictionary) -> void:
 	var mat := ring.material_override as StandardMaterial3D
 	if mat == null:
 		return
-	var cls: StringName = slot["cls"]
-	var col: Color = SLOT_FREE if cls == &"" else PIECE_COLORS.get(cls, Color.WHITE)
-	mat.albedo_color = Color(col.r, col.g, col.b, 0.85 if cls != &"" else 0.5)
+	var units: Array = slot["units"]
+	if units.is_empty():
+		mat.albedo_color = Color(SLOT_FREE.r, SLOT_FREE.g, SLOT_FREE.b, 0.5)
+		return
+	var acc := Color(0, 0, 0)
+	for cls in units:
+		var c: Color = PIECE_COLORS.get(cls, Color.WHITE)
+		acc += c
+	var n: float = float(units.size())
+	mat.albedo_color = Color(acc.r / n, acc.g / n, acc.b / n, 0.85)
 
 
 ## Подпись кучки класса — лежит на полу под кучкой.
@@ -3205,10 +3348,9 @@ func _refresh_stack(cls: StringName) -> void:
 		if is_instance_valid(b):
 			(b as Node).queue_free()
 	st["bodies"] = []
-	var total: int = 0
-	for a in st["queue"]:
-		total += int(a)
-	var n: int = mini(total, 8)
+	# Кучка = ЗАПАС ПОШТУЧНО (раньше очередь групп): свободный бинд ставит по
+	# одному гному, значит и лежать в кучке они должны поголовно.
+	var n: int = mini(int(st.get("count", 0)), 8)
 	for i in range(n):
 		var ang: float = TAU * float(i) / 8.0
 		var p: Vector3 = (st["pos"] as Vector3) + Vector3(cos(ang) * 1.1, 0.0, sin(ang) * 1.1)
@@ -3254,32 +3396,32 @@ func _sync_roster_from_cells() -> void:
 	for cls in _roster_stacks.keys():
 		_roster[cls] = 0
 	for s in _slots:
-		var cls: StringName = s["cls"]
-		if cls != &"":
-			_roster[cls] = int(_roster.get(cls, 0)) + int(s["alive"])
+		for cls in s["units"]:
+			_roster[cls] = int(_roster.get(cls, 0)) + 1
 	_refresh_roster()
 
 
-## Взять группу из кучки в руку (очередь: сперва снятые с их alive, потом
-## свежие/покупные полные).
+## Взять из кучки ОДНОГО гнома в руку. Поштучно — в этом вся суть свободного
+## бинда: игрок раскладывает конкретных гномов по кнопкам, а не пачки классов.
 func _take_piece(cls: StringName) -> void:
-	var q: Array = _roster_stacks[cls]["queue"]
-	if q.is_empty():
+	var st: Dictionary = _roster_stacks[cls]
+	if int(st.get("count", 0)) <= 0:
 		return
+	st["count"] = int(st["count"]) - 1
 	_drag_class = cls
-	_drag_alive = int(q.pop_front())
+	_drag_alive = 1
 	_refresh_stack(cls)
-	for i in range(_drag_alive):
-		var b := _roster_body(cls, _roster_pad)
-		if b != null:
-			_drag_bodies.append(b)
+	var b := _roster_body(cls, _roster_pad)
+	if b != null:
+		_drag_bodies.append(b)
 
 
 ## Вернуть группу из руки обратно в кучку (клик мимо строя).
 func _return_drag_to_stack() -> void:
 	if _drag_class == &"":
 		return
-	(_roster_stacks[_drag_class]["queue"] as Array).push_back(_drag_alive)
+	var st: Dictionary = _roster_stacks[_drag_class]
+	st["count"] = int(st.get("count", 0)) + _drag_alive
 	for b in _drag_bodies:
 		if is_instance_valid(b):
 			_run_back(b, _drag_class)
@@ -3290,12 +3432,27 @@ func _return_drag_to_stack() -> void:
 ## Занятый слот, ближайший к точке (для ПКМ-снятия). {} = мимо.
 func _taken_slot_near(p: Vector3) -> Dictionary:
 	for s in _slots:
-		if s["cls"] == &"":
+		if (s["units"] as Array).is_empty():
 			continue
 		var sp: Vector3 = s["pos"]
 		if Vector2(p.x - sp.x, p.z - sp.z).length() <= 2.8:
 			return s
 	return {}
+
+
+## Слот, в который попадает бросок (любой, хоть пустой). Берём БЛИЖАЙШИЙ в
+## радиусе, а не первый попавшийся: пятаки стоят в ряд, и на границе бросок
+## должен уходить туда, куда игрок целился.
+func _slot_near(p: Vector3) -> Dictionary:
+	var best: Dictionary = {}
+	var best_d: float = 4.2
+	for s in _slots:
+		var sp: Vector3 = s["pos"]
+		var d: float = Vector2(p.x - sp.x, p.z - sp.z).length()
+		if d < best_d:
+			best_d = d
+			best = s
+	return best
 
 
 ## Класс кучки под курсором (null-строка, если мимо).
@@ -3336,17 +3493,22 @@ func _tick_roster(_delta: float) -> void:
 		if rmb_click:
 			var slot: Dictionary = _taken_slot_near(cursor)
 			if not slot.is_empty():
-				_slot_remove(slot)
+				# ПКМ снимает ОДНОГО (последнего) — жест зеркалит постановку.
+				_slot_pop(slot)
 	elif lmb_click:
-		if _near_slots(cursor):
-			# Тела руки гасим — _slot_place ставит статуи кружком на пятаке.
+		# КУДА БРОСИЛ — ТУДА И ЛЁГ: слот определяется курсором, а не классом
+		# гнома. Это и есть свободный бинд; авто-маршрутизация «в слот своего
+		# класса» ушла вместе с правилом «одна кнопка = один класс».
+		var drop: Dictionary = _slot_near(cursor)
+		if not drop.is_empty():
+			# Тела руки гасим — _refresh_slot_bodies ставит статуи на пятаке.
 			for b in _drag_bodies:
 				if is_instance_valid(b):
 					(b as Node).queue_free()
 			_drag_bodies.clear()
 			var cls_placed: StringName = _drag_class
 			_drag_class = &""
-			_slot_place(cls_placed, _drag_alive)
+			_slot_add(drop, cls_placed)
 		else:
 			_return_drag_to_stack()
 	# Группа в руке висит толпой над курсором.
@@ -3378,6 +3540,40 @@ func _run_back(b: Node3D, cls: StringName) -> void:
 			_refresh_stack(cls))
 
 
+## Снимок раскладки: [[класс, индекс кнопки], ...] по всем слотам. Экран
+## разбирается раньше, чем спавнится отряд, поэтому бинды надо унести с собой.
+func _plan_from_slots() -> Array:
+	var plan: Array = []
+	for i in range(_slots.size()):
+		var id: StringName = _slots[i]["id"]
+		var slot_idx: int = BIND_IDS.find(id)
+		if slot_idx < 0:
+			continue
+		for cls in _slots[i]["units"]:
+			plan.append([cls, slot_idx])
+	return plan
+
+
+## Разложить живой отряд по снимку: каждая запись плана забирает одного гнома
+## своего класса. Не попавшие в план (спавн разошёлся с планом) остаются на
+## дефолтной кнопке — раскладка деградирует, а не ломается.
+func _apply_bind_plan(plan: Array) -> void:
+	if _squad == null or plan.is_empty():
+		return
+	var pool: Array = []
+	for m in _squad.members:
+		if is_instance_valid(m):
+			pool.append(m)
+	for entry in plan:
+		var cls: StringName = entry[0]
+		for i in range(pool.size()):
+			if pool[i].soldier_type == cls:
+				pool[i].bind_slot = int(entry[1])
+				pool.remove_at(i)
+				break
+	_stagger_archers()
+
+
 func _roster_total() -> int:
 	var n: int = 0
 	for k in _roster.keys():
@@ -3391,16 +3587,25 @@ func _roster_change(cls: StringName, delta_n: int) -> void:
 	if not _roster_open or not _roster_stacks.has(cls):
 		return
 	if delta_n > 0:
-		var q: Array = _roster_stacks[cls]["queue"]
-		if q.is_empty():
+		var st: Dictionary = _roster_stacks[cls]
+		if int(st.get("count", 0)) <= 0:
 			return
-		var alive: int = int(q.pop_front())
+		st["count"] = int(st["count"]) - 1
 		_refresh_stack(cls)
-		_slot_place(cls, alive)
+		_slot_place(cls, 1)
 	else:
-		var slot: Dictionary = _slot_by_id(_slot_for_class(cls))
-		if not slot.is_empty() and slot["cls"] == cls:
-			_slot_remove(slot)
+		# Снять одного этого класса — с той кнопки, где он есть (не обязательно
+		# дефолтной: игрок мог перебиндить).
+		for s in _slots:
+			var units: Array = s["units"]
+			var idx: int = units.rfind(cls)
+			if idx >= 0:
+				units.remove_at(idx)
+				_roster_stacks[cls]["count"] = int(_roster_stacks[cls].get("count", 0)) + 1
+				_refresh_stack(cls)
+				_refresh_slot_bodies(s)
+				_sync_roster_from_cells()
+				return
 
 
 ## Состояние сбора — ОДНОЙ строкой в угловом HUD. Центральная плашка убрана
@@ -3412,30 +3617,46 @@ func _refresh_roster() -> void:
 	if panel == null:
 		return
 	panel.visible = _roster_open
-	var arch: int = int(_roster.get(ARCHER_TYPE, 0))
 	var pike: int = int(_roster.get(&"pikeman", 0))
-	var art: int = int(_roster.get(&"worker", 0))
 	(panel.get_node("V/Cap") as Label).text = "В строю: %d гномов" % _roster_total()
-	# Числа те же, по которым способности считаются в бою — панель не «описание
-	# классов», а прямой предпросмотр силы удара от состава.
-	(panel.get_node("V/Archers") as Label).text = \
-			"Лучники ×%d — залп %d стрел, урон %d–%d за стрелу" % [
-			arch, arch, int(gnome_damage_min), int(gnome_damage_max)]
+	# ⭐ ПАНЕЛЬ ПЕРЕЕХАЛА С КЛАССОВ НА КНОПКИ (2026-08-07): при свободном бинде
+	# «ПРОБЕЛ бьёт на столько-то» — вранье, урон кнопки зависит от того, КОГО ты
+	# на неё положил. Теперь строка на кнопку: кто на ней и что она сделает.
+	var rows: Array = ["V/Archers", "V/Pikes", "V/Artel"]
+	for i in range(mini(rows.size(), _slots.size())):
+		var lbl := panel.get_node(rows[i]) as Label
+		if lbl == null:
+			continue
+		var slot: Dictionary = _slot_by_id(BIND_IDS[i])
+		var units: Array = slot.get("units", [])
+		lbl.modulate = Color(1, 1, 1)
+		if units.is_empty():
+			lbl.text = "%s — пусто" % BIND_LABELS[i]
+			lbl.modulate = Color(0.7, 0.72, 0.78)
+			continue
+		var n_arch: int = units.count(ARCHER_TYPE)
+		var n_pike: int = units.count(&"pikeman")
+		var n_art: int = units.count(&"worker")
+		var n_fire: int = units.count(&"fire_mage")
+		var parts: Array = []
+		if n_arch > 0:
+			parts.append("лучники ×%d (полив, %d–%d за стрелу)"
+					% [n_arch, int(gnome_damage_min), int(gnome_damage_max)])
+		if n_pike > 0:
+			parts.append("копейщики ×%d (удар %d в радиусе %.1f м)"
+					% [n_pike, int(wasd_super_damage_per_gnome) * n_pike, wasd_super_radius])
+		if n_art > 0:
+			parts.append("артель ×%d (вал %d урона)"
+					% [n_art, int(wasd_wave_damage_per_gnome) * n_art])
+		if n_fire > 0:
+			parts.append("огневики ×%d (залп)" % n_fire)
+		lbl.text = "%s — %s" % [BIND_LABELS[i], ", ".join(parts)]
 	var pikes := panel.get_node("V/Pikes") as Label
-	pikes.text = "Копейщики ×%d — ПРОБЕЛ: %d урона в радиусе %.1f м, откат %.0f с" % [
-			pike, int(wasd_super_damage_per_gnome) * pike, wasd_super_radius,
-			wasd_super_cooldown]
-	# Билд без мили РАЗРЕШЁН (это осознанно тяжёлый выбор, а не ошибка), но
-	# должен читаться заранее: щитовиков придётся выедать стрелами через щит.
-	if pike == 0:
-		pikes.text += "\n⚠ без них щитовиков придётся долго выедать стрелами"
+	# Билд без мили РАЗРЕШЁН (осознанно тяжёлый выбор, а не ошибка), но должен
+	# читаться заранее: щитовиков придётся выедать стрелами через щит.
+	if pike == 0 and pikes != null:
+		pikes.text += "\n⚠ без копейщиков щитовиков придётся долго выедать стрелами"
 		pikes.modulate = Color(1.0, 0.75, 0.4)
-	else:
-		pikes.modulate = Color(1, 1, 1)
-	(panel.get_node("V/Artel") as Label).text = \
-			"Артель ×%d — ПКМ: вал %d урона, полоса %.1f м, откат %.0f с" % [
-			art, int(wasd_wave_damage_per_gnome) * art, _wave_half_width() * 2.0,
-			wasd_wave_cooldown]
 
 
 ## Подтверждение: состав становится боевым, отряд спавнится, мир оживает.
@@ -3451,6 +3672,8 @@ func _confirm_roster() -> void:
 	wasd_spearmen = int(_roster.get(&"pikeman", 0))
 	wasd_artel = int(_roster.get(&"worker", 0))
 	squad_size = _roster_total()
+	# Снимок раскладки снимаем ДО сноса экрана — слоты сейчас исчезнут.
+	var plan: Array = _plan_from_slots()
 	_roster_open = false
 	_teardown_roster_scene()
 	# Камера возвращается к боевой комнате.
@@ -3458,6 +3681,7 @@ func _confirm_roster() -> void:
 		_camera.look_at_from_position(room_center + camera_offset, room_center, Vector3.UP)
 	_look_target = room_center
 	_spawn_squad()
+	_apply_bind_plan(plan)
 	_setup_focus_cards()
 	_refresh_hud_hint()
 	_update_labels()
@@ -3545,10 +3769,10 @@ func _build_swap_scene(fire_stock: int = 0) -> void:
 	# Те же три пятака-слота, что и в сборе песочницы — один язык экрана.
 	_build_slots(c)
 	var defs := [
-		[&"pikeman", Vector3(-11.5, 0.0, 5.0), "Копейщики · ПРОБЕЛ"],
-		[ARCHER_TYPE, Vector3(-4.0, 0.0, 5.0), "Лучники · ЛКМ"],
-		[&"worker", Vector3(4.0, 0.0, 5.0), "Артель · ПКМ вал"],
-		[&"fire_mage", Vector3(11.5, 0.0, 5.0), "Огневики · ПКМ залп"],
+		[&"pikeman", Vector3(-11.5, 0.0, 5.0), "Копейщики · удар вокруг"],
+		[ARCHER_TYPE, Vector3(-4.0, 0.0, 5.0), "Лучники · полив"],
+		[&"worker", Vector3(4.0, 0.0, 5.0), "Артель · каменный вал"],
+		[&"fire_mage", Vector3(11.5, 0.0, 5.0), "Огневики · залп огня"],
 	]
 	_roster_stacks.clear()
 	for d in defs:
@@ -3558,21 +3782,22 @@ func _build_swap_scene(fire_stock: int = 0) -> void:
 		var ring := AoeVisual.spawn_ground_ring(self, pos, 2.2, 0.0, col)
 		if ring != null:
 			_roster_props.append(ring)
-		var q: Array = []
-		if cls == &"fire_mage":
-			for i in range(fire_stock):
-				q.append(int(GROUP_SIZES[cls]))  # покупные — полные пары
-		_roster_stacks[cls] = {"pos": pos, "queue": q, "bodies": []}
+		# Покупной сток огневиков — тоже поштучно (fire_stock групп × размер).
+		var stock: int = fire_stock * int(GROUP_SIZES[cls]) if cls == &"fire_mage" else 0
+		_roster_stacks[cls] = {"pos": pos, "count": stock, "bodies": []}
 		_refresh_stack(cls)
 		_stack_label(pos, String(d[2]), col)
-	# Префилл: группа каждого живого класса уже стоит в слоте своей кнопки.
-	for cls in [&"pikeman", ARCHER_TYPE, &"worker", &"fire_mage"]:
-		var alive: int = 0
-		for m in _squad.members:
-			if is_instance_valid(m) and m.soldier_type == cls:
-				alive += 1
-		if alive > 0:
-			_slot_place(cls, alive)
+	# Префилл: КАЖДЫЙ живой гном встаёт на СВОЮ кнопку (bind_slot), а не на
+	# кнопку своего класса — иначе экран замены стирал бы уже сделанный
+	# перебинд при каждом открытии.
+	for m in _squad.members:
+		if not is_instance_valid(m):
+			continue
+		var slot: Dictionary = _slot_by_id(BIND_IDS[clampi(m.bind_slot, 0, 2)])
+		if not slot.is_empty():
+			(slot["units"] as Array).append(m.soldier_type)
+	for s in _slots:
+		_refresh_slot_bodies(s)
 	if _camera != null:
 		_camera.look_at_from_position(c + camera_offset, c, Vector3.UP)
 	_look_target = c
@@ -3597,6 +3822,8 @@ func _confirm_swap() -> void:
 				% [fire_hire_cost_each, cost, _coin_total], 3.0)
 		return
 	_coin_total -= cost
+	# Снимок раскладки — до сноса экрана и до диффа состава.
+	var plan: Array = _plan_from_slots()
 	var hut_base: Vector3 = _ice_hut.global_position \
 			if (_ice_hut != null and is_instance_valid(_ice_hut)) else _squad.compute_center()
 	for cls in want.keys():
@@ -3621,6 +3848,7 @@ func _confirm_swap() -> void:
 	wasd_archers = int(want.get(ARCHER_TYPE, 0))
 	wasd_artel = int(want.get(&"worker", 0))
 	wasd_fire_mages = int(want.get(&"fire_mage", 0))
+	_apply_bind_plan(plan)
 	_roster_open = false
 	_swap_mode = false
 	_teardown_roster_scene()
@@ -3997,28 +4225,49 @@ func _cards_line(cls: StringName) -> String:
 ## огневики дают ЗАЛП ФАЕРБОЛОВ в точку курсора. Смешанный состав жмёт обе —
 ## у каждой свой откат, один осознанный клик = вся магия спецов.
 func _request_worker_action(cursor: Vector3) -> void:
-	var artel: int = _alive_artel()
-	var mages: int = _alive_fire_mages()
-	if artel <= 0 and mages <= 0:
-		EventBus.tutorial_hint.emit("ПКМ некому исполнять: ни артели (вал), ни огневиков (залп)", 1.6)
+	_press_bind(BIND_RMB, cursor)
+
+
+
+## ⭐ НАЖАТИЕ КНОПКИ БИНДА (2026-08-07): кнопка не привязана к способности —
+## работает КАЖДЫЙ назначенный на неё гном, и каждый делает своё. Копейщики
+## бьют вокруг, артель катит вал, огневики пускают залп; лучники сюда не
+## попадают намеренно — их полив живёт на УДЕРЖАНИИ (см. _wasd_combat).
+func _press_bind(slot: int, cursor: Vector3) -> void:
+	var pikemen: int = _bound_members(slot, &"pikeman").size()
+	var artel: int = _bound_members(slot, &"worker").size()
+	var mages: int = _bound_members(slot, &"fire_mage").size()
+	if pikemen <= 0 and artel <= 0 and mages <= 0:
+		# Молчим, если на кнопке вообще никого нет и лучников тоже: подсказка
+		# «некому» на пустой кнопке при свободном бинде — это норма, не ошибка.
+		if _bound_members(slot).is_empty():
+			EventBus.tutorial_hint.emit(
+					"На этой кнопке никого нет — назначь гномов в хижине", 1.6)
 		return
+	if pikemen > 0:
+		_request_spear_super(slot)
 	if artel > 0:
-		_request_stone_wave(cursor)
+		_request_stone_wave(cursor, slot)
 	if mages > 0:
-		_request_fire_volley(cursor)
+		_request_fire_volley(cursor, slot)
 
 
 ## Залп огневиков: каждый живой маг пускает мини-фаербол (тот же fireball.tscn,
 ## что у Ладьи — «уменьшенная копия выстрела башни») в точку курсора с лёгким
 ## рассеянием. Взрыв бьёт врагов И ТОПИТ ЛЁД (стены шипов, глыбы, пол ледника —
 ## см. _on_mage_fireball_hit). Целиться можно в любую точку — в том числе в лёд.
-func _request_fire_volley(cursor: Vector3) -> void:
+func _request_fire_volley(cursor: Vector3, slot: int = -1) -> void:
 	if _squad == null or _fire_cd > 0.0 or cursor == Vector3.INF:
 		return
+	# slot < 0 — «все огневики отряда» (старые вызовы); иначе только те, кто
+	# назначен на нажатую кнопку.
 	var mages: Array = []
-	for m in _squad.members:
-		if is_instance_valid(m) and m.soldier_type == &"fire_mage":
-			mages.append(m)
+	if slot >= 0:
+		mages = _bound_members(slot, &"fire_mage")
+	else:
+		for m in _squad.members:
+			if is_instance_valid(m) and m.soldier_type == &"fire_mage":
+				mages.append(m)
 	if mages.is_empty():
 		return
 	_fire_cd = mage_fire_cooldown
@@ -4085,10 +4334,12 @@ func _alive_fire_mages() -> int:
 ## ПКМ: каменная волна артели. Гейт — живой артельщик (симметрия с ПРОБЕЛОМ:
 ## нет класса — нет способности). Направление берётся от строя к курсору и
 ## ФИКСИРУЕТСЯ на запуске: вал не подруливает, целиться надо заранее.
-func _request_stone_wave(cursor: Vector3) -> void:
+func _request_stone_wave(cursor: Vector3, slot: int = -1) -> void:
 	if _squad == null or _wave_cd > 0.0 or not _waves.is_empty():
 		return
-	if _alive_artel() <= 0:
+	# slot >= 0 — вал катят только артельщики нажатой кнопки (свободный бинд).
+	var crew: int = _bound_members(slot, &"worker").size() if slot >= 0 else _alive_artel()
+	if crew <= 0:
 		EventBus.tutorial_hint.emit("Нет артельщиков — каменная волна недоступна", 1.6)
 		return
 	var c: Vector3 = _squad.compute_center()
@@ -4317,10 +4568,13 @@ func _alive_artel() -> int:
 ## ПРОБЕЛ: заявка на супер мили-класса. Гейт — состав отряда: нет живых
 ## копейщиков → нет способности (билд решает возможности). Замах не стопит
 ## группу: она продолжает идти и стрелять, кольцо-телеграф едет с ней.
-func _request_spear_super() -> void:
+func _request_spear_super(slot: int = -1) -> void:
 	if _squad == null or _super_windup > 0.0 or _super_cd > 0.0:
 		return
-	if _alive_pikemen() <= 0:
+	# slot >= 0 — бьют только копейщики нажатой кнопки (свободный бинд).
+	var ready_pikemen: int = _bound_members(slot, &"pikeman").size() if slot >= 0 \
+			else _alive_pikemen()
+	if ready_pikemen <= 0:
 		EventBus.tutorial_hint.emit("Нет копейщиков — удар вокруг недоступен", 1.6)
 		return
 	var c: Vector3 = _squad.compute_center()
@@ -4548,6 +4802,10 @@ func _wasd_combat(lmb: bool, cursor: Vector3) -> void:
 	# залп уходил тремя стрелами В ОДИН КАДР — очередь начиналась «бум», а не
 	# «та-та-та». Теперь каждое нажатие раскладывает лучников по такту заново.
 	if lmb and not _volley_lmb_down:
+		# ЛКМ — такая же кнопка бинда, как остальные: назначенные на неё
+		# копейщик/артель/огневик отрабатывают по КЛИКУ, лучники — по удержанию
+		# ниже. По умолчанию на ЛКМ одни лучники, так что вызов холостой.
+		_press_bind(BIND_LKM, cursor)
 		_stagger_archers()
 		# Повторный клик — досрочный съём защёлки сухого колчана (см.
 		# ArcherSoldier.notify_trigger_pressed): удержание ждёт полного, клик
@@ -4630,7 +4888,11 @@ func _wasd_combat(lmb: bool, cursor: Vector3) -> void:
 			m.attack_cooldown_max = gnome_cooldown_max * rate
 			if m is ArcherSoldier:
 				(m as ArcherSoldier).shield_damage_mult = 1.0 + 2.0 * float(_card(&"arch_shieldbreak"))
-			if lmb and aim != Vector3.INF and m.has_method(&"try_suppressive_fire"):
+			# СВОБОДНЫЙ БИНД: лучник льёт, пока зажата ЕГО кнопка — не обязательно
+			# ЛКМ. Полив остаётся УДЕРЖАНИЕМ на любой из трёх (нажатие-событие
+			# ему не подходит: очередь живёт, пока держишь гашетку).
+			if _bind_held(m.bind_slot) and aim != Vector3.INF \
+					and m.has_method(&"try_suppressive_fire"):
 				# true = стрела реально ушла (не сухой спуск/кулдаун) → отдача в тело.
 				if m.call(&"try_suppressive_fire", aim) and wasd_shot_recoil > 0.0:
 					_wasd_vel -= aim_dir * wasd_shot_recoil
@@ -5335,6 +5597,7 @@ const INTRO_HUT_DIALOG := {
 		"text": "Из хижины выглядывает седой артельщик: «Живые! А мы уж думали, одни костяки остались. Мы тут вдвоём засели, когда завалы легли. Руки у нас крепкие — камень катать, щиты держать. Возьмёшь в артель, командир?»",
 		"choices": [
 			{ "label": "Нанять артель — 2 гнома, {cost} монет", "next": &"", "effect": &"dungeon_hire_artel" },
+			{ "label": "Улучшение — {xp} опыта", "next": &"", "effect": &"dungeon_buy_card" },
 			{ "label": "Перенастроить отряд", "next": &"", "effect": &"dungeon_manage_squad" },
 			{ "label": "Кто вы такие?", "next": &"who" },
 			{ "label": "Позже.", "next": &"" },
@@ -5356,6 +5619,7 @@ const INTRO_FIRE_HUT_DIALOG := {
 		"text": "В домике, вросшем в лёд, греются гномы в алых робах: «Замёрз, командир? Лёд тут злой — шипами оброс, проход глыбами запечатал. Мы огневики: фаербол как у Ладьи, только в ладонь. Плати — и жар твой.»",
 		"choices": [
 			{ "label": "Нанять огневиков — 2 гнома, {cost} монет", "next": &"", "effect": &"dungeon_hire_fire" },
+			{ "label": "Улучшение — {xp} опыта", "next": &"", "effect": &"dungeon_buy_card" },
 			{ "label": "Перенастроить отряд", "next": &"", "effect": &"dungeon_manage_squad" },
 			{ "label": "Что умеет ваш огонь?", "next": &"who" },
 			{ "label": "Позже.", "next": &"" },
@@ -5395,20 +5659,43 @@ func _intro_try_hut() -> bool:
 		return false
 	if bool(_dialog_ui.call(&"is_open")):
 		return true
-	# Цена в тексте кнопки — из export'а, чтобы не расползлась с логикой найма.
+	# Какая хижина открыта — знать обязательно: улучшение продаётся ПОШТУЧНО НА
+	# ХИЖИНУ, и списывать «использовано» надо именно с неё.
+	_active_hut = target_hut
+	_dialog_ui.call(&"open", _hut_dialog_for(target_hut, fire_hut), &"root")
+	return true
+
+
+## Диалог конкретной хижины: подставленные цены и снятый пункт улучшения, если
+## здесь его уже брали. Вынесено из _intro_try_hut отдельной функцией — сборку
+## меню надо уметь проверять, не подводя отряд к домику.
+func _hut_dialog_for(hut: Node3D, fire_hut: bool) -> Dictionary:
 	var dlg: Dictionary = (INTRO_FIRE_HUT_DIALOG if fire_hut else INTRO_HUT_DIALOG).duplicate(true)
 	var cost: int = fire_hire_cost_each * 2 if fire_hut else artel_hire_cost
+	# Улучшение здесь уже брали — пункт УБИРАЕМ из списка совсем. Показывать
+	# заведомо мёртвую кнопку и отбивать по клику хуже: игрок каждый раз
+	# заново проверяет, не передумала ли игра.
+	var spent: bool = hut != null and is_instance_valid(hut) \
+			and bool(hut.get_meta(&"card_bought", false))
 	for node_id in dlg:
+		var kept: Array = []
 		for ch in dlg[node_id]["choices"]:
-			ch["label"] = String(ch["label"]).replace("{cost}", str(cost))
-	_dialog_ui.call(&"open", dlg, &"root")
-	return true
+			if spent and StringName(ch.get("effect", &"")) == &"dungeon_buy_card":
+				continue
+			ch["label"] = String(ch["label"]).replace("{cost}", str(cost)) \
+					.replace("{xp}", str(hut_card_cost))
+			kept.append(ch)
+		dlg[node_id]["choices"] = kept
+	return dlg
 
 
 ## Эффекты веток диалога данжа (DialogUI.effect_selected).
 func _on_intro_dialog_effect(effect_id: StringName) -> void:
 	if effect_id == &"dungeon_hire_fire":
 		_intro_hire_fire()
+		return
+	if effect_id == &"dungeon_buy_card":
+		_hut_buy_card()
 		return
 	if effect_id == &"dungeon_manage_squad":
 		# «Перенастроить отряд»: тот же экран, но БЕЗ покупного стока — чистое
@@ -5433,6 +5720,41 @@ func _on_intro_dialog_effect(effect_id: StringName) -> void:
 	_refresh_focus_cards()
 	_update_labels()
 	EventBus.tutorial_hint.emit("Артель нанята! ПКМ — каменная волна теперь доступна", 4.0)
+
+
+## УЛУЧШЕНИЕ ЗА ОПЫТ (хижина гномов, 2026-08-07). Опыт с орбов тратится ТОЛЬКО
+## здесь: сундуки стали бесплатными, и у двух валют развелись двери — монеты
+## покупают гномов, опыт покупает силу. Пикер тот же, что на зачистке комнаты:
+## ритуал выбора в игре один, второго заводить незачем.
+func _hut_buy_card() -> void:
+	if not cards_enabled:
+		return
+	# ОДНА ХИЖИНА — ОДНО УЛУЧШЕНИЕ (2026-08-07). Хижина не лавка с бесконечным
+	# прилавком: сколько бы опыта ни накопил, здесь возьмёшь ровно раз, дальше
+	# ищи следующую. Гейт стоит и тут, а не только в сборке диалога: диалог
+	# могли открыть до покупки и продержать открытым.
+	if _active_hut != null and is_instance_valid(_active_hut) \
+			and bool(_active_hut.get_meta(&"card_bought", false)):
+		EventBus.tutorial_hint.emit("В этой хижине улучшение уже брали", 2.5)
+		return
+	# Пул мог кончиться (все категории добиты). Проверяем ДО списания: заплатить
+	# и не получить выбора — худшее, что может сделать магазин.
+	var available: int = 0
+	for id in CARD_CATALOG.keys():
+		if _cards_in_class(CARD_CATALOG[id]["cls"]) < cards_limit_per_class:
+			available += 1
+	if available <= 0:
+		EventBus.tutorial_hint.emit("Улучшать нечего — все ветки добиты", 3.0)
+		return
+	if _xp < hut_card_cost:
+		EventBus.tutorial_hint.emit(
+				"Не хватает опыта: улучшение стоит %d (есть %d)" % [hut_card_cost, _xp], 3.0)
+		return
+	_xp -= hut_card_cost
+	if _active_hut != null and is_instance_valid(_active_hut):
+		_active_hut.set_meta(&"card_bought", true)
+	_update_labels()
+	_offer_cards("Улучшение в хижине — выбери одно")
 
 
 ## Найм огневиков (хижина К4). Фигура влезает в трюм по площади —
@@ -5791,59 +6113,122 @@ func _spike_distance(p: Vector3, s: Node3D) -> float:
 ## Ангар с Ладьёй: пол, стены, четыре дока-зажима (три пустых — лор без слов),
 ## Ладья-плейсхолдер в дальнем, заслонка пускового коридора и сам коридор.
 func _intro_build_hangar() -> void:
+	# ⭐ АНГАР ВИДЕН В РЕДАКТОРЕ (2026-08-07). Если в сцене уже лежит ветка
+	# «Hangar» (узел или инстанс intro_hangar.tscn) — геометрию НЕ строим:
+	# комната приехала из редактора, и юзер двигает её мышкой, как К4-ледник.
+	# Код в этом случае ставит только башню и логику. Пусто — строим как
+	# раньше, чтобы сцены без ветки (песочницы) не сломались.
+	var scene_hangar: Node = _find_scene_hangar()
+	if scene_hangar == null:
+		_hangar_root = Node3D.new()
+		_hangar_root.name = "Hangar"
+		add_child(_hangar_root)
+		_intro_build_hangar_geometry()
+	else:
+		_hangar_root = scene_hangar
+	_intro_place_tower()
+
+
+## Ветка ангара, приехавшая из .tscn. Ищем по имени в группе — так узел можно
+## положить куда угодно в дереве сцены, а не только в предопределённое место.
+func _find_scene_hangar() -> Node:
+	for n in get_tree().get_nodes_in_group(&"intro_hangar"):
+		if is_instance_valid(n) and n != _hangar_root:
+			return n
+	return null
+
+
+## Геометрия ангара КОДОМ — фолбэк, когда ветки в сцене нет. Каждая плита
+## переезжает под _hangar_root: одна ветка = один объект, который потом можно
+## целиком выгрузить в редактор (см. tools/bake_hangar.gd).
+func _intro_build_hangar_geometry() -> void:
 	var hzc: float = room_center.z - 208.0  # центр ангара по Z (−168 при z=40; сдвиг −40 под К4-ледник)
 	# Пол ангара и коридора.
-	_secret_wall_body(Vector3(room_center.x, -0.25, hzc), Vector3(64.0, 0.5, 44.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(room_center.x, -0.25, room_center.z - 259.0), Vector3(14.0, 0.5, 62.0), false, Vector3.FORWARD)
+	_to_hangar(_secret_wall_body(Vector3(room_center.x, -0.25, hzc), Vector3(64.0, 0.5, 44.0), false, Vector3.FORWARD), "FloorHangar")
+	_to_hangar(_secret_wall_body(Vector3(room_center.x, -0.25, room_center.z - 259.0), Vector3(14.0, 0.5, 62.0), false, Vector3.FORWARD), "FloorTunnel")
 	# Стены ангара: запад/восток, север с проёмом (заслонка отдельно).
-	_secret_wall_body(Vector3(room_center.x - 32.0, 1.5, hzc), Vector3(1.0, 3.0, 44.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(room_center.x + 32.0, 1.5, hzc), Vector3(1.0, 3.0, 44.0), false, Vector3.FORWARD)
+	_to_hangar(_secret_wall_body(Vector3(room_center.x - 32.0, 1.5, hzc), Vector3(1.0, 3.0, 44.0), false, Vector3.FORWARD), "WallWest")
+	_to_hangar(_secret_wall_body(Vector3(room_center.x + 32.0, 1.5, hzc), Vector3(1.0, 3.0, 44.0), false, Vector3.FORWARD), "WallEast")
 	var nz: float = room_center.z + INTRO_CORRIDOR_Z - 40.0  # −190 при z=40
-	_secret_wall_body(Vector3(room_center.x - 19.0, 1.5, nz), Vector3(26.0, 3.0, 1.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(room_center.x + 19.0, 1.5, nz), Vector3(26.0, 3.0, 1.0), false, Vector3.FORWARD)
-	_launch_gate = _secret_wall_body(Vector3(room_center.x, 1.5, nz), Vector3(12.5, 3.0, 1.0), false, Vector3.FORWARD)
+	_to_hangar(_secret_wall_body(Vector3(room_center.x - 19.0, 1.5, nz), Vector3(26.0, 3.0, 1.0), false, Vector3.FORWARD), "WallNorthLeft")
+	_to_hangar(_secret_wall_body(Vector3(room_center.x + 19.0, 1.5, nz), Vector3(26.0, 3.0, 1.0), false, Vector3.FORWARD), "WallNorthRight")
+	# ⛔ ЗАСЛОНКИ БОЛЬШЕ НЕТ (2026-08-07): тоннель в конце ангара ОТКРЫТ. Раньше
+	# коридор запирала плита, которую срывал «рык» после зачистки посадочной
+	# волны — то есть выход из эпизода держал таймер боя, а не решение игрока.
+	# Теперь выезд виден с порога: хочешь — добивай ангар, хочешь — уходи.
+	_launch_gate = null
 	# Стены пускового коридора.
-	_secret_wall_body(Vector3(room_center.x - 6.0, 1.5, room_center.z - 259.0), Vector3(1.0, 3.0, 60.0), false, Vector3.FORWARD)
-	_secret_wall_body(Vector3(room_center.x + 6.0, 1.5, room_center.z - 259.0), Vector3(1.0, 3.0, 60.0), false, Vector3.FORWARD)
+	_to_hangar(_secret_wall_body(Vector3(room_center.x - 6.0, 1.5, room_center.z - 259.0), Vector3(1.0, 3.0, 60.0), false, Vector3.FORWARD), "TunnelWallWest")
+	_to_hangar(_secret_wall_body(Vector3(room_center.x + 6.0, 1.5, room_center.z - 259.0), Vector3(1.0, 3.0, 60.0), false, Vector3.FORWARD), "TunnelWallEast")
 	# Доки-зажимы вдоль западной стены: пары колонн, три пустых + один с Ладьёй.
 	var pillar_mat := StandardMaterial3D.new()
 	pillar_mat.albedo_color = Color(0.28, 0.3, 0.36)
 	pillar_mat.metallic = 0.6
 	var dock_zs := [-6.0, -18.0, -30.0, -40.0]  # локально от z −146 (юг ангара)
+	var dock_i: int = 0
 	for dz in dock_zs:
+		dock_i += 1
 		for side in [-3.5, 3.5]:
 			var mi := MeshInstance3D.new()
+			mi.name = "Dock%d_%s" % [dock_i, "L" if side < 0.0 else "R"]
 			var bm := BoxMesh.new()
 			bm.size = Vector3(1.0, 4.2, 1.0)
 			mi.mesh = bm
 			mi.material_override = pillar_mat
-			add_child(mi)
+			_hangar_root.add_child(mi)
 			mi.global_position = Vector3(room_center.x - 24.0 + float(side), 2.1,
 					room_center.z - 186.0 + float(dz))
-	# Ладья — в последнем доке, тёмная до посадки.
-	_ladya = Node3D.new()
-	add_child(_ladya)
-	_ladya.global_position = Vector3(room_center.x - 24.0, 0.0, room_center.z - 226.0)
+	# ⭐ ЛАДЬЯ = НАСТОЯЩАЯ БАШНЯ основного уровня (2026-08-07). Раньше в доке
+	# стоял примитив из цилиндра и сферы — игрок садился «во что-то», а выезжал
+	# в мир на башне, и связь между эпизодами держалась на слове. Теперь это
+	# буквально тот же объект: та же сцена, та же модель.
+	#
+	# Ход ведёт РАЙД-КОД сцены (_intro_tick_ride), поэтому собственный
+	# _physics_process башни глушим: он читает те же WASD и дрался бы за
+	# позицию. Коллизии тоже снимаем — позицию мы ставим руками, а физическое
+	# тело в узком доке цеплялось бы за стены.
+	pass
+
+
+## Плиту — под ветку ангара (она создаётся в self, забираем к себе) и даём ИМЯ:
+## комната поедет в редактор, а там «@StaticBody3D@172» ничего не говорит.
+func _to_hangar(n: Node, node_name: String = "") -> void:
+	if n == null or _hangar_root == null or n.get_parent() == _hangar_root:
+		return
+	n.get_parent().remove_child(n)
+	if not node_name.is_empty():
+		n.name = node_name
+	_hangar_root.add_child(n)
+
+
+## Башня в доке. Позиция берётся из маркера TowerDock ветки ангара (юзер двигает
+## его в редакторе), иначе — прежняя координата кодом.
+func _intro_place_tower() -> void:
+	var dock := Vector3(room_center.x - 24.0, intro_tower_y, room_center.z - 226.0)
+	if _hangar_root != null:
+		var m := _hangar_root.get_node_or_null(^"TowerDock") as Node3D
+		if m != null:
+			dock = Vector3(m.global_position.x, intro_tower_y, m.global_position.z)
+	var tower: Node3D = TOWER_SCENE.instantiate() as Node3D
+	add_child(tower)
+	tower.global_position = dock
+	# До посадки башня — неподвижная декорация дока: собственный контроллер
+	# спит (иначе она поехала бы по WASD ещё при пеших гномах), но КОЛЛИЗИЯ
+	# жива — отряд обходит корпус, а не проходит сквозь.
+	tower.set_physics_process(false)
+	tower.set_process(false)
+	_no_shadows(tower)
+	# Ладья И ЕСТЬ башня: отдельной обёртки больше нет. Иначе при передаче
+	# контроллера физическое тело поехало бы внутри неподвижного родителя, и
+	# позиция «Ладьи» разъехалась бы с тем, что видит игрок.
+	_ladya = tower
+	_intro_tower = tower
+	# Материал-заглушка больше не красит корпус (у башни свой визуал с жилами
+	# реактора), но остаётся живым: посадка ставит по нему свечение, и код
+	# «оживания» не приходится ветвить.
 	_ladya_mat = StandardMaterial3D.new()
 	_ladya_mat.albedo_color = Color(0.16, 0.17, 0.21)
 	_ladya_mat.metallic = 0.4
-	var hull := MeshInstance3D.new()
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = 1.9
-	cyl.bottom_radius = 2.3
-	cyl.height = 4.6
-	hull.mesh = cyl
-	hull.material_override = _ladya_mat
-	hull.position = Vector3(0.0, 2.3, 0.0)
-	_ladya.add_child(hull)
-	var dome := MeshInstance3D.new()
-	var sph := SphereMesh.new()
-	sph.radius = 1.9
-	sph.height = 2.4
-	dome.mesh = sph
-	dome.material_override = _ladya_mat
-	dome.position = Vector3(0.0, 4.8, 0.0)
-	_ladya.add_child(dome)
 
 
 # --- СОКРОВИЩА: монетки-крошки + сундуки на E (2026-08-01) -------------------
@@ -6259,10 +6644,55 @@ func _intro_tick_hangar(c: Vector3) -> void:
 		for i in range(6):
 			_spawn_skeleton_at(Vector3(room_center.x - 26.0 + 10.0 * float(i), 0.6,
 					room_center.z - 228.0 + randf_range(0.0, 4.0)))
-		EventBus.tutorial_hint.emit("АНГАР. Зажимы пусты… кроме одного. ДОБЕГИ до Ладьи!", 5.0)
-	if _hangar_wave >= 1 \
-			and Vector2(_ladya.global_position.x - c.x, _ladya.global_position.z - c.z).length() < 5.0:
-		_intro_board()
+		EventBus.tutorial_hint.emit("АНГАР. Зажимы пусты… кроме одного. ДОБЕГИ до башни!", 5.0)
+	# ⭐ ПОСАДКА НА E (2026-08-07). Раньше отряд «всасывало» в корпус самим
+	# подходом — единственное важное действие финала происходило без участия
+	# игрока. Теперь башня — такой же E-объект, как рычаг, хижина и сундук:
+	# подошёл, увидел маркер, нажал. Сам вход — в _intro_try_board.
+	_intro_board_marker(c)
+
+
+## Снять тени со всех мешей поддерева. Башня в данже — реквизит дока, а не
+## герой сцены: лишний кастер в комнате с фонарями и толпой не окупается.
+func _no_shadows(root: Node) -> void:
+	if root is GeometryInstance3D:
+		(root as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for c in root.get_children():
+		_no_shadows(c)
+
+
+## Маркер «[E]» над башней — появляется, когда отряд подошёл на дистанцию
+## посадки, и гаснет, когда отошёл. Вешается на саму башню (живёт и умирает
+## с ней), поэтому достаточно показывать и прятать.
+func _intro_board_marker(c: Vector3) -> void:
+	if _ladya == null or not is_instance_valid(_ladya):
+		return
+	var near: bool = _hangar_wave >= 1 and Vector2(
+			_ladya.global_position.x - c.x, _ladya.global_position.z - c.z).length() < INTRO_BOARD_DIST
+	var mark := _ladya.get_node_or_null(^"EMarker") as Label3D
+	if near and mark == null:
+		_spawn_e_marker(_ladya, intro_tower_y + 4.2)
+		EventBus.tutorial_hint.emit("Башня рядом — [E], чтобы забраться внутрь", 3.5)
+	elif mark != null:
+		mark.visible = near
+
+
+## Посадка по E: отряд забирается в башню. Гейт по дистанции тот же, что у
+## маркера — что видишь, то и жмёшь. Возвращает true, если посадка случилась
+## (E-цепочка не должна проваливаться дальше в грузы).
+func _intro_try_board() -> bool:
+	if not intro_mode or _intro_ride or _squad == null:
+		return false
+	if _ladya == null or not is_instance_valid(_ladya) or _hangar_wave < 1:
+		return false
+	var c: Vector3 = _squad.compute_center()
+	if c == Vector3.INF:
+		return false
+	if Vector2(_ladya.global_position.x - c.x,
+			_ladya.global_position.z - c.z).length() > INTRO_BOARD_DIST:
+		return false
+	_intro_board()
+	return true
 
 
 ## Посадка: гномы прячутся в корпус (едут с Ладьёй, скелеты продолжают их
@@ -6278,6 +6708,23 @@ func _intro_board() -> void:
 			(m as CollisionObject3D).collision_layer = 0
 			(m as CollisionObject3D).collision_mask = 0
 		(m as Node3D).global_position = _ladya.global_position + Vector3(0.0, 4.5, 0.0)
+	# ⭐ КОНТРОЛЛЕР ПЕРЕЕЗЖАЕТ ЦЕЛИКОМ (2026-08-07): дальше башней управляет её
+	# ШТАТНЫЙ tower.gd — ход, рывок, каст, вся моторика. Сцена больше не возит
+	# её вручную (см. _intro_tick_ride): иначе в большом мире игрок получил бы
+	# другую машину, чем та, к которой привык за финал интро.
+	_ladya.set_physics_process(true)
+	_ladya.set_process(true)
+	# …и вместе с корпусом — рука, камера и HUD. Посадка = ПЕРЕКЛЮЧЕНИЕ
+	# контроллеров: пеший слой отдаёт мышь целиком, а не «башня едет по WASD».
+	_spawn_tower_controller()
+	# Мана под каст: башня рождается сухой (копится орбами), а финал должен
+	# давать полный арсенал сразу — иначе рука приехала, а колдовать нечем.
+	if "max_mana" in _ladya:
+		_ladya.set(&"mana", _ladya.get(&"max_mana"))
+	# Маркер [E] отработал: сели — звать больше некуда.
+	var em := _ladya.get_node_or_null(^"EMarker")
+	if em != null:
+		em.queue_free()
 	_ladya_mat.emission_enabled = true
 	_ladya_mat.emission = Color(0.3, 0.6, 1.0)
 	_ladya_mat.emission_energy_multiplier = 1.4
@@ -6294,7 +6741,8 @@ func _intro_board() -> void:
 		_cmd_ring.visible = false
 	EventBus.camera_shake.emit(0.6, _ladya.global_position)
 	AoeVisual.spawn_expanding_ring(self, _ladya.global_position, 8.0, 0.4, Color(0.4, 0.7, 1.0, 0.9))
-	EventBus.tutorial_hint.emit("ЛАДЬЯ ТВОЯ. WASD — ход, ЛКМ — ДЭШ: её оружие ближнего боя", 6.0)
+	EventBus.tutorial_hint.emit(
+			"БАШНЯ ТВОЯ. WASD — ход, ПРОБЕЛ — рывок, МЫШЬ — рука: ЛКМ хватает, ПКМ колдует", 6.0)
 	_hangar_wave = 2
 	var corners := [
 		Vector3(room_center.x - 28.0, 0.6, room_center.z - 190.0),
@@ -6307,70 +6755,107 @@ func _intro_board() -> void:
 		_spawn_skeleton_at((p as Vector3) + Vector3(2.0, 0.0, 2.0))
 
 
+## ⭐ ПЕРЕКЛЮЧЕНИЕ КОНТРОЛЛЕРОВ (2026-08-07). Пеший данж и башня — две разные
+## машины ввода, и посадка меняет машину целиком, а не добавляет башне WASD.
+## Приезжает ровно тот набор узлов, что стоит в level_rooms:
+##   Hand       — мышь: курсор = рука в мире, ЛКМ хватает, ПКМ колдует;
+##   CameraRig  — штатная камера башни: колесо = зум, СКМ = орбита, шейк;
+##   GameplayHud — мана/HP башни и трей заклинаний (цифры 1..5 экипируют).
+## Пеший слой после этого камерой не рулит вовсе (см. _intro_tick_ride) и мышь
+## не перехватывает (см. _unhandled_input) — иначе два контроллера дрались бы
+## за одно и то же событие.
+func _spawn_tower_controller() -> void:
+	if _rig != null:
+		return  # посадка одноразовая, но защита дешевле разбора двойного ввода
+	_rig = CAMERA_RIG_SCENE.instantiate() as Node3D
+	add_child(_rig)
+	_rig.global_position = _ladya.global_position
+	# Через focus_override, а не target_path: путь в .tscn прописан под
+	# level_rooms, а здесь башня живёт в другом месте дерева.
+	_rig.call(&"set_focus_override", _ladya)
+	var cam := _rig.get_node_or_null(^"Camera3D") as Camera3D
+	if cam != null:
+		cam.make_current()
+		# Курсор данжа считается от _camera — переводим его на новую камеру,
+		# иначе всё, что мерит «где мышь в мире», осталось бы у старой.
+		_camera = cam
+	_hand = HAND_SCENE.instantiate() as Node3D
+	add_child(_hand)
+	_tower_hud = TOWER_HUD_SCENE.instantiate() as CanvasLayer
+	add_child(_tower_hud)
+	# Панель данжа (волна/гномы/монеты) уступает угол HUD'у башни: два набора
+	# счётчиков в одном месте — каша, а пеший слой уже не тикает.
+	var dungeon_hud := get_node_or_null(^"HUD") as CanvasLayer
+	if dungeon_hud != null:
+		dungeon_hud.visible = false
+	print("[Intro] контроллер башни: рука=%s камера=%s HUD=%s" % [
+			_hand != null, _rig != null, _tower_hud != null])
+
+
 ## Езда на Ладье: WASD с инерцией, ЛКМ-дэш сносит скелетов, рык открывает
 ## пусковой коридор, конец коридора = финиш интро.
 func _intro_tick_ride(delta: float) -> void:
 	if _ladya == null:
 		return
-	_ladya_dash_cd = maxf(_ladya_dash_cd - delta, 0.0)
-	var cursor: Vector3 = _cursor_ground_point()
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and _ladya_dash_cd <= 0.0 \
-			and cursor != Vector3.INF and _ladya_dash_target == Vector3.INF:
-		_ladya_dash_target = _intro_clamp_ladya(Vector3(cursor.x, 0.0, cursor.z))
-		_ladya_dash_cd = ladya_dash_cooldown
-		_ladya_vel = Vector3.ZERO
-		EventBus.camera_shake.emit(0.25, _ladya.global_position)
-	if _ladya_dash_target != Vector3.INF:
-		var to := _ladya_dash_target - _ladya.global_position
-		to.y = 0.0
-		var step: float = ladya_dash_speed * delta
-		if to.length() <= step:
-			_ladya.global_position = _ladya_dash_target
-			_ladya_dash_target = Vector3.INF
-			EventBus.camera_shake.emit(0.2, _ladya.global_position)
-			AoeVisual.spawn_dust(self, _ladya.global_position)
-		else:
-			_ladya.global_position = _intro_clamp_ladya(_ladya.global_position + to.normalized() * step)
-		_intro_dash_hit(to.normalized() if to.length() > 0.01 else Vector3.FORWARD)
-	else:
-		var v: Vector2 = Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
-		var target := Vector3(v.x, 0.0, v.y) * ladya_speed
-		_ladya_vel = _ladya_vel.lerp(target, 1.0 - exp(-6.0 * delta))
-		if _ladya_vel.length_squared() > 0.001:
-			_ladya.global_position = _intro_clamp_ladya(_ladya.global_position + _ladya_vel * delta)
+	# Выехали из тоннеля: управление отдано вспышке, ждём и грузим большой мир.
+	if _intro_exit_pending:
+		_intro_exit_timer -= delta
+		if _intro_exit_timer <= 0.0:
+			_intro_exit_pending = false
+			# ⚠ Финал бьёт slowmo (HitStop.slowmo_beat), а Engine.time_scale
+			# ПЕРЕЖИВАЕТ смену сцены: без сброса большой мир открылся бы в
+			# замедлении, и восстановить его было бы уже некому.
+			Engine.time_scale = 1.0
+			# Дерево нельзя рвать посреди физического тика — только deferred.
+			get_tree().call_deferred(&"change_scene_to_file", intro_exit_scene)
+		return
+	# ⛔ СВОЕГО ХОДА У СЦЕНЫ БОЛЬШЕ НЕТ. Ход, рывок (ПРОБЕЛ) и каст ведёт штатный
+	# tower.gd — тот самый контроллер, с которым игрок поедет по большому миру.
+	# Прежний упрощённый райд (WASD-лерп + ЛКМ-дэш в точку + ручной кламп стен)
+	# выпилен: он учил игрока НЕ ТОЙ машине, а стены тоннеля и так настоящие
+	# коллайдеры — физика держит корпус честнее, чем кламп по координате.
 	# Гномы едут в корпусе — скелеты бегут за Ладьёй, камера держит центр отряда.
 	for m in _squad.members:
 		if is_instance_valid(m):
 			(m as Node3D).global_position = _ladya.global_position + Vector3(0.0, 4.5, 0.0)
 	if _flow != null:
 		_flow.call(&"set_target", _ladya.global_position)
-	# Рык: посадочная волна перебита → заслонка рвётся, коридор открыт.
+	# Рык остался как СОБЫТИЕ (зачистил ангар — недра взвыли), но он больше
+	# ничего не отпирает: тоннель открыт с самого начала.
 	if not _roar_done and _hangar_wave == 2 and _alive_skeletons() == 0:
 		_roar_done = true
 		EventBus.camera_shake.emit(0.9, _ladya.global_position)
 		AoeVisual.spawn_screen_flash(get_tree(), Color(1.0, 0.25, 0.15), 0.22, 0.35)
-		if _launch_gate != null and is_instance_valid(_launch_gate):
-			ShatterEffect.spawn(self, _launch_gate.global_position, Color(0.4, 0.37, 0.34), 16, 1.6,
-					Vector3(0, 0, -1), 1.2)
-			if _flow != null:
-				_flow.call(&"refresh_around", _launch_gate.global_position, 9.0)
-			_launch_gate.queue_free()
-			_launch_gate = null
-		EventBus.tutorial_hint.emit("РРРЫК ИЗ ГЛУБИН!.. Пусковой коридор открыт — ГОНИ!", 5.0)
+		EventBus.tutorial_hint.emit("РРРЫК ИЗ ГЛУБИН!.. Уходи тоннелем — ГОНИ!", 5.0)
 	if not _intro_finished and _ladya.global_position.z < room_center.z + INTRO_FINISH_Z - 40.0:
 		_intro_finished = true
 		HitStop.slowmo_beat(0.3, 0.45)
 		AoeVisual.spawn_screen_flash(get_tree(), Color(1.0, 0.97, 0.9), 0.5, 0.8)
-		EventBus.tutorial_hint.emit("СВЕТ. Большой мир. Конец интро-прототипа ✓", 8.0)
-		print("[Intro] ФИНИШ: Ладья вырвалась из недр")
-	_update_camera(delta, cursor)
+		EventBus.tutorial_hint.emit("СВЕТ. Большой мир!", 4.0)
+		print("[Intro] ФИНИШ: башня вырвалась из недр → переход на основной уровень")
+		_intro_exit_to_world()
+	# Камеру ведёт штатный риг башни (зум колесом, орбита на СКМ, шейк по
+	# EventBus). Камерный код данжа тут МОЛЧИТ: двое ведущих на одну камеру —
+	# это дрожь и рывки. Риг не приехал (старые сцены) — работаем как раньше.
+	if _rig == null:
+		_update_camera(delta, _cursor_ground_point())
 
 
-## Кламп хода Ладьи: ангар, до рыка коридор закрыт, в коридоре — узко.
+## ПЕРЕХОД В БОЛЬШОЙ МИР: тоннель кончился — грузим основной уровень. Кадр
+## отдаём вспышке (она уже запущена выше), поэтому смена сцены — отложенная:
+## менять дерево прямо посреди физического тика нельзя, а ещё игрок должен
+## успеть увидеть свет, а не моргание.
+func _intro_exit_to_world() -> void:
+	if intro_exit_scene.is_empty():
+		return  # пусто = остаться в интро (прежнее поведение «конец прототипа»)
+	_intro_exit_pending = true
+	_intro_exit_timer = intro_exit_delay
+
+
+## Кламп хода Ладьи: ангар и узкий тоннель. Раньше здесь стоял гейт «до рыка
+## коридор закрыт» — снят вместе с заслонкой: тоннель открыт всегда.
 func _intro_clamp_ladya(p: Vector3) -> Vector3:
 	var corr_z: float = room_center.z + INTRO_CORRIDOR_Z - 40.0
-	if not _roar_done:
-		p.z = maxf(p.z, corr_z + 2.5)
 	if p.z < corr_z + 1.0 and absf(p.x - room_center.x) > 4.2:
 		p.z = maxf(p.z, corr_z + 1.0)
 	p.x = clampf(p.x, room_center.x - 30.0, room_center.x + 30.0)
