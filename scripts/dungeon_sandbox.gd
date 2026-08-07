@@ -2969,6 +2969,7 @@ func _wasd_physics(delta: float) -> void:
 	if _space_pending:
 		_space_pending = false
 		_press_bind(BIND_SPACE, cursor)
+	_tick_jumpers(delta)
 	_tick_spear_super(delta)
 	_tick_stone_wave(delta)
 	_tick_ice(delta)
@@ -5124,8 +5125,170 @@ func _apply_kind(sk: Node3D, kind: StringName) -> void:
 			sk.set(&"move_speed", 4.6)
 			_add_kind_decor(sk, Vector3(0.18, 0.5, 0.18), Vector3(0.0, 1.5, 0.0),
 					Color(0.95, 0.45, 0.12))
+		&"jumper":
+			# ПРЫГУН (2026-08-08): пешком плетётся, но раз в пару секунд сигает
+			# через строй и приземляется В ТЫЛУ — цена за «спрятал лучников за
+			# копейщиками». Стеклянный: поймал в полёте — рассыпался.
+			#
+			# Сам прыжок — НЕ новая ИИ-ветка: раз в интервал сцена бьёт по нему
+			# штатным apply_knockback (тем же, чем работает выпад скелета),
+			# см. _tick_jumpers. Скелет об этом ничего не знает.
+			sk.set(&"hp", 20.0)
+			sk.set(&"move_speed", 1.7)
+			sk.set_meta(&"jumper", true)
+			# Силуэт: поджатые задние лапы по бокам — «сейчас распрямит».
+			_add_kind_decor(sk, Vector3(0.22, 0.62, 0.22), Vector3(-0.42, 0.5, 0.12),
+					Color(0.45, 0.85, 0.4))
+			_add_kind_decor(sk, Vector3(0.22, 0.62, 0.22), Vector3(0.42, 0.5, 0.12),
+					Color(0.45, 0.85, 0.4))
+		&"bomber":
+			# ВЗРЫВАЮЩИЙСЯ (2026-08-08): опасен не ударом, а СМЕРТЬЮ — рвётся
+			# там, где его убили. Учит бить издалека и не сваливать толпу в кучу;
+			# на льду, куда тебя несёт юзом, это отдельный ужас.
+			#
+			# Взрыв ловится одним слушателем EventBus.enemy_destroyed по мете —
+			# не сигналом на каждого (лямбда с захватом умирающей ноды у нас уже
+			# стреляла) и не новым классом врага.
+			sk.set(&"hp", 26.0)
+			sk.set(&"move_speed", 2.8)
+			sk.set(&"attack_damage_min", 4.0)
+			sk.set(&"attack_damage_max", 6.0)
+			sk.set_meta(&"bomber", true)
+			var charge := _add_kind_decor(sk, Vector3(0.62, 0.62, 0.62),
+					Vector3(0.0, 1.05, 0.42), Color(0.95, 0.35, 0.1))
+			charge.name = "BombCharge"
 		_:
 			pass
+
+
+## ⭐ СОСТАВ ВРАГОВ ПО КОМНАТАМ (2026-08-08). Каждая комната добавляет РОВНО ОДИН
+## новый тип: игрок разбирается с ними по очереди, а не тонет в зоопарке сразу.
+##   К1 «кишка»      — только обычные: комната учит вести строй, не читать врагов;
+##   К2 «обеденная»  — + ЩИТОВИКИ: стрелы вязнут, нужен супер копейщиков;
+##   К3              — + ПРЫГУНЫ: строй перестал быть стеной, тыл вскрывается;
+##   К4 «ледник»     — + ВЗРЫВАЮЩИЕСЯ, но ЩИТОВИКОВ НЕТ (решение юзера): на льду
+##                     тебя несёт юзом, и медленный танк здесь только мешал бы
+##                     читать главную опасность — то, что рвётся при смерти.
+##
+## Не веса, а ПАТТЕРН по кругу: пачка из 4 гарантированно содержит новый тип.
+## На весах при 20% из пятерых мог не выпасть ни один — «балансно» превратилось
+## бы в лотерею. Курсор на комнату (_room_cursor) крутит паттерн между волнами.
+const ROOM_PATTERN := {
+	0: [&"grunt"],
+	1: [&"grunt", &"grunt", &"grunt", &"shieldman"],
+	2: [&"grunt", &"shieldman", &"grunt", &"jumper"],
+	3: [&"grunt", &"jumper", &"grunt", &"bomber"],
+}
+var _room_cursor: Dictionary = {}
+
+## Прыжок: раз в интервал, если цель в коридоре дистанций. Интервал ЛИЧНЫЙ
+## (рандом в мете) — иначе пачка сигает синхронно, как танцевальный ансамбль.
+const JUMP_INTERVAL_MIN := 1.9
+const JUMP_INTERVAL_MAX := 3.1
+const JUMP_RANGE_MIN := 2.8
+const JUMP_RANGE_MAX := 17.0
+const JUMP_SPEED := 15.0
+const JUMP_UP := 9.5
+const JUMP_DURATION := 0.5
+
+## Взрыв бомбиста: бьёт ВСЕХ в радиусе — и гномов, и своих (симметрия: сила,
+## которая бьёт одних, бьёт и других; толпа скелетов вокруг бомбиста — твой шанс).
+const BOMB_RADIUS := 4.6
+const BOMB_DAMAGE := 34.0
+const BOMB_PUSH := 7.0
+
+
+## Кто следующий в этой комнате. Крутим паттерн по кругу — состав пачки
+## получается ровно тот, что задуман, без лотереи.
+func _room_kind(room: int) -> StringName:
+	var pattern: Array = ROOM_PATTERN.get(room, ROOM_PATTERN[0])
+	var i: int = int(_room_cursor.get(room, 0))
+	_room_cursor[room] = i + 1
+	return pattern[i % pattern.size()]
+
+
+## Прыгуны: сцена раз в личный интервал швыряет их к цели штатным knockback'ом
+## (тем же, чем работает выпад скелета). Своей ИИ-ветки у прыгуна нет —
+## параметризованный скелет плюс этот тик, не новый класс врага.
+func _tick_jumpers(delta: float) -> void:
+	for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
+		if not is_instance_valid(n) or (n as Node).is_queued_for_deletion():
+			continue
+		if not (n as Node).has_meta(&"jumper"):
+			continue
+		var sk := n as Node3D
+		# Первый взвод — СРАЗУ в мету, иначе дефолт get_meta пересчитывался бы
+		# случайным числом каждый кадр и прыжок случался бы примерно никогда.
+		# И он КОРОТКИЙ: на полном интервале прыгун успевал дотопать вплотную
+		# ещё до первого прыжка — и больше уже не прыгал никогда (ближе
+		# JUMP_RANGE_MIN прыжок запрещён). Первый сигает почти сразу, дальше —
+		# обычный ритм.
+		if not sk.has_meta(&"jump_cd"):
+			sk.set_meta(&"jump_cd", randf_range(0.15, 0.7))
+		var t: float = float(sk.get_meta(&"jump_cd")) - delta
+		if t > 0.0:
+			sk.set_meta(&"jump_cd", t)
+			continue
+		sk.set_meta(&"jump_cd", randf_range(JUMP_INTERVAL_MIN, JUMP_INTERVAL_MAX))
+		# Только с земли: прыжок в воздухе доложился бы вертикалью к текущей
+		# (KnockbackState накладывает Y поверх) — получился бы флоатящий батут.
+		if sk is CharacterBody3D and not (sk as CharacterBody3D).is_on_floor():
+			sk.set_meta(&"jump_cd", 0.12)  # приземлится — прыгнет
+			continue
+		var target: Node3D = _nearest_alive_gnome(sk.global_position)
+		if target == null:
+			continue
+		var to := target.global_position - sk.global_position
+		to.y = 0.0
+		var d: float = to.length()
+		if d < JUMP_RANGE_MIN or d > JUMP_RANGE_MAX:
+			continue
+		# Летит НА цель, но не дальше своего прыжка — перелетать строй и падать
+		# в пустоту он не должен, задача приземлиться среди них.
+		var dir: Vector3 = to / d
+		if sk.has_method(&"apply_knockback"):
+			sk.call(&"apply_knockback",
+					dir * JUMP_SPEED + Vector3.UP * JUMP_UP, JUMP_DURATION)
+
+
+## Ближайший живой гном к точке (прыгун целится в того, кто реально рядом,
+## а не в «случайного из отряда» — иначе сигал бы через всю комнату мимо).
+func _nearest_alive_gnome(from: Vector3) -> Node3D:
+	var best: Node3D = null
+	var best_d: float = INF
+	for m in get_tree().get_nodes_in_group(SoldierGnome.SOLDIER_GROUP):
+		if not is_instance_valid(m) or (m as Node).is_queued_for_deletion():
+			continue
+		var g := m as Node3D
+		if not g.visible:
+			continue  # экипаж внутри башни — не мишень
+		var d: float = from.distance_squared_to(g.global_position)
+		if d < best_d:
+			best_d = d
+			best = g
+	return best
+
+
+## Смерть бомбиста = взрыв. Слушатель один на сцену, фильтр по мете.
+## Позицию снимаем СРАЗУ (нода ещё жива), а сам взрыв — deferred: к тому кадру
+## умирающий уже вычищен из групп, и цепная детонация соседних бомбистов не
+## получит его же обратно вторым хитом.
+func _on_enemy_destroyed_bomb(enemy: Node3D) -> void:
+	if enemy == null or not is_instance_valid(enemy) or not enemy.has_meta(&"bomber"):
+		return
+	call_deferred(&"_bomb_blast", enemy.global_position)
+
+
+func _bomb_blast(pos: Vector3) -> void:
+	# Маска — та же, что у предсмертного взрыва камнемётчика: башня/гномы/палисад
+	# плюс ENEMIES, чтобы рвало и своих. Один язык для «враждебного взрыва».
+	AoeDamage.apply_uniform(get_tree(), pos, BOMB_RADIUS,
+			(Layers.MASK_HOSTILE_PROJECTILE & ~Layers.TERRAIN) | Layers.ENEMIES,
+			BOMB_DAMAGE, BOMB_PUSH, 0.25)
+	AoeVisual.spawn_expanding_ring(self, Vector3(pos.x, 0.06, pos.z),
+			BOMB_RADIUS, 0.32, Color(1.0, 0.55, 0.15, 0.95))
+	ShatterEffect.spawn(self, pos + Vector3.UP, Color(1.0, 0.5, 0.15), 12, 1.2)
+	EventBus.camera_shake.emit(0.45, pos)
 
 
 ## Деталь силуэта ключ-цели: unshaded-коробка на теле (щит спереди / гребень
@@ -5473,6 +5636,9 @@ func _intro_setup() -> void:
 	_dialog_ui = preload("res://scenes/dialog_ui.tscn").instantiate() as CanvasLayer
 	add_child(_dialog_ui)
 	_dialog_ui.connect(&"effect_selected", _on_intro_dialog_effect)
+	# Взрывающиеся: ОДИН слушатель на сцену, фильтр по мете (см. _apply_kind).
+	# Сигналом на каждого было бы лямбдой с захватом умирающей ноды — уже стреляло.
+	EventBus.enemy_destroyed.connect(_on_enemy_destroyed_bomb)
 	EventBus.tutorial_hint.emit("Отряд собрался у костра. WASD — в путь, курсор — прицел", 5.0)
 
 
@@ -6582,7 +6748,8 @@ func _intro_tick(delta: float) -> void:
 			_intro_left[1] = 1
 			_intro_timer = 9.0
 			_intro_spawn_pack(5)
-			EventBus.tutorial_hint.emit("Толпа вплотную — ПРОБЕЛ; толпа в проходе — ПКМ-вал", 4.5)
+			EventBus.tutorial_hint.emit(
+					"ЩИТОВИКИ: стрелы вязнут в плите. Толпа вплотную — ПРОБЕЛ, в проходе — ПКМ-вал", 6.0)
 		elif _intro_left[1] == 1:
 			_intro_timer -= delta
 			if _intro_timer <= 0.0 or _alive_skeletons() == 0:
@@ -6592,7 +6759,8 @@ func _intro_tick(delta: float) -> void:
 	if _active_room == 2 and not _intro_left.is_empty() and _intro_left[2] > 0:
 		_intro_left[2] = 0
 		_intro_spawn_pack(4)
-		EventBus.tutorial_hint.emit("Отбейся — и собери бомбу в машине патронов", 4.0)
+		EventBus.tutorial_hint.emit(
+				"ЗЕЛЁНЫЕ ПРЫГАЮТ через строй — тыл больше не тыл. Отбейся и собери бомбу", 6.0)
 	# К4-ледник: встреча на пороге (скелеты уже НА льду — их тоже несёт) +
 	# вдогон с юга, когда отряд втянулся к колоннам. Урок комнаты телесный:
 	# скольжение, шипы у стен, и только потом — покупка огня.
@@ -6600,13 +6768,14 @@ func _intro_tick(delta: float) -> void:
 		_k4_wave = 1
 		for i in range(5):
 			_spawn_skeleton_at(Vector3(room_center.x - 8.0 + 4.0 * float(i), 0.6,
-					room_center.z - 181.0))
-		EventBus.tutorial_hint.emit("ЛЕДНИК. Лёд несёт, шипы у стен РЕЖУТ — правь заранее!", 5.0)
+					room_center.z - 181.0), _room_kind(3))
+		EventBus.tutorial_hint.emit(
+				"ЛЕДНИК. Лёд несёт, шипы РЕЖУТ. Оранжевые РВУТСЯ при смерти — бей издали!", 6.0)
 	elif _k4_wave == 1 and c.z < room_center.z - 166.0:
 		_k4_wave = 2
 		for i in range(4):
 			_spawn_skeleton_at(Vector3(room_center.x - 6.0 + 4.0 * float(i), 0.6,
-					room_center.z - 149.0))
+					room_center.z - 149.0), _room_kind(3))
 	# Пазл К2: блок ЛЕЖИТ на кнопке (не несётся, осел) → рычаг запитан.
 	# Однократная защёлка — снятие блока рычаг не глушит (туториал, не головоломка).
 	if not _k2_powered and _k2_block != null and is_instance_valid(_k2_block) \
@@ -6631,10 +6800,12 @@ func _intro_tick(delta: float) -> void:
 	_intro_tick_hangar(c)
 
 
-## Пачка бегущих из стен активной комнаты (авторская волна).
-func _intro_spawn_pack(n: int) -> void:
+## Пачка бегущих из стен активной комнаты (авторская волна). Состав — по
+## паттерну комнаты (ROOM_PATTERN): каждая следующая приносит свой новый тип.
+func _intro_spawn_pack(n: int, room: int = -1) -> void:
+	var r: int = room if room >= 0 else _active_room
 	for i in range(n):
-		_spawn_skeleton_at(_edge_spawn_point())
+		_spawn_skeleton_at(_edge_spawn_point(), _room_kind(r))
 	_update_labels()
 
 
