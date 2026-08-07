@@ -3055,6 +3055,20 @@ func _refresh_super_charge(current: float, maximum: float) -> void:
 ## с tower_stats (top center) и resources (right column). ScrollContainer
 ## нужен на 6+ отрядов: фиксированная высота не вмещает столько карточек,
 ## вертикальный скролл — без обрезки нижних.
+## ⭐ РЕЖИМ ЭКИПАЖА (2026-08-08). Гномы стали ПИЛОТАМИ башни, и состав показывает
+## ОДИН виджет (crew_widget.tscn) — карточка на класс и счётчик артели рядом с ним
+## дублируют одно и то же тремя разными способами. Гасим, не удаляя: HUD один на
+## оба режима, а вернуть панель — снова один вызов.
+func hide_squad_ui() -> void:
+	_ensure_squad_panel()
+	if _squad_scroll != null and is_instance_valid(_squad_scroll):
+		(_squad_scroll as CanvasItem).visible = false
+	elif _squad_panel != null and is_instance_valid(_squad_panel):
+		_squad_panel.visible = false
+	if _population_label != null and is_instance_valid(_population_label):
+		_population_label.visible = false
+
+
 func _ensure_squad_panel() -> void:
 	if _squad_panel != null and is_instance_valid(_squad_panel):
 		return

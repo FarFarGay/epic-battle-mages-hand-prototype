@@ -440,6 +440,9 @@ const TOWER_SCENE := preload("res://scenes/tower.tscn")
 const HAND_SCENE: PackedScene = preload("res://scenes/hand.tscn")
 const CAMERA_RIG_SCENE: PackedScene = preload("res://scenes/camera_rig.tscn")
 const TOWER_HUD_SCENE: PackedScene = preload("res://scenes/gameplay_hud.tscn")
+## ⭐ ВИДЖЕТ ЭКИПАЖА (2026-08-08): гном = ПИЛОТ башни, виджет = окно в кабину.
+## Един на весь экипаж; две кнопки — пересобрать отряд и покинуть башню.
+const CREW_WIDGET_SCENE: PackedScene = preload("res://scenes/crew_widget.tscn")
 ## Куда переезжаем из тоннеля. Пусто = остаться в интро (старое поведение).
 @export_file("*.tscn") var intro_exit_scene: String = "res://scenes/level_rooms.tscn"
 ## Высота башни в доке: у tower.tscn коллайдер 6 м с origin ПОСЕРЕДИНЕ, поэтому
@@ -874,12 +877,19 @@ var _ladya_dash_cd: float = 0.0
 var _rig: Node3D = null
 var _hand: Node3D = null
 var _tower_hud: CanvasLayer = null
+var _crew_widget: CanvasLayer = null
+## Разовые эффекты первой посадки (свет в корпусе, свечение, волна на посадку):
+## садиться можно сколько угодно раз, а «оживание» башни случается один раз.
+var _board_fx_done: bool = false
 ## Геометрия финала (сдвиг −40 по Z с 2026-08-04: между К3 и ангаром вставлен
 ## К4-ледник z −106..−146): ангар z −146..−190, пусковой коридор до −250, финиш.
 const INTRO_HANGAR_ENTER_Z := -144.0
 ## Дистанция посадки в башню (м): и маркер [E], и сама посадка меряют её —
 ## одно число, чтобы «вижу подсказку, но не сажусь» стало невозможным.
 const INTRO_BOARD_DIST := 6.0
+## Радиус кольца высадки (м): чуть больше дистанции посадки, чтобы вышедший
+## экипаж не оказался внутри корпуса и сразу видел маркер [E] обратно.
+const DISEMBARK_RADIUS := 4.5
 const INTRO_CORRIDOR_Z := -190.0
 const INTRO_FINISH_Z := -240.0
 ## К4 «Ледник»: границы льда (мировые XZ, Rect2 position+size), талые пятна
@@ -2934,7 +2944,10 @@ func _wasd_physics(delta: float) -> void:
 	# живёт только сама площадка сбора.
 	if _roster_open:
 		_tick_roster(delta)
-		_update_camera(delta, _cursor_ground_point())
+		# Перестройка из кабины: камеру ведёт риг башни (она наведена на
+		# доску-трюм через focus_override) — свой камерный код не вмешивается.
+		if _rig == null:
+			_update_camera(delta, _cursor_ground_point())
 		return
 	# Интро: после посадки в Ладью управление и камера — у неё; пеший слой
 	# (полив/строй/грузы) не тикает. Монеты тикают В ОБОИХ слоях (Ладья
@@ -3853,6 +3866,12 @@ func _confirm_swap() -> void:
 	_swap_mode = false
 	_teardown_roster_scene()
 	_set_combat_frozen(false)
+	# Перестраивались из кабины — камера возвращается на башню, а экипаж в
+	# виджете пересчитывается по новому составу.
+	if _rig != null and is_instance_valid(_rig) and _ladya != null:
+		_rig.call(&"set_focus_override", _ladya)
+	if _intro_ride:
+		_reboard_after_rebuild()
 	_refresh_focus_cards()
 	_update_labels()
 	if wasd_fire_mages > 0:
@@ -6699,15 +6718,7 @@ func _intro_try_board() -> bool:
 ## «видеть» → бегут за Ладьёй), корпус оживает, волна на посадку.
 func _intro_board() -> void:
 	_intro_ride = true
-	for m in _squad.members:
-		if not is_instance_valid(m):
-			continue
-		(m as Node3D).visible = false
-		m.set_physics_process(false)
-		if m is CollisionObject3D:
-			(m as CollisionObject3D).collision_layer = 0
-			(m as CollisionObject3D).collision_mask = 0
-		(m as Node3D).global_position = _ladya.global_position + Vector3(0.0, 4.5, 0.0)
+	_stow_crew()
 	# ⭐ КОНТРОЛЛЕР ПЕРЕЕЗЖАЕТ ЦЕЛИКОМ (2026-08-07): дальше башней управляет её
 	# ШТАТНЫЙ tower.gd — ход, рывок, каст, вся моторика. Сцена больше не возит
 	# её вручную (см. _intro_tick_ride): иначе в большом мире игрок получил бы
@@ -6725,6 +6736,18 @@ func _intro_board() -> void:
 	var em := _ladya.get_node_or_null(^"EMarker")
 	if em != null:
 		em.queue_free()
+	_banner.visible = false
+	if _cmd_line != null:
+		_cmd_line.visible = false
+	if _cmd_ring != null:
+		_cmd_ring.visible = false
+	# «ОЖИВАНИЕ» башни — РОВНО ОДИН РАЗ. Садиться можно сколько угодно (сел →
+	# вышел → сел), но свет в корпусе, свечение жил и волна на посадку — событие
+	# первого запуска: на второй посадке они бы штабелировали лампы и скелетов.
+	if _board_fx_done:
+		EventBus.tutorial_hint.emit("Экипаж в кабине. WASD — ход, ПРОБЕЛ — рывок", 3.5)
+		return
+	_board_fx_done = true
 	_ladya_mat.emission_enabled = true
 	_ladya_mat.emission = Color(0.3, 0.6, 1.0)
 	_ladya_mat.emission_energy_multiplier = 1.4
@@ -6734,11 +6757,6 @@ func _intro_board() -> void:
 	light.omni_range = 14.0
 	light.position = Vector3(0.0, 5.0, 0.0)
 	_ladya.add_child(light)
-	_banner.visible = false
-	if _cmd_line != null:
-		_cmd_line.visible = false
-	if _cmd_ring != null:
-		_cmd_ring.visible = false
 	EventBus.camera_shake.emit(0.6, _ladya.global_position)
 	AoeVisual.spawn_expanding_ring(self, _ladya.global_position, 8.0, 0.4, Color(0.4, 0.7, 1.0, 0.9))
 	EventBus.tutorial_hint.emit(
@@ -6753,6 +6771,70 @@ func _intro_board() -> void:
 	for p in corners:
 		_spawn_skeleton_at(p)
 		_spawn_skeleton_at((p as Vector3) + Vector3(2.0, 0.0, 2.0))
+
+
+## Экипаж — В КОРПУС: невидим, без физики и без коллизий, позиция = башня.
+## Вынесено отдельно, потому что зовётся дважды: на посадке и после перестройки
+## состава (новые гномы рождаются снаружи и обязаны попасть внутрь).
+func _stow_crew() -> void:
+	if _squad == null or _ladya == null or not is_instance_valid(_ladya):
+		return
+	for m in _squad.members:
+		if not is_instance_valid(m):
+			continue
+		(m as Node3D).visible = false
+		m.set_physics_process(false)
+		if m is CollisionObject3D:
+			var co := m as CollisionObject3D
+			# Запоминаем СВОИ слои перед обнулением: высадка обязана вернуть
+			# ровно их, а не угадывать по типу юнита (у классов маски разные).
+			if not co.has_meta(&"ride_layer"):
+				co.set_meta(&"ride_layer", co.collision_layer)
+				co.set_meta(&"ride_mask", co.collision_mask)
+			co.collision_layer = 0
+			co.collision_mask = 0
+		(m as Node3D).global_position = _ladya.global_position + Vector3(0.0, 4.5, 0.0)
+
+
+## После перестройки состава прямо из кабины: новобранцы заходят в корпус,
+## виджет пересчитывает экипаж.
+func _reboard_after_rebuild() -> void:
+	_stow_crew()
+	if _crew_widget != null and is_instance_valid(_crew_widget):
+		_crew_widget.call(&"set_crew", _squad.members if _squad != null else [])
+
+
+## ⭐ ВЫСАДКА (2026-08-08). Обратная сторона посадки: гномы — пилоты, вышли из
+## кабины → башня встала, а управление вернулось к пешему отряду. Симметрия
+## полная: всё, что посадка включила, высадка выключает.
+func _intro_disembark() -> void:
+	if not _intro_ride or _ladya == null or not is_instance_valid(_ladya):
+		return
+	_intro_ride = false
+	# Экипаж наружу — кольцом вокруг корпуса, чтобы никто не оказался в стене.
+	var n: int = maxi(_squad.members.size(), 1)
+	var i: int = 0
+	for m in _squad.members:
+		if not is_instance_valid(m):
+			continue
+		var a: float = TAU * float(i) / float(n)
+		(m as Node3D).global_position = _ladya.global_position \
+				+ Vector3(cos(a), 0.0, sin(a)) * DISEMBARK_RADIUS \
+				- Vector3(0.0, intro_tower_y, 0.0)
+		(m as Node3D).visible = true
+		m.set_physics_process(true)
+		if m is CollisionObject3D:
+			var co := m as CollisionObject3D
+			if co.has_meta(&"ride_layer"):
+				co.collision_layer = int(co.get_meta(&"ride_layer"))
+				co.collision_mask = int(co.get_meta(&"ride_mask"))
+		i += 1
+	# Башня без экипажа — стоит. Её контроллер спит, коллизия жива.
+	_ladya.set_physics_process(false)
+	_ladya.set_process(false)
+	_despawn_tower_controller()
+	_banner.visible = true
+	EventBus.tutorial_hint.emit("Экипаж снаружи. Башня ждёт — [E], чтобы вернуться", 4.0)
 
 
 ## ⭐ ПЕРЕКЛЮЧЕНИЕ КОНТРОЛЛЕРОВ (2026-08-07). Пеший данж и башня — две разные
@@ -6783,6 +6865,18 @@ func _spawn_tower_controller() -> void:
 	add_child(_hand)
 	_tower_hud = TOWER_HUD_SCENE.instantiate() as CanvasLayer
 	add_child(_tower_hud)
+	# ⭐ ВИДЖЕТ ЭКИПАЖА ставится ИМЕННО НА ПОСАДКЕ: он и есть окно в кабину.
+	# Состав наполняется каждый тик езды (_intro_tick_ride), кнопки — сигналами:
+	# виджет ничего не решает сам, поэтому годится и большому миру.
+	_crew_widget = CREW_WIDGET_SCENE.instantiate() as CanvasLayer
+	add_child(_crew_widget)
+	_crew_widget.connect(&"rebuild_requested", _on_crew_rebuild)
+	_crew_widget.connect(&"leave_requested", _intro_disembark)
+	_crew_widget.call(&"set_crew", _squad.members if _squad != null else [])
+	# Карточки отрядов и счётчик артели в HUD башни гасим: экипаж показывает
+	# ОДИН виджет, а не карточка на класс (фидбек юзера 2026-08-08).
+	if _tower_hud.has_method(&"hide_squad_ui"):
+		_tower_hud.call(&"hide_squad_ui")
 	# Панель данжа (волна/гномы/монеты) уступает угол HUD'у башни: два набора
 	# счётчиков в одном месте — каша, а пеший слой уже не тикает.
 	var dungeon_hud := get_node_or_null(^"HUD") as CanvasLayer
@@ -6790,6 +6884,43 @@ func _spawn_tower_controller() -> void:
 		dungeon_hud.visible = false
 	print("[Intro] контроллер башни: рука=%s камера=%s HUD=%s" % [
 			_hand != null, _rig != null, _tower_hud != null])
+
+
+## Снос контроллера башни: высадился — мышь, камера и HUD возвращаются пешему
+## слою. Ровно то же, что _spawn_tower_controller включил, и в обратном порядке.
+func _despawn_tower_controller() -> void:
+	if _crew_widget != null and is_instance_valid(_crew_widget):
+		_crew_widget.queue_free()
+	_crew_widget = null
+	if _hand != null and is_instance_valid(_hand):
+		_hand.queue_free()
+	_hand = null
+	if _tower_hud != null and is_instance_valid(_tower_hud):
+		_tower_hud.queue_free()
+	_tower_hud = null
+	if _rig != null and is_instance_valid(_rig):
+		_rig.queue_free()
+	_rig = null
+	# Камера данжа снова ведущая — и как активная, и как источник курсора.
+	var own_cam := get_node_or_null(^"Camera3D") as Camera3D
+	if own_cam != null:
+		own_cam.make_current()
+		_camera = own_cam
+	var dungeon_hud := get_node_or_null(^"HUD") as CanvasLayer
+	if dungeon_hud != null:
+		dungeon_hud.visible = true
+
+
+## Кнопка «Пересобрать отряд». Открывает ТОТ ЖЕ экран сбора, что и хижина
+## гномов (слот-кнопки, кучки фигур) — второго интерфейса состава не заводим.
+## Экран модальный и тикает раньше райда (см. _wasd_physics), поэтому работает
+## прямо из кабины; камеру на время перестройки уводим на доску-трюм.
+func _on_crew_rebuild() -> void:
+	if _roster_open:
+		return
+	_open_swap_roster(0)
+	if _rig != null and is_instance_valid(_rig) and _roster_room != null:
+		_rig.call(&"set_focus_override", _roster_room)
 
 
 ## Езда на Ладье: WASD с инерцией, ЛКМ-дэш сносит скелетов, рык открывает
@@ -6814,6 +6945,10 @@ func _intro_tick_ride(delta: float) -> void:
 	# Прежний упрощённый райд (WASD-лерп + ЛКМ-дэш в точку + ручной кламп стен)
 	# выпилен: он учил игрока НЕ ТОЙ машине, а стены тоннеля и так настоящие
 	# коллайдеры — физика держит корпус честнее, чем кламп по координате.
+	# Виджет экипажа: состав живой (пилота убило — строка сама поредеет). Внутри
+	# стоит гейт «пересобираем узлы только если состав изменился».
+	if _crew_widget != null and is_instance_valid(_crew_widget):
+		_crew_widget.call(&"set_crew", _squad.members if _squad != null else [])
 	# Гномы едут в корпусе — скелеты бегут за Ладьёй, камера держит центр отряда.
 	for m in _squad.members:
 		if is_instance_valid(m):
