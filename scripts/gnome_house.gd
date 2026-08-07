@@ -32,10 +32,9 @@ const DIALOGS := {
 		],
 	},
 	&"artel": {
-		"text": "«Рабочие руки? О-о, {name}, у меня есть ШЕСТЬ пар лучших рук по эту сторону пропасти, бэйби. Парни скучают, а скучающий гном — опасный гном. Забирай всю артель — рубят, носят, строят, чинят. Всего 5 серебряных, для партнёра по Хартии — даром. Шага-делик?»",
+		"text": "«Рабочие руки? Ох, котик... вот тут я тебе не торговец, и это меня самого убивает. Гномы не лежат на прилавке, бэйби — гномы сидят ВНИЗУ, в старых штольнях, в клетках у костлявых. Хочешь рук — спускайся и выводи. Кого выведешь — те и твои. А золото... золото пусть купит им кирки, йе-е.»",
 		"choices": [
-			{ "label": "По рукам! Нанять артель — 5🥈", "next": &"", "effect": &"hire_artel" },
-			{ "label": "Позже.", "next": &"root" },
+			{ "label": "Понял. Спущусь.", "next": &"root" },
 		],
 	},
 	&"who": {
@@ -91,10 +90,9 @@ const DIALOGS := {
 			],
 		},
 		&"artel": {
-			"text": "«Рабочие руки? Есть у нас артель — шестеро, на все руки: рубят, носят, строят, чинят. 5 серебряных — и они твои, {name}. В деле каменщика лишних рук не бывает.»",
+			"text": "«Рабочие руки, {name}? Своих бы найти. Гильдия была большая, да половина осталась внизу — в штольнях, за завалами. Мы бы сами пошли, только кладку бросить нельзя. Спустишься — выводи всех, кого встретишь: каждый выведенный гном тут же встанет к делу. В деле каменщика лишних рук не бывает.»",
 			"choices": [
-				{ "label": "По рукам! Нанять артель — 5🥈", "next": &"", "effect": &"hire_artel" },
-				{ "label": "Позже.", "next": &"root" },
+				{ "label": "Понял. Спущусь.", "next": &"root" },
 			],
 		},
 	},
@@ -157,16 +155,12 @@ func _process(_delta: float) -> void:
 				add_to_group(&"guild_met")
 
 
-## Цена артели (бронза-эквивалент казны, = 5🥈) и размер найма. Покупка В ОДИН
-## КЛИК из диалога (2026-07-07, фидбек «стол — непонятное говно»): без стола,
-## перетаскиваний и скидок-дел. Стол торга остался только казармам города.
-const ARTEL_PRICE_BRONZE := 50
-const ARTEL_HIRE_COUNT := 6
-
-
 ## Обработка эффектов веток диалога (DialogUI.effect_selected). Найм БОЕВЫХ отрядов
 ## отсюда убран (2026-06-25) — их нанимают казармы (PadBuilding._open_hire).
-## open_charter — подпись Торговой Хартии; hire_artel — найм артели одним кликом.
+##
+## ⛔ НАЙМ АРТЕЛИ ЗА ЗОЛОТО ВЫПИЛЕН (2026-08-07). Кошелёк рабочих рук не делает:
+## гномы приходят из подземелья и только оттуда (MatchConfig.next_squad). Ветка
+## диалога осталась, но теперь она объясняет, а не продаёт.
 func _on_dialog_effect(effect_id: StringName) -> void:
 	if effect_id == &"open_charter":
 		# Награда = подпись Торговой Хартии. Deferred: диалог закроется этим же
@@ -174,30 +168,6 @@ func _on_dialog_effect(effect_id: StringName) -> void:
 		var charter := get_tree().get_first_node_in_group(&"charter_ui")
 		if charter != null and charter.has_method(&"open"):
 			charter.call_deferred(&"open")
-	elif effect_id == &"hire_artel":
-		_hire_artel()
-
-
-## Найм артели: гейт по капу → списание → спавн через generic-путь спавнера.
-## Результат сообщаем плашкой подсказок (окон нет — фидбек 2026-07-07).
-func _hire_artel() -> void:
-	var worker: StringName = SoldierSystem.ROLE_WORKER
-	var cap: int = SoldierSystem.get_squad_cap(worker)
-	var alive: int = 0
-	for s in get_tree().get_nodes_in_group(SoldierGnome.SOLDIER_GROUP):
-		if is_instance_valid(s) and s.get(&"soldier_type") == worker:
-			alive += 1
-	if cap > 0 and alive >= cap:
-		EventBus.tutorial_hint.emit("Артель уже в полном составе (%d/%d)" % [alive, cap], 5.0)
-		return
-	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
-	if bank == null or not bank.call(&"try_spend", ARTEL_PRICE_BRONZE):
-		EventBus.tutorial_hint.emit("Не хватает монет: артель стоит 5🥈 — разбей горшки", 6.0)
-		return
-	var spawner := get_tree().get_first_node_in_group(&"squad_spawner")
-	if spawner != null and spawner.has_method(&"hire_squad"):
-		spawner.call(&"hire_squad", worker, ARTEL_HIRE_COUNT)
-		EventBus.tutorial_hint.emit("Артель нанята! 6 гномов идут в башню", 6.0)
 
 
 ## Диалог этого домика по dialog_id (fallback — «mysterious», если id неизвестен).

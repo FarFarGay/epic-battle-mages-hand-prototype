@@ -23,6 +23,27 @@ var next_gate_pos: Vector3 = SENTINEL
 ## false — игра показывает «спокойный» старт.
 var match_started: bool = false
 
+## ⭐ ОТРЯД, ВЫВЕЗЕННЫЙ ИЗ ДАНЖА (2026-08-07). Гномы башни больше не берутся из
+## кошелька: артель-магазин выпилен, единственный источник рук — подземелье.
+## Список = по одному элементу на ЖИВОГО гнома, значение = его класс
+## (SoldierSystem.SOLDIER_CATALOG: worker / archer_squad / pikeman / fire_mage).
+##
+## Класс едет вместе с гномом и в башне НЕ МЕНЯЕТСЯ: кем собрал отряд в данже,
+## тем он и работает наверху. Привёл трёх лучников и ноль рабочих — шахта стоит.
+##
+## Живёт здесь, а не в новом синглтоне: MatchConfig и заведён как «состояние,
+## которое переживает смену сцены и достаётся следующей» (позиции башни/врат от
+## StartMenu), и consume-паттерн у него уже есть.
+var next_squad: Array[StringName] = []
+
+
+## Забрать отряд и очистить: следующая загрузка мира не должна получить его
+## повторно (иначе рестарт сцены дублировал бы гномов).
+func consume_squad() -> Array[StringName]:
+	var s: Array[StringName] = next_squad.duplicate()
+	next_squad.clear()
+	return s
+
 
 func has_pending() -> bool:
 	return next_tower_pos != SENTINEL or next_poi_pos != SENTINEL

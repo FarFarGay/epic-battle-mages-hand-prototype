@@ -6848,8 +6848,32 @@ func _intro_tick_ride(delta: float) -> void:
 func _intro_exit_to_world() -> void:
 	if intro_exit_scene.is_empty():
 		return  # пусто = остаться в интро (прежнее поведение «конец прототипа»)
+	_pack_squad_for_world()
 	_intro_exit_pending = true
 	_intro_exit_timer = intro_exit_delay
+
+
+## ⭐ ОТРЯД ЕДЕТ В МИР (2026-08-07). Раньше между эпизодами не переносилось
+## НИЧЕГО: данж был витриной, а гномов в башне ты докупал за золото. Теперь
+## наоборот — подземелье и есть единственный источник рук, а кошелёк гномов не
+## делает. Кого выбили скелетами в третьей комнате, тот на шахту не встанет:
+## список собирается по ЖИВЫМ на момент выезда.
+##
+## Класс едет вместе с гномом (переучивания нет — решение юзера): собранный
+## слот-кнопками отряд определяет не только бой в данже, но и рабочую силу
+## города. Дальше состав читает GnomeSquadSpawner на старте мира.
+func _pack_squad_for_world() -> void:
+	var roster: Array[StringName] = []
+	if _squad != null:
+		for m in _squad.members:
+			if not is_instance_valid(m):
+				continue
+			var t: StringName = StringName(str(m.get(&"soldier_type")))
+			if t == &"":
+				t = SoldierSystem.ROLE_WORKER  # без типа = рядовая пара рук
+			roster.append(t)
+	MatchConfig.next_squad = roster
+	print("[Intro] в мир едут гномы: %d — %s" % [roster.size(), str(roster)])
 
 
 ## Кламп хода Ладьи: ангар и узкий тоннель. Раньше здесь стоял гейт «до рыка

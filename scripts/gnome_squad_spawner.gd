@@ -171,8 +171,9 @@ func _squad_has_member_in_ring(sq: Squad, origin: Vector3, radius: float) -> boo
 	return false
 
 
-## Публичный найм generic-путём (минуя стол торга): диалог гномов Room4 нанимает
-## артель одним кликом (2026-07-07). Тот же код-путь, что TradeUI.purchased.
+## Публичный найм generic-путём (минуя стол торга). Прежний вызыватель — диалог
+## гномов Room4 («нанять артель за 5🥈») — УБРАН 2026-08-07: рабочих за золото
+## больше не продают. Метод жив как generic-вход для казарм/будущих продавцов.
 func hire_squad(unit_type: StringName, size: int) -> void:
 	_on_purchased(unit_type, size)
 
@@ -181,6 +182,13 @@ func _on_purchased(unit_type: StringName, squad_size: int) -> void:
 	if SoldierSystem == null:
 		return
 	var soldier_type: StringName = unit_type if SoldierSystem.has_soldier(unit_type) else SOLDIER_TYPE
+	# ⛔ РАБОЧИХ ЗА ЗОЛОТО НЕ ПРОДАЮТ (2026-08-07). Артель приходит из подземелья
+	# и только оттуда — иначе у рук два крана, а кошелёк всегда удобнее похода.
+	# Гейт стоит здесь, в одной точке: любой будущий продавец упрётся в него сам.
+	if soldier_type == SoldierSystem.ROLE_WORKER:
+		EventBus.tutorial_hint.emit(
+				"Рабочих не купить — гномов выводят из подземелья", 5.0)
+		return
 	# Кап артели (рабочие — 7): докупка доливает только до потолка. Уже полно → ничего.
 	# Покупка в домике гномов — отряд НА ТИП (ключ = тип), не per-barracks.
 	var add: int = _clamp_to_cap(soldier_type, soldier_type, maxi(squad_size, 1))
@@ -195,26 +203,47 @@ func _on_purchased(unit_type: StringName, squad_size: int) -> void:
 	_spawn_squad(soldier_type, soldier_type, add, front)
 
 
-## Стартовая численность артели. 2026-07-07: ОДИН гном — остальных ПОКУПАЕШЬ у
-## гномов Room4 после Хартии (стол торга, +6). Кап типа (7) остаётся потолком долива.
-@export var starting_worker_count: int = 1
+## Состав, с которым башня стартует, ЕСЛИ из данжа никто не приехал: прямой
+## запуск мира (level_rooms — главная сцена) и дев-сцены. Полная артель рабочих:
+## ровно то, что было до 2026-07-07, когда гномов ещё не покупали за золото.
+## Игровой путь — не этот: гномов приводят из подземелья (см. ниже).
+@export var starting_worker_count: int = 7
 
 
-## Стартовая артель рабочих — появляется У БАШНИ и сразу прячется внутрь (они в ней
-## «живут»). Зовётся deferred из _ready (ждёт дерево сцены).
+## ⭐ ГНОМЫ ПРИЕЗЖАЮТ ИЗ ДАНЖА (2026-08-07). Артель-магазин выпилен: кошелёк рук
+## не делает, единственный источник — подземелье. Состав кладёт финал интро
+## (DungeonSandbox._pack_squad_for_world) в MatchConfig, здесь он разбирается по
+## классам и спавнится у башни — гномы сразу прячутся внутрь, они в ней «живут».
+##
+## Класс приезжает вместе с гномом и НЕ меняется: привёл лучников — у тебя
+## лучники, привёл рабочих — рабочие. Никто не переучивается.
+##
+## Никто не приехал (прямой запуск мира) → стартовый состав по-старому, иначе
+## главная сцена открывалась бы с пустой башней.
 func _spawn_starting_workers() -> void:
 	await get_tree().physics_frame
 	if not is_inside_tree() or SoldierSystem == null:
-		return
-	var soldier_type: StringName = SoldierSystem.ROLE_WORKER
-	var count: int = starting_worker_count
-	if count <= 0:
 		return
 	var tower := get_tree().get_first_node_in_group(&"tower")
 	if tower == null or not is_instance_valid(tower):
 		return
 	var t: Vector3 = (tower as Node3D).global_position
-	_spawn_squad(soldier_type, soldier_type, count, Vector3(t.x, ground_y, t.z))
+	var at := Vector3(t.x, ground_y, t.z)
+	var carried: Array[StringName] = MatchConfig.consume_squad()
+	if not carried.is_empty():
+		# Считаем по классам и спавним по одному вызову на класс — тот же путь,
+		# что у обычного заказа отряда, без отдельной ветки «особый спавн».
+		var by_type: Dictionary = {}
+		for id in carried:
+			if SoldierSystem.has_soldier(id):
+				by_type[id] = int(by_type.get(id, 0)) + 1
+		for id in by_type:
+			_spawn_squad(id, id, int(by_type[id]), at)
+		print("[Spawner] из данжа приехали: %s" % str(by_type))
+		return
+	if starting_worker_count > 0:
+		var soldier_type: StringName = SoldierSystem.ROLE_WORKER
+		_spawn_squad(soldier_type, soldier_type, starting_worker_count, at)
 
 
 ## Сколько добавить с учётом потолка ТИПА по отряду ЭТОГО КЛЮЧА: cap<=0 → без потолка. cap_bonus —
