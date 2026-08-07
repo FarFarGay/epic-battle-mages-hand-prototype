@@ -2969,7 +2969,7 @@ func _wasd_physics(delta: float) -> void:
 	if _space_pending:
 		_space_pending = false
 		_press_bind(BIND_SPACE, cursor)
-	_tick_jumpers(delta)
+	_tick_bombers(delta)
 	_tick_spear_super(delta)
 	_tick_stone_wave(delta)
 	_tick_ice(delta)
@@ -5125,37 +5125,25 @@ func _apply_kind(sk: Node3D, kind: StringName) -> void:
 			sk.set(&"move_speed", 4.6)
 			_add_kind_decor(sk, Vector3(0.18, 0.5, 0.18), Vector3(0.0, 1.5, 0.0),
 					Color(0.95, 0.45, 0.12))
-		&"jumper":
-			# ПРЫГУН (2026-08-08): пешком плетётся, но раз в пару секунд сигает
-			# через строй и приземляется В ТЫЛУ — цена за «спрятал лучников за
-			# копейщиками». Стеклянный: поймал в полёте — рассыпался.
-			#
-			# Сам прыжок — НЕ новая ИИ-ветка: раз в интервал сцена бьёт по нему
-			# штатным apply_knockback (тем же, чем работает выпад скелета),
-			# см. _tick_jumpers. Скелет об этом ничего не знает.
-			sk.set(&"hp", 20.0)
-			sk.set(&"move_speed", 1.7)
-			sk.set_meta(&"jumper", true)
-			# Силуэт: поджатые задние лапы по бокам — «сейчас распрямит».
-			_add_kind_decor(sk, Vector3(0.22, 0.62, 0.22), Vector3(-0.42, 0.5, 0.12),
-					Color(0.45, 0.85, 0.4))
-			_add_kind_decor(sk, Vector3(0.22, 0.62, 0.22), Vector3(0.42, 0.5, 0.12),
-					Color(0.45, 0.85, 0.4))
 		&"bomber":
-			# ВЗРЫВАЮЩИЙСЯ (2026-08-08): опасен не ударом, а СМЕРТЬЮ — рвётся
-			# там, где его убили. Учит бить издалека и не сваливать толпу в кучу;
-			# на льду, куда тебя несёт юзом, это отдельный ужас.
+			# ⭐ ВЗРЫВАЮЩИЙСЯ (2026-08-08): он не «рвётся от смерти», он БОМБА С
+			# ФИТИЛЁМ. Дошёл до гнома → запустил обратный отсчёт (заряд наливается
+			# красным и мигает всё чаще) → рванул. Застрелил ВО ВРЕМЯ отсчёта —
+			# рвётся на месте: фитиль уже горит, отменить нечем.
 			#
-			# Взрыв ловится одним слушателем EventBus.enemy_destroyed по мете —
-			# не сигналом на каждого (лямбда с захватом умирающей ноды у нас уже
-			# стреляла) и не новым классом врага.
+			# А вот снятый ДО отсчёта не взрывается вовсе — в этом вся тактика:
+			# успел заметить и снять на подходе → чисто; проморгал → выбирай, где
+			# он рванёт. Логика тика — _tick_bombers.
 			sk.set(&"hp", 26.0)
 			sk.set(&"move_speed", 2.8)
 			sk.set(&"attack_damage_min", 4.0)
 			sk.set(&"attack_damage_max", 6.0)
 			sk.set_meta(&"bomber", true)
+			# Заряд инертно-тёмный: КРАСНЫМ он станет только когда фитиль зажжён
+			# (один визуальный язык — красное мигание значит ровно «сейчас рванёт»,
+			# и ничего больше). Оранжевый гребень остаётся приметой бегуна.
 			var charge := _add_kind_decor(sk, Vector3(0.62, 0.62, 0.62),
-					Vector3(0.0, 1.05, 0.42), Color(0.95, 0.35, 0.1))
+					Vector3(0.0, 1.05, 0.42), BOMB_IDLE_COLOR)
 			charge.name = "BombCharge"
 		_:
 			pass
@@ -5165,10 +5153,10 @@ func _apply_kind(sk: Node3D, kind: StringName) -> void:
 ## новый тип: игрок разбирается с ними по очереди, а не тонет в зоопарке сразу.
 ##   К1 «кишка»      — только обычные: комната учит вести строй, не читать врагов;
 ##   К2 «обеденная»  — + ЩИТОВИКИ: стрелы вязнут, нужен супер копейщиков;
-##   К3              — + ПРЫГУНЫ: строй перестал быть стеной, тыл вскрывается;
+##   К3              — + БЕГУНЫ: хилые спринтеры, обходят строй и рвутся в тыл;
 ##   К4 «ледник»     — + ВЗРЫВАЮЩИЕСЯ, но ЩИТОВИКОВ НЕТ (решение юзера): на льду
 ##                     тебя несёт юзом, и медленный танк здесь только мешал бы
-##                     читать главную опасность — то, что рвётся при смерти.
+##                     читать главную опасность — бомбу с зажжённым фитилём.
 ##
 ## Не веса, а ПАТТЕРН по кругу: пачка из 4 гарантированно содержит новый тип.
 ## На весах при 20% из пятерых мог не выпасть ни один — «балансно» превратилось
@@ -5176,23 +5164,27 @@ func _apply_kind(sk: Node3D, kind: StringName) -> void:
 const ROOM_PATTERN := {
 	0: [&"grunt"],
 	1: [&"grunt", &"grunt", &"grunt", &"shieldman"],
-	2: [&"grunt", &"shieldman", &"grunt", &"jumper"],
-	3: [&"grunt", &"jumper", &"grunt", &"bomber"],
+	2: [&"grunt", &"shieldman", &"grunt", &"runner"],
+	3: [&"grunt", &"runner", &"grunt", &"bomber"],
 }
 var _room_cursor: Dictionary = {}
 
-## Прыжок: раз в интервал, если цель в коридоре дистанций. Интервал ЛИЧНЫЙ
-## (рандом в мете) — иначе пачка сигает синхронно, как танцевальный ансамбль.
-const JUMP_INTERVAL_MIN := 1.9
-const JUMP_INTERVAL_MAX := 3.1
-const JUMP_RANGE_MIN := 2.8
-const JUMP_RANGE_MAX := 17.0
-const JUMP_SPEED := 15.0
-const JUMP_UP := 9.5
-const JUMP_DURATION := 0.5
-
-## Взрыв бомбиста: бьёт ВСЕХ в радиусе — и гномов, и своих (симметрия: сила,
-## которая бьёт одних, бьёт и других; толпа скелетов вокруг бомбиста — твой шанс).
+## ⭐ БОМБИСТ — БОМБА С ФИТИЛЁМ (2026-08-08). Подошёл к гному ближе BOMB_ARM_DIST →
+## зажёгся фитиль: заряд наливается красным и мигает всё чаще, через BOMB_FUSE
+## секунд — взрыв. Убежать от собственного фитиля он не может: зажёгся — горит.
+##
+## Убит ВО ВРЕМЯ отсчёта — рвётся на месте (фитиль уже горит). Убит ДО отсчёта —
+## не взрывается вовсе. В этом вся тактика: снял на подходе — чисто, проморгал —
+## выбираешь только место, где рванёт.
+const BOMB_ARM_DIST := 3.2
+const BOMB_FUSE := 1.6
+## Мигание: от медленного к частому по мере догорания (Гц в начале и в конце).
+const BOMB_BLINK_START := 3.0
+const BOMB_BLINK_END := 14.0
+const BOMB_IDLE_COLOR := Color(0.24, 0.2, 0.18)
+const BOMB_LIT_COLOR := Color(1.0, 0.12, 0.06)
+## Взрыв: бьёт ВСЕХ в радиусе — и гномов, и своих (симметрия: сила, которая бьёт
+## одних, бьёт и других; толпа скелетов вокруг бомбиста — твой шанс).
 const BOMB_RADIUS := 4.6
 const BOMB_DAMAGE := 34.0
 const BOMB_PUSH := 7.0
@@ -5207,52 +5199,65 @@ func _room_kind(room: int) -> StringName:
 	return pattern[i % pattern.size()]
 
 
-## Прыгуны: сцена раз в личный интервал швыряет их к цели штатным knockback'ом
-## (тем же, чем работает выпад скелета). Своей ИИ-ветки у прыгуна нет —
-## параметризованный скелет плюс этот тик, не новый класс врага.
-func _tick_jumpers(delta: float) -> void:
+## ФИТИЛЬ БОМБИСТОВ: подошёл к гному — зажёгся, дальше только тикает. Своей
+## ИИ-ветки у бомбиста нет: параметризованный скелет плюс этот тик.
+func _tick_bombers(delta: float) -> void:
 	for n in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		if not is_instance_valid(n) or (n as Node).is_queued_for_deletion():
 			continue
-		if not (n as Node).has_meta(&"jumper"):
-			continue
 		var sk := n as Node3D
-		# Первый взвод — СРАЗУ в мету, иначе дефолт get_meta пересчитывался бы
-		# случайным числом каждый кадр и прыжок случался бы примерно никогда.
-		# И он КОРОТКИЙ: на полном интервале прыгун успевал дотопать вплотную
-		# ещё до первого прыжка — и больше уже не прыгал никогда (ближе
-		# JUMP_RANGE_MIN прыжок запрещён). Первый сигает почти сразу, дальше —
-		# обычный ритм.
-		if not sk.has_meta(&"jump_cd"):
-			sk.set_meta(&"jump_cd", randf_range(0.15, 0.7))
-		var t: float = float(sk.get_meta(&"jump_cd")) - delta
-		if t > 0.0:
-			sk.set_meta(&"jump_cd", t)
+		if not sk.has_meta(&"bomber"):
 			continue
-		sk.set_meta(&"jump_cd", randf_range(JUMP_INTERVAL_MIN, JUMP_INTERVAL_MAX))
-		# Только с земли: прыжок в воздухе доложился бы вертикалью к текущей
-		# (KnockbackState накладывает Y поверх) — получился бы флоатящий батут.
-		if sk is CharacterBody3D and not (sk as CharacterBody3D).is_on_floor():
-			sk.set_meta(&"jump_cd", 0.12)  # приземлится — прыгнет
+		if not sk.has_meta(&"fuse"):
+			# Ещё не зажёгся: ищем повод. Дистанция до БЛИЖАЙШЕГО гнома — тот же
+			# критерий, что игрок видит глазами («подошёл вплотную»).
+			var g: Node3D = _nearest_alive_gnome(sk.global_position)
+			if g == null:
+				continue
+			var to := g.global_position - sk.global_position
+			to.y = 0.0
+			if to.length() > BOMB_ARM_DIST:
+				continue
+			sk.set_meta(&"fuse", BOMB_FUSE)
+			EventBus.camera_shake.emit(0.06, sk.global_position)
 			continue
-		var target: Node3D = _nearest_alive_gnome(sk.global_position)
-		if target == null:
+		var t: float = float(sk.get_meta(&"fuse")) - delta
+		if t <= 0.0:
+			# Догорел: убиваем ШТАТНЫМ уроном, а не своим взрывом напрямую —
+			# тогда и «догорел», и «застрелили с горящим фитилём» приходят
+			# в _on_enemy_destroyed_bomb одной дорогой, без второй ветки.
+			sk.set_meta(&"fuse", 0.0)
+			if sk.has_method(&"take_damage"):
+				sk.call(&"take_damage", 99999.0)
 			continue
-		var to := target.global_position - sk.global_position
-		to.y = 0.0
-		var d: float = to.length()
-		if d < JUMP_RANGE_MIN or d > JUMP_RANGE_MAX:
-			continue
-		# Летит НА цель, но не дальше своего прыжка — перелетать строй и падать
-		# в пустоту он не должен, задача приземлиться среди них.
-		var dir: Vector3 = to / d
-		if sk.has_method(&"apply_knockback"):
-			sk.call(&"apply_knockback",
-					dir * JUMP_SPEED + Vector3.UP * JUMP_UP, JUMP_DURATION)
+		sk.set_meta(&"fuse", t)
+		_bomb_blink(sk, t)
 
 
-## Ближайший живой гном к точке (прыгун целится в того, кто реально рядом,
-## а не в «случайного из отряда» — иначе сигал бы через всю комнату мимо).
+## Мигание заряда: чем меньше осталось, тем чаще. Красим ТОЛЬКО заряд —
+## hit-flash и shatter самого скелета остаются штатными.
+func _bomb_blink(sk: Node3D, left: float) -> void:
+	var charge := sk.get_node_or_null(^"BombCharge") as MeshInstance3D
+	if charge == null:
+		return
+	var mat := charge.material_override as StandardMaterial3D
+	if mat == null:
+		return
+	var k: float = clampf(1.0 - left / BOMB_FUSE, 0.0, 1.0)
+	var hz: float = lerpf(BOMB_BLINK_START, BOMB_BLINK_END, k)
+	# Фаза копится в мете: считать от глобального времени нельзя — все бомбисты
+	# мигали бы в такт, как гирлянда, вместо личных фитилей.
+	var phase: float = float(sk.get_meta(&"fuse_phase", 0.0)) \
+			+ hz * get_physics_process_delta_time()
+	sk.set_meta(&"fuse_phase", phase)
+	var on: bool = fmod(phase, 1.0) < 0.5
+	mat.albedo_color = BOMB_LIT_COLOR if on else BOMB_IDLE_COLOR
+	# Раздувается к концу — читается и боковым зрением, не только по цвету.
+	charge.scale = Vector3.ONE * (1.0 + 0.5 * k + (0.18 if on else 0.0))
+
+
+## Ближайший живой гном к точке (бомбист поджигает фитиль от того, кто реально
+## рядом, а не от «случайного из отряда»).
 func _nearest_alive_gnome(from: Vector3) -> Node3D:
 	var best: Node3D = null
 	var best_d: float = INF
@@ -5275,6 +5280,11 @@ func _nearest_alive_gnome(from: Vector3) -> Node3D:
 ## получит его же обратно вторым хитом.
 func _on_enemy_destroyed_bomb(enemy: Node3D) -> void:
 	if enemy == null or not is_instance_valid(enemy) or not enemy.has_meta(&"bomber"):
+		return
+	# ⭐ РВЁТСЯ ТОЛЬКО С ЗАЖЖЁННЫМ ФИТИЛЁМ. Снятый на подходе — просто труп: иначе
+	# «убей его заранее» перестало бы быть решением, и разницы между расстрелять
+	# издали и пропустить вплотную не было бы никакой.
+	if not enemy.has_meta(&"fuse"):
 		return
 	call_deferred(&"_bomb_blast", enemy.global_position)
 
@@ -6760,7 +6770,7 @@ func _intro_tick(delta: float) -> void:
 		_intro_left[2] = 0
 		_intro_spawn_pack(4)
 		EventBus.tutorial_hint.emit(
-				"ЗЕЛЁНЫЕ ПРЫГАЮТ через строй — тыл больше не тыл. Отбейся и собери бомбу", 6.0)
+				"БЕГУНЫ: хилые, но быстрые — обходят строй и лезут в тыл. Отбейся и собери бомбу", 6.0)
 	# К4-ледник: встреча на пороге (скелеты уже НА льду — их тоже несёт) +
 	# вдогон с юга, когда отряд втянулся к колоннам. Урок комнаты телесный:
 	# скольжение, шипы у стен, и только потом — покупка огня.
@@ -6770,7 +6780,7 @@ func _intro_tick(delta: float) -> void:
 			_spawn_skeleton_at(Vector3(room_center.x - 8.0 + 4.0 * float(i), 0.6,
 					room_center.z - 181.0), _room_kind(3))
 		EventBus.tutorial_hint.emit(
-				"ЛЕДНИК. Лёд несёт, шипы РЕЖУТ. Оранжевые РВУТСЯ при смерти — бей издали!", 6.0)
+				"ЛЕДНИК. Лёд несёт, шипы РЕЖУТ. Замигал КРАСНЫМ — это фитиль, снимай ДО него!", 6.5)
 	elif _k4_wave == 1 and c.z < room_center.z - 166.0:
 		_k4_wave = 2
 		for i in range(4):
