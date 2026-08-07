@@ -71,8 +71,11 @@ const CMD_ARRIVED_DIST := 2.0
 ## подпускать врага = появляется рулёжка.
 @export var gnome_attack_range: float = 12.0
 ## Темп стрельбы (каталожные 1.0–2.0 — вальяжная оборона; данжу нужен ливень).
-@export var gnome_cooldown_min: float = 0.5
-@export var gnome_cooldown_max: float = 0.9
+## ⚠ Разброс УЖЕ прежнего (было 0.5–0.9) при том же среднем 0.7: широкий рандом
+## на шести лучниках превращал очередь в попкорн. Узкий джиттер + фазовая
+## раскладка (_stagger_archers) = пулемёт, в котором изредка сдваивает.
+@export var gnome_cooldown_min: float = 0.64
+@export var gnome_cooldown_max: float = 0.76
 ## Урон выстрела. Каталожные 20–32 ваншотили скелета (hp=30) — «жоско»
 ## (фидбек 2026-07-23). 8–12 = ~3 выстрела на скелета: толпа успевает
 ## доползти, появляется челлендж.
@@ -322,11 +325,36 @@ const CMD_ARRIVED_DIST := 2.0
 ## ИНЕРЦИЯ ТОЧКИ СТРОЯ (рецепт Pathogenic, 2026-07-30): скорость точки не
 ## телепортируется в цель, а догоняет её экспонентой. Единственная ручка
 ## отзывчивости (1/с): выше — резче разгон и руль, ниже — валкое тяжёлое тело.
-## 6.0 ≈ 63% хода за 0.17с. 0 = вернуть старую мгновенную модель.
-@export var wasd_handling: float = 6.0
+## 10.0 ≈ 63% хода за 0.10с — тело весит, но команду не «обдумывает». 16 было
+## аркадно (отклик 1:1, вес не читается), 6 — вязко. 0 = мгновенная модель.
+@export var wasd_handling: float = 10.0
 ## Тормоз мягче разгона: множитель wasd_handling при отпущенном WASD. Даёт
 ## короткий накат-глайд после отпускания (вес тела); 1.0 = тормоз как разгон.
-@export var wasd_brake_mult: float = 0.45
+## 0.6 — тормоз мягче разгона: короткий накат на отпускании (вес тела), но без
+## юза на полкомнаты, каким он был на 0.45.
+@export var wasd_brake_mult: float = 0.6
+## ⭐ РУЛИМ ТЕЛОМ, А НЕ ТОЧКОЙ (2026-08-07, сверка с контроллером Pathogenic).
+## Там импульс идёт в САМО ТЕЛО, а мягкость — шкура поверх; у нас же ввод шёл в
+## невидимую точку, а гномы её догоняли вторым звеном — отклик размазан по двум
+## фильтрам, и видишь ты не то, чем рулишь. Включённым: скорость [_wasd_vel]
+## раздаётся ВСЕМ гномам как общий ход, слот строя работает пружиной поверх
+## (SoldierGnome.body_pull), точка строя больше не ведёт — она едет на
+## центроиде. false = прежняя модель, для A/B прямо в редакторе.
+@export var wasd_body_mode: bool = true
+## Жёсткость возврата гнома в свой слот в режиме тела (1/с): выше — строй
+## жёстче держит форму, ниже — тело «течёт» и собирается на остановках.
+@export var wasd_body_pull: float = 10.0
+## Кап поправки строя (м/с). Держать заметно ниже крейсера, иначе отставший
+## гном обгоняет группу.
+@export var wasd_body_pull_max: float = 6.0
+## Насколько цепко якорь тела держится за фактический центроид (1/с). Выше —
+## якорь честнее следует за застрявшей группой, но возвращается самоподкачка
+## строя; ниже — тело «упрямее» прёт сквозь помеху.
+@export var wasd_body_anchor_pull: float = 3.0
+## Просторность строя: множитель шага сетки-«черепахи» (1.0 = плечом к плечу,
+## как было). Разброс тела упирается именно в геометрию слотов, а не в
+## инерцию — «пошире» крутится отсюда.
+@export var wasd_formation_spacing: float = 1.35
 ## Зона мягкого подхода гнома к слоту строя (м). Лечит дрожь на отходе спиной:
 ## слот наезжает сзади, и без демпфирования гном скачет «полный ход ↔ стоп».
 ## 0 = штатное жёсткое прибытие. См. SoldierGnome.arrival_damp_radius.
@@ -336,7 +364,7 @@ const CMD_ARRIVED_DIST := 2.0
 @export var wasd_unit_speed: float = 8.0
 ## Сцепление руления юнитов (1/с, экспоненциальный догон скорости): выше =
 ## резче старт/стоп/повороты. Дефолт отряда 5.5 — «кисель» для twin-stick.
-@export var wasd_grip: float = 12.0
+@export var wasd_grip: float = 16.0
 ## Полив: цель = скелет в дальности, ближайший к ЛУЧУ курсора; сектор захвата
 ## вокруг направления (дот-порог 0.5 ≈ ±60°) — курсор ведёт огонь как стик.
 @export var wasd_aim_dot: float = 0.5
@@ -498,12 +526,16 @@ const CMD_ARRIVED_DIST := 2.0
 ## Предел сдвига строя (м) — чтобы желе не расползалось в кисель.
 @export var jelly_max_offset: float = 1.2
 ## Вытяжение вдоль хода на полной скорости (0.35 = +35% длины, поперёк −16%).
-@export var jelly_stretch: float = 0.35
+@export var jelly_stretch: float = 0.26
 ## Отставание КАЖДОГО следующего ряда (м) на полной скорости — волна по телу.
 @export var jelly_row_lag: float = 0.13
 ## Доля руления у хвоста от головного (1.0 = все одинаковые, 0.45 = хвост
-## заметно вязче и запаздывает).
-@export var jelly_grip_tail: float = 0.45
+## заметно вязче и запаздывает). ⚠ ГЛАВНЫЙ ИСТОЧНИК РАЗБРОСА в режиме тела:
+## при 0.45 хвостовой гном рулит с grip 5.4 (τ 0.19с) и на крейсере отстаёт
+## почти на два метра. 0.85 оставляет хвосту лёгкую мягкость «для жизни», но
+## строй едет кучей. 0.68 — компромисс: хвост заметно перетекает за поворотом,
+## но не растягивает тело на два метра, как 0.45.
+@export var jelly_grip_tail: float = 0.68
 
 @export_group("Карточки-находки")
 ## КРИВАЯ РОСТА ВНУТРИ ЗАБЕГА (пивот 2026-07-28). Не VS-левелапы по опыту — их
@@ -558,7 +590,13 @@ const CMD_ARRIVED_DIST := 2.0
 ## колчан не даёт РЕШЕНИЕ, он даёт ПРОСТОЙ — игрок стоит и ждёт, пока цифра
 ## натикает, а переключение фокуса становится повинностью, а не манёвром.
 ## Стрелы на спине остались как декор (wasd_quiver_decor). >0 = вернуть лимит.
-@export var wasd_quiver_size: int = 0
+##
+## ⭐ ВОЗВРАЩЁН 2026-08-07 по числам Pathogenic (запрос юзера «есть КАП выстрелов,
+## который довольно быстро заполняется — прикольно»). Провал июльской версии был
+## в ТАЙМИНГАХ, а не в идее: пустой колчан отливался 2.4с, а у них бар набегает
+## за 0.53с после секунды тишины. Плюс отменён сухой спуск — гашетка больше не
+## держит перезарядку на нуле (см. try_suppressive_fire).
+@export var wasd_quiver_size: int = 5
 ## Сколько стрел рисовать на спине, когда лимит выключен (чистый визуал).
 @export var wasd_quiver_decor: int = 6
 ## СУПЕР МИЛИ-КЛАССА (ПРОБЕЛ, пивот 2026-07-28). Переключение фокуса 1/2/3
@@ -587,11 +625,15 @@ const CMD_ARRIVED_DIST := 2.0
 @export var wasd_super_brake: float = 0.2
 ## ИМПАКТ: хитстоп жертвам супера (сек заморозки на попадании). 0 = выкл.
 @export var wasd_super_hitstop: float = 0.08
-## Секунд на одну стрелу перезарядки (0.5 → 0.3 по фидбеку 2026-07-28 «увеличь
-## скорость»: пустой→полный 2.4с вместо 3.8с).
-@export var wasd_quiver_reload: float = 0.3
-## Пауза тишины после последнего выстрела до старта перезарядки (с).
-@export var wasd_quiver_delay: float = 0.6
+## Секунд на одну стрелу перезарядки. 0.08 при колчане 5 = пустой→полный за
+## 0.4с — «довольно быстро заполняется», как у них (полный бар за 0.53с).
+@export var wasd_quiver_reload: float = 0.08
+## Пауза тишины до старта перезарядки (с). ⚠ ГЛАВНОЕ ЧИСЛО ВСЕЙ МЕХАНИКИ: она
+## обязана быть ДЛИННЕЕ интервала между выстрелами, иначе колчан отливается
+## прямо между стрелами и кап не наступает никогда (первый замер: пауза 0.3с
+## при выстреле раз в 0.7с — ни один лучник так и не высох). У Pathogenic пауза
+## 1.0с при темпе 0.105с, то есть в 9 раз длиннее интервала.
+@export var wasd_quiver_delay: float = 0.8
 ## СТАМИНА КОПЕЙЩИКОВ (2026-07-28, зеркало колчана) — ВЫКЛЮЧЕНА тем же фидбеком:
 ## выдохшийся копейщик так же обнуляет темп (машешь мышью, а удара нет). Пипсы
 ## на спине не строятся при 0. >0 = вернуть запас ударов.
@@ -722,6 +764,11 @@ var _wasd_vel: Vector3 = Vector3.ZERO
 ## текущий пружинный сдвиг слотов и его скорость.
 var _jelly_prev_hold: Vector3 = Vector3.INF
 var _jelly_prev_vel: Vector3 = Vector3.ZERO
+## Якорь тела в режиме wasd_body_mode (см. _wasd_move). INF = ещё не привязан.
+var _body_anchor: Vector3 = Vector3.INF
+## Прошлое состояние ЛКМ ДЛЯ ПОЛИВА — по фронту нажатия раскладываем очередь
+## лучников. Отдельно от _lmb_was_down: тот принадлежит дрифт-пути (газ/юз).
+var _volley_lmb_down: bool = false
 var _jelly_offset: Vector3 = Vector3.ZERO
 var _jelly_offset_vel: Vector3 = Vector3.ZERO
 ## Взятые карточки: id → сколько раз взята (повторы разрешены, пока есть слот).
@@ -1046,6 +1093,7 @@ func _spawn_wasd_squad() -> void:
 	# Стоячий строй — «черепаха»-блок вместо кольца (фидбек 2026-07-23).
 	# strict=false: мягкий HOLD — стрельба всегда приоритетнее марша.
 	_squad.hold_grid = true
+	_squad.grid_spacing_scale = wasd_formation_spacing
 	_squad.command_hold(room_center, false)
 
 
@@ -1114,7 +1162,30 @@ func _create_wasd_soldier(t: StringName, at: Vector3) -> SoldierGnome:
 		_skin_fire_mage(soldier)
 	_squad.add_member(soldier)
 	soldier.destroyed.connect(_on_gnome_died)
+	if soldier is ArcherSoldier:
+		_stagger_archers()
 	return soldier
+
+
+## ОЧЕРЕДЬ, А НЕ ПОПКОРН: лучники разводятся по фазе внутри общего такта, и
+## залп читается как пулемётная очередь — стреляют друг за другом, а не кто
+## когда. Ровным метрономом темп при этом НЕ делаем: джиттер кулдауна
+## (gnome_cooldown_min/max) оставляет редкие сдвоенные выстрелы — по фидбеку
+## «всё равно чуть смешанно, когда 2 стрелы могут пойти одновременно».
+## Зовётся на каждом появлении лучника (старт отряда и найм) — оба вне боя.
+func _stagger_archers() -> void:
+	if _squad == null:
+		return
+	var archers: Array = []
+	for m in _squad.members:
+		if is_instance_valid(m) and m is ArcherSoldier:
+			archers.append(m)
+	if archers.is_empty():
+		return
+	var beat: float = (gnome_cooldown_min + gnome_cooldown_max) * 0.5
+	var step: float = beat / float(archers.size())
+	for i in range(archers.size()):
+		archers[i].set_fire_phase(step * float(i))
 
 
 ## Раскладка постоянная (выбирать больше нечего): подсказка вместо телеграфа
@@ -2878,6 +2949,28 @@ func _wasd_move(delta: float, cursor: Vector3) -> void:
 		if _is_on_ice(_squad.hold_position):
 			rate *= ice_handling_mult
 		_wasd_vel = _wasd_vel.lerp(target, 1.0 - exp(-rate * delta))
+	if wasd_body_mode:
+		# ЯКОРЬ ТЕЛА — аналог center_body у Pathogenic: собственная точка,
+		# которую интегрирует сам ход, а гномы к ней пружинят. Ставить слоты
+		# прямо на центроид НЕЛЬЗЯ: слоты считаются от гномов, гномы тянутся к
+		# слотам — контур сам себя разгоняет (замер: 11.8 м/с при команде 9.3).
+		# Якорь эту петлю рвёт: он не выводится из положения группы.
+		if c == Vector3.INF:
+			return
+		var cf := Vector3(c.x, 0.0, c.z)
+		if _body_anchor == Vector3.INF or _body_anchor.distance_to(cf) > 8.0:
+			_body_anchor = cf
+		_body_anchor += _wasd_vel * delta
+		# Мягкая сцепка с фактическим телом: упёрлись в стену или увязли в
+		# толпе — якорь не убегает вперёд, а подтягивается к центроиду. Слабая
+		# намеренно: сильная вернула бы ту же петлю.
+		_body_anchor = _body_anchor.lerp(cf, 1.0 - exp(-wasd_body_anchor_pull * delta))
+		_body_anchor.x = clampf(_body_anchor.x, room_center.x - room_half + 2.0,
+				room_center.x + room_half - 2.0 + (18.0 if intro_mode else 0.0))
+		_body_anchor.z = clampf(_body_anchor.z, cursor_z_min, cursor_z_max)
+		_squad.hold_position = _body_anchor
+		_banner.global_position = _body_anchor
+		return
 	if _wasd_vel.length_squared() > 0.0004:
 		var hp2: Vector3 = _squad.hold_position + _wasd_vel * delta
 		hp2.x = clampf(hp2.x, room_center.x - room_half + 2.0,
@@ -4411,10 +4504,16 @@ func _tick_jelly(delta: float) -> void:
 		_jelly_offset = _jelly_offset.normalized() * jelly_max_offset
 		_jelly_offset_vel *= 0.5
 	var speed01: float = clampf(vel.length() / maxf(wasd_speed, 0.001), 0.0, 1.0)
-	_squad.jelly_offset = _jelly_offset
+	# В РЕЖИМЕ ТЕЛА смещающие члены (общий сдвиг пружины и отставание рядов)
+	# ОТКЛЮЧЕНЫ: слот там не цель погони, а пружина, и сдвинутый назад строй
+	# тянул бы тело назад постоянно — замер показал потолок 5.5 м/с при команде
+	# 9.4. Отставание теперь даёт инерция самих гномов (разброс steer_grip по
+	# строю ниже), то есть настоящая деформация вместо нарисованной. Форма
+	# (вытяжение вдоль / поджатие поперёк) центрирована и телу не мешает.
+	_squad.jelly_offset = Vector3.ZERO if wasd_body_mode else _jelly_offset
 	_squad.jelly_along = 1.0 + jelly_stretch * speed01
 	_squad.jelly_across = 1.0 - jelly_stretch * 0.45 * speed01
-	_squad.jelly_row_lag = jelly_row_lag * speed01
+	_squad.jelly_row_lag = 0.0 if wasd_body_mode else jelly_row_lag * speed01
 
 
 ## ОТХОД СПИНОЙ СТОИТ ТЕМПА: группа всегда развёрнута к курсору, поэтому шаг
@@ -4444,6 +4543,19 @@ func _backpedal_scale(move_dir: Vector3, center: Vector3, cursor: Vector3) -> fl
 func _wasd_combat(lmb: bool, cursor: Vector3) -> void:
 	if _squad == null:
 		return
+	# ОЧЕРЕДЬ СТАРТУЕТ РАЗВЁРНУТОЙ: фазы раздаём на НАЖАТИИ ЛКМ, а не на спавне.
+	# Замер показал: к моменту нажатия кулдауны у всех давно истекли, и первый
+	# залп уходил тремя стрелами В ОДИН КАДР — очередь начиналась «бум», а не
+	# «та-та-та». Теперь каждое нажатие раскладывает лучников по такту заново.
+	if lmb and not _volley_lmb_down:
+		_stagger_archers()
+		# Повторный клик — досрочный съём защёлки сухого колчана (см.
+		# ArcherSoldier.notify_trigger_pressed): удержание ждёт полного, клик
+		# при половине дожимает.
+		for m in _squad.members:
+			if is_instance_valid(m) and m is ArcherSoldier:
+				(m as ArcherSoldier).notify_trigger_pressed()
+	_volley_lmb_down = lmb
 	var c: Vector3 = _squad.compute_center()
 	var tgt: Node3D = null
 	var aim: Vector3 = Vector3.INF
@@ -4491,6 +4603,14 @@ func _wasd_combat(lmb: bool, cursor: Vector3) -> void:
 		if not is_instance_valid(m):
 			continue
 		m.face_override = aim_dir
+		# Общий ход тела (см. wasd_body_mode). Раздаётся каждый кадр — новички
+		# из найма подхватывают модель сами, без отдельной инициализации.
+		if wasd_body_mode:
+			m.body_velocity = _wasd_vel
+			m.body_pull = wasd_body_pull
+			m.body_pull_max = wasd_body_pull_max
+		else:
+			m.body_pull = 0.0
 		# Желе: голова строя рулит жёстко, хвост вязче и запаздывает — тело
 		# «перетекает» за поворотом, а не поворачивается целиком, как доска.
 		if jelly_enabled:

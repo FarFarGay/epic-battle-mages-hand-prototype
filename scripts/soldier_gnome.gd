@@ -429,6 +429,19 @@ const SQUAD_TARGET_ARRIVAL: float = 0.4
 ## в цикле стоп-старт-перелёт.
 var arrival_damp_radius: float = 0.0
 
+## ⭐ РУЛИМ ТЕЛОМ, А НЕ ТОЧКОЙ (данж-WASD, 2026-08-07, сверка с Pathogenic).
+## Общий ход группы: сцена раздаёт ОДНУ И ТУ ЖЕ скорость всем членам, гном едет
+## ею, а слот строя даёт лишь пружинную поправку поверх. Смысл: инерция живёт в
+## одном месте — в скорости тела, — а не копится двумя звеньями «точка догоняет
+## ввод → юнит догоняет слот», где рулишь невидимой точкой, а видишь отстающих.
+## Работает только при [body_pull] > 0 → основная игра/дрифт/superhot нетронуты.
+var body_velocity: Vector3 = Vector3.ZERO
+## Жёсткость возврата в свой слот (1/с) в режиме тела. 0 = режим ВЫКЛЮЧЕН.
+var body_pull: float = 0.0
+## Кап поправки строя (м/с): пружина ДОВОРАЧИВАЕТ тело и держит форму, но не
+## разгоняет его — иначе отставший гном обгонял бы группу, качая энергию.
+var body_pull_max: float = 4.0
+
 ## Squash & stretch — две выраженные позы вокруг lunge'а. Контраст между
 ## ними (особенно по Z) даёт визуальный «всплеск»: глаз чётко отделяет
 ## anticipation от взрыва, без этого рывок сливается со скоростью точки
@@ -867,6 +880,11 @@ func _tick_worker_idle() -> void:
 		velocity = Vector3.ZERO
 		return
 	var goal: Vector3 = _squad.target_for_member(self, _resolve_squad_center())
+	# Артель в режиме тела едет тем же ходом, что и бойцы — иначе рабочие
+	# отстают и тянут центроид (а с ним и слоты) назад.
+	var to_goal := Vector3(goal.x - global_position.x, 0.0, goal.z - global_position.z)
+	if step_to_slot(to_goal, to_goal.length()):
+		return
 	_approach_point(goal)
 
 
@@ -1248,6 +1266,11 @@ func _active_tick(delta: float) -> void:
 	var goal: Vector3 = _squad.target_for_member(self, _resolve_squad_center())
 	var to_goal_xz := Vector3(goal.x - global_position.x, 0.0, goal.z - global_position.z)
 	var dist: float = to_goal_xz.length()
+	# РЕЖИМ ТЕЛА: ход задаёт группа, слот только поправляет. Раньше выхода по
+	# SQUAD_TARGET_ARRIVAL — там гном, догнав слот, ОБНУЛЯЕТ скорость, и строй
+	# на крейсере едет рывками «догнал → стоп → слот уехал → поехал».
+	if step_to_slot(to_goal_xz, dist):
+		return
 	if dist <= SQUAD_TARGET_ARRIVAL:
 		velocity = Vector3.ZERO
 		return
@@ -1732,6 +1755,62 @@ func _tower_center() -> Vector3:
 ## через [Gnome._resolve_path_step] — обходит стены/палатки. Скорость
 ## sprint'а считается от **финальной** дистанции, не от шага path'а:
 ## юнит не должен замедляться на промежуточных waypoint'ах.
+## В РЕЖИМЕ ТЕЛА расталкивание соседей выключено — ровно по той же причине, что
+## у DefenderGnome в формации: дистанцию уже держат слоты, а лишний толчок
+## наружу пружина тут же отыгрывает назад, и строй вечно шевелится на месте
+## (замер: 0.1–0.4 м/с возни на стоянке).
+## Гейт узкий намеренно: в бою (выпад, разгон, отскок) гном идёт мимо строя,
+## и там расталкивание по-прежнему нужно — иначе бойцы слипаются на цели.
+func _should_apply_separation() -> bool:
+	return body_pull <= 0.0 or _combat_state != CombatState.READY
+
+
+## ЕДИНАЯ точка «встать в свой слот» для всех веток строя (копейщик, лучник,
+## артель — у каждого свой _active_tick, но модель движения обязана быть одна).
+## true = режим тела отработал и звать штатный путь не нужно.
+func step_to_slot(to_goal_xz: Vector3, dist: float) -> bool:
+	if body_pull <= 0.0:
+		return false
+	_move_as_body(to_goal_xz, dist)
+	return true
+
+
+## Движение В РЕЖИМЕ ТЕЛА (см. [body_velocity]): базовый ход — общая скорость
+## группы, слот строя добавляет пружинную поправку с капом [body_pull_max].
+## Скорость НЕ обнуляется у слота — тело едет непрерывно, строй это форма
+## ПОВЕРХ хода, а не его источник. Деформацию («шкуру») даёт разброс steer_grip
+## по строю (jelly_grip_tail в песочнице): голова цепкая, хвост запаздывает.
+## Обход препятствий остаётся за _resolve_path_step, но правит только поправку.
+func _move_as_body(to_goal_xz: Vector3, dist: float) -> void:
+	var corr := Vector3.ZERO
+	if dist > SQUAD_TARGET_ARRIVAL * 0.5:
+		var step_target: Vector3 = _resolve_path_step(global_position + to_goal_xz)
+		var step_dir: Vector3 = step_target - global_position
+		step_dir.y = 0.0
+		if step_dir.length_squared() > VecUtil.EPSILON_SQ:
+			corr = step_dir.normalized() * minf(dist * body_pull, body_pull_max)
+	var desired: Vector3 = body_velocity + corr
+	if hauling:
+		desired *= HAUL_SPEED_SCALE
+	# Тот же руль, что и в обычном пути: лёд доминирует, иначе steer_grip.
+	# Здесь он уже НЕ второе звено инерции (цель почти не двигается
+	# относительно гнома), а сглаживание рывков и материал деформации строя.
+	var rate: float = steer_grip if steer_grip > 0.0 else steer_inertia
+	if ice_grip_override > 0.0:
+		rate = ice_grip_override
+	var v := Vector3(velocity.x, 0.0, velocity.z)
+	if rate > 0.0:
+		v = v.lerp(desired, 1.0 - exp(-rate * get_physics_process_delta_time()))
+	else:
+		v = desired
+	velocity = v
+	if v.length_squared() > 0.04:
+		look_at(global_position + v.normalized(), Vector3.UP)
+	# Наклон корпуса — забота дрифт-пути; здесь держим ось чистой, иначе
+	# pitch от прошлой модели остался бы «залипшим».
+	rotation.x = 0.0
+
+
 func _move_toward(to_goal_xz: Vector3, dist: float, speed_mult: float = 1.0) -> void:
 	var final_goal: Vector3 = global_position + to_goal_xz
 	var step_target: Vector3 = _resolve_path_step(final_goal)

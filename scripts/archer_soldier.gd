@@ -304,6 +304,12 @@ func _active_tick(delta: float) -> void:
 	var goal: Vector3 = _squad.target_for_member(self, _resolve_squad_center())
 	var to_goal_xz := Vector3(goal.x - global_position.x, 0.0, goal.z - global_position.z)
 	var dist: float = to_goal_xz.length()
+	# Режим тела (см. SoldierGnome.step_to_slot): ход задаёт группа, слот —
+	# пружина поверх. Раньше выхода по SQUAD_TARGET_ARRIVAL: там скорость
+	# обнуляется, и лучники якорили бы всё тело на своей скорости.
+	if step_to_slot(to_goal_xz, dist):
+		_face_horizontal(to_goal_xz, dist)
+		return
 	if dist <= SQUAD_TARGET_ARRIVAL:
 		# Дрифт на полном разгоне НЕ паркуется — проносится мимо слота и
 		# рулит обратно в него: вокруг зажатой точки выходит орбита-«пятак».
@@ -601,6 +607,7 @@ func volley_fire_at(aim_pos: Vector3, dmg: float) -> void:
 	arrow.shooter_ref = weakref(self)  # kill-credit → XP (см. credit_kill)
 	arrow.setup(global_position + arrow_spawn_offset, aim_pos)
 	_quiver_spend()
+	_shot_feedback()
 
 
 ## Полив по направлению (WASD-данж): выстрел В ТОЧКУ на ШТАТНОМ кулдауне —
@@ -611,10 +618,12 @@ func try_suppressive_fire(aim_pos: Vector3) -> bool:
 	if hauling:
 		return false
 	if not has_arrows():
-		# Сухой спуск: зажатый ЛКМ на пустом колчане ДЕРЖИТ перезарядку на нуле
-		# (палец на гашетке пустого магазина). Решение игрока «отпустить полив»
-		# и есть старт перезарядки — ядро ритма обоймы.
-		_quiver_idle = 0.0
+		# ⛔ СУХОЙ СПУСК ОТМЕНЁН (2026-08-07, сверка с Pathogenic): раньше зажатый
+		# ЛКМ на пустом колчане ДЕРЖАЛ перезарядку на нуле, и отлив начинался
+		# только когда игрок сам отпустит гашетку. Это и делало обойму
+		# наказанием — инструмент выключался, пока не догадаешься отпустить.
+		# У них перезарядка идёт от последней ПОТРАЧЕННОЙ единицы независимо от
+		# гашетки: держишь — огонь сам возобновится, как бар набежит.
 		return false
 	if _attack_cd > 0.0:
 		return false
@@ -656,10 +665,67 @@ func _fire_at(target: Node3D) -> void:
 	arrow.setup(spawn, aim_pos)
 	_shots_fired += 1
 	_quiver_spend()
+	_shot_feedback()
 	if _squad != null:
 		_squad.add_charge(1.0)
 	if debug_log and LogConfig.master_enabled:
 		print("[ArcherSoldier:%s] выстрел в %s (dmg=%.1f, shots=%d)" % [name, target.name, damage, _shots_fired])
+
+
+# --- ФИДБЕК ВЫСТРЕЛА -------------------------------------------------------------
+#
+# Рецепт Pathogenic (Gun._physics_process): оружие — само себе индикатор. На
+# выстреле ствол ПЕРЕСВЕЧИВАЕТСЯ и его сжимает отдачей назад, дальше отдача
+# гаснет за пару кадров; пока идёт кулдаун — ствол ПРИТУШЕН, готовность видно
+# по нему, без всякого UI. Камеру НЕ трогаем: тряска на каждый выстрел при
+# темпе очереди превратилась бы в непрерывную болтанку.
+
+
+## Отдача: лук отскакивает НАЗАД (+Z локали — в скине спина смотрит в +Z, см.
+## колчан на z+0.18) и за несколько кадров возвращается. Затухание за кадр —
+## как recoil *= 0.15 у них, только приведённое к delta (fps-независимо).
+const BOW_RECOIL_DIST: float = 0.12
+const BOW_RECOIL_DECAY: float = 0.30
+## Яркость лука: на кулдауне притушен, к готовности наливается, на выстреле
+## коротко пересвечен. ⚠ Всё это ОДИН канал (albedo) намеренно: emission занят
+## подсветкой руки (set_highlighted), и мигание в такт стрельбе её бы съело.
+const BOW_COOLDOWN_DIM: float = 0.55
+const BOW_FLASH_BRIGHT: float = 2.6
+const BOW_ALBEDO: Color = Color(0.3, 0.2, 0.12)
+
+
+func _shot_feedback() -> void:
+	_bow_recoil = 1.0
+	_bow_flash = 1.0
+
+
+## Тик отдачи и яркости лука. Зовётся каждый физкадр, no-op без скина.
+func _bow_tick(delta: float) -> void:
+	if _bow_node == null or not is_instance_valid(_bow_node):
+		return
+	var decay: float = pow(BOW_RECOIL_DECAY, delta * 60.0)
+	if _bow_recoil > 0.0001:
+		_bow_recoil *= decay
+		if _bow_recoil < 0.0001:
+			_bow_recoil = 0.0
+	_bow_node.position = _bow_rest + Vector3(0.0, 0.0, BOW_RECOIL_DIST * _bow_recoil)
+	if _bow_mat == null:
+		return
+	if _bow_flash > 0.0001:
+		_bow_flash = maxf(_bow_flash - delta * 6.0, 0.0)
+	# Готовность читается по самому луку: тускнеет сразу после выстрела и
+	# наливается к следующему — оружие и есть индикатор, никакого UI.
+	var ready01: float = 1.0
+	if _attack_cd > 0.0 and attack_cooldown_max > 0.0:
+		ready01 = clampf(1.0 - _attack_cd / attack_cooldown_max, 0.0, 1.0)
+	var k: float = lerpf(lerpf(BOW_COOLDOWN_DIM, 1.0, ready01), BOW_FLASH_BRIGHT, _bow_flash)
+	_bow_mat.albedo_color = Color(BOW_ALBEDO.r * k, BOW_ALBEDO.g * k, BOW_ALBEDO.b * k)
+
+
+## Фазовый сдвиг очереди: сцена разводит лучников по времени, чтобы залп читался
+## как ОЧЕРЕДЬ (стреляют друг за другом), а не как случайный попкорн.
+func set_fire_phase(offset: float) -> void:
+	_attack_cd = maxf(offset, 0.0)
 
 
 # --- КОЛЧАН-ОБОЙМА: методы -------------------------------------------------------
@@ -684,9 +750,26 @@ func setup_quiver(size: int, per_arrow: float, delay: float) -> void:
 	_build_quiver_visual()
 
 
-## true = можно стрелять (колчан выключен или стрелы есть).
+## ЗАЩЁЛКА СУХОГО КОЛЧАНА (Pathogenic, Player.stamina_recharging_from_depleted):
+## высох — стрелять нельзя, ПОКА НЕ НАБЕРЁТСЯ ПОЛНЫЙ колчан. Без неё кап не
+## чувствуется вовсе: первая же отлитая стрела тут же уходит, и огонь вырождается
+## в капель вместо честной паузы. Ровно поэтому у них это отдельный флаг, а не
+## просто проверка «есть ли заряд».
+var _quiver_dry: bool = false
+
+
+## true = можно стрелять (колчан выключен, стрелы есть и защёлка снята).
 func has_arrows() -> bool:
-	return quiver_max <= 0 or _quiver > 0
+	return quiver_max <= 0 or (_quiver > 0 and not _quiver_dry)
+
+
+## Нажали гашетку ЗАНОВО (фронт ЛКМ, зовёт сцена). Их поблажка: осознанный
+## повторный клик при половине колчана снимает защёлку досрочно — удержание
+## так не умеет. Это и есть решение игрока: «дожать сейчас» против «дать
+## набраться полностью».
+func notify_trigger_pressed() -> void:
+	if _quiver_dry and quiver_max > 0 and _quiver * 2 >= quiver_max:
+		_quiver_dry = false
 
 
 ## Стрела ушла: минус одна, перезарядка откатывается на ноль. No-op без колчана.
@@ -694,6 +777,8 @@ func _quiver_spend() -> void:
 	if quiver_max <= 0:
 		return
 	_quiver = maxi(_quiver - 1, 0)
+	if _quiver == 0:
+		_quiver_dry = true
 	_quiver_idle = 0.0
 	_quiver_regen = 0.0
 	_refresh_quiver_visual()
@@ -714,6 +799,9 @@ func _quiver_tick(delta: float) -> void:
 		_refresh_quiver_visual()
 	if _quiver >= quiver_max:
 		_quiver_regen = 0.0
+		# Колчан полон — защёлка снята, огонь возобновляется сам, даже если
+		# игрок всё это время держал гашетку.
+		_quiver_dry = false
 
 
 ## Веер стрел на спине: тёмная плашка-колчан + quiver_max шафтов с ярким
@@ -767,6 +855,13 @@ func _refresh_quiver_visual() -> void:
 # ВСЕХ ArcherSoldier (наёмных и из казармы) — единый вид. Капсулу прячем (поза/флеш
 # анимируют её невидимо — безвредно), модель строим от ног со сдвигом под центр капсулы.
 var _archer_skinned := false
+## Узел лука в боксовом скине + его исходная позиция и материал — по ним живёт
+## отдача и индикация готовности (см. _bow_tick).
+var _bow_node: MeshInstance3D = null
+var _bow_rest: Vector3 = Vector3.ZERO
+var _bow_mat: StandardMaterial3D = null
+var _bow_recoil: float = 0.0
+var _bow_flash: float = 0.0
 
 
 func _apply_visual() -> void:
@@ -790,7 +885,9 @@ func _apply_visual() -> void:
 	_visual_mats = mats
 	_arch_box(holder, Vector3(0.34, 0.5, 0.26), Vector3(0, 0.45, 0), cloth)   # тело
 	_arch_box(holder, Vector3(0.26, 0.26, 0.24), Vector3(0, 0.82, 0), skin)   # голова
-	_arch_box(holder, Vector3(0.06, 0.62, 0.06), Vector3(0.22, 0.55, 0), wood)  # лук
+	_bow_node = _arch_box(holder, Vector3(0.06, 0.62, 0.06), Vector3(0.22, 0.55, 0), wood)  # лук
+	_bow_rest = _bow_node.position
+	_bow_mat = wood
 	if _level > 0:
 		_refresh_level_badges()
 
@@ -883,6 +980,7 @@ func _grn_should_garrison() -> bool:
 func _physics_process(delta: float) -> void:
 	# Колчан перезаряжается в любом состоянии (no-op при quiver_max=0).
 	_quiver_tick(delta)
+	_bow_tick(delta)
 	# Носимое оружие — приоритет над всем (squad-команды/гарнизон не трогают
 	# несомого и установленного лучника; позицией владеет рука/башня).
 	if _hand_carried:
