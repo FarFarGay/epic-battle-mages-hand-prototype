@@ -443,6 +443,8 @@ const TOWER_HUD_SCENE: PackedScene = preload("res://scenes/gameplay_hud.tscn")
 ## ⭐ ВИДЖЕТ ЭКИПАЖА (2026-08-08): гном = ПИЛОТ башни, виджет = окно в кабину.
 ## Един на весь экипаж; две кнопки — пересобрать отряд и покинуть башню.
 const CREW_WIDGET_SCENE: PackedScene = preload("res://scenes/crew_widget.tscn")
+## Большой дэшащий скелет основного уровня — ядро финального энкаунтера.
+const GIANT_SCENE: PackedScene = preload("res://scenes/skeleton_giant.tscn")
 ## Куда переезжаем из тоннеля. Пусто = остаться в интро (старое поведение).
 @export_file("*.tscn") var intro_exit_scene: String = "res://scenes/level_rooms.tscn"
 ## Высота башни в доке: у tower.tscn коллайдер 6 м с origin ПОСЕРЕДИНЕ, поэтому
@@ -450,6 +452,35 @@ const CREW_WIDGET_SCENE: PackedScene = preload("res://scenes/crew_widget.tscn")
 @export var intro_tower_y: float = 3.0
 ## Пауза между «выехал из тоннеля» и загрузкой мира (с) — под вспышку финала.
 @export var intro_exit_delay: float = 1.1
+
+@export_group("Подача врага: комнаты с бомбами и финал")
+## К3 — БОЧКИ + машина патронов. Толпа здесь не просто давление: бочки рвутся
+## от любого урона и детонируют цепочкой, поэтому чем плотнее враг, тем жирнее
+## размен «один выстрел вместо десяти». На четверых скелетов это не читалось.
+@export var room3_wave1: int = 9
+@export var room3_wave2: int = 7
+## К4 — ЛЕДНИК с бомбистами. Лёд несёт юзом, фитили горят — плотность врага и
+## делает комнату про «куда меня тащит», а не про «добей четверых».
+@export var k4_wave1: int = 8
+@export var k4_wave2: int = 8
+## Встреча в ангаре ДО посадки. Растёт умеренно: задача этой волны — гнать к
+## башне, а не устроить бой пешим отрядом у самого трапа.
+@export var hangar_entry_wave: int = 8
+## ⭐ ФИНАЛ: энкаунтер ПОСЛЕ посадки в башню (2026-08-08). До посадки подача
+## прежняя — там задача добежать; вся драма включается, когда игрок сел за руль.
+@export var finale_wave1: int = 12
+@export var finale_wave2: int = 6
+@export var finale_wave3: int = 10
+## Два больших дэшащих скелета из основного уровня — центр энкаунтера.
+@export var finale_giants: int = 2
+## HP гиганта в финале. Каталожные 750 рассчитаны на полностью прокачанную
+## башню основного уровня; в интро с ней ещё нечем воевать так долго, и дуэль
+## превращалась бы в грызню. Ручка, а не константа — крути под плейтест.
+@export var finale_giant_hp: float = 450.0
+## Через сколько секунд после посадки приходят волны 2 (с гигантами) и 3.
+@export var finale_stage2_delay: float = 7.0
+@export var finale_stage3_delay: float = 18.0
+@export_group("")
 @export var ladya_speed: float = 8.0
 @export var ladya_dash_speed: float = 30.0
 @export var ladya_dash_cooldown: float = 1.0
@@ -881,6 +912,9 @@ var _crew_widget: CanvasLayer = null
 ## Разовые эффекты первой посадки (свет в корпусе, свечение, волна на посадку):
 ## садиться можно сколько угодно раз, а «оживание» башни случается один раз.
 var _board_fx_done: bool = false
+## Финальный энкаунтер: 0 = ждёт посадки, 1..2 = стадии, 3 = выдан целиком.
+var _finale_stage: int = 0
+var _finale_time: float = 0.0
 ## Геометрия финала (сдвиг −40 по Z с 2026-08-04: между К3 и ангаром вставлен
 ## К4-ледник z −106..−146): ангар z −146..−190, пусковой коридор до −250, финиш.
 const INTRO_HANGAR_ENTER_Z := -144.0
@@ -5592,7 +5626,7 @@ func _intro_setup() -> void:
 	# Курсор и точка строя должны дотягиваться до ангара и пускового коридора.
 	cursor_z_min = INTRO_FINISH_Z - 12.0
 	# К1 = 3 встречи, К2 = 2 волны, К3 = 1 волна.
-	_intro_left = [3, 2, 1]
+	_intro_left = [3, 2, 2]
 	# Флоу-филд на весь интро-мир: лента + анфилада + ледник + ангар + коридор.
 	_flow = FLOW_FIELD_SCRIPT.new()
 	add_child(_flow)
@@ -6765,27 +6799,36 @@ func _intro_tick(delta: float) -> void:
 			if _intro_timer <= 0.0 or _alive_skeletons() == 0:
 				_intro_left[1] = 0
 				_intro_spawn_pack(7)
-	# К3: одна волна на входе, дальше — работа с машиной.
-	if _active_room == 2 and not _intro_left.is_empty() and _intro_left[2] > 0:
-		_intro_left[2] = 0
-		_intro_spawn_pack(4)
-		EventBus.tutorial_hint.emit(
-				"БЕГУНЫ: хилые, но быстрые — обходят строй и лезут в тыл. Отбейся и собери бомбу", 6.0)
+	# К3 (БОЧКИ + машина патронов): две волны, как в К2 — вторая по зачистке ИЛИ
+	# таймеру. Одна пачка на четверых не давала поводу «замани толпу к бочке»
+	# ни одного шанса случиться.
+	if _active_room == 2 and not _intro_left.is_empty():
+		if _intro_left[2] == 2:
+			_intro_left[2] = 1
+			_intro_timer = 10.0
+			_intro_spawn_pack(room3_wave1)
+			EventBus.tutorial_hint.emit(
+					"БЕГУНЫ лезут в тыл. Тут ПОРОХОВЫЕ БОЧКИ — вали толпу через них!", 6.0)
+		elif _intro_left[2] == 1:
+			_intro_timer -= delta
+			if _intro_timer <= 0.0 or _alive_skeletons() == 0:
+				_intro_left[2] = 0
+				_intro_spawn_pack(room3_wave2)
 	# К4-ледник: встреча на пороге (скелеты уже НА льду — их тоже несёт) +
 	# вдогон с юга, когда отряд втянулся к колоннам. Урок комнаты телесный:
 	# скольжение, шипы у стен, и только потом — покупка огня.
 	if _k4_wave == 0 and c.z < room_center.z - 147.0:
 		_k4_wave = 1
-		for i in range(5):
-			_spawn_skeleton_at(Vector3(room_center.x - 8.0 + 4.0 * float(i), 0.6,
-					room_center.z - 181.0), _room_kind(3))
+		for i in range(k4_wave1):
+			_spawn_skeleton_at(Vector3(room_center.x - 14.0 + 4.0 * float(i), 0.6,
+					room_center.z - 181.0 + randf_range(-2.0, 2.0)), _room_kind(3))
 		EventBus.tutorial_hint.emit(
 				"ЛЕДНИК. Лёд несёт, шипы РЕЖУТ. Замигал КРАСНЫМ — это фитиль, снимай ДО него!", 6.5)
 	elif _k4_wave == 1 and c.z < room_center.z - 166.0:
 		_k4_wave = 2
-		for i in range(4):
-			_spawn_skeleton_at(Vector3(room_center.x - 6.0 + 4.0 * float(i), 0.6,
-					room_center.z - 149.0), _room_kind(3))
+		for i in range(k4_wave2):
+			_spawn_skeleton_at(Vector3(room_center.x - 14.0 + 4.0 * float(i), 0.6,
+					room_center.z - 149.0 + randf_range(-2.0, 2.0)), _room_kind(3))
 	# Пазл К2: блок ЛЕЖИТ на кнопке (не несётся, осел) → рычаг запитан.
 	# Однократная защёлка — снятие блока рычаг не глушит (туториал, не головоломка).
 	if not _k2_powered and _k2_block != null and is_instance_valid(_k2_block) \
@@ -6841,8 +6884,8 @@ func _intro_tick_hangar(c: Vector3) -> void:
 		return
 	if _hangar_wave == 0 and c.z < room_center.z + INTRO_HANGAR_ENTER_Z - 40.0:
 		_hangar_wave = 1
-		for i in range(6):
-			_spawn_skeleton_at(Vector3(room_center.x - 26.0 + 10.0 * float(i), 0.6,
+		for i in range(hangar_entry_wave):
+			_spawn_skeleton_at(Vector3(room_center.x - 28.0 + 8.0 * float(i), 0.6,
 					room_center.z - 228.0 + randf_range(0.0, 4.0)))
 		EventBus.tutorial_hint.emit("АНГАР. Зажимы пусты… кроме одного. ДОБЕГИ до башни!", 5.0)
 	# ⭐ ПОСАДКА НА E (2026-08-07). Раньше отряд «всасывало» в корпус самим
@@ -6943,15 +6986,11 @@ func _intro_board() -> void:
 	EventBus.tutorial_hint.emit(
 			"БАШНЯ ТВОЯ. WASD — ход, ПРОБЕЛ — рывок, МЫШЬ — рука: ЛКМ хватает, ПКМ колдует", 6.0)
 	_hangar_wave = 2
-	var corners := [
-		Vector3(room_center.x - 28.0, 0.6, room_center.z - 190.0),
-		Vector3(room_center.x + 28.0, 0.6, room_center.z - 190.0),
-		Vector3(room_center.x - 28.0, 0.6, room_center.z - 226.0),
-		Vector3(room_center.x + 28.0, 0.6, room_center.z - 226.0),
-	]
-	for p in corners:
-		_spawn_skeleton_at(p)
-		_spawn_skeleton_at((p as Vector3) + Vector3(2.0, 0.0, 2.0))
+	# ⭐ ЭНКАУНТЕР НАЧИНАЕТСЯ ЗДЕСЬ (2026-08-08). Раньше посадка выдавала восемь
+	# скелетов по углам и на этом финал заканчивался. Теперь это сцена в три
+	# удара: западня → выход гигантов → добивающая волна (см. _tick_finale).
+	_finale_stage = 0
+	_finale_time = 0.0
 
 
 ## Экипаж — В КОРПУС: невидим, без физики и без коллизий, позиция = башня.
@@ -6983,6 +7022,90 @@ func _reboard_after_rebuild() -> void:
 	_stow_crew()
 	if _crew_widget != null and is_instance_valid(_crew_widget):
 		_crew_widget.call(&"set_crew", _squad.members if _squad != null else [])
+
+
+## ⭐ ФИНАЛЬНЫЙ ЭНКАУНТЕР (2026-08-08, юзер: «после посадки увеличить прям
+## драматически, это должен быть энкаунтер»). Три удара вместо одной кучи —
+## куча читается как «навалили врагов», а сцена как событие:
+##   1) СРАЗУ на посадке — западня: кольцо со всех сторон, ты в центре;
+##   2) через finale_stage2_delay — ДВА БОЛЬШИХ ДЭШАЩИХ СКЕЛЕТА выходят из
+##      глубины ангара (толчок камерой + крик), плюс мелочь под ноги;
+##   3) через finale_stage3_delay — добивающая волна: пока дерёшься с гигантами,
+##      сзади поджимает.
+## Дальше — тишина: тоннель открыт, уходить или добивать решает игрок.
+func _tick_finale(delta: float) -> void:
+	if _finale_stage > 2:
+		return
+	_finale_time += delta
+	match _finale_stage:
+		0:
+			_finale_stage = 1
+			_finale_ring(finale_wave1, 26.0)
+			EventBus.tutorial_hint.emit("ЗАПАДНЯ! Ангар кишит — WASD ход, ПРОБЕЛ таранит", 5.0)
+		1:
+			if _finale_time < finale_stage2_delay:
+				return
+			_finale_stage = 2
+			_finale_ring(finale_wave2, 22.0)
+			# Гиганты выходят с ЮГА (из глубины ангара, откуда пришёл отряд) —
+			# между ними и тоннелем оказывается игрок: бежать = проехать мимо них.
+			var gz: float = room_center.z - 224.0
+			for i in range(finale_giants):
+				_spawn_giant_at(Vector3(room_center.x - 12.0 + 24.0 * float(i), 0.6, gz))
+			EventBus.camera_shake.emit(1.0, _ladya.global_position)
+			AoeVisual.spawn_screen_flash(get_tree(), Color(1.0, 0.3, 0.15), 0.25, 0.4)
+			EventBus.tutorial_hint.emit(
+					"ЗЕМЛЯ ДРОЖИТ. Двое ОГРОМНЫХ — они РАЗГОНЯЮТСЯ и таранят. Не стой на линии!", 7.0)
+		2:
+			if _finale_time < finale_stage3_delay:
+				return
+			_finale_stage = 3
+			_finale_ring(finale_wave3, 28.0)
+			EventBus.tutorial_hint.emit("Сзади поджимают! Тоннель открыт — решай: добить или гнать", 6.0)
+
+
+## Кольцо врагов вокруг башни: со ВСЕХ сторон, вразнобой по дистанции —
+## равномерная окружность читается как декорация, а не как окружение.
+func _finale_ring(count: int, radius: float) -> void:
+	if count <= 0 or _ladya == null or not is_instance_valid(_ladya):
+		return
+	var c: Vector3 = _ladya.global_position
+	for i in range(count):
+		var a: float = TAU * (float(i) + randf_range(-0.3, 0.3)) / float(count)
+		var r: float = radius * randf_range(0.7, 1.0)
+		var p := Vector3(c.x + cos(a) * r, 0.6, c.z + sin(a) * r)
+		# Держим спавн внутри коробки ангара — иначе часть пачки уедет в стену
+		# или в тоннель, и «окружение» окажется дырявым с одного бока.
+		p.x = clampf(p.x, room_center.x - 30.0, room_center.x + 30.0)
+		p.z = clampf(p.z, room_center.z - 228.0, room_center.z - 190.0)
+		_spawn_skeleton_at(p, _room_kind(3))
+
+
+## Большой дэшащий скелет из основного уровня. Тот же путь настройки, что у
+## рядовых (_spawn_skeleton_at), плюс три вещи, специфичные для данжа:
+##   - LOD выключен: FAR-режим снимает коллизии, гигант проходил бы сквозь стены;
+##   - ПРИЗЫВ ОТКЛЮЧЁН (summon_scene = null): его подкрепление рождается мимо
+##     нашей настройки — без flow_provider и с живым LOD. Толпу в финале ведём
+##     сами волнами, а не его спавном;
+##   - РАМКА КОМНАТЫ = ангар: гигант не должен утащиться за башней в тоннель,
+##     там он телом заткнул бы единственный выход.
+func _spawn_giant_at(pos: Vector3) -> void:
+	var g := GIANT_SCENE.instantiate() as Node3D
+	if g == null:
+		return
+	g.set(&"lod_far_distance", 100000.0)
+	g.set(&"lod_offscreen_half_angle_deg", 90.0)
+	g.set(&"extra_collision_mask", Layers.FRIENDLY_UNIT | Layers.ENEMIES)
+	g.set(&"summon_scene", null)
+	g.set(&"hp", finale_giant_hp)
+	g.set(&"room_center", Vector2(room_center.x, room_center.z - 208.0))
+	g.set(&"room_size", Vector2(64.0, 44.0))
+	if _flow != null:
+		g.set(&"flow_provider", _flow)
+	add_child(g)
+	g.global_position = pos
+	if g.has_signal(&"destroyed"):
+		g.connect(&"destroyed", _on_skeleton_died)
 
 
 ## ⭐ ВЫСАДКА (2026-08-08). Обратная сторона посадки: гномы — пилоты, вышли из
@@ -7136,6 +7259,7 @@ func _intro_tick_ride(delta: float) -> void:
 			(m as Node3D).global_position = _ladya.global_position + Vector3(0.0, 4.5, 0.0)
 	if _flow != null:
 		_flow.call(&"set_target", _ladya.global_position)
+	_tick_finale(delta)
 	# Рык остался как СОБЫТИЕ (зачистил ангар — недра взвыли), но он больше
 	# ничего не отпирает: тоннель открыт с самого начала.
 	if not _roar_done and _hangar_wave == 2 and _alive_skeletons() == 0:
