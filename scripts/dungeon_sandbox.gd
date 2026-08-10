@@ -6452,6 +6452,13 @@ func _intro_place_tower() -> void:
 	# позиция «Ладьи» разъехалась бы с тем, что видит игрок.
 	_ladya = tower
 	_intro_tower = tower
+	# ⚠ ГИБЕЛЬ БАШНИ НАДО ЛОВИТЬ ЗДЕСЬ. В большом мире её слушают Camp и
+	# MatchGoal, но в интро ни того, ни другого нет — до 2026-08-11 разбитая
+	# башня просто удаляла себя, игрок терял тело, и не происходило РОВНО
+	# НИЧЕГО: ни экрана, ни подсказки, ни рестарта. Пока она была неуязвима
+	# (не входила в TARGET_GROUP), дыра не стреляла; теперь стреляет.
+	if tower.has_signal(&"destroyed"):
+		tower.connect(&"destroyed", _on_intro_tower_lost)
 	# Материал-заглушка больше не красит корпус (у башни свой визуал с жилами
 	# реактора), но остаётся живым: посадка ставит по нему свечение, и код
 	# «оживания» не приходится ветвить.
@@ -6949,6 +6956,18 @@ func _intro_board() -> void:
 	# другую машину, чем та, к которой привык за финал интро.
 	_ladya.set_physics_process(true)
 	_ladya.set_process(true)
+	# ⭐ БАШНЯ СТАНОВИТСЯ ЦЕЛЬЮ (2026-08-11, баг «мелкие скелеты не наносят ей
+	# урона»). Рядовой скелет бьёт AOE по всем в Enemy.TARGET_GROUP вокруг себя
+	# (Skeleton._perform_strike ходит по target-сетке, а сетка строится из этой
+	# группы). tower.gd сам в неё НЕ входит — её проставляют в level_rooms.tscn
+	# узлом сцены, а здесь башня создаётся кодом, и группы у неё не было ни разу.
+	# Гигант всё это время бил исправно: у него свой _scan_target через Tower.GROUP,
+	# поэтому баг и выглядел как «большие бьют, мелкие нет».
+	#
+	# Момент выбран по модели «гномы = пилоты»: цель — живая машина, а не хлам в
+	# доке. До посадки скелеты гоняются за отрядом (это и есть задача «ДОБЕГИ»),
+	# после высадки башня снова выходит из целей (см. _intro_disembark).
+	_ladya.add_to_group(Enemy.TARGET_GROUP)
 	# …и вместе с корпусом — рука, камера и HUD. Посадка = ПЕРЕКЛЮЧЕНИЕ
 	# контроллеров: пеший слой отдаёт мышь целиком, а не «башня едет по WASD».
 	_spawn_tower_controller()
@@ -7022,6 +7041,26 @@ func _reboard_after_rebuild() -> void:
 	_stow_crew()
 	if _crew_widget != null and is_instance_valid(_crew_widget):
 		_crew_widget.call(&"set_crew", _squad.members if _squad != null else [])
+
+
+## Башня разбита. Тот же исход, что гибель отряда (экипаж внутри — терять его и
+## машину это одно событие), поэтому переиспользуем готовый game-over: надпись в
+## HUD + рестарт по R. Своего экрана поражения интро не заводит.
+func _on_intro_tower_lost() -> void:
+	if _game_over:
+		return
+	_game_over = true
+	_intro_ride = false
+	# Слоумо финала могло остаться включённым — рестарт-сцена унаследовала бы его.
+	Engine.time_scale = 1.0
+	_despawn_tower_controller()
+	AoeVisual.spawn_screen_flash(get_tree(), Color(1.0, 0.25, 0.15), 0.4, 0.6)
+	var lbl := get_node_or_null(^"HUD/Center/GameOverLabel") as Label
+	if lbl != null:
+		lbl.text = "БАШНЯ РАЗБИТА\nR — начать заново"
+		lbl.visible = true
+	EventBus.tutorial_hint.emit("Башня разбита вместе с экипажем. R — начать заново", 8.0)
+	print("[Intro] башня уничтожена — game over")
 
 
 ## ⭐ ФИНАЛЬНЫЙ ЭНКАУНТЕР (2026-08-08, юзер: «после посадки увеличить прям
@@ -7136,6 +7175,9 @@ func _intro_disembark() -> void:
 	# Башня без экипажа — стоит. Её контроллер спит, коллизия жива.
 	_ladya.set_physics_process(false)
 	_ladya.set_process(false)
+	# …и из целей скелетов выходит: бить пустой корпус, когда рядом живой отряд,
+	# им незачем. Симметрия посадки — что она включила, высадка выключает.
+	_ladya.remove_from_group(Enemy.TARGET_GROUP)
 	_despawn_tower_controller()
 	_banner.visible = true
 	EventBus.tutorial_hint.emit("Экипаж снаружи. Башня ждёт — [E], чтобы вернуться", 4.0)
