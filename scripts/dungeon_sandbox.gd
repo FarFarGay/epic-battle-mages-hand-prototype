@@ -465,12 +465,12 @@ const GIANT_SCENE: PackedScene = preload("res://scenes/skeleton_giant.tscn")
 @export var k4_wave2: int = 8
 ## Встреча в ангаре ДО посадки. Растёт умеренно: задача этой волны — гнать к
 ## башне, а не устроить бой пешим отрядом у самого трапа.
-@export var hangar_entry_wave: int = 8
+@export var hangar_entry_wave: int = 11
 ## ⭐ ФИНАЛ: энкаунтер ПОСЛЕ посадки в башню (2026-08-08). До посадки подача
 ## прежняя — там задача добежать; вся драма включается, когда игрок сел за руль.
-@export var finale_wave1: int = 12
-@export var finale_wave2: int = 6
-@export var finale_wave3: int = 10
+@export var finale_wave1: int = 17
+@export var finale_wave2: int = 10
+@export var finale_wave3: int = 14
 ## Два больших дэшащих скелета из основного уровня — центр энкаунтера.
 @export var finale_giants: int = 2
 ## HP гиганта в финале. Каталожные 750 рассчитаны на полностью прокачанную

@@ -1,4 +1,19 @@
-[gd_scene format=3]
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/hangar_column.gd" id="1_column"]
+
+[sub_resource type="CylinderShape3D" id="shape_column"]
+height = 4.5
+radius = 0.9
+
+[sub_resource type="CylinderMesh" id="mesh_column"]
+top_radius = 0.9
+bottom_radius = 1.05
+height = 4.5
+
+[sub_resource type="StandardMaterial3D" id="mat_column"]
+albedo_color = Color(0.34, 0.33, 0.38, 1)
+roughness = 0.85
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_cj65u"]
 size = Vector3(64, 0.5, 44)
@@ -232,3 +247,93 @@ mesh = SubResource("BoxMesh_3g85d")
 
 [node name="TowerDock" type="Node3D" parent="." unique_id=215073275]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 16, 0, -186)
+
+[node name="Columns" type="Node3D" parent="." unique_id=215073300]
+
+[node name="Column1" type="StaticBody3D" parent="Columns" unique_id=215073301]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 2.25, -158)
+script = ExtResource("1_column")
+
+[node name="Collision" type="CollisionShape3D" parent="Columns/Column1" unique_id=215073302]
+shape = SubResource("shape_column")
+
+[node name="Mesh" type="MeshInstance3D" parent="Columns/Column1" unique_id=215073303]
+material_override = SubResource("mat_column")
+mesh = SubResource("mesh_column")
+
+[node name="Column2" type="StaticBody3D" parent="Columns" unique_id=215073304]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 28, 2.25, -176)
+script = ExtResource("1_column")
+
+[node name="Collision" type="CollisionShape3D" parent="Columns/Column2" unique_id=215073305]
+shape = SubResource("shape_column")
+
+[node name="Mesh" type="MeshInstance3D" parent="Columns/Column2" unique_id=215073306]
+material_override = SubResource("mat_column")
+mesh = SubResource("mesh_column")
+
+[node name="Column3" type="StaticBody3D" parent="Columns" unique_id=215073307]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 2.25, -152)
+script = ExtResource("1_column")
+
+[node name="Collision" type="CollisionShape3D" parent="Columns/Column3" unique_id=215073308]
+shape = SubResource("shape_column")
+
+[node name="Mesh" type="MeshInstance3D" parent="Columns/Column3" unique_id=215073309]
+material_override = SubResource("mat_column")
+mesh = SubResource("mesh_column")
+
+[node name="Column4" type="StaticBody3D" parent="Columns" unique_id=215073310]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 40, 2.25, -172)
+script = ExtResource("1_column")
+
+[node name="Collision" type="CollisionShape3D" parent="Columns/Column4" unique_id=215073311]
+shape = SubResource("shape_column")
+
+[node name="Mesh" type="MeshInstance3D" parent="Columns/Column4" unique_id=215073312]
+material_override = SubResource("mat_column")
+mesh = SubResource("mesh_column")
+
+[node name="Column5" type="StaticBody3D" parent="Columns" unique_id=215073313]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 52, 2.25, -158)
+script = ExtResource("1_column")
+
+[node name="Collision" type="CollisionShape3D" parent="Columns/Column5" unique_id=215073314]
+shape = SubResource("shape_column")
+
+[node name="Mesh" type="MeshInstance3D" parent="Columns/Column5" unique_id=215073315]
+material_override = SubResource("mat_column")
+mesh = SubResource("mesh_column")
+
+[node name="Column6" type="StaticBody3D" parent="Columns" unique_id=215073316]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 52, 2.25, -176)
+script = ExtResource("1_column")
+
+[node name="Collision" type="CollisionShape3D" parent="Columns/Column6" unique_id=215073317]
+shape = SubResource("shape_column")
+
+[node name="Mesh" type="MeshInstance3D" parent="Columns/Column6" unique_id=215073318]
+material_override = SubResource("mat_column")
+mesh = SubResource("mesh_column")
+
+[node name="Column7" type="StaticBody3D" parent="Columns" unique_id=215073319]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 63, 2.25, -151)
+script = ExtResource("1_column")
+
+[node name="Collision" type="CollisionShape3D" parent="Columns/Column7" unique_id=215073320]
+shape = SubResource("shape_column")
+
+[node name="Mesh" type="MeshInstance3D" parent="Columns/Column7" unique_id=215073321]
+material_override = SubResource("mat_column")
+mesh = SubResource("mesh_column")
+
+[node name="Column8" type="StaticBody3D" parent="Columns" unique_id=215073322]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 63, 2.25, -181)
+script = ExtResource("1_column")
+
+[node name="Collision" type="CollisionShape3D" parent="Columns/Column8" unique_id=215073323]
+shape = SubResource("shape_column")
+
+[node name="Mesh" type="MeshInstance3D" parent="Columns/Column8" unique_id=215073324]
+material_override = SubResource("mat_column")
+mesh = SubResource("mesh_column")
