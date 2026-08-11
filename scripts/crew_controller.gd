@@ -336,6 +336,7 @@ func _physics_process(delta: float) -> void:
 	# Squad чистит мёртвых сам по сигналу, своего прохода не нужно.
 	if _widget != null:
 		_widget.call(&"set_crew", _squad.members)
+		_widget.call(&"set_states", _ability_states())
 		if not _crewed:
 			_widget.call(&"set_hint", _hint_text())
 	if _crewed:
@@ -463,6 +464,23 @@ func _tick_commands(delta: float, c: Vector3, cursor: Vector3, aim_dir: Vector3)
 		if _bind_held(m.bind_slot) and m.call(&"try_suppressive_fire", aim) \
 				and shot_recoil > 0.0:
 			_vel -= aim_dir * shot_recoil
+
+
+## ⭐ ЧТО УМЕЕТ КАЖДЫЙ КЛАСС — прямо на его карточке: кнопка и готовность.
+## Карточка молчит о том, чего в мире нет: вал артели и залп огневиков пока
+## живут только в подземелье, и обещать их кнопкой нельзя — пишем честно.
+func _ability_states() -> Dictionary:
+	var spear: String = "ПРОБЕЛ — удар вокруг · %s" \
+			% ("готов" if _super_cd <= 0.0 else "%.1fс" % _super_cd)
+	# Лучник без отката, поэтому «горит» у него значит не «готов» (он готов
+	# всегда), а «сейчас льёт»: подсветка на зажатой гашетке. Постоянно горящий
+	# бордер был бы шумом — телеграф обязан что-то СООБЩАТЬ.
+	return {
+		CrewKit.ARCHER: {"line": "ЛКМ — полив", "armed": _lmb_down},
+		&"pikeman": {"line": spear, "armed": _super_cd <= 0.0},
+		&"worker": {"line": "вал — пока только в подземелье", "armed": false},
+		&"fire_mage": {"line": "залп — пока только в подземелье", "armed": false},
+	}
 
 
 ## Подсказка кнопок отряда: называем только то, что в ЭТОМ составе реально

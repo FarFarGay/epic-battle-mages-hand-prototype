@@ -39,6 +39,9 @@ var _crewed: bool = true
 ## Строка подсказок под составом: снаружи она называет кнопки отряда, в кабине
 ## молчит (там глаголы башни, их показывает её собственный HUD).
 var _hint: Label = null
+## Карточки классов: id → {card, box, act, color}. Пересобираются только вместе
+## с составом; каждый кадр по ним ходит лишь set_states.
+var _cards: Dictionary = {}
 
 
 func _ready() -> void:
@@ -117,30 +120,87 @@ func set_rebuild_enabled(on: bool) -> void:
 		_rebuild_btn.disabled = not on
 
 
+## ⭐ КАРТОЧКА НА КЛАСС, А НЕ СТРОЧКА (2026-08-11, юзер: «где карточки, какие у
+## тебя гномы с их атаками?»). Строка «● Лучники — 3» говорит, КТО есть, но
+## молчит о том, ЧТО он умеет и можно ли этим жать прямо сейчас. Карточка
+## отвечает на все три вопроса разом: класс, живые из скольких, его кнопка и
+## готовность. Бордер белеет на готовности — телеграф на самой карточке (тот же
+## приём, что у карточек данжа: полоска отката читается хуже, чем «загорелось»).
 func _rebuild_rows(by_type: Dictionary) -> void:
 	for c in _crew.get_children():
 		c.queue_free()
+	_cards.clear()
 	var total: int = 0
 	for id in by_type:
 		total += int(by_type[id])
 	_title.text = ("ЭКИПАЖ БАШНИ — %d" if _crewed else "ОТРЯД В ПОЛЕ — %d") % total
 	if total <= 0:
 		var empty := Label.new()
-		empty.text = "пусто"
+		empty.text = "экипажа нет"
 		empty.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		empty.add_theme_font_size_override("font_size", 12)
 		empty.add_theme_color_override("font_color", Color(0.6, 0.6, 0.65))
 		_crew.add_child(empty)
 		return
-	# Порядок строк — как в каталоге, чтобы состав не прыгал между кадрами.
+	# Порядок — как в каталоге, чтобы карточки не прыгали местами между кадрами.
 	for id in SoldierSystem.SOLDIER_CATALOG:
 		if not by_type.has(id):
 			continue
-		var data: Dictionary = SoldierSystem.get_soldier_data(id)
-		var row := Label.new()
-		row.text = "● %s — %d" % [str(data.get("name", str(id))), int(by_type[id])]
-		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_theme_font_size_override("font_size", 13)
-		row.add_theme_color_override("font_color",
-				data.get("icon_color", Color(0.85, 0.85, 0.9)))
-		_crew.add_child(row)
+		_cards[id] = _build_card(id, int(by_type[id]))
+
+
+## Одна карточка класса. Строку способности заполняет владелец (set_states) —
+## виджет не знает ни кнопок, ни откатов, он их только показывает.
+func _build_card(id: StringName, alive: int) -> Dictionary:
+	var data: Dictionary = SoldierSystem.get_soldier_data(id)
+	var col: Color = data.get("icon_color", Color(0.85, 0.85, 0.9))
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(0.09, 0.09, 0.13, 0.92)
+	box.border_color = col
+	box.set_border_width_all(1)
+	box.set_corner_radius_all(3)
+	box.content_margin_left = 6.0
+	box.content_margin_right = 6.0
+	box.content_margin_top = 3.0
+	box.content_margin_bottom = 3.0
+	var card := PanelContainer.new()
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_theme_stylebox_override("panel", box)
+	var rows := VBoxContainer.new()
+	rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rows.add_theme_constant_override("separation", 0)
+	card.add_child(rows)
+	var head := Label.new()
+	head.text = "%s ×%d" % [str(data.get("name", str(id))), alive]
+	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_theme_font_size_override("font_size", 13)
+	head.add_theme_color_override("font_color", col)
+	rows.add_child(head)
+	var act := Label.new()
+	act.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	act.add_theme_font_size_override("font_size", 11)
+	act.add_theme_color_override("font_color", Color(0.72, 0.75, 0.82))
+	rows.add_child(act)
+	_crew.add_child(card)
+	return {"card": card, "box": box, "act": act, "color": col}
+
+
+## Состояния способностей: {класс: {"line": текст кнопки, "armed": готова ли}}.
+## Зовут каждый кадр — трогаем только то, что изменилось.
+func set_states(states: Dictionary) -> void:
+	for id in _cards:
+		var c: Dictionary = _cards[id]
+		var st: Dictionary = states.get(id, {})
+		var line: String = str(st.get("line", ""))
+		var act: Label = c["act"]
+		# В кабине кнопок отряда нет — строку способности прячем, а не врём ею.
+		act.visible = not _crewed and line != ""
+		if act.text != line:
+			act.text = line
+		var armed: bool = bool(st.get("armed", false))
+		var box: StyleBoxFlat = c["box"]
+		var want: Color = Color(1, 1, 1, 0.95) if armed else (c["color"] as Color)
+		if box.border_color != want:
+			box.border_color = want
+			box.bg_color = Color(0.16, 0.15, 0.2, 0.95) if armed \
+					else Color(0.09, 0.09, 0.13, 0.92)
