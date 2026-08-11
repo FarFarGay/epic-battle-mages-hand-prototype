@@ -1019,9 +1019,8 @@ var _focus_group: int = 2
 ## порядком групп 1..3 и их StyleBoxFlat для подсветки выбранной. Узлы живут
 ## в .tscn (двигаются в редакторе), код только красит и наполняет. Пусто в
 ## сценах без FocusCards (drift/superhot).
-var _focus_cards: Array = []
-var _focus_card_boxes: Array = []
-const FOCUS_CARD_COLORS := [Color(0.85, 0.55, 0.25), Color(0.55, 0.35, 0.75), Color(0.7, 0.45, 0.25), Color(0.95, 0.4, 0.2)]
+## Ссылки и цвета карточек переехали в сам узел (SquadCards): он теперь общий с
+## большим миром, и держать его внутренности здесь незачем.
 ## Эффективный поводок этого кадра = superhot_reach минус вес несомого груза
 ## (superhot_reach_weight_penalty). Правит шаг, прицел-детект и attack_range.
 var _effective_reach: float = 9.0
@@ -1257,34 +1256,21 @@ func _refresh_hud_hint() -> void:
 	_refresh_focus_cards()
 
 
-## Стили карточек (как _make_squad_card основной игры: тёмный фон, цветной
-## бордер типа, скругление). Узлы — в .tscn, тут только StyleBox'ы и ссылки.
+## Стили карточек теперь строит сам узел SquadCards в своём _ready — вызовы
+## отсюда остаются пустыми, чтобы не трогать десяток мест, где они стояли.
 func _setup_focus_cards() -> void:
-	_focus_cards.clear()
-	_focus_card_boxes.clear()
-	for i in range(4):
-		var card := get_node_or_null("HUD/FocusCards/Card%d" % (i + 1)) as PanelContainer
-		if card == null:
-			return
-		var box := StyleBoxFlat.new()
-		box.bg_color = Color(0.09, 0.09, 0.13, 0.92)
-		box.border_color = FOCUS_CARD_COLORS[i]
-		box.set_border_width_all(2)
-		box.set_corner_radius_all(4)
-		box.content_margin_left = 8
-		box.content_margin_right = 8
-		box.content_margin_top = 5
-		box.content_margin_bottom = 5
-		card.add_theme_stylebox_override("panel", box)
-		_focus_cards.append(card)
-		_focus_card_boxes.append(box)
+	pass
 
 
 ## Карточки больше НЕ выбор, а дисплей состава: счётчик живых по типам (вся
 ## группа мертва → карточка гаснет, гномы = видимое HP) + готовность супера на
 ## карточке копейщиков. Подсветки выбранной нет — выбирать нечего.
+## САМИ КАРТОЧКИ — общий узел SquadCards (scenes/squad_cards.tscn): их же
+## показывает большой мир, и разъезжаться двум рядам нельзя. Здесь остаётся
+## только сбор ДАННЫХ — что за отряд и какие откаты; рисование не наше.
 func _refresh_focus_cards() -> void:
-	if _focus_cards.size() < 3:
+	var cards := get_node_or_null("HUD/FocusCards") as SquadCards
+	if cards == null:
 		return
 	var keys := [&"pikeman", ARCHER_TYPE, &"worker", &"fire_mage"]
 	var totals := [wasd_spearmen, wasd_archers, wasd_artel, wasd_fire_mages]
@@ -1293,38 +1279,33 @@ func _refresh_focus_cards() -> void:
 		for m in _squad.members:
 			if is_instance_valid(m):
 				counts[m.soldier_type] = int(counts.get(m.soldier_type, 0)) + 1
-	for i in range(_focus_cards.size()):
-		var card: PanelContainer = _focus_cards[i]
-		var box: StyleBoxFlat = _focus_card_boxes[i]
+	var data := {}
+	for i in range(keys.size()):
 		var alive: int = int(counts.get(keys[i], 0))
 		# Карточка огневиков скрыта, пока их не нанял (паттерн F-призыва:
 		# карточка появляется вместе с классом, а не висит пустой).
-		if i == 3:
-			card.visible = totals[3] > 0 or alive > 0
-		# Классы со способностью (копейщики — ПРОБЕЛ, артель — ПКМ): бордер
-		# белеет, когда кнопка готова — телеграф на самой карточке, а не полоска.
+		if i == 3 and totals[3] <= 0 and alive <= 0:
+			continue
+		# Классы со способностью (копейщики — ПРОБЕЛ, артель/огневики — ПКМ):
+		# бордер белеет, когда кнопка готова.
 		var armed: bool = false
+		var line: String = ""
 		if i == 0:
 			armed = alive > 0 and _super_cd <= 0.0 and _super_windup <= 0.0
+			line = "[ПРОБЕЛ] готов" if armed else "[ПРОБЕЛ] %.1fс" % _super_cd
 		elif i == 2:
 			armed = alive > 0 and _wave_cd <= 0.0
+			line = "[ПКМ] готов" if armed else "[ПКМ] %.1fс" % _wave_cd
 		elif i == 3:
 			armed = alive > 0 and _fire_cd <= 0.0
-		box.border_color = Color(1, 1, 1, 0.95) if armed else FOCUS_CARD_COLORS[i]
-		box.bg_color = Color(0.16, 0.15, 0.2, 0.95) if armed else Color(0.09, 0.09, 0.13, 0.92)
-		card.modulate = Color(1, 1, 1, 1.0) if alive > 0 else Color(1, 1, 1, 0.35)
-		var cnt := card.get_node_or_null("V/Count") as Label
-		if cnt != null:
-			var txt: String = "Живых: %d / %d" % [alive, totals[i]]
-			if i == 0 and alive > 0:
-				txt += "\n[ПРОБЕЛ] готов" if armed else "\n[ПРОБЕЛ] %.1fс" % _super_cd
-			elif i == 2 and alive > 0:
-				txt += "\n[ПКМ] готов" if armed else "\n[ПКМ] %.1fс" % _wave_cd
-			elif i == 3 and alive > 0:
-				txt += "\n[ПКМ] готов" if armed else "\n[ПКМ] %.1fс" % _fire_cd
+			line = "[ПКМ] готов" if armed else "[ПКМ] %.1fс" % _fire_cd
+		data[keys[i]] = {
+			"alive": alive, "total": totals[i], "armed": armed,
+			"line": line if alive > 0 else "",
 			# Набранные находки категории — прямо на её карточке.
-			txt += _cards_line(keys[i])
-			cnt.text = txt
+			"extra": _cards_line(keys[i]),
+		}
+	cards.refresh(data)
 
 
 ## Модельки классов (артельщик, огневик) переехали в CrewKit — они часть

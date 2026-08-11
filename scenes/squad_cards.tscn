@@ -1,0 +1,171 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/squad_cards.gd" id="1_cards"]
+
+[node name="FocusCards" type="HBoxContainer"]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -370.0
+offset_top = -96.0
+offset_right = 370.0
+offset_bottom = -18.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+theme_override_constants/separation = 12
+script = ExtResource("1_cards")
+
+[node name="Card1" type="PanelContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="V" type="VBoxContainer" parent="Card1"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 3
+
+[node name="Header" type="HBoxContainer" parent="Card1/V"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="Swatch" type="ColorRect" parent="Card1/V/Header"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+size_flags_vertical = 4
+color = Color(0.85, 0.55, 0.25, 1)
+
+[node name="Name" type="Label" parent="Card1/V/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 13
+text = "Копейщики"
+
+[node name="Count" type="Label" parent="Card1/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Живых: —"
+
+[node name="Key" type="Label" parent="Card1/V"]
+modulate = Color(1, 1, 1, 0.6)
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "[ПРОБЕЛ] удар вокруг"
+
+[node name="Card2" type="PanelContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="V" type="VBoxContainer" parent="Card2"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 3
+
+[node name="Header" type="HBoxContainer" parent="Card2/V"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="Swatch" type="ColorRect" parent="Card2/V/Header"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+size_flags_vertical = 4
+color = Color(0.55, 0.35, 0.75, 1)
+
+[node name="Name" type="Label" parent="Card2/V/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 13
+text = "Лучники"
+
+[node name="Count" type="Label" parent="Card2/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Живых: —"
+
+[node name="Key" type="Label" parent="Card2/V"]
+modulate = Color(1, 1, 1, 0.6)
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "[ЛКМ] полив"
+
+[node name="Card3" type="PanelContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="V" type="VBoxContainer" parent="Card3"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 3
+
+[node name="Header" type="HBoxContainer" parent="Card3/V"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="Swatch" type="ColorRect" parent="Card3/V/Header"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+size_flags_vertical = 4
+color = Color(0.7, 0.45, 0.25, 1)
+
+[node name="Name" type="Label" parent="Card3/V/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 13
+text = "Артель"
+
+[node name="Count" type="Label" parent="Card3/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Живых: —"
+
+[node name="Key" type="Label" parent="Card3/V"]
+modulate = Color(1, 1, 1, 0.6)
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "[ПКМ] каменный вал"
+
+[node name="Card4" type="PanelContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="V" type="VBoxContainer" parent="Card4"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 3
+
+[node name="Header" type="HBoxContainer" parent="Card4/V"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="Swatch" type="ColorRect" parent="Card4/V/Header"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+size_flags_vertical = 4
+color = Color(0.95, 0.4, 0.2, 1)
+
+[node name="Name" type="Label" parent="Card4/V/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 13
+text = "Огневики"
+
+[node name="Count" type="Label" parent="Card4/V"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Живых: —"
+
+[node name="Key" type="Label" parent="Card4/V"]
+modulate = Color(1, 1, 1, 0.6)
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "[ПКМ] залп огня"

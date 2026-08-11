@@ -19,6 +19,9 @@ extends Node3D
 ## дефолтный отряд из инспектора, чтобы сцена не открывалась пустой.
 
 const CREW_WIDGET_SCENE: PackedScene = preload("res://scenes/crew_widget.tscn")
+## ⭐ ТЕ ЖЕ КАРТОЧКИ, ЧТО В ДАНЖЕ (scenes/squad_cards.tscn). Не «такие же» —
+## ТЕ ЖЕ: один узел, одна разметка, один код. Свои рисовать нельзя.
+const SQUAD_CARDS_SCENE: PackedScene = preload("res://scenes/squad_cards.tscn")
 
 ## Стартуем с гномами ВНУТРИ: они приехали из подземелья в башне (DESIGN §2.2).
 @export var start_crewed: bool = true
@@ -79,6 +82,10 @@ var _squad: Squad = null
 var _tower: Node3D = null
 var _rig: Node = null
 var _widget: CanvasLayer = null
+## Ряд карточек классов — общий узел с данжем (SquadCards).
+var _cards: Control = null
+## Стартовый состав по классам: знаменатель «живых из скольких» на карточках.
+var _start_counts: Dictionary = {}
 ## Узел-цель камеры, когда рулим отрядом: камера следит за ним, а не за башней.
 ## Он же — escort-якорь гномов (в данже эту роль играет баннер строя).
 var _focus: Node3D = null
@@ -105,6 +112,11 @@ func _ready() -> void:
 	add_child(_focus)
 	_widget = CREW_WIDGET_SCENE.instantiate() as CanvasLayer
 	add_child(_widget)
+	# Ряд карточек кладём в тот же CanvasLayer виджета: Control'у нужен слой, а
+	# заводить второй ради одного узла незачем. Разметка (низ по центру) —
+	# из самой сцены карточек, здесь её не переопределяем.
+	_cards = SQUAD_CARDS_SCENE.instantiate() as Control
+	_widget.add_child(_cards)
 	_widget.connect(&"leave_requested", _on_leave_pressed)
 	_widget.connect(&"board_requested", _on_board_pressed)
 	_widget.connect(&"rebuild_requested", _on_rebuild_pressed)
@@ -139,6 +151,11 @@ func _spawn_crew() -> void:
 		at = _tower.global_position
 	var roster: Array[StringName] = _roster()
 	var cfg: Dictionary = CrewKit.default_cfg()
+	# Полный состав на старте — знаменатель карточек («Живых: 2 / 3»). Потери
+	# должны быть ВИДНЫ, а для этого надо помнить, сколько было.
+	_start_counts.clear()
+	for id in roster:
+		_start_counts[id] = int(_start_counts.get(id, 0)) + 1
 	for i in range(roster.size()):
 		var ang: float = TAU * float(i) / float(maxi(roster.size(), 1))
 		var pos: Vector3 = _on_ground(at.x + cos(ang) * disembark_radius,
@@ -336,9 +353,8 @@ func _physics_process(delta: float) -> void:
 	# Squad чистит мёртвых сам по сигналу, своего прохода не нужно.
 	if _widget != null:
 		_widget.call(&"set_crew", _squad.members)
-		_widget.call(&"set_states", _ability_states())
-		if not _crewed:
-			_widget.call(&"set_hint", _hint_text())
+	if _cards != null:
+		(_cards as SquadCards).refresh(_card_data())
 	if _crewed:
 		return
 	var c: Vector3 = _squad.compute_center()
@@ -466,43 +482,37 @@ func _tick_commands(delta: float, c: Vector3, cursor: Vector3, aim_dir: Vector3)
 			_vel -= aim_dir * shot_recoil
 
 
-## ⭐ ЧТО УМЕЕТ КАЖДЫЙ КЛАСС — прямо на его карточке: кнопка и готовность.
-## Карточка молчит о том, чего в мире нет: вал артели и залп огневиков пока
-## живут только в подземелье, и обещать их кнопкой нельзя — пишем честно.
-func _ability_states() -> Dictionary:
-	var spear: String = "ПРОБЕЛ — удар вокруг · %s" \
-			% ("готов" if _super_cd <= 0.0 else "%.1fс" % _super_cd)
-	# Лучник без отката, поэтому «горит» у него значит не «готов» (он готов
-	# всегда), а «сейчас льёт»: подсветка на зажатой гашетке. Постоянно горящий
-	# бордер был бы шумом — телеграф обязан что-то СООБЩАТЬ.
-	return {
-		CrewKit.ARCHER: {"line": "ЛКМ — полив", "armed": _lmb_down},
-		&"pikeman": {"line": spear, "armed": _super_cd <= 0.0},
-		&"worker": {"line": "вал — пока только в подземелье", "armed": false},
-		&"fire_mage": {"line": "залп — пока только в подземелье", "armed": false},
-	}
-
-
-## Подсказка кнопок отряда: называем только то, что в ЭТОМ составе реально
-## работает — обещать «удар вокруг» без копейщиков нельзя. Откат показываем
-## цифрой: игрок должен видеть, ждать ему или жать.
-func _hint_text() -> String:
-	var archers: int = 0
-	var pikemen: int = 0
+## Данные для карточек — ровно тот же формат, что собирает данж. Отличается
+## только источник цифр: там инспектор сцены, здесь стартовый состав.
+##
+## Карточка не врёт о том, чего в мире нет: вал артели и залп огневиков пока
+## живут только в подземелье, поэтому у их классов кнопка не обещается.
+func _card_data() -> Dictionary:
+	var counts := {}
 	for m in _squad.members:
-		if not is_instance_valid(m):
-			continue
-		if m is ArcherSoldier:
-			archers += 1
-		elif m.soldier_type == &"pikeman":
-			pikemen += 1
-	var parts: Array[String] = ["WASD — вести"]
-	if archers > 0:
-		parts.append("ЛКМ — полив")
-	if pikemen > 0:
-		parts.append("ПРОБЕЛ — удар (%s)"
-				% ("готов" if _super_cd <= 0.0 else "%.1fс" % _super_cd))
-	return "  ·  ".join(parts)
+		if is_instance_valid(m):
+			counts[m.soldier_type] = int(counts.get(m.soldier_type, 0)) + 1
+	var data := {}
+	for id in _start_counts:
+		var alive: int = int(counts.get(id, 0))
+		var armed: bool = false
+		var line: String = ""
+		if id == &"pikeman":
+			armed = alive > 0 and _super_cd <= 0.0 and not _crewed
+			line = "[ПРОБЕЛ] готов" if _super_cd <= 0.0 else "[ПРОБЕЛ] %.1fс" % _super_cd
+		elif id == CrewKit.ARCHER:
+			# У лучника нет отката, поэтому «горит» значит не «готов» (он готов
+			# всегда), а «сейчас льёт». Вечно горящая рамка была бы шумом.
+			armed = alive > 0 and _lmb_down and not _crewed
+			line = "[ЛКМ] полив"
+		else:
+			line = "только в подземелье"
+		data[id] = {
+			"alive": alive, "total": int(_start_counts[id]), "armed": armed,
+			# В кабине кнопок отряда нет — строку способности гасим, а не врём ею.
+			"line": line if not _crewed else " ",
+		}
+	return data
 
 
 ## Зажата ли кнопка слота. Нужна ИМЕННО удерживаемость: полив живёт, пока держишь.
