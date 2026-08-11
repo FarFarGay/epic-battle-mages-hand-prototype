@@ -24,6 +24,9 @@ const CREW_WIDGET_SCENE: PackedScene = preload("res://scenes/crew_widget.tscn")
 @export var start_crewed: bool = true
 ## Дистанция посадки по E — та же логика, что в ангаре интро.
 @export var board_distance: float = 8.0
+## Радиус кольца высадки вокруг корпуса. Корпус башни — коробка 2×2 в основании,
+## так что 5 м гарантированно выносит гномов из-под неё, а не на крышу.
+@export var disembark_radius: float = 5.0
 
 @export_group("Состав по умолчанию")
 ## Отряд для ПРЯМОГО запуска мира (из данжа никто не приехал). Числа — как в
@@ -132,13 +135,13 @@ func _spawn_crew() -> void:
 	_squad.grid_spacing_scale = formation_spacing
 	var at: Vector3 = global_position
 	if _tower != null and is_instance_valid(_tower):
-		# У башни origin приподнят (y≈5) — по XZ от неё, но на землю.
-		at = Vector3(_tower.global_position.x, 0.5, _tower.global_position.z)
+		at = _tower.global_position
 	var roster: Array[StringName] = _roster()
 	var cfg: Dictionary = CrewKit.default_cfg()
 	for i in range(roster.size()):
 		var ang: float = TAU * float(i) / float(maxi(roster.size(), 1))
-		var pos: Vector3 = at + Vector3(cos(ang) * 1.5, 0.0, sin(ang) * 1.5)
+		var pos: Vector3 = _on_ground(at.x + cos(ang) * disembark_radius,
+				at.z + sin(ang) * disembark_radius)
 		var g := CrewKit.create_soldier(self, roster[i], pos, cfg, _focus)
 		if g == null:
 			continue
@@ -146,7 +149,7 @@ func _spawn_crew() -> void:
 		# патрули) у него нет и включаться она не должна ни на кадр.
 		g.set_crew_mode(true)
 		_squad.add_member(g)
-	_squad.command_hold(at, false)
+	_squad.command_hold(Vector3(at.x, 0.0, at.z), false)
 	print("[Crew] экипаж: %d — %s" % [roster.size(), str(roster)])
 
 
@@ -223,8 +226,11 @@ func _on_leave_pressed() -> void:
 	if not _crewed or _squad == null or _tower == null or not is_instance_valid(_tower):
 		return
 	_set_crewed(false)
-	# Высаживаем кольцом вокруг корпуса — на землю, а не на origin башни:
-	# у неё центр висит высоко (y≈5), гномы оказались бы в воздухе.
+	# Высаживаем кольцом вокруг корпуса, КАЖДОГО отдельным лучом на землю.
+	# ⚠ Раньше высота бралась «от первого гнома» — а он в этот момент ещё сидит
+	# в кабине на y≈7.5, и весь экипаж высаживался на крышу башни: висели в
+	# воздухе и не падали (стоят на её же коллайдере). Высоту спрашиваем только
+	# у ПОЛА, и только по той точке, куда реально ставим.
 	var n: int = maxi(_squad.members.size(), 1)
 	var i: int = 0
 	var t: Vector3 = _tower.global_position
@@ -232,8 +238,8 @@ func _on_leave_pressed() -> void:
 		if not is_instance_valid(m):
 			continue
 		var a: float = TAU * float(i) / float(n)
-		(m as Node3D).global_position = Vector3(
-			t.x + cos(a) * 5.0, _ground_y(), t.z + sin(a) * 5.0)
+		(m as Node3D).global_position = _on_ground(
+				t.x + cos(a) * disembark_radius, t.z + sin(a) * disembark_radius)
 		i += 1
 	_squad.hold_position = Vector3(t.x, 0.0, t.z)
 	EventBus.tutorial_hint.emit("Экипаж снаружи. WASD ведёт отряд, [E] у башни — вернуться", 5.0)
@@ -257,18 +263,30 @@ func _try_board() -> void:
 	EventBus.tutorial_hint.emit("Экипаж в кабине — Ладья твоя", 3.0)
 
 
+## Базис руления = базис рига (он крутится только по Y, длина ввода сохраняется).
+## Ровно тот же источник, что у башни: одна камера — одно «вперёд».
+func _cam_basis() -> Basis:
+	if _rig != null and is_instance_valid(_rig):
+		return (_rig as Node3D).global_transform.basis
+	return Basis()
+
+
 ## Рука башни в сцене (может отсутствовать в дев-сценах).
 func _find_hand() -> Node:
 	return get_tree().get_first_node_in_group(Hand.HAND_GROUP)
 
 
-## Земля под отрядом. Уровень плоский на y=0, но берём от гнома, если он есть:
-## так высадка не проваливается, если пол когда-нибудь сместят.
-func _ground_y() -> float:
-	for m in _squad.members:
-		if is_instance_valid(m):
-			return (m as Node3D).global_position.y
-	return 0.0
+## Точка на ПОЛУ под (x, z): луч сверху вниз по слою террейна. Маска только
+## TERRAIN — корпус башни и постройки лучу не мешают, иначе гном встал бы на
+## крышу того, над чем оказался. Пол не найден (дырка/за краем) → y=0.
+func _on_ground(x: float, z: float) -> Vector3:
+	var q := PhysicsRayQueryParameters3D.create(
+			Vector3(x, 40.0, z), Vector3(x, -20.0, z), Layers.TERRAIN)
+	var hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(q)
+	var y: float = (hit.position as Vector3).y if not hit.is_empty() else 0.0
+	# Полшага над полом: капсула гнома садится сама, а стартовать вплотную к
+	# коллайдеру — верный способ провалиться сквозь него на первом кадре.
+	return Vector3(x, y + 0.5, z)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -299,7 +317,15 @@ func _physics_process(delta: float) -> void:
 	_focus.global_position = c
 	var v: Vector2 = Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
 	var has_input: bool = v.length_squared() > 0.0001
-	var target := Vector3(v.x, 0.0, v.y) * move_speed if has_input else Vector3.ZERO
+	# ⚠ ХОД СЧИТАЕМ ОТ КАМЕРЫ, А НЕ ОТ МИРОВЫХ ОСЕЙ. Риг большого мира крутится
+	# орбитой (СКМ), и его поворот разворачивает систему координат управления —
+	# «вперёд» обязано оставаться «вглубь экрана». Мировые оси давали ровно то,
+	# на что жаловался юзер: стоит камере отъехать по орбите, и WASD ведёт отряд
+	# не туда, куда смотришь. Башня берёт тот же basis (Tower._camera_yaw_basis) —
+	# два контроллера обязаны рулить одинаково, иначе посадка ощущается как
+	# смена раскладки.
+	var target: Vector3 = _cam_basis() * Vector3(v.x, 0.0, v.y) * move_speed \
+			if has_input else Vector3.ZERO
 	var rate: float = handling * (1.0 if has_input else brake_mult)
 	_vel = _vel.lerp(target, 1.0 - exp(-rate * delta))
 	var cf := Vector3(c.x, 0.0, c.z)
@@ -318,7 +344,10 @@ func _physics_process(delta: float) -> void:
 	var look: Vector3 = Vector3.ZERO
 	if cursor != Vector3.INF:
 		var to_cur := Vector3(cursor.x - c.x, 0.0, cursor.z - c.z)
-		if to_cur.length_squared() > 0.01:
+		# Мёртвая зона: курсор ПОВЕРХ отряда не должен вертеть строй. Без неё
+		# дрожь мыши в паре сантиметров от центра перекладывает сетку слотов, и
+		# гномы мечутся, будто управление сошло с ума.
+		if to_cur.length_squared() > 6.25:
 			look = to_cur.normalized()
 	if look == Vector3.ZERO and _vel.length_squared() > 0.25:
 		look = _vel.normalized()
