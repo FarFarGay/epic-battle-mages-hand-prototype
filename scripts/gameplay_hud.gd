@@ -399,7 +399,15 @@ func _ready() -> void:
 
 ## Баннер тревоги (V): красная строка по центру под рядом монет. Скрыт до тревоги.
 ## mouse_filter IGNORE — центр-экранные элементы HUD не должны перехватывать мышь.
+## ⛔ БАННЕР ТРЕВОГИ УБРАН вместе с артелью (2026-08-11): прятать «население»
+## больше не от кого и незачем — производство не зависит от гномов, а сами
+## гномы это экипаж Ладьи, а не рабочие на смене. Узел не создаётся;
+## _on_alarm_changed уже проверяет null.
 func _build_alarm_banner() -> void:
+	_alarm_banner = null
+
+
+func _build_alarm_banner_legacy() -> void:
 	_alarm_banner = Label.new()
 	_alarm_banner.text = "🚨 ТРЕВОГА — население в укрытии, добыча стоит  [V]"
 	_alarm_banner.add_theme_font_size_override(&"font_size", 20)
@@ -557,7 +565,23 @@ func _add_squad_card_header(parent: VBoxContainer, swatch_color: Color, initial_
 ## Без disband-кнопки: собиратели — base population лагеря, их рекрут идёт
 ## через постройку «новая палатка» (отдельная конверсия), расформирование
 ## не предусмотрено (некуда — они уже самый низкий «класс»).
+## ⛔ КАРТОЧКА СОБИРАТЕЛЕЙ УБРАНА (2026-08-11, юзер: «никаких отправил артель,
+## ничо такого не надо»). Она была пультом управления пулом рабочих: счётчик
+## свободных и кнопки режимов «Свободны» / «Тревога». В модели «гномы = экипаж
+## Ладьи» пульта нет — состав показывает виджет экипажа, а режимов у экипажа
+## не бывает: он либо в кабине, либо снаружи.
+##
+## Все поля карточки остаются null, их потребители (_update_counts,
+## _refresh_gatherer_mode_buttons) уже проверяют null.
 func _build_gatherer_card() -> void:
+	_gatherer_card = null
+	_gatherer_card_count_label = null
+	_gatherer_free_btn = null
+	_gatherer_work_btn = null
+	_gatherer_alarm_btn = null
+
+
+func _build_gatherer_card_legacy() -> void:
 	_ensure_squad_panel()
 	# Коричневый border под цвет собирателей.
 	var parts := _make_squad_card(Color(0.7, 0.45, 0.25, 0.9))
