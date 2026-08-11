@@ -41,11 +41,6 @@ const ARCHER_TYPE := &"archer_squad"
 ## Флоу-филд навигации данжа (скрипт без class_name — подключение preload'ом,
 ## кэш классов не трогаем).
 const FLOW_FIELD_SCRIPT := preload("res://scripts/dungeon_flow_field.gd")
-## Снаряд огневиков — ТОТ ЖЕ fireball.tscn, что у башни/меха/шквала: та же
-## баллистика и визуал, отличаются только цифры setup'а (мини-копия).
-const FIREBALL_SCENE: PackedScene = preload("res://scenes/fireball.tscn")
-## Горящая земля после взрыва — штатный burn-пятак башенного фаербола.
-const BURN_PATCH_SCENE: PackedScene = preload("res://scenes/burn_patch.tscn")
 ## Цвет приказов отряду — тот же голубой, что у aim-ring'а HandSquadAim:
 ## один визуальный язык «команда отряду» по всей игре.
 const CMD_COLOR := Color(0.4, 0.85, 1.0, 0.9)
@@ -405,6 +400,14 @@ const CMD_ARRIVED_DIST := 2.0
 @export var secret_enabled: bool = true
 ## Сторона квадратного кармана (м).
 @export var secret_size: float = 4.5
+## ⭐ ПОСТОЯННАЯ ДОБЫЧА ТАЙНИКА (2026-08-11). Карточка-находка тает вместе с
+## забегом, и у секрета не оставалось следа в башне — искать его было незачем.
+## Теперь вскрытый тайник СВЕРХ карточки роняет одну вещь НАСОВСЕМ: свиток
+## заклинания либо чертёж здания, равным броском. Пулы — существующие id из
+## SpellSystem.SPELL_CATALOG и RoomBuildings.CATALOG; пустой пул просто не
+## участвует в броске (оба пустых = прежнее поведение, только карточка).
+@export var secret_scroll_pool: Array[StringName] = [&"frost", &"mine_scatter"]
+@export var secret_blueprint_pool: Array[StringName] = [&"pad_barrack", &"watchtower"]
 ## ЦЕНА обычного сундука в XP. ⭐ 0 с 2026-08-07: сундуки открываются ДАРОМ —
 ## награда за то, что нашёл и дошёл. Опыт никуда не делся, он переехал в
 ## хижины: там за него берут УЛУЧШЕНИЕ (см. hut_card_cost). Так две валюты
@@ -812,15 +815,12 @@ var _super_cd: float = 0.0
 var _super_ring: Node3D = null
 var _super_armed_prev: bool = true
 var _super_hud_acc: float = 0.0
-## Каменная волна артели (ПКМ). Валов может быть НЕСКОЛЬКО разом (первый +
-## догоняющие «эхо»), поэтому список: {node, travelled, half, power, hit}.
-## Направление общее — эхо идёт тем же курсом, что и первый.
-var _waves: Array = []
-var _wave_dir: Vector3 = Vector3.ZERO
-var _wave_cd: float = 0.0
-## Сколько «эхо»-валов ещё выпустить из строя и когда следующий.
-var _wave_echo_left: int = 0
-var _wave_echo_timer: float = 0.0
+## Каменная волна артели (ПКМ) — ОБЩИЙ узел StoneWave, он же в большом мире.
+## Вся физика гребня, эхо и рассыпание живут там; здесь остаются только вещи,
+## которых общий код знать не может: тайник, завал К1, мебель интро, своя камера.
+var _wave: StoneWave = null
+## Залп огневиков (ПКМ) — тоже ОБЩИЙ узел; лёд ледника довешен сигналом.
+var _volley: MageVolley = null
 ## Инерция точки строя (wasd_handling): текущая скорость между кадрами.
 var _wasd_vel: Vector3 = Vector3.ZERO
 ## Желе-строй: прошлая точка строя и её скорость (для расчёта ускорения),
@@ -929,10 +929,9 @@ const INTRO_FINISH_Z := -240.0
 ## К4 «Ледник»: границы льда (мировые XZ, Rect2 position+size), талые пятна
 ## [{pos, r}] — острова сцепления, прожжённые фаерболами. Ледяные объекты
 ## живут в группе &"ice_meltable" (meta melt_hits/spike/melt_reach), шипастые
-## пилят контактом ВСЕХ (симметрия взаимодействий). _fire_cd — откат залпа ПКМ.
+## пилят контактом ВСЕХ (симметрия взаимодействий).
 var _ice_rect: Rect2 = Rect2()
 var _melt_patches: Array = []
-var _fire_cd: float = 0.0
 var _ice_hut: Node3D = null
 var _ice_boulders: StaticBody3D = null
 var _k4_wave: int = 0
@@ -1052,6 +1051,7 @@ func _ready() -> void:
 	# Импакт: без этой подписки эмиты вала/супера некому слушать (CameraRig
 	# в данж-сцене отсутствует).
 	EventBus.camera_shake.connect(_on_dungeon_shake)
+	_setup_squad_abilities()
 	_cmd_line = AoeVisual.spawn_ground_line(self, room_center, room_center, CMD_COLOR, 0.16)
 	_cmd_ring = AoeVisual.spawn_ground_ring(self, room_center, CMD_RING_RADIUS, 0.0, CMD_COLOR)
 	_cmd_line.visible = false
@@ -1294,11 +1294,13 @@ func _refresh_focus_cards() -> void:
 			armed = alive > 0 and _super_cd <= 0.0 and _super_windup <= 0.0
 			line = "[ПРОБЕЛ] готов" if armed else "[ПРОБЕЛ] %.1fс" % _super_cd
 		elif i == 2:
-			armed = alive > 0 and _wave_cd <= 0.0
-			line = "[ПКМ] готов" if armed else "[ПКМ] %.1fс" % _wave_cd
+			var wave_cd: float = _wave.cooldown_left() if _wave != null else 0.0
+			armed = alive > 0 and wave_cd <= 0.0
+			line = "[ПКМ] готов" if armed else "[ПКМ] %.1fс" % wave_cd
 		elif i == 3:
-			armed = alive > 0 and _fire_cd <= 0.0
-			line = "[ПКМ] готов" if armed else "[ПКМ] %.1fс" % _fire_cd
+			var fire_cd: float = _volley.cooldown_left() if _volley != null else 0.0
+			armed = alive > 0 and fire_cd <= 0.0
+			line = "[ПКМ] готов" if armed else "[ПКМ] %.1fс" % fire_cd
 		data[keys[i]] = {
 			"alive": alive, "total": totals[i], "armed": armed,
 			"line": line if alive > 0 else "",
@@ -2892,7 +2894,8 @@ func _wasd_physics(delta: float) -> void:
 		_press_bind(BIND_SPACE, cursor)
 	_tick_bombers(delta)
 	_tick_spear_super(delta)
-	_tick_stone_wave(delta)
+	if _wave != null:
+		_wave.tick(delta)
 	_tick_ice(delta)
 	_tick_chests()
 	_tick_cargo(delta)
@@ -4032,9 +4035,43 @@ func _tick_chests() -> void:
 		# Заголовок пикера — по источнику: тайниковый сундук хвастается отдельно.
 		# (Интро сюда не попадает: его карты живут в сундуках сокровищ, а в нише — хижина.)
 		if bool(ch.get("secret", false)):
+			# Тайник платит ДВАЖДЫ: постоянной вещью в канал (переживёт забег) и
+			# обычной карточкой на сам забег. Повторов не будет — сюда пускает
+			# только флаг taken, выставленный строкой выше.
+			_grant_secret_permanent()
 			_offer_cards("Тайник! Возьми находку")
 		else:
 			_offer_cards("Сундук открыт — возьми находку")
+
+
+## Постоянная находка тайника: кладём в канал MatchConfig, а не в сейв на месте —
+## PlayerProfile живёт узлом в сцене мира, из данжа до него не дотянуться.
+## Игроку сразу называем вещь по-человечески: «нашёл что-то» без имени читается
+## как пустой сундук.
+func _grant_secret_permanent() -> void:
+	var has_scrolls: bool = not secret_scroll_pool.is_empty()
+	var has_blueprints: bool = not secret_blueprint_pool.is_empty()
+	if not has_scrolls and not has_blueprints:
+		return
+	var take_scroll: bool = has_scrolls
+	if has_scrolls and has_blueprints:
+		take_scroll = randf() < 0.5
+	if take_scroll:
+		var sid: StringName = secret_scroll_pool[randi() % secret_scroll_pool.size()]
+		MatchConfig.next_scrolls.append(sid)
+		var sname: String = str(SpellSystem.get_spell_data(sid).get("name", ""))
+		if sname.is_empty():
+			sname = str(sid)  # каталог не знает id — показываем хоть его, но молчать нельзя
+		EventBus.tutorial_hint.emit("📜 Свиток: %s" % sname, 3.0)
+		print("[DungeonSandbox] тайник → свиток НАСОВСЕМ: %s" % str(sid))
+	else:
+		var bid: StringName = secret_blueprint_pool[randi() % secret_blueprint_pool.size()]
+		MatchConfig.next_blueprints.append(bid)
+		var bname: String = str(RoomBuildings.get_data(bid).get("name", ""))
+		if bname.is_empty():
+			bname = str(bid)
+		EventBus.tutorial_hint.emit("📐 Чертёж: %s" % bname, 3.0)
+		print("[DungeonSandbox] тайник → чертёж НАСОВСЕМ: %s" % str(bid))
 
 
 ## Сколько раз взята карточка (0 = нет). Единственная точка чтения эффектов —
@@ -4193,12 +4230,11 @@ func _press_bind(slot: int, cursor: Vector3) -> void:
 		_request_fire_volley(cursor, slot)
 
 
-## Залп огневиков: каждый живой маг пускает мини-фаербол (тот же fireball.tscn,
-## что у Ладьи — «уменьшенная копия выстрела башни») в точку курсора с лёгким
-## рассеянием. Взрыв бьёт врагов И ТОПИТ ЛЁД (стены шипов, глыбы, пол ледника —
-## см. _on_mage_fireball_hit). Целиться можно в любую точку — в том числе в лёд.
+## Залп огневиков: считает ОБЩИЙ узел MageVolley (он же в большом мире), здесь —
+## только гейт по кнопке и данжевые последствия огня. Взрыв бьёт врагов И ТОПИТ
+## ЛЁД (см. _on_mage_fire_exploded); целиться можно в любую точку, в том числе в лёд.
 func _request_fire_volley(cursor: Vector3, slot: int = -1) -> void:
-	if _squad == null or _fire_cd > 0.0 or cursor == Vector3.INF:
+	if _squad == null or _volley == null or not _volley.is_ready() or cursor == Vector3.INF:
 		return
 	# slot < 0 — «все огневики отряда» (старые вызовы); иначе только те, кто
 	# назначен на нажатую кнопку.
@@ -4209,57 +4245,12 @@ func _request_fire_volley(cursor: Vector3, slot: int = -1) -> void:
 		for m in _squad.members:
 			if is_instance_valid(m) and m.soldier_type == &"fire_mage":
 				mages.append(m)
-	if mages.is_empty():
+	if not _volley.fire(mages, cursor):
 		return
-	_fire_cd = mage_fire_cooldown
-	var target := Vector3(cursor.x, 0.0, cursor.z)
-	for i in range(mages.size()):
-		var jitter := Vector3.ZERO
-		if mages.size() > 1:
-			jitter = Vector3(randf_range(-1.2, 1.2), 0.0, randf_range(-1.2, 1.2))
-		_launch_mage_fireball((mages[i] as Node3D).global_position, target + jitter)
 	var c: Vector3 = _squad.compute_center()
 	if c != Vector3.INF:
 		EventBus.camera_shake.emit(0.2, c)
 	_refresh_focus_cards()
-
-
-## Один мини-фаербол огневика: короткая пологая дуга из рук мага, взрыв малым
-## AOE. Детонирует и о преграду по пути (TERRAIN) — прицел в стену честно
-## взрывается о стену, лёд топится там, куда реально попал.
-func _launch_mage_fireball(from: Vector3, target: Vector3) -> void:
-	var fb := FIREBALL_SCENE.instantiate() as Fireball
-	if fb == null:
-		return
-	add_child(fb)
-	fb.add_to_group(&"player_projectile")
-	fb.setup(
-		from + Vector3(0.0, 1.1, 0.0),
-		target,
-		0.22,   # boost: короткий подскок из рук
-		5.5,    # вверх
-		5.0,    # вперёд
-		16.0,   # gravity дуги
-		1.0,    # sway
-		9.0,    # homing initial
-		26.0,   # accel
-		20.0,   # max speed
-		6.0,    # drift angle
-		9.0,    # turn rate
-		mage_fire_damage,
-		mage_fire_radius,
-		Layers.MASK_HAND_SLAM,
-		8.0,    # knockback
-		0.35,   # lift
-		0.25,   # duration
-	)
-	fb.set_collide_in_flight(true, Layers.TERRAIN)
-	fb.shake_amount = 0.12
-	# Земля горит: штатный burn-пятак (радиус чуть уже AOE), тикает по врагам —
-	# слой «горение добивает» в трёхслойном балансе урона огневика.
-	fb.setup_burn(BURN_PATCH_SCENE, mage_fire_radius * 0.85,
-			mage_burn_damage_per_tick, mage_burn_tick_interval, mage_burn_duration)
-	fb.hit.connect(_on_mage_fireball_hit)
 
 
 func _alive_fire_mages() -> int:
@@ -4273,10 +4264,10 @@ func _alive_fire_mages() -> int:
 
 
 ## ПКМ: каменная волна артели. Гейт — живой артельщик (симметрия с ПРОБЕЛОМ:
-## нет класса — нет способности). Направление берётся от строя к курсору и
-## ФИКСИРУЕТСЯ на запуске: вал не подруливает, целиться надо заранее.
+## нет класса — нет способности). Сам вал считает общий узел StoneWave — здесь
+## только гейт по составу, карточки хижины и эпизодные последствия.
 func _request_stone_wave(cursor: Vector3, slot: int = -1) -> void:
-	if _squad == null or _wave_cd > 0.0 or not _waves.is_empty():
+	if _squad == null or _wave == null or not _wave.is_ready():
 		return
 	# slot >= 0 — вал катят только артельщики нажатой кнопки (свободный бинд).
 	var crew: int = _bound_members(slot, &"worker").size() if slot >= 0 else _alive_artel()
@@ -4286,214 +4277,92 @@ func _request_stone_wave(cursor: Vector3, slot: int = -1) -> void:
 	var c: Vector3 = _squad.compute_center()
 	if c == Vector3.INF or cursor == Vector3.INF:
 		return
-	var dir := Vector3(cursor.x - c.x, 0.0, cursor.z - c.z)
-	if dir.length_squared() < 0.01:
+	# Карточки хижины читаются НА ЗАПУСКЕ: между забегами их количество растёт.
+	_wave.wide_cards = _card(&"artel_wide")
+	_wave.burst_cards = _card(&"artel_burst")
+	_wave.echo_cards = _card(&"artel_echo")
+	if not _wave.launch(c, Vector3(cursor.x - c.x, 0.0, cursor.z - c.z)):
 		return
-	_wave_dir = dir.normalized()
-	_wave_cd = wasd_wave_cooldown
-	# «Эхо в камне»: второй вал идёт ИЗ СТРОЯ вдогонку первому через
-	# wasd_wave_echo_delay — не из точки, где первый разбился (там он бесполезен,
-	# фидбек 2026-07-29). Валы живут параллельно, поэтому список, а не один узел.
-	_wave_echo_left = _card(&"artel_echo")
-	_wave_echo_timer = wasd_wave_echo_delay
-	_spawn_wave_body(c + _wave_dir * 1.6, 5 + 2 * _card(&"artel_wide"),
-			_wave_half_width(), 1.0)
-	AoeVisual.spawn_dust(self, c + _wave_dir * 1.6)
 	# 0.18 → 0.5 (2026-07-30): смещение ∝ травма², старые значения давали
 	# сантиметры на камере в 24 м — тряска существовала только на бумаге.
 	EventBus.camera_shake.emit(0.5, c)
 	# Отдача: тело отшатывается от собственного залпа (эхо-валы не пинают —
 	# один осознанный запуск = один толчок).
-	_wasd_vel -= _wave_dir * wasd_wave_recoil
+	_wasd_vel -= (Vector3(cursor.x - c.x, 0.0, cursor.z - c.z)).normalized() * wasd_wave_recoil
 
 
-## Вал: гребень из плит разной высоты поперёк хода — читается как «поднявшийся
-## камень», а не снаряд. Unshaded, тени выключены (их тут десятки за забег).
-## `stones` — сколько плит (эхо тоньше основного), `half` — полуширина полосы,
-## `power` — доля урона/отброса от базового.
-func _spawn_wave_body(pos: Vector3, stones: int, half: float, power: float) -> void:
-	var root := Node3D.new()
-	add_child(root)
-	root.global_position = Vector3(pos.x, 0.0, pos.z)
-	root.look_at(root.global_position + _wave_dir, Vector3.UP)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.42, 0.38, 0.34)
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var n: int = maxi(stones, 2)
-	for i in range(n):
-		var t: float = float(i) / float(n - 1)
-		var h: float = lerpf(0.7, 1.5, 1.0 - absf(t - 0.5) * 2.0) * randf_range(0.85, 1.15)
-		var mi := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = Vector3(half * 2.0 / float(n) * 0.95, h, 0.5)
-		mi.mesh = bm
-		mi.material_override = mat
-		# Локальный X — поперёк хода (root смотрит вдоль _wave_dir).
-		mi.position = Vector3(lerpf(-half, half, t), h * 0.5, 0.0)
-		mi.rotation.z = randf_range(-0.12, 0.12)
-		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		root.add_child(mi)
-	_waves.append({"node": root, "travelled": 0.0, "half": half, "power": power, "hit": {}})
+## Способности отряда, у которых есть ОБЩИЕ узлы (вал артели и залп огневиков):
+## заводим по одному разу, числа отдаём из инспектора сцены — ручки остались на
+## месте, крутить баланс по-прежнему тут. Всё, что знает только подземелье
+## (тайник, завал, бочки, мебель интро, лёд, своя камера), приезжает сигналами.
+func _setup_squad_abilities() -> void:
+	_wave = StoneWave.new()
+	_wave.name = "StoneWave"
+	add_child(_wave)
+	_wave.cooldown = wasd_wave_cooldown
+	_wave.speed = wasd_wave_speed
+	_wave.travel_range = wasd_wave_range
+	_wave.half_width = wasd_wave_half_width
+	_wave.damage_per_gnome = wasd_wave_damage_per_gnome
+	_wave.knockback = wasd_wave_knockback
+	_wave.recoil = wasd_wave_recoil
+	_wave.hitstop = wasd_wave_hitstop
+	_wave.travel_shake = wasd_wave_travel_shake
+	_wave.echo_delay = wasd_wave_echo_delay
+	_wave.echo_stones = wasd_wave_echo_stones
+	_wave.echo_power = wasd_wave_echo_power
+	_wave.center_provider = func() -> Vector3:
+		return _squad.compute_center() if _squad != null else Vector3.INF
+	_wave.crew_provider = func() -> int:
+		return _alive_artel()
+	_wave.blocked.connect(_on_wave_blocked)
+	_wave.swept.connect(_on_wave_swept)
+	_wave.rumble.connect(_on_wave_rumble)
+	_volley = MageVolley.new()
+	_volley.name = "MageVolley"
+	add_child(_volley)
+	_volley.cooldown = mage_fire_cooldown
+	_volley.direct_damage = mage_fire_direct_damage
+	_volley.direct_radius = mage_fire_direct_radius
+	_volley.aoe_damage = mage_fire_damage
+	_volley.aoe_radius = mage_fire_radius
+	_volley.burn_damage_per_tick = mage_burn_damage_per_tick
+	_volley.burn_tick_interval = mage_burn_tick_interval
+	_volley.burn_duration = mage_burn_duration
+	_volley.exploded.connect(_on_mage_fire_exploded)
 
 
-## Ход валов: каждый едет вперёд, бьёт КАЖДОГО один раз, рассыпается о стену
-## (raycast по TERRAIN/преградам) или выдохшись на wasd_wave_range. Валов может
-## быть несколько разом — первый и догоняющие «эхо».
-func _tick_stone_wave(delta: float) -> void:
-	if _wave_cd > 0.0:
-		_wave_cd = maxf(_wave_cd - delta, 0.0)
-	# Эхо стартует ИЗ СТРОЯ через паузу после первого вала — вдогонку, не с
-	# места гибели. 3 камня (уже основного) и урон вполсилы.
-	if _wave_echo_left > 0 and _squad != null:
-		_wave_echo_timer -= delta
-		if _wave_echo_timer <= 0.0:
-			_wave_echo_left -= 1
-			_wave_echo_timer = wasd_wave_echo_delay
-			var c: Vector3 = _squad.compute_center()
-			if c != Vector3.INF:
-				_spawn_wave_body(c + _wave_dir * 1.6, wasd_wave_echo_stones,
-						_wave_half_width() * 0.62, wasd_wave_echo_power)
-	if _waves.is_empty():
+## Вал разбился о преграду — что именно она такое, знает только данж.
+func _on_wave_blocked(collider: Object, _at: Vector3) -> void:
+	if collider == null:
 		return
-	var space := get_world_3d().direct_space_state
-	var step: float = wasd_wave_speed * delta
-	# Рокот катящегося вала: тряска камеры живёт всё время полёта и глохнет с
-	# удалением вала от отряда — «грохот уходит вдаль». Подсып только ДО своего
-	# потолка: разовые удары (травма выше потолка) не гасятся клампом.
-	if wasd_wave_travel_shake > 0.0 and _squad != null:
-		var sc: Vector3 = _squad.compute_center()
-		if sc != Vector3.INF:
-			var near_fall: float = 0.0
-			for wv in _waves:
-				var wn: Node3D = wv["node"]
-				if is_instance_valid(wn):
-					near_fall = maxf(near_fall, 1.0 - clampf(
-							wn.global_position.distance_to(sc) / wasd_wave_range, 0.0, 1.0))
-			if near_fall > 0.0 and _cam_trauma < 0.6:
-				_cam_trauma = minf(_cam_trauma + wasd_wave_travel_shake * near_fall * delta, 0.6)
-	for i in range(_waves.size() - 1, -1, -1):
-		var w: Dictionary = _waves[i]
-		var node: Node3D = w["node"]
-		if not is_instance_valid(node):
-			_waves.remove_at(i)
-			continue
-		var from: Vector3 = node.global_position + Vector3.UP * 0.6
-		var q := PhysicsRayQueryParameters3D.create(from, from + _wave_dir * (step + 0.6),
-				Layers.TERRAIN | Layers.WALL_GATE_BLOCK | Layers.CHASM_BARRIER)
-		var ray: Dictionary = space.intersect_ray(q)
-		var blocked: bool = not ray.is_empty()
-		# Вал разбился о треснувшую стенку тайника или завал К1 → вскрыл их
-		# (сам тоже гибнет — камень об камень).
-		if blocked and _secret_wall != null and ray.get("collider") == _secret_wall:
-			_break_secret_wall()
-		elif blocked and _k1_rubble != null and ray.get("collider") == _k1_rubble:
-			_break_k1_rubble()
-		elif blocked and ray.get("collider") is Node \
-				and (ray.get("collider") as Node).is_in_group(&"powder_barrel"):
-			# Вал доехал до бочки: сам гибнет о неё, но подрывает — честный размен.
-			Damageable.try_damage(ray.get("collider"), 99.0)
-		node.global_position += _wave_dir * step
-		w["travelled"] = float(w["travelled"]) + step
-		_wave_damage_pass(w)
-		if blocked or float(w["travelled"]) >= wasd_wave_range:
-			_break_stone_wave(w)
-			_waves.remove_at(i)
+	if _secret_wall != null and collider == _secret_wall:
+		_break_secret_wall()
+	elif _k1_rubble != null and collider == _k1_rubble:
+		_break_k1_rubble()
+	elif collider is Node and (collider as Node).is_in_group(&"powder_barrel"):
+		# Вал доехал до бочки: сам гибнет о неё, но подрывает — честный размен.
+		Damageable.try_damage(collider, 99.0)
 
 
-## Урон по полосе: цель считается задетой, если она в пределах полуширины по
-## бокам и не дальше полушага по ходу — вал именно СМЕТАЕТ, а не тянет за собой.
-func _wave_damage_pass(w: Dictionary) -> void:
-	var origin: Vector3 = (w["node"] as Node3D).global_position
-	var hit: Dictionary = w["hit"]
-	var power: float = float(w["power"])
-	var kills: int = 0
-	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
-		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
-			continue
-		if hit.has(sk.get_instance_id()):
-			continue
-		var to := Vector3((sk as Node3D).global_position.x - origin.x, 0.0,
-				(sk as Node3D).global_position.z - origin.z)
-		var along: float = to.dot(_wave_dir)
-		var side: float = absf(to.dot(Vector3(-_wave_dir.z, 0.0, _wave_dir.x)))
-		if absf(along) > 1.1 or side > float(w["half"]) + 0.5:
-			continue
-		hit[sk.get_instance_id()] = true
-		Damageable.try_damage(sk, _wave_damage_now() * power, wasd_wave_hitstop, _wave_dir, true)
-		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
-			kills += 1
-		elif sk.has_method(&"apply_knockback"):
-			sk.call(&"apply_knockback",
-					_wave_dir * wasd_wave_knockback * power + Vector3.UP * 2.5, 0.3)
-	# Интро: мебель обеденного зала на пути вала — в щепу (та же полоса; вал о
-	# мебель НЕ разбивается — она не TERRAIN, «просека» сквозь столы = хаос).
+## Полоса вала прошла: мебель обеденного зала интро — в щепу. Вал о мебель НЕ
+## разбивается (она не TERRAIN) — «просека» сквозь столы = хаос.
+func _on_wave_swept(origin: Vector3, dir: Vector3, half: float) -> void:
 	for b in get_tree().get_nodes_in_group(&"intro_breakable"):
 		if not is_instance_valid(b) or (b as Node).is_queued_for_deletion():
 			continue
-		var tob := Vector3((b as Node3D).global_position.x - origin.x, 0.0,
+		var to := Vector3((b as Node3D).global_position.x - origin.x, 0.0,
 				(b as Node3D).global_position.z - origin.z)
-		if absf(tob.dot(_wave_dir)) <= 1.4 \
-				and absf(tob.dot(Vector3(-_wave_dir.z, 0.0, _wave_dir.x))) <= float(w["half"]) + 0.8:
-			_intro_break_box(b as Node3D, _wave_dir)
-	# Кульминация как у фаербола башни: пачка (3+) одним проходом → слоумо-бит.
-	# slowmo_beat сам не стакается, если время уже искажено.
-	if kills >= 3:
-		HitStop.slowmo_beat(HitStop.BEAT_MULTIKILL_SCALE, HitStop.BEAT_MULTIKILL_TIME)
+		if absf(to.dot(dir)) <= 1.4 \
+				and absf(to.dot(Vector3(-dir.z, 0.0, dir.x))) <= half + 0.8:
+			_intro_break_box(b as Node3D, dir)
 
 
-## Урон вала СЕЙЧАС = вклад каждого живого артельщика. Считается в момент
-## попадания, а не на запуске: погиб носитель — вал слабеет на лету.
-func _wave_damage_now() -> float:
-	return wasd_wave_damage_per_gnome * float(_alive_artel())
-
-
-## Полуширина вала с учётом карточки «Ещё по камню».
-func _wave_half_width() -> float:
-	return wasd_wave_half_width + 0.85 * float(_card(&"artel_wide"))
-
-
-## Рассыпание: камень летит по ходу вала (направленный shatter, §6.1 F1).
-## Карточка «Обвал» добавляет осколочный удар по кругу в точке разрушения.
-func _break_stone_wave(w: Dictionary) -> void:
-	var node: Node3D = w["node"]
-	if not is_instance_valid(node):
-		return
-	var p: Vector3 = node.global_position
-	var power: float = float(w["power"])
-	ShatterEffect.spawn(self, p + Vector3.UP * 0.6, Color(0.42, 0.38, 0.34),
-			int((10 + 4 * _card(&"artel_burst")) * power), 1.6, _wave_dir, 1.2)
-	AoeVisual.spawn_dust(self, p)
-	node.queue_free()
-	if _card(&"artel_burst") > 0:
-		_wave_burst(p, power)
-
-
-## «Обвал»: круговой осколочный удар в точке разрушения вала.
-func _wave_burst(p: Vector3, power: float = 1.0) -> void:
-	var r: float = 4.5 * power
-	var r_sq: float = r * r
-	var kills: int = 0
-	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
-		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
-			continue
-		var to := Vector3((sk as Node3D).global_position.x - p.x, 0.0,
-				(sk as Node3D).global_position.z - p.z)
-		if to.length_squared() > r_sq:
-			continue
-		# Осколки «Обвала» тоже не пробивают стены.
-		if not _los_clear(p, (sk as Node3D).global_position):
-			continue
-		var dir: Vector3 = to.normalized() if to.length_squared() > 0.0001 else _wave_dir
-		# «Обвал» — вторичный удар, заморозка вполовину от основного вала.
-		Damageable.try_damage(sk, _wave_damage_now() * 0.6 * power, wasd_wave_hitstop * 0.5, dir, true)
-		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
-			kills += 1
-		elif sk.has_method(&"apply_knockback"):
-			sk.call(&"apply_knockback", dir * wasd_wave_knockback * 0.7 * power, 0.2)
-	if kills >= 3:
-		HitStop.slowmo_beat(HitStop.BEAT_MULTIKILL_SCALE, HitStop.BEAT_MULTIKILL_TIME)
-	AoeVisual.spawn_expanding_ring(self, p, r, 0.25, Color(0.7, 0.65, 0.6, 0.9))
-	EventBus.camera_shake.emit(0.45 * power, p)
+## Рокот в полёте. Подсып только ДО своего потолка: разовые удары (травма выше
+## потолка) не гасятся клампом. Камера у данжа своя, поэтому травму правим прямо.
+func _on_wave_rumble(amount: float, _at: Vector3) -> void:
+	if _cam_trauma < 0.6:
+		_cam_trauma = minf(_cam_trauma + amount, 0.6)
 
 
 func _alive_artel() -> int:
@@ -4555,7 +4424,8 @@ func _tick_spear_super(delta: float) -> void:
 	# _fire_cd в агрегате обязателен: иначе с готовыми супером/валом карточка
 	# огневиков не тикала (рефреш шёл только пока «не всё готово»).
 	var armed: bool = _super_cd <= 0.0 and _super_windup <= 0.0 and _alive_pikemen() > 0 \
-			and _wave_cd <= 0.0 and _fire_cd <= 0.0
+			and (_wave == null or _wave.cooldown_left() <= 0.0) \
+			and (_volley == null or _volley.cooldown_left() <= 0.0)
 	_super_hud_acc += delta
 	if armed != _super_armed_prev or (not armed and _super_hud_acc >= 0.1):
 		_super_armed_prev = armed
@@ -6013,7 +5883,7 @@ func _intro_spawn_rubble(pos: Vector3, rot_y: float = 0.0, width: float = 12.5) 
 ## IceRubble) — юзер двигает её в редакторе; код только БИНДИТ: группы, меты
 ## плавкости/шипов (числа — из export'ов), зону льда. Скольжение — код
 ## (_tick_ice/_wasd_move) по _ice_rect. Всё ледяное топится ТОЛЬКО фаерболами
-## огневиков (группа ice_meltable, см. _on_mage_fireball_hit).
+## огневиков (группа ice_meltable, см. _on_mage_fire_exploded).
 func _intro_setup_ice_room() -> void:
 	_ice_rect = Rect2(room_center.x - 16.0, room_center.z - 186.0, 32.0, 40.0)
 	var r4 := get_node_or_null("Room4")
@@ -6053,28 +5923,11 @@ func _intro_setup_ice_room() -> void:
 	], 5.0)
 
 
-## Взрыв мини-фаербола. ПРЯМОЕ ПОПАДАНИЕ: ближайший враг у точки взрыва
-## (mage_fire_direct_radius) получает бонус-урон — «в кого прилетел, тому
-## больно»; AOE взрыва слабый (маленький damage в setup), горение добивает.
-## Плюс топим лёд: сегменты/колонны/глыбы в радиусе теряют «хит» (пар +
-## усадка как телеграф), на нуле тают целиком. Попадание в ледяной пол
-## прожигает ТАЛОЕ ПЯТНО — остров штатного сцепления.
-func _on_mage_fireball_hit(origin: Vector3, radius: float) -> void:
-	var direct: Node3D = null
-	var direct_d: float = mage_fire_direct_radius
-	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
-		if not is_instance_valid(sk) or (sk as Node).is_queued_for_deletion():
-			continue
-		var sd: float = Vector2((sk as Node3D).global_position.x - origin.x,
-				(sk as Node3D).global_position.z - origin.z).length()
-		if sd < direct_d:
-			direct_d = sd
-			direct = sk as Node3D
-	if direct != null:
-		var dir: Vector3 = direct.global_position - origin
-		dir.y = 0.0
-		Damageable.try_damage(direct, mage_fire_direct_damage, HitStop.LIGHT,
-				dir if dir.length_squared() > 0.01 else Vector3.FORWARD)
+## Взрыв мини-фаербола ГЛАЗАМИ ПОДЗЕМЕЛЬЯ (урон и прямое попадание — в MageVolley).
+## Топим лёд: сегменты/колонны/глыбы в радиусе теряют «хит» (пар + усадка как
+## телеграф), на нуле тают целиком. Попадание в ледяной пол прожигает ТАЛОЕ
+## ПЯТНО — остров штатного сцепления.
+func _on_mage_fire_exploded(origin: Vector3, radius: float) -> void:
 	for n in get_tree().get_nodes_in_group(&"ice_meltable"):
 		if not is_instance_valid(n) or (n as Node).is_queued_for_deletion():
 			continue
@@ -6148,8 +6001,8 @@ func _is_on_ice(p: Vector3) -> bool:
 ## Скольжение гномов — через ШТАТНЫЙ механизм SoldierGnome.ice_grip_override
 ## (лёд доминирует над рулением); ветка инерции включается steer_inertia > 0.
 func _tick_ice(delta: float) -> void:
-	if _fire_cd > 0.0:
-		_fire_cd = maxf(_fire_cd - delta, 0.0)
+	if _volley != null:
+		_volley.tick(delta)
 	if _ice_rect.size == Vector2.ZERO:
 		return
 	if _squad != null:
@@ -7218,6 +7071,7 @@ func _intro_exit_to_world() -> void:
 	if intro_exit_scene.is_empty():
 		return  # пусто = остаться в интро (прежнее поведение «конец прототипа»)
 	_pack_squad_for_world()
+	_pack_haul_for_world()
 	_intro_exit_pending = true
 	_intro_exit_timer = intro_exit_delay
 
@@ -7231,8 +7085,14 @@ func _intro_exit_to_world() -> void:
 ## Класс едет вместе с гномом (переучивания нет — решение юзера): собранный
 ## слот-кнопками отряд определяет не только бой в данже, но и рабочую силу
 ## города. Дальше состав читает GnomeSquadSpawner на старте мира.
+##
+## ⭐ КНОПКА ЕДЕТ ВМЕСТЕ С КЛАССОМ (2026-08-11). Возили голый класс, и мир
+## раздавал бинды заново по DEFAULT_BIND — расклад, собранный игроком на пятаках
+## («лучников на ПКМ»), молча терялся на выезде. Раз экран сбора считает кнопку
+## частью состава, то и канал обязан её везти: элемент = {"cls", "bind"}.
 func _pack_squad_for_world() -> void:
-	var roster: Array[StringName] = []
+	var roster: Array = []
+	var parts: PackedStringArray = []
 	if _squad != null:
 		for m in _squad.members:
 			if not is_instance_valid(m):
@@ -7240,9 +7100,27 @@ func _pack_squad_for_world() -> void:
 			var t: StringName = StringName(str(m.get(&"soldier_type")))
 			if t == &"":
 				t = SoldierSystem.ROLE_WORKER  # без типа = рядовая пара рук
-			roster.append(t)
+			var b: int = clampi(int(m.bind_slot), 0, 2)
+			roster.append({"cls": t, "bind": b})
+			parts.append("%s%s" % [str(t), BIND_LABELS[b]])
 	MatchConfig.next_squad = roster
-	print("[Intro] в мир едут гномы: %d — %s" % [roster.size(), str(roster)])
+	print("[Intro] в мир едут гномы: %d — %s" % [roster.size(), ", ".join(parts)])
+
+
+## ⭐ ДОБЫЧА ЗАБЕГА ЕДЕТ С ОТРЯДОМ (2026-08-11). Казна и находки умирали вместе
+## со сценой: игрок собирал монеты руками, а наверх приезжали одни тела. Считаем
+## на выезде и ровно один раз — точка выхода одна (_intro_exit_to_world, а её
+## сторожит защёлка _intro_finished), так что повторного начисления быть не может.
+##
+## Свитки/чертежи тайника здесь НЕ трогаем: они ложатся в канал в момент
+## вскрытия сундука — тайник может остаться ненайденным, и «упаковывать» тогда
+## нечего. Забирает всё разом MatchConfig.consume_haul() уже на стороне мира.
+func _pack_haul_for_world() -> void:
+	MatchConfig.next_coins = _coin_total
+	MatchConfig.next_cards = _cards.duplicate()
+	print("[Intro] в мир едет добыча: %d🥉, карточек %d, свитков %d, чертежей %d"
+			% [_coin_total, _cards.size(), MatchConfig.next_scrolls.size(),
+			MatchConfig.next_blueprints.size()])
 
 
 ## Кламп хода Ладьи: ангар и узкий тоннель. Раньше здесь стоял гейт «до рыка

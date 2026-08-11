@@ -154,6 +154,20 @@ func _on_camera_shake(amount: float, position: Vector3) -> void:
 	_trauma = clampf(_trauma + amount * falloff, 0.0, 1.0)
 
 
+## РОКОТ — непрерывная подсыпка травмы с СОБСТВЕННЫМ потолком (в отличие от
+## разовых ударов через camera_shake). Нужен длящимся событиям вроде катящегося
+## каменного вала: дрожь держится, пока событие идёт, но не забивает удары —
+## потолок ниже, чем их травма. Затухание по дистанции — то же, что у ударов.
+func add_rumble(amount: float, position: Vector3, cap: float = 0.6) -> void:
+	if _trauma >= cap:
+		return
+	var falloff: float = 1.0 - smoothstep(shake_full_radius, shake_zero_radius,
+			global_position.distance_to(position))
+	if falloff <= 0.0:
+		return
+	_trauma = minf(_trauma + amount * falloff, cap)
+
+
 ## Каждый кадр: позиция камеры = базовый оффсет×зум + экранное смещение, поворот =
 ## базовый + крен. Смещение/крен ∝ травма² (резкий спад — бьёт и быстро гаснет).
 ## Травма=0 → ровно зум-позиция, без эффекта (нет регрессии статичной камеры).

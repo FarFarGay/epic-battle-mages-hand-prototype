@@ -15,13 +15,19 @@ extends Node3D
 ## Теперь источник ровно один — CrewKit, тот же, что в данже: те же сцены, те же
 ## модели, те же статы, те же кнопки. Никакой второй ветки для мира нет.
 ##
-## Состав приезжает из подземелья (MatchConfig). Прямой запуск мира без данжа —
-## дефолтный отряд из инспектора, чтобы сцена не открывалась пустой.
+## Состав приезжает из подземелья (MatchConfig) — вместе с КНОПКАМИ, на которые
+## игрок их поставил, и со всей добычей забега (монеты, карточки, свитки,
+## чертежи), см. _consume_haul. Прямой запуск мира без данжа — дефолтный отряд
+## из инспектора, чтобы сцена не открывалась пустой.
 
 const CREW_WIDGET_SCENE: PackedScene = preload("res://scenes/crew_widget.tscn")
 ## ⭐ ТЕ ЖЕ КАРТОЧКИ, ЧТО В ДАНЖЕ (scenes/squad_cards.tscn). Не «такие же» —
 ## ТЕ ЖЕ: один узел, одна разметка, один код. Свои рисовать нельзя.
 const SQUAD_CARDS_SCENE: PackedScene = preload("res://scenes/squad_cards.tscn")
+## Горящая земля карточки «Выжженная земля» — ШТАТНЫЙ пятак, тот же, что у
+## фаербола и залпа огневиков (MageVolley.BURN_PATCH_SCENE). Своего огня у
+## копейщиков нет и заводить его нельзя.
+const BURN_PATCH_SCENE: PackedScene = preload("res://scenes/burn_patch.tscn")
 
 ## Стартуем с гномами ВНУТРИ: они приехали из подземелья в башне (DESIGN §2.2).
 @export var start_crewed: bool = true
@@ -32,11 +38,15 @@ const SQUAD_CARDS_SCENE: PackedScene = preload("res://scenes/squad_cards.tscn")
 @export var disembark_radius: float = 5.0
 
 @export_group("Состав по умолчанию")
-## Отряд для ПРЯМОГО запуска мира (из данжа никто не приехал). Числа — как в
-## интро: тройка лучников и пара копейщиков.
+## Отряд для ПРЯМОГО запуска мира (из данжа никто не приехал). Числа — РАЗМЕРЫ
+## ГРУПП из подземелья (DungeonSandbox.GROUP_SIZES): лучники 3, копейщики 2,
+## артель 2, огневики 2. Классы едут из данжа ВСЕ ЧЕТЫРЕ и работают в мире так
+## же, как там, поэтому и дефолт держит все четыре — иначе прямой запуск мира
+## показывал бы обрезанный отряд, которого в игре не бывает.
 @export var default_archers: int = 3
 @export var default_pikemen: int = 2
-@export var default_workers: int = 0
+@export var default_workers: int = 2
+@export var default_fire_mages: int = 2
 @export_group("")
 
 @export_group("Ход отряда (модель данжа)")
@@ -76,8 +86,42 @@ const SQUAD_CARDS_SCENE: PackedScene = preload("res://scenes/squad_cards.tscn")
 @export var super_knockback: float = 11.0
 @export var super_hitstop: float = 0.08
 @export var super_cooldown: float = 6.0
+## Каменный вал артели (ПКМ) — те же данжевые числа, что в StoneWave. Ручки
+## продублированы здесь, чтобы баланс мира можно было крутить из инспектора, но
+## СЧИТАЕТ вал общий узел: своей копии физики гребня у мира нет.
+@export var wave_cooldown: float = 14.0
+@export var wave_speed: float = 13.0
+@export var wave_range: float = 20.0
+@export var wave_half_width: float = 1.9
+@export var wave_damage_per_gnome: float = 45.0
+@export var wave_knockback: float = 14.0
+## Отдача запуска: пинок точки строя ПРОТИВ хода вала (м/с). Работает через
+## инерцию handling; 0 = выкл.
+@export var wave_recoil: float = 7.0
+@export var wave_hitstop: float = 0.06
+@export var wave_travel_shake: float = 1.2
+## Залп огневиков (та же ПКМ) — числа из данжа, считает общий узел MageVolley.
+@export var volley_cooldown: float = 5.0
+@export var volley_direct_damage: float = 30.0
+@export var volley_direct_radius: float = 1.0
+@export var volley_aoe_damage: float = 10.0
+@export var volley_aoe_radius: float = 2.6
+@export var volley_burn_damage_per_tick: float = 4.0
+@export var volley_burn_tick_interval: float = 0.5
+@export var volley_burn_duration: float = 3.0
 @export_group("")
 
+## ⭐ КАРТОЧКИ-НАХОДКИ ЗАБЕГА (id → сколько раз взята). Приезжают из подземелья
+## тем же каналом, что и тела, и работают наверху ПО ТЕМ ЖЕ ФОРМУЛАМ (решение
+## юзера 2026-08-11: «карточка = выучка отряда»). Носитель класса — единственный,
+## кто их держит: погиб последний артельщик — «Эхо в камне» ушло с ним, потому
+## что каждый эффект гейтится живыми носителями своего глагола.
+var _haul_cards: Dictionary = {}
+## Сборка экипажа С УЧЁТОМ карточек лучников. Держим полем, а не считаем на
+## месте: цифры нужны и рождению гнома, и прицелу (_archer_range), и разводке
+## очереди (_stagger_archers) — три копии формулы разъехались бы на первой же
+## правке. Заполняется до спавна, в _consume_haul.
+var _cfg: Dictionary = CrewKit.default_cfg()
 var _squad: Squad = null
 var _tower: Node3D = null
 var _rig: Node = null
@@ -103,7 +147,12 @@ var _facing: Vector3 = Vector3.FORWARD
 var _hand: Node = null
 var _lmb_down: bool = false
 var _space_down: bool = false
+var _rmb_down: bool = false
 var _super_cd: float = 0.0
+## Каменный вал артели и залп огневиков (оба на ПКМ) — ОБЩИЕ узлы с
+## подземельем, не копии.
+var _wave: StoneWave = null
+var _volley: MageVolley = null
 
 
 func _ready() -> void:
@@ -123,7 +172,52 @@ func _ready() -> void:
 	# Пересборка состава живёт пока только в подземелье (там для неё есть
 	# комната-предбанник). Гасим кнопку честно, а не делаем вид, что работает.
 	_widget.call(&"set_rebuild_enabled", false)
+	_setup_squad_abilities()
 	call_deferred(&"_late_setup")
+
+
+## ⭐ ВАЛ И ЗАЛП — ТЕ ЖЕ УЗЛЫ, ЧТО В ДАНЖЕ (stone_wave.gd / mage_volley.gd). Не
+## «такие же»: гребень, эхо, фаерболы и урон считает один код на оба эпизода.
+## Здесь только числа из инспектора и то, чем мир отличается — рокот уходит в
+## риг камеры, а топить в мире нечего (лёд — химия ледника, не общая).
+func _setup_squad_abilities() -> void:
+	_wave = StoneWave.new()
+	_wave.name = "StoneWave"
+	add_child(_wave)
+	_wave.cooldown = wave_cooldown
+	_wave.speed = wave_speed
+	_wave.travel_range = wave_range
+	_wave.half_width = wave_half_width
+	_wave.damage_per_gnome = wave_damage_per_gnome
+	_wave.knockback = wave_knockback
+	_wave.recoil = wave_recoil
+	_wave.hitstop = wave_hitstop
+	_wave.travel_shake = wave_travel_shake
+	# Карточки хижины («Эхо», «Обвал», уширение) проставляются НА ЗАПУСКЕ вала
+	# (_stone_wave): на этом кадре добыча забега ещё не разобрана.
+	_wave.center_provider = func() -> Vector3:
+		return _squad.compute_center() if _squad != null else Vector3.INF
+	_wave.crew_provider = func() -> int:
+		return _alive_artel()
+	_wave.rumble.connect(_on_wave_rumble)
+	_volley = MageVolley.new()
+	_volley.name = "MageVolley"
+	add_child(_volley)
+	_volley.cooldown = volley_cooldown
+	_volley.direct_damage = volley_direct_damage
+	_volley.direct_radius = volley_direct_radius
+	_volley.aoe_damage = volley_aoe_damage
+	_volley.aoe_radius = volley_aoe_radius
+	_volley.burn_damage_per_tick = volley_burn_damage_per_tick
+	_volley.burn_tick_interval = volley_burn_tick_interval
+	_volley.burn_duration = volley_burn_duration
+
+
+## Рокот катящегося вала: у мира травмой камеры заведует риг, и у длящегося
+## события свой потолок — иначе дрожь полёта забила бы разовые удары.
+func _on_wave_rumble(amount: float, at: Vector3) -> void:
+	if _rig != null and is_instance_valid(_rig) and _rig.has_method(&"add_rumble"):
+		_rig.call(&"add_rumble", amount, at, 0.6)
 
 
 ## Отложенно: башня и риг могут ready'иться позже нас (порядок детей).
@@ -134,8 +228,77 @@ func _late_setup() -> void:
 	_tower = get_tree().get_first_node_in_group(Tower.GROUP) as Node3D
 	_rig = get_tree().get_first_node_in_group(CameraRig.CAMERA_RIG_GROUP)
 	_hand = _find_hand()
+	# ⚠ ДОБЫЧА РАЗБИРАЕТСЯ ДО СПАВНА. Карточки лучников уходят в статы при
+	# РОЖДЕНИИ (CrewKit кладёт дальность и темп в stats один раз), так что
+	# порядок тут не косметический: разбери haul после — и привезённый
+	# «Барабанный темп» не подействовал бы до конца заезда.
+	_consume_haul()
 	_spawn_crew()
 	_set_crewed(start_crewed)
+
+
+## ⭐ ПРИЁМ ДОБЫЧИ ЗАБЕГА (2026-08-11). Раньше из данжа выезжали только тела, и
+## всё, что игрок собрал руками, умирало вместе со сценой. Теперь одним куском:
+## монеты — в казну, карточки — в отряд на этот заезд, свитки и чертежи — в
+## профиль насовсем.
+##
+## Зовём РОВНО ОДИН РАЗ за загрузку сцены: consume_haul чистит источник, и
+## второй вызов молча вернул бы нули (а не удвоил бы добычу).
+func _consume_haul() -> void:
+	var haul: Dictionary = MatchConfig.consume_haul()
+	_haul_cards = (haul.get("cards", {}) as Dictionary).duplicate()
+	_apply_archer_cards()
+	_bank_haul_coins(int(haul.get("coins", 0)))
+	_store_permanent_haul(haul.get("scrolls", []) as Array,
+			haul.get("blueprints", []) as Array)
+
+
+## Карточки лучников — в сборку экипажа. Формулы ДОСЛОВНО данжевые
+## (DungeonSandbox: темп ×0.8ⁿ, дальность +4 м за карту): у одного и того же
+## отряда в двух эпизодах не может быть двух разных прибавок.
+func _apply_archer_cards() -> void:
+	_cfg = CrewKit.default_cfg()
+	var rate: float = pow(0.8, float(_card(&"arch_rate")))
+	_cfg["archer_range"] = float(_cfg["archer_range"]) + 4.0 * float(_card(&"arch_range"))
+	_cfg["archer_cd_min"] = float(_cfg["archer_cd_min"]) * rate
+	_cfg["archer_cd_max"] = float(_cfg["archer_cd_max"]) * rate
+
+
+## Сколько раз взята карточка (0 = нет). Единственная точка чтения — как в
+## данже: места применения спрашивают ЗДЕСЬ, а не хранят копии множителей.
+func _card(id: StringName) -> int:
+	return int(_haul_cards.get(id, 0))
+
+
+## Монеты забега — в казну. Монета данжа = 1 бронза (единая валюта), поэтому
+## идём ТЕМ ЖЕ путём, что продажа бревна у башни (SoldierGnome, WOOD_SALE_BRONZE):
+## GoldBank в группе + add_coin. Прямой CampEconomy.add_resource — другая, лагерная
+## ветка учёта, и деньги по ней в одометр казны не попадают.
+func _bank_haul_coins(coins: int) -> void:
+	if coins <= 0:
+		return
+	var bank := get_tree().get_first_node_in_group(GoldBank.GROUP)
+	if bank == null or not bank.has_method(&"add_coin"):
+		return
+	bank.call(&"add_coin", ResourcePile.ResourceType.BRONZE, coins)
+	EventBus.tutorial_hint.emit("Из подземелья привезли %d🥉 — в казну" % coins, 4.0)
+
+
+## Свитки и чертежи — в профиль НАСОВСЕМ (user://tower_profile.cfg). Пишет сам
+## PlayerProfile: он же сохраняет на диск и он же рассказывает игроку, что
+## выучено — своей подсказки здесь не надо, иначе о находке скажут дважды.
+## Профиля нет (дев-запуск сцены без него) — молча пропускаем: терять добычу
+## обидно, но падать на старте мира хуже.
+func _store_permanent_haul(scrolls: Array, blueprints: Array) -> void:
+	if scrolls.is_empty() and blueprints.is_empty():
+		return
+	var prof := get_tree().get_first_node_in_group(&"player_profile")
+	if prof == null:
+		return
+	for s in scrolls:
+		prof.call(&"learn_scroll", StringName(String(s)))
+	for b in blueprints:
+		prof.call(&"grant_blueprint", StringName(String(b)))
 
 
 ## ⭐ ЭКИПАЖ. Состав — из подземелья, иначе дефолтный. Строй — «черепаха» с
@@ -149,47 +312,73 @@ func _spawn_crew() -> void:
 	var at: Vector3 = global_position
 	if _tower != null and is_instance_valid(_tower):
 		at = _tower.global_position
-	var roster: Array[StringName] = _roster()
-	var cfg: Dictionary = CrewKit.default_cfg()
+	var roster: Array[Dictionary] = _roster()
 	# Полный состав на старте — знаменатель карточек («Живых: 2 / 3»). Потери
 	# должны быть ВИДНЫ, а для этого надо помнить, сколько было.
 	_start_counts.clear()
-	for id in roster:
+	var classes: Array[StringName] = []
+	for entry in roster:
+		var id: StringName = entry["cls"]
 		_start_counts[id] = int(_start_counts.get(id, 0)) + 1
+		classes.append(id)
 	for i in range(roster.size()):
 		var ang: float = TAU * float(i) / float(maxi(roster.size(), 1))
 		var pos: Vector3 = _on_ground(at.x + cos(ang) * disembark_radius,
 				at.z + sin(ang) * disembark_radius)
-		var g := CrewKit.create_soldier(self, roster[i], pos, cfg, _focus)
+		var g := CrewKit.create_soldier(self, roster[i]["cls"], pos, _cfg, _focus)
 		if g == null:
 			continue
+		# ⭐ КНОПКА ПРИЕХАЛА ВМЕСТЕ С ГНОМОМ. CrewKit ставит слот по ДЕФОЛТНОЙ
+		# раскладке класса — для собранного в данже отряда это враньё: игрок мог
+		# посадить лучников на ПКМ, и молча вернуть их на ЛКМ значит потерять его
+		# расклад на выходе. Перебиваем сразу после рождения.
+		g.bind_slot = int(roster[i]["bind"])
+		# Карточка «Щитобой» — поверх готового тела: множитель стрелы живёт у
+		# самого лучника (стрела читает его через shooter_ref), в cfg сборки его нет.
+		if g is ArcherSoldier:
+			(g as ArcherSoldier).shield_damage_mult = 1.0 + 2.0 * float(_card(&"arch_shieldbreak"))
 		# Гном мира — ВСЕГДА экипаж: рабочей логики лагеря (дерево, смены,
 		# патрули) у него нет и включаться она не должна ни на кадр.
 		g.set_crew_mode(true)
 		_squad.add_member(g)
 	_squad.command_hold(Vector3(at.x, 0.0, at.z), false)
-	print("[Crew] экипаж: %d — %s" % [roster.size(), str(roster)])
+	print("[Crew] экипаж: %d — %s" % [roster.size(), str(classes)])
 
 
-## Кто именно приехал. Класс едет вместе с гномом и НЕ меняется (решение юзера):
-## привёл лучников — у тебя лучники. Пусто → дефолт из инспектора.
-func _roster() -> Array[StringName]:
-	var carried: Array[StringName] = MatchConfig.consume_squad()
-	if not carried.is_empty():
-		var out: Array[StringName] = []
-		for id in carried:
-			if SoldierSystem != null and SoldierSystem.has_soldier(id):
-				out.append(id)
-		if not out.is_empty():
-			return out
-	var mix: Array[StringName] = []
+## Кто именно приехал: по элементу {"cls", "bind"} на гнома. Класс едет вместе с
+## гномом и НЕ меняется (решение юзера): привёл лучников — у тебя лучники;
+## кнопка едет с ним же (MatchConfig.next_squad). Пусто → дефолт из инспектора,
+## и там слот берётся штатной раскладкой класса — расклада-то ещё не было.
+func _roster() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for e in MatchConfig.consume_squad():
+		if not (e is Dictionary):
+			continue
+		var cls := StringName((e as Dictionary).get("cls", &""))
+		# Класса нет в каталоге — гнома пропускаем: CrewKit на нём всё равно
+		# упрётся в отсутствующую сцену, а отряд поедет дальше.
+		if SoldierSystem == null or not SoldierSystem.has_soldier(cls):
+			continue
+		out.append({
+			"cls": cls,
+			"bind": int((e as Dictionary).get("bind", CrewKit.default_bind_for(cls))),
+		})
+	if not out.is_empty():
+		return out
+	var mix: Array[Dictionary] = []
 	for i in range(default_pikemen):
-		mix.append(&"pikeman")
+		mix.append(_default_entry(&"pikeman"))
 	for i in range(default_archers):
-		mix.append(CrewKit.ARCHER)
+		mix.append(_default_entry(CrewKit.ARCHER))
 	for i in range(default_workers):
-		mix.append(&"worker")
+		mix.append(_default_entry(&"worker"))
+	for i in range(default_fire_mages):
+		mix.append(_default_entry(&"fire_mage"))
 	return mix
+
+
+func _default_entry(cls: StringName) -> Dictionary:
+	return {"cls": cls, "bind": CrewKit.default_bind_for(cls)}
 
 
 # --- Посадка и высадка -------------------------------------------------------
@@ -223,10 +412,16 @@ func _set_crewed(on: bool) -> void:
 	# ⭐ ОДИН ХОЗЯИН ВВОДА. Рука — инструмент Ладьи: экипаж вышел — рука спит.
 	# Иначе ЛКМ делает два дела разом (рука хватает ящик, лучники поливают), а
 	# это ровно та мешанина контроллеров, из-за которой всё и переделывалось.
+	#
+	# ⚠ ГАСИМ ПОДДЕРЕВО, А НЕ УЗЕЛ. set_process(false) на Hand усыпляет ТОЛЬКО
+	# сам Hand, а кнопки опрашивает не он: HandPhysical (ЛКМ хватает / ПКМ слэм)
+	# и HandSpell (ПКМ каст) — его ДЕТИ, у каждого свой _process, и он продолжал
+	# крутиться. Снаружи это значило два хозяина у одной кнопки: ПКМ разом катит
+	# вал артели и кастует заклинание башни. process_mode = DISABLED
+	# распространяется вниз по дереву — это и есть «рука спит» целиком.
 	if _hand != null and is_instance_valid(_hand):
-		_hand.set_process(on)
-		_hand.set_physics_process(on)
-		_hand.set_process_unhandled_input(on)
+		(_hand as Node).process_mode = Node.PROCESS_MODE_INHERIT if on \
+				else Node.PROCESS_MODE_DISABLED
 		(_hand as Node3D).visible = on
 	# Камера: за башней в кабине, за отрядом снаружи.
 	if _rig != null and is_instance_valid(_rig):
@@ -268,7 +463,9 @@ func _on_leave_pressed() -> void:
 				t.x + cos(a) * disembark_radius, t.z + sin(a) * disembark_radius)
 		i += 1
 	_squad.hold_position = Vector3(t.x, 0.0, t.z)
-	EventBus.tutorial_hint.emit("Экипаж снаружи. WASD ведёт отряд, [E] у башни — вернуться", 5.0)
+	EventBus.tutorial_hint.emit(
+			"Экипаж снаружи. WASD — ход · ЛКМ — полив · ПРОБЕЛ — удар · ПКМ — вал · [E] у башни — вернуться",
+			5.0)
 
 
 ## Кнопка «Вернуться в башню» — тот же путь, что клавиша E, включая проверку
@@ -355,6 +552,12 @@ func _physics_process(delta: float) -> void:
 		_widget.call(&"set_crew", _squad.members)
 	if _cards != null:
 		(_cards as SquadCards).refresh(_card_data())
+	# Откаты тикают и в кабине: запущенный перед посадкой камень обязан
+	# докатиться, а не зависнуть в воздухе на полпути.
+	if _wave != null:
+		_wave.tick(delta)
+	if _volley != null:
+		_volley.tick(delta)
 	if _crewed:
 		return
 	var c: Vector3 = _squad.compute_center()
@@ -432,16 +635,20 @@ func _physics_process(delta: float) -> void:
 # и работает. По умолчанию лучники на ЛКМ (полив по удержанию), копейщики на
 # ПРОБЕЛЕ (удар вокруг строя).
 #
-# ⛔ ПКМ (каменный вал артели) сюда ПОКА не перенесён: у него в данже своя
-# физика гребня, эхо-волна и тик — это отдельный кусок, а не пара строк. В мир
-# артель штатно и не приезжает (в отряде лучники с копейщиками), так что кнопка
-# просто молчит, а не врёт. Порт — следующим шагом.
+# ⭐ ПКМ ПЕРЕНЕСЁН ЦЕЛИКОМ 2026-08-11 — но не копией: физика гребня уехала в
+# общий узел StoneWave, залп огневиков — в MageVolley, и оба эпизода вешают ОДНИ
+# И ТЕ ЖЕ узлы. Набор команд экипажа в данже и снаружи теперь совпадает, а
+# править способность по-прежнему надо в одном месте.
 
 
 func _tick_commands(delta: float, c: Vector3, cursor: Vector3, aim_dir: Vector3) -> void:
 	_super_cd = maxf(_super_cd - delta, 0.0)
 	var lmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 	var space: bool = Input.is_key_pressed(KEY_SPACE)
+	var rmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+	if rmb and not _rmb_down:
+		_press_rmb(c, cursor)
+	_rmb_down = rmb
 	if lmb and not _lmb_down:
 		# ОЧЕРЕДЬ СТАРТУЕТ РАЗВЁРНУТОЙ: фазы раздаём на НАЖАТИИ, иначе первый
 		# залп уходит тремя стрелами в один кадр — «бум» вместо «та-та-та».
@@ -485,8 +692,9 @@ func _tick_commands(delta: float, c: Vector3, cursor: Vector3, aim_dir: Vector3)
 ## Данные для карточек — ровно тот же формат, что собирает данж. Отличается
 ## только источник цифр: там инспектор сцены, здесь стартовый состав.
 ##
-## Карточка не врёт о том, чего в мире нет: вал артели и залп огневиков пока
-## живут только в подземелье, поэтому у их классов кнопка не обещается.
+## Все четыре класса работают в мире так же, как в данже, поэтому каждый обещает
+## свою кнопку. Ветка «прочее» осталась на случай класса, который приедет из
+## подземелья раньше, чем его глагол.
 func _card_data() -> Dictionary:
 	var counts := {}
 	for m in _squad.members:
@@ -505,6 +713,14 @@ func _card_data() -> Dictionary:
 			# всегда), а «сейчас льёт». Вечно горящая рамка была бы шумом.
 			armed = alive > 0 and _lmb_down and not _crewed
 			line = "[ЛКМ] полив"
+		elif id == &"worker":
+			var wave_cd: float = _wave.cooldown_left() if _wave != null else 0.0
+			armed = alive > 0 and wave_cd <= 0.0 and not _crewed
+			line = "[ПКМ] готов" if wave_cd <= 0.0 else "[ПКМ] %.1fс" % wave_cd
+		elif id == &"fire_mage":
+			var fire_cd: float = _volley.cooldown_left() if _volley != null else 0.0
+			armed = alive > 0 and fire_cd <= 0.0 and not _crewed
+			line = "[ПКМ] готов" if fire_cd <= 0.0 else "[ПКМ] %.1fс" % fire_cd
 		else:
 			line = "только в подземелье"
 		data[id] = {
@@ -527,9 +743,11 @@ func _bind_held(slot: int) -> bool:
 	return false
 
 
-## Дальность полива — та же, что положил CrewKit при сборке лучника.
+## Дальность полива — та же, что положил CrewKit при сборке лучника (значит, с
+## карточкой «Дальний глаз»: иначе прицел обрезал бы выстрелы там, где стрелок
+## уже достаёт).
 func _archer_range() -> float:
-	return float(CrewKit.default_cfg().get("archer_range", 12.0))
+	return float(_cfg.get("archer_range", 12.0))
 
 
 ## Цель полива: скелет в дальности от центра строя, в секторе прицела; из
@@ -564,9 +782,10 @@ func _stagger_archers() -> void:
 			archers.append(m)
 	if archers.size() < 2:
 		return
-	var cfg: Dictionary = CrewKit.default_cfg()
-	var beat: float = (float(cfg.get("archer_cd_min", 0.64))
-			+ float(cfg.get("archer_cd_max", 0.76))) * 0.5
+	# Такт берём из СБОРКИ ЭТОГО отряда: «Барабанный темп» ускорил стрельбу —
+	# должна сжаться и очередь, иначе фазы разъедутся с реальным откатом.
+	var beat: float = (float(_cfg.get("archer_cd_min", 0.64))
+			+ float(_cfg.get("archer_cd_max", 0.76))) * 0.5
 	var step: float = beat / float(archers.size())
 	for i in range(archers.size()):
 		archers[i].set_fire_phase(step * float(i))
@@ -585,11 +804,14 @@ func _spear_super(c: Vector3) -> void:
 	if pikemen <= 0:
 		EventBus.tutorial_hint.emit("Нет копейщиков — удар вокруг недоступен", 1.6)
 		return
-	_super_cd = super_cooldown
+	# ⚠ ЭКСПОРТ = БАЗА, КАРТОЧКА = НАДБАВКА. Числа инспектора не трогаем: они
+	# балансная точка отсчёта, а находка забега живёт ровно один заезд.
+	var radius: float = _super_radius()
+	_super_cd = _super_cooldown()
 	AoeVisual.spawn_expanding_ring(get_tree().current_scene, Vector3(c.x, 0.05, c.z),
-			super_radius, 0.28, Color(1.0, 0.55, 0.2, 0.9))
+			radius, 0.28, Color(1.0, 0.55, 0.2, 0.9))
 	EventBus.camera_shake.emit(0.5, c)
-	var r_sq: float = super_radius * super_radius
+	var r_sq: float = radius * radius
 	var dmg: float = super_damage_per_gnome * float(pikemen)
 	for sk in get_tree().get_nodes_in_group(Skeleton.SKELETON_GROUP):
 		if not is_instance_valid(sk) or not (sk is Node3D) or (sk as Node).is_queued_for_deletion():
@@ -605,6 +827,97 @@ func _spear_super(c: Vector3) -> void:
 		if is_instance_valid(sk) and not (sk as Node).is_queued_for_deletion() \
 				and sk.has_method(&"apply_knockback"):
 			sk.call(&"apply_knockback", dir * super_knockback + Vector3.UP * 2.0, 0.25)
+	# Карточка «Выжженная земля»: на месте удара остаётся горящее пятно (те же
+	# 0.8 радиуса и 5 с, что в данже).
+	if _card(&"pike_burn") > 0:
+		_spawn_burn(c, radius * 0.8, 5.0)
+
+
+## Радиус удара вокруг с карточкой «Шире размах» (+2 м за каждую).
+func _super_radius() -> float:
+	return super_radius + 2.0 * float(_card(&"pike_radius"))
+
+
+## Откат удара с карточкой «Второе дыхание». Пол 1.5 с — данжевый, и он не про
+## баланс, а про то, чтобы кнопка не выродилась в спам.
+func _super_cooldown() -> float:
+	return maxf(super_cooldown - 2.0 * float(_card(&"pike_cd")), 1.5)
+
+
+## Горящее пятно штатным BurnPatch — тот же узел и те же параметры прожига, что
+## у залпа огневиков. Маска бьёт по врагам обоих видов (обычные и мёрзлые).
+func _spawn_burn(pos: Vector3, radius: float, duration: float) -> void:
+	var bp := BURN_PATCH_SCENE.instantiate() as Node3D
+	if bp == null:
+		return
+	add_child(bp)
+	bp.global_position = Vector3(pos.x, 0.05, pos.z)
+	if bp.has_method(&"setup"):
+		bp.call(&"setup", radius, 7.0, 0.5, duration, Layers.ENEMIES | Layers.COLD_ENEMY)
+
+
+## ПКМ: работает КТО НА КНОПКЕ — та же модель, что в данже (_press_bind). По
+## умолчанию там артель (каменный вал) и огневики (залп); стоят оба класса —
+## срабатывают оба, у каждого свой откат.
+func _press_rmb(c: Vector3, cursor: Vector3) -> void:
+	if c == Vector3.INF or cursor == Vector3.INF:
+		return
+	var artel: int = _alive_artel()
+	var mages: Array = _bound_mages()
+	if artel <= 0 and mages.is_empty():
+		EventBus.tutorial_hint.emit("На ПКМ никого нет — нужна артель или огневики", 1.6)
+		return
+	if artel > 0:
+		_stone_wave(c, cursor)
+	if not mages.is_empty():
+		_fire_volley(c, cursor, mages)
+
+
+## Каменный вал по прицелу. Направление фиксируется на запуске, вал не
+## подруливает — целиться надо заранее.
+func _stone_wave(c: Vector3, cursor: Vector3) -> void:
+	if _wave == null or not _wave.is_ready():
+		return
+	# Карточки артели читаются НА ЗАПУСКЕ, как в данже: узел вала общий, свои
+	# копии множителей ни один эпизод не держит.
+	_wave.wide_cards = _card(&"artel_wide")
+	_wave.burst_cards = _card(&"artel_burst")
+	_wave.echo_cards = _card(&"artel_echo")
+	var dir := Vector3(cursor.x - c.x, 0.0, cursor.z - c.z)
+	if not _wave.launch(c, dir):
+		return
+	EventBus.camera_shake.emit(0.5, c)
+	# Отдача: строй отшатывается от собственного залпа (через инерцию _vel).
+	_vel -= dir.normalized() * wave_recoil
+
+
+## Залп огневиков в точку курсора. Топить в мире нечего (лёд — химия ледника),
+## поэтому сигнал взрыва здесь никто не слушает: остаются урон и горящая земля.
+func _fire_volley(c: Vector3, cursor: Vector3, mages: Array) -> void:
+	if _volley == null or not _volley.fire(mages, cursor):
+		return
+	EventBus.camera_shake.emit(0.2, c)
+
+
+## Живые артельщики НА КНОПКЕ ПКМ: вал катят только те, кто на неё назначен —
+## как копейщики на ПРОБЕЛЕ. Урон вала считается от этого числа в момент удара.
+func _alive_artel() -> int:
+	var n: int = 0
+	for m in _squad.members if _squad != null else []:
+		if is_instance_valid(m) and m.soldier_type == &"worker" \
+				and m.bind_slot == CrewKit.BIND_RMB:
+			n += 1
+	return n
+
+
+## Живые огневики на кнопке ПКМ — по снаряду с каждого.
+func _bound_mages() -> Array:
+	var out: Array = []
+	for m in _squad.members if _squad != null else []:
+		if is_instance_valid(m) and m.soldier_type == &"fire_mage" \
+				and m.bind_slot == CrewKit.BIND_RMB:
+			out.append(m)
+	return out
 
 
 func _los_clear(a: Vector3, b: Vector3) -> bool:
