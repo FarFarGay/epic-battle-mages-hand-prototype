@@ -106,6 +106,7 @@ func _ready() -> void:
 	_widget = CREW_WIDGET_SCENE.instantiate() as CanvasLayer
 	add_child(_widget)
 	_widget.connect(&"leave_requested", _on_leave_pressed)
+	_widget.connect(&"board_requested", _on_board_pressed)
 	_widget.connect(&"rebuild_requested", _on_rebuild_pressed)
 	# Пересборка состава живёт пока только в подземелье (там для неё есть
 	# комната-предбанник). Гасим кнопку честно, а не делаем вид, что работает.
@@ -216,8 +217,16 @@ func _set_crewed(on: bool) -> void:
 			_rig.call(&"clear_focus_override")
 		else:
 			_rig.call(&"set_focus_override", _focus)
+	# ⭐ ЭКРАН ПЕРЕКЛЮЧАЕТСЯ ВМЕСТЕ С УПРАВЛЕНИЕМ. Виджет экипажа виден ВСЕГДА —
+	# он про гномов, а гномы есть в обоих режимах; меняются заголовок, главная
+	# кнопка и подсказка. Башенный HUD (трей заклинаний, мана, супер, палитра
+	# стройки) снаружи гаснет: это глаголы Ладьи, а не отряда.
 	if _widget != null:
-		_widget.visible = on
+		_widget.visible = true
+		_widget.call(&"set_crewed", on)
+	var hud := get_tree().get_first_node_in_group(&"gameplay_hud")
+	if hud != null and hud.has_method(&"set_crew_mode"):
+		hud.call(&"set_crew_mode", on)
 	_anchor = Vector3.INF
 	_vel = Vector3.ZERO
 
@@ -243,6 +252,19 @@ func _on_leave_pressed() -> void:
 		i += 1
 	_squad.hold_position = Vector3(t.x, 0.0, t.z)
 	EventBus.tutorial_hint.emit("Экипаж снаружи. WASD ведёт отряд, [E] у башни — вернуться", 5.0)
+
+
+## Кнопка «Вернуться в башню» — тот же путь, что клавиша E, включая проверку
+## дистанции. Далеко — говорим почему, а не молчим кнопкой, которая «не нажалась».
+func _on_board_pressed() -> void:
+	if _crewed or _squad == null or _tower == null or not is_instance_valid(_tower):
+		return
+	var c: Vector3 = _squad.compute_center()
+	if c != Vector3.INF and Vector2(_tower.global_position.x - c.x,
+			_tower.global_position.z - c.z).length() > board_distance:
+		EventBus.tutorial_hint.emit("Слишком далеко от башни — подведи отряд к ней", 2.0)
+		return
+	_try_board()
 
 
 func _on_rebuild_pressed() -> void:
@@ -306,11 +328,18 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if _squad == null or _crewed:
+	if _squad == null:
 		return
-	# Состав Squad чистит сам по сигналу гибели члена — своего прохода не нужно.
+	# Состав виджета обновляем В ОБОИХ режимах, ДО выхода по _crewed: сидя в
+	# кабине игрок тоже смотрит на состав (и видит, когда пилота убило). Раньше
+	# ветка стояла после выхода — в кабине заголовок так и висел «— 0».
+	# Squad чистит мёртвых сам по сигналу, своего прохода не нужно.
 	if _widget != null:
 		_widget.call(&"set_crew", _squad.members)
+		if not _crewed:
+			_widget.call(&"set_hint", _hint_text())
+	if _crewed:
+		return
 	var c: Vector3 = _squad.compute_center()
 	if c == Vector3.INF:
 		return
@@ -434,6 +463,28 @@ func _tick_commands(delta: float, c: Vector3, cursor: Vector3, aim_dir: Vector3)
 		if _bind_held(m.bind_slot) and m.call(&"try_suppressive_fire", aim) \
 				and shot_recoil > 0.0:
 			_vel -= aim_dir * shot_recoil
+
+
+## Подсказка кнопок отряда: называем только то, что в ЭТОМ составе реально
+## работает — обещать «удар вокруг» без копейщиков нельзя. Откат показываем
+## цифрой: игрок должен видеть, ждать ему или жать.
+func _hint_text() -> String:
+	var archers: int = 0
+	var pikemen: int = 0
+	for m in _squad.members:
+		if not is_instance_valid(m):
+			continue
+		if m is ArcherSoldier:
+			archers += 1
+		elif m.soldier_type == &"pikeman":
+			pikemen += 1
+	var parts: Array[String] = ["WASD — вести"]
+	if archers > 0:
+		parts.append("ЛКМ — полив")
+	if pikemen > 0:
+		parts.append("ПРОБЕЛ — удар (%s)"
+				% ("готов" if _super_cd <= 0.0 else "%.1fс" % _super_cd))
+	return "  ·  ".join(parts)
 
 
 ## Зажата ли кнопка слота. Нужна ИМЕННО удерживаемость: полив живёт, пока держишь.

@@ -17,6 +17,10 @@ extends CanvasLayer
 
 signal rebuild_requested
 signal leave_requested
+## Экипаж снаружи и просится обратно в кабину. Отдельный сигнал, а не «leave
+## наоборот»: сцена решает, можно ли сесть (близко ли башня), и виджет об этом
+## правиле знать не обязан.
+signal board_requested
 
 const GROUP := &"crew_widget"
 
@@ -30,12 +34,56 @@ const GROUP := &"crew_widget"
 ## зовут каждый кадр — перестраивать узлы на каждом было бы мусором на ровном месте.
 var _shown: Dictionary = {}
 var _shown_valid: bool = false
+## В кабине или в поле. От этого зависит и заголовок, и что делает главная кнопка.
+var _crewed: bool = true
+## Строка подсказок под составом: снаружи она называет кнопки отряда, в кабине
+## молчит (там глаголы башни, их показывает её собственный HUD).
+var _hint: Label = null
 
 
 func _ready() -> void:
 	add_to_group(GROUP)
 	_rebuild_btn.pressed.connect(func() -> void: rebuild_requested.emit())
-	_leave_btn.pressed.connect(func() -> void: leave_requested.emit())
+	_leave_btn.pressed.connect(_on_main_pressed)
+	_hint = Label.new()
+	_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hint.add_theme_font_size_override("font_size", 12)
+	_hint.add_theme_color_override("font_color", Color(0.68, 0.72, 0.8))
+	_hint.visible = false
+	# Между составом и кнопками: подсказка описывает то, что рядом с ней жмут.
+	_crew.get_parent().add_child(_hint)
+	_crew.get_parent().move_child(_hint, _crew.get_index() + 1)
+
+
+## Главная кнопка: в кабине выпускает экипаж, в поле — зовёт обратно.
+func _on_main_pressed() -> void:
+	if _crewed:
+		leave_requested.emit()
+	else:
+		board_requested.emit()
+
+
+## ⭐ ПЕРЕКЛЮЧЕНИЕ РЕЖИМА. Виджет один и тот же в обе стороны — меняются
+## заголовок, подпись главной кнопки и подсказка. Заводить второе окно «панель
+## отряда» нельзя: это тот же экипаж, просто снаружи, и два окна про один
+## состав — ровно та мешанина, которую мы и разбирали.
+func set_crewed(crewed: bool) -> void:
+	if _crewed == crewed and _shown_valid:
+		return
+	_crewed = crewed
+	_leave_btn.text = "Покинуть башню" if crewed else "Вернуться в башню  [E]"
+	# Пересобрать состав можно только из кабины (экран сбора — её интерфейс).
+	_rebuild_btn.visible = crewed
+	_hint.visible = not crewed
+	_shown_valid = false  # заголовок зависит от режима — перерисовать строки
+	_rebuild_rows(_shown)
+
+
+## Готовность способностей отряда: подсказка кнопок с живым отсчётом. Зовут
+## каждый кадр — текст собираем, но пишем только при изменении.
+func set_hint(text: String) -> void:
+	if _hint != null and _hint.text != text:
+		_hint.text = text
 
 
 ## Состав экипажа из живых членов отряда. Принимаем сам массив юнитов, а не
@@ -75,7 +123,7 @@ func _rebuild_rows(by_type: Dictionary) -> void:
 	var total: int = 0
 	for id in by_type:
 		total += int(by_type[id])
-	_title.text = "ЭКИПАЖ БАШНИ — %d" % total
+	_title.text = ("ЭКИПАЖ БАШНИ — %d" if _crewed else "ОТРЯД В ПОЛЕ — %d") % total
 	if total <= 0:
 		var empty := Label.new()
 		empty.text = "пусто"

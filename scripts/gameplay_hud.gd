@@ -114,6 +114,9 @@ const ACTION_BAR_FIXED_SHIELD: Dictionary = {
 	"category_str": "SHIELD", "type": -1,
 }
 
+## Группа HUD'а: единственный способ дотянуться до него из чужой ветки сцены.
+const GROUP := &"gameplay_hud"
+
 @export_node_path("Camp") var camp_path: NodePath
 
 ## Счётчик собирателей переехал в gatherer card (squad_panel, см.
@@ -312,6 +315,9 @@ const RESOURCE_DISPLAY: Array = []
 
 
 func _ready() -> void:
+	# Группа, чтобы HUD находили без NodePath'ов (его зовёт переключатель режима
+	# экипажа — он живёт в другой ветке сцены и путь к HUD знать не должен).
+	add_to_group(GROUP)
 	if not camp_path.is_empty():
 		_camp = get_node_or_null(camp_path) as Camp
 	_match_goal = get_tree().get_first_node_in_group(MatchGoal.GROUP) as MatchGoal
@@ -3066,6 +3072,38 @@ func _refresh_super_charge(current: float, maximum: float) -> void:
 ## с tower_stats (top center) и resources (right column). ScrollContainer
 ## нужен на 6+ отрядов: фиксированная высота не вмещает столько карточек,
 ## вертикальный скролл — без обрезки нижних.
+## ⭐⭐ HUD ПЕРЕКЛЮЧАЕТСЯ ВМЕСТЕ С КОНТРОЛЛЕРОМ (2026-08-11). Посадка меняет не
+## только управление, но и НАБОР ГЛАГОЛОВ — значит и экран. Пока ты отряд, трей
+## заклинаний, мана, супер и палитра стройки не твои: это инструменты Ладьи, и
+## висеть они не должны, иначе интерфейс обещает то, чего кнопка не сделает.
+##
+## Что ОСТАЁТСЯ снаружи и почему:
+##   HP башни — она стоит зданием и её могут ломать, это твоя забота даже пешком;
+##   ресурсы, часы, подсказки, квест — про мир, а не про то, кем ты рулишь;
+##   журнал — окно чтения, оно уместно в обоих режимах.
+##
+## Гасим, не удаляя: HUD один на оба режима, возврат — тот же вызов с true.
+func set_crew_mode(crewed: bool) -> void:
+	# Трей заклинаний (рука) — центр низа. Его владелец спит вместе с рукой.
+	var bar := get_node_or_null(^"ActionBarAnchor") as CanvasItem
+	if bar != null:
+		bar.visible = crewed
+	# Мана и супер — ресурсы КАСТОВ. HP оставляем: башня уязвима и припаркованной.
+	var stats := get_node_or_null(^"TowerStats")
+	if stats != null:
+		for n in [^"ManaBar", ^"SuperBar"]:
+			var b := stats.get_node_or_null(n) as CanvasItem
+			if b != null:
+				b.visible = crewed
+	# Палитра стройки: ставит рука, значит наружу с ней нельзя. Открытую закрываем,
+	# иначе она осталась бы висеть поверх боя отряда.
+	if _build_palette != null and is_instance_valid(_build_palette):
+		if not crewed:
+			_build_palette.visible = false
+		_build_palette.mouse_filter = Control.MOUSE_FILTER_STOP if crewed \
+				else Control.MOUSE_FILTER_IGNORE
+
+
 ## ⭐ РЕЖИМ ЭКИПАЖА (2026-08-08). Гномы стали ПИЛОТАМИ башни, и состав показывает
 ## ОДИН виджет (crew_widget.tscn) — карточка на класс и счётчик артели рядом с ним
 ## дублируют одно и то же тремя разными способами. Гасим, не удаляя: HUD один на
