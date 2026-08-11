@@ -64,6 +64,7 @@
 [ext_resource type="Script" uid="uid://cj3u1rkiy7qxw" path="res://scripts/quest_marker.gd" id="62_questmarker"]
 [ext_resource type="Script" uid="uid://b2w5h5nbg7ckg" path="res://scripts/harpoon_module.gd" id="63_harpoonmodule"]
 [ext_resource type="PackedScene" path="res://scenes/vein_boulder.tscn" id="64_veinboulder"]
+[ext_resource type="Script" path="res://scripts/crew_controller.gd" id="70_crew"]
 
 [sub_resource type="PanoramaSkyMaterial" id="Sky_mat"]
 panorama = ExtResource("13_skypano")
@@ -841,6 +842,9 @@ script = ExtResource("36_deeds")
 [node name="GnomeSquadSpawner" type="Node" parent="." unique_id=1793913173]
 script = ExtResource("38_squadspawn")
 starting_worker_count = 7
+
+[node name="CrewController" type="Node3D" parent="." unique_id=1793913200]
+script = ExtResource("70_crew")
 
 [node name="SpawnZones" type="Node3D" parent="." unique_id=911000001]
 
