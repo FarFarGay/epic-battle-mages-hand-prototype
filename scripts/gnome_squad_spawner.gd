@@ -45,8 +45,6 @@ func _ready() -> void:
 	add_to_group(GROUP)  # чтобы постройки (казарма) могли заказать отряд
 	# Deferred: TradeUI мог ещё не войти в группу к нашему _ready (порядок детей).
 	call_deferred(&"_connect_trade")
-	# Стартовая артель рабочих (7) живёт в башне с самого начала.
-	_spawn_starting_workers()
 
 
 ## Публичный заказ отряда ОТ КОНКРЕТНОЙ КАЗАРМЫ: добавить count юнитов типа у позиции pos
@@ -203,47 +201,15 @@ func _on_purchased(unit_type: StringName, squad_size: int) -> void:
 	_spawn_squad(soldier_type, soldier_type, add, front)
 
 
-## Состав, с которым башня стартует, ЕСЛИ из данжа никто не приехал: прямой
-## запуск мира (level_rooms — главная сцена) и дев-сцены. Полная артель рабочих:
-## ровно то, что было до 2026-07-07, когда гномов ещё не покупали за золото.
-## Игровой путь — не этот: гномов приводят из подземелья (см. ниже).
-@export var starting_worker_count: int = 7
-
-
-## ⭐ ГНОМЫ ПРИЕЗЖАЮТ ИЗ ДАНЖА (2026-08-07). Артель-магазин выпилен: кошелёк рук
-## не делает, единственный источник — подземелье. Состав кладёт финал интро
-## (DungeonSandbox._pack_squad_for_world) в MatchConfig, здесь он разбирается по
-## классам и спавнится у башни — гномы сразу прячутся внутрь, они в ней «живут».
+## ⛔ СТАРТОВУЮ АРТЕЛЬ ЗДЕСЬ БОЛЬШЕ НЕ СПАВНЯТ (2026-08-11). Экипаж мира рождает
+## CrewController — тем же CrewKit, что и подземелье: те же сцены, модели, статы
+## и кнопки. Прежний путь давал ГРАЖДАНСКИХ рабочих лагеря (каталожная скорость,
+## рабочий AI, эскорт, карточка отряда) — поверх них контроллер экипажа вёл свой
+## строй, и у одних тел оказывалось два хозяина. Состав из данжа (MatchConfig)
+## читает тоже CrewController.
 ##
-## Класс приезжает вместе с гномом и НЕ меняется: привёл лучников — у тебя
-## лучники, привёл рабочих — рабочие. Никто не переучивается.
-##
-## Никто не приехал (прямой запуск мира) → стартовый состав по-старому, иначе
-## главная сцена открывалась бы с пустой башней.
-func _spawn_starting_workers() -> void:
-	await get_tree().physics_frame
-	if not is_inside_tree() or SoldierSystem == null:
-		return
-	var tower := get_tree().get_first_node_in_group(&"tower")
-	if tower == null or not is_instance_valid(tower):
-		return
-	var t: Vector3 = (tower as Node3D).global_position
-	var at := Vector3(t.x, ground_y, t.z)
-	var carried: Array[StringName] = MatchConfig.consume_squad()
-	if not carried.is_empty():
-		# Считаем по классам и спавним по одному вызову на класс — тот же путь,
-		# что у обычного заказа отряда, без отдельной ветки «особый спавн».
-		var by_type: Dictionary = {}
-		for id in carried:
-			if SoldierSystem.has_soldier(id):
-				by_type[id] = int(by_type.get(id, 0)) + 1
-		for id in by_type:
-			_spawn_squad(id, id, int(by_type[id]), at)
-		print("[Spawner] из данжа приехали: %s" % str(by_type))
-		return
-	if starting_worker_count > 0:
-		var soldier_type: StringName = SoldierSystem.ROLE_WORKER
-		_spawn_squad(soldier_type, soldier_type, starting_worker_count, at)
+## Этот спавнер остался ТОЛЬКО под найм от построек (казармы). Сам найм юзер
+## переделывает — см. DESIGN §9.3.7.
 
 
 ## Сколько добавить с учётом потолка ТИПА по отряду ЭТОГО КЛЮЧА: cap<=0 → без потолка. cap_bonus —
@@ -255,18 +221,16 @@ func _clamp_to_cap(key, soldier_type: StringName, want: int, cap_bonus: int = 0)
 	return clampi(want, 0, maxi(cap + cap_bonus - _count_in(key), 0))
 
 
-## НАСЕЛЕНИЕ = АРТЕЛЬ (2026-07-12): найм солдата РАСХОДУЕТ свободного гнома-рабочего
-## (Population.consume_free_workers — гном у казармы исчезает, солдат = бывший рабочий).
-## Возвращает, скольких реально удалось «переодеть» (кламп и расход в одном шаге).
-## Рабочие сами гномы — не расходуют. Нет Population → как было (дев-сцены).
-func _consume_population(soldier_type: StringName, want: int, pos: Vector3) -> int:
-	if want <= 0:
-		return want
-	if SoldierSystem != null and soldier_type == SoldierSystem.ROLE_WORKER:
-		return want
-	if Population == null:
-		return want
-	return int(Population.consume_free_workers(want, pos))
+## ⛔ НАЙМ БОЛЬШЕ НЕ ЕСТ ГНОМОВ (2026-08-11). Раньше солдат = «переодетый»
+## свободный рабочий артели (Population.consume_free_workers). Артели как пула
+## рабочих рук на уровне нет: гном — пилот Ладьи, он приходит из подземелья и
+## работает только в отряде. Оставь прежний расход — казарма молча перестала бы
+## нанимать (свободных рабочих ноль → add=0 → тишина без причины).
+##
+## Гейт на найм вернётся вместе с переделкой казармы (DESIGN §9.3.7) — но уже
+## как военная экономика, а не как «отними у стройки пару рук».
+func _consume_population(_soldier_type: StringName, want: int, _pos: Vector3) -> int:
+	return want
 
 
 ## Живых членов отряда по ключу (тип ИЛИ казарма) — для капа/гейта.

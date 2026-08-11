@@ -841,7 +841,6 @@ script = ExtResource("36_deeds")
 
 [node name="GnomeSquadSpawner" type="Node" parent="." unique_id=1793913173]
 script = ExtResource("38_squadspawn")
-starting_worker_count = 7
 
 [node name="CrewController" type="Node3D" parent="." unique_id=1793913200]
 script = ExtResource("70_crew")

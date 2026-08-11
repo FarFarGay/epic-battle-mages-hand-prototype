@@ -1187,74 +1187,44 @@ func _spawn_wasd_squad() -> void:
 
 ## Один боец wasd-отряда: каталожная сцена + данж-статы + вступление в _squad.
 ## Общая точка СТАРТОВОГО спавна и НАЙМА по ходу (хижина артели в интро).
+##
+## САМА СБОРКА — в CrewKit (2026-08-11): тот же гном рождается и в большом мире,
+## и разъезжаться этим двум путям нельзя. Здесь остаётся только то, что
+## специфично для данжа: вступление в отряд, учёт потерь, разводка залпа.
 func _create_wasd_soldier(t: StringName, at: Vector3) -> SoldierGnome:
-	var data: Dictionary = SoldierSystem.get_soldier_data(t)
-	var scene: PackedScene = data.get("scene", null)
-	if scene == null:
-		push_error("[DungeonSandbox] нет сцены для %s в SOLDIER_CATALOG" % t)
-		return null
-	var stats: Dictionary = (data.get("stats", {}) as Dictionary).duplicate()
-	# Бодрый twin-stick: у слота юниты ходят на BASE move_speed (спринт
-	# только вдали) — каталожные 1.6–2.2 давали «вязкую» группу. Единая
-	# скорость всем + резкое сцепление руления.
-	stats["move_speed"] = wasd_unit_speed
-	stats["caravan_sprint_speed"] = wasd_unit_speed * 1.3
-	stats["steer_grip"] = wasd_grip
-	if t == ARCHER_TYPE:
-		# Данж-баланс лучника + steer_inertia>0: выстрел НЕ стопит бег —
-		# полив на ходу, ядро twin-stick-феела.
-		stats["attack_range"] = gnome_attack_range
-		stats["attack_cooldown_min"] = gnome_cooldown_min
-		stats["attack_cooldown_max"] = gnome_cooldown_max
-		stats["attack_damage_min"] = gnome_damage_min
-		stats["attack_damage_max"] = gnome_damage_max
-		stats["steer_inertia"] = gnome_steer_inertia
-	elif t == &"pikeman":
-		# Копейщик НЕ ВОЮЕТ САМ (2026-07-28: «чтобы ничего не делали вообще
-		# кроме пробела»). Детект 0 → цель не находится → ни погони, ни
-		# укола: между суперами он тело в строю, вся его работа — ПРОБЕЛ.
-		stats["enemy_detect_radius"] = wasd_spear_detect
-	var soldier := scene.instantiate() as SoldierGnome
+	var soldier := CrewKit.create_soldier(self, t, at, _crew_cfg(), _banner)
 	if soldier == null:
 		return null
-	# LOD выключен + телесность со скелетами — как у штатного спавна выше.
-	soldier.lod_far_distance = 100000.0
-	soldier.lod_offscreen_half_angle_deg = 90.0
-	soldier.collision_mask |= Layers.ENEMIES
-	# Мягкий подход к слоту: лечит дрожь при отходе строя спиной (слот
-	# наезжает на гнома сзади → бинарный «ход/стоп» давал стоп-старт).
-	soldier.arrival_damp_radius = wasd_arrival_damp
-	add_child(soldier)
-	soldier.setup_free(t, stats, at, _banner)
-	if t == ARCHER_TYPE:
-		# С первого кадра под гейтом прицела (до первого тика _wasd_combat
-		# дефолтный false давал 1-2 «левых» выстрела по видимым).
-		soldier.fire_suppressed = true
-		if soldier is ArcherSoldier:
-			if wasd_quiver_size > 0:
-				(soldier as ArcherSoldier).setup_quiver(
-						wasd_quiver_size, wasd_quiver_reload, wasd_quiver_delay)
-			else:
-				# Лимит выключен, но стрелы на спине остаются (декор).
-				(soldier as ArcherSoldier).setup_quiver_decor(wasd_quiver_decor)
-	elif t == &"pikeman":
-		# Оборона по умолчанию: укол с места, из строя не выходит; клик
-		# при фокусе [1] — удар-хлыст (punch_at, скорость из инспектора).
-		soldier.hold_ground = true
-		soldier.punch_speed = wasd_punch_speed
-		if wasd_stamina_hits > 0:
-			soldier.setup_stamina(wasd_stamina_hits, wasd_stamina_restore, wasd_stamina_delay)
-	elif t == &"worker":
-		_skin_artel(soldier)
-	elif t == &"fire_mage":
-		_skin_fire_mage(soldier)
-	# Дефолтный бинд по классу — прежняя раскладка кнопок «из коробки».
-	soldier.bind_slot = _default_bind_for(t)
 	_squad.add_member(soldier)
 	soldier.destroyed.connect(_on_gnome_died)
 	if soldier is ArcherSoldier:
 		_stagger_archers()
 	return soldier
+
+
+## Настройки сборки экипажа из инспектора данжа. Дефолты CrewKit — те же числа;
+## здесь они остаются экспортами, чтобы данж-сцены могли крутить их поштучно.
+func _crew_cfg() -> Dictionary:
+	return {
+		"unit_speed": wasd_unit_speed,
+		"grip": wasd_grip,
+		"arrival_damp": wasd_arrival_damp,
+		"archer_range": gnome_attack_range,
+		"archer_cd_min": gnome_cooldown_min,
+		"archer_cd_max": gnome_cooldown_max,
+		"archer_dmg_min": gnome_damage_min,
+		"archer_dmg_max": gnome_damage_max,
+		"archer_steer_inertia": gnome_steer_inertia,
+		"spear_detect": wasd_spear_detect,
+		"punch_speed": wasd_punch_speed,
+		"stamina_hits": wasd_stamina_hits,
+		"stamina_restore": wasd_stamina_restore,
+		"stamina_delay": wasd_stamina_delay,
+		"quiver_size": wasd_quiver_size,
+		"quiver_reload": wasd_quiver_reload,
+		"quiver_delay": wasd_quiver_delay,
+		"quiver_decor": wasd_quiver_decor,
+	}
 
 
 ## ОЧЕРЕДЬ, А НЕ ПОПКОРН: лучники разводятся по фазе внутри общего такта, и
@@ -1357,72 +1327,8 @@ func _refresh_focus_cards() -> void:
 			cnt.text = txt
 
 
-## Блочная моделька артельщика — единый стиль с лучником/копейщиком (фидбек
-## 2026-07-24): жёлтая роба строителя, молоток, заплечная доска. GLB-модель
-## воркера скрываем ТОЛЬКО в данж-группе; в основной игре он как был.
-func _skin_artel(w: SoldierGnome) -> void:
-	var vis := w.get_node_or_null("Visual") as Node3D
-	if vis != null:
-		vis.visible = false
-	var mesh_node := w.get_node_or_null("MeshInstance3D") as MeshInstance3D
-	if mesh_node != null:
-		mesh_node.visible = false
-	var holder := Node3D.new()
-	holder.position = Vector3(0, -0.4, 0)
-	w.add_child(holder)
-	var cloth := _artel_mat(Color(0.85, 0.66, 0.2))
-	var skin := _artel_mat(Color(0.85, 0.7, 0.55))
-	var wood := _artel_mat(Color(0.3, 0.2, 0.12))
-	var steel := _artel_mat(Color(0.72, 0.74, 0.8))
-	_artel_box(holder, Vector3(0.34, 0.5, 0.26), Vector3(0, 0.45, 0), cloth)      # тело
-	_artel_box(holder, Vector3(0.26, 0.26, 0.24), Vector3(0, 0.82, 0), skin)      # голова
-	_artel_box(holder, Vector3(0.05, 0.55, 0.05), Vector3(0.24, 0.6, 0), wood)    # рукоять молотка
-	_artel_box(holder, Vector3(0.16, 0.1, 0.1), Vector3(0.24, 0.92, 0), steel)    # боёк молотка
-	_artel_box(holder, Vector3(0.3, 0.42, 0.06), Vector3(-0.2, 0.55, 0.14), wood) # заплечная доска
-
-
-## Блочная моделька огневика — единый стиль с артельщиком: алая роба мага,
-## посох с тлеющим навершием. Тот же приём скрытия GLB-тела, что у артели.
-func _skin_fire_mage(w: SoldierGnome) -> void:
-	var vis := w.get_node_or_null("Visual") as Node3D
-	if vis != null:
-		vis.visible = false
-	var mesh_node := w.get_node_or_null("MeshInstance3D") as MeshInstance3D
-	if mesh_node != null:
-		mesh_node.visible = false
-	var holder := Node3D.new()
-	holder.position = Vector3(0, -0.4, 0)
-	w.add_child(holder)
-	var robe := _artel_mat(Color(0.78, 0.2, 0.12))
-	var skin := _artel_mat(Color(0.85, 0.7, 0.55))
-	var wood := _artel_mat(Color(0.3, 0.2, 0.12))
-	var ember := _artel_mat(Color(1.0, 0.55, 0.15))
-	ember.emission_enabled = true
-	ember.emission = Color(1.0, 0.45, 0.1)
-	ember.emission_energy_multiplier = 1.6
-	_artel_box(holder, Vector3(0.34, 0.5, 0.26), Vector3(0, 0.45, 0), robe)       # роба
-	_artel_box(holder, Vector3(0.26, 0.26, 0.24), Vector3(0, 0.82, 0), skin)      # голова
-	_artel_box(holder, Vector3(0.2, 0.16, 0.2), Vector3(0, 0.98, 0), robe)        # капюшон
-	_artel_box(holder, Vector3(0.05, 0.9, 0.05), Vector3(0.24, 0.55, 0), wood)    # посох
-	_artel_box(holder, Vector3(0.12, 0.12, 0.12), Vector3(0.24, 1.05, 0), ember)  # навершие
-	w.set_meta(&"fire_mage_ember", ember)
-
-
-func _artel_mat(c: Color) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = c
-	m.roughness = 0.85
-	return m
-
-
-func _artel_box(parent: Node3D, size: Vector3, pos: Vector3, mat: StandardMaterial3D) -> void:
-	var bm := BoxMesh.new()
-	bm.size = size
-	bm.material = mat
-	var mi := MeshInstance3D.new()
-	mi.mesh = bm
-	mi.position = pos
-	parent.add_child(mi)
+## Модельки классов (артельщик, огневик) переехали в CrewKit — они часть
+## сборки гнома, а гнома теперь собирает одна точка на оба эпизода.
 
 
 func _process(_dt: float) -> void:
@@ -3424,9 +3330,9 @@ func _roster_body(cls: StringName, pos: Vector3) -> Node3D:
 	g.setup_free(cls, (data.get("stats", {}) as Dictionary).duplicate(),
 			Vector3(pos.x, 0.5, pos.z), _banner)
 	if cls == &"worker":
-		_skin_artel(g)  # тот же жёлтый скин артельщика, что и в бою
+		CrewKit.skin_artel(g)  # тот же жёлтый скин артельщика, что и в бою
 	elif cls == &"fire_mage":
-		_skin_fire_mage(g)  # алая роба + посох, как в бою
+		CrewKit.skin_fire_mage(g)  # алая роба + посох, как в бою
 	# Статуя: без тика и без тела — стоит и ждёт, пока её возьмут.
 	g.set_physics_process(false)
 	g.set_process(false)
