@@ -1403,33 +1403,20 @@ func _punch_coins_label(gained: bool) -> void:
 	_coins_punch_tween.parallel().tween_property(_coins_label, "modulate", Color.WHITE, 0.35)
 
 
-## Счётчик СВОБОДНОГО населения (cap − занятое) под монетами. Янтарным при 0 (строить социалку).
+## ⛔ СЧЁТЧИК АРТЕЛИ УБРАН (2026-08-11). Строка «👥 Артель: свободно N из M» под
+## полоской здоровья башни выключена: она про модель «пул рабочих рук, которых
+## куда-то отправляют», а гномы становятся ЭКИПАЖЕМ Ладьи — их состав показывает
+## виджет экипажа (crew_widget.tscn), и второго счётчика для этого не нужно.
+##
+## Узел не удалён, а не создаётся: `_population_label` остаётся null, все его
+## потребители уже проверяют null. Так правка не тянет за собой правку пяти
+## мест и легко откатывается одной строкой, если счётчик понадобится обратно.
 func _build_population_label() -> void:
-	_population_label = Label.new()
-	_population_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	_population_label.offset_top = 118.0
-	_population_label.offset_bottom = 142.0
-	_population_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_population_label.add_theme_font_size_override("font_size", 16)
-	_population_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_population_label)
+	_population_label = null
 
 
 func _update_population_label() -> void:
-	if _population_label == null:
-		return
-	# Население = АРТЕЛЬ (2026-07-12): показываем свободных/всего живых рабочих.
-	# Пока гномов нет вовсе (старт до спасения первого) — параметр прячем.
-	if Population == null or int(Population.cap()) <= 0:
-		_population_label.visible = false
-		return
-	var free: int = int(Population.free_slots())
-	_population_label.visible = true
-	_population_label.text = "👥 Артель: свободно %d из %d" % [free, int(Population.cap())]
-	# Янтарным, когда свободных гномов нет (найми у замка/купи в домике — иначе
-	# новые здания простаивают и солдат не нанять).
-	var col: Color = Color(1.0, 0.8, 0.3) if free <= 0 else Color(1, 1, 1)
-	_population_label.add_theme_color_override(&"font_color", col)
+	return
 
 
 ## Обновление squad-бара. Вызывается на каждом инкременте XP (через
