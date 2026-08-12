@@ -30,6 +30,16 @@ var scrolls: Dictionary = {}
 ## ЧЕРТЕЖИ башни: building id (String, ключ RoomBuildings.CATALOG) с повторами —
 ## каждый чертёж = одна карта в колоде заезда (HUD читает в _deck_init).
 var blueprints: Array = []
+## ⭐ ЕДИНЫЙ ОПЫТ башни и гномов (2026-08-12, модель юзера). Копится с орбов в
+## забеге, ЧАСТЬ тратится там же (карточка в хижине стоит монеты + опыт), а
+## ОСТАТОК доезжает сюда и живёт между заездами: на него берутся улучшения базы
+## и крупные улучшения гномов, открывающие новые типы для тренировки в домах.
+##
+## Почему в профиле, а не в сцене: это единственное межматчевое хранилище в
+## проекте, и опыт по природе такой же, как свиток — «нажито навсегда».
+## ⚠ Тратить пока НЕЧЕМ: мета-магазин не спроектирован. Число копится и ждёт,
+## и это осознанно — возить его без стока было нельзя, копить без витрины можно.
+var xp: int = 0
 
 
 func _ready() -> void:
@@ -73,6 +83,15 @@ func grant_blueprint(building_id: StringName) -> void:
 	EventBus.blueprint_granted.emit(building_id)
 
 
+## Опыт с забега лёг в общий котёл. Отрицательное не принимаем: канал приезжает
+## из другой сцены, и мусорное значение не должно уметь ОБНУЛЯТЬ накопленное.
+func add_xp(amount: int) -> void:
+	if amount <= 0:
+		return
+	xp += amount
+	_save()
+
+
 ## Список building id чертежей (String, с повторами) — для сборки колоды.
 func blueprint_ids() -> Array:
 	return blueprints
@@ -102,12 +121,13 @@ func display_name(default_name: String) -> String:
 	return player_name if is_signed() else default_name
 
 
-# --- Сейв/лоад (только межматчевое: свитки + чертежи) ---
+# --- Сейв/лоад (только межматчевое: свитки + чертежи + опыт) ---
 
 func _save() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("tower", "scrolls", scrolls.keys())
 	cfg.set_value("tower", "blueprints", blueprints)
+	cfg.set_value("tower", "xp", xp)
 	var err := cfg.save(SAVE_PATH)
 	if err != OK:
 		push_warning("[PlayerProfile] не удалось сохранить профиль (%d)" % err)
@@ -123,3 +143,4 @@ func _load() -> void:
 	blueprints = []
 	for id in cfg.get_value("tower", "blueprints", []):
 		blueprints.append(String(id))
+	xp = int(cfg.get_value("tower", "xp", 0))

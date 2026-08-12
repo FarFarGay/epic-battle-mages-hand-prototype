@@ -416,7 +416,14 @@ const CMD_ARRIVED_DIST := 2.0
 ## ЦЕНА УЛУЧШЕНИЯ в хижине гномов (в опыте с орбов). Хижина — единственное
 ## место, где опыт тратится: пришёл к своим, вложил добытое, выбрал одну из
 ## трёх карточек.
+##
+## ⭐ ДВОЙНАЯ ЦЕНА с 2026-08-12: монеты И опыт. Раньше у валют были разные двери
+## (монеты покупают гномов, опыт — силу). Модель сменилась: ЗОЛОТО — валюта
+## УРОВНЯ, тратится здесь и сейчас, а ОПЫТ переживает забег и уходит в мету
+## (улучшения базы, новые типы гномов). Общая дверь нужна затем, чтобы карманы
+## МЕШАЛИ друг другу: взял карточку — отложил мету. Это главный выбор забега.
 @export var hut_card_cost: int = 50
+@export var hut_card_coin_cost: int = 30
 
 @export_group("Интро-сценарий «Из недр — к Ладье»")
 ## СЦЕНАРИЙ СТАРТА ИГРЫ (канон: docs/scenario_dungeon_intro.md; 1-я итерация
@@ -5583,7 +5590,7 @@ const INTRO_HUT_DIALOG := {
 		"text": "Из хижины выглядывает седой артельщик: «Живые! А мы уж думали, одни костяки остались. Мы тут вдвоём засели, когда завалы легли. Руки у нас крепкие — камень катать, щиты держать. Возьмёшь в артель, командир?»",
 		"choices": [
 			{ "label": "Нанять артель — 2 гнома, {cost} монет", "next": &"", "effect": &"dungeon_hire_artel" },
-			{ "label": "Улучшение — {xp} опыта", "next": &"", "effect": &"dungeon_buy_card" },
+			{ "label": "Улучшение — {coin}🥉 и {xp} опыта", "next": &"", "effect": &"dungeon_buy_card" },
 			{ "label": "Перенастроить отряд", "next": &"", "effect": &"dungeon_manage_squad" },
 			{ "label": "Кто вы такие?", "next": &"who" },
 			{ "label": "Позже.", "next": &"" },
@@ -5605,7 +5612,7 @@ const INTRO_FIRE_HUT_DIALOG := {
 		"text": "В домике, вросшем в лёд, греются гномы в алых робах: «Замёрз, командир? Лёд тут злой — шипами оброс, проход глыбами запечатал. Мы огневики: фаербол как у Ладьи, только в ладонь. Плати — и жар твой.»",
 		"choices": [
 			{ "label": "Нанять огневиков — 2 гнома, {cost} монет", "next": &"", "effect": &"dungeon_hire_fire" },
-			{ "label": "Улучшение — {xp} опыта", "next": &"", "effect": &"dungeon_buy_card" },
+			{ "label": "Улучшение — {coin}🥉 и {xp} опыта", "next": &"", "effect": &"dungeon_buy_card" },
 			{ "label": "Перенастроить отряд", "next": &"", "effect": &"dungeon_manage_squad" },
 			{ "label": "Что умеет ваш огонь?", "next": &"who" },
 			{ "label": "Позже.", "next": &"" },
@@ -5669,7 +5676,8 @@ func _hut_dialog_for(hut: Node3D, fire_hut: bool) -> Dictionary:
 			if spent and StringName(ch.get("effect", &"")) == &"dungeon_buy_card":
 				continue
 			ch["label"] = String(ch["label"]).replace("{cost}", str(cost)) \
-					.replace("{xp}", str(hut_card_cost))
+					.replace("{xp}", str(hut_card_cost)) \
+					.replace("{coin}", str(hut_card_coin_cost))
 			kept.append(ch)
 		dlg[node_id]["choices"] = kept
 	return dlg
@@ -5732,11 +5740,15 @@ func _hut_buy_card() -> void:
 	if available <= 0:
 		EventBus.tutorial_hint.emit("Улучшать нечего — все ветки добиты", 3.0)
 		return
-	if _xp < hut_card_cost:
+	# Обе цены проверяем ДО любого списания: снять монеты и упереться в опыт
+	# (или наоборот) — молчаливый штраф за то, чего игрок не получил.
+	if _xp < hut_card_cost or _coin_total < hut_card_coin_cost:
 		EventBus.tutorial_hint.emit(
-				"Не хватает опыта: улучшение стоит %d (есть %d)" % [hut_card_cost, _xp], 3.0)
+				"Не хватает: улучшение стоит %d🥉 и %d опыта (есть %d🥉 и %d)"
+				% [hut_card_coin_cost, hut_card_cost, _coin_total, _xp], 3.0)
 		return
 	_xp -= hut_card_cost
+	_coin_total -= hut_card_coin_cost
 	if _active_hut != null and is_instance_valid(_active_hut):
 		_active_hut.set_meta(&"card_bought", true)
 	_update_labels()
@@ -7118,8 +7130,12 @@ func _pack_squad_for_world() -> void:
 func _pack_haul_for_world() -> void:
 	MatchConfig.next_coins = _coin_total
 	MatchConfig.next_cards = _cards.duplicate()
-	print("[Intro] в мир едет добыча: %d🥉, карточек %d, свитков %d, чертежей %d"
-			% [_coin_total, _cards.size(), MatchConfig.next_scrolls.size(),
+	# Опыт, НЕ потраченный в хижинах, едет в мету: наверху он ляжет в профиль
+	# башни и будет ждать мета-покупок. Потратил всё внизу на карточки — наверх
+	# не привёз ничего, и это ровно тот размен, ради которого цены сведены.
+	MatchConfig.next_xp = _xp
+	print("[Intro] в мир едет добыча: %d🥉, %d опыта, карточек %d, свитков %d, чертежей %d"
+			% [_coin_total, _xp, _cards.size(), MatchConfig.next_scrolls.size(),
 			MatchConfig.next_blueprints.size()])
 
 

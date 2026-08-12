@@ -249,6 +249,7 @@ func _consume_haul() -> void:
 	_haul_cards = (haul.get("cards", {}) as Dictionary).duplicate()
 	_apply_archer_cards()
 	_bank_haul_coins(int(haul.get("coins", 0)))
+	_bank_haul_xp(int(haul.get("xp", 0)))
 	_store_permanent_haul(haul.get("scrolls", []) as Array,
 			haul.get("blueprints", []) as Array)
 
@@ -282,6 +283,24 @@ func _bank_haul_coins(coins: int) -> void:
 		return
 	bank.call(&"add_coin", ResourcePile.ResourceType.BRONZE, coins)
 	EventBus.tutorial_hint.emit("Из подземелья привезли %d🥉 — в казну" % coins, 4.0)
+
+
+## Опыт, не потраченный в хижинах, — в ЕДИНЫЙ котёл башни и гномов (профиль,
+## user://tower_profile.cfg). Копится между заездами: на него пойдут улучшения
+## базы и крупные улучшения гномов, открывающие новые типы для тренировки.
+##
+## ⚠ Тратить пока НЕЧЕМ — мета-магазина нет. Показываем цифру подсказкой, чтобы
+## накопление было ВИДНЫМ: молча растущее число в сейве игрок не считает
+## наградой, а забег обязан читаться как вклад во что-то.
+func _bank_haul_xp(amount: int) -> void:
+	if amount <= 0:
+		return
+	var prof := get_tree().get_first_node_in_group(&"player_profile")
+	if prof == null or not prof.has_method(&"add_xp"):
+		return
+	prof.call(&"add_xp", amount)
+	EventBus.tutorial_hint.emit("Опыт отряда: +%d (всего %d)"
+			% [amount, int(prof.get(&"xp"))], 4.0)
 
 
 ## Свитки и чертежи — в профиль НАСОВСЕМ (user://tower_profile.cfg). Пишет сам
