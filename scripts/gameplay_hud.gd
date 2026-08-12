@@ -167,6 +167,10 @@ var _day_clock_director: WaveDirector = null
 ## башни (вслепую), карты копятся в РУКЕ, клик по карте = размещение (уже оплачено). Монеты
 ## города идут на башню: найм/верфь/магазин заклинаний/Врата. Тоггл по кнопке «🔨 Стройка».
 ## _build_tabs (ряд бывших вкладок) держит кнопку «взять карту», _build_sections — карты руки.
+## ⭐ СТРОЙКА СНЯТА С ЭТОГО УРОВНЯ (пивот 2026-08-12): она уезжает в ОТДЕЛЬНЫЙ
+## РЕЖИМ. Код стройки цел и рабочий — гасим только вход в неё, чтобы не пришлось
+## потом восстанавливать систему из git. Сцена режима стройки поставит true.
+@export var build_mode_available: bool = false
 @onready var _build_palette: Panel = $BuildPalette
 @onready var _build_tabs: HBoxContainer = $BuildPalette/Margin/VBox/Tabs
 @onready var _build_sections: VBoxContainer = $BuildPalette/Margin/VBox/Scroll/Sections
@@ -1501,6 +1505,10 @@ func _on_journal_button_pressed() -> void:
 ## Тоггл палитры стройки (узлы в .tscn). Открытие гасит активные aim-режимы и пере-наполняет
 ## секции (гейтинг/оплатимость на момент открытия), закрытие — просто прячет.
 func _toggle_build_palette() -> void:
+	if not build_mode_available:
+		# Кнопок быть не должно вовсе (см. гейт при сборке рядов), но путь сюда
+		# ведёт из двух мест — глушим в ОДНОЙ точке, а не в каждой кнопке.
+		return
 	if _build_palette == null or not is_instance_valid(_build_palette):
 		return
 	if _build_palette.visible:
@@ -3317,7 +3325,7 @@ func _add_squad_buttons_rooms(vbox: VBoxContainer, squad: Squad) -> void:
 	btn_hide.pressed.connect(_on_squad_hide_pressed.bind(squad.id))
 	row.add_child(btn_hide)
 
-	if squad.soldier_type == SoldierSystem.ROLE_WORKER:
+	if squad.soldier_type == SoldierSystem.ROLE_WORKER and build_mode_available:
 		var btn_build := _mk_squad_btn("🔨 Стройка")
 		btn_build.tooltip_text = "Выбрать, что построить, потом отправить рабочих"
 		btn_build.pressed.connect(_on_squad_build_pressed.bind(btn_build))
@@ -3406,7 +3414,7 @@ func _add_squad_buttons_camp(vbox: VBoxContainer, squad: Squad) -> void:
 	btn_deselect.pressed.connect(_on_squad_deselect_pressed)
 	btn_row2.add_child(btn_deselect)
 
-	if is_worker_squad:
+	if is_worker_squad and build_mode_available:
 		var btn_build := Button.new()
 		btn_build.text = "🔨 Стройка"
 		btn_build.focus_mode = Control.FOCUS_NONE

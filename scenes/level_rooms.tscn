@@ -57,6 +57,7 @@
 [ext_resource type="PackedScene" path="res://scenes/coal_lump.tscn" id="55_coal"]
 [ext_resource type="PackedScene" path="res://scenes/gate_ruin.tscn" id="56_gateruin"]
 [ext_resource type="PackedScene" path="res://scenes/rubble_pile.tscn" id="57_rubble"]
+[ext_resource type="PackedScene" path="res://scenes/ladya_heart.tscn" id="65_heart"]
 [ext_resource type="PackedScene" path="res://scenes/gear_element.tscn" id="58_gear"]
 [ext_resource type="PackedScene" path="res://scenes/keystone_element.tscn" id="59_keystone"]
 [ext_resource type="PackedScene" path="res://scenes/star_crystal.tscn" id="60_starcrystal"]
@@ -951,10 +952,10 @@ transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 118, 0, 63.375)
 
 [node name="Zastava" type="Node3D" parent="." unique_id=1942734947]
 
-[node name="BlueprintMachine" parent="Zastava" unique_id=428979207 instance=ExtResource("41_4w2r8")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 74, 0, 28)
+[node name="BlueprintMachine" parent="." unique_id=428979207 instance=ExtResource("41_4w2r8")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 96, 0, 74)
 print_scene = ExtResource("54_blueprint")
-print_hint = "Чертёж замка отпечатан! Хватай рукой и неси на плиту-фундамент в центре долины"
+print_hint = "Чертёж отпечатан! Гномы запомнили постройку — пригодится, когда возьмёшься за стройку"
 
 [node name="WallWest" parent="Zastava" unique_id=911400001 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 50, 58, 0, 30.5)
@@ -1038,8 +1039,20 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 63.5, 0.4, 28.5)
 [node name="Coal4" parent="Zastava" unique_id=911400013 instance=ExtResource("55_coal")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65, 0.4, 32.5)
 
-[node name="CastleFoundation" parent="." unique_id=911400005 instance=ExtResource("53_foundation")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 56, 0, 84)
+[node name="DeadLadya" type="Node3D" parent="." unique_id=912100001]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 88, 0, 30)
+
+[node name="HullRubble" parent="DeadLadya" unique_id=912100002 instance=ExtResource("57_rubble")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+
+[node name="HullRubble2" parent="DeadLadya" unique_id=912100003 instance=ExtResource("57_rubble")]
+transform = Transform3D(-0.866025, 0, -0.5, 0, 1, 0, 0.5, 0, -0.866025, 3.4, 0, 1.6)
+
+[node name="HullRubble3" parent="DeadLadya" unique_id=912100004 instance=ExtResource("57_rubble")]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, -2.8, 0, 2.2)
+
+[node name="Heart" parent="DeadLadya" unique_id=912100005 instance=ExtResource("65_heart")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.6, 0.9, -1.4)
 
 [node name="GateRuin" parent="." unique_id=911500001 instance=ExtResource("56_gateruin")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 50, 0, 43)

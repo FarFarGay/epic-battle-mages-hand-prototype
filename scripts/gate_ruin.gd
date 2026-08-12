@@ -1,12 +1,17 @@
 class_name GateRuin
 extends Node3D
 ## Древние Врата — проход из Верхнего Предела обратно в гномьи рукава, к
-## подземной столице (финал акта II). Механизм цел, но ЖАДЕН: открывается
-## за плату из казны ([exit_price_bronze]) — накопи и кликни рукой по плите.
-## Руны на плите — одометр накопления: теплеют по третям цены (казна/цена),
-## все три вспыхивают на оплате.
+## подземной столице (финал акта II). Механизм цел, но МЁРТВ: ему нужно живое
+## ядро — СЕРДЦЕ ЛАДЬИ ([LadyaHeart]) из разбитой башни посреди поля. Гномы
+## выковыривают его и несут к своей башне; сердце на месте — Врата откликаются.
+## Руны на плите: две теплеют на подходе башни, все три вспыхивают на сердце.
 ##
-## ОПЛАТА БУДИТ СТРАЖА: грохот древнего механизма поднимает нежить всей
+## ⚠ ПЛАТА 900🥉 УБРАНА (пивот 2026-08-12). Копить можно сидя на месте, а
+## сходить за сердцем нельзя — выход из уровня обязан быть ВЫЛАЗКОЙ, а не
+## таймером казны. Заодно это развело валюты: золото тратится на уровне, а
+## финал стоит поступка. Возвращать оплату не надо — цепочка ниже та же.
+##
+## СЕРДЦЕ БУДИТ СТРАЖА: грохот древнего механизма поднимает нежить всей
 ## долины — предупреждение → мех-страж ([EnemyMech], соло-дуэль, СТРОГО один —
 ## канон) + финальная осада со всех сторон ([WaveDirector.launch_final_siege]).
 ## Страж пал → створ съезжает под землю → башня в проёме = победа акта.
@@ -16,9 +21,6 @@ extends Node3D
 const GROUP := &"gate_ruin"
 const ACTION_GRAB := &"hand_grab"
 
-## Плата за проход (бронза-эквивалент единой казны). Балансируется под
-## «~3 игровых суток с полным развитием замка».
-@export var exit_price_bronze: int = 900
 ## Зона ЛКМ-клика по вратам (полуразмеры XZ в локальных осях: плита + пилоны).
 @export var click_half_extents: Vector2 = Vector2(6.5, 3.0)
 ## Руны на плите — теплеют по третям накопленной платы.
@@ -57,7 +59,10 @@ func _ready() -> void:
 	poll.timeout.connect(_poll)
 
 
-## ЛКМ-клик по плите врат = попытка оплаты. Input.is_action_just_pressed
+## ЛКМ-клик по плите врат = ОСМОТР: механизм сам ничего не принимает, он ждёт
+## сердце. Клик оставлен, потому что игрок всё равно ткнёт в единственный
+## заметный объект — и должен получить ответ, а не тишину.
+## Input.is_action_just_pressed
 ## живёт один кадр — ловим в _process, не в поллинге (гейты как у
 ## PadBuilding._clicked_on_self: модалка/aim/HUD/занятая рука — не клик).
 func _process(_delta: float) -> void:
@@ -74,9 +79,11 @@ func _process(_delta: float) -> void:
 		return
 	var local: Vector3 = to_local(hand.cursor_world_position())
 	if absf(local.x) <= click_half_extents.x and absf(local.z) <= click_half_extents.y:
-		_try_pay()
+		EventBus.tutorial_hint.emit(
+			"Механизм мёртв: ему нужно живое ядро. Сердце Ладьи — в разбитой башне на поле", 5.0)
 
 
+## Сердце доставлено (историческое имя — раньше это была оплата).
 func is_paid() -> bool:
 	return _paid
 
@@ -93,23 +100,20 @@ func is_guard_down() -> bool:
 	return _awake and _mech == null
 
 
+## ⛔ Цены больше нет: финал открывает сердце, а не казна. Оставлено нулём,
+## потому что старый чеклист заданий ещё спрашивает (ValleyQuests._gate_price).
 func price() -> int:
-	return exit_price_bronze
-
-
-func _bank() -> Node:
-	return get_tree().get_first_node_in_group(GoldBank.GROUP)
+	return 0
 
 
 func _poll() -> void:
 	_check_victory()
 	_tick_approach_hint()
-	# Руны-одометр: казна/цена по третям (третья загорается только оплатой).
+	# Руны: две теплеют, когда башня подошла к вратам (механизм чует машину),
+	# третья — только на сердце. Одометр казны выпилен вместе с платой.
 	var lit: int = 3
 	if not _paid:
-		var bank := _bank()
-		var have: int = 0 if bank == null else int(bank.call(&"get_gold"))
-		lit = clampi(int(3.0 * float(have) / float(maxi(exit_price_bronze, 1))), 0, 2)
+		lit = 2 if _tower_near(20.0) else 0
 	if lit == _lit_runes:
 		return
 	var grew: bool = lit > _lit_runes
@@ -119,23 +123,28 @@ func _poll() -> void:
 		AoeVisual.spawn_pulse_sparks(get_tree().current_scene,
 			global_position + Vector3.UP * 2.0, 1.6, 10.0)
 		EventBus.tutorial_hint.emit(
-			"Руна Врат теплеет — казна растёт (%d/3 платы)" % _lit_runes, 5.0)
+			"Руны Врат теплеют — механизм чует Ладью. Не хватает живого ядра", 5.0)
 
 
-## Первый подъезд башни к вратам → подсказка про плату (один раз).
+## Первый подъезд башни к вратам → подсказка, чего механизму надо (один раз).
 func _tick_approach_hint() -> void:
 	if _approach_hinted or _paid:
 		return
-	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
-	if tower == null:
-		return
-	var d: Vector3 = tower.global_position - global_position
-	if Vector2(d.x, d.z).length() > 16.0:
+	if not _tower_near(16.0):
 		return
 	_approach_hinted = true
 	EventBus.tutorial_hint.emit(
-		"Врата в подземную столицу. Механизм требует плату: %d🥉 — накопи и кликни по плите" % exit_price_bronze,
+		"Врата в подземную столицу. Механизм мёртв — ему нужно Сердце Ладьи из разбитой башни",
 		8.0)
+
+
+## Башня в радиусе (XZ). Одна проверка на две ветки — подсказку и руны.
+func _tower_near(radius: float) -> bool:
+	var tower := get_tree().get_first_node_in_group(&"tower") as Node3D
+	if tower == null:
+		return false
+	var d: Vector3 = tower.global_position - global_position
+	return Vector2(d.x, d.z).length() <= radius
 
 
 func _update_runes() -> void:
@@ -146,14 +155,11 @@ func _update_runes() -> void:
 				rune_live_energy if i < _lit_runes else rune_dead_energy
 
 
-func _try_pay() -> void:
-	var bank := _bank()
-	if bank == null:
-		return
-	if not bank.call(&"try_spend", exit_price_bronze):
-		var have: int = int(bank.call(&"get_gold"))
-		EventBus.tutorial_hint.emit(
-			"Механизму мало: проход %d🥉, в казне %d🥉" % [exit_price_bronze, have], 4.0)
+## ⭐ ТОЧКА ВХОДА ФИНАЛА. Зовёт [LadyaHeart], когда гномы донесли сердце до
+## башни. Идемпотентна: второе сердце (или повторная доставка) не поднимает
+## второго стража — канон «мех СТРОГО один за раз».
+func awaken_by_heart() -> void:
+	if _paid:
 		return
 	_paid = true
 	_awake = true
@@ -162,7 +168,7 @@ func _try_pay() -> void:
 	_on_awakened()
 
 
-## Оплата принята — механизм оживает. Финал акта: предупреждение → из врат
+## Сердце на месте — механизм оживает. Финал акта: предупреждение → из врат
 ## выходит мех-страж (соло-дуэль, СТРОГО один — канон
 ## [[project_ebm_mech_solo_apex]]) + грохот поднимает нежить всей долины
 ## (финальная осада со всех сторон) → убил стража → створ открывается →
