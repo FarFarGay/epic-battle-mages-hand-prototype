@@ -10,6 +10,11 @@ extends Node3D
 ## рука рядом ничего не «схватывает» — конфликта нет, рычаг сам читает hand_grab.
 
 const ACTION_GRAB := &"hand_grab"
+## Реестр ВСЕХ рычагов, независимо от состояния. Нужен тем, кто ищет рычаг рядом
+## ДО того, как он ожил: strike-группа наполняется только на enable(), и по ней
+## обесточенный рычаг не найти — команда «дёрни» проваливалась молча, вместо того
+## чтобы сказать «цепь не запитана».
+const LEVER_GROUP := &"lever"
 ## Единая группа «гном бьёт точку → действие» (горшки + рычаги). Гном заряжается на
 ## цель и СТРАЙКОМ вызывает gnome_hit() — как с горшком, не проходом через область.
 const GNOME_STRIKE_GROUP := Layers.GNOME_STRIKE_TARGET_GROUP
@@ -58,6 +63,7 @@ var _highlighted: bool = false
 
 
 func _ready() -> void:
+	add_to_group(LEVER_GROUP)
 	_handle.rotation.z = deg_to_rad(start_angle_deg)  # OFF-положение (наклон вбок)
 	# Standalone гном-рычаг — активен сразу; запитанный (gnome_needs_power) ждёт
 	# enable() от RedDiode (цепь искра → синий → красный).

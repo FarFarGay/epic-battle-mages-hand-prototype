@@ -36,6 +36,10 @@ const BURN_PATCH_SCENE: PackedScene = preload("res://scenes/burn_patch.tscn")
 ## Радиус кольца высадки вокруг корпуса. Корпус башни — коробка 2×2 в основании,
 ## так что 5 м гарантированно выносит гномов из-под неё, а не на крышу.
 @export var disembark_radius: float = 5.0
+## С какого расстояния экипаж дотягивается до механизма по E (рычаг у стены).
+## Меньше дистанции посадки: E у башни должно оставаться посадкой, а не ловить
+## рычаг через полкомнаты.
+@export var interact_distance: float = 4.5
 
 @export_group("Состав по умолчанию")
 ## Отряд для ПРЯМОГО запуска мира (из данжа никто не приехал). Числа — РАЗМЕРЫ
@@ -552,9 +556,63 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if key.pressed and not _e_was_down:
 		_e_was_down = true
-		_try_board()
+		# E — ОДНА кнопка «сделай то, что рядом». Механизм важнее посадки: у башни
+		# стоишь всё время, а к рычагу подошёл специально. Второй клавиши заводить
+		# нельзя — снаружи их и так три под способности.
+		if not _pull_mechanism():
+			_try_board()
 	elif not key.pressed:
 		_e_was_down = false
+
+
+## ⭐ РЫЧАГ ДЁРГАЮТ ГНОМЫ (2026-08-13). Башня к нему не лезет — это работа
+## отряда: подвёл, нажал E, кто-то из своих перекинул.
+##
+## Переиспользуем ГОТОВЫЙ контракт strike-цели (`can_gnome_interact` / `gnome_hit`,
+## группа GNOME_STRIKE_TARGET_GROUP) — ту же пару уже носят горшки и рычаги, и
+## второй системы «гном → точка → действие» в проекте быть не должно. Меняется
+## только ПОВОД: раньше гном приходил и бил сам (разгон + удар), теперь повод —
+## команда игрока. Сам рычаг об этом не знает и не переписывается.
+##
+## Гейты рычага (роль гнома, запитанность цепи) остаются его собственными: если
+## can_gnome_interact вернул false, отказ объясняем, а не молчим.
+func _pull_mechanism() -> bool:
+	if _crewed or _squad == null:
+		return false
+	var c: Vector3 = _squad.compute_center()
+	if c == Vector3.INF:
+		return false
+	var best: Node = null
+	var best_d: float = interact_distance
+	# Ищем по РЕЕСТРУ рычагов, а не по strike-группе: та наполняется только на
+	# enable(), и обесточенный рычаг в неё не входит — команда проваливалась бы
+	# молча ровно там, где игроку важнее всего услышать «цепь не запитана».
+	for n in get_tree().get_nodes_in_group(Lever.LEVER_GROUP):
+		# Только рычаги ГНОМОВ: ручные — работа руки, и отбирать их у неё нельзя,
+		# иначе дверные пазлы начнут решаться не тем инструментом.
+		if not is_instance_valid(n) or not (n is Lever) or not (n as Lever).gnome_pullable:
+			continue
+		var d: float = Vector2((n as Node3D).global_position.x - c.x,
+				(n as Node3D).global_position.z - c.z).length()
+		if d <= best_d:
+			best_d = d
+			best = n
+	if best == null:
+		return false
+	# Кто именно дёрнет: первый живой, кого пропускает гейт роли. Рычаг решает сам,
+	# годится ли этот гном, — мы только предлагаем кандидатов.
+	for m in _squad.members:
+		if not is_instance_valid(m):
+			continue
+		if best.call(&"can_gnome_interact", m):
+			best.call(&"gnome_hit", m)
+			EventBus.camera_shake.emit(0.2, (best as Node3D).global_position)
+			return true
+	# Рычаг рядом, но никто не подходит: обесточен или нужен другой класс. Молчать
+	# тут нельзя — иначе E «не работает» без причины, и игрок жмёт его снова.
+	EventBus.tutorial_hint.emit(
+			"Рычаг не поддаётся: механизм обесточен или нужен гном другого дела", 2.5)
+	return true
 
 
 # --- Ход отряда --------------------------------------------------------------
@@ -569,8 +627,15 @@ func _physics_process(delta: float) -> void:
 	# Squad чистит мёртвых сам по сигналу, своего прохода не нужно.
 	if _widget != null:
 		_widget.call(&"set_crew", _squad.members)
+	# ⭐ КАРТОЧКИ — ТОЛЬКО КОГДА ОТРЯДОМ УПРАВЛЯЕШЬ (2026-08-13, фидбек юзера).
+	# Карточка — дисплей КНОПКИ класса, а в кабине этих кнопок нет: ряд висел
+	# поверх трея заклинаний и обещал то, чего нажать нельзя. Состав в кабине
+	# показывает виджет экипажа — он для этого и заведён, дублировать нечем.
+	# Гасим и НЕ пересчитываем: невидимый ряд незачем перерисовывать каждый кадр.
 	if _cards != null:
-		(_cards as SquadCards).refresh(_card_data())
+		_cards.visible = not _crewed
+		if not _crewed:
+			(_cards as SquadCards).refresh(_card_data())
 	# Откаты тикают и в кабине: запущенный перед посадкой камень обязан
 	# докатиться, а не зависнуть в воздухе на полпути.
 	if _wave != null:
@@ -578,6 +643,16 @@ func _physics_process(delta: float) -> void:
 	if _volley != null:
 		_volley.tick(delta)
 	if _crewed:
+		# ⚠ МЁРТВАЯ КНОПКА ОБЯЗАНА ОБЪЯСНЯТЬСЯ. Кнопки отряда живут только
+		# снаружи, а ПРОБЕЛ в кабине не занят НИЧЕМ (башня его не читает) —
+		# нажатие проваливалось в пустоту без единого признака жизни, и это
+		# читается как «удар копейщиков сломался», хотя он просто не тут.
+		# Флаг общий с _tick_commands: две ветки не работают одновременно.
+		var space_in_cabin: bool = Input.is_key_pressed(KEY_SPACE)
+		if space_in_cabin and not _space_down:
+			EventBus.tutorial_hint.emit(
+					"Копейщики бьют СНАРУЖИ — выйди из башни [E] или кнопкой виджета", 2.5)
+		_space_down = space_in_cabin
 		return
 	var c: Vector3 = _squad.compute_center()
 	if c == Vector3.INF:
@@ -711,6 +786,10 @@ func _tick_commands(delta: float, c: Vector3, cursor: Vector3, aim_dir: Vector3)
 ## Данные для карточек — ровно тот же формат, что собирает данж. Отличается
 ## только источник цифр: там инспектор сцены, здесь стартовый состав.
 ##
+## Зовётся ТОЛЬКО когда отряд снаружи (в кабине ряд карточек скрыт), поэтому
+## гасить строки и рамки по _crewed больше не нужно — раньше эти проверки
+## существовали ровно затем, чтобы видимая в кабине карточка не обещала кнопку.
+##
 ## Все четыре класса работают в мире так же, как в данже, поэтому каждый обещает
 ## свою кнопку. Ветка «прочее» осталась на случай класса, который приедет из
 ## подземелья раньше, чем его глагол.
@@ -725,27 +804,26 @@ func _card_data() -> Dictionary:
 		var armed: bool = false
 		var line: String = ""
 		if id == &"pikeman":
-			armed = alive > 0 and _super_cd <= 0.0 and not _crewed
+			armed = alive > 0 and _super_cd <= 0.0
 			line = "[ПРОБЕЛ] готов" if _super_cd <= 0.0 else "[ПРОБЕЛ] %.1fс" % _super_cd
 		elif id == CrewKit.ARCHER:
 			# У лучника нет отката, поэтому «горит» значит не «готов» (он готов
 			# всегда), а «сейчас льёт». Вечно горящая рамка была бы шумом.
-			armed = alive > 0 and _lmb_down and not _crewed
+			armed = alive > 0 and _lmb_down
 			line = "[ЛКМ] полив"
 		elif id == &"worker":
 			var wave_cd: float = _wave.cooldown_left() if _wave != null else 0.0
-			armed = alive > 0 and wave_cd <= 0.0 and not _crewed
+			armed = alive > 0 and wave_cd <= 0.0
 			line = "[ПКМ] готов" if wave_cd <= 0.0 else "[ПКМ] %.1fс" % wave_cd
 		elif id == &"fire_mage":
 			var fire_cd: float = _volley.cooldown_left() if _volley != null else 0.0
-			armed = alive > 0 and fire_cd <= 0.0 and not _crewed
+			armed = alive > 0 and fire_cd <= 0.0
 			line = "[ПКМ] готов" if fire_cd <= 0.0 else "[ПКМ] %.1fс" % fire_cd
 		else:
 			line = "только в подземелье"
 		data[id] = {
 			"alive": alive, "total": int(_start_counts[id]), "armed": armed,
-			# В кабине кнопок отряда нет — строку способности гасим, а не врём ею.
-			"line": line if not _crewed else " ",
+			"line": line,
 		}
 	return data
 
