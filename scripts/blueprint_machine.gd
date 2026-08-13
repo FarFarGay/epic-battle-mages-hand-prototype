@@ -146,7 +146,7 @@ func _reprint() -> void:
 		EventBus.tutorial_hint.emit("Замок стоит — новый чертёж не нужен", 5.0)
 		return
 	if get_tree().get_first_node_in_group(CastleBlueprint.GROUP) != null:
-		EventBus.tutorial_hint.emit("Чертёж уже отпечатан — найди его и отнеси на плиту", 6.0)
+		EventBus.tutorial_hint.emit("Чертёж уже отпечатан — найди его и пусти в дело", 6.0)
 		return
 	var root: Node = get_tree().current_scene
 	if is_instance_valid(root):

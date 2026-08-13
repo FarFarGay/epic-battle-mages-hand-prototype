@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/bridge_blueprint.gd" id="1"]
+
+[node name="BridgeBlueprint" type="RigidBody3D"]
+script = ExtResource("1")
+sheet_color = Color(0.35, 0.6, 1, 1)
+model_color = Color(0.62, 0.44, 0.24, 1)

@@ -59,9 +59,9 @@ func _build_visual() -> void:
 	add_child(sheet)
 	var model := MeshInstance3D.new()
 	var mbox := BoxMesh.new()
-	mbox.size = Vector3(0.28, 0.3, 0.28)
+	mbox.size = _model_size()
 	model.mesh = mbox
-	model.position = Vector3(0, 0.23, 0)
+	model.position = Vector3(0, 0.08 + mbox.size.y * 0.5, 0)
 	var mmat := StandardMaterial3D.new()
 	mmat.albedo_color = model_color
 	mmat.emission_enabled = true
@@ -117,6 +117,14 @@ func _on_hand_released(item: Node3D, _velocity: Vector3) -> void:
 				global_position, 1.5, 8.0)
 			queue_free())
 	_on_learned()
+
+
+## Габарит мини-модели НА ЛИСТЕ — наследники переопределяют, чтобы силуэт
+## называл постройку: у замка кубик-башенка, у моста плоская доска. Чертёж,
+## рисующий не то, что напечатает, — тот же обман, что кнопка не про свою
+## способность (один визуальный язык — один смысл).
+func _model_size() -> Vector3:
+	return Vector3(0.28, 0.3, 0.28)
 
 
 ## Эффект изучения — наследники переопределяют (чертёж кафедры → карта в колоду).
