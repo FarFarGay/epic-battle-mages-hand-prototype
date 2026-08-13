@@ -952,8 +952,8 @@ transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 26.5, 118, 0, 63.375)
 
 [node name="Zastava" type="Node3D" parent="." unique_id=1942734947]
 
-[node name="BlueprintMachine" parent="Zastava" unique_id=428979207 instance=ExtResource("41_4w2r8")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 74, 0, 28)
+[node name="BlueprintMachine" parent="Room5" unique_id=428979207 instance=ExtResource("41_4w2r8")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 22, 0, 112)
 print_scene = ExtResource("54_blueprint")
 print_hint = "Чертёж МОСТА отпечатан! Подбери лист рукой (ЛКМ) и отпусти там, где нужен переход"
 
@@ -1027,17 +1027,17 @@ area_center = Vector3(74, 0, 30)
 area_half_x = 12.0
 area_half_z = 9.0
 
-[node name="Coal1" parent="Zastava" unique_id=911400010 instance=ExtResource("55_coal")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 64, 0.4, 31)
+[node name="Coal1" parent="Room5" unique_id=911400010 instance=ExtResource("55_coal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 16.5, 0.4, 108.5)
 
-[node name="Coal2" parent="Zastava" unique_id=911400011 instance=ExtResource("55_coal")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65.5, 0.4, 29.5)
+[node name="Coal2" parent="Room5" unique_id=911400011 instance=ExtResource("55_coal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 18.0, 0.4, 114.5)
 
-[node name="Coal3" parent="Zastava" unique_id=911400012 instance=ExtResource("55_coal")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 63.5, 0.4, 28.5)
+[node name="Coal3" parent="Room5" unique_id=911400012 instance=ExtResource("55_coal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15.0, 0.4, 112.0)
 
-[node name="Coal4" parent="Zastava" unique_id=911400013 instance=ExtResource("55_coal")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 65, 0.4, 32.5)
+[node name="Coal4" parent="Room5" unique_id=911400013 instance=ExtResource("55_coal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 17.0, 0.4, 110.5)
 
 [node name="DeadLadya" type="Node3D" parent="." unique_id=912100001]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 88, 0, 30)
