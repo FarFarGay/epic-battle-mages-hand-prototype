@@ -71,6 +71,29 @@ func is_spell_ready(type: int) -> bool:
 	return true
 
 
+## ⭐ ЕДИНАЯ таблица «каталожный id → слот руки». Нужна обеим сторонам: HUD
+## экипирует по клику, пушка на крыше — самим фактом установки (WarMachine.
+## equip_to_hand). Держать два списка соответствий нельзя: разъедутся на первом
+## же новом заклинании. -1 = такого спелла у руки нет.
+static func type_for_id(id: StringName) -> int:
+	match id:
+		&"fireball":
+			return SpellType.FIREBALL
+		&"firestorm":
+			return SpellType.FIRESTORM
+		&"mine_scatter":
+			return SpellType.MINE_SCATTER
+		&"frost":
+			return SpellType.FROST
+		&"spark":
+			return SpellType.SPARK
+		&"arbalest_volley":
+			return SpellType.ARBALEST
+		&"harpoon":
+			return SpellType.HARPOON
+	return -1
+
+
 ## Каталожный id (SpellSystem.SPELL_CATALOG) текущего экипированного заклинания.
 ## Tower читает при входе в супер-дэш: dash_form/unlock-гейт живут в каталоге.
 func equipped_spell_id() -> StringName:

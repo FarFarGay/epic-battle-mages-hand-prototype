@@ -216,8 +216,13 @@ func _mount(tower: Node3D) -> void:
 		AoeVisual.spawn_pulse_sparks(get_tree().current_scene, global_position, 0.9, 8.0))
 	# Машина в слоте = глагол у руки. Снимут — глагол погаснет (_unmount).
 	SpellSystem.unlock(machine_id)
+	# ⭐ УСТАНОВЛЕНА = АКТИВНА (2026-08-14, решение юзера: «на башне может быть
+	# только одна пушка — вот тебе и выбор»). Раньше монтаж лишь ЗАЖИГАЛ карточку
+	# в трее, и выбирать оружие всё равно приходилось мышкой по иконкам. Теперь
+	# железо на крыше и есть выбор: поставил — стреляешь, снял — нечем.
+	equip_to_hand(get_tree(), machine_id)
 	var data: Dictionary = CATALOG.get(machine_id, {})
-	EventBus.tutorial_hint.emit("⚙ %s установлена — «%s» в трее ожил" % [
+	EventBus.tutorial_hint.emit("⚙ %s на крыше — ПКМ бьёт «%s»" % [
 		data.get("name", "Машина"),
 		String(SpellSystem.get_spell_data(machine_id).get("name", machine_id))], 4.0)
 
@@ -234,12 +239,38 @@ func _unmount() -> void:
 	_refresh_spell_gate()
 
 
+## ⭐ ПУШКА В РУКУ. Спелл аппарата становится экипированным сразу — без трея и
+## клавиш: слот крыши один, значит и выбор один. Тип берём из общей таблицы
+## HandSpell, второй список соответствий id → SpellType заводить нельзя.
+static func equip_to_hand(tree: SceneTree, id: StringName) -> void:
+	var hand := tree.get_first_node_in_group(Hand.HAND_GROUP)
+	if hand == null or not is_instance_valid(hand):
+		return
+	var spells = hand.get(&"spell_actions")
+	if spells == null or not is_instance_valid(spells):
+		return
+	var t: int = HandSpell.type_for_id(id)
+	if t < 0:
+		return
+	spells.equipped = t
+	hand.set(&"active_category", Hand.Category.MAGIC)
+
+
+## Крыша опустела — колдовать нечем: возвращаем руку к физике. Иначе ПКМ остался
+## бы «заряжен» снятой пушкой и молчал бы на пустом месте.
+static func unequip_from_hand(tree: SceneTree) -> void:
+	var hand := tree.get_first_node_in_group(Hand.HAND_GROUP)
+	if hand != null and is_instance_valid(hand):
+		hand.set(&"active_category", Hand.Category.PHYSICAL)
+
+
 ## Спелл гаснет, только если НИ ОДНОЙ машины этого id не осталось на крыше.
 func _refresh_spell_gate() -> void:
 	for m in get_tree().get_nodes_in_group(ROOF_GROUP):
 		if m is WarMachine and is_instance_valid(m) and (m as WarMachine).machine_id == machine_id:
 			return
 	SpellSystem.lock(machine_id)
+	unequip_from_hand(get_tree())
 
 
 func _exit_tree() -> void:

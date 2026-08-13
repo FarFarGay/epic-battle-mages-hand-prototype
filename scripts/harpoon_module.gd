@@ -242,6 +242,9 @@ func _mount(tower: Node3D) -> void:
 	global_transform = keep
 	add_to_group(MOUNTED_GROUP)
 	add_to_group(WarMachine.ROOF_GROUP)  # общий учёт слотов крыши с машинами
+	# Установлена = активна: ПКМ бьёт гарпуном без всякой карточки в трее
+	# (2026-08-14, «на башне только одна пушка — вот тебе и выбор»).
+	WarMachine.equip_to_hand(get_tree(), &"harpoon")
 	if _gnome_visual != null:
 		_gnome_visual.visible = true  # оператор вылез и сел за аппарат
 	# Твиним только ПОЗИЦИЮ: поворотом владеет слежение за рукой (_process).
@@ -258,6 +261,7 @@ func _unmount() -> void:
 	_mounted = false
 	remove_from_group(MOUNTED_GROUP)
 	remove_from_group(WarMachine.ROOF_GROUP)
+	WarMachine.unequip_from_hand(get_tree())
 	if _gnome_visual != null:
 		_gnome_visual.visible = false  # оператор спрятался в башню
 	var keep := global_transform
