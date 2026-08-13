@@ -64,6 +64,7 @@
 [ext_resource type="Script" uid="uid://bi5ysv32a5q33" path="res://scripts/gnome_cage.gd" id="61_gnomecage"]
 [ext_resource type="Script" uid="uid://cj3u1rkiy7qxw" path="res://scripts/quest_marker.gd" id="62_questmarker"]
 [ext_resource type="Script" uid="uid://b2w5h5nbg7ckg" path="res://scripts/harpoon_module.gd" id="63_harpoonmodule"]
+[ext_resource type="Script" path="res://scripts/war_machine.gd" id="65_warmachine"]
 [ext_resource type="PackedScene" path="res://scenes/vein_boulder.tscn" id="64_veinboulder"]
 [ext_resource type="Script" path="res://scripts/crew_controller.gd" id="70_crew"]
 
@@ -303,6 +304,11 @@ script = ExtResource("63_harpoonmodule")
 script = ExtResource("62_questmarker")
 marker_height = 1.9
 done_group = &"harpoon_module_mounted"
+
+[node name="FireCannonStarter" type="RigidBody3D" parent="Room1" unique_id=911200060]
+transform = Transform3D(0.86602545, 0, 0.5, 0, 1, 0, -0.5, 0, 0.86602545, -25, 0.3, 4.4)
+script = ExtResource("65_warmachine")
+machine_id = &"fireball"
 
 [node name="TunnelEndCap" parent="Room1" unique_id=911200005 instance=ExtResource("6_wall")]
 transform = Transform3D(0.125, 0, 0, 0, 1, 0, 0, 0, 12, -34, 0, 0)
