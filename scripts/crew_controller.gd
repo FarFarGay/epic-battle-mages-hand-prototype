@@ -724,15 +724,20 @@ func _physics_process(delta: float) -> void:
 
 
 # --- Кнопки отряда -----------------------------------------------------------
-# ⭐ ТА ЖЕ РАСКЛАДКА, ЧТО В ДАНЖЕ, И ТОТ ЖЕ СМЫСЛ КНОПКИ: кнопка называет не
-# способность, а СЛОТ (SoldierGnome.bind_slot) — кто на неё назначен, тот по ней
-# и работает. По умолчанию лучники на ЛКМ (полив по удержанию), копейщики на
-# ПРОБЕЛЕ (удар вокруг строя).
+# ⭐ КНОПКА — ЭТО СЛОТ, А НЕ СПОСОБНОСТЬ (SoldierGnome.bind_slot): кто на неё
+# назначен, тот по ней и работает. Раскладка «из коробки» — лучники на ЛКМ,
+# копейщики на ПРОБЕЛЕ, артель с огневиками на ПКМ, — но игрок волен переставить
+# кого угодно на экране сбора, и его расклад ЕДЕТ С ГНОМАМИ в мир.
 #
-# ⭐ ПКМ ПЕРЕНЕСЁН ЦЕЛИКОМ 2026-08-11 — но не копией: физика гребня уехала в
-# общий узел StoneWave, залп огневиков — в MageVolley, и оба эпизода вешают ОДНИ
-# И ТЕ ЖЕ узлы. Набор команд экипажа в данже и снаружи теперь совпадает, а
-# править способность по-прежнему надо в одном месте.
+# ⚠ БАГ, КОТОРЫЙ ЭТО ЧИНИТ (2026-08-13, «огневики на поверхности не стреляют на
+# пробел»). Кнопки были захардкожены классами: ПРОБЕЛ звал удар копейщиков, ПКМ —
+# вал и залп. Пока раскладку не возили, это совпадало с дефолтом и выглядело
+# работающим. Как только бинды поехали из данжа, любой переставленный класс
+# проваливался в дыру: маг на ПРОБЕЛЕ молчал, потому что ПРОБЕЛ «про копейщиков».
+# Теперь нажатие спрашивает СОСТАВ СЛОТА и запускает глаголы тех, кто там стоит, —
+# ровно как _press_bind в подземелье. Класс к кнопке привязывать нельзя.
+#
+# ⭐ Вал и залп считают ОБЩИЕ узлы StoneWave / MageVolley — те же, что в данже.
 
 
 func _tick_commands(delta: float, c: Vector3, cursor: Vector3, aim_dir: Vector3) -> void:
@@ -740,20 +745,16 @@ func _tick_commands(delta: float, c: Vector3, cursor: Vector3, aim_dir: Vector3)
 	var lmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 	var space: bool = Input.is_key_pressed(KEY_SPACE)
 	var rmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
-	if rmb and not _rmb_down:
-		_press_rmb(c, cursor)
-	_rmb_down = rmb
+	# Каждая кнопка идёт ОДНОЙ дорогой: «кто стоит на этом слоте — того и зовём».
 	if lmb and not _lmb_down:
-		# ОЧЕРЕДЬ СТАРТУЕТ РАЗВЁРНУТОЙ: фазы раздаём на НАЖАТИИ, иначе первый
-		# залп уходит тремя стрелами в один кадр — «бум» вместо «та-та-та».
-		_stagger_archers()
-		for m in _squad.members:
-			if is_instance_valid(m) and m is ArcherSoldier:
-				(m as ArcherSoldier).notify_trigger_pressed()
+		_press_slot(CrewKit.BIND_LKM, c, cursor)
 	_lmb_down = lmb
 	if space and not _space_down:
-		_spear_super(c)
+		_press_slot(CrewKit.BIND_SPACE, c, cursor)
 	_space_down = space
+	if rmb and not _rmb_down:
+		_press_slot(CrewKit.BIND_RMB, c, cursor)
+	_rmb_down = rmb
 	if cursor == Vector3.INF or aim_dir == Vector3.ZERO:
 		return
 	# Точка полива: ближайший к лучу курсора скелет, иначе точка на самом луче.
@@ -803,22 +804,27 @@ func _card_data() -> Dictionary:
 		var alive: int = int(counts.get(id, 0))
 		var armed: bool = false
 		var line: String = ""
+		# ⚠ КНОПКУ СПРАШИВАЕМ У САМИХ ГНОМОВ, а не берём по классу: игрок мог
+		# переставить класс на другой слот в данже, и расклад приехал вместе с
+		# ним. Карточка, печатающая «[ПКМ]» огневику, который стоит на ПРОБЕЛЕ, —
+		# это ровно тот же обман, что молчащая кнопка.
+		var key: String = _class_slot_label(id)
 		if id == &"pikeman":
 			armed = alive > 0 and _super_cd <= 0.0
-			line = "[ПРОБЕЛ] готов" if _super_cd <= 0.0 else "[ПРОБЕЛ] %.1fс" % _super_cd
+			line = "%s готов" % key if _super_cd <= 0.0 else "%s %.1fс" % [key, _super_cd]
 		elif id == CrewKit.ARCHER:
 			# У лучника нет отката, поэтому «горит» значит не «готов» (он готов
 			# всегда), а «сейчас льёт». Вечно горящая рамка была бы шумом.
-			armed = alive > 0 and _lmb_down
-			line = "[ЛКМ] полив"
+			armed = alive > 0 and _bind_held(_class_slot(id))
+			line = "%s полив" % key
 		elif id == &"worker":
 			var wave_cd: float = _wave.cooldown_left() if _wave != null else 0.0
 			armed = alive > 0 and wave_cd <= 0.0
-			line = "[ПКМ] готов" if wave_cd <= 0.0 else "[ПКМ] %.1fс" % wave_cd
+			line = "%s готов" % key if wave_cd <= 0.0 else "%s %.1fс" % [key, wave_cd]
 		elif id == &"fire_mage":
 			var fire_cd: float = _volley.cooldown_left() if _volley != null else 0.0
 			armed = alive > 0 and fire_cd <= 0.0
-			line = "[ПКМ] готов" if fire_cd <= 0.0 else "[ПКМ] %.1fс" % fire_cd
+			line = "%s готов" % key if fire_cd <= 0.0 else "%s %.1fс" % [key, fire_cd]
 		else:
 			line = "только в подземелье"
 		data[id] = {
@@ -826,6 +832,21 @@ func _card_data() -> Dictionary:
 			"line": line,
 		}
 	return data
+
+
+## На какой кнопке сейчас стоит класс. Берём по ПЕРВОМУ живому его бойцу: экран
+## сбора не даёт развести один класс по двум слотам, так что первый и есть общий.
+## Никого не осталось — дефолтная раскладка, чтобы карточка павшего класса не
+## меняла подпись на пустую.
+func _class_slot(cls: StringName) -> int:
+	for m in _squad.members if _squad != null else []:
+		if is_instance_valid(m) and m.soldier_type == cls:
+			return int(m.bind_slot)
+	return CrewKit.default_bind_for(cls)
+
+
+func _class_slot_label(cls: StringName) -> String:
+	return _slot_label(_class_slot(cls))
 
 
 ## Зажата ли кнопка слота. Нужна ИМЕННО удерживаемость: полив живёт, пока держишь.
@@ -888,18 +909,12 @@ func _stagger_archers() -> void:
 		archers[i].set_fire_phase(step * float(i))
 
 
-## ПРОБЕЛ: удар копейщиков ВОКРУГ строя. Урон масштабируется числом копейщиков —
-## потерял половину отряда, потерял и половину удара.
-func _spear_super(c: Vector3) -> void:
-	if _super_cd > 0.0 or c == Vector3.INF:
-		return
-	var pikemen: int = 0
-	for m in _squad.members:
-		if is_instance_valid(m) and m.soldier_type == &"pikeman" \
-				and m.bind_slot == CrewKit.BIND_SPACE:
-			pikemen += 1
-	if pikemen <= 0:
-		EventBus.tutorial_hint.emit("Нет копейщиков — удар вокруг недоступен", 1.6)
+## Удар копейщиков ВОКРУГ строя. Урон масштабируется числом копейщиков НА ЭТОЙ
+## КНОПКЕ — потерял половину, потерял и половину удара. Кого считать, решает
+## вызывающий (_press_slot): своей проверки класса тут больше нет, иначе кнопка
+## снова стала бы «про копейщиков», а не про слот.
+func _spear_super(c: Vector3, pikemen: int) -> void:
+	if _super_cd > 0.0 or c == Vector3.INF or pikemen <= 0:
 		return
 	# ⚠ ЭКСПОРТ = БАЗА, КАРТОЧКА = НАДБАВКА. Числа инспектора не трогаем: они
 	# балансная точка отсчёта, а находка забега живёт ровно один заезд.
@@ -953,21 +968,53 @@ func _spawn_burn(pos: Vector3, radius: float, duration: float) -> void:
 		bp.call(&"setup", radius, 7.0, 0.5, duration, Layers.ENEMIES | Layers.COLD_ENEMY)
 
 
-## ПКМ: работает КТО НА КНОПКЕ — та же модель, что в данже (_press_bind). По
-## умолчанию там артель (каменный вал) и огневики (залп); стоят оба класса —
-## срабатывают оба, у каждого свой откат.
-func _press_rmb(c: Vector3, cursor: Vector3) -> void:
-	if c == Vector3.INF or cursor == Vector3.INF:
+## ⭐ НАЖАЛИ КНОПКУ: смотрим, КТО НА ЭТОМ СЛОТЕ, и запускаем глаголы каждого
+## класса, который там стоит. Та же модель, что _press_bind в подземелье.
+## Классы к кнопкам НЕ привязаны: стоят на слоте копейщики и маги — сработает и
+## удар, и залп, у каждого свой откат.
+func _press_slot(slot: int, c: Vector3, cursor: Vector3) -> void:
+	if c == Vector3.INF:
 		return
-	var artel: int = _alive_artel()
-	var mages: Array = _bound_mages()
-	if artel <= 0 and mages.is_empty():
-		EventBus.tutorial_hint.emit("На ПКМ никого нет — нужна артель или огневики", 1.6)
+	var archers: Array = _bound_of(slot, CrewKit.ARCHER)
+	var pikemen: int = _bound_of(slot, &"pikeman").size()
+	var artel: int = _bound_of(slot, &"worker").size()
+	var mages: Array = _bound_of(slot, &"fire_mage")
+	if archers.is_empty() and pikemen <= 0 and artel <= 0 and mages.is_empty():
+		# Молчать нельзя: пустая кнопка — это состояние отряда, а не поломка.
+		EventBus.tutorial_hint.emit("%s — на этой кнопке никого нет" % _slot_label(slot), 1.6)
 		return
+	if not archers.is_empty():
+		# ОЧЕРЕДЬ СТАРТУЕТ РАЗВЁРНУТОЙ: фазы раздаём на НАЖАТИИ, иначе первый
+		# залп уходит тремя стрелами в один кадр — «бум» вместо «та-та-та».
+		_stagger_archers()
+		for m in archers:
+			if m is ArcherSoldier:
+				(m as ArcherSoldier).notify_trigger_pressed()
+	if pikemen > 0:
+		_spear_super(c, pikemen)
 	if artel > 0:
 		_stone_wave(c, cursor)
 	if not mages.is_empty():
 		_fire_volley(c, cursor, mages)
+
+
+## Живые бойцы класса, стоящие НА ЭТОМ слоте. Единственный способ спросить
+## «кто работает по кнопке» — через него, а не по типу класса.
+func _bound_of(slot: int, cls: StringName) -> Array:
+	var out: Array = []
+	for m in _squad.members if _squad != null else []:
+		if is_instance_valid(m) and m.soldier_type == cls and m.bind_slot == slot:
+			out.append(m)
+	return out
+
+
+func _slot_label(slot: int) -> String:
+	match slot:
+		CrewKit.BIND_SPACE:
+			return "[ПРОБЕЛ]"
+		CrewKit.BIND_RMB:
+			return "[ПКМ]"
+	return "[ЛКМ]"
 
 
 ## Каменный вал по прицелу. Направление фиксируется на запуске, вал не
@@ -996,25 +1043,15 @@ func _fire_volley(c: Vector3, cursor: Vector3, mages: Array) -> void:
 	EventBus.camera_shake.emit(0.2, c)
 
 
-## Живые артельщики НА КНОПКЕ ПКМ: вал катят только те, кто на неё назначен —
-## как копейщики на ПРОБЕЛЕ. Урон вала считается от этого числа в момент удара.
+## Живые артельщики отряда — от их числа считается урон вала В МОМЕНТ УДАРА
+## (погиб носитель — вал слабеет на лету). Слот тут НЕ спрашиваем, как и в данже:
+## запуск гейтится составом нажатой кнопки, а силу даёт вся артель.
 func _alive_artel() -> int:
 	var n: int = 0
 	for m in _squad.members if _squad != null else []:
-		if is_instance_valid(m) and m.soldier_type == &"worker" \
-				and m.bind_slot == CrewKit.BIND_RMB:
+		if is_instance_valid(m) and m.soldier_type == &"worker":
 			n += 1
 	return n
-
-
-## Живые огневики на кнопке ПКМ — по снаряду с каждого.
-func _bound_mages() -> Array:
-	var out: Array = []
-	for m in _squad.members if _squad != null else []:
-		if is_instance_valid(m) and m.soldier_type == &"fire_mage" \
-				and m.bind_slot == CrewKit.BIND_RMB:
-			out.append(m)
-	return out
 
 
 func _los_clear(a: Vector3, b: Vector3) -> bool:
