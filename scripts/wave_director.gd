@@ -47,6 +47,12 @@ enum DayNight { DAY, NIGHT }
 ## волна — нормальный темп: достаточно часто чтобы Tower не была безопасной
 ## точкой, не слишком чтобы карта не превращалась в зоопарк гигантов.
 @export var giant_every_n_waves: int = 3
+## ⭐ СКОЛЬКО ГИГАНТОВ ЗА РАЗ (2026-08-13, пивот роли). Гигант больше не «боссовая
+## точка волны», а ПРОСТОЙ ВРАГ БАШНИ: обычные скелеты — работа гномов, а башне
+## нужен свой мясной противник, которого весело щёлкать дэшем. Отсюда тройка и
+## HP 250: их много, умирают быстро, но лезут строго к башне и бьют изъёбисто.
+## Урон каждого срезан втрое (84 → 28), чтобы давление ГРУППЫ осталось прежним.
+@export var giants_per_wave: int = 3
 ## Сцена гиганта-каменщика (ranged-танк, кидает камни в Tower с 25-35м).
 ## Спавнится каждые [member thrower_every_n_waves] волн (как Giant, но реже)
 ## + входит в состав боссовой волны. Без неё — Tower не имеет ranged-угрозы.
@@ -1318,7 +1324,11 @@ func _spawn_giant() -> void:
 		return
 	var origin := _pick_safe_point_in_zone(zone)
 	origin.y = _spawner.spawn_y
-	var giants := _spawner.spawn_group(giant_scene, 1, origin, 1.0)
+	var giants := _spawner.spawn_group(giant_scene, maxi(giants_per_wave, 1), origin, 1.0)
+	# Рёв — только у ПЕРВОГО: три баннера «босс» подряд это не подача, а шум.
+	for i in range(giants.size()):
+		if is_instance_valid(giants[i]) and "boss_intro" in giants[i]:
+			giants[i].boss_intro = (i == 0)
 	# Принудительный таргет — Tower. Гигант override'ит _scan_target и сам
 	# найдёт башню, но forced_target дублирует это для случая когда vision
 	# не успел просканировать (первые тики после спавна).
@@ -1326,8 +1336,8 @@ func _spawn_giant() -> void:
 	if tower != null:
 		_assign_forced_targets(giants, tower)
 	if debug_log and LogConfig.master_enabled:
-		print("[WaveDirector] ГИГАНТ #%d спавн @ (%.0f, %.0f) → %s" % [
-			_wave_count, origin.x, origin.z,
+		print("[WaveDirector] ГИГАНТЫ ×%d #%d спавн @ (%.0f, %.0f) → %s" % [
+			giants.size(), _wave_count, origin.x, origin.z,
 			tower.name if tower != null else "no-tower",
 		])
 
