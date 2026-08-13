@@ -706,14 +706,14 @@ trigger_mode = 2
 [node name="HintGrab" type="Area3D" parent="TutorialHints" unique_id=911200016]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 18)
 script = ExtResource("47_tuthint")
-text = "Мосток: наведи руку, зажми ЛКМ — тащи и положи поперёк пропасти"
+text = "Мосток кладёт РУКА, а она работает из башни: наведи, зажми ЛКМ и тащи поперёк"
 duration = 8.0
 zone_size = Vector3(34, 8, 8)
 
 [node name="HintNeedBridge" type="Area3D" parent="TutorialHints" unique_id=911200018]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 23)
 script = ExtResource("47_tuthint")
-text = "Пропасть! Нужен мост: схвати мосток рукой (ЛКМ) и положи поперёк"
+text = "Пропасть! Мост — работа РУКИ из башни: экипаж внутри, схвати мосток ЛКМ"
 duration = 8.0
 zone_size = Vector3(34, 8, 4)
 suppress_group = &"bridge_snapped"
@@ -770,7 +770,7 @@ zone_size = Vector3(22, 8, 8)
 
 [node name="HintPlankReady" type="Area3D" parent="TutorialHints" unique_id=911200030]
 script = ExtResource("47_tuthint")
-text = "Доска готова! Схвати её рукой (ЛКМ) и положи поперёк пропасти"
+text = "Доска готова! Кладёт её РУКА из башни — экипаж внутрь, дальше ЛКМ"
 duration = 9.0
 trigger_mode = 3
 watch_group = &"built_plank"
@@ -806,7 +806,7 @@ zone_size = Vector3(16, 8, 9)
 [node name="HintRift" type="Area3D" parent="TutorialHints" unique_id=911700011]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 2, 39)
 script = ExtResource("47_tuthint")
-text = "Каньон храма! Плита-мост на том берегу слишком тяжела для руки — стащи её ГАРПУНОМ"
+text = "Каньон храма! Плита тяжелее, чем поднимет рука — стащи ГАРПУНОМ, тоже из башни"
 duration = 9.0
 zone_size = Vector3(22, 8, 8)
 suppress_group = &"bridge_snapped"
