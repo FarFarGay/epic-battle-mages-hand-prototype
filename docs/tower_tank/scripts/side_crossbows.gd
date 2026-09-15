@@ -85,7 +85,7 @@ func cancel_trigger() -> void:
 	pending_tap = false
 
 func _can_operate() -> bool:
-	return not actor.dead and arena.crew.crewed and arena.crew.input_armed and not arena.tuning_open and not arena.pointer_over_ui() and not actor.dash.blocks_gun()
+	return arena.weapon_mode_active() and not actor.dead and arena.crew.crewed and arena.crew.input_armed and not arena.tuning_open and not arena.pointer_over_ui() and not actor.dash.blocks_gun()
 
 func tick(dt: float) -> void:
 	_tick_bolts(dt)
@@ -112,7 +112,7 @@ func tick(dt: float) -> void:
 func _update_mounts(dt: float) -> void:
 	for mount in mounts:
 		var pivot: Node3D = mount.pivot
-		if arena.crew.crewed:
+		if arena.crew.crewed and arena.weapon_mode_active():
 			var local: Vector3 = actor.turret.global_basis.inverse() * (actor.aim_world - pivot.global_position)
 			var yaw := clampf(atan2(-local.x, -local.z), -0.25, 0.25)
 			var pitch := clampf(atan2(local.y, Vector2(local.x, local.z).length()), -0.9, 0.18)

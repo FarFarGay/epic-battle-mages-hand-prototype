@@ -1,5 +1,12 @@
 extends RefCounted
 ## Small procedural mesh kit. All assets are original and generated locally.
+const UI_LAYER := 1 << 19
+
+static func mark_ui(node: Node) -> void:
+	# Camera filtering preserves each marker's own visibility rules across toggles.
+	if node is VisualInstance3D: node.layers = UI_LAYER
+	if node is GeometryInstance3D: node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for child in node.get_children(): mark_ui(child)
 
 static func material(color: Color, metallic: float = 0.0, glow: float = 0.0) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()

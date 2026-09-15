@@ -134,7 +134,7 @@ func _run() -> void:
 	wall.queue_free()
 	await _frames(3)
 	await _reset()
-	var prop: StaticBody3D = arena.props.spawn_prop(Vector3(0, 0, -4))
+	var prop: RigidBody3D = arena.props.spawn_prop(Vector3(0, 0, -4))
 	arena.aim_position = Vector3(0, 0.35, -4)
 	await _frames(60)
 	_mouse(MOUSE_BUTTON_RIGHT, true)

@@ -3,6 +3,9 @@ extends Node
 var bank: Dictionary = {}
 var muted := false
 var motor: AudioStreamPlayer
+var voices: Array[AudioStreamPlayer] = []
+var voice_cursor := 0
+var last_crowd_sound := {}
 var random := RandomNumberGenerator.new()
 const RATE := 22050
 
@@ -10,6 +13,10 @@ func _ready() -> void:
 	random.seed = 4107
 	for kind in ["fire", "impact", "eject", "chamber", "lock", "ready", "servo", "step", "bow", "spell", "strike", "pickup", "dash", "dash_charge", "shatter", "repeater", "bolt_hit", "repeater_reload"]:
 		bank[kind] = _synthesize(kind)
+	for i in 32:
+		var voice := AudioStreamPlayer.new()
+		add_child(voice)
+		voices.append(voice)
 	motor = AudioStreamPlayer.new()
 	add_child(motor)
 	motor.stream = _synthesize("motor")
@@ -19,12 +26,27 @@ func _ready() -> void:
 func play(kind: String, volume: float = 0.0, pitch: float = 1.0) -> void:
 	if muted or not bank.has(kind):
 		return
-	var player := AudioStreamPlayer.new()
-	add_child(player)
+	if kind in ["bow", "shatter"]:
+		var now := Time.get_ticks_msec()
+		if now - int(last_crowd_sound.get(kind, -1000)) < 30: return
+		last_crowd_sound[kind] = now
+	var player: AudioStreamPlayer
+	# Eight reserved voices keep the cannon/reload audible during crowded melee.
+	var heavy := kind in ["fire", "impact", "eject", "chamber", "lock", "ready"]
+	var first := 24 if heavy else 0
+	var count := 8 if heavy else 24
+	for i in count:
+		var voice := voices[first + i]
+		if not voice.playing:
+			player = voice
+			break
+	if player == null:
+		player = voices[first + voice_cursor % count]
+		voice_cursor += 1
+		player.stop()
 	player.stream = bank[kind]
 	player.volume_db = volume - 5.0
 	player.pitch_scale = pitch * random.randf_range(0.96, 1.04)
-	player.finished.connect(player.queue_free)
 	player.play()
 
 func engine(throttle: float) -> void:

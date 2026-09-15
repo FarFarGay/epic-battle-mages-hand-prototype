@@ -1,0 +1,42 @@
+{
+  "checks": {
+    "600_or_requested_alive": true,
+    "on_field": true
+  },
+  "full": {
+    "battle_ms": 88.8005,
+    "draw_calls": 48862.4666666667,
+    "enemies": 600,
+    "fps": 1.10773243146518,
+    "frame_ms": 902.745077777778,
+    "p95_ms": 934.529,
+    "physics_ms": 105.279633333333,
+    "render_objects": 49643.4666666667
+  },
+  "machine": {
+    "count": 600,
+    "cpu": "Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz",
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "viewport": "(1440.0, 900.0)"
+  },
+  "render_only": {
+    "battle_ms": 106.255,
+    "draw_calls": 48532.0,
+    "enemies": 600,
+    "fps": 12.3203487808604,
+    "frame_ms": 81.1665333333333,
+    "p95_ms": 86.145,
+    "physics_ms": 0.0986333333333333,
+    "render_objects": 49311.0
+  },
+  "simulation_only": {
+    "battle_ms": 91.0886444444444,
+    "draw_calls": 1580.72222222222,
+    "enemies": 600,
+    "fps": 1.2724653402356,
+    "frame_ms": 785.876022222222,
+    "p95_ms": 799.756,
+    "physics_ms": 102.422488888889,
+    "render_objects": 2359.72222222222
+  }
+}

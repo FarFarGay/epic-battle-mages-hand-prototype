@@ -19,10 +19,26 @@
     "enemy_repeats_attacks": true,
     "enemy_routes_around_wreck": true,
     "fire_patch_damages_skeleton": true,
-    "first_wave_has_12_skeletons": true,
+    "first_wave_has_600_skeletons": true,
     "full_range_bodies_stay_on_field": true,
     "full_range_enemies_reach_combat": true,
     "full_range_hull_takes_damage": true,
+    "full_range_spawns_safe": true,
+    "giant_arrow_half_damage": true,
+    "giant_crossbow_full_damage_no_stunlock": true,
+    "giant_fire_burst_half_damage": true,
+    "giant_fire_tick_half_damage": true,
+    "giant_fourth_cannon_hit_kills": true,
+    "giant_heavy_hit_interrupts": true,
+    "giant_melee_stronger": true,
+    "giant_readable_windup": true,
+    "giant_rejects_hand": true,
+    "giant_routes_around_wall": true,
+    "giant_size_and_health": true,
+    "giant_survives_crew_combo": true,
+    "giant_survives_real_spear_strike": true,
+    "giant_survives_three_cannon_hits": true,
+    "giant_worker_wave_half_damage": true,
     "hull_can_be_destroyed": true,
     "interrupted_attack_does_not_land": true,
     "knockback_interrupts_windup": true,
@@ -40,11 +56,12 @@
     "visible_windup_before_damage": true,
     "walking_tower_pushes_skeleton": true,
     "wave_clear_counts_and_coins": true,
+    "wave_has_24_giants": true,
     "worker_wave_hits_skeleton": true,
     "wreck_cannot_fire_or_dash": true
   },
   "metrics": {
-    "average_full_range_physics_ms": 4.82831799999995
+    "average_full_range_physics_ms": 9.73710500000006
   },
   "passed": true
 }

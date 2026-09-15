@@ -1,0 +1,108 @@
+{
+  "approach": {
+    "battle_ms": 3.372625,
+    "collision_pairs": 18.3583333333333,
+    "draw_calls": 1560.78333333333,
+    "enemies": 500,
+    "fps": 142.337948245922,
+    "frame_ms": 7.02553333333333,
+    "p95_ms": 10.323,
+    "physics_ms": 0.717375,
+    "profile": {
+      "actors": 250.0,
+      "logic": 0.0,
+      "move": 0.0,
+      "separation": 0.0,
+      "shared": 0.649591666666667
+    },
+    "render_objects": 2356.78333333333
+  },
+  "attacking_count": 66,
+  "cannon_shots": 4,
+  "checks": {
+    "600_or_requested_alive": true,
+    "both_weapons_kill": true,
+    "on_field": true
+  },
+  "crossbow_shots": 115,
+  "full": {
+    "battle_ms": 3.67915833333333,
+    "collision_pairs": 50.2916666666667,
+    "draw_calls": 1605.46666666667,
+    "enemies": 500,
+    "fps": 124.022226850089,
+    "frame_ms": 8.06307083333334,
+    "p95_ms": 11.293,
+    "physics_ms": 8.59409166666671,
+    "profile": {
+      "actors": 258.983333333333,
+      "logic": 0.0,
+      "move": 0.0,
+      "separation": 0.0,
+      "shared": 0.658525
+    },
+    "render_objects": 2386.46666666667
+  },
+  "kills": 131,
+  "machine": {
+    "count": 500,
+    "cpu": "Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz",
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "viewport": "(1440.0, 900.0)"
+  },
+  "moving_count": 500,
+  "render_only": {
+    "battle_ms": 0.0,
+    "collision_pairs": 50.0,
+    "draw_calls": 1565.9,
+    "enemies": 500,
+    "fps": 209.229095398006,
+    "frame_ms": 4.77945,
+    "p95_ms": 5.349,
+    "physics_ms": 0.0,
+    "profile": {
+      "actors": 261.0,
+      "logic": 0.0,
+      "move": 0.0,
+      "separation": 0.0,
+      "shared": 0.643
+    },
+    "render_objects": 2346.9
+  },
+  "simulation_only": {
+    "battle_ms": 3.69699166666666,
+    "collision_pairs": 51.5666666666667,
+    "draw_calls": 1586.00833333333,
+    "enemies": 500,
+    "fps": 179.808683560692,
+    "frame_ms": 5.56146666666666,
+    "p95_ms": 9.399,
+    "physics_ms": 5.63100000000001,
+    "profile": {
+      "actors": 258.1,
+      "logic": 0.0,
+      "move": 0.0,
+      "separation": 0.0,
+      "shared": 0.67945
+    },
+    "render_objects": 2365.00833333333
+  },
+  "weapons": {
+    "battle_ms": 3.65412916666667,
+    "collision_pairs": 64.1666666666667,
+    "draw_calls": 1678.79166666667,
+    "enemies": 500,
+    "fps": 89.6514742904787,
+    "frame_ms": 11.15430625,
+    "p95_ms": 14.051,
+    "physics_ms": 8.09035208333334,
+    "profile": {
+      "actors": 254.729166666667,
+      "logic": 0.0,
+      "move": 0.0,
+      "separation": 0.0,
+      "shared": 0.660270833333333
+    },
+    "render_objects": 2538.22708333333
+  }
+}

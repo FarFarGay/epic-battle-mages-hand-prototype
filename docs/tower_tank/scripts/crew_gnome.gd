@@ -125,6 +125,7 @@ func _build() -> void:
 	muzzle.position = Vector3(0.27, 0.80, -0.50)
 	var ring := Geo.ring(self, 0.39, 0.035, Vector3(0, 0.035, 0), Geo.material(COLORS[role], 0, 0.5))
 	ring.scale.y = 0.18
+	Geo.mark_ui(ring)
 
 func set_embarked(on: bool) -> void:
 	embarked = on

@@ -48,7 +48,7 @@
   },
   "metrics": {
     "cruise_full_speed_time_s": 1.5,
-    "cruise_max_leg_length_m": 2.02546167373657,
+    "cruise_max_leg_length_m": 2.02545952796936,
     "cruise_speed_mps": 14.8000011444092,
     "cruise_stopping_distance_m": 2.76000094413757,
     "max_leg_length": 2.32669019699097,

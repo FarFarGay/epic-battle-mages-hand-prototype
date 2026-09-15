@@ -7,6 +7,11 @@ const Hud = preload("res://scripts/hud.gd")
 const Crew = preload("res://scripts/crew.gd")
 const Breakables = preload("res://scripts/breakables.gd")
 const Battle = preload("res://scripts/battle.gd")
+const TowerHand = preload("res://scripts/tower_hand.gd")
+const HandObject = preload("res://scripts/hand_object.gd")
+const CAMERA_DEFAULT_YAW := PI / 4.0
+const CAMERA_ORBIT_OFFSET := Vector3(24, 24, 24)
+const CAMERA_TURN_SENSITIVITY := 0.005
 
 @export var shake_strength := 1.0
 var tank
@@ -16,9 +21,13 @@ var hud
 var crew
 var props
 var battle
+var hand
 var camera: Camera3D
 var aim_camera: Camera3D
-var targets: Array[StaticBody3D] = []
+var camera_yaw := CAMERA_DEFAULT_YAW
+var camera_rotating := false
+var camera_return_pointer := Vector2.ZERO
+var targets: Array[PhysicsBody3D] = []
 var shells: Array[Dictionary] = []
 var target_specs: Array[Dictionary] = []
 var respawns: Array[Dictionary] = []
@@ -33,6 +42,7 @@ var ready_pulse := 0.0
 var hit_pulse := 0.0
 var kills := 0
 var tuning_open := false
+var interface_visible := true
 var aim_position := Vector3(0, 0.0, -8)
 var ground_aim_position := Vector3(0, 0.0, -8)
 var actual_hit := Vector3.ZERO
@@ -49,6 +59,7 @@ var _reset_requested := false
 var _range_generation := 0
 
 func _ready() -> void:
+	get_tree().node_added.connect(_register_world_label)
 	rng.seed = 7142
 	_bind_inputs()
 	_build_world()
@@ -90,6 +101,9 @@ func _ready() -> void:
 	# Existing verification modes keep an empty range; battle tests spawn fixtures.
 	battle.waves_enabled = OS.get_cmdline_user_args().is_empty()
 	add_child(battle)
+	hand = TowerHand.new()
+	hand.arena = self
+	add_child(hand)
 	var layer := CanvasLayer.new()
 	add_child(layer)
 	hud = Hud.new()
@@ -118,6 +132,12 @@ func _ready() -> void:
 		add_child(probe)
 	elif OS.get_cmdline_user_args().has("--battle-check"):
 		var probe: Node = load("res://verification/battle_regression.gd").new()
+		add_child(probe)
+	elif OS.get_cmdline_user_args().has("--horde-check"):
+		var probe: Node = load("res://verification/horde_regression.gd").new()
+		add_child(probe)
+	elif OS.get_cmdline_user_args().has("--hand-check"):
+		var probe: Node = load("res://verification/hand_regression.gd").new()
 		add_child(probe)
 
 func _bind_inputs() -> void:
@@ -190,6 +210,7 @@ func _build_world() -> void:
 	for radius in [6.0, 12.0, 20.0]:
 		var circle := Geo.ring(self, radius, 0.055, Vector3(0, 0.029, 0), paint)
 		circle.scale.y = 0.07
+		Geo.mark_ui(circle)
 	for side in [-1, 1]:
 		Geo.box(self, Vector3(0.085, 0.012, 46), Vector3(side * 24, 0.025, 0), paint)
 		Geo.box(self, Vector3(46, 0.012, 0.085), Vector3(0, 0.025, side * 24), paint)
@@ -203,10 +224,12 @@ func _build_world() -> void:
 			Geo.cylinder(self, 0.5, 0.2, pillar + Vector3.UP * 2.9, dark)
 			Geo.sphere(self, 0.22, pillar + Vector3.UP * 3.15, cyan)
 	# Start position, forward chevrons and scattered rubble outside the range.
-	Geo.ring(self, 2.6, 0.09, Vector3(0, 0.034, 5), cyan).scale.y = 0.12
+	var start_marker := Geo.ring(self, 2.6, 0.09, Vector3(0, 0.034, 5), cyan)
+	start_marker.scale.y = 0.12
+	Geo.mark_ui(start_marker)
 	for z in [1.8, 0.7, -0.4]:
-		Geo.line(self, Vector3(-0.42, 0.05, z + 0.35), Vector3(0, 0.05, z), 0.065, paint)
-		Geo.line(self, Vector3(0.42, 0.05, z + 0.35), Vector3(0, 0.05, z), 0.065, paint)
+		Geo.mark_ui(Geo.line(self, Vector3(-0.42, 0.05, z + 0.35), Vector3(0, 0.05, z), 0.065, paint))
+		Geo.mark_ui(Geo.line(self, Vector3(0.42, 0.05, z + 0.35), Vector3(0, 0.05, z), 0.065, paint))
 	for i in 65:
 		var angle := rng.randf() * TAU
 		var dist := rng.randf_range(30, 44)
@@ -231,7 +254,13 @@ func _build_targets() -> void:
 		_spawn_target(spec)
 
 func _spawn_target(spec: Dictionary) -> void:
-	var target := StaticBody3D.new()
+	var target: PhysicsBody3D = HandObject.new() if spec.barrel else StaticBody3D.new()
+	if target is RigidBody3D:
+		target.arena = self
+		target.mass = 6.0
+		target.freeze = true
+		target.collision_layer = 1 | 8
+		target.collision_mask = 9 | 32
 	target.name = "Target_%02d" % spec.id
 	add_child(target)
 	target.position = spec.pos
@@ -244,6 +273,7 @@ func _spawn_target(spec: Dictionary) -> void:
 	var width := 0.85 if spec.barrel else 1.15
 	Geo.collider(target, Vector3(width, height, width), Vector3.UP * height / 2)
 	if spec.barrel:
+		TowerHand.register_item(target, Vector3(width, height, width), "ПОРОХОВАЯ БОЧКА", Vector3.UP * height * 0.5)
 		Geo.cylinder(target, 0.43, 1.2, Vector3.UP * 0.6, dark, 10)
 		for y in [0.16, 0.94]:
 			Geo.cylinder(target, 0.46, 0.16, Vector3.UP * y, amber, 10)
@@ -286,6 +316,7 @@ func _physics_process(dt: float) -> void:
 	if crew.crewed:
 		tank.aim_world = aim_position
 	tank.tick(dt)
+	hand.tick(dt)
 	_update_actual_hit()
 	_update_shells(dt)
 	battle.tick(dt)
@@ -324,7 +355,8 @@ func _update_camera(dt: float) -> void:
 	focus = focus.lerp(desired, 1.0 - exp(-dt * 5.0))
 	var shake := trauma * trauma * shake_strength
 	var offset := Vector3(sin(time * 103) * 0.44, cos(time * 91) * 0.25, sin(time * 117) * 0.35) * shake
-	aim_camera.position = focus + Vector3(24, 24, 24)
+	var orbit := CAMERA_ORBIT_OFFSET.rotated(Vector3.UP, camera_yaw - CAMERA_DEFAULT_YAW)
+	aim_camera.position = focus + orbit
 	aim_camera.look_at(focus)
 	aim_camera.size = zoom
 	camera.global_transform = aim_camera.global_transform
@@ -333,6 +365,7 @@ func _update_camera(dt: float) -> void:
 	camera.size = zoom + zoom_punch * shake_strength
 
 func _update_aim(dt: float, pointer: Vector2 = Vector2.INF) -> void:
+	if camera_rotating: return
 	if test_aim:
 		ground_aim_position = Vector3(aim_position.x, 0, aim_position.z)
 	if not test_aim and not tuning_open:
@@ -432,9 +465,9 @@ func combat_targets() -> Array:
 	if battle: result.append_array(battle.enemies)
 	return result
 
-func _damage_target(target: Node3D, damage: float, direction: Vector3 = Vector3.ZERO, force: float = 0.0) -> void:
+func _damage_target(target: Node3D, damage: float, direction: Vector3 = Vector3.ZERO, force: float = 0.0, source: StringName = &"") -> void:
 	if target.has_meta("enemy"):
-		target.take_damage(damage, direction, force)
+		target.take_damage(damage, direction, force, source)
 		return
 	if not targets.has(target):
 		return
@@ -471,10 +504,33 @@ func add_trauma(amount: float) -> void:
 	trauma = minf(1.0, trauma + amount)
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_EQUAL:
+		set_interface_visible(not interface_visible)
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE:
+		if event.pressed:
+			if not tuning_open and not pointer_over_ui(): _begin_camera_rotation()
+		else:
+			_end_camera_rotation()
+		get_viewport().set_input_as_handled()
+		return
+	if camera_rotating and event is InputEventMouseMotion:
+		var delta: Vector2 = event.screen_relative
+		camera_yaw = wrapf(camera_yaw - delta.x * CAMERA_TURN_SENSITIVITY, -PI, PI)
+		_update_camera(0.0)
+		get_viewport().set_input_as_handled()
+		return
+	if camera_rotating and event is InputEventKey and event.pressed and event.physical_keycode in [KEY_F, KEY_E, KEY_TAB, KEY_R, KEY_ESCAPE]:
+		_end_camera_rotation()
 	if event is InputEventKey and event.physical_keycode == KEY_SPACE and not event.echo and crew.crewed:
 		tank.dash.space(event.pressed)
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
+			KEY_F:
+				if not tuning_open and crew.crewed:
+					hand.set_enabled(not hand.enabled)
+					get_viewport().set_input_as_handled()
 			KEY_E:
 				if not tuning_open: crew.interact_requested = true
 			KEY_Q:
@@ -486,6 +542,8 @@ func _input(event: InputEvent) -> void:
 			KEY_N:
 				if not tuning_open and battle.waves_enabled: battle.wave_requested = true
 			KEY_TAB:
+				if not interface_visible: return
+				hand.cancel_drag()
 				tank.dash.cancel()
 				tank.crossbows.cancel_trigger()
 				get_viewport().set_input_as_handled()
@@ -505,6 +563,15 @@ func _input(event: InputEvent) -> void:
 				else:
 					get_tree().quit()
 			KEY_F12: _capture("user://iron_citadel.png")
+	if hand.enabled and event is InputEventMouseButton and not tank.dash.is_aiming():
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			hand.trigger(event.pressed)
+			get_viewport().set_input_as_handled()
+			return
+		if event.button_index == MOUSE_BUTTON_RIGHT:
+			if event.pressed: hand.place_gently()
+			get_viewport().set_input_as_handled()
+			return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
 		if event.pressed and tank.dash.commit():
 			tank.crossbows.cancel_trigger()
@@ -515,16 +582,63 @@ func _input(event: InputEvent) -> void:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and not tuning_open:
 			zoom = maxf(18.0, zoom - 1.5)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and not tuning_open:
-			zoom = minf(42.0, zoom + 1.5)
-		elif event.button_index == MOUSE_BUTTON_LEFT and not tuning_open and crew.crewed and crew.input_armed and not pointer_over_ui() and not tank.dash.blocks_gun():
+			zoom = minf(72.0, zoom + 1.5)
+		elif event.button_index == MOUSE_BUTTON_LEFT and weapon_mode_active() and not tuning_open and crew.crewed and crew.input_armed and not pointer_over_ui() and not tank.dash.blocks_gun():
 			# A press in the last 0.18 s of reload is remembered.
 			tank.buffered_shot = 0.18
 
+func _register_world_label(node: Node) -> void:
+	if node is Label3D: Geo.mark_ui(node)
+
+func set_interface_visible(value: bool) -> void:
+	interface_visible = value
+	if not value and tuning_open:
+		tuning_open = false
+		hud.panel.hide()
+		if not camera_rotating: Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
+	hud.visible = value
+	camera.cull_mask = (camera.cull_mask | Geo.UI_LAYER) if value else (camera.cull_mask & ~Geo.UI_LAYER)
+	aim_camera.cull_mask = camera.cull_mask
+
+func _begin_camera_rotation() -> void:
+	if camera_rotating: return
+	camera_return_pointer = get_viewport().get_mouse_position()
+	camera_rotating = true
+	tank.buffered_shot = 0.0
+	tank.crossbows.cancel_trigger()
+	crew.input_armed = false
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	hud.reset_reticle()
+
+func _end_camera_rotation(restore_pointer: bool = true) -> void:
+	if not camera_rotating: return
+	camera_rotating = false
+	crew.input_armed = false
+	tank.buffered_shot = 0.0
+	tank.crossbows.cancel_trigger()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if tuning_open else Input.MOUSE_MODE_HIDDEN
+	if restore_pointer:
+		var pointer := camera_return_pointer
+		if hand != null and is_instance_valid(hand.held):
+			pointer = aim_camera.unproject_position(hand.cursor_world)
+			# Discard camera motion from the throw velocity history.
+			hand.velocity_history.clear()
+			hand.cursor_initialized = false
+		var viewport := get_viewport().get_visible_rect()
+		Input.warp_mouse(pointer.clamp(viewport.position, viewport.end - Vector2.ONE))
+	hud.reset_reticle()
+
 func pointer_over_ui() -> bool:
-	return hud != null and hud.pointer_over_ui()
+	return camera_rotating or (hud != null and hud.pointer_over_ui())
+
+func weapon_mode_active() -> bool:
+	return hand == null or not hand.enabled
 
 func reset_range() -> void:
+	_end_camera_rotation()
+	camera_yaw = CAMERA_DEFAULT_YAW
 	_range_generation += 1
+	if hand: hand.reset()
 	if battle: battle.reset()
 	for target in targets:
 		target.collision_layer = 0
@@ -554,6 +668,9 @@ func reset_range() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and is_instance_valid(tank) and tank.dash != null:
+		_end_camera_rotation(false)
+		if hand: hand.cancel_drag()
+		crew.input_armed = false
 		Input.action_release("tank_cruise")
 		tank.cruising = false
 		tank.dash.cancel()
@@ -561,6 +678,9 @@ func _notification(what: int) -> void:
 
 func verification_path(filename: String) -> String:
 	var directory := "res://verification/" if OS.has_feature("editor") else "user://verification/"
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--report-dir="):
+			directory = arg.trim_prefix("--report-dir=").path_join("") + "/"
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(directory))
 	return directory + filename
 

@@ -83,7 +83,7 @@ func strike() -> void:
 		if offset.length() <= 6.5 and arena.strike_clear(origin, target.position):
 			_sparks(target.position + Vector3.UP, arrow_mat, 10)
 			arena.fx.dust(target.position, -offset.normalized() * 15.0)
-			arena._damage_target(target, 28.0 * spears.size(), offset.normalized(), 11.0)
+			arena._damage_target(target, 28.0 * spears.size(), offset.normalized(), 11.0, &"crew")
 	for prop in arena.props.props.duplicate():
 		var offset: Vector3 = prop.position - origin
 		offset.y = 0.0
@@ -149,7 +149,7 @@ func _tick_bolts(dt: float) -> void:
 				var direction: Vector3 = bolt.vel.normalized()
 				if not bolt.hit_ids.has(id) and absf(relative.dot(direction)) < 0.8 and absf(relative.dot(direction.cross(Vector3.UP))) < 2.3 and _clear_to(from, target):
 					bolt.hit_ids.append(id)
-					arena._damage_target(target, bolt.damage, direction, 12.0)
+					arena._damage_target(target, bolt.damage, direction, 12.0, &"crew")
 			remove = not hit.is_empty() and not hit.collider.has_meta("target") and not hit.collider.has_meta("breakable") and not hit.collider.has_meta("enemy")
 			if int(bolt.range * 5.0) % 3 == 0:
 				arena.fx.dust(next, bolt.vel * 0.3)
@@ -158,7 +158,7 @@ func _tick_bolts(dt: float) -> void:
 				arena.props.shatter(hit.collider, bolt.vel.normalized())
 			if bolt.kind == "arrow":
 				if hit.collider.has_meta("target") or hit.collider.has_meta("enemy"):
-					arena._damage_target(hit.collider, bolt.damage, bolt.vel.normalized(), 2.5)
+					arena._damage_target(hit.collider, bolt.damage, bolt.vel.normalized(), 2.5, &"crew")
 				_sparks(hit.position, arrow_mat, 4)
 			else:
 				_fire_burst(hit.position, hit.collider)
@@ -187,7 +187,7 @@ func _fire_burst(pos: Vector3, direct) -> void:
 	arena.sound.play("spell", -8.0, 0.7)
 	for target in arena.combat_targets():
 		if target == direct or (target.position + Vector3.UP * 0.8).distance_to(pos) < 2.6 and _clear_to(pos, target):
-			arena._damage_target(target, 30.0 if target == direct else 10.0, (target.position - pos).normalized(), 4.0)
+			arena._damage_target(target, 30.0 if target == direct else 10.0, (target.position - pos).normalized(), 4.0, &"crew")
 	burns.append({"pos": Vector3(pos.x, 0.08, pos.z), "life": 3.0, "tick": 0.5})
 
 func _tick_burns(dt: float) -> void:
@@ -200,5 +200,5 @@ func _tick_burns(dt: float) -> void:
 			_sparks(burn.pos, ember_mat, 3)
 			for target in arena.combat_targets():
 				if Vector2(target.position.x - burn.pos.x, target.position.z - burn.pos.z).length() < 2.6 and _clear_to(burn.pos + Vector3.UP * 0.5, target):
-					arena._damage_target(target, 4.0)
+					arena._damage_target(target, 4.0, Vector3.ZERO, 0.0, &"crew")
 		if burn.life <= 0.0: burns.remove_at(i)

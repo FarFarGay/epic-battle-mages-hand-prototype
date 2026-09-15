@@ -5,6 +5,10 @@ const Geo = preload("res://scripts/geo.gd")
 enum State { APPROACH, WINDUP, LUNGE, RECOVERY, STAGGER }
 var battle
 var arena
+var giant := false
+var body_size := 1.0
+var body_radius := 0.4
+var body_height := 1.9
 var hp := 30.0
 var max_hp := 30.0
 var move_speed := 2.0
@@ -27,22 +31,41 @@ var bump_cooldown := 0.0
 var attacks := 0
 var hits := 0
 var visual: Node3D
-var torso: Node3D
-var arms: Array[Node3D] = []
-var legs: Array[Node3D] = []
-var bones: Array[MeshInstance3D] = []
-var health: MeshInstance3D
-var warning: MeshInstance3D
-var bone_mat: StandardMaterial3D
+var warning: Node3D
+var animation_speed := 0.0
+var body_lean := 0.1
+var move_direction := Vector3.ZERO
+var separation_force := Vector3.ZERO
+var separation_wait := 0.0
+var walk_clearance := 1.0
+var pending_dt := 0.0
+var render_from := Vector3.ZERO
+var render_stride := 0.0
+var render_time := -1.0
+var render_period := 0.0333333
+var sim_slot := 0
+var crowd_index := 0
+var hand_held := false
+var hand_thrown := false
 
 func _ready() -> void:
-	name = "Skeleton"
+	name = "SkeletonBrute" if giant else "Skeleton"
+	if giant:
+		body_size = 1.8
+		body_radius = 0.72
+		body_height = 3.42
+		hp = 360.0
+		move_speed = 1.55
+		attack_damage = 24.0
+		attack_windup = 0.75
+		close_windup = 0.5
+		attack_cooldown = 1.65
 	collision_layer = 64
-	collision_mask = 71 # world, tower, crew, other skeletons
+	collision_mask = 0 # Queryable by weapons; walking collision uses the crowd grid.
 	floor_snap_length = 0.3
 	set_meta("enemy", true)
 	var rng: RandomNumberGenerator = battle.rng
-	hp *= rng.randf_range(0.8, 1.2)
+	if not giant: hp *= rng.randf_range(0.8, 1.2)
 	max_hp = hp
 	move_speed *= rng.randf_range(0.85, 1.15)
 	attack_damage *= rng.randf_range(0.8, 1.2)
@@ -51,89 +74,37 @@ func _ready() -> void:
 	attack_cooldown *= rng.randf_range(0.85, 1.15)
 	scan_left = rng.randf_range(0.0, 0.4)
 	path_left = rng.randf_range(0.0, 0.5)
+	separation_wait = rng.randf_range(0.0, 0.12)
 	var capsule := CapsuleShape3D.new()
-	capsule.radius = 0.4
-	capsule.height = 1.9
+	capsule.radius = body_radius
+	capsule.height = body_height
 	var shape := CollisionShape3D.new()
 	shape.shape = capsule
-	shape.position.y = 0.95
+	shape.position.y = body_height * 0.5
 	add_child(shape)
 	_build()
-
-func _bone(parent: Node3D, size: Vector3, pos: Vector3) -> MeshInstance3D:
-	var mesh := Geo.box(parent, size, pos, bone_mat)
-	bones.append(mesh)
-	return mesh
+	preload("res://scripts/tower_hand.gd").register_item(self, Vector3(body_radius * 2.0, body_height, body_radius * 2.0), "СКЕЛЕТ-ГРОМИЛА" if giant else "СКЕЛЕТ", Vector3.UP * body_height * 0.5)
 
 func _build() -> void:
-	bone_mat = Geo.material(Color(0.88, 0.85, 0.78))
-	var dark := Geo.material(Color("242729"))
-	var rust := Geo.material(Color("65594d"), 0.55)
-	var eye := Geo.material(Color("ff593e"), 0.0, 1.8)
 	visual = Node3D.new()
 	add_child(visual)
-	torso = Node3D.new()
-	visual.add_child(torso)
-	torso.position.y = 0.95
-	_bone(torso, Vector3(0.13, 0.61, 0.12), Vector3(0, 0.12, 0.09))
-	_bone(torso, Vector3(0.44, 0.13, 0.25), Vector3(0, -0.05, 0))
-	for i in 4:
-		var width := 0.53 - absf(i - 1.5) * 0.055
-		_bone(torso, Vector3(width, 0.065, 0.08), Vector3(0, 0.14 + i * 0.105, -0.15))
-		for side in [-1, 1]:
-			_bone(torso, Vector3(0.065, 0.065, 0.28), Vector3(side * width * 0.5, 0.14 + i * 0.105, -0.02))
-	_bone(torso, Vector3(0.63, 0.09, 0.17), Vector3(0, 0.56, 0))
-	_bone(torso, Vector3(0.12, 0.2, 0.12), Vector3(0, 0.65, 0))
-	_bone(torso, Vector3(0.40, 0.35, 0.33), Vector3(0, 0.85, -0.025))
-	_bone(torso, Vector3(0.28, 0.085, 0.25), Vector3(0, 0.61, -0.07))
-	for side in [-1, 1]:
-		Geo.box(torso, Vector3(0.12, 0.11, 0.03), Vector3(side * 0.105, 0.85, -0.198), dark)
-		Geo.box(torso, Vector3(0.045, 0.036, 0.038), Vector3(side * 0.105, 0.85, -0.216), eye)
-		for tooth in 2:
-			_bone(torso, Vector3(0.046, 0.07, 0.07), Vector3(side * (0.035 + tooth * 0.06), 0.67, -0.16))
-		var arm := Node3D.new()
-		torso.add_child(arm)
-		arm.position = Vector3(side * 0.36, 0.5, 0)
-		_bone(arm, Vector3(0.10, 0.35, 0.11), Vector3(0, -0.15, 0))
-		_bone(arm, Vector3(0.11, 0.31, 0.10), Vector3(0, -0.42, -0.09))
-		_bone(arm, Vector3(0.15, 0.14, 0.14), Vector3(0, -0.58, -0.1))
-		arms.append(arm)
-		var leg := Node3D.new()
-		visual.add_child(leg)
-		leg.position = Vector3(side * 0.19, 0.89, 0)
-		_bone(leg, Vector3(0.13, 0.40, 0.14), Vector3(0, -0.19, 0))
-		_bone(leg, Vector3(0.16, 0.13, 0.16), Vector3(0, -0.42, -0.02))
-		_bone(leg, Vector3(0.1, 0.37, 0.11), Vector3(0, -0.63, 0.025))
-		_bone(leg, Vector3(0.18, 0.10, 0.33), Vector3(0, -0.82, -0.08))
-		legs.append(leg)
-	# A short chipped blade keeps this first enemy's silhouette distinct from crew.
-	Geo.box(arms[1], Vector3(0.07, 0.07, 0.26), Vector3(0, -0.58, -0.20), rust)
-	Geo.box(arms[1], Vector3(0.31, 0.07, 0.07), Vector3(0, -0.58, -0.31), rust)
-	Geo.box(arms[1], Vector3(0.12, 0.055, 0.65), Vector3(0, -0.58, -0.66), rust)
-	warning = Geo.ring(self, 0.72, 0.07, Vector3.UP * 0.06, Geo.material(Color("f0a04c"), 0, 1.0))
-	warning.scale.y = 0.12
+	warning = Node3D.new()
+	add_child(warning)
 	warning.hide()
-	var bar_root := Node3D.new()
-	add_child(bar_root)
-	bar_root.position.y = 2.2
-	var background := Geo.box(bar_root, Vector3(0.75, 0.075, 0.02), Vector3.ZERO, dark)
-	background.material_override.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	health = Geo.box(bar_root, Vector3(0.71, 0.045, 0.025), Vector3(0, 0, -0.018), eye)
-	bar_root.rotation = arena.camera.rotation
-	bar_root.hide()
 
 func tick(dt: float) -> void:
+	var profile_start := Time.get_ticks_usec() if battle.profile_enabled else 0
 	if dead: return
 	bump_cooldown = maxf(0.0, bump_cooldown - dt)
 	hit_flash = maxf(0.0, hit_flash - dt)
-	bone_mat.albedo_color = Color("fff7d6") if hit_flash > 0.0 else Color(0.88, 0.85, 0.78)
-	bone_mat.emission_enabled = hit_flash > 0.0
-	bone_mat.emission = Color("d56b3c")
-	bone_mat.emission_energy_multiplier = 0.6
-	health.get_parent().visible = hp < max_hp
-	health.get_parent().global_rotation = arena.aim_camera.global_rotation
-	health.scale.x = maxf(hp / max_hp, 0.001)
-	health.position.x = -0.355 * (1.0 - hp / max_hp)
+	if hand_held:
+		warning.hide()
+		stride += dt * 9.0
+		animation_speed = 0.0
+		return
+	if hand_thrown:
+		_tick_throw(dt)
+		return
 	scan_left -= dt
 	if not battle.valid_target(target) or scan_left <= 0.0:
 		target = battle.choose_target(self)
@@ -145,7 +116,7 @@ func tick(dt: float) -> void:
 		impulse = impulse.move_toward(Vector3.ZERO, 20.0 * dt)
 		if timer <= 0.0: state = State.APPROACH
 	elif state == State.LUNGE:
-		desired = attack_direction * 8.0
+		desired = attack_direction * (6.0 if giant else 8.0)
 		if timer <= 0.0:
 			state = State.RECOVERY
 			timer = attack_cooldown
@@ -156,7 +127,7 @@ func tick(dt: float) -> void:
 		offset.y = 0.0
 		var direction := offset.normalized()
 		rotation.y = lerp_angle(rotation.y, atan2(-direction.x, -direction.z), 1.0 - exp(-12.0 * dt))
-		var reach: float = 1.32 if target == arena.tank else 0.0
+		var reach: float = (1.32 if target == arena.tank else 0.0) + (0.5 if giant else 0.0)
 		if state == State.WINDUP:
 			desired = direction * 1.5
 			if timer <= 0.0: _strike(direction)
@@ -166,23 +137,87 @@ func tick(dt: float) -> void:
 		else:
 			path_left -= dt
 			if path_left <= 0.0:
-				path = battle.find_path(global_position, target.global_position)
-				path_left = 0.55
-			while not path.is_empty() and Vector2(path[0].x - position.x, path[0].z - position.z).length() < 0.45:
-				path.remove_at(0)
-			if not path.is_empty(): direction = (path[0] - Vector3(position.x, 0, position.z)).normalized()
-			desired = direction * move_speed
-			for other in battle.enemies:
-				if other == self: continue
-				var gap: Vector3 = position - other.position
-				gap.y = 0.0
-				if gap.length_squared() > 0.001 and gap.length_squared() < 1.44:
-					desired += gap.normalized() * (1.2 - gap.length()) * 1.5
+				move_direction = battle.flow_direction(position, target.position)
+				path_left = 0.10
+			desired = move_direction * move_speed
 	else:
 		state = State.APPROACH
-	velocity = Vector3(desired.x, -2.0 if is_on_floor() else velocity.y - 20.0 * dt, desired.z)
-	move_and_slide()
+	var profile_steer := Time.get_ticks_usec() if battle.profile_enabled else 0
+	separation_wait -= dt
+	if separation_wait <= 0.0:
+		separation_wait = 0.10
+		var neighbors: Vector4 = battle.separation(crowd_index, position, move_direction)
+		separation_force = Vector3(neighbors.x, neighbors.y, neighbors.z)
+		walk_clearance = neighbors.w
+	if state == State.APPROACH: desired *= walk_clearance
+	if state != State.STAGGER: desired += separation_force
+	var profile_move := Time.get_ticks_usec() if battle.profile_enabled else 0
+	velocity = Vector3(desired.x, -2.0 if position.y < 0.19 else velocity.y - 20.0 * dt, desired.z)
+	battle.move_ground(self, dt)
+	if battle.profile_enabled:
+		battle.last_profile.logic += profile_steer - profile_start
+		battle.last_profile.separation += profile_move - profile_steer
+		battle.last_profile.move += Time.get_ticks_usec() - profile_move
 	_animate(dt, desired.length())
+
+func can_hand_grab() -> bool:
+	return not dead and not giant
+
+func on_hand_grab() -> void:
+	hand_held = true
+	hand_thrown = false
+	velocity = Vector3.ZERO
+	impulse = Vector3.ZERO
+	state = State.APPROACH
+	timer = 0.0
+	warning.hide()
+	visual.rotation = Vector3.ZERO
+	visual.scale = Vector3.ONE
+	visual.position = Vector3.ZERO
+	body_lean = 0.0
+
+func on_hand_release(motion: Vector3) -> void:
+	hand_held = false
+	if dead:
+		collision_layer = 0
+		collision_mask = 0
+		return
+	hand_thrown = true
+	velocity = motion
+	floor_snap_length = 0.0
+	collision_mask = 71 | 8 | 32
+	warning.hide()
+
+func _tick_throw(dt: float) -> void:
+	velocity.y -= 20.0 * dt
+	var collision := move_and_collide(velocity * dt)
+	visual.rotation.z += dt * velocity.length() * 0.13
+	if not collision: return
+	var normal := collision.get_normal()
+	var speed := velocity.length()
+	var direction := velocity.normalized()
+	var other = collision.get_collider()
+	if speed > 8.0:
+		if is_instance_valid(other):
+			if other.has_meta("enemy"): other.take_damage(minf(55.0, speed * 1.8), direction, 10.0)
+			elif other.has_meta("breakable"): arena.props.shatter(other, direction, 1.5)
+			elif other.has_meta("target"): arena._damage_target(other, minf(55.0, speed * 1.8), direction, 8.0)
+		arena.fx.repeater_hit(global_position + Vector3.UP * 0.7, -direction)
+		arena.sound.play("shatter", -9.0, 0.7)
+		take_damage(clampf((speed - 8.0) * 2.0, 0.0, 60.0), direction, 0.0)
+		if dead: return
+	if normal.dot(Vector3.UP) > 0.45:
+		hand_thrown = false
+		floor_snap_length = 0.3
+		collision_mask = 0
+		visual.rotation = Vector3.ZERO
+		state = State.RECOVERY
+		timer = 0.45
+		velocity = Vector3.ZERO
+		path.clear()
+		path_left = 0.0
+	else:
+		velocity = velocity.bounce(normal) * 0.3
 
 func _strike(direction: Vector3) -> void:
 	state = State.LUNGE
@@ -192,30 +227,25 @@ func _strike(direction: Vector3) -> void:
 	for victim in battle.player_targets():
 		var offset: Vector3 = victim.global_position - global_position
 		offset.y = 0.0
-		var radius := 1.95 + (1.32 if victim == arena.tank else 0.0)
+		var radius := 1.95 + (1.32 if victim == arena.tank else 0.0) + (0.5 if giant else 0.0)
 		if offset.length() <= radius and battle.clear_sight(global_position, victim.global_position, victim):
 			if victim == arena.tank: victim.take_damage(attack_damage)
 			else: victim.take_damage(attack_damage, offset.normalized() * 0.2)
 			hits += 1
 			arena.fx.repeater_hit(victim.global_position + Vector3.UP * 0.8, -direction)
-	var slash := Geo.line(arena.fx, position + Vector3.UP + direction * 0.4, position + Vector3.UP + direction * 1.8, 0.065, arena.fx.hot)
+	var slash := Geo.line(arena.fx, position + Vector3.UP * body_size + direction * 0.4, position + Vector3.UP * body_size + direction * (1.8 + (0.5 if giant else 0.0)), 0.065 * body_size, arena.fx.hot)
 	arena.fx.add_piece(slash, direction * 3.0, 0.12)
-	arena.sound.play("bow", -14.0, 0.65)
+	arena.sound.play("bow", -10.0 if giant else -14.0, 0.42 if giant else 0.65)
 
 func _animate(dt: float, speed: float) -> void:
-	stride += speed * dt * 3.3
+	stride += speed * dt * 3.3 / body_size
+	animation_speed = speed
 	var windup := state == State.WINDUP
-	var striking := state == State.LUNGE
 	warning.visible = windup
-	torso.rotation.x = lerpf(torso.rotation.x, -0.22 if windup else (0.48 if striking else 0.10), 1.0 - exp(-22.0 * dt))
-	visual.scale.y = lerpf(visual.scale.y, 0.84 if windup else 1.0, 1.0 - exp(-20.0 * dt))
-	visual.position.y = absf(sin(stride)) * minf(speed * 0.02, 0.05)
-	for i in 2:
-		legs[i].rotation.x = sin(stride + i * PI) * minf(speed * 0.19, 0.65)
-		arms[i].rotation.x = lerpf(arms[i].rotation.x, -2.0 if windup else (-1.15 if striking else -0.35 + sin(stride + i * PI) * 0.18), 1.0 - exp(-24.0 * dt))
-
-func take_damage(amount: float, direction: Vector3 = Vector3.ZERO, force: float = 0.0) -> void:
+	body_lean = lerpf(body_lean, -0.22 if windup else (0.48 if state == State.LUNGE else 0.10), 1.0 - exp(-22.0 * dt))
+func take_damage(amount: float, direction: Vector3 = Vector3.ZERO, force: float = 0.0, source: StringName = &"") -> void:
 	if dead or amount <= 0.0: return
+	if giant and source == &"crew": amount *= 0.5
 	var before := hp
 	hp = maxf(0.0, hp - amount)
 	hit_flash = 0.11
@@ -227,16 +257,11 @@ func take_damage(amount: float, direction: Vector3 = Vector3.ZERO, force: float 
 		collision_mask = 0
 		hide()
 		var power := 1.0 + clampf((amount - before) / maxf(before, 1.0), 0.0, 3.0) * 0.6
-		for i in range(0, bones.size(), 3):
-			var piece: MeshInstance3D = bones[i].duplicate()
-			arena.fx.add_child(piece)
-			piece.global_transform = bones[i].global_transform
-			var scatter := Vector3(sin(i * 2.4), 1.3, cos(i * 2.4)) * 2.0 * power
-			arena.fx.add_piece(piece, scatter + direction * power * 4.0, 2.0, 18.0, "piece", Vector3(4, 3, 5))
+		battle.crowd.scatter(self, direction, power)
 		battle.killed(self)
 		queue_free()
-	elif force > 0.0:
+	elif force > 0.0 and (not giant or force >= 6.0):
 		state = State.STAGGER
 		timer = 0.25
-		impulse = direction * force
+		impulse = direction * force * (0.4 if giant else 1.0)
 		warning.hide()

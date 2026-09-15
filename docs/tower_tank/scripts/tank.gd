@@ -181,12 +181,15 @@ func tick(dt: float) -> void:
 	arena.sound.engine(clampf(absf(speed) / forward_speed + absf(steering) * 0.15, 0.0, 1.0))
 	_update_reload(dt)
 	crossbows.tick(dt)
-	if (Input.is_action_pressed("tank_fire") or buffered_shot > 0.0) and cooldown <= 0.0 and not arena.tuning_open and arena.crew.crewed and arena.crew.input_armed and not arena.pointer_over_ui() and not dash.blocks_gun():
+	if (Input.is_action_pressed("tank_fire") or buffered_shot > 0.0) and arena.weapon_mode_active() and cooldown <= 0.0 and not arena.tuning_open and arena.crew.crewed and arena.crew.input_armed and not arena.pointer_over_ui() and not dash.blocks_gun():
 		fire()
 
 func _update_gun_aim(dt: float) -> void:
 	# Keep the upper-floor turn lag, but stabilize its roll/pitch after the
 	# walker's suspension update. Footfalls and recoil still move the tower.
+	if not arena.weapon_mode_active():
+		turret.global_rotation = Vector3(0, turret_yaw, 0)
+		return
 	var to_aim := aim_world - turret.global_position
 	var desired_yaw := atan2(-to_aim.x, -to_aim.z)
 	var diff := angle_difference(turret_yaw, desired_yaw)
@@ -197,7 +200,7 @@ func _update_gun_aim(dt: float) -> void:
 	gun_pitch.rotation.x = lerpf(gun_pitch.rotation.x, clampf(pitch, -0.6, 0.15), 1.0 - exp(-dt * 18.0))
 
 func fire() -> void:
-	if dead or cooldown > 0.0 or not arena.crew.crewed or dash.blocks_gun():
+	if dead or cooldown > 0.0 or not arena.crew.crewed or not arena.weapon_mode_active() or dash.blocks_gun():
 		return
 	buffered_shot = 0.0
 	cooldown = reload_time

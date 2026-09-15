@@ -46,15 +46,15 @@ func _draw() -> void:
 	draw_line(Vector2(38, 140), Vector2(w - 38, 140), Color(0.7, 0.72, 0.63, 0.25), 1)
 	var battle = arena.battle
 	var combat_mode: bool = battle.waves_enabled or not battle.enemies.is_empty()
-	text_at(Vector2(w - 266, 38), "ВОЛНА %02d  /  ОБЫЧНЫЕ СКЕЛЕТЫ" % battle.wave if combat_mode else "01   /   ИСПЫТАТЕЛЬНЫЙ ПОЛИГОН", 11, gold)
-	text_at(Vector2(w - 266, 83), "%02d" % (battle.enemies.size() if combat_mode else arena.kills), 38, ink, true)
+	text_at(Vector2(w - 266, 38), "ВОЛНА %02d  /  СКЕЛЕТЫ И ГРОМИЛЫ" % battle.wave if combat_mode else "01   /   ИСПЫТАТЕЛЬНЫЙ ПОЛИГОН", 11, gold)
+	text_at(Vector2(w - 266, 83), "%02d" % (battle.remaining() if combat_mode else arena.kills), 38, ink, true)
 	text_at(Vector2(w - 190, 69), "ОСТАЛОСЬ ВРАГОВ" if combat_mode else "МИШЕНЕЙ РАЗБИТО", 11, muted)
 	text_at(Vector2(w - 190, 90), "%02d  уничтожено" % battle.kills if combat_mode else "%02d  выстрелов" % arena.tank.shot_count, 12, ink)
 	draw_circle(Vector2(w - 260, 116), 3, teal)
 	var wave_hint := "ВОССТАНОВЛЕНИЕ МИШЕНЕЙ: 8 СЕК"
 	if combat_mode:
 		wave_hint = "СБЛИЖЕНИЕ → ЗАМАХ → ВЫПАД"
-		if battle.enemies.is_empty(): wave_hint = "НОВАЯ ВОЛНА: %.0f С  ·  N — СРАЗУ" % maxf(battle.next_wave, 0.0)
+		if battle.remaining() == 0: wave_hint = "НОВАЯ ВОЛНА: %.0f С  ·  N — СРАЗУ" % maxf(battle.next_wave, 0.0)
 		if arena.crew.members.is_empty(): wave_hint = "ОТРЯД ПОГИБ · R — НАЧАТЬ ЗАНОВО"
 	text_at(Vector2(w - 249, 121), wave_hint, 10, muted)
 	# Tank control hints stay visible throughout the test.
@@ -70,14 +70,16 @@ func _draw() -> void:
 	var center := w * 0.5
 	if on_foot:
 		_draw_abilities(center, h)
+	elif arena.hand.enabled and not arena.tank.dash.is_aiming():
+		_draw_hand(center, h)
 	else:
 		_draw_cannon(center, h)
 	var speed: float = arena.crew.motion.length() if on_foot else (arena.tank.velocity.length() if arena.tank.dash.active else absf(arena.tank.speed))
 	text_at(Vector2(w - 316, h - 96), "%04.1f" % (speed * 3.6), 26, ink, true)
 	text_at(Vector2(w - 231, h - 98), "КМ/Ч", 11, muted)
 	text_at(Vector2(w - 316, h - 63), "R  сброс     TAB  настройка фила", 12, ink)
-	text_at(Vector2(w - 316, h - 39), "КОЛЕСО  масштаб     M  звук", 12, muted)
-	text_at(Vector2(w - 316, h - 18), "ESC  выход" + ("     ЗВУК ВЫКЛ." if arena.sound.muted else ""), 10, muted)
+	text_at(Vector2(w - 316, h - 39), "КОЛЕСО  масштаб · зажать — обзор", 12, muted)
+	text_at(Vector2(w - 316, h - 18), "=  интерфейс    ESC  выход    M  звук" + (" ВЫКЛ." if arena.sound.muted else ""), 10, muted)
 	_draw_crew(w, h)
 	_draw_hull()
 	if not on_foot:
@@ -107,7 +109,7 @@ func _draw_cannon(center: float, h: float) -> void:
 		elif progress < 0.43: status = "ВЫБРОС ГИЛЬЗЫ"
 		elif progress < 0.86: status = "ДОСЫЛАНИЕ СНАРЯДА"
 		else: status = "ЗАТВОР ЗАКРЫТ"
-	text_at(Vector2(center - 186, h - 96), "ОСАДНОЕ ОРУДИЕ   /   120 ММ", 11, muted)
+	text_at(Vector2(center - 186, h - 96), "ПРИЦЕЛ · 120 ММ     /     F — РУКА", 11, muted)
 	text_at(Vector2(center - 186, h - 63), status, 18, color, true)
 	text_at(Vector2(center + 129, h - 64), "READY" if ready else "%.1f s" % arena.tank.cooldown, 13, color)
 	for i in 32:
@@ -116,6 +118,15 @@ func _draw_cannon(center: float, h: float) -> void:
 	text_at(Vector2(center - 185, h - 22), "ЛКМ  огонь / удерживать      МЫШЬ  наводка", 12, muted)
 	if arena.ready_pulse > 0.0:
 		draw_rect(Rect2(center - 193, h - 84, 386, 48), Color(teal, arena.ready_pulse * 0.12))
+
+func _draw_hand(center: float, h: float) -> void:
+	var hand = arena.hand
+	text_at(Vector2(center - 186, h - 96), "РУКА     /     F — ВЕРНУТЬ ПРИЦЕЛ", 11, teal)
+	var label := "ВЗАИМОДЕЙСТВИЕ С МИРОМ"
+	if is_instance_valid(hand.held): label = hand.held.get_meta("hand_label", "ГРУЗ В РУКЕ")
+	text_at(Vector2(center - 186, h - 63), label, 18, ink, true)
+	text_at(Vector2(center - 186, h - 39), "ЛКМ держать — нести · отпустить — положить", 12, muted)
+	text_at(Vector2(center - 186, h - 18), "Взмах — бросить · ПКМ — мягко отпустить", 12, muted)
 
 func _draw_abilities(center: float, h: float) -> void:
 	var combat = arena.crew.combat
@@ -161,6 +172,8 @@ func _draw_crew(w: float, h: float) -> void:
 	text_at(Vector2(53, 260), "%d носильщиков · Q — опустить груз" % c.loot.haulers.size() if c.loot.cargo != null else "%d лучн. · %d копья · %d рабоч. · %d мага" % [c.role_count("archer_squad"), c.role_count("pikeman"), c.role_count("worker"), c.role_count("fire_mage")], 10, muted)
 	if not arena.tuning_open:
 		var label: String = c.context_action().text
+		if arena.hand.enabled: label = arena.hand.status_text()
+		if arena.camera_rotating: label = "ОБЗОР · ОТПУСТИ КОЛЕСО, ЧТОБЫ ВЕРНУТЬСЯ"
 		if arena.tank.dash.is_aiming():
 			label = "ПКМ — СУПЕРДЭШ   ·   отпусти SPACE — отмена"
 		var width := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
@@ -169,6 +182,7 @@ func _draw_crew(w: float, h: float) -> void:
 		if c.notice_time > 0.0 and not arena.tank.dash.is_aiming():
 			var message: String = c.notice
 			var length := font.get_string_size(message, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+			draw_rect(Rect2((w - length) * 0.5 - 10, h - 197, length + 20, 22), Color(0.035, 0.065, 0.07, 0.88))
 			text_at(Vector2((w - length) * 0.5, h - 182), message, 12, ink)
 
 func _draw_hull() -> void:
@@ -198,6 +212,9 @@ func _draw_dash() -> void:
 	text_at(Vector2(53, 408), "РАЗДАВЛЕНО ПРЕДМЕТОВ  %02d" % arena.props.broken_count, 10, gold)
 
 func _draw_crossbows(w: float) -> void:
+	if arena.hand.enabled:
+		_draw_cargo(w)
+		return
 	var gun = arena.tank.crossbows
 	var x := w - 352.0
 	var loading: bool = gun.reload_left > 0.0
@@ -218,6 +235,18 @@ func _draw_crossbows(w: float) -> void:
 	if gun.firing_pulse > 0.0 or gun.ready_pulse > 0.0:
 		draw_rect(Rect2(x, 162, 3, 132), Color(color, maxf(gun.firing_pulse, gun.ready_pulse)))
 
+func _draw_cargo(w: float) -> void:
+	var x := w - 352.0
+	var hand = arena.hand
+	draw_rect(Rect2(x, 162, 314, 132), Color(0.035, 0.065, 0.07, 0.86))
+	draw_line(Vector2(x, 162), Vector2(x + 314, 162), teal, 2.0)
+	text_at(Vector2(x + 15, 185), "ГРУЗ НА БАШНЕ · 1 МЕСТО", 12, teal)
+	var cargo: String = hand.mounted.get_meta("hand_label", "ГРУЗ") if is_instance_valid(hand.mounted) else "КРЕПЛЕНИЕ СВОБОДНО"
+	text_at(Vector2(x + 15, 215), cargo, 16, ink, true)
+	text_at(Vector2(x + 15, 242), "Схвати груз на крыше, чтобы снять" if is_instance_valid(hand.mounted) else "Отпусти груз рядом с башней", 12, muted)
+	text_at(Vector2(x + 15, 265), "КУБ → ГНЕЗДО → ОТКРЫТЬ ВОРОТА", 11, gold)
+	text_at(Vector2(x + 15, 284), "ДОСЯГАЕМОСТЬ РУКИ · 18 М", 10, muted)
+
 func _build_crew_button() -> void:
 	crew_button = Button.new()
 	add_child(crew_button)
@@ -231,6 +260,7 @@ func _build_crew_button() -> void:
 		arena.tank.buffered_shot = 0.0)
 
 func pointer_over_ui() -> bool:
+	if not is_visible_in_tree(): return false
 	var cursor := get_viewport().get_mouse_position()
 	return (panel.visible and panel.get_global_rect().has_point(cursor)) or crew_button.get_global_rect().has_point(cursor)
 
@@ -247,11 +277,15 @@ func _key_style() -> StyleBoxFlat:
 	return style
 
 func _draw_crosshair() -> void:
+	if arena.camera_rotating: return
 	if arena.tank.dash.is_aiming():
 		var landing: Vector2 = arena.aim_camera.unproject_position(arena.tank.dash.landing)
 		var color := gold if arena.tank.dash.preview_blocked else teal
 		draw_arc(landing, 11.0, 0, TAU, 32, color, 2.0, true)
 		draw_circle(landing, 2.0, color)
+		return
+	if arena.hand.enabled:
+		_draw_hand_cursor()
 		return
 	var cursor := get_viewport().get_mouse_position()
 	if arena.test_aim:
@@ -278,12 +312,29 @@ func _draw_crosshair() -> void:
 		for dir in [Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]:
 			draw_line(cursor + dir * 18, cursor + dir * 25, Color(gold, arena.hit_pulse), 2, true)
 
+func _draw_hand_cursor() -> void:
+	if arena.pointer_over_ui(): return
+	var hand = arena.hand
+	var cursor: Vector2 = hand.test_pointer if hand.test_pointer.is_finite() else get_viewport().get_mouse_position()
+	var color: Color = gold if is_instance_valid(hand.candidate) or hand.snap_destination != "" else teal
+	if not hand.cursor_valid: color = Color("ed8069")
+	# A glove silhouette, rather than a weapon crosshair. The world palm closes on grab.
+	var points := PackedVector2Array([Vector2(-6, 12), Vector2(-14, 1), Vector2(-13, -3), Vector2(-10, -3), Vector2(-6, 2), Vector2(-6, -12), Vector2(-3, -15), Vector2(0, -12), Vector2(0, -3), Vector2(1, -3), Vector2(1, -17), Vector2(3, -19), Vector2(6, -16), Vector2(6, -3), Vector2(7, -3), Vector2(7, -13), Vector2(9, -15), Vector2(12, -12), Vector2(12, -1), Vector2(13, -1), Vector2(13, -7), Vector2(15, -9), Vector2(18, -6), Vector2(18, 6), Vector2(12, 14)])
+	if is_instance_valid(hand.held):
+		points = PackedVector2Array([Vector2(-7, 13), Vector2(-14, 3), Vector2(-14, -3), Vector2(-10, -5), Vector2(-5, 0), Vector2(-5, -7), Vector2(0, -10), Vector2(5, -8), Vector2(10, -8), Vector2(15, -4), Vector2(16, 6), Vector2(10, 14)])
+	draw_set_transform(cursor)
+	draw_colored_polygon(points, Color(0.035, 0.065, 0.07, 0.94))
+	points.append(points[0])
+	draw_polyline(points, color, 2.0, true)
+	draw_set_transform(Vector2.ZERO)
+	if hand.snap_destination != "": draw_arc(cursor, 27, 0, TAU, 40, gold, 2.0, true)
+
 func reset_reticle() -> void:
 	reticle_initialized = false
 	reticle_alpha = 0.0
 
 func update_reticle(dt: float) -> void:
-	if not arena.crew.crewed:
+	if not arena.crew.crewed or arena.hand.enabled or arena.camera_rotating:
 		reticle_alpha = 0.0
 		return
 	# Damping affects only the HUD. Hits still use the current muzzle ray.
@@ -329,7 +380,7 @@ func _build_tuning() -> void:
 	_slider(box, "Скорость башни", 3.0, 10.0, arena.tank.forward_speed, func(v: float): arena.tank.forward_speed = v, " м/с")
 	_slider(box, "Отзывчивость хода", 0.6, 1.6, arena.tank.drive_response, func(v: float): arena.tank.drive_response = v, "×")
 	var note := Label.new()
-	note.text = "Изменения действуют сразу.\nTAB — вернуться к стрельбе."
+	note.text = "Изменения действуют сразу.\nTAB — вернуться в игру."
 	note.add_theme_font_size_override("font_size", 13)
 	note.modulate = muted
 	box.add_child(note)

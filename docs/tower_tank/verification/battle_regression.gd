@@ -14,6 +14,11 @@ func _ready() -> void:
 func _frames(count: int) -> void:
 	for i in count: await get_tree().physics_frame
 
+func _wave_ready() -> void:
+	for i in 180:
+		if battle.spawning_left == 0: return
+		await _frames(1)
+
 func _key(code: Key, pressed: bool) -> void:
 	var event := InputEventKey.new()
 	event.physical_keycode = code
@@ -77,8 +82,10 @@ func _run() -> void:
 	battle.waves_enabled = true
 	battle.next_wave = 0.0
 	await _frames(5)
-	checks.first_wave_has_12_skeletons = battle.wave == 1 and battle.enemies.size() == 12
-	checks.original_stat_ranges = battle.enemies.all(func(e): return e.hp >= 24.0 and e.hp <= 36.0 and e.move_speed >= 1.7 and e.move_speed <= 2.3 and e.attack_damage >= 6.4 and e.attack_damage <= 9.6 and e.attack_windup >= 0.32 and e.attack_windup <= 0.48)
+	await _wave_ready()
+	checks.first_wave_has_600_skeletons = battle.wave == 1 and battle.enemies.size() == 600
+	checks.wave_has_24_giants = battle.enemies.filter(func(e): return e.giant).size() == 24
+	checks.original_stat_ranges = battle.enemies.filter(func(e): return not e.giant).all(func(e): return e.hp >= 24.0 and e.hp <= 36.0 and e.move_speed >= 1.7 and e.move_speed <= 2.3 and e.attack_damage >= 6.4 and e.attack_damage <= 9.6 and e.attack_windup >= 0.32 and e.attack_windup <= 0.48)
 	checks.spawns_safe = battle.enemies.all(func(e): return e.position.distance_to(arena.tank.position) > 9.0 and absf(e.position.x) < 28.0 and absf(e.position.z) < 28.0)
 	var approacher = battle.enemies[0]
 	var distance_before: float = approacher.position.distance_to(arena.tank.position)
@@ -89,14 +96,17 @@ func _run() -> void:
 	_key(KEY_N, true)
 	_key(KEY_N, false)
 	await _frames(3)
-	checks.n_cannot_stack_waves = battle.wave == 1 and battle.enemies.size() == 12
-	for enemy in battle.enemies.duplicate(): enemy.take_damage(100.0, Vector3.FORWARD)
+	checks.n_cannot_stack_waves = battle.wave == 1 and battle.enemies.size() == 600
+	for enemy in battle.enemies.duplicate(): enemy.take_damage(1000.0, Vector3.FORWARD)
 	await _frames(3)
-	checks.wave_clear_counts_and_coins = battle.kills == 12 and battle.enemies.is_empty() and battle.next_wave > 7.0 and crew.loot.loose_coins.size() >= 12
+	var dropped_gold := 0
+	for coin in crew.loot.loose_coins: dropped_gold += int(coin.get_meta("coin_value", 1))
+	checks.wave_clear_counts_and_coins = battle.kills == 600 and battle.enemies.is_empty() and battle.next_wave > 7.0 and dropped_gold >= 696 and crew.loot.loose_coins.size() <= 64
 	_key(KEY_N, true)
 	_key(KEY_N, false)
 	await _frames(3)
-	checks.n_starts_next_wave = battle.wave == 2 and battle.enemies.size() == 16
+	await _wave_ready()
+	checks.n_starts_next_wave = battle.wave == 2 and battle.enemies.size() == 600
 
 	await _fresh()
 	var melee = battle.spawn_enemy(Vector3(0, 0, 2.4))
@@ -278,12 +288,16 @@ func _run() -> void:
 	_key(KEY_R, false)
 	await _frames(5)
 	checks.reset_restores_battle_and_crew = arena.tank.hp == 1000.0 and not arena.tank.dead and crew.members.size() == 9 and crew.crewed and battle.enemies.is_empty() and battle.kills == 0 and battle.wave == 0
+	await _check_giants()
+	await _fresh()
 	# Empty-field timer starts another wave without pressing N.
 	battle.waves_enabled = true
 	battle.wave = 2
 	battle.next_wave = 0.04
 	await _frames(6)
-	checks.automatic_next_wave = battle.wave == 3 and battle.enemies.size() == 20
+	await _wave_ready()
+	checks.automatic_next_wave = battle.wave == 3 and battle.enemies.size() == 600
+	checks.full_range_spawns_safe = battle.enemies.all(func(e): return e.position.distance_to(arena.tank.position) > 8.5 and e.position.y > -0.2)
 	# Sustained battle on the real prop/target-filled range, not the empty fixtures.
 	var physics_ms := 0.0
 	for i in 1000:
@@ -301,3 +315,92 @@ func _run() -> void:
 	file.close()
 	print("BATTLE_CHECK: ", JSON.stringify(report))
 	get_tree().quit(0 if passed else 1)
+
+func _giant(pos: Vector3) -> CharacterBody3D:
+	var enemy: CharacterBody3D = battle.spawn_enemy(pos, true)
+	enemy.move_speed = 0.0
+	enemy.state = enemy.State.RECOVERY
+	enemy.timer = 99.0
+	return enemy
+
+func _check_giants() -> void:
+	await _fresh()
+	var brute = _giant(Vector3(0, 0, -8))
+	await _frames(3)
+	checks.giant_size_and_health = brute.hp == 360.0 and brute.body_size == 1.8 and brute.get_child(0).shape.radius > 0.7
+	checks.giant_rejects_hand = not brute.can_hand_grab() and not arena.hand._available(brute)
+	# A projectile aimed at the enlarged upper body must hit its real capsule.
+	for shot in 3:
+		arena.shoot(brute.position + Vector3(0, 3.0, 4), Vector3.FORWARD)
+		await _frames(25)
+	checks.giant_survives_three_cannon_hits = is_instance_valid(brute) and is_equal_approx(brute.hp, 30.0)
+	if is_instance_valid(brute):
+		arena.shoot(brute.position + Vector3(0, 3.0, 4), Vector3.FORWARD)
+		await _frames(25)
+	checks.giant_fourth_cannon_hit_kills = not is_instance_valid(brute) and battle.kills == 1
+	await _fresh()
+	brute = _giant(Vector3(0, 0, -7))
+	await _frames(3)
+	brute.state = brute.State.WINDUP
+	brute.timer = 0.6
+	arena.tank.crossbows._hit({"collider": brute, "position": brute.position + Vector3.UP, "normal": Vector3.BACK}, Vector3.FORWARD)
+	checks.giant_crossbow_full_damage_no_stunlock = is_equal_approx(brute.hp, 360.0 - arena.tank.crossbows.DAMAGE) and brute.state == brute.State.WINDUP
+	brute.take_damage(1.0, Vector3.FORWARD, 12.0)
+	checks.giant_heavy_hit_interrupts = brute.state == brute.State.STAGGER and is_equal_approx(brute.impulse.length(), 4.8)
+	await _fresh(true)
+	var center: Vector3 = crew.center()
+	brute = _giant(center + Vector3.FORWARD * 4)
+	_stationary(center + Vector3.BACK * 4)
+	await _frames(3)
+	crew.combat.strike()
+	checks.giant_survives_real_spear_strike = brute.hp == 332.0 and battle.enemies.size() == 1
+	# Exercise every crew damage path, including the lingering fire tick.
+	brute.state = brute.State.RECOVERY
+	brute.timer = 99.0
+	brute.impulse = Vector3.ZERO
+	brute.position = center + Vector3.FORWARD * 7
+	arena.aim_position = brute.position + Vector3.UP
+	for mage in crew.combat._available("fire_mage"): mage.hauling = true
+	crew.combat.special()
+	await _frames(40)
+	checks.giant_worker_wave_half_damage = is_equal_approx(brute.hp, 287.0)
+	var before: float = brute.hp
+	crew.combat._fire_burst(brute.position + Vector3.UP, brute)
+	checks.giant_fire_burst_half_damage = is_equal_approx(before - brute.hp, 15.0)
+	crew.combat.burns.clear()
+	before = brute.hp
+	crew.combat.burns.append({"pos": brute.position, "life": 3.0, "tick": 0.0})
+	crew.combat._tick_burns(0.01)
+	checks.giant_fire_tick_half_damage = is_equal_approx(before - brute.hp, 2.0)
+	crew.combat.burns.clear()
+	before = brute.hp
+	arena.aim_position = brute.position + Vector3.UP
+	crew.combat._shoot(crew.combat._available("archer_squad")[0], "arrow")
+	await _frames(30)
+	checks.giant_arrow_half_damage = is_equal_approx(before - brute.hp, 5.0)
+	checks.giant_survives_crew_combo = is_instance_valid(brute) and brute.hp > 250.0
+	await _fresh()
+	brute = battle.spawn_enemy(Vector3(0, 0, 2.8), true)
+	await _frames(8)
+	checks.giant_readable_windup = brute.state == brute.State.WINDUP and arena.tank.hp == 1000.0 and brute.warning.visible
+	await _frames(55)
+	checks.giant_melee_stronger = brute.attacks == 1 and arena.tank.hp <= 980.8 and arena.tank.hp >= 971.2
+	await _fresh()
+	var wall := StaticBody3D.new()
+	arena.add_child(wall)
+	wall.position = Vector3(0, 0, -1)
+	Geo.collider(wall, Vector3(6, 3, 0.5), Vector3.UP * 1.5)
+	brute = battle.spawn_enemy(Vector3(0, 0, -5), true)
+	await _frames(3)
+	battle.nav_dirty = true
+	var max_side := 0.0
+	for i in 720:
+		await _frames(1)
+		max_side = maxf(max_side, absf(brute.position.x))
+	checks.giant_routes_around_wall = max_side > 3.5 and brute.position.z > 0.0
+	wall.queue_free()
+	await _fresh()
+	brute = _giant(Vector3(1.5, 0, -4))
+	_stationary(Vector3(-1.0, 0, -4))
+	await _frames(5)
+	await arena._capture(arena.verification_path("battle_07_giant.png"))

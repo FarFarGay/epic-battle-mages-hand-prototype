@@ -50,7 +50,7 @@ func _fresh(pos: Vector3 = Vector3(12, 0.05, 12)) -> void:
 	arena.focus = pos
 	await _frames(3)
 
-func _target(pos: Vector3, barrel: bool = false) -> StaticBody3D:
+func _target(pos: Vector3, barrel: bool = false) -> PhysicsBody3D:
 	arena._spawn_target({"pos": Vector3(pos.x, 0, pos.z), "barrel": barrel, "id": 80 + arena.targets.size()})
 	return arena.targets.back()
 

@@ -1,6 +1,7 @@
 extends Node3D
 ## Port of dungeon_sandbox's E cargo, sticky haulers and physical coin magnet.
 const Geo = preload("res://scripts/geo.gd")
+const HandObject = preload("res://scripts/hand_object.gd")
 var crew
 var arena
 var coins := 0
@@ -46,7 +47,8 @@ func _marker(parent: Node3D, text: String, height: float) -> Label3D:
 	return label
 
 func spawn_cargo(pos: Vector3, need: int) -> RigidBody3D:
-	var body := RigidBody3D.new()
+	var body := HandObject.new()
+	body.arena = arena
 	body.name = "Cargo_%d" % items.size()
 	body.collision_layer = 8
 	body.collision_mask = 9
@@ -62,15 +64,21 @@ func spawn_cargo(pos: Vector3, need: int) -> RigidBody3D:
 		Geo.box(body, Vector3(0.10, side + 0.025, side + 0.025), Vector3(x * side * 0.3, 0, 0), iron)
 	Geo.box(body, Vector3(0.32, 0.26, 0.035), Vector3(0, 0, -side * 0.51), gold)
 	body.set_meta("need", need)
+	preload("res://scripts/tower_hand.gd").register_item(body, Vector3.ONE * side, "ГРУЗ · %d ГНОМ." % need)
 	_marker(body, "[E]  ГРУЗ · %d гном." % need, side * 0.5 + 0.42)
 	items.append(body)
 	return body
 
 func _spawn_chest(pos: Vector3) -> void:
-	var root := StaticBody3D.new()
+	var root := HandObject.new()
+	root.arena = arena
+	root.freeze = true
+	root.mass = 5.0
 	add_child(root)
 	root.position = pos
 	root.collision_layer = 8
+	root.collision_mask = 9 | 32
+	root.set_meta("chest", true)
 	Geo.collider(root, Vector3(1.15, 0.65, 0.80), Vector3.UP * 0.325)
 	Geo.box(root, Vector3(1.15, 0.60, 0.80), Vector3.UP * 0.33, wood)
 	for x in [-0.43, 0.43]:
@@ -82,12 +90,13 @@ func _spawn_chest(pos: Vector3) -> void:
 	Geo.box(root, Vector3(0.2, 0.25, 0.08), Vector3(0, 0.60, -0.45), gold)
 	_marker(root, "[E]  СУНДУК", 1.40)
 	chests.append({"node": root, "lid": lid, "opened": false})
+	preload("res://scripts/tower_hand.gd").register_item(root, Vector3(1.2, 0.8, 0.88), "СУНДУК", Vector3.UP * 0.4)
 
 func nearest_interaction(pos: Vector3) -> Dictionary:
 	var best := {}
 	var distance := 4.0
 	for item in items:
-		if item == cargo: continue
+		if item == cargo or item.has_meta("hand_owner"): continue
 		var d := Vector2(pos.x - item.position.x, pos.z - item.position.z).length()
 		if d < distance and _los(pos + Vector3.UP * 0.8, item.position):
 			distance = d
@@ -106,6 +115,7 @@ func _los(from: Vector3, to: Vector3) -> bool:
 
 func pickup_cargo(item: RigidBody3D) -> bool:
 	if crew.crewed or crew.members.is_empty() or cargo != null or not items.has(item): return false
+	if item.has_meta("hand_owner"): return false
 	var c: Vector3 = crew.center()
 	if Vector2(c.x - item.position.x, c.z - item.position.z).length() > 4.0 or not _los(c + Vector3.UP * 0.8, item.position): return false
 	var need: int = item.get_meta("need")
@@ -158,10 +168,13 @@ func store_cargo() -> void:
 	cargo = null
 	arena.sound.play("pickup", -4.0, 0.85)
 
-func open_chest(chest: Dictionary) -> bool:
-	if crew.crewed or crew.members.is_empty() or chest.opened: return false
+func open_chest(chest: Dictionary, by_hand: bool = false) -> bool:
+	if crew.members.is_empty() or chest.opened: return false
 	var pos: Vector3 = chest.node.position
-	if crew.center().distance_to(pos) > 3.1 or not _los(crew.center() + Vector3.UP * 0.8, pos + Vector3.UP * 0.5): return false
+	if by_hand:
+		if arena.hand == null or not arena.hand._can_use() or not arena.hand.can_reach(chest.node): return false
+	elif crew.crewed or crew.center().distance_to(pos) > 3.1 or not _los(crew.center() + Vector3.UP * 0.8, pos + Vector3.UP * 0.5):
+		return false
 	chest.opened = true
 	chest.node.get_node("Marker").hide()
 	var tween := create_tween()
@@ -175,9 +188,22 @@ func open_chest(chest: Dictionary) -> bool:
 	return true
 
 func spawn_coin(pos: Vector3, impulse: Vector3) -> void:
-	if loose_coins.size() >= 180: return
+	var nearest: RigidBody3D
+	var distance := INF
+	for pile in loose_coins:
+		if pile.has_meta("hand_owner"): continue
+		var squared := pile.position.distance_squared_to(pos)
+		if squared < distance:
+			distance = squared
+			nearest = pile
+	if nearest != null and (distance < 1.44 or loose_coins.size() >= 64):
+		var value := int(nearest.get_meta("coin_value", 1)) + 1
+		nearest.set_meta("coin_value", value)
+		nearest.set_meta("hand_label", "МОНЕТЫ ×%d" % value)
+		return
 	var coin := RigidBody3D.new()
-	coin.collision_layer = 0
+	coin.set_meta("coin_value", 1)
+	coin.collision_layer = 16
 	coin.collision_mask = 1
 	coin.mass = 0.15
 	coin.linear_damp = 1.0
@@ -197,13 +223,14 @@ func spawn_coin(pos: Vector3, impulse: Vector3) -> void:
 	coin.linear_velocity = impulse
 	coin.angular_velocity = Vector3(3, 5, 2)
 	loose_coins.append(coin)
+	preload("res://scripts/tower_hand.gd").register_item(coin, Vector3(0.34, 0.24, 0.34), "МОНЕТА")
 
 func tick(dt: float) -> void:
 	coin_sound_cd = maxf(0.0, coin_sound_cd - dt)
 	var player: Vector3 = crew.center()
 	var alive: bool = not crew.members.is_empty()
 	for item in items:
-		item.get_node("Marker").visible = alive and not crew.crewed and item != cargo and item.position.distance_to(player) < 8.0
+		item.get_node("Marker").visible = alive and not crew.crewed and item != cargo and not item.has_meta("hand_owner") and item.position.distance_to(player) < 8.0
 	for chest in chests:
 		chest.node.get_node("Marker").visible = alive and not crew.crewed and not chest.opened and chest.node.position.distance_to(player) < 8.0
 	if cargo != null and not haulers.is_empty():
@@ -216,6 +243,7 @@ func tick(dt: float) -> void:
 	target.y = 0.8
 	for i in range(loose_coins.size() - 1, -1, -1):
 		var coin := loose_coins[i]
+		if coin.has_meta("hand_owner"): continue
 		if not alive:
 			coin.gravity_scale = 1.0
 			continue
@@ -225,7 +253,7 @@ func tick(dt: float) -> void:
 			coin.gravity_scale = 1.0
 			continue
 		if offset.length() < 0.65:
-			coins += 1
+			coins += int(coin.get_meta("coin_value", 1))
 			loose_coins.remove_at(i)
 			coin.queue_free()
 			if coin_sound_cd <= 0.0:

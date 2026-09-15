@@ -41,6 +41,8 @@ func _ready() -> void:
 	marker = Geo.ring(arena, 1.4, 0.07, Vector3.ZERO, mat)
 	marker.scale.y = 0.1
 	range_line = Geo.box(arena, Vector3(0.075, 0.035, 1.0), Vector3.ZERO, mat)
+	Geo.mark_ui(marker)
+	Geo.mark_ui(range_line)
 	_hide_preview()
 
 func is_aiming() -> bool:

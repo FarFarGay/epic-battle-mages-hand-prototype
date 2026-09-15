@@ -93,7 +93,7 @@ func _run() -> void:
 	results.dash_follows_screen_input = metrics.down_travel > 5.0
 	# Continuous walking and individual footfall contacts both break scenery.
 	await _reset()
-	var prop: StaticBody3D = arena.props.spawn_prop(Vector3(-1.03, 0, 2.6))
+	var prop: RigidBody3D = arena.props.spawn_prop(Vector3(-1.03, 0, 2.6))
 	Input.action_press("tank_forward")
 	await _real(0.85)
 	Input.action_release("tank_forward")
@@ -155,7 +155,7 @@ func _run() -> void:
 	# A durable target may only take one ram hit from the same dash.
 	await _reset()
 	arena._spawn_target({"pos": Vector3(0, 0, 1), "barrel": false, "id": 99})
-	var durable: StaticBody3D = arena.targets.back()
+	var durable: PhysicsBody3D = arena.targets.back()
 	durable.set_meta("hp", 250.0)
 	await _frames(2)
 	_key(KEY_SPACE, true)

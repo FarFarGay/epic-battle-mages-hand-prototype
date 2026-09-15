@@ -54,6 +54,7 @@ func _ready() -> void:
 	board_marker.modulate = Color("71d9c8")
 	board_ring = Geo.ring(arena, 2.75, 0.045, Vector3.ZERO, Geo.material(Color("71d9c8"), 0, 0.5))
 	board_ring.scale.y = 0.1
+	Geo.mark_ui(board_ring)
 	reset()
 
 func center() -> Vector3:
@@ -258,6 +259,7 @@ func disembark() -> bool:
 		tell("Для высадки тесно — отведи башню от стены")
 		return false
 	crewed = false
+	if arena.hand: arena.hand.set_enabled(false)
 	if arena.battle: arena.battle.nav_dirty = true
 	arena.tank.dash.cancel()
 	arena.tank.crossbows.cancel_trigger()

@@ -2,8 +2,9 @@ extends Node3D
 ## Standalone equivalent of main-project pot.gd: tower contact, shards, coins.
 ## Swept contact also catches small props between frames during a super dash.
 const Geo = preload("res://scripts/geo.gd")
+const HandObject = preload("res://scripts/hand_object.gd")
 var arena
-var props: Array[StaticBody3D] = []
+var props: Array[RigidBody3D] = []
 var broken_count := 0
 var clay := Geo.material(Color("ba7954"))
 var wood := Geo.material(Color("8e7150"))
@@ -25,13 +26,16 @@ func reset() -> void:
 			var offset := Vector3(float(j % 2) * 1.15 - 0.57, 0, float(j / 2) * 1.0 - 1.0)
 			spawn_prop(centers[i] + offset, (i + j) % 3)
 
-func spawn_prop(pos: Vector3, kind: int = 0) -> StaticBody3D:
-	var prop := StaticBody3D.new()
+func spawn_prop(pos: Vector3, kind: int = 0) -> RigidBody3D:
+	var prop := HandObject.new()
+	prop.arena = arena
+	prop.freeze = true
+	prop.mass = 2.0 if kind == 0 else 3.0
 	add_child(prop)
 	prop.name = "FragileScenery"
 	prop.position = pos
 	prop.collision_layer = 32
-	prop.collision_mask = 0
+	prop.collision_mask = 9 | 32
 	prop.set_meta("breakable", true)
 	prop.set_meta("kind", kind)
 	prop.set_meta("broken", false)
@@ -52,15 +56,17 @@ func spawn_prop(pos: Vector3, kind: int = 0) -> StaticBody3D:
 			for y in [0.16, 0.72]:
 				Geo.cylinder(prop, 0.36, 0.09, Vector3.UP * y, band, 10)
 	props.append(prop)
+	preload("res://scripts/tower_hand.gd").register_item(prop, Vector3(0.68, 0.9, 0.68), ["ГОРШОК", "ЯЩИК", "БОЧКА"][kind], Vector3.UP * 0.45)
 	return prop
 
 func tick(dt: float) -> void:
 	crack_sound_cd = maxf(0.0, crack_sound_cd - dt)
 
-func crush_segment(from: Vector3, to: Vector3, radius: float, force: float = 1.0) -> void:
+func crush_segment(from: Vector3, to: Vector3, radius: float, force: float = 1.0, include_carried: bool = false) -> void:
 	var start := Vector3(from.x, 0, from.z)
 	var end := Vector3(to.x, 0, to.z)
 	for prop in props.duplicate():
+		if prop.has_meta("hand_owner") and not include_carried: continue
 		var closest := Geometry3D.get_closest_point_to_segment(prop.position, start, end)
 		if prop.position.distance_to(closest) > radius + 0.34:
 			continue
@@ -72,9 +78,9 @@ func stomp(pos: Vector3, power: float = 1.0) -> void:
 	crush_segment(pos, pos, 0.80, power)
 
 func blast(pos: Vector3, radius: float) -> void:
-	crush_segment(pos, pos, radius, 1.4)
+	crush_segment(pos, pos, radius, 1.4, true)
 
-func shatter(prop: StaticBody3D, direction: Vector3 = Vector3.ZERO, power: float = 1.0) -> void:
+func shatter(prop: RigidBody3D, direction: Vector3 = Vector3.ZERO, power: float = 1.0) -> void:
 	if not is_instance_valid(prop) or not props.has(prop) or prop.get_meta("broken", false):
 		return
 	prop.set_meta("broken", true)
