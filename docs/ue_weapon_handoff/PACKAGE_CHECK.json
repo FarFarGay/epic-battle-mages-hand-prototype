@@ -1,0 +1,130 @@
+{
+  "passed": true,
+  "scope": "Artifact integrity; not a fresh gameplay run or a UE acceptance result",
+  "source_value_checks": {
+    "crossbow_CAPACITY": true,
+    "crossbow_FIRE_RATE": true,
+    "crossbow_RELOAD_TIME": true,
+    "crossbow_BOLT_SPEED": true,
+    "crossbow_BOLT_RANGE": true,
+    "crossbow_DAMAGE": true,
+    "cannon_aim_lag": true,
+    "cannon_turret_speed": true,
+    "cannon_reload_time": true,
+    "cannon_recoil_force": true,
+    "tank: recoil * 110.0 - recoil_velocity * 17.0": true,
+    "tank: rock * 85.0 - rock_velocity * 10.0": true,
+    "arena: direction * 57.0": true,
+    "arena: \"life\": 2.1": true,
+    "arena: trauma - dt * 1.9": true,
+    "arena: aim_camera.size = zoom": true,
+    "arena: camera.size = zoom + zoom_punch * shake_strength": true,
+    "side_crossbows: arena.trauma = maxf(arena.trauma, 0.13)": true,
+    "side_crossbows: query.hit_from_inside = true": true
+  },
+  "source_copy_count": 17,
+  "markdown_relative_links_checked": 57,
+  "broken_markdown_relative_links": [],
+  "csv_values_finite": true,
+  "audio_checks": {
+    "fire": {
+      "sample_rate_hz": 22050,
+      "channels": 1,
+      "bits": 16,
+      "duration_s": 1.5
+    },
+    "impact": {
+      "sample_rate_hz": 22050,
+      "channels": 1,
+      "bits": 16,
+      "duration_s": 1.1499773242630384
+    },
+    "eject": {
+      "sample_rate_hz": 22050,
+      "channels": 1,
+      "bits": 16,
+      "duration_s": 0.5
+    },
+    "chamber": {
+      "sample_rate_hz": 22050,
+      "channels": 1,
+      "bits": 16,
+      "duration_s": 0.58
+    },
+    "lock": {
+      "sample_rate_hz": 22050,
+      "channels": 1,
+      "bits": 16,
+      "duration_s": 0.34997732426303857
+    },
+    "ready": {
+      "sample_rate_hz": 22050,
+      "channels": 1,
+      "bits": 16,
+      "duration_s": 0.4
+    },
+    "repeater": {
+      "sample_rate_hz": 22050,
+      "channels": 1,
+      "bits": 16,
+      "duration_s": 0.1
+    },
+    "bolt_hit": {
+      "sample_rate_hz": 22050,
+      "channels": 1,
+      "bits": 16,
+      "duration_s": 0.12
+    },
+    "repeater_reload": {
+      "sample_rate_hz": 22050,
+      "channels": 1,
+      "bits": 16,
+      "duration_s": 0.9
+    },
+    "step": {
+      "sample_rate_hz": 22050,
+      "channels": 1,
+      "bits": 16,
+      "duration_s": 0.42
+    }
+  },
+  "historical_godot_reports": {
+    "aim_result.json": {
+      "copied_verbatim": true,
+      "checks_count": 9,
+      "all_checks_true": true,
+      "source_modified_utc": "2026-09-15T07:59:53.522793+00:00",
+      "rerun_for_document_task": false
+    },
+    "crossbow_check.json": {
+      "copied_verbatim": true,
+      "checks_count": 33,
+      "all_checks_true": true,
+      "source_modified_utc": "2026-09-15T08:47:44.840937+00:00",
+      "rerun_for_document_task": false
+    },
+    "battle_check.json": {
+      "copied_verbatim": true,
+      "checks_count": 42,
+      "all_checks_true": true,
+      "source_modified_utc": "2026-09-15T08:54:58.271859+00:00",
+      "rerun_for_document_task": false
+    },
+    "crew_damage_check.json": {
+      "copied_verbatim": true,
+      "checks_count": 35,
+      "all_checks_true": true,
+      "source_modified_utc": "2026-09-15T08:46:00.465675+00:00",
+      "rerun_for_document_task": false
+    }
+  },
+  "playable_sha256": "ce41ac023e580cd3b8f2e676702aa7ec98134c254ea3e8b58602fe6f7ccb820b",
+  "derived_curve_metrics": {
+    "cannon_barrel_peak_m": 0.6225959494460656,
+    "cannon_barrel_peak_simulation_s": 0.08333333333333333,
+    "cannon_first_visible_pose_m": 0.39469444444444446,
+    "rock_peak_deg": 2.0914767838370714,
+    "compression_min_m": -0.04984161893053187,
+    "root_discrete_unobstructed_travel_m": 0.2644444444444444
+  }
+}

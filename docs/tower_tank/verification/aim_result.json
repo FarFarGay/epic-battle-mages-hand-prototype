@@ -1,0 +1,11 @@
+{
+	"camera_impact_preserved": true,
+	"marker_ignores_camera_shake": true,
+	"marker_jump_is_bounded": true,
+	"marker_settles_on_actual_hit": true,
+	"mouse_aim_settles_exactly": true,
+	"recoil_does_not_move_mouse_aim": true,
+	"target_height_does_not_shift_camera_lead": true,
+	"target_to_ground_transition_is_smooth": true,
+	"upper_floor_stabilized_against_steps": true
+}

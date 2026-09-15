@@ -1,0 +1,385 @@
+{
+  "package": "Epic Battle Mages UE weapon handoff",
+  "revision": 1,
+  "reference_version": "0.7.0",
+  "created_utc": "2026-09-15T09:25:09.311862+00:00",
+  "source_project": "docs/tower_tank",
+  "source_code_modified_by_document_task": false,
+  "playable_origin": "docs/builds/IronCitadel-Windows-x64/IronCitadel.exe",
+  "playable_sha256": "ce41ac023e580cd3b8f2e676702aa7ec98134c254ea3e8b58602fe6f7ccb820b",
+  "source_snapshot": [
+    {
+      "source_relative_to_project": "scripts/arena.gd",
+      "package_path": "reference/source/arena.gd",
+      "sha256": "4c973685bd89ee0eacba920e159a9de714e8c45fb95acfb2e4aa17fe059cb176"
+    },
+    {
+      "source_relative_to_project": "scripts/battle.gd",
+      "package_path": "reference/source/battle.gd",
+      "sha256": "8ce56bd37aa19aa4409fd14dca253a0c7cf073d8cc0133af47be7c062e547d1c"
+    },
+    {
+      "source_relative_to_project": "scripts/breakables.gd",
+      "package_path": "reference/source/breakables.gd",
+      "sha256": "7ef2eecbee933bbb7a22ddea22a6c0f7b2db8114a9f06ef1db8b14533df5b0ef"
+    },
+    {
+      "source_relative_to_project": "scripts/crew.gd",
+      "package_path": "reference/source/crew.gd",
+      "sha256": "0576ac234719bb36bb10288ba2113cb4f373271ed867077b459d5d94a1e74415"
+    },
+    {
+      "source_relative_to_project": "scripts/crew_combat.gd",
+      "package_path": "reference/source/crew_combat.gd",
+      "sha256": "5c2e0f9eb63dfc6e299a6e9884ef1587860bb5632d0c632a1f13e4d7851ba228"
+    },
+    {
+      "source_relative_to_project": "scripts/crew_gnome.gd",
+      "package_path": "reference/source/crew_gnome.gd",
+      "sha256": "517bb5744836ed7d5344ef966f8839f2da5b980660d73d32c7f19aa366673e8c"
+    },
+    {
+      "source_relative_to_project": "scripts/crew_loot.gd",
+      "package_path": "reference/source/crew_loot.gd",
+      "sha256": "2e88333983e3ae78fa8a272c5220104519811374cb5997c8b49f523dd875c120"
+    },
+    {
+      "source_relative_to_project": "scripts/effects.gd",
+      "package_path": "reference/source/effects.gd",
+      "sha256": "1dc68771bcaddf8cd86d1034d53560531ae83e6340c4bef37235fdf3febfeb07"
+    },
+    {
+      "source_relative_to_project": "scripts/geo.gd",
+      "package_path": "reference/source/geo.gd",
+      "sha256": "f930ba7e47d9a58e55532104db36642d99a3bd119b075d98306b215302e72d03"
+    },
+    {
+      "source_relative_to_project": "scripts/hud.gd",
+      "package_path": "reference/source/hud.gd",
+      "sha256": "8c9c0a35a2064ff3e71deb7daa560bc366ef0d9f3f62fa063fa92084ec239b26"
+    },
+    {
+      "source_relative_to_project": "scripts/side_crossbows.gd",
+      "package_path": "reference/source/side_crossbows.gd",
+      "sha256": "090b3983d855b3517e895a6beb94d76401dae2eed1322962fd17a2b0c26fae68"
+    },
+    {
+      "source_relative_to_project": "scripts/skeleton.gd",
+      "package_path": "reference/source/skeleton.gd",
+      "sha256": "5d3eb3f1ed67f831f9664edc813e83dcd3f48817a5b665f14cefd4530ad8df2e"
+    },
+    {
+      "source_relative_to_project": "scripts/sound.gd",
+      "package_path": "reference/source/sound.gd",
+      "sha256": "f58433d768cc2c34688a4e5096f46dcbba11f34f98bfb8fcea679ffc09097ddf"
+    },
+    {
+      "source_relative_to_project": "scripts/tank.gd",
+      "package_path": "reference/source/tank.gd",
+      "sha256": "ce7c27f8c0e0b0183d75059bf8f528798f3cd8f2d709b29a0a0e6493b935581c"
+    },
+    {
+      "source_relative_to_project": "scripts/tower_dash.gd",
+      "package_path": "reference/source/tower_dash.gd",
+      "sha256": "552985ceb56c2c0b86caff69c4695f229e45c313112f62f79074f2d0af72e377"
+    },
+    {
+      "source_relative_to_project": "scripts/tower_model.gd",
+      "package_path": "reference/source/tower_model.gd",
+      "sha256": "33b203ce4c4590617be50dcf21dd4c03f1595dfa9d3e919d4a7f0f47ced0a07f"
+    },
+    {
+      "source_relative_to_project": "scripts/walker.gd",
+      "package_path": "reference/source/walker.gd",
+      "sha256": "aea622d8c5e63b7f531d35fa97258333c513172b52541d75f755e841b7dd4b0d"
+    }
+  ],
+  "notes": [
+    "WAVs exported from sound.gd bank via Godot; no mix gain or pitch baked in",
+    "CSVs calculated from source formulas, not captured gameplay telemetry",
+    "Historical Godot QA reports copied verbatim; no UE implementation tested",
+    "Manifest intentionally does not hash itself"
+  ],
+  "files": [
+    {
+      "path": "01_CANNON.md",
+      "bytes": 26356,
+      "sha256": "23618acf1242a8d847d0ece3ceb66d185bec0400dbfcfeb6b2aef1dc0082e843"
+    },
+    {
+      "path": "02_SIDE_CROSSBOWS.md",
+      "bytes": 17665,
+      "sha256": "0643062017344d0437d1905e4160d9ee2e01035316b7cc86a8293442c3d50cce"
+    },
+    {
+      "path": "03_AIM_CAMERA_UE.md",
+      "bytes": 23750,
+      "sha256": "ebdae3983adf7c203c0532b88a34233a8a530cefe5912dfbdb9136bfca62f378"
+    },
+    {
+      "path": "04_ACCEPTANCE.md",
+      "bytes": 13853,
+      "sha256": "30d6f6b57dccb1fdb8f63bfb69ef9857e095301b60ef92d96051394189ca36dc"
+    },
+    {
+      "path": "PACKAGE_CHECK.json",
+      "bytes": 3798,
+      "sha256": "0a5d6bba598e7444e42ad06de47294a20d26d9d2ee074a6d2f7fbb3a4daa4f39"
+    },
+    {
+      "path": "parameters.json",
+      "bytes": 13013,
+      "sha256": "1f8add731379fa116b5e893b31f2bef7356239220534a26a5c722712a83683cd"
+    },
+    {
+      "path": "playable/IronCitadel.exe",
+      "bytes": 109244536,
+      "sha256": "ce41ac023e580cd3b8f2e676702aa7ec98134c254ea3e8b58602fe6f7ccb820b"
+    },
+    {
+      "path": "playable/PLAY_REFERENCE.cmd",
+      "bytes": 74,
+      "sha256": "6a1e3fe777ba96e9fafd1242f6e1cd331012dcbbbe711a3bd8e8513d559bbdc6"
+    },
+    {
+      "path": "playable/README.md",
+      "bytes": 1234,
+      "sha256": "7da44b3f72756d8a6939a3bae86936cc883126d5b21f6597ffd4ea80be9ac76c"
+    },
+    {
+      "path": "README.md",
+      "bytes": 8050,
+      "sha256": "9c3222c93da6fb3d5d9dca4a0137d0c9fb0f3e4a5d2c3f02c549018bf02f4474"
+    },
+    {
+      "path": "reference/audio/bolt_hit.wav",
+      "bytes": 5336,
+      "sha256": "b9d19e6d9103fd17e8078dd1a48f99a88012ca1caa200480726f39499c92ba35"
+    },
+    {
+      "path": "reference/audio/chamber.wav",
+      "bytes": 25622,
+      "sha256": "23ac8941451e536dfe8b5c2e41543f02ff0de0e0bedf43d1ed1dfdb0e51a8fc3"
+    },
+    {
+      "path": "reference/audio/eject.wav",
+      "bytes": 22094,
+      "sha256": "d3afca02ff8b1f1291e9332db125ae879f127937cf937350fe283dfc84b872d1"
+    },
+    {
+      "path": "reference/audio/export_metadata.json",
+      "bytes": 415,
+      "sha256": "34e3990f74969eb78ed51467ebafe3c0a42c9e483490fd383415129319cfef79"
+    },
+    {
+      "path": "reference/audio/fire.wav",
+      "bytes": 66194,
+      "sha256": "142465b792caccc80e09e11919a7cab0f33f81ef877e97599d1f5c2a1f8503ed"
+    },
+    {
+      "path": "reference/audio/impact.wav",
+      "bytes": 50758,
+      "sha256": "89751b25345ecc4a69ad7d5a06032415d4145be7ed9a5b28106439598f25113d"
+    },
+    {
+      "path": "reference/audio/lock.wav",
+      "bytes": 15478,
+      "sha256": "fc98d5711258509b40167909519a08f7fc153eacc9a63b7d068ce508d03bd58b"
+    },
+    {
+      "path": "reference/audio/README.md",
+      "bytes": 2263,
+      "sha256": "71a1b623bb9caa2eae2b12ae5fae0d4c545d8a56a246864d8a670e9617cd182b"
+    },
+    {
+      "path": "reference/audio/ready.wav",
+      "bytes": 17684,
+      "sha256": "0b2efa26cbc77a61f3bdc293b3443d01f4bd58e33b3857838ab93fac66b7e463"
+    },
+    {
+      "path": "reference/audio/repeater.wav",
+      "bytes": 4454,
+      "sha256": "226e837d6f44838561db006fbd0ca992f4826e9908d756d2535d848ca266c08f"
+    },
+    {
+      "path": "reference/audio/repeater_reload.wav",
+      "bytes": 39734,
+      "sha256": "f9e7bf1a24161e3916d6f5652ddd8f885b55cf5b44c71c2995cba775463a9ce8"
+    },
+    {
+      "path": "reference/audio/step.wav",
+      "bytes": 18566,
+      "sha256": "409dfc39998cd5f027b34a1eb25cfbb09b3aa2c889e935c4eff5329722eb1537"
+    },
+    {
+      "path": "reference/curves/camera_single_shot_envelopes_120hz.csv",
+      "bytes": 12469,
+      "sha256": "0aed4e93913466c2475b6fa1f742a0440840ae5dec73d0df5e2872f2949a94f2"
+    },
+    {
+      "path": "reference/curves/cannon_isolated_60hz.csv",
+      "bytes": 16506,
+      "sha256": "378c80ab17bef2002dc26c0847c4daabde36d2fb28f0a34b828942e7de7b2dfa"
+    },
+    {
+      "path": "reference/curves/crossbow_reload_targets_60hz.csv",
+      "bytes": 20209,
+      "sha256": "35105b8e93dd545c6e7c6f32a6a8e927dde6d3c6cc22cea894eead2ff7c49678"
+    },
+    {
+      "path": "reference/curves/crossbow_single_shot_60hz.csv",
+      "bytes": 357,
+      "sha256": "b1807ea8b7bd76ae02110f30ca64c4a4176473f0408fc9d4c96adfabf214c0c9"
+    },
+    {
+      "path": "reference/curves/derived_metrics.json",
+      "bytes": 314,
+      "sha256": "43028603abbde3605bb0114dd8c081b486210d53a6dca48fc4be2046da5122b9"
+    },
+    {
+      "path": "reference/curves/README.md",
+      "bytes": 4164,
+      "sha256": "ea323e602f7528e64e1c004ecfc1af638cae7ed7f4acc0ee13ead688f7ac30b3"
+    },
+    {
+      "path": "reference/source/arena.gd",
+      "bytes": 29007,
+      "sha256": "4c973685bd89ee0eacba920e159a9de714e8c45fb95acfb2e4aa17fe059cb176"
+    },
+    {
+      "path": "reference/source/battle.gd",
+      "bytes": 6548,
+      "sha256": "8ce56bd37aa19aa4409fd14dca253a0c7cf073d8cc0133af47be7c062e547d1c"
+    },
+    {
+      "path": "reference/source/breakables.gd",
+      "bytes": 4236,
+      "sha256": "7ef2eecbee933bbb7a22ddea22a6c0f7b2db8114a9f06ef1db8b14533df5b0ef"
+    },
+    {
+      "path": "reference/source/crew.gd",
+      "bytes": 12505,
+      "sha256": "0576ac234719bb36bb10288ba2113cb4f373271ed867077b459d5d94a1e74415"
+    },
+    {
+      "path": "reference/source/crew_combat.gd",
+      "bytes": 8421,
+      "sha256": "5c2e0f9eb63dfc6e299a6e9884ef1587860bb5632d0c632a1f13e4d7851ba228"
+    },
+    {
+      "path": "reference/source/crew_gnome.gd",
+      "bytes": 6214,
+      "sha256": "517bb5744836ed7d5344ef966f8839f2da5b980660d73d32c7f19aa366673e8c"
+    },
+    {
+      "path": "reference/source/crew_loot.gd",
+      "bytes": 8811,
+      "sha256": "2e88333983e3ae78fa8a272c5220104519811374cb5997c8b49f523dd875c120"
+    },
+    {
+      "path": "reference/source/effects.gd",
+      "bytes": 8337,
+      "sha256": "1dc68771bcaddf8cd86d1034d53560531ae83e6340c4bef37235fdf3febfeb07"
+    },
+    {
+      "path": "reference/source/geo.gd",
+      "bytes": 2334,
+      "sha256": "f930ba7e47d9a58e55532104db36642d99a3bd119b075d98306b215302e72d03"
+    },
+    {
+      "path": "reference/source/hud.gd",
+      "bytes": 19768,
+      "sha256": "8c9c0a35a2064ff3e71deb7daa560bc366ef0d9f3f62fa063fa92084ec239b26"
+    },
+    {
+      "path": "reference/source/project.godot.reference",
+      "bytes": 829,
+      "sha256": "76cc724ba2391b537bdc2362f87677388666c160afaccd2f7d9cb13d74acb69f"
+    },
+    {
+      "path": "reference/source/README.md",
+      "bytes": 1129,
+      "sha256": "17abf595a5352c63b30110628dca4d63cf624684b7d204b994ccdee6fdb0f064"
+    },
+    {
+      "path": "reference/source/side_crossbows.gd",
+      "bytes": 8602,
+      "sha256": "090b3983d855b3517e895a6beb94d76401dae2eed1322962fd17a2b0c26fae68"
+    },
+    {
+      "path": "reference/source/skeleton.gd",
+      "bytes": 9708,
+      "sha256": "5d3eb3f1ed67f831f9664edc813e83dcd3f48817a5b665f14cefd4530ad8df2e"
+    },
+    {
+      "path": "reference/source/sound.gd",
+      "bytes": 5509,
+      "sha256": "f58433d768cc2c34688a4e5096f46dcbba11f34f98bfb8fcea679ffc09097ddf"
+    },
+    {
+      "path": "reference/source/tank.gd",
+      "bytes": 9482,
+      "sha256": "ce7c27f8c0e0b0183d75059bf8f528798f3cd8f2d709b29a0a0e6493b935581c"
+    },
+    {
+      "path": "reference/source/tower_dash.gd",
+      "bytes": 8414,
+      "sha256": "552985ceb56c2c0b86caff69c4695f229e45c313112f62f79074f2d0af72e377"
+    },
+    {
+      "path": "reference/source/tower_model.gd",
+      "bytes": 10900,
+      "sha256": "33b203ce4c4590617be50dcf21dd4c03f1595dfa9d3e919d4a7f0f47ced0a07f"
+    },
+    {
+      "path": "reference/source/walker.gd",
+      "bytes": 8508,
+      "sha256": "aea622d8c5e63b7f531d35fa97258333c513172b52541d75f755e841b7dd4b0d"
+    },
+    {
+      "path": "reference/verification/aim_regression.gd",
+      "bytes": 3255,
+      "sha256": "8249bba057015e466420edbd39f4d5088420ec3afb75daeb2a7b2aa2cff1222f"
+    },
+    {
+      "path": "reference/verification/aim_result.json",
+      "bytes": 369,
+      "sha256": "47b180f63716e2912adcda27ce768709b8841a8a48817142b58d534454aac8ba"
+    },
+    {
+      "path": "reference/verification/battle_check.json",
+      "bytes": 1741,
+      "sha256": "30772b4094ae7e951c99bf1800f28b1a887528e5632d8abcd5455b9cc77f0c26"
+    },
+    {
+      "path": "reference/verification/crew_damage_check.json",
+      "bytes": 1382,
+      "sha256": "9aa5426f043de5f9107740dcfa913d1584b1fd3623e13faf39ee1376bedcc9af"
+    },
+    {
+      "path": "reference/verification/crossbow_check.json",
+      "bytes": 1363,
+      "sha256": "311709c8dc092c8e6736313987d62a7639f1c7b965cdc51a13a370d17c5fdaff"
+    },
+    {
+      "path": "reference/verification/crossbow_regression.gd",
+      "bytes": 8661,
+      "sha256": "fead2dbe8e655c61d950cd8699ce20b36e9126c9ab2a67d3f9abbbe70b0fe52c"
+    },
+    {
+      "path": "reference/verification/README.md",
+      "bytes": 1825,
+      "sha256": "5c0b05ecebdfb49877db19936f2f279538230169384770c648a6cad167f037e5"
+    },
+    {
+      "path": "tools/build_package.py",
+      "bytes": 22967,
+      "sha256": "58be231f08fb91fa048534f443240538fec8d61fff33f0ad6f2dbec9b7bbc635"
+    },
+    {
+      "path": "tools/export_audio.gd",
+      "bytes": 1427,
+      "sha256": "111ff504112338f685bd474164b5862b46506077882ed9307d29c28916f2299f"
+    }
+  ]
+}

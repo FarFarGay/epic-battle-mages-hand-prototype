@@ -1,0 +1,19 @@
+{
+  "audio": [
+    "fire",
+    "impact",
+    "eject",
+    "chamber",
+    "lock",
+    "ready",
+    "repeater",
+    "bolt_hit",
+    "repeater_reload",
+    "step"
+  ],
+  "camera_keep_aspect_enum": 1,
+  "camera_size": 24.0,
+  "projection": "[X: (0.052083, 0.0, 0.0, 0.0), Y: (0.0, 0.083333, 0.0, 0.0), Z: (0.0, 0.0, -0.0005, 0.0), W: (0.0, 0.0, -1.000025, 1.0)]",
+  "sample_rate": 22050,
+  "viewport_size": "(64, 64)"
+}

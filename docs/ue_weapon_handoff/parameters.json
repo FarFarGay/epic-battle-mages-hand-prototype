@@ -1,0 +1,507 @@
+{
+  "schema_version": 1,
+  "reference": {
+    "game": "Iron Citadel",
+    "version": "0.7.0",
+    "engine": "Godot 4.7",
+    "spec_date": "2026-09-15",
+    "physics_hz": 60,
+    "viewport_px": [
+      1440,
+      900
+    ],
+    "scope": "Reference values; proposed UE changes are in Markdown and are not silently applied here"
+  },
+  "units": {
+    "distance": "metres unless suffix _cm",
+    "time": "simulation seconds unless explicitly real/render",
+    "angle": "radians unless suffix _deg",
+    "godot_axes": "X right, Y up, -Z forward",
+    "ue_position_cm": "100 * (-godot.z, godot.x, godot.y)",
+    "ue_direction": "(-godot.z, godot.x, godot.y)",
+    "ue_heading_yaw": "-GodotYaw * 180 / pi; transform bases for arbitrary rotations",
+    "godot_light_energy": "not photometric UE units"
+  },
+  "cannon": {
+    "input": {
+      "button": "LMB",
+      "hold_repeats": true,
+      "buffer_s": 0.18,
+      "manual_reload": false,
+      "finite_ammunition": false
+    },
+    "reload": {
+      "duration_s": 1.65,
+      "clock": "physics, paused by arena hitstop",
+      "events": [
+        {
+          "name": "eject",
+          "progress": 0.16,
+          "nominal_s": 0.264
+        },
+        {
+          "name": "chamber",
+          "progress": 0.43,
+          "nominal_s": 0.7095,
+          "barrel_v_add_mps": 2.7
+        },
+        {
+          "name": "lock",
+          "progress": 0.86,
+          "nominal_s": 1.419,
+          "barrel_v_add_mps": -2.6,
+          "rock_pitch_v_add_radps": 0.1,
+          "trauma_add": 0.15
+        },
+        {
+          "name": "ready",
+          "progress": 1,
+          "nominal_s": 1.65
+        }
+      ],
+      "mechanical_impulses_scale_with_recoil_force": false
+    },
+    "projectile": {
+      "speed_mps": 57,
+      "speed_ue_cmps": 5700,
+      "lifetime_s": 2.1,
+      "nominal_unobstructed_path_m": 119.7,
+      "visual_radius_m": 0.14,
+      "collision": "segment ray each physics tick, not sphere sweep",
+      "mask_godot": 97,
+      "channels": [
+        "world",
+        "fragile_props",
+        "enemy"
+      ],
+      "gravity": 0,
+      "inherits_actor_velocity": false,
+      "homing": false,
+      "spread_rad": 0,
+      "damage_direct": 110,
+      "damage_splash": 60,
+      "splash_radius_m": 2.8,
+      "direct_excluded_from_splash": true,
+      "enemy_sample_height_m": 1,
+      "enemy_knockback_mps": 12,
+      "aoe_enemy_crew_los_check": false,
+      "muzzle_root_obstruction_test": false
+    },
+    "recoil": {
+      "force_default": 1,
+      "force_tuning_range": [
+        0.3,
+        1.8
+      ],
+      "barrel_initial_state_m": 0.21,
+      "barrel_initial_v_mps": 16,
+      "barrel_k_per_s2": 110,
+      "barrel_c_per_s": 17,
+      "integration": "v += (-k*x-c*v)*dt; x += v*dt; fixed 1/60s",
+      "visual_update": "shot state set after mesh update; first new pose after hitstop and next integration",
+      "rock_k_per_s2": 85,
+      "rock_c_per_s": 10,
+      "rock_v_add": "(-Dlocal.z,Dlocal.x)*0.75*force rad/s",
+      "compression_v_add_mps": -1.4,
+      "compression_k_per_s2": 110,
+      "compression_c_per_s": 14,
+      "compression_limits_m": [
+        -0.2,
+        0.12
+      ],
+      "body_height_base_m": 1.18,
+      "root_kick_mps": 1.8,
+      "root_kick_brake_mps2": 6.5,
+      "ground_direction_renormalized": false
+    },
+    "shot_feedback": {
+      "freeze_s": 0.045,
+      "trauma_add": 0.8,
+      "camera_kick_m": 0.6,
+      "ortho_height_punch_m": 1.3,
+      "flash_alpha": 0.14,
+      "flash_rgb": [
+        1,
+        0.84,
+        0.52
+      ]
+    },
+    "tuning": {
+      "reload_range_s": [
+        0.65,
+        3
+      ],
+      "aim_lag_range_s": [
+        0.04,
+        0.5
+      ]
+    }
+  },
+  "crossbows": {
+    "input": {
+      "button": "RMB",
+      "hold_repeats": true,
+      "quick_tap_latched": true,
+      "tap_during_reload_discarded": true,
+      "hold_resumes_after_reload": true
+    },
+    "capacity_shared": 200,
+    "total_fire_rate_per_s": 20,
+    "interval_s": 0.05,
+    "per_side_fire_rate_per_s": 10,
+    "first_side": "port / negative Godot local X",
+    "alternate_across_bursts": true,
+    "reload_s": 7,
+    "manual_reload": false,
+    "reload_events": [
+      {
+        "name": "start",
+        "progress": 0,
+        "nominal_s": 0
+      },
+      {
+        "name": "magazine_lowest",
+        "progress": 0.36,
+        "nominal_s": 2.52
+      },
+      {
+        "name": "chamber",
+        "progress": 0.48,
+        "nominal_s": 3.36
+      },
+      {
+        "name": "magazine_home",
+        "progress": 0.72,
+        "nominal_s": 5.04
+      },
+      {
+        "name": "lock",
+        "progress": 0.9,
+        "nominal_s": 6.3,
+        "recoil_state_m": 0.1
+      },
+      {
+        "name": "ready",
+        "progress": 1,
+        "nominal_s": 7
+      }
+    ],
+    "projectile": {
+      "speed_mps": 72,
+      "speed_ue_cmps": 7200,
+      "range_m": 48,
+      "damage": 8,
+      "enemy_knockback_mps": 1.3,
+      "size_xyz_m": [
+        0.055,
+        0.055,
+        0.64
+      ],
+      "yaw_spread_uniform_rad": [
+        -0.009,
+        0.009
+      ],
+      "pitch_spread_uniform_rad": [
+        -0.006,
+        0.006
+      ],
+      "mask_godot": 97,
+      "collision": "segment ray + pivot-to-muzzle obstruction ray",
+      "hit_from_inside": true,
+      "gravity": 0,
+      "aoe": false,
+      "obstructed_shot_consumes_ammo": true
+    },
+    "mount": {
+      "pivot_positions_godot_m": [
+        [
+          -1.43,
+          0.23,
+          -0.22
+        ],
+        [
+          1.43,
+          0.23,
+          -0.22
+        ]
+      ],
+      "muzzle_local_m": [
+        0,
+        0.13,
+        -1.25
+      ],
+      "yaw_limits_rad": [
+        -0.25,
+        0.25
+      ],
+      "pitch_limits_rad": [
+        -0.9,
+        0.18
+      ],
+      "aim_ease_per_s": 18,
+      "shot_recoil_state_m": 0.14,
+      "recoil_return_mps": 2.4,
+      "feed_per_shot_rad": 0.5235987755982988,
+      "feed_ease_per_s": 20,
+      "arm_rotation_per_recoil_m": 1.8,
+      "string_scale_z": "1 - recoil_m*1.8",
+      "magazine_home_y_m": -0.23,
+      "magazine_lower_m": 0.4,
+      "magazine_lower_cycle_fraction": 0.72,
+      "magazine_y": "-0.23-0.4*sin(pi*clamp(progress/0.72,0,1))",
+      "reload_extra_feed_rad": 6.283185307179586,
+      "visual_update": "recoil decays and applies before firing; 0.14 state gives 0.10 first visible at 60Hz"
+    },
+    "shot_feedback": {
+      "rock_v_add_port_radps": [
+        0.022,
+        -0.025
+      ],
+      "rock_v_add_starboard_radps": [
+        0.022,
+        0.025
+      ],
+      "trauma_floor": 0.13,
+      "freeze_s": 0,
+      "camera_kick_m": 0,
+      "zoom_punch_m": 0,
+      "screen_flash": false
+    },
+    "hud": {
+      "segments": 20,
+      "low_color_below": 40,
+      "warning_at_or_below": 40,
+      "fire_pulse_decay_per_s": 9,
+      "ready_pulse_decay_per_s": 1.5
+    }
+  },
+  "aim": {
+    "world_point_ease_per_s": 22,
+    "world_ray_length_m": 180,
+    "ground_plane_godot_y": 0,
+    "mask_godot": 97,
+    "source_camera": "before cosmetic impulse",
+    "yaw_lag_s": 0.18,
+    "yaw_max_speed_radps": 3.1,
+    "yaw_max_speed_degps": 177.6169164905552,
+    "min_lag_s": 0.02,
+    "pitch_limits_rad": [
+      -0.6,
+      0.15
+    ],
+    "pitch_ease_per_s": 18,
+    "cannon_preview_length_m": 85,
+    "turret_world_pitch_roll_stabilized": true,
+    "reticle_ease_per_s": 16,
+    "reticle_max_speed_pxps": 1200,
+    "reticle_alpha_ease_per_s": 20,
+    "viewport_safe_margin_px": 20,
+    "first_valid_reticle_snaps": true,
+    "cursor_smoothing": false,
+    "reticle_radius_px": 6,
+    "cursor_reload_radius_px": 24,
+    "cursor_reload_segments": 48,
+    "connector_dots": 8,
+    "connector_alpha": 0.3,
+    "connector_distance_fade_px": [
+      24,
+      64,
+      300,
+      420
+    ]
+  },
+  "camera": {
+    "projection": "orthographic, keep vertical size",
+    "base_vertical_size_m": 24,
+    "base_ue_ortho_width_at_1440x900_cm": 3840,
+    "ue_ortho_width_formula": "vertical_size_m*100*aspect_ratio",
+    "zoom_range_m": [
+      18,
+      42
+    ],
+    "wheel_step_m": 1.5,
+    "offset_godot_m": [
+      24,
+      24,
+      24
+    ],
+    "offset_ue_cm": [
+      -2400,
+      2400,
+      2400
+    ],
+    "focus_height_m": 0.75,
+    "lead_factor": 0.13,
+    "lead_max_m": 2.8,
+    "follow_ease_per_real_s": 5,
+    "strength_default": 1,
+    "strength_tuning_range": [
+      0,
+      1.7
+    ],
+    "trauma_cap": 1,
+    "trauma_decay_per_s": 1.9,
+    "trauma_power": 2,
+    "translation_amplitude_godot_xyz_m": [
+      0.44,
+      0.25,
+      0.35
+    ],
+    "translation_angular_frequencies_radps": [
+      103,
+      91,
+      117
+    ],
+    "translation_functions": [
+      "sin",
+      "cos",
+      "sin"
+    ],
+    "roll_amplitude_rad": 0.011,
+    "roll_angular_frequency_radps": 85,
+    "global_phase_not_reset_on_shot": true,
+    "kick_decay_per_s": 10,
+    "zoom_decay_per_s": 7,
+    "flash_decay_alpha_per_s": 4,
+    "ready_decay_per_s": 2.3,
+    "hit_confirm_decay_per_s": 3,
+    "impact_trauma": {
+      "normal": 0.38,
+      "big": 0.65,
+      "distance_scale_m": 45,
+      "minimum_factor": 0.15
+    },
+    "decay_before_render_transform": true
+  },
+  "vfx": {
+    "temporary_elements_cap": 420,
+    "scorch_marks_cap": 45,
+    "all_sizes_nominal_before_piece_scale": true,
+    "piece_scale": "min(remaining_s*5,1)",
+    "smoke_scale": "(0.35+1.8*age01)*min(remaining_s*3,1)",
+    "ring_scale": "1+9*age01",
+    "muzzle_ring_scale": "1+3.4*age01",
+    "ring_alpha": "0.65*(1-age01)",
+    "light_decay_s": 0.17,
+    "cannon": {
+      "light_energy_godot": 7,
+      "light_range_m": 10,
+      "muzzle_core_radius_m": 0.58,
+      "muzzle_core_life_s": 0.075,
+      "sparks_count": 16,
+      "smoke_count": 9,
+      "trail_width_m": 0.07,
+      "trail_life_s": 0.13,
+      "ground_ring_radius_m": 0.55,
+      "ground_ring_life_s": 0.32,
+      "normal_impact_debris": 20,
+      "big_impact_debris": 34,
+      "big_impact_power": 1.6,
+      "impact_smoke_count": 12
+    },
+    "crossbow": {
+      "muzzle_box_xyz_m": [
+        0.16,
+        0.1,
+        0.34
+      ],
+      "muzzle_life_s": 0.045,
+      "smoke_radius_m": 0.09,
+      "smoke_life_s": 0.2,
+      "trail_width_m": 0.027,
+      "trail_life_s": 0.065,
+      "hit_chips": 4,
+      "hit_chip_xyz_m": [
+        0.055,
+        0.055,
+        0.13
+      ],
+      "hit_life_s": 0.22
+    }
+  },
+  "audio": {
+    "format": "mono PCM16",
+    "sample_rate_hz": 22050,
+    "source_synthesis_rng_seed": 4107,
+    "spatialized_in_reference": false,
+    "gain_formula_db": "play_call_volume_db - 5",
+    "pitch_multiplier_uniform": [
+      0.96,
+      1.04
+    ],
+    "oneshot_overlap": true,
+    "wav_contains_playback_gain_or_pitch": false,
+    "events": {
+      "cannon_shot": {
+        "wav": "reference/audio/fire.wav",
+        "gain_db": -5,
+        "base_pitch": 1
+      },
+      "cannon_eject": {
+        "wav": "reference/audio/eject.wav",
+        "gain_db": -8,
+        "base_pitch": 1
+      },
+      "cannon_chamber": {
+        "wav": "reference/audio/chamber.wav",
+        "gain_db": -7,
+        "base_pitch": 1
+      },
+      "cannon_lock": {
+        "wav": "reference/audio/lock.wav",
+        "gain_db": -5,
+        "base_pitch": 1
+      },
+      "cannon_ready": {
+        "wav": "reference/audio/ready.wav",
+        "gain_db": -9,
+        "base_pitch": 1
+      },
+      "normal_impact": {
+        "wav": "reference/audio/impact.wav",
+        "gain_db": -11,
+        "base_pitch": 1
+      },
+      "barrel_impact": {
+        "wav": "reference/audio/impact.wav",
+        "gain_db": -8,
+        "base_pitch": 0.85
+      },
+      "crossbow_port": {
+        "wav": "reference/audio/repeater.wav",
+        "gain_db": -13,
+        "base_pitch": 1.04
+      },
+      "crossbow_starboard": {
+        "wav": "reference/audio/repeater.wav",
+        "gain_db": -13,
+        "base_pitch": 0.94
+      },
+      "crossbow_hit": {
+        "wav": "reference/audio/bolt_hit.wav",
+        "gain_db": -24,
+        "base_pitch": 1
+      },
+      "crossbow_reload_start": {
+        "wav": "reference/audio/repeater_reload.wav",
+        "gain_db": -9,
+        "base_pitch": 1
+      },
+      "crossbow_chamber": {
+        "wav": "reference/audio/chamber.wav",
+        "gain_db": -12,
+        "base_pitch": 0.7
+      },
+      "crossbow_lock": {
+        "wav": "reference/audio/lock.wav",
+        "gain_db": -8,
+        "base_pitch": 0.75
+      },
+      "crossbow_ready": {
+        "wav": "reference/audio/ready.wav",
+        "gain_db": -8,
+        "base_pitch": 1.35
+      }
+    }
+  }
+}

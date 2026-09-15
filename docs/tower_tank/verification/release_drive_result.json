@@ -1,0 +1,38 @@
+{
+  "checks": {
+    "boots_settle_after_changes": true,
+    "diagonal_direction": true,
+    "diagonal_not_faster": true,
+    "down_same_speed_as_up": true,
+    "first_step_starts_with_input": true,
+    "mouse_does_not_turn_body": true,
+    "one_support_boot": true,
+    "opposite_keys_cancel": true,
+    "quick_acceleration": true,
+    "quick_reversal": true,
+    "quick_stop": true,
+    "simple_legs_stay_attached": true,
+    "support_boot_stays_planted": true,
+    "tank_forward_full_speed": true,
+    "tank_forward_responds_without_waiting_for_turn": true,
+    "tank_forward_screen_direction": true,
+    "tank_left_full_speed": true,
+    "tank_left_responds_without_waiting_for_turn": true,
+    "tank_left_screen_direction": true,
+    "tank_reverse_full_speed": true,
+    "tank_reverse_responds_without_waiting_for_turn": true,
+    "tank_reverse_screen_direction": true,
+    "tank_right_full_speed": true,
+    "tank_right_responds_without_waiting_for_turn": true,
+    "tank_right_screen_direction": true,
+    "turret_aim_independent": true
+  },
+  "metrics": {
+    "max_leg_length": 2.47797417640686,
+    "reversal_time_s": 0.0833333333333333,
+    "stop_time_s": 0.1,
+    "stopping_distance_m": 0.291666895151138,
+    "time_to_90_percent_speed_s": 0.116666666666667
+  },
+  "passed": true
+}

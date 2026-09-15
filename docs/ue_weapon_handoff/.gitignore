@@ -1,0 +1,5 @@
+# Generated executables are distributed in the local handoff ZIP, like docs/builds.
+playable/*.exe
+tools/*.log
+__pycache__/
+*.pyc

@@ -1,0 +1,43 @@
+{
+  "checks": {
+    "alternating_both_sides": true,
+    "auto_reload_starts": true,
+    "boarding_preserves_ammo_and_requires_release": true,
+    "bolts_break_small_props": true,
+    "bolts_destroy_target": true,
+    "both_weapons_independent": true,
+    "disembark_stops_burst": true,
+    "fires_after_reload": true,
+    "fires_while_walking": true,
+    "focus_loss_cancels_fire": true,
+    "fresh_click_after_boarding_fires": true,
+    "fresh_click_after_super_fires": true,
+    "full_magazine": true,
+    "full_refill_after_long_reload": true,
+    "machine_gun_cadence": true,
+    "magazine_exactly_200": true,
+    "muzzle_cannot_shoot_through_wall": true,
+    "no_early_reload": true,
+    "no_extra_bolts_on_release": true,
+    "outside_right_click_is_crew_special": true,
+    "projectiles_bounded": true,
+    "quick_click_fires_once": true,
+    "real_projectiles": true,
+    "release_stops_fire": true,
+    "reload_blocks_held_fire": true,
+    "reset_restores_weapon": true,
+    "secondary_only": true,
+    "super_aim_stops_burst": true,
+    "super_click_never_fires_bolts": true,
+    "ten_second_burst": true,
+    "thin_wall_stops_bolts": true,
+    "tuning_cancels_held_fire": true,
+    "two_visible_mounts": true
+  },
+  "metrics": {
+    "bolts_in_half_second": 10,
+    "magazine_seconds": 9.96666666666667,
+    "peak_projectiles": 9
+  },
+  "passed": true
+}
