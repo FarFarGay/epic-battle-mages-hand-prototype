@@ -2,6 +2,7 @@ extends Node3D
 ## Port of dungeon_sandbox's E cargo, sticky haulers and physical coin magnet.
 const Geo = preload("res://scripts/geo.gd")
 const HandObject = preload("res://scripts/hand_object.gd")
+const Coin = preload("res://scripts/coin.gd")
 var crew
 var arena
 var coins := 0
@@ -27,6 +28,7 @@ func reset() -> void:
 	haulers.clear()
 	coins = 0
 	supplies = 0
+	if arena.level: return
 	for pos in [Vector3(7, 0, 10), Vector3(-5, 0, 7), Vector3(15, 0, -8)]:
 		spawn_cargo(pos, 1 if items.is_empty() else 3)
 	for pos in [Vector3(10, 0, 4), Vector3(-11, 0, 5), Vector3(-2, 0, -19)]:
@@ -201,29 +203,37 @@ func spawn_coin(pos: Vector3, impulse: Vector3) -> void:
 		nearest.set_meta("coin_value", value)
 		nearest.set_meta("hand_label", "МОНЕТЫ ×%d" % value)
 		return
-	var coin := RigidBody3D.new()
+	var coin := Coin.new()
 	coin.set_meta("coin_value", 1)
 	coin.collision_layer = 16
-	coin.collision_mask = 1
+	coin.collision_mask = 1 | 8 | 32 | 1024 # Terrain and physical scenery.
+	coin.continuous_cd = true
+	coin.max_contacts_reported = 4
 	coin.mass = 0.15
 	coin.linear_damp = 1.0
-	coin.angular_damp = 1.5
+	coin.angular_damp = 2.8
 	var collider := CollisionShape3D.new()
-	var shape := SphereShape3D.new()
-	shape.radius = 0.12
+	# Match the disk, including its rim. The old smaller sphere let the
+	# visible coin sink into the floor and kept it rolling instead of lying flat.
+	var shape := CylinderShape3D.new()
+	shape.radius = 0.18
+	shape.height = 0.08
+	shape.margin = 0.005
 	collider.shape = shape
 	coin.add_child(collider)
 	var physics := PhysicsMaterial.new()
-	physics.bounce = 0.3
+	physics.bounce = 0.28
+	physics.friction = 0.85
+	physics.rough = true
 	coin.physics_material_override = physics
 	add_child(coin)
 	coin.position = pos
-	var mesh := Geo.cylinder(coin, 0.17, 0.07, Vector3.ZERO, gold, 10)
-	mesh.rotation.x = PI / 2.0
+	Geo.cylinder(coin, 0.17, 0.07, Vector3.ZERO, gold, 16)
+	coin.rotation = Vector3(0.65,sin(pos.x*2.1+pos.z)*PI,0.4)
 	coin.linear_velocity = impulse
 	coin.angular_velocity = Vector3(3, 5, 2)
 	loose_coins.append(coin)
-	preload("res://scripts/tower_hand.gd").register_item(coin, Vector3(0.34, 0.24, 0.34), "МОНЕТА")
+	preload("res://scripts/tower_hand.gd").register_item(coin, Vector3(0.36, 0.08, 0.36), "МОНЕТА")
 
 func tick(dt: float) -> void:
 	coin_sound_cd = maxf(0.0, coin_sound_cd - dt)
@@ -237,10 +247,10 @@ func tick(dt: float) -> void:
 		var c := Vector3.ZERO
 		for member in haulers: c += member.global_position
 		c /= haulers.size()
-		cargo.global_position = Vector3(c.x, 1.5, c.z)
+		cargo.global_position = Vector3(c.x, c.y+(0.95 if arena.level else 1.5), c.z)
 	# As in the dungeon, both the squad and the occupied tower collect coins.
 	var target: Vector3 = crew.center()
-	target.y = 0.8
+	target.y += 0.8
 	for i in range(loose_coins.size() - 1, -1, -1):
 		var coin := loose_coins[i]
 		if coin.has_meta("hand_owner"): continue

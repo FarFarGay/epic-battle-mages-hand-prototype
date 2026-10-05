@@ -39,15 +39,17 @@ void vertex() {
 	VERTEX.y *= 1.0 - 0.16 * clamp(-lean / 0.22, 0.0, 1.0);
 	VERTEX.y += abs(sin(phase)) * min(speed * 0.02, 0.05);
 	palette = UV2.y;
-	flash = step(15.5, mod(INSTANCE_CUSTOM.z, 32.0)) * (1.0 - step(0.5, palette));
+	flash = step(15.5, mod(INSTANCE_CUSTOM.z, 32.0)) * (palette < 0.5 || palette > 3.5 ? 1.0 : 0.0);
 	brute = step(31.5, INSTANCE_CUSTOM.z);
 }
 
 void fragment() {
 	vec3 tint = palette < 0.5 ? vec3(0.88, 0.85, 0.78) : (palette < 1.5 ? vec3(0.14, 0.15, 0.16) : (palette < 2.5 ? vec3(0.40, 0.35, 0.30) : vec3(1.0, 0.35, 0.24)));
+	if (palette > 3.5) tint = palette < 4.5 ? vec3(0.08,0.34,0.47) : (palette < 5.5 ? vec3(0.66,0.49,0.24) : vec3(0.23,0.29,0.32));
 	if (palette < 0.5) tint = mix(tint, vec3(0.76, 0.57, 0.32), brute);
 	if (palette > 1.5 && palette < 2.5) tint = mix(tint, vec3(0.24, 0.18, 0.15), brute);
 	ALBEDO = mix(tint, vec3(1.0, 0.96, 0.78), flash);
 	ROUGHNESS = 0.74;
-	EMISSION = tint * step(2.5, palette) * 1.8 + vec3(0.5, 0.12, 0.025) * flash;
+	METALLIC = palette > 4.5 ? 0.45 : 0.0;
+	EMISSION = tint * step(2.5, palette) * (1.0 - step(3.5, palette)) * 1.8 + vec3(0.5, 0.12, 0.025) * flash;
 }

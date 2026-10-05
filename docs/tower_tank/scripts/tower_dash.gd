@@ -118,13 +118,14 @@ func landing_point(cursor: Vector3) -> Vector3:
 	if length < 0.05:
 		preview_blocked = false
 		return origin
+	if arena.level: return _terrain_landing(offset.normalized(),length)
 	var motion := offset.normalized() * length
 	var query := PhysicsShapeQueryParameters3D.new()
 	query.shape = preview_shape
 	query.transform = actor.global_transform
 	query.transform.origin += Vector3.UP * actor.HULL_HEIGHT * 0.5
 	query.motion = motion
-	query.collision_mask = 1
+	query.collision_mask = 1 | 256
 	# Range targets can be rammed through; permanent walls still stop the whole hull.
 	var excluded: Array[RID] = [actor.get_rid()]
 	for target in arena.targets:
@@ -134,6 +135,47 @@ func landing_point(cursor: Vector3) -> Vector3:
 	var fraction: float = sweep[0] if not sweep.is_empty() else 1.0
 	preview_blocked = fraction < 0.999
 	return origin + motion * maxf(0.0, fraction - (0.025 / length if preview_blocked else 0.0))
+
+func _terrain_motion(start: Vector3, motion: Vector3) -> Vector3:
+	var rise: float=arena.ground_height(start+motion)-arena.ground_height(start)
+	if absf(rise)<0.65: motion.y=rise
+	return motion
+
+func _terrain_landing(dir: Vector3, length: float) -> Vector3:
+	# Follow the same short floor-sliding steps as the dash. A straight sweep
+	# cuts through the plateau when the destination is on a lower slope.
+	var parameters := PhysicsTestMotionParameters3D.new()
+	parameters.from=actor.global_transform
+	parameters.margin=0.001
+	var excluded: Array[RID]=[]
+	for target in arena.combat_targets():
+		var health: float=target.hp if target.has_meta("enemy") else float(target.get_meta("hp"))
+		if health<=130.0: excluded.append(target.get_rid())
+	parameters.exclude_bodies=excluded
+	var result := PhysicsTestMotionResult3D.new()
+	var left := length
+	preview_blocked=false
+	for step in 32:
+		if left<=0.005: break
+		var start: Vector3=parameters.from.origin
+		var motion := _terrain_motion(start,dir*minf(left,SUPER_SPEED/60.0))
+		for slide in 8:
+			if motion.length_squared()<0.000001: break
+			parameters.motion=motion
+			var collided := PhysicsServer3D.body_test_motion(actor.get_rid(),parameters,result)
+			parameters.from.origin+=result.get_travel()
+			if not collided: break
+			if result.get_collision_normal().y>0.7:
+				motion=result.get_remainder().slide(result.get_collision_normal())
+			else:
+				preview_blocked=true
+				break
+		var moved := Vector2(parameters.from.origin.x-start.x,parameters.from.origin.z-start.z).length()
+		left-=moved
+		if preview_blocked or moved<0.0001: break
+	var point: Vector3=parameters.from.origin
+	point.y=arena.ground_height(point)
+	return point
 
 func tick(dt: float) -> void:
 	cooldown = maxf(0.0, cooldown - dt)
@@ -174,12 +216,16 @@ func move(dt: float) -> void:
 	var travel := minf(remaining, (SUPER_SPEED if is_super else SPEED) * dt)
 	var motion := direction * travel
 	var start: Vector3 = actor.global_position
+	if arena.level: motion=_terrain_motion(start,motion)
 	var blocked := false
 	for i in 8:
 		if motion.length_squared() < 0.000001: break
 		var collision: KinematicCollision3D = actor.move_and_collide(motion, false, 0.001)
 		if collision == null: break
 		var collider := collision.get_collider()
+		if arena.level and collision.get_normal().y>0.7:
+			motion=collision.get_remainder().slide(collision.get_normal())
+			continue
 		if collider is Node3D and (collider.has_meta("target") or collider.has_meta("enemy")):
 			var id: int = collider.get_instance_id()
 			if not hit_ids.has(id):
@@ -190,7 +236,7 @@ func move(dt: float) -> void:
 				continue
 		blocked = true
 		break
-	var moved: float = (actor.global_position - start).length()
+	var moved: float = Vector2(actor.global_position.x-start.x,actor.global_position.z-start.z).length()
 	remaining = maxf(0.0, remaining - moved)
 	actor.velocity = (actor.global_position - start) / maxf(dt, 0.00001)
 	echo_timer -= dt

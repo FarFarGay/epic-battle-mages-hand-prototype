@@ -3,10 +3,12 @@ extends Node3D
 const Geo = preload("res://scripts/geo.gd")
 const CAPACITY := 200
 const FIRE_RATE := 20.0
-const RELOAD_TIME := 7.0
+const RELOAD_TIME := 4.5
 const BOLT_SPEED := 72.0
 const BOLT_RANGE := 48.0
 const DAMAGE := 8.0
+const AIM_STRIP_HALF_WIDTH := 0.85
+const AIM_SCAN_INTERVAL := 0.06
 var actor
 var arena
 var ammo := CAPACITY
@@ -21,6 +23,10 @@ var hit_count := 0
 var next_side := 0
 var firing_pulse := 0.0
 var ready_pulse := 0.0
+var fire_heading := Vector3.FORWARD
+var aim_scan_left := 0.0
+var line_target: Node3D
+var line_aim := Vector3.ZERO
 var mounts: Array[Dictionary] = []
 var bolts: Array[Dictionary] = []
 var rng := RandomNumberGenerator.new()
@@ -110,10 +116,11 @@ func tick(dt: float) -> void:
 		if not trigger_held or reload_left > 0.0: break
 
 func _update_mounts(dt: float) -> void:
+	if arena.crew.crewed and arena.weapon_mode_active(): _update_line_aim(dt)
 	for mount in mounts:
 		var pivot: Node3D = mount.pivot
 		if arena.crew.crewed and arena.weapon_mode_active():
-			var local: Vector3 = actor.turret.global_basis.inverse() * (actor.aim_world - pivot.global_position)
+			var local: Vector3 = actor.turret.global_basis.inverse() * (line_aim - pivot.global_position)
 			var yaw := clampf(atan2(-local.x, -local.z), -0.25, 0.25)
 			var pitch := clampf(atan2(local.y, Vector2(local.x, local.z).length()), -0.9, 0.18)
 			pivot.rotation.y = lerp_angle(pivot.rotation.y, yaw, 1.0 - exp(-dt * 18.0))
@@ -127,6 +134,61 @@ func _update_mounts(dt: float) -> void:
 		var lowered := sin(PI * clampf(progress / 0.72, 0.0, 1.0)) if reload_left > 0.0 else 0.0
 		mount.magazine.position.y = -0.23 - lowered * 0.40
 		mount.magazine.rotation.x = lerp_angle(mount.magazine.rotation.x, mount.feed + (progress * TAU if reload_left > 0.0 else 0.0), 1.0 - exp(-dt * 20.0))
+
+func _aimable(target: Node3D) -> bool:
+	if not is_instance_valid(target) or target.is_queued_for_deletion(): return false
+	if target.has_meta("hand_owner"): return false
+	if target.has_meta("enemy"): return not target.dead and not target.hand_held
+	if target.has_meta("breakable"): return not target.get_meta("broken", false)
+	return float(target.get_meta("hp", 0.0)) > 0.0
+
+func _line_depth(target: Node3D) -> float:
+	if not _aimable(target): return INF
+	var offset: Vector3 = target.global_position - actor.global_position
+	offset.y = 0.0
+	var depth := offset.dot(fire_heading)
+	if depth < 3.0 or depth > BOLT_RANGE - 1.0: return INF
+	var radius: float = target.body_radius if target.has_meta("enemy") else 0.4
+	if (offset - fire_heading * depth).length_squared() > pow(AIM_STRIP_HALF_WIDTH + radius, 2): return INF
+	return depth
+
+func _update_line_aim(dt: float) -> void:
+	# Mouse distance never sets bolt range. A short dead zone avoids flipping
+	# the repeaters when the pointer crosses the tower's feet.
+	var heading: Vector3 = arena.ground_aim_position - actor.global_position
+	heading.y = 0.0
+	if heading.length_squared() > 1.0:
+		heading = heading.normalized()
+		if heading.dot(fire_heading) < 0.995: aim_scan_left = 0.0
+		fire_heading = heading
+	aim_scan_left -= dt
+	if is_instance_valid(line_target) and _line_depth(line_target) == INF:
+		line_target = null
+		aim_scan_left = 0.0
+	if aim_scan_left <= 0.0:
+		aim_scan_left = AIM_SCAN_INTERVAL
+		line_target = null
+		var nearest := INF
+		# One shared, throttled scan for both mounts, including large hordes.
+		for candidates in [arena.battle.enemies, arena.targets, arena.props.props]:
+			for candidate in candidates:
+				var depth := _line_depth(candidate)
+				if depth < nearest:
+					nearest = depth
+					line_target = candidate
+	line_aim = actor.global_position + fire_heading * BOLT_RANGE
+	line_aim.y = arena.ground_height(line_aim) + 1.0
+	if is_instance_valid(line_target):
+		# Roof-mounted guns need elevation assistance to hit ordinary skeletons.
+		# Only targets inside the fire strip qualify; bolts remain straight,
+		# physical projectiles stopped by the first obstacle.
+		line_aim = line_target.global_position
+		if line_target.has_meta("enemy"):
+			line_aim.y += line_target.body_height * 0.55
+		elif line_target.has_meta("breakable"):
+			line_aim.y += 0.45
+		else:
+			line_aim.y += 0.6 if line_target.get_meta("spec", {}).get("barrel", false) else 1.2
 
 func _fire() -> void:
 	var side := next_side
@@ -223,6 +285,10 @@ func reset() -> void:
 	next_side = 0
 	firing_pulse = 0.0
 	ready_pulse = 0.0
+	fire_heading = Vector3.FORWARD
+	aim_scan_left = 0.0
+	line_target = null
+	line_aim = Vector3.ZERO
 	for mount in mounts:
 		mount.recoil = 0.0
 		mount.feed = 0.0

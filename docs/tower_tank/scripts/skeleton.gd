@@ -1,16 +1,21 @@
 extends CharacterBody3D
 ## Ordinary Skeleton/Enemy from the main project, without its world autoloads.
-## Same base stats, variance, windup -> lunge -> recovery and interruptible attacks.
+## Faster-falling rank and file; original attack phases and interruptible attacks.
 const Geo = preload("res://scripts/geo.gd")
+const WALK_SPEED_MULTIPLIER := 1.15
+const SHIELD_MAX_HP := 24.0
 enum State { APPROACH, WINDUP, LUNGE, RECOVERY, STAGGER }
 var battle
 var arena
 var giant := false
+var shield_guard := false
+var shield_hp := 0.0
+var attack_on_spawn := false
 var body_size := 1.0
 var body_radius := 0.4
 var body_height := 1.9
-var hp := 30.0
-var max_hp := 30.0
+var hp := 13.0
+var max_hp := 13.0
 var move_speed := 2.0
 var attack_damage := 8.0
 var attack_windup := 0.4
@@ -35,6 +40,7 @@ var warning: Node3D
 var animation_speed := 0.0
 var body_lean := 0.1
 var move_direction := Vector3.ZERO
+var approach_lane := INF
 var separation_force := Vector3.ZERO
 var separation_wait := 0.0
 var walk_clearance := 1.0
@@ -49,7 +55,8 @@ var hand_held := false
 var hand_thrown := false
 
 func _ready() -> void:
-	name = "SkeletonBrute" if giant else "Skeleton"
+	name = "SkeletonBrute" if giant else ("SkeletonGuard" if shield_guard else "Skeleton")
+	if shield_guard: shield_hp = SHIELD_MAX_HP
 	if giant:
 		body_size = 1.8
 		body_radius = 0.72
@@ -67,7 +74,7 @@ func _ready() -> void:
 	var rng: RandomNumberGenerator = battle.rng
 	if not giant: hp *= rng.randf_range(0.8, 1.2)
 	max_hp = hp
-	move_speed *= rng.randf_range(0.85, 1.15)
+	move_speed *= WALK_SPEED_MULTIPLIER * rng.randf_range(0.85, 1.15)
 	attack_damage *= rng.randf_range(0.8, 1.2)
 	attack_windup *= rng.randf_range(0.8, 1.2)
 	close_windup *= rng.randf_range(0.8, 1.2)
@@ -83,7 +90,7 @@ func _ready() -> void:
 	shape.position.y = body_height * 0.5
 	add_child(shape)
 	_build()
-	preload("res://scripts/tower_hand.gd").register_item(self, Vector3(body_radius * 2.0, body_height, body_radius * 2.0), "СКЕЛЕТ-ГРОМИЛА" if giant else "СКЕЛЕТ", Vector3.UP * body_height * 0.5)
+	preload("res://scripts/tower_hand.gd").register_item(self, Vector3(body_radius * 2.0, body_height, body_radius * 2.0), "СКЕЛЕТ-ГРОМИЛА" if giant else ("СКЕЛЕТ-ЩИТОВИК" if shield_guard else "СКЕЛЕТ"), Vector3.UP * body_height * 0.5)
 
 func _build() -> void:
 	visual = Node3D.new()
@@ -137,7 +144,7 @@ func tick(dt: float) -> void:
 		else:
 			path_left -= dt
 			if path_left <= 0.0:
-				move_direction = battle.flow_direction(position, target.position)
+				move_direction = battle.flow_direction(position, target.position,approach_lane)
 				path_left = 0.10
 			desired = move_direction * move_speed
 	else:
@@ -151,8 +158,14 @@ func tick(dt: float) -> void:
 		walk_clearance = neighbors.w
 	if state == State.APPROACH: desired *= walk_clearance
 	if state != State.STAGGER: desired += separation_force
+	# Crowd pressure must not pin a walker against a prop while its route
+	# points into open ground. Keep the static collision grid authoritative.
+	if state == State.APPROACH and battle.solid.size()==battle.nav_area and not move_direction.is_zero_approx():
+		var clearance := body_radius-0.4
+		if not battle._ground_open(position+desired.normalized()*0.5,clearance) and battle._ground_open(position+move_direction*0.5,clearance):
+			desired = move_direction*move_speed*maxf(walk_clearance,0.5)
 	var profile_move := Time.get_ticks_usec() if battle.profile_enabled else 0
-	velocity = Vector3(desired.x, -2.0 if position.y < 0.19 else velocity.y - 20.0 * dt, desired.z)
+	velocity = Vector3(desired.x, -2.0 if position.y < arena.ground_height(position)+0.19 else velocity.y - 20.0 * dt, desired.z)
 	battle.move_ground(self, dt)
 	if battle.profile_enabled:
 		battle.last_profile.logic += profile_steer - profile_start
@@ -246,11 +259,27 @@ func _animate(dt: float, speed: float) -> void:
 func take_damage(amount: float, direction: Vector3 = Vector3.ZERO, force: float = 0.0, source: StringName = &"") -> void:
 	if dead or amount <= 0.0: return
 	if giant and source == &"crew": amount *= 0.5
-	var before := hp
-	hp = maxf(0.0, hp - amount)
 	hit_flash = 0.11
 	scan_left = 0.0
 	arena.hit_pulse = 1.0
+	if shield_hp > 0.0:
+		var absorbed := minf(shield_hp, amount)
+		shield_hp -= absorbed
+		amount -= absorbed
+		if shield_hp <= 0.0:
+			battle.crowd.scatter_shield(self, direction)
+			arena.sound.play("shield_break", -7.0)
+			state = State.STAGGER
+			timer = 0.25
+			impulse = direction * minf(force, 3.0)
+			warning.hide()
+		else:
+			arena.sound.play("shield_hit", -15.0)
+		# Heavy hits carry their excess through the shield: cannon and powder
+		# still smash the whole guard. Three 8-damage bolts only remove the shield.
+		if amount <= 0.0: return
+	var before := hp
+	hp = maxf(0.0, hp - amount)
 	if hp <= 0.0:
 		dead = true
 		collision_layer = 0

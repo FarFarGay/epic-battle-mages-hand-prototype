@@ -39,6 +39,21 @@
     "giant_survives_real_spear_strike": true,
     "giant_survives_three_cannon_hits": true,
     "giant_worker_wave_half_damage": true,
+    "guard_barrel_blast_breaks_through": true,
+    "guard_can_be_carried": true,
+    "guard_cannon_breaks_through": true,
+    "guard_carry_preserves_shield": true,
+    "guard_crew_damage_hits_shield": true,
+    "guard_fifth_bolt_kills": true,
+    "guard_fourth_bolt_survives": true,
+    "guard_real_projectiles_five_hits": true,
+    "guard_shield_absorbs_bolts": true,
+    "guard_shield_break_staggers": true,
+    "guard_shield_damage_has_bar": true,
+    "guard_shield_disappears_armor_remains": true,
+    "guard_shield_resists_light_stagger": true,
+    "guard_starts_with_shield": true,
+    "guard_third_bolt_breaks_shield_only": true,
     "hull_can_be_destroyed": true,
     "interrupted_attack_does_not_land": true,
     "knockback_interrupts_windup": true,
@@ -49,10 +64,11 @@
     "n_cannot_stack_waves": true,
     "n_starts_next_wave": true,
     "navigates_around_wall": true,
-    "original_stat_ranges": true,
+    "regulars_take_two_bolts": true,
     "reset_restores_battle_and_crew": true,
     "spawns_safe": true,
     "spears_kill_front_and_back": true,
+    "tuned_stat_ranges": true,
     "visible_windup_before_damage": true,
     "walking_tower_pushes_skeleton": true,
     "wave_clear_counts_and_coins": true,
@@ -61,7 +77,7 @@
     "wreck_cannot_fire_or_dash": true
   },
   "metrics": {
-    "average_full_range_physics_ms": 9.73710500000006
+    "average_full_range_physics_ms": 14.0116700000002
   },
   "passed": true
 }

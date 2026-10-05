@@ -11,7 +11,7 @@ const RATE := 22050
 
 func _ready() -> void:
 	random.seed = 4107
-	for kind in ["fire", "impact", "eject", "chamber", "lock", "ready", "servo", "step", "bow", "spell", "strike", "pickup", "dash", "dash_charge", "shatter", "repeater", "bolt_hit", "repeater_reload"]:
+	for kind in ["fire", "impact", "eject", "chamber", "lock", "ready", "servo", "step", "bow", "spell", "strike", "pickup", "dash", "dash_charge", "shatter", "repeater", "bolt_hit", "repeater_reload", "shield_hit", "shield_break"]:
 		bank[kind] = _synthesize(kind)
 	for i in 32:
 		var voice := AudioStreamPlayer.new()
@@ -26,7 +26,7 @@ func _ready() -> void:
 func play(kind: String, volume: float = 0.0, pitch: float = 1.0) -> void:
 	if muted or not bank.has(kind):
 		return
-	if kind in ["bow", "shatter"]:
+	if kind in ["bow", "shatter", "shield_hit", "shield_break"]:
 		var now := Time.get_ticks_msec()
 		if now - int(last_crowd_sound.get(kind, -1000)) < 30: return
 		last_crowd_sound[kind] = now
@@ -81,6 +81,8 @@ func _synthesize(kind: String) -> AudioStreamWAV:
 		"shatter": duration = 0.32
 		"repeater": duration = 0.10
 		"bolt_hit": duration = 0.12
+		"shield_hit": duration = 0.18
+		"shield_break": duration = 0.35
 		"repeater_reload": duration = 0.90
 	var count := int(duration * RATE)
 	var data := PackedByteArray()
@@ -93,6 +95,10 @@ func _synthesize(kind: String) -> AudioStreamWAV:
 		low = lerpf(low, noise, 0.13)
 		var s := 0.0
 		match kind:
+			"shield_hit":
+				s = noise * exp(-t * 90.0) * 0.5 + (sin(TAU * 780.0 * t) + sin(TAU * 1237.0 * t) * 0.55 + sin(TAU * 1961.0 * t) * 0.3) * exp(-t * 24.0) * 0.4
+			"shield_break":
+				s = low * exp(-t * 16.0) * 1.6 + noise * exp(-t * 32.0) * 0.7 + (sin(TAU * 231.0 * t) + sin(TAU * 571.0 * t) * 0.6) * exp(-t * 15.0) * 0.45
 			"repeater":
 				phase += TAU * (170.0 + 680.0 * exp(-t * 65.0)) / RATE
 				s = sin(phase) * exp(-t * 48.0) * 0.55 + noise * exp(-t * 90.0) * 0.65 + sin(TAU * 2450.0 * t) * exp(-t * 55.0) * 0.15

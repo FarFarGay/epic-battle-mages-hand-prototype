@@ -2,3 +2,5 @@
 verification/*.png
 verification/*.png.import
 verification/*.log
+verification/packaged_level/
+verification/level_progress.json

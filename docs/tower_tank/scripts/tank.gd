@@ -39,7 +39,7 @@ var walker
 var dash
 var crossbows
 var model
-var hull_shape: CylinderShape3D
+var hull_shape: Shape3D
 var drive_velocity := Vector3.ZERO
 var speed := 0.0
 var steering := 0.0
@@ -60,7 +60,10 @@ func _ready() -> void:
 	name = "TowerTank"
 	collision_layer = 2
 	collision_mask = 65
-	hull_shape = CylinderShape3D.new()
+	floor_snap_length = 0.7
+	floor_constant_speed = true
+	# Rounded contact at the feet climbs ramp seams without catching the hull rim.
+	hull_shape = CapsuleShape3D.new() if arena.level else CylinderShape3D.new()
 	hull_shape.radius = HULL_RADIUS
 	hull_shape.height = HULL_HEIGHT
 	var collider := CollisionShape3D.new()
@@ -143,8 +146,9 @@ func tick(dt: float) -> void:
 			rotation.y += delta_yaw
 			steering = delta_yaw / dt
 	speed = drive_velocity.length()
+	var fall_speed := -2.0 if is_on_floor() or not arena.level else maxf(-20.0,velocity.y-24.0*dt)
 	velocity = drive_velocity + kick_velocity
-	velocity.y = -2.0
+	velocity.y = fall_speed
 	var previous_position := global_position
 	if arena.crew.crewed:
 		if dash.active:

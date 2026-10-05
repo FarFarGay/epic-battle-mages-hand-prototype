@@ -53,7 +53,56 @@ func _wall(z: float) -> StaticBody3D:
 	Geo.collider(wall, Vector3(8, 7, 0.06), Vector3.ZERO)
 	return wall
 
+func _check_directional_fire() -> void:
+	await _reset()
+	for target in arena.targets:
+		target.collision_layer = 0
+		target.queue_free()
+	arena.targets.clear()
+	arena.respawns.clear()
+	for prop in arena.props.props:
+		prop.collision_layer = 0
+		prop.queue_free()
+	arena.props.props.clear()
+	var base: Vector3 = tank.global_position
+	var front = arena.battle.spawn_enemy(base + Vector3(0, 0, -18))
+	var rear = arena.battle.spawn_enemy(base + Vector3(0, 0, -26))
+	var flank = arena.battle.spawn_enemy(base + Vector3(8, 0, -18))
+	for enemy in [front, rear, flank]: enemy.move_speed = 0.0
+	arena.aim_position = base + Vector3(0, 0, -3)
+	await _frames(60)
+	var near_aim: Vector3 = guns.line_aim
+	arena.aim_position = base + Vector3(0, 0, -40)
+	await _frames(20)
+	checks.cursor_distance_does_not_change_line = guns.line_aim.distance_to(near_aim) < 0.03
+	arena.aim_position = base + Vector3(0, 0, -3)
+	await _frames(12)
+	_mouse(MOUSE_BUTTON_RIGHT, true)
+	await _frames(150)
+	_mouse(MOUSE_BUTTON_RIGHT, false)
+	await _frames(40)
+	checks.close_cursor_hits_far_skeleton = not is_instance_valid(front) or front.dead
+	checks.line_continues_to_next_skeleton = not is_instance_valid(rear) or rear.dead
+	checks.line_does_not_select_flank = is_instance_valid(flank) and not flank.dead and flank.hp == flank.max_hp
+	# Move only the bearing, keeping the cursor close to the tower.
+	arena.aim_position = base + Vector3(8, 0, -18).normalized() * 3.0
+	await _frames(40)
+	_mouse(MOUSE_BUTTON_RIGHT, true)
+	await _frames(90)
+	_mouse(MOUSE_BUTTON_RIGHT, false)
+	await _frames(40)
+	checks.sweeping_direction_hits_flank = not is_instance_valid(flank) or flank.dead
+	metrics.line_hits = guns.hit_count
+	# With no targets, a bolt must still fly beyond the cursor along its bearing.
+	arena.aim_position = base + Vector3(0, 0, -3)
+	await _frames(60)
+	_mouse(MOUSE_BUTTON_RIGHT, true)
+	_mouse(MOUSE_BUTTON_RIGHT, false)
+	await _frames(18)
+	checks.empty_line_flies_past_cursor = guns.bolts.any(func(b): return b.node.global_position.z < base.z - 15.0)
+
 func _run() -> void:
+	await _check_directional_fire()
 	await _reset()
 	checks.full_magazine = guns.ammo == 200 and guns.reload_left == 0.0
 	checks.two_visible_mounts = guns.mounts.size() == 2 and guns.mounts[0].pivot.is_visible_in_tree() and guns.mounts[1].pivot.is_visible_in_tree()
@@ -80,6 +129,9 @@ func _run() -> void:
 
 	# Empty the entire magazine through the actual held mouse path.
 	await _reset()
+	# Point into an empty lane: destroying range statues pauses simulation.
+	arena.aim_position = Vector3(0, 4, 27)
+	await _frames(80)
 	_mouse(MOUSE_BUTTON_RIGHT, true)
 	var elapsed := 0
 	var peak_bolts := 0
@@ -93,13 +145,13 @@ func _run() -> void:
 	checks.magazine_exactly_200 = guns.shot_count == 200 and guns.ammo == 0 and guns.side_counts == [100, 100]
 	checks.ten_second_burst = elapsed >= 590 and elapsed <= 608
 	checks.projectiles_bounded = peak_bolts <= 16
-	checks.auto_reload_starts = guns.reload_left > 6.8
+	checks.auto_reload_starts = guns.reload_left > 4.4 and guns.reload_left <= 4.5
 	await _frames(180)
-	checks.reload_blocks_held_fire = guns.shot_count == 200 and guns.ammo == 0 and guns.reload_left > 3.8
+	checks.reload_blocks_held_fire = guns.shot_count == 200 and guns.ammo == 0 and guns.reload_left > 1.3 and guns.reload_left < 1.6
 	await arena._capture(arena.verification_path("crossbow_03_reload.png"))
 	_mouse(MOUSE_BUTTON_RIGHT, false)
-	await _frames(270)
-	checks.full_refill_after_long_reload = guns.ammo == 200 and guns.reload_left == 0.0 and guns.shot_count == 200
+	await _frames(100)
+	checks.full_refill_after_four_and_half_seconds = guns.ammo == 200 and guns.reload_left == 0.0 and guns.shot_count == 200
 	_mouse(MOUSE_BUTTON_RIGHT, true)
 	await _frames(4)
 	_mouse(MOUSE_BUTTON_RIGHT, false)

@@ -11,9 +11,13 @@ const TowerHand = preload("res://scripts/tower_hand.gd")
 const HandObject = preload("res://scripts/hand_object.gd")
 const CAMERA_DEFAULT_YAW := PI / 4.0
 const CAMERA_ORBIT_OFFSET := Vector3(24, 24, 24)
+const CANYON_CAMERA_ORBIT_OFFSET := Vector3(23, 40, 23)
 const CAMERA_TURN_SENSITIVITY := 0.005
 
 @export var shake_strength := 1.0
+@export var desert_mode := false
+var level
+var world_bounds := Rect2(-28, -28, 56, 56)
 var tank
 var fx
 var sound
@@ -54,6 +58,7 @@ var cyan := Geo.material(Color("5bbeb6"), 0.1, 0.45)
 var red := Geo.material(Color("f47456"), 0.15, 1.3)
 var stone := Geo.material(Color("9e9886"))
 var dark := Geo.material(Color("343e40"), 0.15)
+var powder_red := Geo.material(Color("ae3e2f"), 0.2)
 var bullet_material := Geo.material(Color("fff0bb"), 0.0, 3.0)
 var _reset_requested := false
 var _range_generation := 0
@@ -62,6 +67,11 @@ func _ready() -> void:
 	get_tree().node_added.connect(_register_world_label)
 	rng.seed = 7142
 	_bind_inputs()
+	if desert_mode:
+		level = load("res://scripts/desert_level.gd").new()
+		level.arena = self
+		add_child(level)
+		world_bounds = level.WORLD_BOUNDS
 	_build_world()
 	fx = Effects.new()
 	fx.name = "Effects"
@@ -76,15 +86,17 @@ func _ready() -> void:
 	camera = Camera3D.new()
 	camera.name = "IsometricCamera"
 	add_child(camera)
-	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	camera.projection = Camera3D.PROJECTION_PERSPECTIVE if level else Camera3D.PROJECTION_ORTHOGONAL
+	camera.fov = 40.0
 	camera.size = zoom
-	camera.far = 180
+	camera.far = 600 if desert_mode else 180
 	camera.current = true
 	# A matching, non-rendering camera isolates mouse picking from impact shake.
 	aim_camera = Camera3D.new()
 	aim_camera.name = "StableAimProjection"
 	add_child(aim_camera)
-	aim_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	aim_camera.projection = camera.projection
+	aim_camera.fov = camera.fov
 	aim_camera.far = camera.far
 	aim_camera.current = false
 	_update_camera(1.0)
@@ -99,7 +111,7 @@ func _ready() -> void:
 	battle = Battle.new()
 	battle.arena = self
 	# Existing verification modes keep an empty range; battle tests spawn fixtures.
-	battle.waves_enabled = OS.get_cmdline_user_args().is_empty()
+	battle.waves_enabled = not desert_mode and (OS.get_cmdline_user_args().is_empty() or "--range" in OS.get_cmdline_user_args())
 	add_child(battle)
 	hand = TowerHand.new()
 	hand.arena = self
@@ -109,8 +121,11 @@ func _ready() -> void:
 	hud = Hud.new()
 	hud.arena = self
 	layer.add_child(hud)
+	if level: level.setup_gameplay()
 	Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
-	if OS.get_cmdline_user_args().has("--smoke"):
+	if OS.get_cmdline_user_args().has("--level-check") or OS.get_cmdline_user_args().has("--level-preview"):
+		add_child(load("res://verification/level_regression.gd").new())
+	elif OS.get_cmdline_user_args().has("--smoke"):
 		_smoke_test.call_deferred()
 	elif OS.get_cmdline_user_args().has("--aim-check"):
 		var probe: Node = load("res://verification/aim_regression.gd").new()
@@ -181,6 +196,13 @@ func _build_world() -> void:
 	sun.light_energy = 1.0
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 85.0
+	if level:
+		env.background_color = Color("777d89")
+		env.fog_enabled = false
+		sun.light_color = Color("fff3df")
+		sun.light_energy = 0.75
+		level.build_world()
+		return
 	var ground := StaticBody3D.new()
 	ground.name = "Ground"
 	add_child(ground)
@@ -245,6 +267,9 @@ func _wall(pos: Vector3, size: Vector3) -> void:
 	Geo.box(wall, Vector3(size.x + 0.12, 0.18, size.z + 0.12), Vector3.UP * size.y, stone)
 
 func _build_targets() -> void:
+	if level:
+		level.build_targets()
+		return
 	var locations := [Vector3(0, 0, -8), Vector3(-7, 0, -5), Vector3(7, 0, -7), Vector3(-5, 0, -14), Vector3(4, 0, -15), Vector3(12, 0, -1), Vector3(-13, 0, 1), Vector3(11, 0, 9), Vector3(-9, 0, 11)]
 	for i in locations.size():
 		target_specs.append({"pos": locations[i], "barrel": false, "id": i + 1})
@@ -274,7 +299,7 @@ func _spawn_target(spec: Dictionary) -> void:
 	Geo.collider(target, Vector3(width, height, width), Vector3.UP * height / 2)
 	if spec.barrel:
 		TowerHand.register_item(target, Vector3(width, height, width), "ПОРОХОВАЯ БОЧКА", Vector3.UP * height * 0.5)
-		Geo.cylinder(target, 0.43, 1.2, Vector3.UP * 0.6, dark, 10)
+		Geo.cylinder(target, 0.43, 1.2, Vector3.UP * 0.6, powder_red if spec.get("entry_supply",false) else dark, 10)
 		for y in [0.16, 0.94]:
 			Geo.cylinder(target, 0.46, 0.16, Vector3.UP * y, amber, 10)
 		Geo.cylinder(target, 0.27, 0.1, Vector3.UP * 1.23, red, 8)
@@ -320,6 +345,7 @@ func _physics_process(dt: float) -> void:
 	_update_actual_hit()
 	_update_shells(dt)
 	battle.tick(dt)
+	if level: level.tick(dt)
 	for i in range(respawns.size() - 1, -1, -1):
 		respawns[i].time -= dt
 		if respawns[i].time <= 0.0 and tank.global_position.distance_to(respawns[i].spec.pos) > 3.5 and (crew.crewed or crew.center().distance_to(respawns[i].spec.pos) > 4.0):
@@ -355,7 +381,9 @@ func _update_camera(dt: float) -> void:
 	focus = focus.lerp(desired, 1.0 - exp(-dt * 5.0))
 	var shake := trauma * trauma * shake_strength
 	var offset := Vector3(sin(time * 103) * 0.44, cos(time * 91) * 0.25, sin(time * 117) * 0.35) * shake
-	var orbit := CAMERA_ORBIT_OFFSET.rotated(Vector3.UP, camera_yaw - CAMERA_DEFAULT_YAW)
+	var base_orbit := CANYON_CAMERA_ORBIT_OFFSET if level else CAMERA_ORBIT_OFFSET
+	var orbit := base_orbit.rotated(Vector3.UP, camera_yaw - CAMERA_DEFAULT_YAW)
+	if level: orbit *= zoom/30.0
 	aim_camera.position = focus + orbit
 	aim_camera.look_at(focus)
 	aim_camera.size = zoom
@@ -363,17 +391,29 @@ func _update_camera(dt: float) -> void:
 	camera.position += offset + kick * shake_strength
 	camera.rotation.z += sin(time * 85) * shake * 0.011
 	camera.size = zoom + zoom_punch * shake_strength
+	if level: camera.position += orbit.normalized()*zoom_punch*shake_strength
+
+func ground_height(point: Vector3) -> float:
+	return level.ground_height(point) if level else 0.0
+
+func terrain_point(origin: Vector3, direction: Vector3, extra_mask: int=0) -> Vector3:
+	if level:
+		var ray := PhysicsRayQueryParameters3D.create(origin,origin+direction*1000.0,1024|extra_mask)
+		var hit := get_world_3d().direct_space_state.intersect_ray(ray)
+		if hit: return hit.position
+	var flat = Plane(Vector3.UP,0.0).intersects_ray(origin,direction)
+	return flat if flat!=null else origin+direction*100
 
 func _update_aim(dt: float, pointer: Vector2 = Vector2.INF) -> void:
 	if camera_rotating: return
 	if test_aim:
-		ground_aim_position = Vector3(aim_position.x, 0, aim_position.z)
+		ground_aim_position = Vector3(aim_position.x, ground_height(aim_position), aim_position.z)
 	if not test_aim and not tuning_open:
 		var mouse := get_viewport().get_mouse_position() if not pointer.is_finite() else pointer
 		var origin := aim_camera.project_ray_origin(mouse)
 		var direction := aim_camera.project_ray_normal(mouse)
 		var desired := aim_position
-		var ground_hit = Plane(Vector3.UP, 0.0).intersects_ray(origin, direction)
+		var ground_hit = terrain_point(origin,direction)
 		if ground_hit != null:
 			ground_aim_position = ground_hit
 			desired = ground_hit
@@ -456,7 +496,7 @@ func strike_clear(from: Vector3, to: Vector3) -> bool:
 	# Range targets share layer 1 with walls; ignore them for radial strike LOS.
 	var excluded: Array[RID] = []
 	for target in targets: excluded.append(target.get_rid())
-	var query := PhysicsRayQueryParameters3D.create(Vector3(from.x, 0.9, from.z), Vector3(to.x, 0.9, to.z), 3, excluded)
+	var query := PhysicsRayQueryParameters3D.create(from+Vector3.UP*0.9, to+Vector3.UP*0.9, 3, excluded)
 	return get_world_3d().direct_space_state.intersect_ray(query).is_empty()
 
 func combat_targets() -> Array:
@@ -466,6 +506,9 @@ func combat_targets() -> Array:
 	return result
 
 func _damage_target(target: Node3D, damage: float, direction: Vector3 = Vector3.ZERO, force: float = 0.0, source: StringName = &"") -> void:
+	if level and target.has_meta("ore"):
+		level.damage_ore(target, damage, direction)
+		return
 	if target.has_meta("enemy"):
 		target.take_damage(damage, direction, force, source)
 		return
@@ -490,7 +533,7 @@ func _damage_target(target: Node3D, damage: float, direction: Vector3 = Vector3.
 	if crew != null:
 		for i in 3:
 			crew.loot.spawn_coin(pos + Vector3.UP * 1.0, Vector3(sin(i * 2.1) * 2.0, 3.0, cos(i * 2.1) * 2.0))
-	respawns.append({"spec": spec, "time": 7.5})
+	if not level: respawns.append({"spec": spec, "time": 7.5})
 	fx.impact(pos + Vector3.UP * 1.2, true)
 	freeze = maxf(freeze, 0.045)
 	if spec.barrel:
@@ -527,6 +570,13 @@ func _input(event: InputEvent) -> void:
 		tank.dash.space(event.pressed)
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
+			KEY_F2:
+				_end_camera_rotation()
+				hand.cancel_drag()
+				tank.dash.cancel()
+				get_tree().change_scene_to_file.call_deferred("res://main.tscn" if desert_mode else "res://desert.tscn")
+			KEY_G:
+				if level and interface_visible and not tuning_open: level.toggle_map()
 			KEY_F:
 				if not tuning_open and crew.crewed:
 					hand.set_enabled(not hand.enabled)
@@ -654,6 +704,7 @@ func reset_range() -> void:
 	tank.reset_state()
 	crew.reset()
 	props.reset()
+	if level: level.setup_gameplay()
 	tank.shot_count = 0
 	kills = 0
 	trauma = 0.0

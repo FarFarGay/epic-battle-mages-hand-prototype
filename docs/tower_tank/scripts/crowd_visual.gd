@@ -4,6 +4,8 @@ const Geo = preload("res://scripts/geo.gd")
 const CAPACITY := 1024
 var battle
 var bodies: MultiMesh
+var shields: MultiMesh
+var guard_gear: MultiMesh
 var warnings: MultiMesh
 var bars: MultiMesh
 var debris: MultiMesh
@@ -11,13 +13,14 @@ var debris_states: Array[Dictionary] = []
 var debris_cursor := 0
 var chunks: Array[Dictionary] = []
 var bone_color := Color(0.88, 0.85, 0.78, 1)
-var bone_material := Geo.material(Color(0.88, 0.85, 0.78))
 var _surface: SurfaceTool
 
 func _ready() -> void:
 	var material := ShaderMaterial.new()
 	material.shader = preload("res://scripts/crowd.gdshader")
 	bodies = _batch(_build_mesh(), material)
+	shields = _batch(_build_shield_mesh(), material)
+	guard_gear = _batch(_build_guard_mesh(), material)
 	var ring := TorusMesh.new()
 	ring.inner_radius = 0.65
 	ring.outer_radius = 0.72
@@ -27,12 +30,16 @@ func _ready() -> void:
 	var bar := BoxMesh.new()
 	bar.size = Vector3(0.75, 0.075, 0.02)
 	var bar_shader := Shader.new()
-	bar_shader.code = "shader_type spatial; render_mode unshaded; varying float hp; void vertex(){ hp = INSTANCE_CUSTOM.x; } void fragment(){ ALBEDO = UV.x < hp ? vec3(1.0,0.22,0.06) : vec3(0.12,0.15,0.16); }"
+	bar_shader.code = "shader_type spatial; render_mode unshaded; varying float hp; varying float shield; void vertex(){ hp = INSTANCE_CUSTOM.x; shield = INSTANCE_CUSTOM.y; } void fragment(){ ALBEDO = UV.x < hp ? mix(vec3(1.0,0.22,0.06),vec3(0.18,0.72,1.0),shield) : vec3(0.12,0.15,0.16); }"
 	var bar_material := ShaderMaterial.new()
 	bar_material.shader = bar_shader
 	bars = _batch(bar, bar_material, true)
 	var chip := BoxMesh.new()
-	debris = _batch(chip, bone_material)
+	var chip_shader := Shader.new()
+	chip_shader.code = "shader_type spatial; varying vec3 tint; void vertex(){ tint = INSTANCE_CUSTOM.rgb; } void fragment(){ ALBEDO = tint; ROUGHNESS = 0.74; }"
+	var chip_material := ShaderMaterial.new()
+	chip_material.shader = chip_shader
+	debris = _batch(chip, chip_material)
 	get_child(get_child_count() - 1).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 func _batch(mesh: Mesh, material: Material, ui: bool = false) -> MultiMesh:
@@ -44,6 +51,9 @@ func _batch(mesh: Mesh, material: Material, ui: bool = false) -> MultiMesh:
 	data.visible_instance_count = 0
 	data.mesh = mesh
 	data.custom_aabb = AABB(Vector3(-36, -10, -36), Vector3(72, 30, 72))
+	if battle.arena.level:
+		var bounds: Rect2 = battle.arena.world_bounds.grow(12.0)
+		data.custom_aabb = AABB(Vector3(bounds.position.x, -10, bounds.position.y), Vector3(bounds.size.x, 40, bounds.size.y))
 	node.multimesh = data
 	node.material_override = material
 	add_child(node)
@@ -55,6 +65,8 @@ func update_instances() -> void:
 	var count := 0
 	var warning_count := 0
 	var bar_count := 0
+	var shield_count := 0
+	var guard_count := 0
 	var camera_basis: Basis = battle.arena.aim_camera.global_basis
 	for enemy in battle.enemies:
 		if enemy.dead or count >= CAPACITY: continue
@@ -65,22 +77,35 @@ func update_instances() -> void:
 			var alpha := clampf((display_time - enemy.render_time) / maxf(enemy.render_period, 0.001), 0.0, 1.0)
 			pose.origin = enemy.render_from.lerp(pose.origin, alpha)
 			phase = lerpf(enemy.render_stride, phase, alpha)
-		bodies.set_instance_transform(count, pose * enemy.visual.transform.scaled_local(Vector3.ONE * enemy.body_size))
+		var body_pose: Transform3D = pose * enemy.visual.transform.scaled_local(Vector3.ONE * enemy.body_size)
+		bodies.set_instance_transform(count, body_pose)
 		var mode: int = 5 if enemy.hand_held else (6 if enemy.hand_thrown else enemy.state)
-		bodies.set_instance_custom_data(count, Color(phase, enemy.animation_speed, mode + (16 if enemy.hit_flash > 0.0 else 0) + (32 if enemy.giant else 0), enemy.body_lean))
+		var animation := Color(phase, enemy.animation_speed, mode + (16 if enemy.hit_flash > 0.0 else 0) + (32 if enemy.giant else 0), enemy.body_lean)
+		bodies.set_instance_custom_data(count, animation)
+		if enemy.shield_guard:
+			guard_gear.set_instance_transform(guard_count, body_pose)
+			guard_gear.set_instance_custom_data(guard_count, animation)
+			guard_count += 1
+			if enemy.shield_hp>0.0:
+				shields.set_instance_transform(shield_count, body_pose)
+				shields.set_instance_custom_data(shield_count, animation)
+				shield_count += 1
 		count += 1
 		if enemy.warning.visible:
 			warnings.set_instance_transform(warning_count, Transform3D(Basis.from_scale(Vector3(enemy.body_size, 0.12, enemy.body_size)), enemy.position + Vector3.UP * 0.06))
 			warning_count += 1
-		if enemy.giant or enemy.hp < enemy.max_hp:
+		var show_shield: bool = enemy.shield_hp>0.0 and enemy.shield_hp<enemy.SHIELD_MAX_HP
+		if enemy.giant or enemy.hp < enemy.max_hp or show_shield:
 			bars.set_instance_transform(bar_count, Transform3D(camera_basis.scaled_local(Vector3(1.8, 1.5, 1) if enemy.giant else Vector3.ONE), enemy.position + Vector3.UP * (enemy.body_height + 0.3)))
-			bars.set_instance_custom_data(bar_count, Color(enemy.hp / enemy.max_hp, 0, 0, 0))
+			bars.set_instance_custom_data(bar_count, Color(enemy.shield_hp/enemy.SHIELD_MAX_HP if show_shield else enemy.hp/enemy.max_hp,1 if show_shield else 0,0,0))
 			bar_count += 1
 	bodies.visible_instance_count = count
+	shields.visible_instance_count = shield_count
+	guard_gear.visible_instance_count = guard_count
 	warnings.visible_instance_count = warning_count
 	bars.visible_instance_count = bar_count
 
-func _box(size: Vector3, pos: Vector3, part: float = 0, color: Color = Color(0.88, 0.85, 0.78, 1), glow: float = 0.0) -> void:
+func _box(size: Vector3, pos: Vector3, part: float = 0, color: Color = Color(0.88, 0.85, 0.78, 1), glow: float = 0.0, palette_override: float = -1.0) -> void:
 	var box := BoxMesh.new()
 	box.size = size
 	var arrays := box.get_mesh_arrays()
@@ -90,6 +115,7 @@ func _box(size: Vector3, pos: Vector3, part: float = 0, color: Color = Color(0.8
 	for index in indices:
 		_surface.set_normal(normals[index])
 		var palette := 0.0 if color.a > 0.5 else (3.0 if glow > 0.0 else (1.0 if color.r < 0.2 else 2.0))
+		if palette_override>=0.0: palette = palette_override
 		_surface.set_uv2(Vector2(part, palette))
 		_surface.add_vertex(vertices[index] + pos)
 	if color.a > 0.5: chunks.append({"mesh": box, "position": pos})
@@ -132,15 +158,48 @@ func _build_mesh() -> ArrayMesh:
 	_surface = null
 	return mesh
 
+func _build_shield_mesh() -> ArrayMesh:
+	_surface = SurfaceTool.new()
+	_surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var trim := Color(0,0,0,0) # Gear is scattered separately from the bones.
+	_box(Vector3(1.0,1.22,0.11),Vector3(-0.30,1.08,-0.40),1,trim,0,5)
+	_box(Vector3(0.84,1.07,0.16),Vector3(-0.30,1.08,-0.47),1,trim,0,4)
+	_box(Vector3(0.70,0.075,0.05),Vector3(-0.30,1.08,-0.565),1,trim,0,5)
+	_box(Vector3(0.075,0.89,0.05),Vector3(-0.30,1.08,-0.565),1,trim,0,5)
+	_box(Vector3(0.18,0.22,0.09),Vector3(-0.30,1.08,-0.615),1,trim,0,6)
+	var mesh := _surface.commit()
+	_surface = null
+	return mesh
+
+func _build_guard_mesh() -> ArrayMesh:
+	_surface = SurfaceTool.new()
+	_surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var metal := Color(0,0,0,0)
+	_box(Vector3(0.51,0.15,0.42),Vector3(0,1.98,-0.025),0,metal,0,6)
+	_box(Vector3(0.53,0.065,0.45),Vector3(0,1.895,-0.025),0,metal,0,5)
+	for side in [-1,1]:
+		_box(Vector3(0.25,0.18,0.30),Vector3(side*0.36,1.46,0),1 if side<0 else 2,metal,0,6)
+	var mesh := _surface.commit()
+	_surface = null
+	return mesh
+
+func _add_debris(chip: Dictionary) -> void:
+	if debris_states.size() < 384: debris_states.append(chip)
+	else:
+		debris_states[debris_cursor % 384] = chip
+		debris_cursor += 1
+
+func scatter_shield(enemy, direction: Vector3) -> void:
+	for i in 4:
+		var offset := Vector3((i%2-0.5)*0.42,(i/2-0.5)*0.48,0)
+		_add_debris({"pos":enemy.to_global(Vector3(-0.3,1.08,-0.5)+offset),"velocity":direction*3.0+enemy.global_basis*Vector3(offset.x*7.0,2.5+i*0.4,-2.0),"life":1.4,"rotation":enemy.rotation,"size":Vector3(0.42,0.48,0.10),"color":Color("327f9e") if i%2==0 else Color("aa8751")})
+
 func scatter(enemy, direction: Vector3, power: float) -> void:
 	for i in range(0, chunks.size(), 3):
 		var part: Dictionary = chunks[i]
 		var spread := Vector3(sin(i * 2.4), 1.3, cos(i * 2.4)) * 2.0 * power
 		var chip := {"pos": enemy.to_global(part.position * enemy.body_size), "velocity": spread + direction * power * 4.0, "life": 2.0, "rotation": enemy.rotation, "size": part.mesh.size * enemy.body_size}
-		if debris_states.size() < 384: debris_states.append(chip)
-		else:
-			debris_states[debris_cursor % 384] = chip
-			debris_cursor += 1
+		_add_debris(chip)
 
 func clear_debris() -> void:
 	debris_states.clear()
@@ -157,9 +216,12 @@ func tick_debris(dt: float) -> void:
 		chip.velocity.y -= 18.0 * dt
 		chip.pos += chip.velocity * dt
 		chip.rotation += Vector3(4, 3, 5) * dt
-		if chip.pos.y < 0.12:
-			chip.pos.y = 0.12
+		var floor_y: float=battle.arena.ground_height(chip.pos)+0.12
+		if chip.pos.y < floor_y:
+			chip.pos.y = floor_y
 			chip.velocity *= Vector3(0.78, -0.28, 0.78)
-		if is_visible_in_tree(): debris.set_instance_transform(count, Transform3D(Basis.from_euler(chip.rotation).scaled(chip.size * minf(chip.life * 5.0, 1.0)), chip.pos))
+		if is_visible_in_tree():
+			debris.set_instance_transform(count, Transform3D(Basis.from_euler(chip.rotation).scaled(chip.size * minf(chip.life * 5.0, 1.0)), chip.pos))
+			debris.set_instance_custom_data(count,chip.get("color",bone_color))
 		count += 1
 	debris.visible_instance_count = count

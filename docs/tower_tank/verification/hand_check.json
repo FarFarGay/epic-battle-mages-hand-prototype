@@ -89,22 +89,22 @@
     "chest_hold": {
       "age": 0.266666666666667,
       "candidate": "<null>",
-      "held": "@RigidBody3D@3704:<RigidBody3D#1301056328399>",
+      "held": "@RigidBody3D@3706:<RigidBody3D#1147662242474>",
       "opened": false
     },
     "cube_pick": {
       "armed": true,
       "candidate": "<null>",
       "reachable": true,
-      "surface": "(14.71209, 0.0, 13.68588)"
+      "surface": "(14.70238, 0.0, 13.68448)"
     },
-    "drag_position": "(16.5, 1.5, 10.5)",
+    "drag_position": "(16.5, 1.499998, 10.5)",
     "socket_drag_position": "(20.5, 1.5, 16.5)",
     "tower_snap": {
       "held": true,
-      "position": "(18.49988, 1.499998, 8.499882)",
+      "position": "(18.49989, 1.5, 8.499886)",
       "reach": true,
-      "surface": "(15.99989, 0.0, 5.999887)"
+      "surface": "(15.99989, 0.0, 5.999882)"
     }
   },
   "passed": true

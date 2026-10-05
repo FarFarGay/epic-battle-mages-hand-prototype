@@ -28,8 +28,9 @@ func _process(dt: float) -> void:
 		p.vel.y -= p.gravity * dt
 		node.position += p.vel * dt
 		node.rotation += p.spin * dt
-		if p.gravity > 1.0 and node.position.y < 0.12:
-			node.position.y = 0.12
+		var floor_y: float=get_parent().ground_height(node.position)+0.12
+		if p.gravity > 1.0 and node.position.y < floor_y:
+			node.position.y = floor_y
 			p.vel.y = absf(p.vel.y) * 0.28
 			p.vel.x *= 0.78
 			p.vel.z *= 0.78
@@ -97,7 +98,7 @@ func muzzle(pos: Vector3, direction: Vector3) -> void:
 func impact(pos: Vector3, big: bool = false) -> void:
 	var power := 1.6 if big else 1.0
 	flash(pos + Vector3.UP, 5.0 * power, 12.0)
-	ring(Vector3(pos.x, 0.09, pos.z), 0.5 * power)
+	ring(Vector3(pos.x, get_parent().ground_height(pos)+0.09, pos.z), 0.5 * power)
 	var ball := Geo.sphere(self, 0.65 * power, pos, hot)
 	add_piece(ball, Vector3.ZERO, 0.12)
 	for i in (34 if big else 20):
@@ -108,14 +109,14 @@ func impact(pos: Vector3, big: bool = false) -> void:
 	for i in 12:
 		var n := Geo.sphere(self, rng.randf_range(0.3, 0.7) * power, pos, dust_mat if i % 2 else smoke)
 		add_piece(n, Vector3(rng.randf_range(-2.0, 2.0), rng.randf_range(0.7, 3.5), rng.randf_range(-2.0, 2.0)) * power, rng.randf_range(0.7, 1.5), -0.15, "smoke")
-	var mark := Geo.cylinder(self, rng.randf_range(0.6, 1.0) * power, 0.014, Vector3(pos.x, 0.018 + rng.randf() * 0.005, pos.z), charred, 13)
+	var mark := Geo.cylinder(self, rng.randf_range(0.6, 1.0) * power, 0.014, Vector3(pos.x, get_parent().ground_height(pos)+0.018 + rng.randf() * 0.005, pos.z), charred, 13)
 	mark.rotation.y = rng.randf() * TAU
 	marks.append(mark)
 	if marks.size() > 45:
 		marks.pop_front().queue_free()
 
 func spear_strike(pos: Vector3) -> void:
-	pos.y = 0.12
+	pos.y = get_parent().ground_height(pos)+0.12
 	# The expanding ring reaches the actual 6.5 m hit radius.
 	var wave := Geo.ring(self, 0.65, 0.035, pos, _ring_material(gold))
 	add_piece(wave, Vector3.ZERO, 0.25, 0.0, "ring")

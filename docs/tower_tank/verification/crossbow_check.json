@@ -6,14 +6,19 @@
     "bolts_break_small_props": true,
     "bolts_destroy_target": true,
     "both_weapons_independent": true,
+    "close_cursor_hits_far_skeleton": true,
+    "cursor_distance_does_not_change_line": true,
     "disembark_stops_burst": true,
+    "empty_line_flies_past_cursor": true,
     "fires_after_reload": true,
     "fires_while_walking": true,
     "focus_loss_cancels_fire": true,
     "fresh_click_after_boarding_fires": true,
     "fresh_click_after_super_fires": true,
     "full_magazine": true,
-    "full_refill_after_long_reload": true,
+    "full_refill_after_four_and_half_seconds": true,
+    "line_continues_to_next_skeleton": true,
+    "line_does_not_select_flank": true,
     "machine_gun_cadence": true,
     "magazine_exactly_200": true,
     "muzzle_cannot_shoot_through_wall": true,
@@ -29,6 +34,7 @@
     "secondary_only": true,
     "super_aim_stops_burst": true,
     "super_click_never_fires_bolts": true,
+    "sweeping_direction_hits_flank": true,
     "ten_second_burst": true,
     "thin_wall_stops_bolts": true,
     "tuning_cancels_held_fire": true,
@@ -36,8 +42,9 @@
   },
   "metrics": {
     "bolts_in_half_second": 10,
+    "line_hits": 6,
     "magazine_seconds": 9.96666666666667,
-    "peak_projectiles": 9
+    "peak_projectiles": 7
   },
   "passed": true
 }

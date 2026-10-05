@@ -20,6 +20,7 @@ var arms: Array[Node3D] = []
 var legs: Array[Node3D] = []
 var weapon: Node3D
 var muzzle: Marker3D
+var extra_collision_mask := 0
 
 func _ready() -> void:
 	name = "Crew_" + role
@@ -131,12 +132,14 @@ func set_embarked(on: bool) -> void:
 	embarked = on
 	visible = not on and not dead
 	collision_layer = 0 if on or dead else 4
-	collision_mask = 0 if on or dead else 67
+	collision_mask = 0 if on or dead else (67 | extra_collision_mask)
 	velocity = Vector3.ZERO
 	knockback = Vector3.ZERO
 
 func tick(dt: float, desired_velocity: Vector3, facing: Vector3, grip: float) -> void:
 	if dead: return
+	floor_snap_length=0.45
+	floor_constant_speed=true
 	shot_cooldown = maxf(0.0, shot_cooldown - dt)
 	var flat := Vector3(velocity.x, 0, velocity.z).lerp(desired_velocity + knockback, 1.0 - exp(-grip * dt))
 	knockback = knockback.move_toward(Vector3.ZERO, 18.0 * dt)

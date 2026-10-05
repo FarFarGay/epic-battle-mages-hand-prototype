@@ -19,6 +19,7 @@ func reset() -> void:
 	props.clear()
 	broken_count = 0
 	crack_sound_cd = 0.0
+	if arena.level: return
 	# Piles along clear approach lanes; varied silhouettes identify fragile scenery.
 	var centers := [Vector3(0, 0, 0), Vector3(-5, 0, 3), Vector3(5, 0, 1), Vector3(8, 0, -3), Vector3(-10, 0, -6), Vector3(15, 0, 8), Vector3(-14, 0, 12), Vector3(5, 0, 17)]
 	for i in centers.size():
@@ -56,6 +57,7 @@ func spawn_prop(pos: Vector3, kind: int = 0) -> RigidBody3D:
 			for y in [0.16, 0.72]:
 				Geo.cylinder(prop, 0.36, 0.09, Vector3.UP * y, band, 10)
 	props.append(prop)
+	if arena.level and arena.battle: arena.battle.nav_dirty = true
 	preload("res://scripts/tower_hand.gd").register_item(prop, Vector3(0.68, 0.9, 0.68), ["ГОРШОК", "ЯЩИК", "БОЧКА"][kind], Vector3.UP * 0.45)
 	return prop
 
@@ -63,8 +65,8 @@ func tick(dt: float) -> void:
 	crack_sound_cd = maxf(0.0, crack_sound_cd - dt)
 
 func crush_segment(from: Vector3, to: Vector3, radius: float, force: float = 1.0, include_carried: bool = false) -> void:
-	var start := Vector3(from.x, 0, from.z)
-	var end := Vector3(to.x, 0, to.z)
+	var start := Vector3(from.x, arena.ground_height(from), from.z)
+	var end := Vector3(to.x, arena.ground_height(to), to.z)
 	for prop in props.duplicate():
 		if prop.has_meta("hand_owner") and not include_carried: continue
 		var closest := Geometry3D.get_closest_point_to_segment(prop.position, start, end)
@@ -87,6 +89,7 @@ func shatter(prop: RigidBody3D, direction: Vector3 = Vector3.ZERO, power: float 
 	props.erase(prop)
 	prop.collision_layer = 0
 	prop.hide()
+	if arena.level and arena.battle: arena.battle.nav_dirty = true
 	var pos := prop.global_position
 	var kind: int = prop.get_meta("kind")
 	prop.queue_free()

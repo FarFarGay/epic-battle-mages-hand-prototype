@@ -85,7 +85,8 @@ func _run() -> void:
 	await _wave_ready()
 	checks.first_wave_has_600_skeletons = battle.wave == 1 and battle.enemies.size() == 600
 	checks.wave_has_24_giants = battle.enemies.filter(func(e): return e.giant).size() == 24
-	checks.original_stat_ranges = battle.enemies.filter(func(e): return not e.giant).all(func(e): return e.hp >= 24.0 and e.hp <= 36.0 and e.move_speed >= 1.7 and e.move_speed <= 2.3 and e.attack_damage >= 6.4 and e.attack_damage <= 9.6 and e.attack_windup >= 0.32 and e.attack_windup <= 0.48)
+	checks.tuned_stat_ranges = battle.enemies.filter(func(e): return not e.giant).all(func(e): return e.hp >= 10.4 and e.hp <= 15.6 and e.move_speed >= 1.955 and e.move_speed <= 2.645 and e.attack_damage >= 6.4 and e.attack_damage <= 9.6 and e.attack_windup >= 0.32 and e.attack_windup <= 0.48)
+	checks.regulars_take_two_bolts = battle.enemies.filter(func(e): return not e.giant).all(func(e): return ceili(e.hp/arena.tank.crossbows.DAMAGE)==2)
 	checks.spawns_safe = battle.enemies.all(func(e): return e.position.distance_to(arena.tank.position) > 9.0 and absf(e.position.x) < 28.0 and absf(e.position.z) < 28.0)
 	var approacher = battle.enemies[0]
 	var distance_before: float = approacher.position.distance_to(arena.tank.position)
@@ -289,6 +290,7 @@ func _run() -> void:
 	await _frames(5)
 	checks.reset_restores_battle_and_crew = arena.tank.hp == 1000.0 and not arena.tank.dead and crew.members.size() == 9 and crew.crewed and battle.enemies.is_empty() and battle.kills == 0 and battle.wave == 0
 	await _check_giants()
+	await _check_guards()
 	await _fresh()
 	# Empty-field timer starts another wave without pressing N.
 	battle.waves_enabled = true
@@ -322,6 +324,90 @@ func _giant(pos: Vector3) -> CharacterBody3D:
 	enemy.state = enemy.State.RECOVERY
 	enemy.timer = 99.0
 	return enemy
+
+func _guard(pos: Vector3) -> CharacterBody3D:
+	var enemy: CharacterBody3D = battle.spawn_enemy(pos,false,true)
+	enemy.move_speed = 0.0
+	enemy.state = enemy.State.RECOVERY
+	enemy.timer = 99.0
+	return enemy
+
+func _check_guards() -> void:
+	await _fresh()
+	var guard = _guard(Vector3(0,0,-7))
+	await _frames(3)
+	checks.guard_starts_with_shield=guard.shield_hp==24.0 and ceili(guard.hp/8.0)==2
+	var body_hp: float = guard.hp
+	guard.state = guard.State.WINDUP
+	guard.timer = 99.0
+	var guns = arena.tank.crossbows
+	for i in 2: guns._hit({"collider":guard,"position":guard.position+Vector3.UP,"normal":Vector3.BACK},Vector3.FORWARD)
+	checks.guard_shield_absorbs_bolts=guard.shield_hp==8.0 and guard.hp==body_hp
+	checks.guard_shield_resists_light_stagger=guard.state==guard.State.WINDUP
+	battle.crowd.update_instances()
+	checks.guard_shield_damage_has_bar=battle.crowd.bars.visible_instance_count==1
+	# The headless dummy renderer does not retain GPU instance custom data.
+	if DisplayServer.get_name()!="headless": checks.guard_shield_bar_is_blue=battle.crowd.bars.get_instance_custom_data(0).g==1.0
+	guns._hit({"collider":guard,"position":guard.position+Vector3.UP,"normal":Vector3.BACK},Vector3.FORWARD)
+	checks.guard_third_bolt_breaks_shield_only=guard.shield_hp==0.0 and guard.hp==body_hp and not guard.dead and battle.kills==0
+	checks.guard_shield_break_staggers=guard.state==guard.State.STAGGER
+	battle.crowd.update_instances()
+	checks.guard_shield_disappears_armor_remains=battle.crowd.shields.visible_instance_count==0 and battle.crowd.guard_gear.visible_instance_count==1 and battle.crowd.debris_states.size()==4
+	guns._hit({"collider":guard,"position":guard.position+Vector3.UP,"normal":Vector3.BACK},Vector3.FORWARD)
+	checks.guard_fourth_bolt_survives=is_equal_approx(guard.hp,body_hp-8.0) and not guard.dead
+	guns._hit({"collider":guard,"position":guard.position+Vector3.UP,"normal":Vector3.BACK},Vector3.FORWARD)
+	await _frames(2)
+	checks.guard_fifth_bolt_kills=not is_instance_valid(guard) and battle.kills==1
+	await _fresh()
+	guard = _guard(Vector3(0,0,-8))
+	arena.aim_position = guard.position+Vector3.UP
+	await _frames(65)
+	for i in 5:
+		guns._fire()
+		await _frames(20)
+	checks.guard_real_projectiles_five_hits=not is_instance_valid(guard) and guns.hit_count==5 and battle.kills==1
+	await _fresh()
+	guard = _guard(Vector3(0,0,-7))
+	await _frames(3)
+	arena.shoot(guard.position+Vector3(0,1,4),Vector3.FORWARD)
+	await _frames(25)
+	checks.guard_cannon_breaks_through=not is_instance_valid(guard) and battle.kills==1
+	await _fresh()
+	guard = _guard(Vector3(10,0,10))
+	arena._spawn_target({"pos":Vector3(12,0,10),"barrel":true,"id":98})
+	await _frames(3)
+	arena._damage_target(arena.targets.back(),8.0)
+	await _frames(20)
+	checks.guard_barrel_blast_breaks_through=not is_instance_valid(guard) and battle.kills==1
+	await _fresh()
+	guard = _guard(Vector3(0,0,-4))
+	guard.take_damage(8.0,Vector3.FORWARD,0.0,&"crew")
+	checks.guard_crew_damage_hits_shield=guard.shield_hp==16.0 and guard.hp==guard.max_hp
+	arena.hand.set_enabled(true)
+	await _frames(3) # Mode switches re-arm input after all buttons are released.
+	checks.guard_can_be_carried=arena.hand.grab(guard)
+	arena.hand._release(true,false)
+	checks.guard_carry_preserves_shield=not guard.hand_held and guard.shield_hp==16.0
+	await _fresh()
+	guard = _guard(Vector3(1.0,0,-4))
+	var regular = _stationary(Vector3(-1.0,0,-4))
+	regular.state = regular.State.RECOVERY
+	regular.timer = 99.0
+	guard.rotation.y = PI
+	regular.rotation.y = PI
+	await _frames(3)
+	if DisplayServer.get_name()!="headless":
+		arena.set_physics_process(false)
+		arena.set_process(false)
+		arena.hud.hide()
+		arena.camera.position = Vector3(4,5,4)
+		arena.camera.look_at(Vector3(0,1,-4))
+		arena.camera.size = 6.0
+		await arena._capture(arena.verification_path("battle_08_shield_guard.png"))
+		arena.hud.show()
+		arena.set_physics_process(true)
+		arena.set_process(true)
+		arena._update_camera(1.0)
 
 func _check_giants() -> void:
 	await _fresh()

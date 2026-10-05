@@ -16,6 +16,7 @@ var spawn_cursor := 0
 var spawning_left := 0
 var nav_dirty := true
 var nav_wait := 0.0
+var nav_origin := Vector3.ZERO
 var grid := AStarGrid2D.new()
 var rng := RandomNumberGenerator.new()
 var probe := SphereShape3D.new()
@@ -25,6 +26,9 @@ var neighbor_heads := PackedInt32Array()
 var neighbor_links := PackedInt32Array()
 var neighbor_positions := PackedVector3Array()
 var neighbor_radii := PackedFloat32Array()
+var neighbor_origin := Vector3.ZERO
+var neighbor_width := 44
+var neighbor_height := 44
 const CROWD_GRID := 44
 const CROWD_CELL := 1.5
 const NEAR_CELLS := [Vector2i(0, 0), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1), Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]
@@ -35,7 +39,9 @@ var profile_enabled := false
 var last_profile := {}
 var solid := PackedByteArray()
 var flow_next := PackedInt32Array()
+var flow_distance := PackedInt32Array()
 var flow_build := PackedInt32Array()
+var flow_build_distance := PackedInt32Array()
 var flow_queue := PackedInt32Array()
 var flow_head := 0
 var flow_tail := 0
@@ -44,8 +50,11 @@ var flow_build_goal := -1
 var target_load := {}
 var ground_crew: Array[Vector3] = []
 var ground_crew_center := Vector3.ZERO
-const GRID_WIDTH := 57
-const GRID_AREA := GRID_WIDTH * GRID_WIDTH
+var nav_min := Vector2i(-28,-28)
+var nav_width := 57
+var nav_height := 57
+var nav_area := 57*57
+var entry_navigation := false
 const DIRECTIONS := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1), Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]
 
 func _ready() -> void:
@@ -77,7 +86,9 @@ func reset() -> void:
 	enemies.clear()
 	crowd.clear_debris()
 	flow_next.clear()
+	flow_distance.clear()
 	flow_build.clear()
+	flow_build_distance.clear()
 	flow_goal = -1
 	flow_build_goal = -1
 	wave = 0
@@ -106,6 +117,7 @@ func choose_target(enemy: CharacterBody3D) -> Node3D:
 	var best_score := INF
 	for candidate in player_targets():
 		var score: float = enemy.position.distance_squared_to(candidate.global_position)
+		if arena.level and not enemy.attack_on_spawn and score > 45.0 * 45.0: continue
 		# As in the original: prefer at most two attackers per dwarf.
 		if candidate != arena.tank:
 			var load: int = target_load.get(candidate.get_instance_id(), 0) - (1 if enemy.target == candidate else 0)
@@ -122,100 +134,156 @@ func clear_sight(from: Vector3, to: Vector3, victim: Node3D = null) -> bool:
 	# Terrain and the hull block melee; exclude the hull when it is the victim.
 	var excluded: Array[RID] = []
 	if victim == arena.tank: excluded.append(arena.tank.get_rid())
-	var ray := PhysicsRayQueryParameters3D.create(Vector3(from.x, 0.9, from.z), Vector3(to.x, 0.9, to.z), 3, excluded)
+	var ray := PhysicsRayQueryParameters3D.create(from+Vector3.UP*0.9,to+Vector3.UP*0.9,3,excluded)
 	return get_world_3d().direct_space_state.intersect_ray(ray).is_empty()
 
 func _rebuild_navigation() -> void:
-	solid.resize(GRID_AREA)
+	# Cover the entire narrow entry with fewer cells than the normal local grid.
+	# Rear ranks then share the same obstacle routes as those near the tower.
+	var player: Vector3 = arena.crew.center()
+	entry_navigation = arena.level != null and player.x < -128.0 and absf(player.z)<10.0
+	var region := Rect2i(-28,-28,57,57)
+	if entry_navigation:
+		region = Rect2i(int(arena.level.ENTRY_WEST-nav_origin.x),int(-10-nav_origin.z),int(arena.level.ENTRY_LENGTH)+1,21)
+	if grid.region != region:
+		grid.region = region
+		grid.update()
+	nav_min = region.position
+	nav_width = region.size.x
+	nav_height = region.size.y
+	nav_area = nav_width*nav_height
+	solid.resize(nav_area)
 	var query := PhysicsShapeQueryParameters3D.new()
 	query.shape = probe
+	if arena.level:
+		var body_probe := CapsuleShape3D.new()
+		body_probe.radius = probe.radius
+		body_probe.height = 2.05
+		query.shape = body_probe
 	query.collision_mask = 3 if arena.tank.dead or not arena.crew.crewed else 1
-	for x in range(-28, 29):
-		for z in range(-28, 29):
-			query.transform.origin = Vector3(x, 0.9, z)
+	if arena.level: query.collision_mask |= 32 # Breakable supply crates and barrels.
+	for x in range(region.position.x,region.end.x):
+		for z in range(region.position.y,region.end.y):
+			query.transform.origin = nav_origin + Vector3(x, 1.3 if arena.level else 0.9, z)
+			var point := nav_origin+Vector3(x,0,z)
+			var floor_y: float=arena.ground_height(point)
+			query.transform.origin.y+=floor_y
 			var blocked := not get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty()
+			if arena.level:
+				for offset in [Vector3.RIGHT,Vector3.LEFT,Vector3.FORWARD,Vector3.BACK]:
+					if absf(arena.ground_height(point+offset)-floor_y)>0.65:
+						blocked=true
+						break
 			grid.set_point_solid(Vector2i(x, z), blocked)
-			solid[(z + 28) * GRID_WIDTH + x + 28] = int(blocked)
+			solid[_nav_index(Vector2i(x,z))] = int(blocked)
 	nav_dirty = false
 	nav_wait = 0.35
 	flow_next.clear()
+	flow_distance.clear()
 	flow_build.clear()
+	flow_build_distance.clear()
 	flow_goal = -1
 	flow_build_goal = -1
 
 func _update_flow() -> void:
-	if solid.size() != GRID_AREA: return
+	if solid.size() != nav_area: return
 	var destination: Vector3 = arena.tank.position if arena.crew.crewed else arena.crew.center()
 	var cell := _walkable(_cell(destination))
-	var goal := (cell.y + 28) * GRID_WIDTH + cell.x + 28
+	var goal := _nav_index(cell)
 	if flow_build.is_empty() and goal != flow_goal:
-		flow_build.resize(GRID_AREA)
+		flow_build.resize(nav_area)
 		flow_build.fill(-1)
-		flow_queue.resize(GRID_AREA)
+		flow_build_distance.resize(nav_area)
+		flow_build_distance.fill(-1)
+		flow_queue.resize(nav_area)
 		flow_build[goal] = goal
+		flow_build_distance[goal] = 0
 		flow_queue[0] = goal
 		flow_head = 0
 		flow_tail = 1
 		flow_build_goal = goal
 	if flow_build.is_empty(): return
 	# Amortize shared path finding; movement uses the previous completed field.
-	var limit := mini(flow_head + 384, GRID_AREA)
+	var limit := mini(flow_head + 384, nav_area)
 	while flow_head < flow_tail and flow_head < limit:
 		var current := flow_queue[flow_head]
 		flow_head += 1
-		var x := current % GRID_WIDTH
-		var z := current / GRID_WIDTH
+		var x := current % nav_width
+		var z := current / nav_width
 		for d in DIRECTIONS:
 			var nx: int = x + d.x
 			var nz: int = z + d.y
-			if nx < 0 or nz < 0 or nx >= GRID_WIDTH or nz >= GRID_WIDTH: continue
-			var next := nz * GRID_WIDTH + nx
+			if nx < 0 or nz < 0 or nx >= nav_width or nz >= nav_height: continue
+			var next := nz * nav_width + nx
 			if solid[next] != 0 or flow_build[next] >= 0: continue
-			if d.x != 0 and d.y != 0 and (solid[z * GRID_WIDTH + nx] != 0 or solid[nz * GRID_WIDTH + x] != 0): continue
+			if d.x != 0 and d.y != 0 and (solid[z * nav_width + nx] != 0 or solid[nz * nav_width + x] != 0): continue
 			flow_build[next] = current
+			flow_build_distance[next] = flow_build_distance[current]+1
 			flow_queue[flow_tail] = next
 			flow_tail += 1
 	if flow_head >= flow_tail:
 		flow_next = flow_build
+		flow_distance = flow_build_distance
 		flow_build = PackedInt32Array()
+		flow_build_distance = PackedInt32Array()
 		flow_goal = flow_build_goal
 
-func flow_direction(from: Vector3, to: Vector3) -> Vector3:
+func flow_direction(from: Vector3, to: Vector3, approach_lane: float = INF) -> Vector3:
+	if not grid.region.has_point(Vector2i(roundi(from.x-nav_origin.x),roundi(from.z-nav_origin.z))):
+		return Vector3(to.x - from.x, 0, to.z - from.z).normalized()
 	var cell := _cell(from)
-	var index := (cell.y + 28) * GRID_WIDTH + cell.x + 28
-	if solid.size() == GRID_AREA and solid[index] != 0:
+	var index := _nav_index(cell)
+	if solid.size() == nav_area and solid[index] != 0:
 		var closest := INF
 		var escape := Vector3.ZERO
 		for offset in DIRECTIONS:
-			var point := Vector3(cell.x + offset.x, from.y, cell.y + offset.y)
+			var point := nav_origin + Vector3(cell.x + offset.x, from.y, cell.y + offset.y)
 			var distance := from.distance_squared_to(point)
 			if distance >= closest or not _ground_open(point): continue
-			var ray := PhysicsRayQueryParameters3D.create(from + Vector3.UP * 0.9, point + Vector3.UP * 0.9, 1)
+			var ray := PhysicsRayQueryParameters3D.create(from + Vector3.UP * 0.9, point + Vector3.UP * 0.9, 33 if arena.level else 1)
 			if get_world_3d().direct_space_state.intersect_ray(ray).is_empty():
 				closest = distance
 				escape = (point - from).normalized()
 		return escape
-	if flow_next.size() == GRID_AREA:
+	if flow_next.size() == nav_area:
 		var next := flow_next[index]
 		if next >= 0 and next != index:
-			var point := Vector3(next % GRID_WIDTH - 28, 0, next / GRID_WIDTH - 28)
+			# Among equally short routes, retain each walker's side of the
+			# corridor. The whole column no longer shares one diagonal queue.
+			if entry_navigation and is_finite(approach_lane) and flow_distance.size()==nav_area:
+				var spread := clampf((absf(from.x-to.x)-6.0)/14.0,0.0,1.0)
+				var lane := lerpf(to.z,approach_lane,spread)
+				var best_score := INF
+				for offset in DIRECTIONS:
+					var candidate: Vector2i = cell+offset
+					if not grid.region.has_point(candidate): continue
+					var candidate_index := _nav_index(candidate)
+					if solid[candidate_index]!=0 or flow_distance[candidate_index]!=flow_distance[index]-1: continue
+					if offset.x!=0 and offset.y!=0 and (grid.is_point_solid(cell+Vector2i(offset.x,0)) or grid.is_point_solid(cell+Vector2i(0,offset.y))): continue
+					var world := nav_origin+Vector3(candidate.x,0,candidate.y)
+					var score := absf(world.z-lane)+0.18*Vector2(world.x-from.x,world.z-from.z).length()
+					if score<best_score:
+						best_score=score
+						next=candidate_index
+			var point := nav_origin + Vector3(next % nav_width + nav_min.x, 0, next / nav_width + nav_min.y)
 			return (point - Vector3(from.x, 0, from.z)).normalized()
 	return Vector3(to.x - from.x, 0, to.z - from.z).normalized()
 
 func _ground_open(pos: Vector3, clearance: float = 0.0) -> bool:
-	var x := roundi(pos.x) + 28
-	var z := roundi(pos.z) + 28
-	if x < 0 or x >= GRID_WIDTH or z < 0 or z >= GRID_WIDTH or solid[z * GRID_WIDTH + x] != 0: return false
+	var x := roundi(pos.x - nav_origin.x) - nav_min.x
+	var z := roundi(pos.z - nav_origin.z) - nav_min.y
+	if x < 0 or x >= nav_width or z < 0 or z >= nav_height or solid[z * nav_width + x] != 0: return false
 	if clearance > 0.0:
 		return _ground_open(pos + Vector3.RIGHT * clearance) and _ground_open(pos + Vector3.LEFT * clearance) and _ground_open(pos + Vector3.FORWARD * clearance) and _ground_open(pos + Vector3.BACK * clearance)
 	return true
 
 func move_ground(enemy: CharacterBody3D, dt: float) -> void:
-	# This arena has a flat floor. The shared radius-expanded obstacle grid handles
-	# walking; the real capsule remains queryable by bullets, the hull and the hand.
+	# The shared grid handles obstacles and cliff edges; analytic terrain heights
+	# keep the crowd on ramps without a separate physics sweep for every skeleton.
 	var clearance: float = enemy.body_radius - 0.4
-	if absf(enemy.position.y - 0.04) > 0.15 or solid.size() != GRID_AREA or not _ground_open(enemy.position, clearance):
-		enemy.collision_mask = 7
+	var floor_y: float=arena.ground_height(enemy.position)
+	if absf(enemy.position.y-floor_y-0.04) > 0.15 or solid.size() != nav_area or not _ground_open(enemy.position, clearance):
+		enemy.collision_mask = 39 if arena.level else 7
 		enemy.move_and_slide()
 		return
 	enemy.collision_mask = 0
@@ -230,7 +298,7 @@ func move_ground(enemy: CharacterBody3D, dt: float) -> void:
 	var hull_offset: Vector3 = next - arena.tank.position
 	hull_offset.y = 0.0
 	var hull_radius: float = 1.32 + enemy.body_radius
-	if hull_offset.length_squared() < hull_radius * hull_radius:
+	if hull_offset.length_squared() < hull_radius * hull_radius and absf(enemy.position.y-arena.tank.position.y)<1.0:
 		if hull_offset.is_zero_approx(): hull_offset = Vector3.RIGHT
 		next = arena.tank.position + hull_offset.normalized() * hull_radius
 	if not ground_crew.is_empty() and next.distance_squared_to(ground_crew_center) < 64.0:
@@ -238,11 +306,15 @@ func move_ground(enemy: CharacterBody3D, dt: float) -> void:
 			var gap := Vector3(next.x - member.x, 0, next.z - member.z)
 			var crew_radius: float = 0.25 + enemy.body_radius
 			if gap.length_squared() < crew_radius * crew_radius and not gap.is_zero_approx(): next = member + gap.normalized() * crew_radius
-	next.y = 0.04
+	next.y = arena.ground_height(next)+0.04
+	if absf(next.y-start.y)>0.65: return
 	if _ground_open(next, clearance): enemy.position = next
 
 func _cell(pos: Vector3) -> Vector2i:
-	return Vector2i(clampi(roundi(pos.x), -28, 28), clampi(roundi(pos.z), -28, 28))
+	return Vector2i(clampi(roundi(pos.x - nav_origin.x),nav_min.x,nav_min.x+nav_width-1),clampi(roundi(pos.z - nav_origin.z),nav_min.y,nav_min.y+nav_height-1))
+
+func _nav_index(cell: Vector2i) -> int:
+	return (cell.y-nav_min.y)*nav_width+cell.x-nav_min.x
 
 func _walkable(cell: Vector2i) -> Vector2i:
 	if not grid.is_point_solid(cell): return cell
@@ -258,18 +330,23 @@ func find_path(from: Vector3, to: Vector3) -> PackedVector3Array:
 	var start := _walkable(_cell(from))
 	var finish := _walkable(_cell(to))
 	if grid.is_point_solid(start) or grid.is_point_solid(finish): return result
-	for point in grid.get_point_path(start, finish, true): result.append(Vector3(point.x, 0, point.y))
+	for point in grid.get_point_path(start, finish, true):
+		var world := nav_origin+Vector3(point.x,0,point.y)
+		world.y=arena.ground_height(world)
+		result.append(world)
 	# Skip the grid center under the actor to avoid a backwards first step.
 	if result.size() > 1: result.remove_at(0)
 	return result
 
-func spawn_enemy(pos: Vector3, giant: bool = false) -> CharacterBody3D:
+func spawn_enemy(pos: Vector3, giant: bool = false, shield_guard: bool = false) -> CharacterBody3D:
 	var enemy := SkeletonActor.new()
 	enemy.arena = arena
 	enemy.battle = self
 	enemy.giant = giant
+	enemy.shield_guard = shield_guard and not giant
 	add_child(enemy)
-	enemy.global_position = Vector3(pos.x, 0.04, pos.z)
+	enemy.global_position = Vector3(pos.x, arena.ground_height(pos)+0.04, pos.z)
+	enemy.approach_lane = pos.z
 	enemy.sim_slot = enemies.size() % 2
 	enemies.append(enemy)
 	return enemy
@@ -277,7 +354,7 @@ func spawn_enemy(pos: Vector3, giant: bool = false) -> CharacterBody3D:
 func _spawn_clear(pos: Vector3, giant: bool = false) -> bool:
 	var query := PhysicsShapeQueryParameters3D.new()
 	query.shape = giant_probe if giant else probe
-	query.transform.origin = pos + Vector3.UP
+	query.transform.origin = Vector3(pos.x,arena.ground_height(pos)+1.0,pos.z)
 	query.collision_mask = 103 # world, tower, crew, scenery, skeletons
 	if not get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty(): return false
 	return true
@@ -307,7 +384,7 @@ func _spawn_wave_batch() -> void:
 	if spawn_cursor >= spawn_points.size(): spawning_left = 0
 
 func remaining() -> int:
-	return enemies.size() + spawning_left
+	return enemies.size() + spawning_left + (arena.level.spawn_queue.size() if arena.level else 0)
 
 func killed(enemy: CharacterBody3D) -> void:
 	if not enemies.has(enemy): return
@@ -333,7 +410,16 @@ func bump(from: Vector3, to: Vector3, speed: float) -> void:
 			enemy.bump_cooldown = 0.5
 
 func _update_neighbors() -> void:
-	neighbor_heads.resize(CROWD_GRID * CROWD_GRID)
+	# Include the rear of the long corridor; clamping it into one edge cell
+	# used to exhaust the neighbour budget before nearby walkers were found.
+	neighbor_origin = nav_origin-Vector3.ONE*CROWD_GRID*CROWD_CELL*0.5
+	neighbor_width = CROWD_GRID
+	neighbor_height = CROWD_GRID
+	if entry_navigation:
+		neighbor_origin = nav_origin+Vector3(nav_min.x-3,0,nav_min.y-3)
+		neighbor_width = ceili((nav_width+6)/CROWD_CELL)+1
+		neighbor_height = ceili((nav_height+6)/CROWD_CELL)+1
+	neighbor_heads.resize(neighbor_width * neighbor_height)
 	neighbor_heads.fill(-1)
 	neighbor_links.resize(enemies.size())
 	neighbor_positions.resize(enemies.size())
@@ -352,9 +438,9 @@ func _update_neighbors() -> void:
 		neighbor_links[i] = -1
 		if is_instance_valid(enemy.target): target_load[enemy.target.get_instance_id()] = target_load.get(enemy.target.get_instance_id(), 0) + 1
 		if enemy.hand_held or enemy.hand_thrown: continue
-		var x := clampi(floori(pos.x / CROWD_CELL) + CROWD_GRID / 2, 0, CROWD_GRID - 1)
-		var z := clampi(floori(pos.z / CROWD_CELL) + CROWD_GRID / 2, 0, CROWD_GRID - 1)
-		var cell := z * CROWD_GRID + x
+		var x := clampi(floori((pos.x-neighbor_origin.x)/CROWD_CELL),0,neighbor_width-1)
+		var z := clampi(floori((pos.z-neighbor_origin.z)/CROWD_CELL),0,neighbor_height-1)
+		var cell := z * neighbor_width + x
 		neighbor_links[i] = neighbor_heads[cell]
 		neighbor_heads[cell] = i
 
@@ -362,20 +448,20 @@ func separation(index: int, pos: Vector3, forward: Vector3) -> Vector4:
 	var result := Vector3.ZERO
 	var clearance := 1.0
 	var radius := neighbor_radii[index] if index < neighbor_radii.size() else 0.4
-	var x := clampi(floori(pos.x / CROWD_CELL) + CROWD_GRID / 2, 1, CROWD_GRID - 2)
-	var z := clampi(floori(pos.z / CROWD_CELL) + CROWD_GRID / 2, 1, CROWD_GRID - 2)
+	var x := clampi(floori((pos.x-neighbor_origin.x)/CROWD_CELL),1,neighbor_width-2)
+	var z := clampi(floori((pos.z-neighbor_origin.z)/CROWD_CELL),1,neighbor_height-2)
 	var examined := 0
 	for d in NEAR_CELLS:
-		var other := neighbor_heads[(z + d.y) * CROWD_GRID + x + d.x]
+		var other := neighbor_heads[(z + d.y) * neighbor_width + x + d.x]
 		while other >= 0:
 			if other != index:
 				var gap := pos - neighbor_positions[other]
 				gap.y = 0.0
 				var distance_squared := gap.length_squared()
-				var spacing := radius + neighbor_radii[other] + 0.4
+				var spacing := radius + neighbor_radii[other] + 0.65
 				if distance_squared > 0.000001 and distance_squared < spacing * spacing:
 					var distance := sqrt(distance_squared)
-					result += gap * ((spacing - distance) * 2.5 / distance)
+					result += gap * ((spacing - distance) * 3.4 / distance)
 					var ahead := -gap.dot(forward)
 					if ahead > 0.0 and distance_squared - ahead * ahead < spacing * spacing * 0.25:
 						clearance = minf(clearance, clampf((ahead - spacing + 0.42) / 0.4, 0.0, 1.0))
@@ -392,6 +478,21 @@ func tick(dt: float) -> void:
 	last_profile = {"logic": 0, "separation": 0, "move": 0, "actors": 0}
 	nav_wait = maxf(0.0, nav_wait - dt)
 	if arena.tuning_open: return
+	if arena.level:
+		var player: Vector3 = arena.crew.center()
+		var in_entry := player.x < -128.0 and absf(player.z)<10.0
+		if in_entry != entry_navigation:
+			nav_dirty = true
+			nav_wait = 0.0
+		if absf(player.x - nav_origin.x) > 12.0 or absf(player.z - nav_origin.z) > 12.0:
+			nav_origin = Vector3(snappedf(player.x, 16.0), 0, snappedf(player.z, 16.0))
+			nav_dirty = true
+			nav_wait = 0.0
+			solid.clear()
+			flow_next.clear()
+			flow_distance.clear()
+			flow_build.clear()
+			flow_build_distance.clear()
 	if (waves_enabled or not enemies.is_empty()) and nav_dirty and nav_wait <= 0.0: _rebuild_navigation()
 	if player_targets().is_empty():
 		wave_requested = false

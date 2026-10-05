@@ -5,7 +5,7 @@ const Geo = preload("res://scripts/geo.gd")
 const Puzzle = preload("res://scripts/hand_puzzle.gd")
 const ITEM_GROUP := &"tower_hand_item"
 const HELD_LAYER := 128
-const PICK_MASK := 1 | 8 | 16 | 32 | 64 | HELD_LAYER
+const PICK_MASK := 1 | 8 | 16 | 32 | 64 | HELD_LAYER | 512
 const MAX_MASS := 10.0
 const REACH := 18.0
 const GRAB_RADIUS := 1.5
@@ -43,7 +43,7 @@ func _ready() -> void:
 	arena.tank.turret.add_child(rack)
 	rack.position = Vector3(0, 1.50, 0.30)
 	_build_hand()
-	puzzle = Puzzle.new()
+	puzzle = load("res://scripts/level_bridge.gd").new() if arena.level else Puzzle.new()
 	puzzle.arena = arena
 	puzzle.hand = self
 	add_child(puzzle)
@@ -152,7 +152,7 @@ func _clear_line(from: Vector3, to: Vector3, ignore: PhysicsBody3D = null) -> bo
 	return get_world_3d().direct_space_state.intersect_ray(ray).is_empty()
 
 func can_reach(node: Node3D) -> bool:
-	return is_instance_valid(node) and _flat_distance(arena.tank.global_position, _center(node)) <= REACH and _clear_line(arena.tank.global_position + Vector3.UP * 3.0, _center(node) + Vector3.UP * 0.3, node as PhysicsBody3D)
+	return is_instance_valid(node) and _flat_distance(arena.tank.global_position, _center(node)) <= REACH and _clear_line(arena.tank.global_position + Vector3.UP * (5.8 if arena.level else 3.0), _center(node) + Vector3.UP * 0.3, node as PhysicsBody3D)
 
 func _available(body: Node3D) -> bool:
 	if not is_instance_valid(body) or body.is_queued_for_deletion() or not body is PhysicsBody3D or not body.is_in_group(ITEM_GROUP): return false
@@ -173,7 +173,7 @@ func update_pointer(pointer: Vector2) -> void:
 		var pick_ray := PhysicsRayQueryParameters3D.create(origin, origin + direction * 180.0, 8 | 16 | 32 | 64 | HELD_LAYER)
 		var item_hit := get_world_3d().direct_space_state.intersect_ray(pick_ray)
 		if item_hit and _available(item_hit.collider): hit = item_hit
-	var plane_hit = Plane(Vector3.UP, 0.0).intersects_ray(origin, direction)
+	var plane_hit = arena.terrain_point(origin,direction,512)
 	if plane_hit == null:
 		cursor_valid = false
 		candidate = null
@@ -252,7 +252,8 @@ func tick(dt: float) -> void:
 			target.x = arena.tank.global_position.x + horizontal.x
 			target.z = arena.tank.global_position.z + horizontal.z
 		# Sweep the whole carried collider instead of teleporting it through scenery.
-		held.move_and_collide(target - _center(held))
+		if held.has_method("hand_move"): held.hand_move(target)
+		else: held.move_and_collide(target - _center(held))
 		if held is RigidBody3D:
 			held.linear_velocity = Vector3.ZERO
 			held.angular_velocity = Vector3.ZERO
@@ -295,8 +296,11 @@ func grab(body: PhysicsBody3D) -> bool:
 func _snap_destination() -> String:
 	if not is_instance_valid(held) or not cursor_valid: return ""
 	if not held is RigidBody3D: return ""
-	if held == puzzle.cube and _flat_distance(cursor_surface, puzzle.socket_position) <= 1.5 and held.global_position.distance_to(puzzle.seat_position()) < 4.0 and _clear_line(_center(held), puzzle.seat_position(), held):
-		return "socket"
+	if held == puzzle.cube:
+		if puzzle.has_method("can_snap"):
+			if puzzle.can_snap(held,cursor_surface): return "socket"
+		elif _flat_distance(cursor_surface, puzzle.socket_position) <= 1.5 and held.global_position.distance_to(puzzle.seat_position()) < 4.0 and _clear_line(_center(held), puzzle.seat_position(), held):
+			return "socket"
 	if not is_instance_valid(mounted) and _flat_distance(cursor_surface, arena.tank.global_position) <= CARGO_SNAP_RADIUS and _flat_distance(held.global_position, arena.tank.global_position) <= 4.0 and _clear_line(_center(held), _cargo_position(held), held):
 		return "tower"
 	return ""
@@ -368,7 +372,7 @@ func _drop_mounted() -> void:
 func status_text() -> String:
 	if is_instance_valid(held):
 		if snap_destination == "tower": return "ОТПУСТИ ЛКМ — ЗАКРЕПИТЬ НА БАШНЕ"
-		if snap_destination == "socket": return "ОТПУСТИ ЛКМ — ВСТАВИТЬ В ГНЕЗДО"
+		if snap_destination == "socket": return "ОТПУСТИ ЛКМ — УСТАНОВИТЬ МОСТ" if arena.level else "ОТПУСТИ ЛКМ — ВСТАВИТЬ В ГНЕЗДО"
 		return "ЛКМ — НЕСТИ · ПКМ — АККУРАТНО ОТПУСТИТЬ"
 	if is_instance_valid(candidate):
 		if candidate.get_meta("hand_owner", "") == "tower": return "ЗАЖМИ ЛКМ — СНЯТЬ ГРУЗ С БАШНИ"

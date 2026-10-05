@@ -3,8 +3,8 @@ config_version=5
 
 [application]
 config/name="Epic Battle Mages — Iron Citadel"
-config/version="0.11.0"
-run/main_scene="res://main.tscn"
+config/version="0.14.4"
+run/main_scene="res://entry.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
 

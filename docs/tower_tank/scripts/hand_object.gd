@@ -29,7 +29,7 @@ func on_hand_release(motion: Vector3) -> void:
 	_update_navigation(true)
 
 func _update_navigation(force: bool = false) -> void:
-	if not (collision_layer & 1) or not is_instance_valid(arena.battle): return
+	if not (collision_layer & (33 if arena.level else 1)) or not is_instance_valid(arena.battle): return
 	if force or not navigation_position.is_finite() or navigation_position.distance_to(global_position) > 0.75:
 		navigation_position = global_position
 		arena.battle.nav_dirty = true
@@ -39,9 +39,10 @@ func _physics_process(dt: float) -> void:
 	_update_navigation()
 	flight_age += dt
 	if not safe_position.is_finite(): safe_position = get_meta("hand_home", global_position)
-	if absf(global_position.x) < 26.5 and absf(global_position.z) < 26.5 and global_position.y > -0.1 and global_position.y < 4.0 and linear_velocity.length() < 1.0:
+	var height: float=global_position.y-arena.ground_height(global_position)
+	if arena.world_bounds.grow(-1.5).has_point(Vector2(global_position.x, global_position.z)) and height > -0.1 and height < 4.0 and linear_velocity.length() < 1.0:
 		safe_position = global_position
-	if global_position.y < -8.0 or absf(global_position.x) > 32.0 or absf(global_position.z) > 32.0:
+	if global_position.y < -8.0 or not arena.world_bounds.grow(4.0).has_point(Vector2(global_position.x, global_position.z)):
 		global_position = safe_position + Vector3.UP
 		linear_velocity = Vector3.ZERO
 		angular_velocity = Vector3.ZERO

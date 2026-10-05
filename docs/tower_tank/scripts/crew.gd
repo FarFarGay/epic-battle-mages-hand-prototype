@@ -10,6 +10,7 @@ const BOARD_DISTANCE := 8.0
 const MOVE_SPEED := 10.0
 const SPACING := 1.35
 var arena
+var formation_spacing := SPACING
 var members: Array[CharacterBody3D] = []
 var roster: Array[CharacterBody3D] = []
 var crewed := true
@@ -201,7 +202,7 @@ func _slot(i: int, direction: Vector3) -> Vector3:
 	var centroid := Vector2.ZERO
 	for index in members.size(): centroid += Vector2(index % 3, index / 3)
 	centroid /= maxf(members.size(), 1)
-	return right * (float(i % 3) - centroid.x) * SPACING - direction * (float(i / 3) - centroid.y) * SPACING
+	return right * (float(i % 3) - centroid.x) * formation_spacing - direction * (float(i / 3) - centroid.y) * formation_spacing
 
 func board_distance() -> float:
 	var offset: Vector3 = center() - arena.tank.global_position
@@ -220,7 +221,7 @@ func can_board() -> bool:
 	return true
 
 func _clear_spawn(pos: Vector3) -> bool:
-	if absf(pos.x) > 27.5 or absf(pos.z) > 27.5:
+	if not arena.world_bounds.grow(-0.5).has_point(Vector2(pos.x, pos.z)):
 		return false
 	var shape := CapsuleShape3D.new()
 	shape.radius = 0.30
@@ -233,7 +234,7 @@ func _clear_spawn(pos: Vector3) -> bool:
 		return false
 	var ray := PhysicsRayQueryParameters3D.create(pos + Vector3.UP * 0.4, pos - Vector3.UP, 1)
 	var floor_hit := get_world_3d().direct_space_state.intersect_ray(ray)
-	return not floor_hit.is_empty() and floor_hit.normal.y > 0.8 and absf(floor_hit.position.y) < 0.1
+	return not floor_hit.is_empty() and floor_hit.normal.y > 0.8 and absf(floor_hit.position.y-pos.y) < 0.15
 
 func disembark() -> bool:
 	if not crewed or members.is_empty():
@@ -245,12 +246,13 @@ func disembark() -> bool:
 		for sample in 16:
 			var angle: float = arena.tank.rotation.y + sample * TAU / 16.0
 			spawn_center = arena.tank.global_position + Vector3(cos(angle), 0, sin(angle)) * radius
-			spawn_center.y = 0.04
+			spawn_center.y = arena.ground_height(spawn_center)+0.04
 			spawn_positions.clear()
 			var exit_ray := PhysicsRayQueryParameters3D.create(arena.tank.global_position + Vector3.UP * 0.7, spawn_center + Vector3.UP * 0.7, 1)
 			if not get_world_3d().direct_space_state.intersect_ray(exit_ray).is_empty(): continue
 			for i in members.size():
 				var pos := spawn_center + _slot(i, Vector3.FORWARD)
+				pos.y=arena.ground_height(pos)+0.04
 				if not _clear_spawn(pos): break
 				spawn_positions.append(pos)
 			if spawn_positions.size() == members.size(): break
@@ -265,7 +267,7 @@ func disembark() -> bool:
 	arena.tank.crossbows.cancel_trigger()
 	input_armed = false
 	motion = Vector3.ZERO
-	anchor = Vector3(spawn_center.x, 0, spawn_center.z)
+	anchor = spawn_center
 	facing = Vector3.FORWARD
 	arena.tank.stop_drive()
 	arena.tank.kick_velocity = Vector3.ZERO
@@ -304,6 +306,9 @@ func _reset_reticle() -> void:
 
 func context_action() -> Dictionary:
 	if members.is_empty(): return {"kind": "none", "text": "ОТРЯД ПОГИБ  ·  R — НАЧАТЬ ЗАНОВО"}
+	if arena.level:
+		var action: Dictionary = arena.level.context_action()
+		if not action.is_empty(): return action
 	if crewed: return {"kind": "exit", "text": "E  ВЫСАДИТЬ ЭКИПАЖ"}
 	if loot.cargo != null:
 		if can_board(): return {"kind": "board", "text": "E  ПОГРУЗИТЬ И СЕСТЬ В БАШНЮ"}
@@ -320,6 +325,7 @@ func interact() -> void:
 		return
 	var action := context_action()
 	match action.kind:
+		"level": arena.level.interact(action.id)
 		"exit": disembark()
 		"board": board()
 		"drop": loot.drop_cargo()

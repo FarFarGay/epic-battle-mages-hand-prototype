@@ -37,6 +37,10 @@ func _draw() -> void:
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE * ui_scale)
 	if arena.tank.dash.is_aiming():
 		draw_rect(Rect2(0, 0, w, h), Color(0.01, 0.04, 0.08, 0.22))
+	if compact_mode():
+		_draw_compact(w,h)
+		_finish_draw()
+		return
 	# Open composition: thin rules, large title, instruments around the edges.
 	draw_rect(Rect2(0, 0, w, 142), Color(0.035, 0.06, 0.07, 0.55))
 	draw_rect(Rect2(0, h - 127, w, 127), Color(0.035, 0.06, 0.07, 0.76))
@@ -45,8 +49,10 @@ func _draw() -> void:
 	text_at(Vector2(38, 118), "ШАГАЮЩАЯ БАШНЯ   /   " + ("ЭКИПАЖ НА БОРТУ" if arena.crew.crewed else "ОТРЯД В ПОЛЕ"), 12, muted)
 	draw_line(Vector2(38, 140), Vector2(w - 38, 140), Color(0.7, 0.72, 0.63, 0.25), 1)
 	var battle = arena.battle
-	var combat_mode: bool = battle.waves_enabled or not battle.enemies.is_empty()
-	text_at(Vector2(w - 266, 38), "ВОЛНА %02d  /  СКЕЛЕТЫ И ГРОМИЛЫ" % battle.wave if combat_mode else "01   /   ИСПЫТАТЕЛЬНЫЙ ПОЛИГОН", 11, gold)
+	var combat_mode: bool = arena.level != null or battle.waves_enabled or not battle.enemies.is_empty()
+	var location: String = "ВОЛНА %02d  /  СКЕЛЕТЫ И ГРОМИЛЫ" % battle.wave if combat_mode else "01   /   ИСПЫТАТЕЛЬНЫЙ ПОЛИГОН"
+	if arena.level: location = arena.level.current_zone
+	text_at(Vector2(w - 266, 38), location, 11, gold)
 	text_at(Vector2(w - 266, 83), "%02d" % (battle.remaining() if combat_mode else arena.kills), 38, ink, true)
 	text_at(Vector2(w - 190, 69), "ОСТАЛОСЬ ВРАГОВ" if combat_mode else "МИШЕНЕЙ РАЗБИТО", 11, muted)
 	text_at(Vector2(w - 190, 90), "%02d  уничтожено" % battle.kills if combat_mode else "%02d  выстрелов" % arena.tank.shot_count, 12, ink)
@@ -56,6 +62,7 @@ func _draw() -> void:
 		wave_hint = "СБЛИЖЕНИЕ → ЗАМАХ → ВЫПАД"
 		if battle.remaining() == 0: wave_hint = "НОВАЯ ВОЛНА: %.0f С  ·  N — СРАЗУ" % maxf(battle.next_wave, 0.0)
 		if arena.crew.members.is_empty(): wave_hint = "ОТРЯД ПОГИБ · R — НАЧАТЬ ЗАНОВО"
+	if arena.level and not arena.crew.members.is_empty(): wave_hint = "G — КАРТА  ·  F2 — ПОЛИГОН"
 	text_at(Vector2(w - 249, 121), wave_hint, 10, muted)
 	# Tank control hints stay visible throughout the test.
 	var on_foot: bool = not arena.crew.crewed
@@ -87,11 +94,69 @@ func _draw() -> void:
 		_draw_crossbows(w)
 	if arena.hit_pulse > 0.0:
 		text_at(Vector2(center - 45, 179), "ПОПАДАНИЕ", 13, Color(gold, arena.hit_pulse))
+	_finish_draw()
+
+func _finish_draw() -> void:
 	draw_set_transform(Vector2.ZERO)
 	if not arena.tuning_open:
 		_draw_crosshair()
 	if arena.flash_alpha > 0:
 		draw_rect(get_viewport_rect(), Color(1.0, 0.84, 0.52, arena.flash_alpha))
+
+func compact_mode() -> bool:
+	return not arena.tuning_open and not Input.is_physical_key_pressed(KEY_F1)
+
+func _draw_compact(w: float, h: float) -> void:
+	var hull = arena.tank
+	var crew = arena.crew
+	var center := w*0.5
+	var bottom := h-24.0
+	var color := Color("ed8069") if hull.hp<hull.MAX_HP*0.3 else teal
+	var backdrop := Color(0.035,0.065,0.07,0.82)
+	draw_rect(Rect2(24,bottom-64,272,64),backdrop)
+	if crew.crewed:
+		text_at(Vector2(38,bottom-41),"БАШНЯ",11,muted)
+		text_at(Vector2(188,bottom-41),"%d / %d"%[ceili(hull.hp),int(hull.MAX_HP)],12,color)
+		draw_rect(Rect2(38,bottom-23,244,5),muted.darkened(0.6))
+		draw_rect(Rect2(38,bottom-23,244*hull.hp/hull.MAX_HP,5),color)
+	else:
+		text_at(Vector2(38,bottom-41),"ЭКИПАЖ · %d / 9"%crew.members.size(),13,teal)
+		text_at(Vector2(38,bottom-17),"МОНЕТЫ %d · ЗАПАСЫ %d"%[crew.loot.coins,crew.loot.supplies],11,gold)
+		_draw_abilities(center,h)
+	if crew.crewed:
+		if arena.hand.enabled:
+			draw_rect(Rect2(center-205,h-119,410,107),backdrop)
+			_draw_hand(center,h)
+		else:
+			var x := center-300
+			draw_rect(Rect2(x,bottom-64,278,64),backdrop)
+			text_at(Vector2(x+14,bottom-42),"ЛКМ · ПУШКА",11,muted)
+			text_at(Vector2(x+14,bottom-19),"ГОТОВА" if hull.cooldown<=0 else "ПЕРЕЗАРЯДКА · %.1f с"%hull.cooldown,16,teal if hull.cooldown<=0 else gold,true)
+			draw_rect(Rect2(x+14,bottom-9,250*clampf(1.0-hull.cooldown/hull.reload_time,0,1),3),teal if hull.cooldown<=0 else gold)
+			x = center-10
+			var guns = hull.crossbows
+			draw_rect(Rect2(x,bottom-64,278,64),backdrop)
+			text_at(Vector2(x+14,bottom-42),"ПКМ · АРБАЛЕТЫ",11,muted)
+			text_at(Vector2(x+14,bottom-19),"%03d / 200"%guns.ammo if guns.reload_left<=0 else "ПЕРЕЗАРЯДКА · %.1f с"%guns.reload_left,16,teal if guns.reload_left<=0 else gold,true)
+			var fraction: float = float(guns.ammo)/guns.CAPACITY if guns.reload_left<=0 else 1.0-guns.reload_left/guns.RELOAD_TIME
+			draw_rect(Rect2(x+14,bottom-9,250*fraction,3),teal if guns.reload_left<=0 else gold)
+		if hull.dash.active or hull.dash.cooldown>0:
+			text_at(Vector2(38,bottom-76),"РЫВОК" if hull.dash.active else "РЫВОК · %.1f с"%hull.dash.cooldown,12,teal)
+	text_at(Vector2(w-142,bottom-3),"F1 · подсказки",12,muted)
+	var context: Dictionary = crew.context_action()
+	var hint: String = context.text if context.kind not in ["exit","none"] else ""
+	if arena.hand.enabled: hint = arena.hand.status_text()
+	if arena.camera_rotating: hint = "ОБЗОР · ОТПУСТИ КОЛЕСО"
+	if hull.dash.is_aiming(): hint = "ПКМ — СУПЕРДЭШ · ОТПУСТИ SPACE — ОТМЕНА"
+	if crew.members.is_empty(): hint = "ОТРЯД ПОГИБ · R — ЗАНОВО"
+	if not hint.is_empty():
+		var width := font.get_string_size(hint,HORIZONTAL_ALIGNMENT_LEFT,-1,13).x
+		draw_rect(Rect2(center-width*0.5-12,h-155,width+24,28),backdrop)
+		text_at(Vector2(center-width*0.5,h-136),hint,13,teal)
+	if crew.notice_time>0.0 and crew.notice!="E — высадить экипаж" and not hull.dash.is_aiming():
+		var width := font.get_string_size(crew.notice,HORIZONTAL_ALIGNMENT_LEFT,-1,13).x
+		draw_rect(Rect2(center-width*0.5-12,28,width+24,30),backdrop)
+		text_at(Vector2(center-width*0.5,48),crew.notice,13,ink)
 
 func _draw_cannon(center: float, h: float) -> void:
 	if arena.tank.dash.is_aiming():
@@ -228,7 +293,7 @@ func _draw_crossbows(w: float) -> void:
 	var fraction: float = 1.0 - gun.reload_left / gun.RELOAD_TIME if loading else float(gun.ammo) / gun.CAPACITY
 	for i in 20:
 		draw_rect(Rect2(x + 15 + i * 14.2, 235, 11, 5), color if float(i) / 20.0 < fraction else Color(0.25, 0.30, 0.29))
-	var hint := "ПЕРЕЗАРЯДКА  ·  ЗАМЕНА ОБОЙМЫ" if loading else "ПКМ  удерживать  ·  20 болтов/с"
+	var hint := "ПЕРЕЗАРЯДКА  ·  ЗАМЕНА ОБОЙМЫ" if loading else "ПКМ  удерживать · ОГОНЬ ПО НАПРАВЛЕНИЮ"
 	if arena.tank.dash.is_aiming(): hint = "ПРИЦЕЛ СУПЕРДЭША  ·  ОГОНЬ ЗАКРЫТ"
 	text_at(Vector2(x + 15, 262), hint, 11, ink)
 	text_at(Vector2(x + 15, 281), "АВТОПЕРЕЗАРЯДКА  ·  7 СЕК", 10, muted)
@@ -244,7 +309,7 @@ func _draw_cargo(w: float) -> void:
 	var cargo: String = hand.mounted.get_meta("hand_label", "ГРУЗ") if is_instance_valid(hand.mounted) else "КРЕПЛЕНИЕ СВОБОДНО"
 	text_at(Vector2(x + 15, 215), cargo, 16, ink, true)
 	text_at(Vector2(x + 15, 242), "Схвати груз на крыше, чтобы снять" if is_instance_valid(hand.mounted) else "Отпусти груз рядом с башней", 12, muted)
-	text_at(Vector2(x + 15, 265), "КУБ → ГНЕЗДО → ОТКРЫТЬ ВОРОТА", 11, gold)
+	text_at(Vector2(x + 15, 265), "МОСТ / ПРЕДМЕТЫ / РУКОЯТЬ ВОРОТ" if arena.level else "КУБ → ГНЕЗДО → ОТКРЫТЬ ВОРОТА", 11, gold)
 	text_at(Vector2(x + 15, 284), "ДОСЯГАЕМОСТЬ РУКИ · 18 М", 10, muted)
 
 func _build_crew_button() -> void:
@@ -262,7 +327,7 @@ func _build_crew_button() -> void:
 func pointer_over_ui() -> bool:
 	if not is_visible_in_tree(): return false
 	var cursor := get_viewport().get_mouse_position()
-	return (panel.visible and panel.get_global_rect().has_point(cursor)) or crew_button.get_global_rect().has_point(cursor)
+	return (panel.visible and panel.get_global_rect().has_point(cursor)) or (crew_button.is_visible_in_tree() and crew_button.get_global_rect().has_point(cursor))
 
 func _key(pos: Vector2, label: String) -> void:
 	draw_style_box(_key_style(), Rect2(pos, Vector2(51, 27)))
@@ -408,6 +473,7 @@ func _process(_dt: float) -> void:
 	if panel:
 		panel.position = Vector2(maxf(16, get_viewport_rect().size.x - 410), 160)
 	if crew_button:
+		crew_button.visible = not compact_mode()
 		var viewport := get_viewport_rect().size
 		var factor := maxf(0.4, minf(viewport.x / 1440.0, viewport.y / 900.0))
 		crew_button.position = Vector2(53, 274) * factor

@@ -44,8 +44,11 @@ func build(tower, body: Node3D) -> void:
 
 func _neutral(side: float, yaw: float) -> Vector3:
 	var pos: Vector3 = actor.global_position + Basis(Vector3.UP, yaw) * Vector3(side * STANCE, 0, -0.06)
-	pos.y = FLOOR_Y
+	pos.y = _floor_y(pos)
 	return pos
+
+func _floor_y(point: Vector3) -> float:
+	return maxf(actor.arena.ground_height(point),actor.global_position.y-0.85)+FLOOR_Y if actor.arena.level else FLOOR_Y
 
 func reset_pose() -> void:
 	compression = 0.0
@@ -99,7 +102,7 @@ func tick(dt: float, travel_velocity: Vector3, angular_speed: float, recoil_rock
 			if leg.progress < 0.65:
 				var landing_yaw: float = actor.global_rotation.y + angular_speed * leg.duration * 0.40
 				var landing: Vector3 = _neutral(leg.side, landing_yaw) + travel_velocity.limit_length(maxf(8.0, actor.forward_speed * actor.cruise_multiplier)) * leg.duration * 0.78
-				landing.y = FLOOR_Y
+				landing.y = _floor_y(landing)
 				var follow := 1.0 - exp(-dt * 12.0)
 				leg.to = leg.to.lerp(landing, follow)
 				leg.to_yaw = lerp_angle(leg.to_yaw, landing_yaw, follow)
@@ -163,7 +166,7 @@ func _start_step(index: int, travel_velocity: Vector3, angular_speed: float, mov
 	leg.from_yaw = leg.foot.global_rotation.y
 	leg.to_yaw = actor.global_rotation.y + angular_speed * leg.duration * 0.40
 	leg.to = _neutral(leg.side, leg.to_yaw) + travel_velocity.limit_length(maxf(8.0, actor.forward_speed * actor.cruise_multiplier)) * leg.duration * 0.78
-	leg.to.y = FLOOR_Y
+	leg.to.y = _floor_y(leg.to)
 	leg.progress = 0.0
 	leg.swing = true
 	next_leg = 1 - index

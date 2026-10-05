@@ -48,7 +48,7 @@ func _available(role: String) -> Array:
 func _shoot(member, kind: String) -> void:
 	var from: Vector3 = member.muzzle.global_position
 	var target: Vector3 = arena.aim_position
-	target.y = maxf(target.y, 0.75)
+	target.y = maxf(target.y, arena.ground_height(target)+0.75)
 	var direction := (target - from).normalized()
 	if direction.length_squared() < 0.5: direction = crew.facing
 	var node: Node3D
@@ -106,7 +106,7 @@ func special() -> void:
 		wave_cd = 14.0
 		used = true
 		var start: Vector3 = crew.center() + crew.facing * 1.8
-		start.y = 0.55
+		start.y = arena.ground_height(start)+0.55
 		var wave := Node3D.new()
 		add_child(wave)
 		wave.position = start
@@ -136,6 +136,8 @@ func _tick_bolts(dt: float) -> void:
 		var bolt: Dictionary = bolts[i]
 		var from: Vector3 = bolt.node.global_position
 		var next: Vector3 = from + bolt.vel * dt
+		if bolt.kind=="wave" and absf(arena.ground_height(next)-arena.ground_height(from))<0.65:
+			next.y=arena.ground_height(next)+0.55
 		var query := PhysicsRayQueryParameters3D.create(from, next, 99)
 		var hit := get_world_3d().direct_space_state.intersect_ray(query)
 		var remove := false
@@ -182,13 +184,13 @@ func _sparks(pos: Vector3, mat: Material, count: int) -> void:
 func _fire_burst(pos: Vector3, direct) -> void:
 	arena.props.blast(pos, 2.6)
 	arena.fx.flash(pos, 2.5, 5.0)
-	arena.fx.ring(Vector3(pos.x, 0.08, pos.z), 0.28, ember_mat)
+	arena.fx.ring(Vector3(pos.x, arena.ground_height(pos)+0.08, pos.z), 0.28, ember_mat)
 	_sparks(pos, ember_mat, 10)
 	arena.sound.play("spell", -8.0, 0.7)
 	for target in arena.combat_targets():
 		if target == direct or (target.position + Vector3.UP * 0.8).distance_to(pos) < 2.6 and _clear_to(pos, target):
 			arena._damage_target(target, 30.0 if target == direct else 10.0, (target.position - pos).normalized(), 4.0, &"crew")
-	burns.append({"pos": Vector3(pos.x, 0.08, pos.z), "life": 3.0, "tick": 0.5})
+	burns.append({"pos": Vector3(pos.x, arena.ground_height(pos)+0.08, pos.z), "life": 3.0, "tick": 0.5})
 
 func _tick_burns(dt: float) -> void:
 	for i in range(burns.size() - 1, -1, -1):
