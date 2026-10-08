@@ -3,10 +3,16 @@ extends Node3D
 const Geo = preload("res://scripts/geo.gd")
 const HandObject = preload("res://scripts/hand_object.gd")
 const Coin = preload("res://scripts/coin.gd")
+const Crystal = preload("res://scripts/ore_crystal.gd")
+const CRYSTALS_PER_GNOME := 4
 var crew
 var arena
 var coins := 0
 var supplies := 0
+var crystals := 0
+var loose_crystals: Array[RigidBody3D] = []
+var crystal_stacks: Dictionary = {}
+var crystal_deliveries: Array[Dictionary] = []
 var cargo: RigidBody3D
 var haulers: Array = []
 var items: Array[RigidBody3D] = []
@@ -24,10 +30,14 @@ func reset() -> void:
 	items.clear()
 	chests.clear()
 	loose_coins.clear()
+	loose_crystals.clear()
+	crystal_stacks.clear()
+	crystal_deliveries.clear()
 	cargo = null
 	haulers.clear()
 	coins = 0
 	supplies = 0
+	crystals = 0
 	if arena.level: return
 	for pos in [Vector3(7, 0, 10), Vector3(-5, 0, 7), Vector3(15, 0, -8)]:
 		spawn_cargo(pos, 1 if items.is_empty() else 3)
@@ -97,6 +107,12 @@ func _spawn_chest(pos: Vector3) -> void:
 func nearest_interaction(pos: Vector3) -> Dictionary:
 	var best := {}
 	var distance := 4.0
+	for item in loose_crystals:
+		if not is_instance_valid(item) or item.has_meta("hand_owner") or item.has_meta("crew_carrier"): continue
+		var d := pos.distance_to(item.global_position)
+		if d < distance and _los(pos + Vector3.UP * 0.8, item.global_position):
+			distance = d
+			best = {"kind": "crystal", "node": item, "text": "E  ПОДНЯТЬ КРИСТАЛЛ"}
 	for item in items:
 		if item == cargo or item.has_meta("hand_owner"): continue
 		var d := Vector2(pos.x - item.position.x, pos.z - item.position.z).length()
@@ -124,7 +140,10 @@ func pickup_cargo(item: RigidBody3D) -> bool:
 	if crew.members.size() < need:
 		crew.tell("Для груза нужно %d гномов" % need)
 		return false
-	var free: Array = crew.members.duplicate()
+	var free: Array = crew.members.filter(func(member): return not member.hauling)
+	if free.size() < need:
+		crew.tell("Для груза нужно %d свободных гномов" % need)
+		return false
 	free.sort_custom(func(a, b): return a.global_position.distance_squared_to(item.position) < b.global_position.distance_squared_to(item.position))
 	haulers.clear()
 	for i in need:
@@ -235,7 +254,149 @@ func spawn_coin(pos: Vector3, impulse: Vector3) -> void:
 	loose_coins.append(coin)
 	preload("res://scripts/tower_hand.gd").register_item(coin, Vector3(0.36, 0.08, 0.36), "МОНЕТА")
 
+func spawn_crystal(pos: Vector3, impulse: Vector3 = Vector3.ZERO) -> RigidBody3D:
+	var item := Crystal.new()
+	item.arena = arena
+	add_child(item)
+	item.global_position = pos
+	item.safe_position = pos
+	item.set_meta("hand_home", pos)
+	item.linear_velocity = impulse
+	item.angular_velocity = Vector3(1.2, 2.0, 0.6)
+	loose_crystals.append(item)
+	return item
+
+func carried_crystal_count() -> int:
+	var total := 0
+	for stack in crystal_stacks.values(): total += stack.size()
+	return total
+
+func pickup_crystal(item: RigidBody3D) -> bool:
+	if crew.crewed or crew.members.is_empty() or not loose_crystals.has(item): return false
+	if item.has_meta("hand_owner") or item.has_meta("crew_carrier"): return false
+	var center: Vector3 = crew.center()
+	if center.distance_to(item.global_position) > 4.0 or not _los(center + Vector3.UP * 0.8, item.global_position): return false
+	var carrier: CharacterBody3D
+	var closest := INF
+	# Fill a visible stack before assigning another dwarf.
+	for member in crew.members:
+		if not crystal_stacks.has(member) or crystal_stacks[member].size() >= CRYSTALS_PER_GNOME: continue
+		var d: float = member.global_position.distance_squared_to(item.global_position)
+		if d < closest:
+			closest = d
+			carrier = member
+	if carrier == null:
+		for member in crew.members:
+			if member.hauling: continue
+			var d: float = member.global_position.distance_squared_to(item.global_position)
+			if d < closest:
+				closest = d
+				carrier = member
+	if carrier == null:
+		crew.tell("Все гномы заняты грузом — сдай кристаллы в башню")
+		return false
+	if not crystal_stacks.has(carrier): crystal_stacks[carrier] = []
+	crystal_stacks[carrier].append(item)
+	carrier.hauling = true
+	item.set_meta("crew_carrier", carrier)
+	item.on_hand_grab()
+	item.freeze = true
+	item.collision_layer = 0
+	item.collision_mask = 0
+	item.linear_velocity = Vector3.ZERO
+	item.angular_velocity = Vector3.ZERO
+	item.rotation = Vector3.ZERO
+	_tick_crystals(0.0)
+	arena.sound.play("lock", -9.0, 1.35)
+	crew.tell("Кристаллы: %d · у башни E — сдать · Q — опустить" % carried_crystal_count())
+	return true
+
+func _release_crystal_carrier(item: RigidBody3D) -> void:
+	if not item.has_meta("crew_carrier"): return
+	var carrier = item.get_meta("crew_carrier")
+	item.remove_meta("crew_carrier")
+	if crystal_stacks.has(carrier):
+		crystal_stacks[carrier].erase(item)
+		if crystal_stacks[carrier].is_empty():
+			crystal_stacks.erase(carrier)
+			carrier.hauling = haulers.has(carrier)
+
+func _make_crystal_loose(item: RigidBody3D, impulse: Vector3) -> void:
+	item.set_meta("depositing", false)
+	item.freeze = false
+	item.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
+	item.collision_layer = item.get_meta("hand_free_layer", 16)
+	item.collision_mask = item.get_meta("hand_free_mask", 1 | 8 | 32 | 1024)
+	item.sleeping = false
+	item.scale = Vector3.ONE
+	item.linear_velocity = impulse
+	item.angular_velocity = Vector3(1.0, 1.5, 0.4)
+	if not loose_crystals.has(item): loose_crystals.append(item)
+
+func drop_crystals(only_carrier: CharacterBody3D = null) -> void:
+	for carrier in crystal_stacks.keys():
+		if only_carrier != null and carrier != only_carrier: continue
+		for item in crystal_stacks[carrier].duplicate():
+			_release_crystal_carrier(item)
+			_make_crystal_loose(item, Vector3(carrier.velocity.x, 2.0, carrier.velocity.z))
+
+func deposit_carried_crystals() -> bool:
+	if carried_crystal_count() == 0 or not crew.can_board(): return false
+	var count := carried_crystal_count()
+	for stack in crystal_stacks.values().duplicate():
+		for item in stack.duplicate(): deposit_crystal(item)
+	crew.tell("Сдаём %d кристаллов в башню" % count)
+	return true
+
+func deposit_crystal(item: RigidBody3D) -> bool:
+	if arena.tank.dead or not loose_crystals.has(item): return false
+	_release_crystal_carrier(item)
+	loose_crystals.erase(item)
+	item.set_meta("depositing", true)
+	item.freeze = true
+	item.collision_layer = 0
+	item.collision_mask = 0
+	item.linear_velocity = Vector3.ZERO
+	item.angular_velocity = Vector3.ZERO
+	crystal_deliveries.append({"node": item, "from": item.global_position, "age": 0.0, "delay": crystal_deliveries.size() * 0.06})
+	arena.sound.play("eject", -12.0, 1.3)
+	return true
+
+func _tick_crystals(dt: float) -> void:
+	for carrier in crystal_stacks:
+		var stack: Array = crystal_stacks[carrier]
+		for index in stack.size():
+			var item: RigidBody3D = stack[index]
+			item.global_position = carrier.global_position + Vector3.UP * ((1.0 if arena.level else 1.5) + index * 0.76)
+			item.global_basis = Basis.IDENTITY
+	for index in range(crystal_deliveries.size() - 1, -1, -1):
+		var delivery: Dictionary = crystal_deliveries[index]
+		var item: RigidBody3D = delivery.node
+		if arena.tank.dead:
+			_make_crystal_loose(item, Vector3.UP * 2.0)
+			crystal_deliveries.remove_at(index)
+			continue
+		delivery.age += dt
+		var age: float = maxf(0.0, delivery.age - delivery.delay)
+		var target: Vector3 = arena.tank.global_position + Vector3.UP * (3.8 if arena.level else 2.8)
+		var out: Vector3 = target - delivery.from
+		out.y = 0.0
+		var toss: Vector3 = delivery.from + out.limit_length(1.4) + Vector3.UP * 1.2
+		if age < 0.18:
+			item.global_position = delivery.from.lerp(toss, age / 0.18)
+		else:
+			var fraction := clampf((age - 0.18) / 0.5, 0.0, 1.0)
+			item.global_position = toss.lerp(target, fraction * fraction)
+			item.scale = Vector3.ONE * lerpf(1.0, 0.2, fraction)
+		if age >= 0.68:
+			crystals += 1
+			arena.fx.ring(target, 0.3, arena.fx.dash_mat)
+			arena.sound.play("pickup", -8.0, 1.2)
+			item.queue_free()
+			crystal_deliveries.remove_at(index)
+
 func tick(dt: float) -> void:
+	_tick_crystals(dt)
 	coin_sound_cd = maxf(0.0, coin_sound_cd - dt)
 	var player: Vector3 = crew.center()
 	var alive: bool = not crew.members.is_empty()

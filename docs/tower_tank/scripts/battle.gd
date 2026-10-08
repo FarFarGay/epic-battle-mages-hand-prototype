@@ -55,6 +55,16 @@ var nav_width := 57
 var nav_height := 57
 var nav_area := 57*57
 var entry_navigation := false
+var nav_building := false
+var nav_build_grid: AStarGrid2D
+var nav_build_solid := PackedByteArray()
+var nav_build_origin := Vector3.ZERO
+var nav_build_entry := false
+var nav_build_cursor := 0
+var nav_build_query: PhysicsShapeQueryParameters3D
+var last_nav_slice_usec := 0
+const NAV_SLICE_USEC := 2500
+const NAV_SLICE_CELLS := 128
 const DIRECTIONS := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1), Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]
 
 func _ready() -> void:
@@ -80,6 +90,10 @@ func _process(dt: float) -> void:
 	crowd.update_instances()
 
 func reset() -> void:
+	nav_building = false
+	nav_build_solid.clear()
+	nav_build_grid = null
+	nav_build_query = null
 	for enemy in enemies:
 		enemy.collision_layer = 0
 		enemy.queue_free()
@@ -117,7 +131,8 @@ func choose_target(enemy: CharacterBody3D) -> Node3D:
 	var best_score := INF
 	for candidate in player_targets():
 		var score: float = enemy.position.distance_squared_to(candidate.global_position)
-		if arena.level and not enemy.attack_on_spawn and score > 45.0 * 45.0: continue
+		var detection_radius: float = enemy.WORLD_ALERT_RADIUS if enemy.world_resident else 45.0
+		if arena.level and not enemy.attack_on_spawn and score>detection_radius*detection_radius: continue
 		# As in the original: prefer at most two attackers per dwarf.
 		if candidate != arena.tank:
 			var load: int = target_load.get(candidate.get_instance_id(), 0) - (1 if enemy.target == candidate else 0)
@@ -138,21 +153,27 @@ func clear_sight(from: Vector3, to: Vector3, victim: Node3D = null) -> bool:
 	return get_world_3d().direct_space_state.intersect_ray(ray).is_empty()
 
 func _rebuild_navigation() -> void:
-	# Cover the entire narrow entry with fewer cells than the normal local grid.
-	# Rear ranks then share the same obstacle routes as those near the tower.
+	# Explicit fixture calls can request a completed grid. Gameplay uses slices.
+	_begin_navigation()
+	while nav_building: _step_navigation(0)
+
+func _begin_navigation() -> void:
 	var player: Vector3 = arena.crew.center()
-	entry_navigation = arena.level != null and player.x < -128.0 and absf(player.z)<10.0
+	nav_build_entry = arena.level != null and arena.level.ENTRY_RECT.has_point(Vector2(player.x,player.z))
+	# The corridor already covers the whole column; do not recenter it as the
+	# tower advances. Outside it the completed local grid follows the player.
+	nav_build_origin = Vector3.ZERO if nav_build_entry or not arena.level else Vector3(snappedf(player.x,16.0),0,snappedf(player.z,16.0))
 	var region := Rect2i(-28,-28,57,57)
-	if entry_navigation:
-		region = Rect2i(int(arena.level.ENTRY_WEST-nav_origin.x),int(-10-nav_origin.z),int(arena.level.ENTRY_LENGTH)+1,21)
-	if grid.region != region:
-		grid.region = region
-		grid.update()
-	nav_min = region.position
-	nav_width = region.size.x
-	nav_height = region.size.y
-	nav_area = nav_width*nav_height
-	solid.resize(nav_area)
+	if nav_build_entry:
+		var bounds: Rect2 = arena.level.ENTRY_RECT
+		region = Rect2i(Vector2i(bounds.position.floor()),Vector2i(bounds.size.ceil())+Vector2i.ONE)
+	nav_build_grid = AStarGrid2D.new()
+	nav_build_grid.region = region
+	nav_build_grid.cell_size = Vector2.ONE
+	nav_build_grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	nav_build_grid.update()
+	nav_build_solid.resize(region.size.x*region.size.y)
+	nav_build_cursor = 0
 	var query := PhysicsShapeQueryParameters3D.new()
 	query.shape = probe
 	if arena.level:
@@ -162,21 +183,49 @@ func _rebuild_navigation() -> void:
 		query.shape = body_probe
 	query.collision_mask = 3 if arena.tank.dead or not arena.crew.crewed else 1
 	if arena.level: query.collision_mask |= 32 # Breakable supply crates and barrels.
-	for x in range(region.position.x,region.end.x):
-		for z in range(region.position.y,region.end.y):
-			query.transform.origin = nav_origin + Vector3(x, 1.3 if arena.level else 0.9, z)
-			var point := nav_origin+Vector3(x,0,z)
-			var floor_y: float=arena.ground_height(point)
-			query.transform.origin.y+=floor_y
-			var blocked := not get_world_3d().direct_space_state.intersect_shape(query, 1).is_empty()
-			if arena.level:
-				for offset in [Vector3.RIGHT,Vector3.LEFT,Vector3.FORWARD,Vector3.BACK]:
-					if absf(arena.ground_height(point+offset)-floor_y)>0.65:
-						blocked=true
-						break
-			grid.set_point_solid(Vector2i(x, z), blocked)
-			solid[_nav_index(Vector2i(x,z))] = int(blocked)
+	nav_build_query = query
+	nav_building = true
 	nav_dirty = false
+
+func _step_navigation(budget_usec: int = NAV_SLICE_USEC) -> void:
+	if not nav_building: return
+	var started := Time.get_ticks_usec()
+	var region := nav_build_grid.region
+	var area := nav_build_solid.size()
+	var limit := area if budget_usec==0 else mini(area,nav_build_cursor+NAV_SLICE_CELLS)
+	var space := get_world_3d().direct_space_state
+	while nav_build_cursor<limit:
+		if budget_usec>0 and Time.get_ticks_usec()-started>=budget_usec: break
+		var x := nav_build_cursor%region.size.x+region.position.x
+		var z := nav_build_cursor/region.size.x+region.position.y
+		var point := nav_build_origin+Vector3(x,0,z)
+		var floor_y: float = arena.ground_height(point)
+		nav_build_query.transform.origin = point+Vector3.UP*(floor_y+(1.3 if arena.level else 0.9))
+		var blocked := not space.intersect_shape(nav_build_query,1).is_empty()
+		if arena.level:
+			for offset in [Vector3.RIGHT,Vector3.LEFT,Vector3.FORWARD,Vector3.BACK]:
+				if absf(arena.ground_height(point+offset)-floor_y)>0.65:
+					blocked=true
+					break
+		nav_build_grid.set_point_solid(Vector2i(x,z),blocked)
+		nav_build_solid[nav_build_cursor]=int(blocked)
+		nav_build_cursor+=1
+	last_nav_slice_usec = Time.get_ticks_usec()-started
+	if nav_build_cursor<area: return
+	# Keep the previous complete map usable until this one is ready. Changes
+	# made during construction leave nav_dirty set and schedule another pass.
+	grid = nav_build_grid
+	nav_origin = nav_build_origin
+	entry_navigation = nav_build_entry
+	nav_min = region.position
+	nav_width = region.size.x
+	nav_height = region.size.y
+	nav_area = area
+	solid = nav_build_solid
+	nav_build_solid = PackedByteArray()
+	nav_building = false
+	nav_build_grid = null
+	nav_build_query = null
 	nav_wait = 0.35
 	flow_next.clear()
 	flow_distance.clear()
@@ -384,7 +433,7 @@ func _spawn_wave_batch() -> void:
 	if spawn_cursor >= spawn_points.size(): spawning_left = 0
 
 func remaining() -> int:
-	return enemies.size() + spawning_left + (arena.level.spawn_queue.size() if arena.level else 0)
+	return enemies.size() + spawning_left + (arena.level.spawn_queue.size()+(arena.level.WORLD_SKELETONS if arena.level.world_population_pending else 0) if arena.level else 0)
 
 func killed(enemy: CharacterBody3D) -> void:
 	if not enemies.has(enemy): return
@@ -438,8 +487,10 @@ func _update_neighbors() -> void:
 		neighbor_links[i] = -1
 		if is_instance_valid(enemy.target): target_load[enemy.target.get_instance_id()] = target_load.get(enemy.target.get_instance_id(), 0) + 1
 		if enemy.hand_held or enemy.hand_thrown: continue
-		var x := clampi(floori((pos.x-neighbor_origin.x)/CROWD_CELL),0,neighbor_width-1)
-		var z := clampi(floori((pos.z-neighbor_origin.z)/CROWD_CELL),0,neighbor_height-1)
+		var x := floori((pos.x-neighbor_origin.x)/CROWD_CELL)
+		var z := floori((pos.z-neighbor_origin.z)/CROWD_CELL)
+		# Distant residents must not pile into the border cells of a local grid.
+		if x<0 or z<0 or x>=neighbor_width or z>=neighbor_height: continue
 		var cell := z * neighbor_width + x
 		neighbor_links[i] = neighbor_heads[cell]
 		neighbor_heads[cell] = i
@@ -480,20 +531,14 @@ func tick(dt: float) -> void:
 	if arena.tuning_open: return
 	if arena.level:
 		var player: Vector3 = arena.crew.center()
-		var in_entry := player.x < -128.0 and absf(player.z)<10.0
-		if in_entry != entry_navigation:
+		var in_entry: bool = arena.level.ENTRY_RECT.has_point(Vector2(player.x,player.z))
+		var needs_region := in_entry != entry_navigation or (not in_entry and (absf(player.x-nav_origin.x)>12.0 or absf(player.z-nav_origin.z)>12.0))
+		var desired_origin := Vector3.ZERO if in_entry else Vector3(snappedf(player.x,16.0),0,snappedf(player.z,16.0))
+		if needs_region and (not nav_building or nav_build_entry!=in_entry or nav_build_origin!=desired_origin):
 			nav_dirty = true
 			nav_wait = 0.0
-		if absf(player.x - nav_origin.x) > 12.0 or absf(player.z - nav_origin.z) > 12.0:
-			nav_origin = Vector3(snappedf(player.x, 16.0), 0, snappedf(player.z, 16.0))
-			nav_dirty = true
-			nav_wait = 0.0
-			solid.clear()
-			flow_next.clear()
-			flow_distance.clear()
-			flow_build.clear()
-			flow_build_distance.clear()
-	if (waves_enabled or not enemies.is_empty()) and nav_dirty and nav_wait <= 0.0: _rebuild_navigation()
+	if (waves_enabled or not enemies.is_empty()) and nav_dirty and nav_wait<=0.0 and not nav_building: _begin_navigation()
+	_step_navigation()
 	if player_targets().is_empty():
 		wave_requested = false
 		for enemy in enemies.duplicate():
@@ -509,15 +554,21 @@ func tick(dt: float) -> void:
 	last_profile["shared"] = Time.get_ticks_usec() - tick_started
 	simulation_time += dt
 	simulation_frame += 1
+	var player_position: Vector3 = arena.crew.center()
 	for enemy in enemies.duplicate():
 		enemy.pending_dt += dt
 		var full_rate: bool = enemies.size() <= 64 or enemy.giant or enemy.hand_held or enemy.hand_thrown or enemy.state == enemy.State.STAGGER or enemy.state == enemy.State.WINDUP or enemy.state == enemy.State.LUNGE
-		if not full_rate and enemy.sim_slot != simulation_frame % 2: continue
+		var period := dt if full_rate else dt*2.0
+		var patrol_scheduled: bool = enemy.world_resident and not enemy.attack_on_spawn and not enemy.hand_held and not enemy.hand_thrown and enemy.state==enemy.State.APPROACH and not valid_target(enemy.target) and enemy.position.distance_squared_to(player_position)>pow(enemy.WORLD_ALERT_RADIUS+1.0,2)
+		if patrol_scheduled:
+			period=0.2 if enemy.position.distance_squared_to(player_position)>55.0*55.0 else 1.0/15.0
+			if enemy.pending_dt+0.000001<period: continue
+		elif not full_rate and enemy.sim_slot != simulation_frame % 2: continue
 		last_profile.actors += 1
 		enemy.render_from = enemy.position
 		enemy.render_stride = enemy.stride
 		enemy.render_time = simulation_time
-		enemy.render_period = dt if full_rate else dt * 2.0
+		enemy.render_period = period
 		enemy.tick(enemy.pending_dt)
 		enemy.pending_dt = 0.0
 	last_tick_usec = Time.get_ticks_usec() - tick_started

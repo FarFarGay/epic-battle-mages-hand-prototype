@@ -4,6 +4,8 @@ extends CharacterBody3D
 const Geo = preload("res://scripts/geo.gd")
 const WALK_SPEED_MULTIPLIER := 1.15
 const SHIELD_MAX_HP := 24.0
+const WORLD_ALERT_RADIUS := 24.0
+const PATROL_RADIUS := 14.0
 enum State { APPROACH, WINDUP, LUNGE, RECOVERY, STAGGER }
 var battle
 var arena
@@ -11,6 +13,13 @@ var giant := false
 var shield_guard := false
 var shield_hp := 0.0
 var attack_on_spawn := false
+var world_resident := false
+var patrol_origin := Vector3.ZERO
+var patrol_goal := Vector3.ZERO
+var patrol_wait := 0.0
+var patrol_speed := 1.0
+var patrol_blocked := 0.0
+var patrol_rng := RandomNumberGenerator.new()
 var body_size := 1.0
 var body_radius := 0.4
 var body_height := 1.9
@@ -99,6 +108,72 @@ func _build() -> void:
 	add_child(warning)
 	warning.hide()
 
+func setup_patrol(slot: int) -> void:
+	patrol_origin=position
+	patrol_goal=position
+	patrol_rng.seed=19221+slot*1543
+	patrol_speed=patrol_rng.randf_range(0.85,1.15)
+	patrol_wait=patrol_rng.randf_range(0.0,1.8)
+	# Spread distant patrol updates across physics frames, rather than all at once.
+	pending_dt=float(slot%12)/60.0
+
+func _new_patrol_goal() -> void:
+	var excluded: Array[RID] = [get_rid()]
+	for attempt in 8:
+		var angle := patrol_rng.randf()*TAU
+		var radius := patrol_rng.randf_range(4.0,PATROL_RADIUS)
+		var point := patrol_origin+Vector3(cos(angle),0,sin(angle))*radius
+		if point.distance_squared_to(position)<9.0: continue
+		if arena.level._world_spawn_open(point,excluded):
+			patrol_goal=point
+			patrol_blocked=0.0
+			return
+	patrol_goal=position
+	patrol_wait=0.5
+
+func _tick_patrol(dt: float) -> void:
+	velocity=Vector3.ZERO
+	patrol_wait=maxf(0.0,patrol_wait-dt)
+	if patrol_wait>0.0:
+		_animate(dt,0.0)
+		return
+	var offset := patrol_goal-position
+	offset.y=0.0
+	if offset.length_squared()<0.36:
+		_new_patrol_goal()
+		offset=patrol_goal-position
+		offset.y=0.0
+		if offset.length_squared()<0.36:
+			_animate(dt,0.0)
+			return
+	var direction := offset.normalized()
+	var travel := minf(patrol_speed*dt,offset.length())
+	var next := position
+	var excluded: Array[RID] = [get_rid()]
+	var turn := 1.0 if int(patrol_rng.seed)%2==0 else -1.0
+	# Check the body at every short step; try either side of props and cliff edges.
+	for angle in [0.0,turn*PI/3,-turn*PI/3,turn*PI/2,-turn*PI/2]:
+		var step := direction.rotated(Vector3.UP,angle)*travel
+		var point := position+step
+		if point.distance_squared_to(patrol_origin)>PATROL_RADIUS*PATROL_RADIUS: continue
+		if arena.level._world_spawn_open(point,excluded):
+			next=point
+			break
+	var motion := next-position
+	if motion.is_zero_approx():
+		patrol_blocked+=dt
+		if patrol_blocked>0.6: _new_patrol_goal()
+		_animate(dt,0.0)
+		return
+	patrol_blocked=0.0
+	position=next
+	velocity=motion/maxf(dt,0.001)
+	rotation.y=lerp_angle(rotation.y,atan2(-motion.x,-motion.z),1.0-exp(-6.0*dt))
+	_animate(dt,velocity.length())
+	if position.distance_squared_to(patrol_goal)<0.36:
+		patrol_wait=patrol_rng.randf_range(0.8,2.2)
+		patrol_goal=position
+
 func tick(dt: float) -> void:
 	var profile_start := Time.get_ticks_usec() if battle.profile_enabled else 0
 	if dead: return
@@ -116,6 +191,9 @@ func tick(dt: float) -> void:
 	if not battle.valid_target(target) or scan_left <= 0.0:
 		target = battle.choose_target(self)
 		scan_left = 0.4
+	if world_resident and not attack_on_spawn and state==State.APPROACH and not battle.valid_target(target):
+		_tick_patrol(dt)
+		return
 	var desired := Vector3.ZERO
 	timer -= dt
 	if state == State.STAGGER:
@@ -258,6 +336,7 @@ func _animate(dt: float, speed: float) -> void:
 	body_lean = lerpf(body_lean, -0.22 if windup else (0.48 if state == State.LUNGE else 0.10), 1.0 - exp(-22.0 * dt))
 func take_damage(amount: float, direction: Vector3 = Vector3.ZERO, force: float = 0.0, source: StringName = &"") -> void:
 	if dead or amount <= 0.0: return
+	if world_resident: attack_on_spawn=true # A long-range hit also wakes the victim.
 	if giant and source == &"crew": amount *= 0.5
 	hit_flash = 0.11
 	scan_left = 0.0

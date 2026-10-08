@@ -98,7 +98,7 @@ func set_enabled(value: bool) -> void:
 	cursor_initialized = false
 	if arena.hud: arena.hud.reset_reticle()
 	_show(value)
-	arena.crew.tell("Рука · ЛКМ держать — взять · отпустить у башни — закрепить" if value else "Прицел · ЛКМ — пушка · ПКМ — арбалеты")
+	arena.crew.tell("Рука · ЛКМ держать — взять · отпусти у башни — груз / ресурс" if value else "Прицел · ЛКМ — пушка · ПКМ — арбалеты")
 
 func trigger(pressed: bool) -> void:
 	if not pressed:
@@ -210,6 +210,9 @@ func tick(dt: float) -> void:
 	if not enabled:
 		_show(false)
 		return
+	if arena.defenses and arena.defenses.mode!=arena.defenses.Mode.IDLE:
+		_show(false)
+		return
 	if arena.tuning_open or arena.tank.dash.active or arena.tank.dash.is_aiming():
 		cancel_drag()
 		_show(false)
@@ -301,7 +304,7 @@ func _snap_destination() -> String:
 			if puzzle.can_snap(held,cursor_surface): return "socket"
 		elif _flat_distance(cursor_surface, puzzle.socket_position) <= 1.5 and held.global_position.distance_to(puzzle.seat_position()) < 4.0 and _clear_line(_center(held), puzzle.seat_position(), held):
 			return "socket"
-	if not is_instance_valid(mounted) and _flat_distance(cursor_surface, arena.tank.global_position) <= CARGO_SNAP_RADIUS and _flat_distance(held.global_position, arena.tank.global_position) <= 4.0 and _clear_line(_center(held), _cargo_position(held), held):
+	if (not is_instance_valid(mounted) or held.get_meta("crystal", false)) and _flat_distance(cursor_surface, arena.tank.global_position) <= CARGO_SNAP_RADIUS and _flat_distance(held.global_position, arena.tank.global_position) <= 4.0 and _clear_line(_center(held), _cargo_position(held), held):
 		return "tower"
 	return ""
 
@@ -330,6 +333,12 @@ func _release(gently: bool, allow_snap: bool) -> void:
 	if destination == "socket":
 		puzzle.seat(body)
 	elif destination == "tower":
+		if body.get_meta("crystal", false):
+			arena.crew.loot.deposit_crystal(body)
+			velocity_history.clear()
+			snap_destination = ""
+			arena.crew.tell("Кристалл втягивается в башню")
+			return
 		mounted = body as RigidBody3D
 		body.set_meta("hand_owner", "tower")
 		mounted.freeze = true
@@ -370,8 +379,11 @@ func _drop_mounted() -> void:
 	body.linear_velocity = -arena.tank.global_basis.x * 2.5 + Vector3.UP
 
 func status_text() -> String:
+	if arena.defenses:
+		var building_hint: String = arena.defenses.status_text()
+		if not building_hint.is_empty(): return building_hint
 	if is_instance_valid(held):
-		if snap_destination == "tower": return "ОТПУСТИ ЛКМ — ЗАКРЕПИТЬ НА БАШНЕ"
+		if snap_destination == "tower": return "ОТПУСТИ ЛКМ — СДАТЬ КРИСТАЛЛ" if held.get_meta("crystal", false) else "ОТПУСТИ ЛКМ — ЗАКРЕПИТЬ НА БАШНЕ"
 		if snap_destination == "socket": return "ОТПУСТИ ЛКМ — УСТАНОВИТЬ МОСТ" if arena.level else "ОТПУСТИ ЛКМ — ВСТАВИТЬ В ГНЕЗДО"
 		return "ЛКМ — НЕСТИ · ПКМ — АККУРАТНО ОТПУСТИТЬ"
 	if is_instance_valid(candidate):

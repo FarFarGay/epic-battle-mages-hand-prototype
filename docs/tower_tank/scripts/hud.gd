@@ -119,9 +119,10 @@ func _draw_compact(w: float, h: float) -> void:
 		text_at(Vector2(188,bottom-41),"%d / %d"%[ceili(hull.hp),int(hull.MAX_HP)],12,color)
 		draw_rect(Rect2(38,bottom-23,244,5),muted.darkened(0.6))
 		draw_rect(Rect2(38,bottom-23,244*hull.hp/hull.MAX_HP,5),color)
+		text_at(Vector2(38,bottom-6),"КРИСТАЛЛЫ В БАШНЕ  %d"%crew.loot.crystals,10,gold)
 	else:
 		text_at(Vector2(38,bottom-41),"ЭКИПАЖ · %d / 9"%crew.members.size(),13,teal)
-		text_at(Vector2(38,bottom-17),"МОНЕТЫ %d · ЗАПАСЫ %d"%[crew.loot.coins,crew.loot.supplies],11,gold)
+		text_at(Vector2(38,bottom-17),"КРИСТАЛЛЫ %d + %d НЕСЁМ · МОНЕТЫ %d"%[crew.loot.crystals,crew.loot.carried_crystal_count(),crew.loot.coins],10,gold)
 		_draw_abilities(center,h)
 	if crew.crewed:
 		if arena.hand.enabled:
@@ -234,6 +235,7 @@ func _draw_crew(w: float, h: float) -> void:
 		if member.hauling:
 			draw_rect(Rect2(x - 6, 196, 12, 4), ink)
 	text_at(Vector2(53, 242), "МОНЕТЫ  %03d    ЗАПАСЫ В БАШНЕ  %02d" % [c.loot.coins, c.loot.supplies], 11, gold)
+	text_at(Vector2(53, 310), "КРИСТАЛЛЫ  %d В БАШНЕ · %d НЕСЁМ" % [c.loot.crystals,c.loot.carried_crystal_count()], 11, teal)
 	text_at(Vector2(53, 260), "%d носильщиков · Q — опустить груз" % c.loot.haulers.size() if c.loot.cargo != null else "%d лучн. · %d копья · %d рабоч. · %d мага" % [c.role_count("archer_squad"), c.role_count("pikeman"), c.role_count("worker"), c.role_count("fire_mage")], 10, muted)
 	if not arena.tuning_open:
 		var label: String = c.context_action().text
@@ -383,6 +385,10 @@ func _draw_hand_cursor() -> void:
 	var cursor: Vector2 = hand.test_pointer if hand.test_pointer.is_finite() else get_viewport().get_mouse_position()
 	var color: Color = gold if is_instance_valid(hand.candidate) or hand.snap_destination != "" else teal
 	if not hand.cursor_valid: color = Color("ed8069")
+	if arena.defenses and arena.defenses.mode==arena.defenses.Mode.AIM:
+		color = teal if arena.defenses.direction_valid else Color("ed8069")
+	elif arena.defenses and is_instance_valid(arena.defenses.hovered):
+		color = gold if arena.defenses.reachable(arena.defenses.hovered) else Color("ed8069")
 	# A glove silhouette, rather than a weapon crosshair. The world palm closes on grab.
 	var points := PackedVector2Array([Vector2(-6, 12), Vector2(-14, 1), Vector2(-13, -3), Vector2(-10, -3), Vector2(-6, 2), Vector2(-6, -12), Vector2(-3, -15), Vector2(0, -12), Vector2(0, -3), Vector2(1, -3), Vector2(1, -17), Vector2(3, -19), Vector2(6, -16), Vector2(6, -3), Vector2(7, -3), Vector2(7, -13), Vector2(9, -15), Vector2(12, -12), Vector2(12, -1), Vector2(13, -1), Vector2(13, -7), Vector2(15, -9), Vector2(18, -6), Vector2(18, 6), Vector2(12, 14)])
 	if is_instance_valid(hand.held):

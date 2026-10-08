@@ -41,11 +41,9 @@ func _draw() -> void:
 		var radius: float = entry[1]*factor*0.5
 		draw_circle(p(pos),radius,entry[3])
 		caption(p(pos)+Vector2(-radius*0.7,4),entry[2],Color("18282e"),15)
-	for i in level.encounters.size():
-		var entry: Dictionary = level.encounters[i]
-		var pos: Vector3 = entry.pos
-		draw_circle(p(Vector2(pos.x,pos.z)),7.0*factor,Color(0.72,0.3,0.25,0.5 if entry.triggered else 0.8))
-		caption(p(Vector2(pos.x,pos.z))+Vector2(-10,5),"Б%d" % (i+1) if i<4 else "Л1",Color.WHITE,13)
+	for enemy in level.arena.battle.enemies:
+		if enemy.world_resident and not enemy.dead:
+			draw_circle(p(Vector2(enemy.position.x,enemy.position.z)),2.0,Color("e29b72") if enemy.shield_guard else Color("ce5e52"))
 	var loot_positions := [Vector2(0,44),Vector2(-8,-76),Vector2(-42,73)]
 	for i in loot_positions.size():
 		var pos: Vector2 = loot_positions[i]
@@ -59,4 +57,4 @@ func _draw() -> void:
 	caption(p(Vector2(level.ENTRY_WEST+1,-13)),"ВХОД · %d М · %d СКЕЛЕТОВ" % [int(level.ENTRY_LENGTH),level.ENTRY_ATTACK_SIZE],Color.WHITE,14)
 	caption(p(Vector2(129,-13)),"ВЫХОД",Color.WHITE,14)
 	caption(Vector2(60,view.y-63),"A: гномы → груз на платформе → рукоять рукой → верстак.   B: площадка и два кармана лута.",Color("d0d7d3"),15)
-	caption(Vector2(60,view.y-38),"C: разбор породы / рабочие и защита трёх входов.   Красное — встречи с врагами, жёлтое — лут.",Color("d0d7d3"),15)
+	caption(Vector2(60,view.y-38),"C: разбор породы / рабочие и защита трёх входов.   Красные точки — скелеты, жёлтое — лут.",Color("d0d7d3"),15)

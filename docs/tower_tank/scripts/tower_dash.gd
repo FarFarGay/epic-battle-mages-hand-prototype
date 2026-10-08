@@ -151,6 +151,10 @@ func _terrain_landing(dir: Vector3, length: float) -> Vector3:
 	for target in arena.combat_targets():
 		var health: float=target.hp if target.has_meta("enemy") else float(target.get_meta("hp"))
 		if health<=130.0: excluded.append(target.get_rid())
+	# A super dash destroys this door on contact; preview the usable landing
+	# behind it while retaining collisions with the fixed fence and cliff edges.
+	if is_instance_valid(arena.level.bridge_door) and arena.level.bridge_door.can_super_dash_break():
+		excluded.append(arena.level.bridge_door.get_rid())
 	parameters.exclude_bodies=excluded
 	var result := PhysicsTestMotionResult3D.new()
 	var left := length
@@ -226,6 +230,10 @@ func move(dt: float) -> void:
 		if arena.level and collision.get_normal().y>0.7:
 			motion=collision.get_remainder().slide(collision.get_normal())
 			continue
+		if is_super and collider is Node3D and collider.has_method("break_by_super_dash"):
+			if collider.break_by_super_dash(direction):
+				motion = collision.get_remainder()
+				continue
 		if collider is Node3D and (collider.has_meta("target") or collider.has_meta("enemy")):
 			var id: int = collider.get_instance_id()
 			if not hit_ids.has(id):

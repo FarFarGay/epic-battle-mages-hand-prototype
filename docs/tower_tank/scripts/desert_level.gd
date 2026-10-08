@@ -1,18 +1,27 @@
 extends Node3D
 ## Playable greybox based on Levelart.pdf. Coordinates are metres, north is -Z.
 const Geo = preload("res://scripts/geo.gd")
-const A := Vector3(-60, 4, 46)
-const B := Vector3(-28, 5, -46)
-const C := Vector3(48, 4, 10)
+var A := Vector3(-60, 4, 46)
+var B := Vector3(-28, 5, -46)
+var C := Vector3(48, 4, 10)
 const ENTRY_LENGTH := 96.0
-const ENTRY_ATTACK_SIZE := 240
+var ENTRY_ATTACK_SIZE := 240
 const ENTRY_SHIELD_EVERY := 6 # 200 ordinary + 40 guards: 600 hits, three perfect magazines.
 const ENTRY_FRONT_DISTANCE := 26.0
+var WORLD_SKELETONS := 120
+const WORLD_SHIELD_EVERY := 8 # 105 ordinary skeletons and 15 guards.
+const ORE_HEALTH := 100.0
+const MINING_DAMAGE := 20.0
+const MINING_INTERVAL := 0.65
+const ORE_CELL_SIZE := 2.5
+const WORLD_SPACING := 7.5
 const ENTRY_POWDER_CACHES := [Vector2(25,-3),Vector2(43,-3.4),Vector2(61.5,5)]
 const ENTRY_WEST := -128.0-ENTRY_LENGTH
-const ENTRY_RECT := Rect2(ENTRY_WEST,-10,ENTRY_LENGTH,20)
-const WORLD_BOUNDS := Rect2(ENTRY_WEST,-88,164.0-ENTRY_WEST,176)
-const START := Vector3(ENTRY_WEST+10, 0.04, 0)
+@export_group("Map bounds")
+@export var ENTRY_RECT := Rect2(ENTRY_WEST,-10,ENTRY_LENGTH,20)
+@export var WORLD_BOUNDS := Rect2(ENTRY_WEST,-88,164.0-ENTRY_WEST,176)
+var START := Vector3(ENTRY_WEST+10, 0.04, 0)
+const BRIDGE_DOOR_POSITION := Vector3(-124,0,0)
 const ENTRY_SUPPLIES := [Vector2(20,-4.8),Vector2(21.5,4.6),Vector2(36,-1.2),Vector2(44,4.4),Vector2(52,-4.2),Vector2(64,1.2)]
 const ENTRY_PROP_LAYOUT := [
 	[Vector2(-0.35,-2.6),1], [Vector2(0.15,-1.65),2], [Vector2(-0.2,-0.7),1], [Vector2(0.35,0.25),1],
@@ -20,17 +29,19 @@ const ENTRY_PROP_LAYOUT := [
 const OUTLINE := [Vector2(-128,-10), Vector2(-114,-44), Vector2(-80,-78), Vector2(-14,-88), Vector2(40,-80), Vector2(84,-64), Vector2(116,-36), Vector2(128,-10), Vector2(128,10), Vector2(112,42), Vector2(80,70), Vector2(24,88), Vector2(-36,84), Vector2(-88,76), Vector2(-116,44), Vector2(-128,10)]
 var arena
 var terrain
-var ground_mat := Geo.material(Color("897252"))
-var rock_mat := Geo.material(Color("aa7756"))
+var dressing
+var ground_mat: Material = Geo.material(Color("68746a"))
+var rock_mat: Material = Geo.material(Color("89958d"))
 var dark_mat := Geo.material(Color("48525b"))
-var pad_mat := Geo.material(Color("958063"))
-var house_mat := Geo.material(Color("8b7b68"))
-var ore_mat := Geo.material(Color("967139"))
+var pad_mat: Material = Geo.material(Color("9a9e8c"))
+var house_mat: Material = Geo.material(Color("98aaa3"))
+var ore_mat: Material = Geo.material(Color("718781"))
 var accent_a := Geo.material(Color("786187"))
 var accent_b := Geo.material(Color("547982"))
 var accent_c := Geo.material(Color("92723f"))
 var bridge_body: StaticBody3D
 var bridge_guards: Array[StaticBody3D] = []
+var bridge_door
 var gate: StaticBody3D
 var gate_bars: Node3D
 var gate_handle
@@ -40,10 +51,11 @@ var unlocked := false
 var gate_open := false
 var gate_lift := 0.0
 var ore: Array[StaticBody3D] = []
+var ore_cells: Dictionary = {}
+var mining_time := 0.0
 var ore_total := 0
 var mined := 0
 var mining := false
-var mining_left := 0.0
 var mine_defense_started := false
 var completed := false
 var encounters: Array[Dictionary] = []
@@ -54,6 +66,19 @@ var last_safe := START
 var automatic_encounters := true
 var entry_barrel_positions: Array[Vector3] = []
 var entry_prop_specs: Array[Dictionary] = []
+var world_spawn_positions: Array[Vector3] = []
+var world_probe := CapsuleShape3D.new()
+var world_population_pending := false
+var world_sync_frames := 0
+@export var authored := false
+var layout
+var platform_rest := Vector3.ZERO
+var gate_bars_rest := Vector3.ZERO
+
+func bind_authored_world() -> void:
+	layout = preload("res://scripts/canyon_layout.gd").new()
+	layout.level = self
+	layout.bind()
 
 func block(pos: Vector3, size: Vector3, mat: Material, solid: bool = true, yaw: float = 0.0) -> Node3D:
 	var node: Node3D = StaticBody3D.new() if solid else Node3D.new()
@@ -75,6 +100,13 @@ func _floor(pos: Vector3, size: Vector2, mat: Material) -> StaticBody3D:
 
 func build_world() -> void:
 	name = "CanyonLevel"
+	dressing = load("res://scripts/canyon_dressing.gd").new()
+	dressing.level = self
+	add_child(dressing)
+	ground_mat = dressing.ground_material
+	pad_mat = dressing.worn_material
+	rock_mat = dressing.stone_material
+	ore_mat = dressing.ore_material
 	terrain=load("res://scripts/canyon_terrain.gd").new()
 	terrain.level=self
 	add_child(terrain)
@@ -116,6 +148,7 @@ func build_world() -> void:
 		Geo.collider(guard, Vector3(0.25,9,20), Vector3.UP * 4.5)
 		bridge_guards.append(guard)
 	set_bridge(false)
+	_build_bridge_fence()
 	# Three large obstructions reproduce the sightline breaks on the layout.
 	terrain.crag(Vector3(-79,0,-21),Vector3(11,14,12),1)
 	terrain.crag(Vector3(-69,0,-16),Vector3(6,8,7),2)
@@ -127,6 +160,27 @@ func build_world() -> void:
 	_build_a()
 	_build_b()
 	_build_c()
+	dressing.build()
+
+func _build_bridge_fence() -> void:
+	var wood := Geo.material(Color("776047"))
+	var beams := Geo.material(Color("4d3829"))
+	for side in [-1,1]:
+		var fence := StaticBody3D.new()
+		fence.name = "BridgeFenceLeft" if side<0 else "BridgeFenceRight"
+		add_child(fence)
+		fence.position = BRIDGE_DOOR_POSITION+Vector3(0,0,side*13.0)
+		fence.collision_layer = 1
+		fence.collision_mask = 0
+		Geo.collider(fence,Vector3(0.55,4.8,20),Vector3.UP*2.4)
+		for i in 24:
+			Geo.box(fence,Vector3(0.32,4.2,0.68),Vector3(0,2.1,-9.6+i*0.835),wood)
+		for y in [0.7,3.5]: Geo.box(fence,Vector3(0.18,0.24,20),Vector3(-0.23,y,0),beams)
+		for z in [-9.7,0.0,9.7]: Geo.box(fence,Vector3(0.75,4.8,0.55),Vector3(0,2.4,z),beams)
+	bridge_door = load("res://scripts/level_dash_gate.gd").new()
+	bridge_door.level = self
+	bridge_door.position = BRIDGE_DOOR_POSITION
+	add_child(bridge_door)
 
 func _build_a() -> void:
 	terrain.plateau(A,32)
@@ -207,6 +261,9 @@ func set_bridge(opened: bool) -> void:
 	if arena.battle: arena.battle.nav_dirty = true
 
 func build_targets() -> void:
+	if authored:
+		layout.build_targets()
+		return
 	# Powder chains along the advancing column reward a well-timed shot.
 	# Offset powder caches sit by the barricades; each chain is local.
 	for center in ENTRY_POWDER_CACHES:
@@ -224,23 +281,30 @@ func build_targets() -> void:
 	for spec in arena.target_specs: arena._spawn_target(spec)
 
 func setup_gameplay() -> void:
+	if arena.defenses: arena.defenses.reset()
+	bridge_door.reset()
 	unlocked = false
 	gate_open = false
 	gate_lift = 0.0
 	gate.collision_layer = 1
-	gate_bars.position.y = 0
+	gate_bars.position = gate_bars_rest
 	gate_handle.reset()
-	platform.position.y = A.y+0.04
+	if authored: platform.global_position = platform_rest
+	else: platform.position.y = A.y+0.04
 	mining = false
 	mined = 0
-	mining_left = 0.0
 	mine_defense_started = false
 	completed = false
 	spawn_queue.clear()
 	ore.clear()
+	ore_cells.clear()
+	mining_time = 0.0
 	arena.tank.position = START
 	arena.tank.rotation.y = -PI/2
 	arena.tank.turret_yaw = -PI/2
+	if authored:
+		arena.tank.rotation.y = layout.player_transform.basis.get_euler().y
+		arena.tank.turret_yaw = arena.tank.rotation.y
 	arena.tank.collision_mask |= 256
 	arena.tank.walker.reset_pose()
 	last_safe = START
@@ -258,6 +322,23 @@ func setup_gameplay() -> void:
 		shape.shape.radius = 0.19
 		shape.shape.height = 0.70
 		shape.position.y = 0.35
+	if authored:
+		layout.spawn_gameplay()
+	else:
+		_spawn_generated_gameplay()
+	ore_total = ore.size()
+	encounters.clear()
+	if map_view == null:
+		map_view = load("res://scripts/level_map.gd").new()
+		map_view.level = self
+		arena.hud.add_child(map_view)
+	map_view.hide()
+	_queue_entry_attack()
+	world_population_pending=true
+	world_sync_frames=2 # Newly added colliders need a physics synchronization first.
+	arena.crew.tell("Впереди скелеты · красные бочки помогут прорваться")
+
+func _spawn_generated_gameplay() -> void:
 	weight = arena.crew.loot.spawn_cargo(A+Vector3(-12,0,-8),1)
 	weight.set_meta("hand_label","ГРУЗ ДЛЯ ВЕСОВОЙ ПЛАТФОРМЫ")
 	for pos in [Vector3(0,0,44),Vector3(-8,0,-76),Vector3(-42,0,73),B+Vector3(-10,0,1),B+Vector3(10,0,7),C+Vector3(-20,0,8)]:
@@ -274,22 +355,59 @@ func setup_gameplay() -> void:
 			var p := Vector2((x-4)*2.5/13.0,z*2.5/23.0)
 			if p.length_squared() > 1.0 or ((x+z)%9 == 0 and x < 1): continue
 			_spawn_ore(C+Vector3(x*2.5,0,z*2.5),2.0+float(posmod(x+z,3))*0.65)
-	ore_total = ore.size()
-	encounters.assign([
-		{"name":"Б1 · ДОРОЖНЫЙ БОЙ","pos":Vector3(-99,0,19),"count":18,"giants":1,"radius":23.0,"triggered":false},
-		{"name":"Б2 · ДОРОЖНЫЙ БОЙ","pos":Vector3(4,0,-19),"count":24,"giants":2,"radius":24.0,"triggered":false},
-		{"name":"Б3 · ОХРАНА ЛУТА","pos":Vector3(14,0,-68),"count":18,"giants":1,"radius":19.0,"triggered":false},
-		{"name":"Б4 · ОХРАНА ЛУТА","pos":Vector3(-18,0,73),"count":24,"giants":2,"radius":20.0,"triggered":false},
-		{"name":"Л1 · УСИЛЕННАЯ ОХРАНА","pos":Vector3(0,0,44),"count":30,"giants":3,"radius":14.0,"triggered":false}])
-	if map_view == null:
-		map_view = load("res://scripts/level_map.gd").new()
-		map_view.level = self
-		arena.hud.add_child(map_view)
-	map_view.hide()
-	_queue_entry_attack()
-	arena.crew.tell("Впереди скелеты · красные бочки помогут прорваться")
+
+func _world_spawn_open(pos: Vector3, exclude: Array[RID] = []) -> bool:
+	var point := Vector2(pos.x,pos.z)
+	var in_canyon := Geometry2D.is_point_in_polygon(point,PackedVector2Array(OUTLINE))
+	var in_exit := pos.x>=128 and pos.x<=160 and absf(pos.z)<7.0
+	if not in_canyon and not in_exit: return false
+	# Leave room to land the super dash and read the open canyon beyond the door.
+	if pos.x<-113 or absf(ground_height(pos))>0.01: return false
+	for shelf in terrain.shelves:
+		if shelf.bounds.grow(3.0).has_point(point): return false
+	for ramp in terrain.ramps:
+		var offset: Vector3 = pos-ramp.from
+		var along: float = offset.dot(ramp.direction)
+		if along>-3 and along<ramp.length+3 and absf(offset.dot(ramp.side))<ramp.width*0.5+2.0: return false
+	world_probe.radius=0.55
+	world_probe.height=2.0
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape=world_probe
+	query.transform.origin=pos+Vector3.UP*1.15
+	query.collision_mask=1|8|32
+	if not exclude.is_empty():
+		query.collision_mask|=2|4|64
+		query.exclude=exclude
+	return get_world_3d().direct_space_state.intersect_shape(query,1).is_empty()
+
+func _queue_world_population() -> void:
+	world_population_pending=false
+	if authored:
+		layout.queue_enemies(true)
+		return
+	# A jittered lattice distributes the initial population over the whole floor;
+	# queue batches are only loading work, never proximity-triggered encounters.
+	if world_spawn_positions.size()!=WORLD_SKELETONS:
+		var random := RandomNumberGenerator.new()
+		random.seed=94621
+		var slots: Array[Vector3] = []
+		for row in range(22):
+			for column in range(37):
+				var pos := Vector3(-110+column*WORLD_SPACING,0,-79+row*WORLD_SPACING)
+				pos+=Vector3(random.randf_range(-1.4,1.4),0,random.randf_range(-1.4,1.4))
+				if _world_spawn_open(pos): slots.append(pos)
+		assert(slots.size()>=WORLD_SKELETONS,"The canyon needs enough free resident slots")
+		world_spawn_positions.clear()
+		for i in WORLD_SKELETONS:
+			var slot := roundi(float(i)*(slots.size()-1)/(WORLD_SKELETONS-1))
+			world_spawn_positions.append(slots[slot])
+	for i in WORLD_SKELETONS:
+		spawn_queue.append({"world_pos":world_spawn_positions[i],"shield_guard":i%WORLD_SHIELD_EVERY==2,"slot":i})
 
 func _queue_entry_attack() -> void:
+	if authored:
+		layout.queue_enemies(false)
+		return
 	# One continuous column: every rank advances from the start. Sample free
 	# slots evenly so avoiding props never bunches the whole wave at the front.
 	var slots: Array[Vector3] = []
@@ -319,22 +437,37 @@ func _spawn_ore(pos: Vector3, height: float) -> void:
 	var node := block(pos,Vector3(2.42,height,2.42),ore_mat) as StaticBody3D
 	node.set_meta("ore",true)
 	node.set_meta("target",true)
-	node.set_meta("hp",80.0)
+	node.set_meta("hp",ORE_HEALTH)
+	node.set_meta("ore_height", height)
 	node.set_meta("spec",{"pos":pos,"barrel":false,"ore":true,"id":1000+ore.size()})
 	ore.append(node)
+	var cell := _ore_cell(pos)
+	if not ore_cells.has(cell): ore_cells[cell] = []
+	ore_cells[cell].append(node)
 	arena.targets.append(node)
 
-func damage_ore(node: StaticBody3D, amount: float, direction: Vector3) -> void:
+func damage_ore(node: StaticBody3D, amount: float, direction: Vector3, by_mining: bool = false) -> void:
 	if not ore.has(node): return
 	var hp: float = node.get_meta("hp")-amount
 	node.set_meta("hp",hp)
-	if hp > 0.0: return
+	if hp > 0.0:
+		if not by_mining:
+			arena.fx.repeater_hit(node.global_position + Vector3.UP * 0.7, -direction)
+			arena.sound.play("lock", -15.0, 0.75)
+		return
 	ore.erase(node)
+	var cell := _ore_cell(node.global_position)
+	ore_cells[cell].erase(node)
+	if ore_cells[cell].is_empty(): ore_cells.erase(cell)
 	arena.targets.erase(node)
 	node.collision_layer = 0
 	node.queue_free()
 	mined += 1
-	arena.crew.loot.supplies += 1
+	var out := -direction
+	out.y = 0.0
+	if out.length_squared() < 0.01: out = Vector3.LEFT
+	out = out.normalized()
+	arena.crew.loot.spawn_crystal(node.global_position + Vector3.UP * 0.7 + out * 0.35, out * 2.0 + Vector3.UP * 3.0)
 	arena.hit_pulse = 1.0
 	arena.battle.nav_dirty = true
 	arena.fx.dust(node.position,direction*6)
@@ -343,22 +476,35 @@ func damage_ore(node: StaticBody3D, amount: float, direction: Vector3) -> void:
 
 func _start_mine_defense() -> void:
 	mine_defense_started = true
-	for entrance in [C+Vector3(-33,0,0),C+Vector3(-16,0,-33),C+Vector3(-33,0,18)]:
-		_queue_encounter(entrance,20,1)
+	if authored:
+		layout.queue_mine_defense()
+	else:
+		for entrance in [C+Vector3(-33,0,0),C+Vector3(-16,0,-33),C+Vector3(-33,0,18)]:
+			_queue_encounter(entrance,20,1)
 	arena.crew.tell("Шахта разбужена: враги идут через три входа!")
 
 func _queue_encounter(center: Vector3, count: int, giants: int) -> void:
 	for i in count: spawn_queue.append({"center":center,"giant":i<giants,"tries":0,"slot":i})
 
 func _spawn_batch() -> void:
+	if world_population_pending:
+		world_sync_frames-=1
+		if world_sync_frames<=0: _queue_world_population()
 	var attempts := 0
 	while not spawn_queue.is_empty() and attempts < 10:
 		var entry: Dictionary = spawn_queue.pop_front()
 		attempts += 1
 		if entry.has("entry_pos"):
-			var enemy = arena.battle.spawn_enemy(entry.entry_pos,false,entry.shield_guard)
+			var enemy = arena.battle.spawn_enemy(entry.entry_pos,entry.get("giant",false),entry.shield_guard)
+			if entry.has("yaw"): enemy.rotation.y = entry.yaw
 			enemy.attack_on_spawn = true
 			enemy.scan_left = 0.0
+			continue
+		if entry.has("world_pos"):
+			var enemy = arena.battle.spawn_enemy(entry.world_pos,entry.get("giant",false),entry.shield_guard)
+			enemy.world_resident=true
+			enemy.rotation.y=entry.get("yaw",sin(float(entry.slot)*2.399)*PI)
+			enemy.setup_patrol(entry.slot)
 			continue
 		var angle: float = float(entry.slot)*2.399 + float(entry.tries)*0.8
 		var radius: float = 2.5+float(entry.slot%5)*1.5+float(entry.tries)*0.45
@@ -369,6 +515,11 @@ func _spawn_batch() -> void:
 			entry.tries += 1
 			spawn_queue.append(entry)
 
+func cancel_spawning() -> void:
+	spawn_queue.clear()
+	world_population_pending=false
+	world_sync_frames=0
+
 func open_gate() -> void:
 	if not unlocked or gate_open: return
 	gate_open = true
@@ -377,10 +528,9 @@ func open_gate() -> void:
 
 func context_action() -> Dictionary:
 	var pos: Vector3 = arena.crew.center()
-	if gate_open and arena.crew.crewed and pos.distance_to(A+Vector3(7,0,0)) < 5.5:
+	var workbench: Vector3 = layout.workbench_position if authored else A+Vector3(7,0,0)
+	if gate_open and arena.crew.crewed and pos.distance_to(workbench) < 5.5:
 		return {"kind":"level","id":"workbench","text":"E  ВЕРСТАК · ПОЧИНИТЬ БАШНЮ / ПОПОЛНИТЬ БОЛТЫ"}
-	if not arena.crew.crewed and arena.crew.loot.cargo == null and not ore.is_empty() and pos.distance_to(C+Vector3(-6,0,0)) < 10:
-		return {"kind":"level","id":"mine","text":"E  " + ("ОСТАНОВИТЬ ДОБЫЧУ" if mining else "РАБОЧИЕ: ДОБЫВАТЬ БЛИЖНЮЮ ПОРОДУ")}
 	return {}
 
 func interact(id: String) -> void:
@@ -389,56 +539,120 @@ func interact(id: String) -> void:
 		arena.tank.crossbows.reset()
 		arena.sound.play("ready",-5.0)
 		arena.crew.tell("Башня обслужена · прочность и арбалеты восстановлены")
-	elif id == "mine":
-		if arena.crew.role_count("worker") == 0:
-			arena.crew.tell("Для добычи нужны рабочие; породу можно разбить пушкой")
-			return
-		mining = not mining
-		mining_left = 0.0
-		arena.crew.tell("Добыча включена · подводи рабочих к открывающемуся фронту породы" if mining else "Добыча остановлена")
+
+func _ore_cell(pos: Vector3) -> Vector2i:
+	return Vector2i(floori(pos.x/ORE_CELL_SIZE),floori(pos.z/ORE_CELL_SIZE))
+
+func _contact_ore(member: CharacterBody3D) -> StaticBody3D:
+	# Slide contacts cover walking into a vein; the short surface check keeps
+	# digging after releasing WASD while standing against the same face.
+	for index in member.get_slide_collision_count():
+		var body = member.get_slide_collision(index).get_collider()
+		if body is StaticBody3D and ore.has(body): return body
+	var nearest: StaticBody3D
+	var distance := 0.36
+	# Check only neighbouring cells instead of scanning the entire ore field
+	# for each dwarf on every physics tick, including outside the mine.
+	var cell := _ore_cell(member.global_position)
+	var candidates: Array = []
+	for x in range(-1,2):
+		for z in range(-1,2): candidates.append_array(ore_cells.get(cell+Vector2i(x,z),[]))
+	for node in candidates:
+		var p: Vector3 = member.global_position - node.global_position
+		if p.y < -0.3 or p.y > float(node.get_meta("ore_height")) + 0.2: continue
+		var face: Vector3 = Vector3(clampf(p.x,-1.21,1.21),p.y+0.35,clampf(p.z,-1.21,1.21)) + node.global_position
+		var gap := Vector2(member.global_position.x-face.x,member.global_position.z-face.z).length()
+		if gap >= distance: continue
+		var ray := PhysicsRayQueryParameters3D.create(member.global_position+Vector3.UP*0.35,face,1,[node.get_rid()])
+		if not get_world_3d().direct_space_state.intersect_ray(ray).is_empty(): continue
+		distance = gap
+		nearest = node
+	return nearest
+
+func _mining_impact(node: StaticBody3D, from: Vector3) -> void:
+	var visual: MeshInstance3D
+	for child in node.get_children():
+		if child is MeshInstance3D: visual = child; break
+	if visual == null: return
+	# Only an actively mined vein needs private flash state. Untouched ore
+	# keeps the shared material to avoid extra render-state changes.
+	if not visual.has_meta("mining_material"):
+		if visual.material_override: visual.material_override=visual.material_override.duplicate()
+		visual.set_meta("mining_material",true)
+	var mat := visual.material_override as ShaderMaterial
+	if mat:
+		mat.set_shader_parameter("hit_flash",1.0)
+		var flash := visual.create_tween()
+		flash.tween_method(func(value: float): mat.set_shader_parameter("hit_flash",value),1.0,0.0,0.24).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	var out := from-node.global_position
+	out.y=0.0
+	out=out.normalized() if out.length_squared()>0.001 else Vector3.LEFT
+	if not visual.has_meta("mining_rest"): visual.set_meta("mining_rest",visual.position)
+	var rest: Vector3 = visual.get_meta("mining_rest")
+	var local_out := node.global_basis.inverse()*out
+	# Animate only the mesh. Collision, ore lookup and navigation stay fixed.
+	visual.position=rest
+	var shake := visual.create_tween()
+	shake.tween_property(visual,"position",rest-local_out*0.075,0.035).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	shake.tween_property(visual,"position",rest+local_out*0.028,0.055)
+	shake.tween_property(visual,"position",rest,0.12).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	var bounds := visual.get_aabb()
+	var local := visual.to_local(from+Vector3.UP*0.48).clamp(bounds.position,bounds.end)
+	var hit := visual.to_global(local)+out*0.08
+	arena.fx.mining_hit(hit,out)
+	arena.sound.play("bolt_hit",-6.0,0.7)
+
+func _tick_mining(dt: float) -> void:
+	mining = false
+	mining_time += dt
+	if arena.crew.crewed: return
+	var miners: Dictionary = {}
+	for member in arena.crew.members:
+		if member.hauling: continue
+		var target := _contact_ore(member)
+		if target == null: continue
+		mining = true
+		if not miners.has(target): miners[target] = []
+		miners[target].append(member)
+	for target in miners:
+		# One group hit per vein and interval: simultaneous dwarf contacts must
+		# not multiply damage enough to destroy a fresh block in one frame.
+		if mining_time + 0.000001 < float(target.get_meta("next_mining_hit",0.0)): continue
+		target.set_meta("next_mining_hit",mining_time+MINING_INTERVAL)
+		var from := Vector3.ZERO
+		for member in miners[target]:
+			member.action_pulse = 1.0
+			from += member.global_position
+		from /= miners[target].size()
+		var direction: Vector3 = target.global_position - from
+		direction.y = 0.0
+		_mining_impact(target,from)
+		damage_ore(target,MINING_DAMAGE,direction.normalized(),true)
 
 func tick(dt: float) -> void:
 	if arena.tuning_open: return
+	if arena.defenses: arena.defenses.tick(dt)
 	var center: Vector3 = arena.crew.center()
 	current_zone = "ПУСТЫНЯ · СВОБОДНЫЙ МАРШРУТ"
-	if center.x < -128: current_zone = "ВХОД · АТАКА СКЕЛЕТОВ И МОСТ"
+	if ENTRY_RECT.has_point(Vector2(center.x,center.z)): current_zone = "ВХОД · АТАКА СКЕЛЕТОВ И МОСТ"
 	elif center.distance_to(A) < 24: current_zone = "A · ПАЗЛ И ВЕРСТАК"
 	elif center.distance_to(B) < 24: current_zone = "B · ВХОД В ДАНЖ"
 	elif center.distance_to(C) < 40: current_zone = "C · ДОБЫЧА И ОБОРОНА"
 	elif center.x > 128: current_zone = "ВЫХОД ИЗ КАНЬОНА"
 	if is_instance_valid(weight) and not gate_open:
-		var ready: bool = weight.position.distance_to(A+Vector3(-8.5,0.48,-8)) < 1.35 and weight.position.y < A.y+0.9 and not weight.has_meta("hand_owner") and arena.crew.loot.cargo != weight
+		var plate: Vector3 = platform_rest if authored else A+Vector3(-8.5,0.04,-8)
+		var ready: bool = weight.global_position.distance_to(plate+Vector3.UP*0.44) < 1.35 and weight.global_position.y < plate.y+0.86 and not weight.has_meta("hand_owner") and arena.crew.loot.cargo != weight
 		if ready != unlocked:
 			unlocked = ready
-		platform.position.y = move_toward(platform.position.y,A.y+(0.015 if ready else 0.04),dt*0.3)
+		platform.global_position.y = move_toward(platform.global_position.y,plate.y+(-0.025 if ready else 0.0),dt*0.3)
 	gate_lift = move_toward(gate_lift,6.6 if gate_open else 0.0,dt*4.0)
-	gate_bars.position.y = gate_lift
+	gate_bars.position = gate_bars_rest+Vector3.UP*gate_lift
 	var layer := 0 if gate_lift > 6.3 else 1
 	if gate.collision_layer != layer:
 		gate.collision_layer = layer
 		arena.battle.nav_dirty = true
-	if automatic_encounters:
-		for encounter in encounters:
-			if not encounter.triggered and center.distance_to(encounter.pos) < encounter.radius:
-				encounter.triggered = true
-				_queue_encounter(encounter.pos,encounter.count,encounter.giants)
-				arena.crew.tell(encounter.name)
 	_spawn_batch()
-	if mining and not arena.crew.crewed and not arena.crew.members.is_empty():
-		mining_left -= dt
-		if mining_left <= 0:
-			mining_left = 1.2
-			var nearest: StaticBody3D
-			var distance := 8.0
-			var workers: Array = arena.crew.combat._available("worker")
-			for node in ore:
-				var d := node.position.distance_to(center)
-				if d < distance and arena.strike_clear(center,node.position):
-					distance = d
-					nearest = node
-			if nearest and not workers.is_empty():
-				for worker in workers: worker.action_pulse = 1.0
-				damage_ore(nearest,40.0*workers.size(),Vector3.UP)
+	_tick_mining(dt)
 	if center.x > 153 and not completed:
 		completed = true
 		arena.crew.tell("Маршрут пройден! Можно вернуться к атоллам · R — начать уровень заново")
@@ -448,7 +662,7 @@ func tick(dt: float) -> void:
 		arena.tank.walker.reset_pose()
 	elif arena.tank.position.y >= -0.1: last_safe = arena.tank.position
 	if map_view.visible: map_view.queue_redraw()
-	terrain.update_occlusion(arena.camera,center)
+	terrain.update_occlusion(arena.camera,center,dt)
 
 func toggle_map() -> void:
 	map_view.visible = not map_view.visible

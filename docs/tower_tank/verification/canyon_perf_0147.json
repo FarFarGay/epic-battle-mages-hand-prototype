@@ -1,0 +1,73 @@
+{
+  "advance_burst": {
+    "draw_calls": 961.222841225627,
+    "fps": 89.7266710655228,
+    "frames": 718,
+    "max_ms": 444.505,
+    "over_33_ms": 13,
+    "over_50_ms": 9,
+    "p95_ms": 16.844,
+    "p99_ms": 70.578,
+    "physics_ms": 18.0805668523678
+  },
+  "approach": {
+    "draw_calls": 799.302013422819,
+    "fps": 178.494880850674,
+    "frames": 894,
+    "max_ms": 299.054,
+    "over_33_ms": 2,
+    "over_50_ms": 2,
+    "p95_ms": 9.959,
+    "p99_ms": 11.168,
+    "physics_ms": 7.6173769574944
+  },
+  "atoll_a": {
+    "draw_calls": 598.940325497288,
+    "fps": 552.982442807441,
+    "frames": 2212,
+    "max_ms": 13.702,
+    "over_33_ms": 0,
+    "over_50_ms": 0,
+    "p95_ms": 2.863,
+    "p99_ms": 4.078,
+    "physics_ms": 18.6306084990946
+  },
+  "atoll_b": {
+    "draw_calls": 581.552974735126,
+    "fps": 613.394496146663,
+    "frames": 2454,
+    "max_ms": 4.149,
+    "over_33_ms": 0,
+    "over_50_ms": 0,
+    "p95_ms": 2.451,
+    "p99_ms": 2.943,
+    "physics_ms": 1.79510431947835
+  },
+  "atoll_c": {
+    "draw_calls": 979.556906077348,
+    "fps": 452.354454954118,
+    "frames": 1810,
+    "max_ms": 5.357,
+    "over_33_ms": 0,
+    "over_50_ms": 0,
+    "p95_ms": 3.181,
+    "p99_ms": 3.586,
+    "physics_ms": 1.5080486187845
+  },
+  "machine": {
+    "cpu": "Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz",
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "version": "0.14.7"
+  },
+  "orbit": {
+    "draw_calls": 611.651056014692,
+    "fps": 217.720357893083,
+    "frames": 1089,
+    "max_ms": 22.191,
+    "over_33_ms": 0,
+    "over_50_ms": 0,
+    "p95_ms": 9.599,
+    "p99_ms": 13.863,
+    "physics_ms": 8.96563452708906
+  }
+}

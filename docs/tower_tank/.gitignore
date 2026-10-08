@@ -3,4 +3,10 @@ verification/*.png
 verification/*.png.import
 verification/*.log
 verification/packaged_level/
+verification/review_latest/
+verification/perf_fix/
+verification/world_population/
+verification/mining/
+verification/editor_scene/
+verification/defense/
 verification/level_progress.json

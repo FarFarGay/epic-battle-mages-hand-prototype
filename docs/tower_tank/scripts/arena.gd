@@ -26,6 +26,7 @@ var crew
 var props
 var battle
 var hand
+var defenses
 var camera: Camera3D
 var aim_camera: Camera3D
 var camera_yaw := CAMERA_DEFAULT_YAW
@@ -62,15 +63,24 @@ var powder_red := Geo.material(Color("ae3e2f"), 0.2)
 var bullet_material := Geo.material(Color("fff0bb"), 0.0, 3.0)
 var _reset_requested := false
 var _range_generation := 0
+var profile_enabled := false
+var physics_profile := {}
+var rendering_ready := true
+var _bake_tool
+signal rendering_prepared
 
 func _ready() -> void:
+	profile_enabled = OS.get_cmdline_user_args().has("--profile")
 	get_tree().node_added.connect(_register_world_label)
 	rng.seed = 7142
 	_bind_inputs()
 	if desert_mode:
-		level = load("res://scripts/desert_level.gd").new()
+		level = get_node_or_null("CanyonLevel")
+		if level == null:
+			level = load("res://scripts/desert_level.gd").new()
+			add_child(level)
 		level.arena = self
-		add_child(level)
+		if level.authored: level.bind_authored_world()
 		world_bounds = level.WORLD_BOUNDS
 	_build_world()
 	fx = Effects.new()
@@ -121,9 +131,33 @@ func _ready() -> void:
 	hud = Hud.new()
 	hud.arena = self
 	layer.add_child(hud)
+	if level:
+		defenses = load("res://scripts/defense_building.gd").new()
+		defenses.arena = self
+		add_child(defenses)
 	if level: level.setup_gameplay()
+	if OS.get_cmdline_user_args().has("--bake-level"):
+		set_physics_process(false)
+		set_process(false)
+		battle.set_process(false)
+		_bake_tool = load("res://tools/bake_canyon.gd").new()
+		_bake_tool.run.call_deferred(self)
+		return
 	Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
-	if OS.get_cmdline_user_args().has("--level-check") or OS.get_cmdline_user_args().has("--level-preview"):
+	var checking := false
+	for arg in OS.get_cmdline_user_args():
+		if arg.ends_with("-check") or arg in ["--smoke","--level-preview"]: checking=true
+	if not checking and DisplayServer.get_name()!="headless":
+		rendering_ready=false
+		set_physics_process(false)
+		_prepare_rendering.call_deferred()
+	if OS.get_cmdline_user_args().has("--canyon-perf"):
+		add_child(load("res://verification/canyon_perf.gd").new())
+	elif OS.get_cmdline_user_args().has("--defense-check"):
+		add_child(load("res://verification/defense_regression.gd").new())
+	elif OS.get_cmdline_user_args().has("--mining-check"):
+		add_child(load("res://verification/mining_regression.gd").new())
+	elif OS.get_cmdline_user_args().has("--level-check") or OS.get_cmdline_user_args().has("--level-preview"):
 		add_child(load("res://verification/level_regression.gd").new())
 	elif OS.get_cmdline_user_args().has("--smoke"):
 		_smoke_test.call_deferred()
@@ -155,6 +189,74 @@ func _ready() -> void:
 		var probe: Node = load("res://verification/hand_regression.gd").new()
 		add_child(probe)
 
+func _prepare_rendering() -> void:
+	# Render the first-use variants while loading, before the wave can advance.
+	var cover := CanvasLayer.new()
+	cover.layer=100
+	add_child(cover)
+	var background := ColorRect.new()
+	background.color=Color("283735")
+	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	cover.add_child(background)
+	var label := Label.new()
+	label.text="Загрузка…"
+	label.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment=VERTICAL_ALIGNMENT_CENTER
+	label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	cover.add_child(label)
+	fx.set_process(false)
+	battle.set_process(false)
+	var pos: Vector3 = tank.position+Vector3(7,1,0)
+	var fixtures: Array[Node] = []
+	for variant in [[false,false],[false,true],[true,false]]:
+		var enemy = battle.spawn_enemy(pos,variant[0],variant[1])
+		enemy.warning.show()
+		enemy.hp=enemy.max_hp*0.5
+		battle.crowd.scatter(enemy,Vector3.RIGHT,1.0)
+	battle.crowd.update_instances()
+	battle.crowd.tick_debris(0.016)
+	fx.muzzle(pos,Vector3.RIGHT)
+	fx.impact(pos,true)
+	fx.repeater_muzzle(pos,Vector3.RIGHT)
+	fx.repeater_trail(pos,pos+Vector3.RIGHT*3)
+	fx.repeater_hit(pos,Vector3.UP)
+	fx.dash_echo(tank,Vector3.RIGHT,true)
+	for mat in [props.wood,props.rim,props.clay]:
+		fx.add_piece(Geo.box(fx,Vector3.ONE*0.2,pos,mat),Vector3.ZERO,1.0)
+	fixtures.append(Geo.sphere(self,0.14,pos,bullet_material))
+	fixtures.append(Geo.box(self,Vector3(0.055,0.055,0.64),pos,tank.crossbows.bolt_mat))
+	crew.loot.spawn_coin(pos,Vector3.ZERO)
+	var coin: RigidBody3D = crew.loot.loose_coins.back()
+	fx._process(0.016)
+	if level: level.terrain.update_occlusion(camera,tank.position,1.0)
+	for light in fx.flash_lights: light.hide()
+	for i in 2: await RenderingServer.frame_post_draw
+	for light in fx.flash_lights:
+		light.position=pos
+		light.omni_range=80
+		light.light_energy=0.1
+		light.show()
+	for i in 2: await RenderingServer.frame_post_draw
+	for node in fixtures: node.queue_free()
+	crew.loot.loose_coins.erase(coin)
+	coin.queue_free()
+	fx.clear()
+	battle.reset()
+	# Build the initial map off the gameplay clock; subsequent updates stay sliced.
+	battle._rebuild_navigation()
+	if level:
+		if level.world_population_pending: level._queue_world_population()
+		# The complete resident population exists before the loading cover lifts.
+		while not level.spawn_queue.is_empty(): level._spawn_batch()
+		battle.crowd.update_instances()
+	fx.set_process(true)
+	battle.set_process(true)
+	await RenderingServer.frame_post_draw
+	cover.queue_free()
+	rendering_ready=true
+	set_physics_process(true)
+	rendering_prepared.emit()
+
 func _bind_inputs() -> void:
 	var bindings := {"tank_forward": KEY_W, "tank_reverse": KEY_S, "tank_left": KEY_A, "tank_right": KEY_D, "tank_cruise": KEY_SHIFT, "crew_strike": KEY_SPACE}
 	for action in bindings:
@@ -175,6 +277,7 @@ func _bind_inputs() -> void:
 	InputMap.action_add_event("crew_special", secondary)
 
 func _build_world() -> void:
+	if level and level.authored: return
 	var environment := WorldEnvironment.new()
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
@@ -197,10 +300,18 @@ func _build_world() -> void:
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 85.0
 	if level:
-		env.background_color = Color("777d89")
-		env.fog_enabled = false
-		sun.light_color = Color("fff3df")
-		sun.light_energy = 0.75
+		env.background_color = Color("94b3b8")
+		env.ambient_light_color = Color("aabac2")
+		env.ambient_light_energy = 0.35
+		env.fog_enabled = true
+		env.fog_light_color = Color("9bbbc0")
+		env.fog_light_energy = 0.7
+		env.fog_density = 0.0007
+		sun.light_color = Color("fff9ee")
+		sun.light_energy = 0.72
+		sun.rotation_degrees = Vector3(-54,-32,0)
+		# Cover the gameplay view without drawing the far mine in entry shadows.
+		sun.directional_shadow_max_distance = 100.0
 		level.build_world()
 		return
 	var ground := StaticBody3D.new()
@@ -279,6 +390,9 @@ func _build_targets() -> void:
 		_spawn_target(spec)
 
 func _spawn_target(spec: Dictionary) -> void:
+	if spec.has("placement"):
+		level.layout.spawn_body(spec.placement)
+		return
 	var target: PhysicsBody3D = HandObject.new() if spec.barrel else StaticBody3D.new()
 	if target is RigidBody3D:
 		target.arena = self
@@ -335,17 +449,31 @@ func _physics_process(dt: float) -> void:
 	if freeze > 0.0:
 		freeze -= dt
 		return
+	var stamp := Time.get_ticks_usec() if profile_enabled else 0
 	_update_aim(dt)
 	props.tick(dt)
 	crew.tick(dt)
+	if profile_enabled:
+		physics_profile.crew = Time.get_ticks_usec()-stamp
+		stamp = Time.get_ticks_usec()
 	if crew.crewed:
 		tank.aim_world = aim_position
 	tank.tick(dt)
+	if profile_enabled:
+		physics_profile.tank = Time.get_ticks_usec()-stamp
+		stamp = Time.get_ticks_usec()
 	hand.tick(dt)
 	_update_actual_hit()
 	_update_shells(dt)
+	if profile_enabled:
+		physics_profile.hand_shells = Time.get_ticks_usec()-stamp
+		stamp = Time.get_ticks_usec()
 	battle.tick(dt)
+	if profile_enabled:
+		physics_profile.battle = Time.get_ticks_usec()-stamp
+		stamp = Time.get_ticks_usec()
 	if level: level.tick(dt)
+	if profile_enabled: physics_profile.level = Time.get_ticks_usec()-stamp
 	for i in range(respawns.size() - 1, -1, -1):
 		respawns[i].time -= dt
 		if respawns[i].time <= 0.0 and tank.global_position.distance_to(respawns[i].spec.pos) > 3.5 and (crew.crewed or crew.center().distance_to(respawns[i].spec.pos) > 4.0):
@@ -547,6 +675,7 @@ func add_trauma(amount: float) -> void:
 	trauma = minf(1.0, trauma + amount)
 
 func _input(event: InputEvent) -> void:
+	if not rendering_ready: return
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_EQUAL:
 		set_interface_visible(not interface_visible)
 		get_viewport().set_input_as_handled()
@@ -566,6 +695,12 @@ func _input(event: InputEvent) -> void:
 		return
 	if camera_rotating and event is InputEventKey and event.pressed and event.physical_keycode in [KEY_F, KEY_E, KEY_TAB, KEY_R, KEY_ESCAPE]:
 		_end_camera_rotation()
+	if defenses:
+		if defenses.handle_input(event):
+			get_viewport().set_input_as_handled()
+			return
+		# UI must receive its mouse events before the hand consumes world clicks.
+		if event is InputEventMouseButton and defenses.pointer_over_ui(): return
 	if event is InputEventKey and event.physical_keycode == KEY_SPACE and not event.echo and crew.crewed:
 		tank.dash.space(event.pressed)
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -642,6 +777,7 @@ func _register_world_label(node: Node) -> void:
 
 func set_interface_visible(value: bool) -> void:
 	interface_visible = value
+	if not value and defenses: defenses.cancel()
 	if not value and tuning_open:
 		tuning_open = false
 		hud.panel.hide()
@@ -666,7 +802,7 @@ func _end_camera_rotation(restore_pointer: bool = true) -> void:
 	crew.input_armed = false
 	tank.buffered_shot = 0.0
 	tank.crossbows.cancel_trigger()
-	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if tuning_open else Input.MOUSE_MODE_HIDDEN
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if tuning_open or (defenses and defenses.mode==defenses.Mode.MENU) else Input.MOUSE_MODE_HIDDEN
 	if restore_pointer:
 		var pointer := camera_return_pointer
 		if hand != null and is_instance_valid(hand.held):
@@ -679,7 +815,7 @@ func _end_camera_rotation(restore_pointer: bool = true) -> void:
 	hud.reset_reticle()
 
 func pointer_over_ui() -> bool:
-	return camera_rotating or (hud != null and hud.pointer_over_ui())
+	return camera_rotating or (hud != null and hud.pointer_over_ui()) or (defenses != null and defenses.pointer_over_ui())
 
 func weapon_mode_active() -> bool:
 	return hand == null or not hand.enabled
@@ -721,6 +857,7 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and is_instance_valid(tank) and tank.dash != null:
 		_end_camera_rotation(false)
 		if hand: hand.cancel_drag()
+		if defenses: defenses.cancel()
 		crew.input_armed = false
 		Input.action_release("tank_cruise")
 		tank.cruising = false

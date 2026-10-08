@@ -13,18 +13,28 @@ var label: Label3D
 const DROP_ZONE := Rect2(-5,-3,10,6)
 var idle_mat := Geo.material(Color(0.22,0.7,0.68,0.3))
 var ready_mat := Geo.material(Color(0.95,0.72,0.22,0.65))
+var socket_transform := Transform3D.IDENTITY
+var drop_zone := DROP_ZONE
 
 func _ready() -> void:
+	var size := Vector3(10,0.04,6)
+	if arena.level.authored:
+		socket_transform = arena.level.layout.bridge_transform
+		socket_position = socket_transform.origin
+		size = arena.level.layout.bridge_size
+	else: socket_transform.origin = socket_position
+	drop_zone = Rect2(-size.x*0.5,-size.z*0.5,size.x,size.z)
 	# A picking-only plane lets the cursor target the future deck over the void.
 	var dock := StaticBody3D.new()
 	add_child(dock)
-	dock.position = socket_position
+	dock.transform = socket_transform
 	dock.collision_layer = 512
 	dock.collision_mask = 0
-	Geo.collider(dock,Vector3(10,0.06,6),Vector3.ZERO)
+	Geo.collider(dock,Vector3(size.x,0.06,size.z),Vector3.ZERO)
 	idle_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	ready_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	marker = Geo.box(self,Vector3(10,0.04,6),socket_position+Vector3.UP*0.04,idle_mat)
+	marker = Geo.box(self,size,socket_position+Vector3.UP*0.04,idle_mat)
+	marker.basis = socket_transform.basis.orthonormalized()
 	Geo.mark_ui(marker)
 	label = arena.crew.loot._marker(self,"ПЕРЕНЕСИ СЕКЦИЮ НА РАЗМЕТКУ",0)
 	label.position = socket_position+Vector3.UP*1.8
@@ -39,6 +49,11 @@ func reset() -> void:
 	seated = false
 	opened = false
 	arena.level.set_bridge(false)
+	if arena.level.authored:
+		cube = arena.level.layout.spawn_bridge(self)
+		marker.show()
+		label.show()
+		return
 	cube = HandObject.new()
 	cube.arena = arena
 	add_child(cube)
@@ -62,10 +77,12 @@ func can_snap(body: PhysicsBody3D, surface: Vector3) -> bool:
 	if body != cube or opened: return false
 	# The entire visible deck accepts the drop, including its banks. The palm's
 	# projection offsets the carried section, so do not compare it to a tiny socket.
-	var pointer := Vector2(surface.x-socket_position.x,surface.z-socket_position.z)
-	if not DROP_ZONE.grow(0.35).has_point(pointer): return false
-	var carried := Vector2(body.global_position.x-socket_position.x,body.global_position.z-socket_position.z)
-	var closest := carried.clamp(DROP_ZONE.position,DROP_ZONE.end)
+	var local := socket_transform.affine_inverse()*surface
+	var pointer := Vector2(local.x,local.z)
+	if not drop_zone.grow(0.35).has_point(pointer): return false
+	local = socket_transform.affine_inverse()*body.global_position
+	var carried := Vector2(local.x,local.z)
+	var closest := carried.clamp(drop_zone.position,drop_zone.end)
 	if carried.distance_to(closest)>4.0 or absf(body.global_position.y-seat_position().y)>4.0: return false
 	return hand._clear_line(hand._center(body),seat_position(),body)
 
@@ -83,7 +100,7 @@ func seat(body: RigidBody3D) -> void:
 	label.hide()
 	arena.level.set_bridge(true)
 	arena.sound.play("lock",-2.0,0.7)
-	arena.crew.tell("Мост установлен · проезжай в пустыню · G — схема локации")
+	arena.crew.tell("Мост установлен · дверь впереди: удерживай Space и нажми ПКМ, чтобы пробить супердэшем")
 
 func unseat(_body: RigidBody3D) -> void:
 	pass # Deployed bridge stays latched until the level is reset.

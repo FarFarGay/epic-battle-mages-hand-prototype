@@ -14,7 +14,8 @@ func _ready() -> void:
 	tank = arena.tank
 	crew = arena.crew
 	hand = arena.hand
-	if OS.get_cmdline_user_args().has("--level-preview"): _preview.call_deferred()
+	if OS.get_cmdline_user_args().has("--bridge-door-preview"): _preview_bridge_door.call_deferred()
+	elif OS.get_cmdline_user_args().has("--level-preview"): _preview.call_deferred()
 	else: _run.call_deferred()
 
 func _frames(count: int) -> void:
@@ -119,7 +120,7 @@ func _view(pos: Vector3, zoom: float, filename: String) -> void:
 	arena._update_camera(1.0)
 
 func _preview() -> void:
-	await _frames(8)
+	await _frames(70)
 	level.automatic_encounters=false
 	arena.test_aim=true
 	await _frames(12)
@@ -137,57 +138,57 @@ func _check_entry_attack() -> void:
 	level.automatic_encounters = true
 	await _frames(32)
 	var battle=arena.battle
-	checks.entry_240_mixed=battle.enemies.size()==240 and battle.enemies.all(func(e): return not e.giant)
-	checks.entry_200_regular_40_guards=battle.enemies.filter(func(e): return e.shield_guard and e.shield_hp==24.0).size()==40 and battle.enemies.filter(func(e): return not e.shield_guard).size()==200
-	checks.entry_guards_spread_along_wave=[0,1,2,3].all(func(i): return battle.enemies.filter(func(e): return e.shield_guard and e.position.x-level.START.x>=24+i*12 and e.position.x-level.START.x<36+i*12).size()>=6)
+	checks.entry_240_mixed=_entry_enemies().size()==240 and _entry_enemies().all(func(e): return not e.giant)
+	checks.entry_200_regular_40_guards=_entry_enemies().filter(func(e): return e.shield_guard and e.shield_hp==24.0).size()==40 and _entry_enemies().filter(func(e): return not e.shield_guard).size()==200
+	checks.entry_guards_spread_along_wave=[0,1,2,3].all(func(i): return _entry_enemies().filter(func(e): return e.shield_guard and e.position.x-level.START.x>=24+i*12 and e.position.x-level.START.x<36+i*12).size()>=6)
 	battle.crowd.update_instances()
 	checks.entry_shields_batched=battle.crowd.shields.visible_instance_count==40 and battle.crowd.guard_gear.visible_instance_count==40
-	checks.entry_inside_corridor=battle.enemies.all(func(e): return e.position.x>level.START.x+10 and e.position.x<-140 and absf(e.position.z)<9 and e.position.y>-0.1)
-	checks.entry_whole_wave_pursues=battle.enemies.all(func(e): return e.attack_on_spawn and e.target==tank)
-	var depths: Array = battle.enemies.map(func(e): return e.position.x-level.START.x)
+	checks.entry_inside_corridor=_entry_enemies().all(func(e): return e.position.x>level.START.x+10 and e.position.x<-140 and absf(e.position.z)<9 and e.position.y>-0.1)
+	checks.entry_whole_wave_pursues=_entry_enemies().all(func(e): return e.attack_on_spawn and e.target==tank)
+	var depths: Array = _entry_enemies().map(func(e): return e.position.x-level.START.x)
 	metrics.entry_front_distance=depths.min()
 	metrics.entry_tail_distance=depths.max()
 	checks.entry_opening_distance=depths.min()>24 and depths.min()<27
 	checks.entry_column_spans_corridor=depths.max()-depths.min()>44 and [0,1,2,3].all(func(i): return depths.filter(func(d): return d>=24+i*12 and d<36+i*12).size()>=40)
 	var visible := Rect2(Vector2(24,24),arena.get_viewport().get_visible_rect().size-Vector2(48,160))
-	checks.entry_front_visible_at_spawn=battle.enemies.filter(func(e): return not arena.aim_camera.is_position_behind(e.position) and visible.has_point(arena.aim_camera.unproject_position(e.position+Vector3.UP))).size()>=12
+	checks.entry_front_visible_at_spawn=_entry_enemies().filter(func(e): return not arena.aim_camera.is_position_behind(e.position) and visible.has_point(arena.aim_camera.unproject_position(e.position+Vector3.UP))).size()>=12
 	await arena._capture(arena.verification_path("level_15_wave_start.png"))
 	var starts: Dictionary={}
-	for enemy in battle.enemies: starts[enemy.get_instance_id()]=enemy.position
+	for enemy in _entry_enemies(): starts[enemy.get_instance_id()]=enemy.position
 	await _frames(300)
 	# A detour around the central powder can start sideways; every active actor
 	# must move, and later must actually gain ground toward the tower.
-	checks.entry_active_rows_advance=battle.enemies.all(func(e): return e.position.distance_to(starts[e.get_instance_id()])>1.0)
+	checks.entry_active_rows_advance=_entry_enemies().all(func(e): return e.position.distance_to(starts[e.get_instance_id()])>1.0)
 	checks.entry_has_time_to_open_fire=is_equal_approx(tank.hp,tank.MAX_HP)
-	metrics.entry_moving_count=battle.enemies.filter(func(e): return e.position.distance_to(starts[e.get_instance_id()])>1).size()
-	var lanes: Array = battle.enemies.map(func(e): return e.position.z)
+	metrics.entry_moving_count=_entry_enemies().filter(func(e): return e.position.distance_to(starts[e.get_instance_id()])>1).size()
+	var lanes: Array = _entry_enemies().map(func(e): return e.position.z)
 	lanes.sort()
 	metrics.entry_middle_80_percent_width=lanes[ceili(lanes.size()*0.9)-1]-lanes[floori(lanes.size()*0.1)]
 	checks.entry_keeps_broad_front=metrics.entry_middle_80_percent_width>10.0
-	checks.entry_neighbors_cover_rear=battle.enemies.all(func(e): return e.position.x>battle.neighbor_origin.x+battle.CROWD_CELL and e.position.x<battle.neighbor_origin.x+(battle.neighbor_width-1)*battle.CROWD_CELL)
-	metrics.entry_delayed=battle.enemies.filter(func(e): return e.position.distance_to(starts[e.get_instance_id()])<=1).map(func(e): return {"start":str(starts[e.get_instance_id()]),"now":str(e.position),"flow":str(e.move_direction),"velocity":str(e.velocity)})
+	checks.entry_neighbors_cover_rear=_entry_enemies().all(func(e): return e.position.x>battle.neighbor_origin.x+battle.CROWD_CELL and e.position.x<battle.neighbor_origin.x+(battle.neighbor_width-1)*battle.CROWD_CELL)
+	metrics.entry_delayed=_entry_enemies().filter(func(e): return e.position.distance_to(starts[e.get_instance_id()])<=1).map(func(e): return {"start":str(starts[e.get_instance_id()]),"now":str(e.position),"flow":str(e.move_direction),"velocity":str(e.velocity)})
 	await arena._capture(arena.verification_path("level_09_entry_attack.png"))
 	await _view(level.START+Vector3(35,0,0),78,"level_10_entry_crowd.png")
 	# Cursor stays before the crowd: RMB must shoot along the corridor anyway.
 	arena.aim_position = tank.global_position + Vector3(3,0,0)
 	await _frames(45)
-	var count_before: int = battle.enemies.size()
+	var count_before: int = _entry_enemies().size()
 	tank.crossbows.trigger(true)
 	await _frames(180)
 	tank.crossbows.trigger(false)
 	await _frames(40)
-	metrics.entry_crossbow_kills = count_before - battle.enemies.size()
+	metrics.entry_crossbow_kills = count_before - _entry_enemies().size()
 	checks.entry_directional_burst_hits_crowd = metrics.entry_crossbow_kills >= 3 and tank.crossbows.hit_count >= 12
 	await arena._capture(arena.verification_path("level_11_directional_burst.png"))
 	for i in 900:
 		await _frames(1)
-		var all_progressed: bool = battle.enemies.all(func(e): return e.position.distance_to(tank.position)<starts[e.get_instance_id()].distance_to(tank.position)-1.0)
+		var all_progressed: bool = _entry_enemies().all(func(e): return e.position.distance_to(tank.position)<starts[e.get_instance_id()].distance_to(tank.position)-1.0)
 		if tank.hp<tank.MAX_HP and all_progressed: break
-	checks.entry_reaches_and_attacks=tank.hp<tank.MAX_HP and battle.enemies.any(func(e): return e.hits>0)
+	checks.entry_reaches_and_attacks=tank.hp<tank.MAX_HP and _entry_enemies().any(func(e): return e.hits>0)
 	metrics.entry_tower_hp=tank.hp
-	checks.entry_stays_on_corridor=battle.enemies.all(func(e): return e.position.y>-0.2 and absf(e.position.z)<10)
-	checks.entry_all_active_make_progress=battle.enemies.all(func(e): return e.position.distance_to(tank.position)<starts[e.get_instance_id()].distance_to(tank.position)-1.0)
-	metrics.entry_late_delayed=battle.enemies.filter(func(e): return e.position.distance_to(tank.position)>=starts[e.get_instance_id()].distance_to(tank.position)-1.0).map(func(e): return {"start":str(starts[e.get_instance_id()]),"now":str(e.position),"flow":str(e.move_direction),"velocity":str(e.velocity)})
+	checks.entry_stays_on_corridor=_entry_enemies().all(func(e): return e.position.y>-0.2 and absf(e.position.z)<10)
+	checks.entry_all_active_make_progress=_entry_enemies().all(func(e): return e.position.distance_to(tank.position)<starts[e.get_instance_id()].distance_to(tank.position)-1.0)
+	metrics.entry_late_delayed=_entry_enemies().filter(func(e): return e.position.distance_to(tank.position)>=starts[e.get_instance_id()].distance_to(tank.position)-1.0).map(func(e): return {"start":str(starts[e.get_instance_id()]),"now":str(e.position),"flow":str(e.move_direction),"velocity":str(e.velocity)})
 	# An aimed opening at powder should remove a meaningful slice of the wave.
 	arena.reset_range()
 	await _frames(32)
@@ -202,17 +203,184 @@ func _check_entry_attack() -> void:
 	metrics.entry_opening_kills = battle.kills
 	checks.entry_powder_opening_thins_wave = _entry_barrels().size()<=8 and battle.kills>=12
 	checks.entry_powder_opening_uses_only_repeaters = tank.shot_count==0 and tank.crossbows.shot_count>0
-	checks.entry_survivors_keep_advancing = battle.enemies.all(func(e): return e.attack_on_spawn and e.target==tank)
+	checks.entry_survivors_keep_advancing = _entry_enemies().all(func(e): return e.attack_on_spawn and e.target==tank)
 	await arena._capture(arena.verification_path("level_14_powder_opening.png"))
 	# The remaining fixtures exercise the bridge and atolls in isolation.
 	level.automatic_encounters = false
 	arena.reset_range()
-	level.spawn_queue.clear()
+	level.cancel_spawning()
 	battle.reset()
 	await _frames(6)
 
+func _entry_enemies() -> Array:
+	return arena.battle.enemies.filter(func(e): return not e.world_resident)
+
+func _check_world_population() -> void:
+	var battle=arena.battle
+	checks.world_generated_on_first_launch=level.world_spawn_positions.size()==120 and not level.world_population_pending
+	var initial_layout: Array = level.world_spawn_positions.duplicate()
+	level.automatic_encounters=false
+	arena.set_physics_process(false)
+	await _frames(2)
+	while not level.spawn_queue.is_empty(): level._spawn_batch()
+	var residents: Array = battle.enemies.filter(func(e): return e.world_resident)
+	checks.world_initial_population=residents.size()==120 and _entry_enemies().size()==240
+	checks.world_population_types=residents.filter(func(e): return e.shield_guard).size()==15 and residents.filter(func(e): return not e.shield_guard and not e.giant).size()==105
+	checks.world_starts_off_atolls=residents.all(func(e): return absf(level.ground_height(e.position))<0.01 and level._world_spawn_open(Vector3(e.position.x,0,e.position.z)))
+	var nearest := INF
+	var regions := PackedInt32Array()
+	regions.resize(9)
+	regions.fill(0)
+	var originals := {}
+	for i in residents.size():
+		var enemy=residents[i]
+		originals[enemy.get_instance_id()]=enemy.position
+		var column := clampi(int((enemy.position.x+120)/80),0,2)
+		var row := clampi(int((enemy.position.z+78)/52),0,2)
+		regions[row*3+column]+=1
+		for j in range(i+1,residents.size()): nearest=minf(nearest,enemy.position.distance_to(residents[j].position))
+	metrics.world_regions=Array(regions)
+	metrics.world_min_spacing=nearest
+	checks.world_spread_across_map=Array(regions).all(func(count): return count>=6)
+	checks.world_no_spawn_piles=nearest>4.4
+	checks.world_exit_is_populated=residents.any(func(e): return e.position.x>128)
+	checks.world_door_landing_clear=residents.all(func(e): return e.position.x>-113)
+	for enemy in _entry_enemies():
+		enemy.collision_layer=0
+		battle.enemies.erase(enemy)
+		enemy.queue_free()
+	arena.set_physics_process(true)
+	var travelled := {}
+	var previous := originals.duplicate()
+	var stays_off_atolls := true
+	for enemy in residents: travelled[enemy.get_instance_id()]=0.0
+	for sample in 50:
+		await _frames(12)
+		for enemy in residents:
+			var id: int = enemy.get_instance_id()
+			travelled[id]+=enemy.position.distance_to(previous[id])
+			previous[id]=enemy.position
+			stays_off_atolls=stays_off_atolls and absf(level.ground_height(enemy.position))<0.01 and level._world_spawn_open(Vector3(enemy.position.x,0,enemy.position.z))
+	metrics.world_patrol_moving=residents.filter(func(e): return travelled[e.get_instance_id()]>2.0).size()
+	checks.world_distant_population_patrols=metrics.world_patrol_moving>=114 and residents.all(func(e): return not is_instance_valid(e.target))
+	checks.world_patrol_avoids_atolls=stays_off_atolls
+	checks.world_patrol_keeps_local_routes=residents.all(func(e): return e.position.distance_to(e.patrol_origin)<=14.1)
+	await _check_patrol_obstacle(residents)
+	await _view(Vector3(0,0,0),250,"level_20_world_population.png")
+	var candidate
+	var approach := Vector3.ZERO
+	for enemy in residents:
+		approach=enemy.position+Vector3(12,-enemy.position.y,0)
+		if not level._world_spawn_open(approach): continue
+		var ray := PhysicsRayQueryParameters3D.create(enemy.position+Vector3.UP,approach+Vector3.UP,1|32)
+		if arena.get_world_3d().direct_space_state.intersect_ray(ray).is_empty():
+			candidate=enemy
+			break
+	checks.world_has_open_approach=candidate!=null
+	if candidate:
+		await _place_tank(approach)
+		var before: float = candidate.position.distance_to(tank.position)
+		await _frames(75)
+		checks.world_nearby_skeleton_engages=candidate.target==tank and candidate.position.distance_to(tank.position)<before-1.0
+	var far = residents.filter(func(e): return e.position.distance_to(tank.position)>60)[0]
+	far.take_damage(1.0)
+	await _frames(30)
+	checks.world_long_range_hit_provokes=far.attack_on_spawn and far.target==tank
+	arena.reset_range()
+	await _frames(2)
+	checks.world_reset_restores_same_layout=level.world_spawn_positions==initial_layout
+
+func _check_patrol_obstacle(residents: Array) -> void:
+	var walker
+	var start := Vector3.ZERO
+	for enemy in residents:
+		start=enemy.patrol_origin
+		var excluded: Array[RID] = [enemy.get_rid()]
+		if not level._world_spawn_open(start+Vector3.RIGHT*10,excluded): continue
+		var ray := PhysicsRayQueryParameters3D.create(start+Vector3.UP,start+Vector3.RIGHT*10+Vector3.UP,1|32)
+		if arena.get_world_3d().direct_space_state.intersect_ray(ray).is_empty():
+			walker=enemy
+			break
+	if not walker:
+		checks.world_patrol_detours_around_prop=false
+		return
+	walker.position=start
+	var obstacle := start+Vector3.RIGHT*4
+	obstacle.y=0.0
+	var prop=arena.props.spawn_prop(obstacle,1)
+	await _frames(2)
+	walker.patrol_goal=start+Vector3.RIGHT*10
+	walker.patrol_wait=0.0
+	var clearance := INF
+	var progress := 0.0
+	var sideways := 0.0
+	for sample in 50:
+		await _frames(12)
+		clearance=minf(clearance,Vector2(walker.position.x-obstacle.x,walker.position.z-obstacle.z).length())
+		progress=maxf(progress,walker.position.x-start.x)
+		sideways=maxf(sideways,absf(walker.position.z-start.z))
+	metrics.world_patrol_obstacle={"clearance":clearance,"progress":progress,"sideways":sideways}
+	checks.world_patrol_detours_around_prop=clearance>0.8 and progress>6.0 and sideways>0.7
+	checks.world_patrol_leaves_props_intact=arena.props.props.has(prop) and not prop.get_meta("broken")
+
 func _entry_barrels() -> Array:
 	return arena.targets.filter(func(t): return t.get_meta("spec",{}).get("entry_supply",false))
+
+func _check_bridge_door() -> void:
+	var door = level.bridge_door
+	checks.bridge_door_stops_walking = not door.broken and tank.position.x<door.global_position.x-1.2
+	checks.bridge_door_after_far_bank = door.global_position.x> -128.0 and door.global_position.x< -120.0
+	await _place_tank(door.global_position+Vector3(-6,0,0))
+	arena.aim_position = door.global_position+Vector3.UP*2.3
+	await _frames(90)
+	await arena._capture(arena.verification_path("level_18_bridge_door.png"))
+	tank.crossbows.trigger(true)
+	await _frames(30)
+	tank.crossbows.trigger(false)
+	tank.cooldown = 0.0
+	tank.fire()
+	await _frames(60)
+	checks.bridge_door_survives_both_guns = not door.broken and door.collision_layer==1 and tank.shot_count>0 and tank.crossbows.shot_count>0
+	await _place_tank(door.global_position+Vector3(-4.4,0,0))
+	tank.dash._start(Vector3.RIGHT,tank.dash.DISTANCE,false)
+	await _frames(40)
+	checks.bridge_door_survives_normal_dash = not door.broken and tank.position.x<door.global_position.x-1.2
+	# Commit uses the preview result, so a truncated marker would stop the dash
+	# before impact even if the collision handler itself could break the door.
+	await _place_tank(door.global_position+Vector3(-6,0,0))
+	arena.aim_position = door.global_position+Vector3(6,0,0)
+	arena.ground_aim_position = arena.aim_position
+	var preview: Vector3 = tank.dash.landing_point(arena.ground_aim_position)
+	checks.bridge_door_preview_reaches_other_side = preview.x>door.global_position.x+3 and not tank.dash.preview_blocked
+	metrics.bridge_door_preview = str(preview)
+	tank.dash.mode = tank.dash.Mode.AIMING
+	checks.bridge_door_super_commit = tank.dash.commit()
+	await _frames(45)
+	checks.bridge_door_breaks_on_super_dash = door.broken and door.collision_layer==0 and not door.panels.visible
+	checks.bridge_door_dash_continues_through = tank.position.x>door.global_position.x+3
+	metrics.bridge_door_dash_end = str(tank.position)
+	checks.bridge_door_open_ray = arena.get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(door.global_position+Vector3(-2,2,0),door.global_position+Vector3(2,2,0),1)).is_empty()
+	await arena._capture(arena.verification_path("level_19_bridge_door_broken.png"))
+	# The rest of the palisade must remain solid even to a super dash.
+	await _place_tank(door.global_position+Vector3(-3,0,6))
+	var side_preview: Vector3 = tank.dash.landing_point(tank.position+Vector3.RIGHT*11.56)
+	tank.dash._start(Vector3.RIGHT,11.56,true)
+	await _frames(45)
+	checks.bridge_fence_stops_super_dash = side_preview.x<door.global_position.x-1.2 and tank.position.x<door.global_position.x-1.2
+
+func _preview_bridge_door() -> void:
+	level.automatic_encounters = false
+	level.cancel_spawning()
+	arena.battle.reset()
+	arena.test_aim = true
+	await _frames(8)
+	hand.puzzle.seat(hand.puzzle.cube)
+	arena.camera_yaw = -PI/4
+	await _place_tank(level.bridge_door.global_position+Vector3(-6,0,0))
+	await _check_bridge_door()
+	var passed := checks.values().all(func(value): return value)
+	print("BRIDGE_DOOR_PREVIEW: ",JSON.stringify({"passed":passed,"checks":checks}))
+	get_tree().quit(0 if passed else 1)
 
 func _entry_props() -> Array:
 	return arena.props.props.filter(func(p): return p.get_meta("entry_supply",false))
@@ -252,7 +420,7 @@ func _check_entry_supplies() -> void:
 	await _move(crate_pos+Vector3(3,0,0),120)
 	checks.entry_steps_crush_crates = not is_instance_valid(crate)
 	arena.reset_range()
-	level.spawn_queue.clear()
+	level.cancel_spawning()
 	arena.battle.reset()
 	await _frames(6)
 	checks.entry_reset_restores_supplies = _entry_barrels().size()==12 and _entry_props().size()==48
@@ -298,12 +466,13 @@ func _check_coins() -> void:
 	await _frames(100)
 	checks.settled_coins_can_be_collected=loot.coins>total_before
 	arena.reset_range()
-	level.spawn_queue.clear()
+	level.cancel_spawning()
 	arena.battle.reset()
 	await _frames(6)
 
 func _run() -> void:
 	await _frames(8)
+	await _check_world_population()
 	level.automatic_encounters = false
 	arena.test_aim = true
 	checks.compact_hud_hides_crew_button=arena.hud.compact_mode() and not arena.hud.crew_button.visible
@@ -337,7 +506,7 @@ func _run() -> void:
 		checks.open_plateau_edges = checks.open_plateau_edges and arena.get_world_3d().direct_space_state.intersect_ray(query).is_empty()
 	metrics.atoll_gaps = {"A_B":level.A.distance_to(level.B)-32,"A_C":level.A.distance_to(level.C)-44,"B_C":level.B.distance_to(level.C)-44}
 	checks.atoll_spacing_matches_pdf = absf(metrics.atoll_gaps.A_B-65)<2 and absf(metrics.atoll_gaps.A_C-70)<2 and absf(metrics.atoll_gaps.B_C-50)<2
-	checks.five_encounters_no_global_wave = level.encounters.size()==5 and not arena.battle.waves_enabled and arena.battle.enemies.is_empty()
+	checks.world_population_replaces_road_spawns = level.encounters.is_empty() and not arena.battle.waves_enabled and arena.battle.enemies.is_empty()
 	checks.full_ore_field = level.ore.size()>100
 	checks.crew_can_exit_at_world_edge = crew.disembark()
 	checks.small_crew_scale = is_equal_approx(crew.members[0].get_child(0).shape.height,0.7)
@@ -377,7 +546,8 @@ func _run() -> void:
 	checks.bridge_installed = hand.puzzle.opened and (level.bridge_body.collision_layer&1)!=0 and level.bridge_guards.all(func(e): return e.collision_layer==0)
 	hand.set_enabled(false)
 	await _move(Vector3(-122,0,0),280)
-	checks.bridge_drive_through = tank.position.x > -125 and tank.position.y > -0.1
+	checks.bridge_drive_through = tank.position.x > -128 and tank.position.y > -0.1
+	await _check_bridge_door()
 	# Item recovery and crew landing must use the full map, not the old 56 m range.
 	await _place_tank(level.A+Vector3(-22,0,-8))
 	await _move(level.A+Vector3(-11,0,-8),100)
@@ -424,7 +594,7 @@ func _run() -> void:
 	await _frames(3)
 	checks.handle_available_after_weight = hand.grab(level.gate_handle)
 	await _point(level.gate_handle.home+Vector3(-5,0,0),15)
-	metrics.handle = str(level.gate_handle.position-level.gate_handle.home)
+	metrics.handle = str(level.gate_handle.global_position-level.gate_handle.home)
 	hand.place_gently()
 	await _frames(115)
 	checks.hand_opens_gate = level.gate_open and level.gate.collision_layer==0
@@ -518,10 +688,9 @@ func _run() -> void:
 	checks.crew_exits_at_mine = crew.disembark()
 	_place_crew(level.C+Vector3(-6,0,0))
 	level.automatic_encounters = true
-	level.interact("mine")
 	var before: int = level.ore.size()
-	await _frames(165)
-	checks.workers_mine_real_blocks = level.ore.size()<before and crew.loot.supplies>0
+	await _move(level.C+Vector3(-1,0,0),165)
+	checks.workers_mine_real_blocks = level.ore.size()<before and not crew.loot.loose_crystals.is_empty() and crew.loot.crystals==0
 	checks.mining_automatically_triggers_defense = level.mine_defense_started
 	level.automatic_encounters = false
 	level.mining = false
@@ -545,7 +714,7 @@ func _run() -> void:
 	level.automatic_encounters = true
 	await _place_tank(Vector3(-115,0,19))
 	await _frames(30)
-	checks.approach_triggers_road_encounter = level.encounters[0].triggered and arena.battle.enemies.size()>=before+10
+	checks.approach_does_not_spawn_small_groups = level.encounters.is_empty() and arena.battle.enemies.size()==before and level.spawn_queue.is_empty()
 	level.automatic_encounters = false
 	await _place_tank(Vector3(155,0,0))
 	checks.exit_reached = level.completed
@@ -558,11 +727,13 @@ func _run() -> void:
 	arena.set_interface_visible(true)
 	arena.reset_range()
 	await _frames(6)
-	checks.reset_restores_level = not level.gate_open and not hand.puzzle.opened and level.mined==0 and level.ore.size()==level.ore_total and arena.battle.remaining()==240 and tank.position.distance_to(level.START)<0.1
-	await _frames(32)
-	checks.reset_restores_exactly_240=arena.battle.enemies.size()==240 and level.spawn_queue.is_empty()
-	checks.reset_restores_40_intact_shields=arena.battle.enemies.filter(func(e): return e.shield_guard and e.shield_hp==24.0).size()==40
-	checks.reset_restores_advancing_wave=arena.battle.enemies.all(func(e): return e.attack_on_spawn and e.target==tank)
+	checks.reset_restores_level = not level.gate_open and not hand.puzzle.opened and level.mined==0 and level.ore.size()==level.ore_total and arena.battle.remaining()==360 and tank.position.distance_to(level.START)<0.1
+	checks.reset_restores_bridge_door = not level.bridge_door.broken and level.bridge_door.collision_layer==1 and level.bridge_door.panels.visible
+	await _frames(65)
+	checks.reset_restores_exactly_240=_entry_enemies().size()==240 and level.spawn_queue.is_empty()
+	checks.reset_restores_40_intact_shields=_entry_enemies().filter(func(e): return e.shield_guard and e.shield_hp==24.0).size()==40
+	checks.reset_restores_advancing_wave=_entry_enemies().all(func(e): return e.attack_on_spawn and e.target==tank)
+	checks.reset_restores_world_population=arena.battle.enemies.filter(func(e): return e.world_resident).size()==120
 	await arena._capture(arena.verification_path("level_07_gameplay.png"))
 	var passed := true
 	for value in checks.values(): passed = passed and value

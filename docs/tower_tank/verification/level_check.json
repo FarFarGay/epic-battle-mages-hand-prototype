@@ -7,7 +7,17 @@
     "barricades_have_turns": true,
     "board_after_puzzle": true,
     "bridge_can_be_grabbed": true,
+    "bridge_door_after_far_bank": true,
+    "bridge_door_breaks_on_super_dash": true,
+    "bridge_door_dash_continues_through": true,
+    "bridge_door_open_ray": true,
+    "bridge_door_preview_reaches_other_side": true,
+    "bridge_door_stops_walking": true,
+    "bridge_door_super_commit": true,
+    "bridge_door_survives_both_guns": true,
+    "bridge_door_survives_normal_dash": true,
     "bridge_drive_through": true,
+    "bridge_fence_stops_super_dash": true,
     "bridge_installed": true,
     "bridge_mouse_corner": true,
     "bridge_mouse_far_edge": true,
@@ -100,6 +110,7 @@
     "removing_weight_relocks_handle": true,
     "reset_restores_40_intact_shields": true,
     "reset_restores_advancing_wave": true,
+    "reset_restores_bridge_door": true,
     "reset_restores_exactly_240": true,
     "reset_restores_level": true,
     "return_through_low_tunnel": true,
@@ -123,6 +134,8 @@
       "A_C": 69.8419952392578,
       "B_C": 50.4086837768555
     },
+    "bridge_door_dash_end": "(-118.44, 0.000352, 0.0)",
+    "bridge_door_preview": "(-118.44, 0.0, 0.0)",
     "bridge_drag": {
       "pos": "(-132.2499, 1.529999, 1.36331)",
       "snap": "socket",
@@ -141,13 +154,13 @@
       0.00546729633787622,
       0.00462205678352113
     ],
-    "enemy_ramp": "(-22.72, 0.04, 0.0)",
+    "enemy_ramp": "(-22.71837, 0.04, 0.0)",
     "entry_chain_props_destroyed": 5,
-    "entry_crossbow_kills": 15,
+    "entry_crossbow_kills": 16,
     "entry_delayed": [],
-    "entry_front_distance": 24.459716796875,
+    "entry_front_distance": 24.6454925537109,
     "entry_late_delayed": [],
-    "entry_middle_80_percent_width": 13.645613193512,
+    "entry_middle_80_percent_width": 13.6424221992493,
     "entry_moving_count": 240,
     "entry_opening_kills": 28,
     "entry_tail_distance": 72.0003051757813,
@@ -190,28 +203,28 @@
       "surface": "(-129.028, 0.029999, 2.280609)"
     },
     "plateau_feet": [
-      "(-7.617901, 0.025, 3.719994)",
-      "(-7.671879, 0.025, 5.279999)"
+      "(-7.618454, 0.025, 3.719994)",
+      "(-7.672432, 0.025, 5.279999)"
     ],
     "ramp_dash": {
-      "end": "(-35.56, -1.849898, 18.0)",
+      "end": "(-35.56, -1.849558, 18.0)",
       "preview": "(-35.56, -1.89, 18.0)",
-      "start": "(-24.0, -0.002003, 18.0)"
+      "start": "(-24.0, -0.008746, 18.0)"
     },
-    "tunnel_crew": "(-9.676239, 0.000831, -8.006016)",
+    "tunnel_crew": "(-9.676094, 0.000783, -8.005993)",
     "tunnel_members": [
-      "(-10.77577, 0.000818, -8.443176)",
-      "(-10.18176, 0.000844, -8.679543)",
-      "(-9.25174, 0.00084, -9.11681)",
-      "(-10.46731, 0.000843, -7.477444)",
-      "(-9.772179, 0.000907, -8.005615)",
-      "(-9.054268, 0.000711, -8.502388)",
-      "(-9.97876, 0.000839, -6.812016)",
-      "(-9.161942, 0.000831, -7.250763)",
-      "(-8.442467, 0.000843, -7.766388)"
+      "(-10.77561, 0.000738, -8.443188)",
+      "(-10.18159, 0.000723, -8.679546)",
+      "(-9.251633, 0.000704, -9.116833)",
+      "(-10.46715, 0.00077, -7.477444)",
+      "(-9.772011, 0.000799, -8.005337)",
+      "(-9.0541, 0.00083, -8.502411)",
+      "(-9.978607, 0.000844, -6.812019)",
+      "(-9.161819, 0.000802, -7.250774)",
+      "(-8.442329, 0.000842, -7.766399)"
     ],
-    "weight": "(-8.493065, 0.366408, -8.629475)",
-    "workbench_tower": "(4.885399, 0.000938, 0.0)"
+    "weight": "(-8.493256, 0.366415, -8.629452)",
+    "workbench_tower": "(4.885281, 0.000842, 0.0)"
   },
   "passed": true
 }

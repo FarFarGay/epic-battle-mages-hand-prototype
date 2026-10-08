@@ -74,6 +74,7 @@ func _member_died(member: CharacterBody3D) -> void:
 	if not members.has(member): return
 	var last_center := center()
 	if loot.haulers.has(member): loot.drop_cargo()
+	loot.drop_crystals(member)
 	member.hauling = false
 	members.erase(member)
 	var corpse: Node3D = member.visual.duplicate()
@@ -139,6 +140,7 @@ func tick(dt: float) -> void:
 			interact()
 		elif drop_requested and not crewed:
 			loot.drop_cargo()
+			loot.drop_crystals()
 	interact_requested = false
 	board_requested = false
 	drop_requested = false
@@ -155,6 +157,9 @@ func tick(dt: float) -> void:
 	if not crewed:
 		board_ring.global_position = arena.tank.global_position + Vector3.UP * 0.06
 		board_marker.text = "БАШНЯ РАЗБИТА" if arena.tank.dead else ("[E]  В БАШНЮ" if can_board() else "БАШНЯ  ·  %d м" % int(board_distance()))
+
+		if not arena.tank.dead and loot.carried_crystal_count() > 0 and can_board():
+			board_marker.text = "[E]  СДАТЬ КРИСТАЛЛЫ"
 
 func _drive(dt: float) -> void:
 	var c := center()
@@ -286,6 +291,7 @@ func board() -> bool:
 		tell("Подведи весь отряд к башне: не дальше 8 м, без преград")
 		return false
 	loot.store_cargo()
+	loot.deposit_carried_crystals()
 	crewed = true
 	input_armed = false
 	motion = Vector3.ZERO
@@ -306,15 +312,20 @@ func _reset_reticle() -> void:
 
 func context_action() -> Dictionary:
 	if members.is_empty(): return {"kind": "none", "text": "ОТРЯД ПОГИБ  ·  R — НАЧАТЬ ЗАНОВО"}
+	if not crewed and loot.carried_crystal_count() > 0 and can_board():
+		return {"kind": "crystals_deposit", "text": "E  СДАТЬ КРИСТАЛЛЫ В БАШНЮ · %d" % loot.carried_crystal_count()}
 	if arena.level:
 		var action: Dictionary = arena.level.context_action()
 		if not action.is_empty(): return action
 	if crewed: return {"kind": "exit", "text": "E  ВЫСАДИТЬ ЭКИПАЖ"}
+	var item: Dictionary = loot.nearest_interaction(center())
+	if item.get("kind", "") == "crystal": return item
 	if loot.cargo != null:
 		if can_board(): return {"kind": "board", "text": "E  ПОГРУЗИТЬ И СЕСТЬ В БАШНЮ"}
 		return {"kind": "drop", "text": "E  ОПУСТИТЬ ГРУЗ"}
-	var item: Dictionary = loot.nearest_interaction(center())
 	if not item.is_empty(): return item
+	if loot.carried_crystal_count() > 0:
+		return {"kind": "crystals_drop", "text": "E / Q  ОПУСТИТЬ КРИСТАЛЛЫ · У БАШНИ E — СДАТЬ"}
 	if can_board(): return {"kind": "board", "text": "E  СЕСТЬ В БАШНЮ"}
 	if arena.tank.dead: return {"kind": "none", "text": "БАШНЯ РАЗБИТА  ·  БОЙ ЭКИПАЖЕМ  ·  R — ЗАНОВО"}
 	return {"kind": "none", "text": "БАШНЯ  %d м  ·  подойди для посадки" % int(board_distance())}
@@ -330,5 +341,8 @@ func interact() -> void:
 		"board": board()
 		"drop": loot.drop_cargo()
 		"cargo": loot.pickup_cargo(action.node)
+		"crystal": loot.pickup_crystal(action.node)
+		"crystals_deposit": loot.deposit_carried_crystals()
+		"crystals_drop": loot.drop_crystals()
 		"chest": loot.open_chest(action.entry)
 		_: tell("Рядом нет предметов. Для посадки подойди к башне")

@@ -3,3 +3,9 @@ playable/*.exe
 tools/*.log
 __pycache__/
 *.pyc
+
+# Godot-generated metadata for the UE handoff's reference copies.
+reference/**/*.import
+reference/**/*.translation
+reference/**/*.uid
+tools/*.gd.uid
