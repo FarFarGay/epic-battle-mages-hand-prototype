@@ -12,6 +12,10 @@ var ghost_materials: Dictionary = {}
 var occlusion_wait := 0.0
 var last_focus := Vector3(INF,0,0)
 var last_camera := Vector3(INF,0,0)
+const HEIGHT_CELL := 8.0
+var height_cells: Dictionary = {}
+var indexed_shelves := -1
+var indexed_ramps := -1
 
 func _ready() -> void:
 	model_material.vertex_color_use_as_albedo = true
@@ -149,17 +153,48 @@ func ramp(from: Vector3, to: Vector3, width: float) -> void:
 	Geo.mesh(body,top_surface.commit(),Vector3.ZERO,level.dressing.worn_material)
 
 func height_at(point: Vector3) -> float:
+	# The level is static between loads. Only inspect surfaces overlapping this
+	# tile; retain the exact polygon/ramp tests (no quantized heights at seams).
+	if indexed_shelves!=shelves.size() or indexed_ramps!=ramps.size(): rebuild_height_index()
 	var height := 0.0
 	var flat := Vector2(point.x,point.z)
-	for shelf in shelves:
-		if shelf.bounds.has_point(flat) and Geometry2D.is_point_in_polygon(flat,shelf.polygon): height=maxf(height,shelf.height)
-	for slope in ramps:
-		var delta: Vector3=point-slope.from
-		delta.y=0
-		var along: float=delta.dot(slope.direction)
-		if along>=-0.01 and along<=slope.length+0.01 and absf(delta.dot(slope.side))<=slope.width*0.5:
-			height=maxf(height,lerpf(slope.from.y,slope.to.y,clampf(along/slope.length,0,1)))
+	var cell := Vector2i(floori(point.x/HEIGHT_CELL),floori(point.z/HEIGHT_CELL))
+	if not height_cells.has(cell): return height
+	for index in height_cells[cell]:
+		if index<shelves.size():
+			var shelf: Dictionary = shelves[index]
+			if shelf.bounds.has_point(flat) and Geometry2D.is_point_in_polygon(flat,shelf.polygon): height=maxf(height,shelf.height)
+		else:
+			var slope: Dictionary = ramps[index-shelves.size()]
+			var delta: Vector3=point-slope.from
+			delta.y=0
+			var along: float=delta.dot(slope.direction)
+			if along>=-0.01 and along<=slope.length+0.01 and absf(delta.dot(slope.side))<=slope.width*0.5:
+				height=maxf(height,lerpf(slope.from.y,slope.to.y,clampf(along/slope.length,0,1)))
 	return height
+
+func rebuild_height_index() -> void:
+	height_cells.clear()
+	indexed_shelves = shelves.size()
+	indexed_ramps = ramps.size()
+	for index in shelves.size()+ramps.size():
+		var bounds: Rect2
+		if index<shelves.size(): bounds = shelves[index].bounds
+		else:
+			var slope: Dictionary = ramps[index-shelves.size()]
+			bounds = Rect2(Vector2(slope.from.x,slope.from.z),Vector2.ZERO)
+			for end in [slope.from,slope.to]:
+				for sign in [-1.0,1.0]:
+					var edge: Vector3 = end+slope.side*slope.width*0.5*sign
+					bounds = bounds.expand(Vector2(edge.x,edge.z))
+			bounds = bounds.grow(0.02)
+		var low := Vector2i((bounds.position/HEIGHT_CELL).floor())
+		var high := Vector2i((bounds.end/HEIGHT_CELL).floor())
+		for z in range(low.y,high.y+1):
+			for x in range(low.x,high.x+1):
+				var cell := Vector2i(x,z)
+				if not height_cells.has(cell): height_cells[cell] = []
+				height_cells[cell].append(index)
 
 func cliff_chain(from: Vector3, to: Vector3, outward: Vector3, height: float=18.0) -> void:
 	var length := from.distance_to(to)

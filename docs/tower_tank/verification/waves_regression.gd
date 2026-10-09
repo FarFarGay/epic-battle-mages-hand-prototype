@@ -149,8 +149,8 @@ func _run() -> void:
 			for enemy in arena.battle.enemies:
 				if enemy.wave_route.is_empty(): arrivals[enemy.wave_entrance]=true
 		await _frames(1)
-		if i==599:
-			print("WAVE_PROFILE_600_FRAMES: ",JSON.stringify(stages))
+		if i%600==599:
+			print("WAVE_PROFILE: ",i+1," ",JSON.stringify(stages)," movement=",JSON.stringify(arena.battle.movement_profile))
 	checks.full_wave_spawns_all_600 = waves.pending.is_empty() and waves.spawned_by_type.values().reduce(func(a,b): return a+b,0)==600
 	checks.full_wave_reaches_all_three_sides = arrivals.size()==3
 	checks.full_wave_crowd_capacity = peak_alive<=arena.battle.crowd.CAPACITY

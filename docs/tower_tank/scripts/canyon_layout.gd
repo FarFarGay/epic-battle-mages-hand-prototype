@@ -98,6 +98,7 @@ func _rebuild_height_cache() -> void:
 			var along := Vector3(to.x-from.x,0,to.z-from.z)
 			var direction := along.normalized()
 			terrain.ramps.append({"from":from,"to":to,"direction":direction,"side":direction.cross(Vector3.UP),"length":along.length(),"width":shape.to_global(points[4]).distance_to(shape.to_global(points[5]))})
+	terrain.rebuild_height_index()
 
 func build_targets() -> void:
 	level.entry_barrel_positions.clear()

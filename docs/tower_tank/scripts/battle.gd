@@ -38,6 +38,7 @@ var simulation_time := 0.0
 var simulation_frame := 0
 var profile_enabled := false
 var last_profile := {}
+var movement_profile := {}
 var solid := PackedByteArray()
 var flow_next := PackedInt32Array()
 var flow_distance := PackedInt32Array()
@@ -340,15 +341,21 @@ func _ground_open(pos: Vector3, clearance: float = 0.0) -> bool:
 		return _ground_open(pos + Vector3.RIGHT * clearance) and _ground_open(pos + Vector3.LEFT * clearance) and _ground_open(pos + Vector3.FORWARD * clearance) and _ground_open(pos + Vector3.BACK * clearance)
 	return true
 
-func move_ground(enemy: CharacterBody3D, dt: float) -> void:
+func move_ground(enemy: CharacterBody3D, dt: float, floor_y: float = INF) -> void:
 	# The shared grid handles obstacles and cliff edges; analytic terrain heights
 	# keep the crowd on ramps without a separate physics sweep for every skeleton.
 	var clearance: float = enemy.body_radius - 0.4
-	var floor_y: float=arena.ground_height(enemy.position)
+	if not is_finite(floor_y): floor_y = arena.ground_height(enemy.position)
 	if absf(enemy.position.y-floor_y-0.04) > 0.15 or solid.size() != nav_area or not _ground_open(enemy.position, clearance):
+		if profile_enabled:
+			var reason := "height" if absf(enemy.position.y-floor_y-0.04)>0.15 else ("building" if solid.size()!=nav_area else "blocked")
+			movement_profile[reason] = movement_profile.get(reason,0)+1
+		var fallback_start := Time.get_ticks_usec() if profile_enabled else 0
 		enemy.collision_mask = 39 if arena.level else 7
 		enemy.move_and_slide()
+		if profile_enabled: movement_profile.physics_us = movement_profile.get("physics_us",0)+Time.get_ticks_usec()-fallback_start
 		return
+	if profile_enabled: movement_profile.grid = movement_profile.get("grid",0)+1
 	enemy.collision_mask = 0
 	var start := enemy.position
 	var next := start + Vector3(enemy.velocity.x, 0, enemy.velocity.z) * dt

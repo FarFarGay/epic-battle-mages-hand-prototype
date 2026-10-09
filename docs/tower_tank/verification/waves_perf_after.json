@@ -1,0 +1,91 @@
+{
+  "machine": {
+    "cpu": "Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz",
+    "display": "Windows",
+    "gpu": "NVIDIA GeForce RTX 3090"
+  },
+  "wave_1_approach": {
+    "battle_stages_ms": {
+      "logic": 0.873599185336049,
+      "move": 1.68590712830957,
+      "separation": 0.440294908350307,
+      "shared": 0.861213034623217
+    },
+    "fps": 204.574809382942,
+    "max_ms": 52.788,
+    "p95_ms": 10.012,
+    "peak_alive": 300,
+    "pending": 0,
+    "physics_ms": 45.784254582486
+  },
+  "wave_1_congested": {
+    "battle_stages_ms": {
+      "logic": 0.931906899418119,
+      "move": 1.49998669991687,
+      "separation": 0.502393599334994,
+      "shared": 0.78578844555278
+    },
+    "fps": 200.376351093346,
+    "max_ms": 17.511,
+    "p95_ms": 10.073,
+    "peak_alive": 300,
+    "pending": 0,
+    "physics_ms": 8.79630756442212
+  },
+  "wave_2_approach": {
+    "battle_stages_ms": {
+      "logic": 1.24375976768743,
+      "move": 1.90222228088701,
+      "separation": 0.631871172122493,
+      "shared": 1.46706388595565
+    },
+    "fps": 157.830110968568,
+    "max_ms": 20.395,
+    "p95_ms": 13.345,
+    "peak_alive": 500,
+    "pending": 0,
+    "physics_ms": 11.7576409714889
+  },
+  "wave_2_congested": {
+    "battle_stages_ms": {
+      "logic": 1.55640135033758,
+      "move": 2.51511177794449,
+      "separation": 0.83168192048012,
+      "shared": 1.28814028507127
+    },
+    "fps": 111.075011963687,
+    "max_ms": 18.27,
+    "p95_ms": 14.675,
+    "peak_alive": 500,
+    "pending": 0,
+    "physics_ms": 12.4214433608404
+  },
+  "wave_3_approach": {
+    "battle_stages_ms": {
+      "logic": 1.44832316384181,
+      "move": 2.25056497175141,
+      "separation": 0.73983615819209,
+      "shared": 1.91316271186441
+    },
+    "fps": 73.7260943139186,
+    "max_ms": 43.822,
+    "p95_ms": 28.07,
+    "peak_alive": 600,
+    "pending": 0,
+    "physics_ms": 14.5878146892656
+  },
+  "wave_3_congested": {
+    "battle_stages_ms": {
+      "logic": 1.91550171232877,
+      "move": 3.20277910958904,
+      "separation": 1.03207534246575,
+      "shared": 1.59154623287671
+    },
+    "fps": 48.6147299301912,
+    "max_ms": 47.719,
+    "p95_ms": 31.021,
+    "peak_alive": 600,
+    "pending": 0,
+    "physics_ms": 16.2783270547947
+  }
+}

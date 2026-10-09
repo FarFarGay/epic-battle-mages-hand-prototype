@@ -272,8 +272,9 @@ func tick(dt: float) -> void:
 		if not battle._ground_open(position+desired.normalized()*0.5,clearance) and battle._ground_open(position+move_direction*0.5,clearance):
 			desired = move_direction*move_speed*maxf(walk_clearance,0.5)
 	var profile_move := Time.get_ticks_usec() if battle.profile_enabled else 0
-	velocity = Vector3(desired.x, -2.0 if position.y < arena.ground_height(position)+0.19 else velocity.y - 20.0 * dt, desired.z)
-	battle.move_ground(self, dt)
+	var floor_y: float = arena.ground_height(position)
+	velocity = Vector3(desired.x, -2.0 if position.y < floor_y+0.19 else velocity.y - 20.0 * dt, desired.z)
+	battle.move_ground(self, dt, floor_y)
 	if battle.profile_enabled:
 		battle.last_profile.logic += profile_steer - profile_start
 		battle.last_profile.separation += profile_move - profile_steer

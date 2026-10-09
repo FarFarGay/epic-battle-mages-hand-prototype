@@ -142,7 +142,29 @@ func _check_entry_attack() -> void:
 	checks.entry_200_regular_40_guards=_entry_enemies().filter(func(e): return e.shield_guard and e.shield_hp==24.0).size()==40 and _entry_enemies().filter(func(e): return not e.shield_guard).size()==200
 	checks.entry_guards_spread_along_wave=[0,1,2,3].all(func(i): return _entry_enemies().filter(func(e): return e.shield_guard and e.position.x-level.START.x>=24+i*12 and e.position.x-level.START.x<36+i*12).size()>=6)
 	battle.crowd.update_instances()
-	checks.entry_shields_batched=battle.crowd.shields.visible_instance_count==40 and battle.crowd.guard_gear.visible_instance_count==40
+	checks.entry_shields_batched=battle.crowd.shields.visible_instance_count>0 and battle.crowd.shields.visible_instance_count==battle.crowd.guard_gear.visible_instance_count
+	checks.offscreen_wave_actors_culled=battle.crowd.bodies.visible_instance_count<battle.enemies.size()
+	# Check culling independently of its implementation: a wide overhead view
+	# contains every actor, a camera away from the map contains none, then return.
+	var camera: Camera3D = arena.camera
+	var saved_transform := camera.global_transform
+	var saved_projection := camera.projection
+	var saved_size := camera.size
+	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	camera.size = 550.0
+	camera.position = Vector3(0,200,0)
+	camera.look_at(Vector3.ZERO,Vector3.FORWARD)
+	battle.crowd.update_instances()
+	var guards: int = battle.enemies.filter(func(e): return e.shield_guard and e.shield_hp>0.0).size()
+	checks.overhead_view_keeps_every_actor=battle.crowd.bodies.visible_instance_count==battle.enemies.size() and battle.crowd.shields.visible_instance_count==guards
+	camera.position.x = 10000.0
+	battle.crowd.update_instances()
+	checks.offscreen_culling_keeps_simulation=battle.crowd.bodies.visible_instance_count==0 and _entry_enemies().size()==240
+	camera.projection = saved_projection
+	camera.size = saved_size
+	camera.global_transform = saved_transform
+	battle.crowd.update_instances()
+	checks.returning_camera_restores_crowd=battle.crowd.bodies.visible_instance_count>0 and battle.crowd.shields.visible_instance_count>0
 	checks.entry_inside_corridor=_entry_enemies().all(func(e): return e.position.x>level.START.x+10 and e.position.x<-140 and absf(e.position.z)<9 and e.position.y>-0.1)
 	checks.entry_whole_wave_pursues=_entry_enemies().all(func(e): return e.attack_on_spawn and e.target==tank)
 	var depths: Array = _entry_enemies().map(func(e): return e.position.x-level.START.x)

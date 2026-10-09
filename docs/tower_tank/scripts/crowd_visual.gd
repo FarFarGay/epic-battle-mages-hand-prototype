@@ -77,14 +77,16 @@ func update_instances() -> void:
 	var planes: Array[Plane] = battle.arena.camera.get_frustum()
 	for enemy in battle.enemies:
 		if enemy.dead or count >= CAPACITY: continue
-		if enemy.world_resident:
-			var center: Vector3 = enemy.position+Vector3.UP*enemy.body_height*0.5
-			var offscreen := false
-			for plane in planes:
-				if plane.distance_to(center)>enemy.body_height*0.6:
-					offscreen=true
-					break
-			if offscreen: continue
+		# Wave actors need the same culling as residents. The MultiMesh AABB
+		# spans the whole canyon, so the renderer cannot discard individual actors.
+		# Padding retains nearby shadows, weapons, fuse rings and interpolated poses.
+		var center: Vector3 = enemy.position+Vector3.UP*enemy.body_height*0.5
+		var offscreen := false
+		for plane in planes:
+			if plane.distance_to(center)>enemy.body_height*0.6+6.0:
+				offscreen=true
+				break
+		if offscreen: continue
 		var pose: Transform3D = enemy.global_transform
 		var phase: float = enemy.stride
 		if not enemy.hand_held and not enemy.hand_thrown and enemy.render_time >= 0.0 and battle.arena.is_physics_processing() and not battle.arena.tuning_open and battle.arena.freeze <= 0.0:
