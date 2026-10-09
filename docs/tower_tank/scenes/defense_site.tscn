@@ -62,6 +62,7 @@ radius = 1.65
 [node name="DefenseSite" type="Node3D" unique_id=1598394811]
 script = ExtResource("1_4yxc8")
 tower_scene = ExtResource("2_mp7qt")
+metadata/_edit_group_ = true
 
 [node name="Platform" type="MeshInstance3D" parent="." unique_id=183493136]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.05, 0)

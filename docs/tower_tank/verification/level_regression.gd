@@ -691,7 +691,7 @@ func _run() -> void:
 	var before: int = level.ore.size()
 	await _move(level.C+Vector3(-1,0,0),165)
 	checks.workers_mine_real_blocks = level.ore.size()<before and not crew.loot.loose_crystals.is_empty() and crew.loot.crystals==0
-	checks.mining_automatically_triggers_defense = level.mine_defense_started
+	checks.mining_emits_story_hook_without_auto_wave = level.mine_defense_started and level.defense_waves.events.has(&"first_ore_mined") and level.defense_waves.active==-1
 	level.automatic_encounters = false
 	level.mining = false
 	var first = level.ore.front()
@@ -709,7 +709,7 @@ func _run() -> void:
 	checks.ai_works_beyond_old_range = enemy.position.distance_to(tank.position)<distance_before-1.0 and arena.battle.nav_origin.x>100
 	checks.crowd_visible_on_large_map = arena.battle.crowd.bodies.visible_instance_count>0 and arena.battle.crowd.bodies.custom_aabb.has_point(enemy.position)
 	await _frames(100)
-	checks.three_mine_approaches_spawn = level.mine_defense_started and arena.battle.enemies.size()>=50
+	checks.old_small_mine_attack_replaced = level.defense_waves.active==-1 and level.spawn_queue.is_empty()
 	before = arena.battle.enemies.size()
 	level.automatic_encounters = true
 	await _place_tank(Vector3(-115,0,19))

@@ -46,6 +46,7 @@ void vertex() {
 void fragment() {
 	vec3 tint = palette < 0.5 ? vec3(0.88, 0.85, 0.78) : (palette < 1.5 ? vec3(0.14, 0.15, 0.16) : (palette < 2.5 ? vec3(0.40, 0.35, 0.30) : vec3(1.0, 0.35, 0.24)));
 	if (palette > 3.5) tint = palette < 4.5 ? vec3(0.08,0.34,0.47) : (palette < 5.5 ? vec3(0.66,0.49,0.24) : vec3(0.23,0.29,0.32));
+	if (palette > 6.5) tint = palette < 7.5 ? vec3(0.65,0.12,0.055) : vec3(0.36,0.22,0.57);
 	if (palette < 0.5) tint = mix(tint, vec3(0.76, 0.57, 0.32), brute);
 	if (palette > 1.5 && palette < 2.5) tint = mix(tint, vec3(0.24, 0.18, 0.15), brute);
 	ALBEDO = mix(tint, vec3(1.0, 0.96, 0.78), flash);

@@ -11,6 +11,12 @@ var battle
 var arena
 var giant := false
 var shield_guard := false
+var role: StringName = &"ordinary"
+var special_settings: Resource = preload("res://scripts/defense_enemy_settings.gd").new()
+var wave_owner: Node
+var wave_route := PackedVector3Array()
+var wave_entrance: StringName
+var throw_aim := Vector3.ZERO
 var shield_hp := 0.0
 var attack_on_spawn := false
 var world_resident := false
@@ -88,6 +94,15 @@ func _ready() -> void:
 	attack_windup *= rng.randf_range(0.8, 1.2)
 	close_windup *= rng.randf_range(0.8, 1.2)
 	attack_cooldown *= rng.randf_range(0.85, 1.15)
+	if role == &"bomber":
+		name = "SkeletonBomber"
+		hp = special_settings.bomber_health
+		move_speed = special_settings.bomber_speed
+	elif role == &"thrower":
+		name = "SkeletonThrower"
+		hp = special_settings.thrower_health
+		move_speed = special_settings.thrower_speed
+	max_hp = hp
 	scan_left = rng.randf_range(0.0, 0.4)
 	path_left = rng.randf_range(0.0, 0.5)
 	separation_wait = rng.randf_range(0.0, 0.12)
@@ -99,7 +114,10 @@ func _ready() -> void:
 	shape.position.y = body_height * 0.5
 	add_child(shape)
 	_build()
-	preload("res://scripts/tower_hand.gd").register_item(self, Vector3(body_radius * 2.0, body_height, body_radius * 2.0), "СКЕЛЕТ-ГРОМИЛА" if giant else ("СКЕЛЕТ-ЩИТОВИК" if shield_guard else "СКЕЛЕТ"), Vector3.UP * body_height * 0.5)
+	var label := "СКЕЛЕТ-ГРОМИЛА" if giant else ("СКЕЛЕТ-ЩИТОВИК" if shield_guard else "СКЕЛЕТ")
+	if role == &"bomber": label = "СКЕЛЕТ-БОМБИСТ"
+	elif role == &"thrower": label = "СКЕЛЕТ-МЕТАЛЬЩИК"
+	preload("res://scripts/tower_hand.gd").register_item(self, Vector3(body_radius * 2.0, body_height, body_radius * 2.0), label, Vector3.UP * body_height * 0.5)
 
 func _build() -> void:
 	visual = Node3D.new()
@@ -213,7 +231,18 @@ func tick(dt: float) -> void:
 		var direction := offset.normalized()
 		rotation.y = lerp_angle(rotation.y, atan2(-direction.x, -direction.z), 1.0 - exp(-12.0 * dt))
 		var reach: float = (1.32 if target == arena.tank else 0.0) + (0.5 if giant else 0.0)
-		if state == State.WINDUP:
+		while not wave_route.is_empty() and Vector2(position.x-wave_route[0].x,position.z-wave_route[0].z).length()<1.1 and absf(position.y-wave_route[0].y)<0.6:
+			wave_route.remove_at(0)
+		if not wave_route.is_empty() and offset.length()>4.0 and state!=State.WINDUP:
+			var route_offset := wave_route[0]-position
+			route_offset.y = 0.0
+			move_direction = route_offset.normalized()
+			desired = move_direction*move_speed
+			rotation.y = lerp_angle(rotation.y,atan2(-move_direction.x,-move_direction.z),1.0-exp(-12.0*dt))
+		elif role in [&"bomber", &"thrower"]:
+			desired = _special_attack(dt,direction,offset.length(),reach)
+			if dead: return
+		elif state == State.WINDUP:
 			desired = direction * 1.5
 			if timer <= 0.0: _strike(direction)
 		elif offset.length() <= 1.5 + reach and battle.clear_sight(global_position, target.global_position, target):
@@ -254,8 +283,35 @@ func tick(dt: float) -> void:
 func can_hand_grab() -> bool:
 	return not dead and not giant
 
+func _special_attack(dt: float, direction: Vector3, distance: float, reach: float) -> Vector3:
+	if state == State.WINDUP:
+		if timer <= 0.0:
+			attacks += 1
+			if role == &"bomber":
+				var point := global_position+Vector3.UP*0.5
+				# Killing or grabbing a runner before the fuse ends cancels its attack.
+				take_damage(hp+1.0)
+				battle.ordnance.blast(point,special_settings.bomber_radius,special_settings.bomber_damage,true)
+			else:
+				battle.ordnance.throw_stone(global_position+Vector3.UP*1.6+direction*0.6,throw_aim,special_settings)
+				state = State.RECOVERY
+				timer = special_settings.thrower_cooldown
+		return Vector3.ZERO
+	var range_limit: float = 1.6+reach if role==&"bomber" else special_settings.thrower_range
+	if distance <= range_limit and battle.clear_sight(global_position,target.global_position,target):
+		state = State.WINDUP
+		timer = special_settings.bomber_fuse if role==&"bomber" else special_settings.thrower_windup
+		throw_aim = target.global_position
+		return Vector3.ZERO
+	path_left -= dt
+	if path_left<=0.0:
+		move_direction = battle.flow_direction(position,target.position,approach_lane)
+		path_left = 0.1
+	return move_direction*move_speed
+
 func on_hand_grab() -> void:
 	hand_held = true
+	wave_route.clear() # A carried attacker resumes combat at its new location.
 	hand_thrown = false
 	velocity = Vector3.ZERO
 	impulse = Vector3.ZERO

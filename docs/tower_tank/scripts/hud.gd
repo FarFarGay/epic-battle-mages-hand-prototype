@@ -35,6 +35,10 @@ func _draw() -> void:
 	var w := viewport.x / ui_scale
 	var h := viewport.y / ui_scale
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE * ui_scale)
+	if arena.level and arena.level.defense_waves:
+		var defense_wave = arena.level.defense_waves
+		if defense_wave.active>=0 or arena.crew.center().distance_to(defense_wave.global_position)<defense_wave.test_launch_distance:
+			text_at(Vector2(28,164),defense_wave.status_text(),13,gold)
 	if arena.tank.dash.is_aiming():
 		draw_rect(Rect2(0, 0, w, h), Color(0.01, 0.04, 0.08, 0.22))
 	if compact_mode():

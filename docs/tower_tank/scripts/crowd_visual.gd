@@ -6,6 +6,8 @@ var battle
 var bodies: MultiMesh
 var shields: MultiMesh
 var guard_gear: MultiMesh
+var bomber_gear: MultiMesh
+var thrower_gear: MultiMesh
 var warnings: MultiMesh
 var bars: MultiMesh
 var debris: MultiMesh
@@ -21,6 +23,8 @@ func _ready() -> void:
 	bodies = _batch(_build_mesh(), material)
 	shields = _batch(_build_shield_mesh(), material)
 	guard_gear = _batch(_build_guard_mesh(), material)
+	bomber_gear = _batch(_build_special_mesh(true), material)
+	thrower_gear = _batch(_build_special_mesh(false), material)
 	var ring := TorusMesh.new()
 	ring.inner_radius = 0.65
 	ring.outer_radius = 0.72
@@ -67,6 +71,8 @@ func update_instances() -> void:
 	var bar_count := 0
 	var shield_count := 0
 	var guard_count := 0
+	var bomber_count := 0
+	var thrower_count := 0
 	var camera_basis: Basis = battle.arena.aim_camera.global_basis
 	var planes: Array[Plane] = battle.arena.camera.get_frustum()
 	for enemy in battle.enemies:
@@ -91,6 +97,14 @@ func update_instances() -> void:
 		var mode: int = 5 if enemy.hand_held else (6 if enemy.hand_thrown else enemy.state)
 		var animation := Color(phase, enemy.animation_speed, mode + (16 if enemy.hit_flash > 0.0 else 0) + (32 if enemy.giant else 0), enemy.body_lean)
 		bodies.set_instance_custom_data(count, animation)
+		if enemy.role == &"bomber":
+			bomber_gear.set_instance_transform(bomber_count, body_pose)
+			bomber_gear.set_instance_custom_data(bomber_count, animation)
+			bomber_count += 1
+		elif enemy.role == &"thrower":
+			thrower_gear.set_instance_transform(thrower_count, body_pose)
+			thrower_gear.set_instance_custom_data(thrower_count, animation)
+			thrower_count += 1
 		if enemy.shield_guard:
 			guard_gear.set_instance_transform(guard_count, body_pose)
 			guard_gear.set_instance_custom_data(guard_count, animation)
@@ -101,7 +115,8 @@ func update_instances() -> void:
 				shield_count += 1
 		count += 1
 		if enemy.warning.visible:
-			warnings.set_instance_transform(warning_count, Transform3D(Basis.from_scale(Vector3(enemy.body_size, 0.12, enemy.body_size)), enemy.position + Vector3.UP * 0.06))
+			var radius_scale: float = enemy.special_settings.bomber_radius/0.72 if enemy.role==&"bomber" else enemy.body_size
+			warnings.set_instance_transform(warning_count, Transform3D(Basis.from_scale(Vector3(radius_scale, 0.12, radius_scale)), enemy.position + Vector3.UP * 0.06))
 			warning_count += 1
 		var show_shield: bool = enemy.shield_hp>0.0 and enemy.shield_hp<enemy.SHIELD_MAX_HP
 		if enemy.giant or enemy.hp < enemy.max_hp or show_shield:
@@ -111,6 +126,8 @@ func update_instances() -> void:
 	bodies.visible_instance_count = count
 	shields.visible_instance_count = shield_count
 	guard_gear.visible_instance_count = guard_count
+	bomber_gear.visible_instance_count = bomber_count
+	thrower_gear.visible_instance_count = thrower_count
 	warnings.visible_instance_count = warning_count
 	bars.visible_instance_count = bar_count
 
@@ -188,6 +205,25 @@ func _build_guard_mesh() -> ArrayMesh:
 	_box(Vector3(0.53,0.065,0.45),Vector3(0,1.895,-0.025),0,metal,0,5)
 	for side in [-1,1]:
 		_box(Vector3(0.25,0.18,0.30),Vector3(side*0.36,1.46,0),1 if side<0 else 2,metal,0,6)
+	var mesh := _surface.commit()
+	_surface = null
+	return mesh
+
+func _build_special_mesh(bomber: bool) -> ArrayMesh:
+	_surface = SurfaceTool.new()
+	_surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var gear := Color(0,0,0,0)
+	if bomber:
+		# Red powder bundle and glowing fuse distinguish runners at crowd scale.
+		_box(Vector3(0.68,0.72,0.50),Vector3(0,1.16,0.30),0,gear,0,7)
+		_box(Vector3(0.74,0.10,0.56),Vector3(0,1.05,0.30),0,gear,0,5)
+		_box(Vector3(0.09,0.30,0.09),Vector3(0,1.63,0.30),0,gear,0,5)
+		_box(Vector3(0.14,0.14,0.14),Vector3(0,1.81,0.30),0,gear,1,3)
+	else:
+		# Violet cowl, stone sack and a stone in the free hand.
+		_box(Vector3(0.54,0.18,0.48),Vector3(0,2.01,-0.025),0,gear,0,8)
+		_box(Vector3(0.56,0.58,0.46),Vector3(0,1.15,0.31),0,gear,0,8)
+		_box(Vector3(0.33,0.30,0.30),Vector3(-0.36,0.9,-0.2),1,gear,0,6)
 	var mesh := _surface.commit()
 	_surface = null
 	return mesh

@@ -57,6 +57,7 @@ var ore_total := 0
 var mined := 0
 var mining := false
 var mine_defense_started := false
+var defense_waves
 var completed := false
 var encounters: Array[Dictionary] = []
 var spawn_queue: Array[Dictionary] = []
@@ -281,6 +282,8 @@ func build_targets() -> void:
 	for spec in arena.target_specs: arena._spawn_target(spec)
 
 func setup_gameplay() -> void:
+	defense_waves = get_node_or_null("AtollC/DefenseWaves")
+	if defense_waves: defense_waves.setup(arena)
 	if arena.defenses: arena.defenses.reset()
 	bridge_door.reset()
 	unlocked = false
@@ -476,6 +479,10 @@ func damage_ore(node: StaticBody3D, amount: float, direction: Vector3, by_mining
 
 func _start_mine_defense() -> void:
 	mine_defense_started = true
+	if defense_waves:
+		# Separate story hook; no wave uses this event until a designer assigns it.
+		defense_waves.notify_story_event(&"first_ore_mined")
+		return
 	if authored:
 		layout.queue_mine_defense()
 	else:
@@ -632,6 +639,7 @@ func _tick_mining(dt: float) -> void:
 func tick(dt: float) -> void:
 	if arena.tuning_open: return
 	if arena.defenses: arena.defenses.tick(dt)
+	if defense_waves: defense_waves.tick(dt)
 	var center: Vector3 = arena.crew.center()
 	current_zone = "ПУСТЫНЯ · СВОБОДНЫЙ МАРШРУТ"
 	if ENTRY_RECT.has_point(Vector2(center.x,center.z)): current_zone = "ВХОД · АТАКА СКЕЛЕТОВ И МОСТ"

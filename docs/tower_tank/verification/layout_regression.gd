@@ -91,7 +91,7 @@ func _run() -> void:
 	var bridge = level.get_node("Bridge")
 	bridge.position.z += 1.0
 	bridge.rotation.y = 0.07
-	expected.socket = _world(bridge.get_node("BridgeSocket")).origin
+	expected.socket = _world(bridge.find_children("*","Marker3D",true,false).filter(func(n): return n.get_meta("level_role","")=="bridge_socket")[0]).origin
 	var start = level.get_node("Entry/PlayerStart")
 	start.position += Vector3(2,0,0)
 	start.rotation.y += 0.2

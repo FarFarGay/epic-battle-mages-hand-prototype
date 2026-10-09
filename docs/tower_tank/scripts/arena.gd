@@ -153,6 +153,8 @@ func _ready() -> void:
 		_prepare_rendering.call_deferred()
 	if OS.get_cmdline_user_args().has("--canyon-perf"):
 		add_child(load("res://verification/canyon_perf.gd").new())
+	elif OS.get_cmdline_user_args().has("--waves-check"):
+		add_child(load("res://verification/waves_regression.gd").new())
 	elif OS.get_cmdline_user_args().has("--defense-check"):
 		add_child(load("res://verification/defense_regression.gd").new())
 	elif OS.get_cmdline_user_args().has("--mining-check"):
@@ -213,6 +215,9 @@ func _prepare_rendering() -> void:
 		enemy.warning.show()
 		enemy.hp=enemy.max_hp*0.5
 		battle.crowd.scatter(enemy,Vector3.RIGHT,1.0)
+	for role in [&"bomber", &"thrower"]:
+		battle.spawn_enemy(pos,false,false,role)
+	battle.ordnance.throw_stone(pos,pos+Vector3.RIGHT*3,preload("res://scripts/defense_enemy_settings.gd").new())
 	battle.crowd.update_instances()
 	battle.crowd.tick_debris(0.016)
 	fx.muzzle(pos,Vector3.RIGHT)
@@ -725,7 +730,9 @@ func _input(event: InputEvent) -> void:
 				tank.crossbows.cancel_trigger()
 				_reset_requested = true
 			KEY_N:
-				if not tuning_open and battle.waves_enabled: battle.wave_requested = true
+				if not tuning_open:
+					if level and level.defense_waves: level.defense_waves.start_next_test_wave()
+					elif battle.waves_enabled: battle.wave_requested = true
 			KEY_TAB:
 				if not interface_visible: return
 				hand.cancel_drag()

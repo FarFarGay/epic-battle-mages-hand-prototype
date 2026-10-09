@@ -22,6 +22,7 @@ var rng := RandomNumberGenerator.new()
 var probe := SphereShape3D.new()
 var giant_probe := SphereShape3D.new()
 var crowd
+var ordnance
 var neighbor_heads := PackedInt32Array()
 var neighbor_links := PackedInt32Array()
 var neighbor_positions := PackedVector3Array()
@@ -84,12 +85,16 @@ func _ready() -> void:
 	crowd = CrowdVisual.new()
 	crowd.battle = self
 	add_child(crowd)
+	ordnance = preload("res://scripts/enemy_ordnance.gd").new()
+	ordnance.battle = self
+	add_child(ordnance)
 
 func _process(dt: float) -> void:
 	crowd.tick_debris(dt)
 	crowd.update_instances()
 
 func reset() -> void:
+	if ordnance: ordnance.reset()
 	nav_building = false
 	nav_build_solid.clear()
 	nav_build_grid = null
@@ -167,6 +172,15 @@ func _begin_navigation() -> void:
 	if nav_build_entry:
 		var bounds: Rect2 = arena.level.ENTRY_RECT
 		region = Rect2i(Vector2i(bounds.position.floor()),Vector2i(bounds.size.ceil())+Vector2i.ONE)
+	elif arena.level and arena.level.defense_waves and arena.level.defense_waves.active>=0:
+		# Build one shared grid covering the three approach columns. A local-only
+		# grid forced hundreds of distant attackers through move_and_slide each tick.
+		var bounds: Rect2 = arena.level.defense_waves.navigation_bounds()
+		bounds = bounds.merge(Rect2(Vector2(nav_build_origin.x-28,nav_build_origin.z-28),Vector2(57,57)))
+		var origin := Vector2(nav_build_origin.x,nav_build_origin.z)
+		var low := Vector2i((bounds.position-origin).floor())
+		var high := Vector2i((bounds.end-origin).ceil())
+		region = Rect2i(low,high-low+Vector2i.ONE)
 	nav_build_grid = AStarGrid2D.new()
 	nav_build_grid.region = region
 	nav_build_grid.cell_size = Vector2.ONE
@@ -387,12 +401,14 @@ func find_path(from: Vector3, to: Vector3) -> PackedVector3Array:
 	if result.size() > 1: result.remove_at(0)
 	return result
 
-func spawn_enemy(pos: Vector3, giant: bool = false, shield_guard: bool = false) -> CharacterBody3D:
+func spawn_enemy(pos: Vector3, giant: bool = false, shield_guard: bool = false, role: StringName = &"ordinary", settings: Resource = null) -> CharacterBody3D:
 	var enemy := SkeletonActor.new()
 	enemy.arena = arena
 	enemy.battle = self
 	enemy.giant = giant
 	enemy.shield_guard = shield_guard and not giant
+	enemy.role = role
+	if settings: enemy.special_settings = settings
 	add_child(enemy)
 	enemy.global_position = Vector3(pos.x, arena.ground_height(pos)+0.04, pos.z)
 	enemy.approach_lane = pos.z
@@ -437,6 +453,7 @@ func remaining() -> int:
 
 func killed(enemy: CharacterBody3D) -> void:
 	if not enemies.has(enemy): return
+	if is_instance_valid(enemy.wave_owner): enemy.wave_owner.enemy_removed(enemy)
 	enemies.erase(enemy)
 	kills += 1
 	for i in (5 if enemy.giant else 1):
@@ -468,6 +485,17 @@ func _update_neighbors() -> void:
 		neighbor_origin = nav_origin+Vector3(nav_min.x-3,0,nav_min.y-3)
 		neighbor_width = ceili((nav_width+6)/CROWD_CELL)+1
 		neighbor_height = ceili((nav_height+6)/CROWD_CELL)+1
+	elif arena.level and arena.level.defense_waves and arena.level.defense_waves.active>=0:
+		# Include the approach columns, not only actors in the player's local grid.
+		var low := Vector2(neighbor_origin.x,neighbor_origin.z)
+		var high := low+Vector2(neighbor_width,neighbor_height)*CROWD_CELL
+		for enemy in enemies:
+			if not is_instance_valid(enemy.wave_owner): continue
+			low = low.min(Vector2(enemy.position.x,enemy.position.z)-Vector2.ONE*3.0)
+			high = high.max(Vector2(enemy.position.x,enemy.position.z)+Vector2.ONE*3.0)
+		neighbor_origin = Vector3(low.x,0,low.y)
+		neighbor_width = ceili((high.x-low.x)/CROWD_CELL)+1
+		neighbor_height = ceili((high.y-low.y)/CROWD_CELL)+1
 	neighbor_heads.resize(neighbor_width * neighbor_height)
 	neighbor_heads.fill(-1)
 	neighbor_links.resize(enemies.size())
@@ -529,6 +557,7 @@ func tick(dt: float) -> void:
 	last_profile = {"logic": 0, "separation": 0, "move": 0, "actors": 0}
 	nav_wait = maxf(0.0, nav_wait - dt)
 	if arena.tuning_open: return
+	ordnance.tick(dt)
 	if arena.level:
 		var player: Vector3 = arena.crew.center()
 		var in_entry: bool = arena.level.ENTRY_RECT.has_point(Vector2(player.x,player.z))
