@@ -19,6 +19,8 @@ func _clear() -> void:
 
 func _run() -> void:
 	await _frames(8)
+	# Isolated spawning/combat suite; campaign_check verifies gated story starts.
+	arena.level.campaign.enabled = false
 	arena.set_physics_process(false)
 	arena.level.cancel_spawning()
 	arena.level.automatic_encounters = false
@@ -42,7 +44,16 @@ func _run() -> void:
 	key.physical_keycode = KEY_N
 	key.pressed = true
 	arena._input(key)
-	checks.hotkey_starts_first = waves.active==0 and waves.pending.size()==300
+	checks.hotkey_cannot_bypass_first_building = waves.active==-1 and waves.pending.is_empty()
+	var first_site = arena.defenses.create_site(arena.level.C+Vector3(-25,0,6))
+	first_site.construct(0.0)
+	checks.construction_arms_countdown = waves.first_wave_left==5.0 and waves.active==-1
+	waves.tick(4.99)
+	checks.construction_waits_five_seconds = waves.active==-1
+	waves.tick(0.01)
+	checks.construction_starts_first = waves.active==0 and waves.remaining()==300
+	first_site.reset()
+	await _frames(2)
 	checks.no_duplicate = not waves.request_wave(0) and not waves.request_wave(1)
 	for number in 3:
 		if number>0: checks["start_%d"%number] = waves.notify_story_event(waves.waves[number].start_event)

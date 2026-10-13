@@ -48,7 +48,7 @@ func has_sight(enemy: Node3D) -> bool:
 func _acquire() -> void:
 	target = null
 	var nearest := INF
-	# Three local slots: cheap range/sector rejection before any line-of-sight ray.
+	# Cheap range/sector rejection before any line-of-sight ray.
 	for enemy in arena.battle.enemies:
 		if not in_sector(enemy): continue
 		var distance := global_position.distance_squared_to(enemy.global_position)

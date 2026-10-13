@@ -1,20 +1,33 @@
 extends Node3D
 const Site = preload("res://scripts/defense_site.gd")
 const Geo = preload("res://scripts/geo.gd")
-enum Mode { IDLE, MENU, AIM }
+const Placement = preload("res://scripts/defense_placement.gd")
+
+enum Mode { IDLE, MENU, PLACE, AIM }
 var arena
 var sites: Array[Node3D] = []
 var mode := Mode.IDLE
 var selected: Node3D
 var hovered: Node3D
+var workshop: Node3D
+var pyrotechnician: Node3D
+var mechanic: Node3D
+var active_shop: Node3D
+var placement
+var blueprint: PackedScene
+var build_cost := 10
+var gold_cost := 50
 var menu: PanelContainer
 var choice: Button
 var cost_label: Label
+var title: Label
 var ghost: Node3D
 var sector: MeshInstance3D
 var heading := 0.0
 var sector_wait := 0.0
 var direction_valid := false
+var placement_valid := false
+var placement_reason := ""
 var reorienting := false
 var ghost_material: StandardMaterial3D
 var sector_material: StandardMaterial3D
@@ -22,10 +35,22 @@ var outline_material: StandardMaterial3D
 
 func _ready() -> void:
 	name = "DefenseBuilding"
-	for node in arena.level.find_children("*","Node3D",true,false):
-		if node is Site:
-			node.arena = arena
-			sites.append(node)
+	workshop = arena.level.get_node("AtollC/Village/House01")
+	pyrotechnician = arena.level.get_node("AtollC/Village/House03")
+	mechanic = preload("res://scripts/mechanic_workshop.gd").new()
+	mechanic.name = "MechanicWorkshop"
+	arena.level.get_node("AtollC").add_child(mechanic)
+	mechanic.global_position = arena.level.C+Vector3(6,0,-20)
+	mechanic.rotation.y = -PI/2
+	blueprint = workshop.defense_blueprint
+	var recipe = blueprint.instantiate()
+	build_cost = recipe.crystal_cost
+	gold_cost = recipe.gold_cost
+	recipe.free()
+	placement = Placement.new()
+	placement.arena = arena
+	placement.atoll = arena.level.get_node("AtollC")
+	placement.mesa = arena.level.get_node("AtollC/AtollMesa3")
 	menu = PanelContainer.new()
 	menu.name = "BuildMenu"
 	menu.z_index = 20
@@ -41,16 +66,15 @@ func _ready() -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation",8)
 	menu.add_child(box)
-	var title := Label.new()
-	title.text = "СТРОИТЕЛЬНАЯ ТОЧКА"
+	title = Label.new()
 	title.add_theme_color_override("font_color",Color("edb96d"))
 	title.add_theme_font_size_override("font_size",13)
 	box.add_child(title)
 	choice = Button.new()
 	choice.name = "DefenseTowerChoice"
-	choice.custom_minimum_size = Vector2(300,42)
+	choice.custom_minimum_size = Vector2(360,42)
 	choice.focus_mode = Control.FOCUS_NONE
-	choice.pressed.connect(begin_orientation)
+	choice.pressed.connect(_choose_product)
 	box.add_child(choice)
 	cost_label = Label.new()
 	cost_label.add_theme_font_size_override("font_size",12)
@@ -74,15 +98,10 @@ func _ready() -> void:
 	sector.hide()
 
 func _context_valid() -> bool:
-	return arena.hand.enabled and arena.crew.crewed and not arena.tank.dead and not arena.tuning_open and arena.interface_visible and not arena.tank.dash.active and not arena.tank.dash.is_aiming() and not is_instance_valid(arena.hand.held)
+	return not arena.crew.members.is_empty() and not arena.tuning_open and arena.interface_visible and not arena.tank.dash.active and not arena.tank.dash.is_aiming() and not is_instance_valid(arena.hand.held)
 
-func reachable(site: Node3D) -> bool:
-	if not is_instance_valid(site): return false
-	if arena.hand._flat_distance(arena.tank.global_position,site.global_position)>arena.hand.REACH: return false
-	var excluded: Array[RID] = []
-	if is_instance_valid(site.tower): excluded.append(site.tower.get_rid())
-	var query := PhysicsRayQueryParameters3D.create(arena.tank.global_position+Vector3.UP*5.8,site.global_position+Vector3.UP*0.4,1,excluded)
-	return get_world_3d().direct_space_state.intersect_ray(query).is_empty()
+func reachable(_site: Node3D) -> bool:
+	return placement.on_atoll(arena.crew.center())
 
 func _pointer() -> Vector2:
 	return arena.hand.test_pointer if arena.hand.test_pointer.is_finite() else get_viewport().get_mouse_position()
@@ -92,7 +111,12 @@ func pick_site(pointer: Vector2) -> Node3D:
 	var direction: Vector3 = arena.aim_camera.project_ray_normal(pointer)
 	var query := PhysicsRayQueryParameters3D.create(origin,origin+direction*250,2048|1|8|32)
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	return hit.collider.get_meta("defense_site") if hit and hit.collider.has_meta("defense_site") else null
+	if hit.is_empty(): return null
+	if hit.collider.has_meta("mason_workshop"): return hit.collider.get_meta("mason_workshop")
+	if hit.collider.has_meta("pyrotechnician"): return hit.collider.get_meta("pyrotechnician")
+	if hit.collider.has_meta("mechanic_workshop"): return hit.collider.get_meta("mechanic_workshop")
+	if hit.collider.has_meta("defense_site"): return hit.collider.get_meta("defense_site")
+	return null
 
 func pointer_over_ui() -> bool:
 	return menu.is_visible_in_tree() and menu.get_global_rect().has_point(_pointer())
@@ -112,8 +136,13 @@ func handle_input(event: InputEvent) -> bool:
 		return true
 	if event.button_index != MOUSE_BUTTON_LEFT: return false
 	if mode==Mode.MENU:
-		if pointer_over_ui(): return false # Let Control deliver the button press.
+		if pointer_over_ui(): return false
 		if event.pressed: cancel()
+		return true
+	if mode==Mode.PLACE:
+		if event.pressed:
+			update_placement(event.position)
+			confirm_position()
 		return true
 	if mode==Mode.AIM:
 		if event.pressed:
@@ -121,21 +150,32 @@ func handle_input(event: InputEvent) -> bool:
 			confirm()
 		return true
 	if not event.pressed or not arena.crew.input_armed: return false
-	var site := pick_site(event.position)
-	if site:
-		if reachable(site): open_menu(site,event.position)
-		else: arena.crew.tell("Подойди башней ближе к строительной точке")
+	var target := pick_site(event.position)
+	if target:
+		if reachable(target): open_menu(target,event.position)
+		else: arena.crew.tell("Строительство доступно с плато поселения")
 		return true
 	return false
 
-func open_menu(site: Node3D, pointer: Vector2) -> void:
-	if not _context_valid() or not reachable(site): return
+func open_menu(target: Node3D, pointer: Vector2) -> void:
+	if not _context_valid() or not reachable(target): return
+	if target!=workshop and target!=pyrotechnician and target!=mechanic and (not target is Site or not is_instance_valid(target.tower)): return
+	if target==mechanic and not mechanic.available: return
 	cancel()
 	arena.hand.cancel_drag()
-	selected = site
-	reorienting = is_instance_valid(site.tower)
+	arena.tank.crossbows.cancel_trigger()
+	reorienting = target is Site
+	active_shop = workshop if reorienting else target
+	selected = target if reorienting else null
 	mode = Mode.MENU
-	choice.text = "Изменить направление" if reorienting else "Защитная башня · %d кристаллов"%site.crystal_cost
+	title.text = "НАПРАВЛЕНИЕ БАШНИ" if reorienting else "ДОМ КАМЕНЩИКА · ЗАЩИТНЫЕ СООРУЖЕНИЯ"
+	choice.text = "Изменить направление" if reorienting else "Башня · %d золота + %d кристаллов"%[gold_cost,build_cost]
+	if active_shop==pyrotechnician:
+		title.text = "ЛАВКА ПИРОТЕХНИКА · ВЗРЫВНЫЕ БОЧКИ"
+		choice.text = "Взрывная бочка · %d золота"%pyrotechnician.barrel_gold_cost
+	if active_shop==mechanic:
+		title.text = "МАСТЕРСКАЯ МЕХАНИКА · УЛУЧШЕНИЯ БАШНИ"
+		choice.text = "Пушка · %d золота + %d кристаллов"%[mechanic.cannon_gold_cost,mechanic.cannon_crystal_cost]
 	_update_cost()
 	menu.reset_size()
 	menu.show()
@@ -145,17 +185,53 @@ func open_menu(site: Node3D, pointer: Vector2) -> void:
 
 func _update_cost() -> void:
 	var available: int = arena.crew.loot.crystals
-	choice.disabled = not reorienting and available<selected.crystal_cost
-	cost_label.text = "Направление меняется бесплатно" if reorienting else "В башне: %d · %s"%[available,"далее — направление огня" if available>=selected.crystal_cost else "сдай кристаллы из шахты"]
+	var gold: int = arena.crew.loot.coins
+	if active_shop==mechanic:
+		choice.disabled = not mechanic.available or arena.tank.cannon_installed or gold<mechanic.cannon_gold_cost or available<mechanic.cannon_crystal_cost
+		cost_label.text = "Пушка уже установлена" if arena.tank.cannon_installed else "Золото: %d · кристаллы: %d\n%s"%[gold,available,"Установить пушку на башню" if not choice.disabled else "Не хватает золота или кристаллов"]
+		cost_label.add_theme_color_override("font_color",Color("b3d6cb"))
+		return
+	if active_shop==pyrotechnician:
+		var blocked: String = pyrotechnician.output_reason(arena)
+		choice.disabled = gold<pyrotechnician.barrel_gold_cost or not blocked.is_empty()
+		cost_label.text = "Золото: %d · кристаллы не нужны\n"%gold
+		cost_label.text += blocked if not blocked.is_empty() else ("Бочка появится на площадке у лавки" if not choice.disabled else "Не хватает золота")
+		cost_label.add_theme_color_override("font_color",Color("ee9676") if choice.disabled else Color("b3d6cb"))
+		return
+	choice.disabled = not reorienting and (available<build_cost or gold<gold_cost)
+	cost_label.text = "Направление меняется бесплатно" if reorienting else "Золото: %d · кристаллы: %d\n%s"%[gold,available,"Выбери место на атолле" if not choice.disabled else "Не хватает золота или кристаллов"]
+	if not reorienting and arena.level.defense_waves.completed==0 and arena.level.defense_waves.active<0 and arena.level.defense_waves.first_wave_left<0:
+		cost_label.text += "\nПервая постройка вызовет волну через 5 секунд"
 	cost_label.add_theme_color_override("font_color",Color("b3d6cb") if not choice.disabled else Color("ee9676"))
 
+func _choose_product() -> void:
+	if mode!=Mode.MENU or not _context_valid() or not reachable(active_shop): return
+	if active_shop==mechanic:
+		mechanic.purchase(arena)
+		_update_cost()
+	elif active_shop==pyrotechnician:
+		pyrotechnician.purchase(arena)
+		_update_cost()
+	else: begin_orientation()
+
+func create_site(point: Vector3, register: bool = true) -> Node3D:
+	var site = blueprint.instantiate()
+	site.arena = arena
+	arena.level.get_node("AtollC/DefenseSites").add_child(site)
+	site.global_position = point
+	if register: sites.append(site)
+	return site
+
 func begin_orientation() -> void:
-	if mode!=Mode.MENU or not _context_valid() or not reachable(selected): return
-	if not reorienting and arena.crew.loot.crystals<selected.crystal_cost: return
+	if mode!=Mode.MENU or not _context_valid() or not reachable(workshop): return
+	if active_shop==pyrotechnician or active_shop==mechanic: return
+	if not reorienting and (arena.crew.loot.crystals<build_cost or arena.crew.loot.coins<gold_cost): return
 	menu.hide()
 	Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
-	mode = Mode.AIM
-	heading = selected.tower.global_rotation.y if reorienting else selected.global_rotation.y
+	if not reorienting: selected = create_site(arena.level.C,false)
+	mode = Mode.AIM if reorienting else Mode.PLACE
+	heading = selected.tower.global_rotation.y if reorienting else 0.0
+	ghost_material.albedo_color = Color(0.3,0.9,0.8,0.48)
 	ghost = selected.tower_scene.instantiate()
 	ghost.preview = true
 	add_child(ghost)
@@ -165,17 +241,48 @@ func begin_orientation() -> void:
 		mesh.material_override = ghost_material
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	Geo.mark_ui(ghost)
+	sector.visible = reorienting
+	direction_valid = false
+	placement_valid = false
+	sector_wait = 0
+	if not reorienting: update_placement(_pointer())
+
+func update_placement(pointer: Vector2) -> void:
+	if mode!=Mode.PLACE: return
+	var origin: Vector3 = arena.aim_camera.project_ray_origin(pointer)
+	var direction: Vector3 = arena.aim_camera.project_ray_normal(pointer)
+	var point = Plane(Vector3.UP,arena.level.C.y).intersects_ray(origin,direction)
+	if point==null:
+		placement_valid = false
+		placement_reason = "Наведи курсор на плато"
+		ghost.hide()
+		return
+	var local: Vector3 = placement.atoll.to_local(point)
+	local.x = snappedf(local.x,0.5)
+	local.z = snappedf(local.z,0.5)
+	selected.global_position = placement.atoll.to_global(local)
+	ghost.global_position = selected.global_position
+	ghost.show()
+	placement_reason = placement.reason(selected.global_position)
+	placement_valid = placement_reason.is_empty()
+	ghost_material.albedo_color = Color(0.3,0.9,0.8,0.48) if placement_valid else Color(1.0,0.22,0.16,0.55)
+
+func confirm_position() -> bool:
+	if mode!=Mode.PLACE or not placement_valid or not _context_valid() or not reachable(workshop): return false
+	placement_reason = placement.reason(selected.global_position)
+	placement_valid = placement_reason.is_empty()
+	if not placement_valid: return false
+	mode = Mode.AIM
 	sector.show()
 	direction_valid = false
-	sector_wait = 0
-	arena.crew.tell("Мышью выбери сектор огня · ЛКМ — построить · ПКМ / Esc — отмена" if not reorienting else "Выбери новое направление · ЛКМ — применить · ПКМ / Esc — отмена")
+	return true
 
 func update_direction(pointer: Vector2) -> void:
 	if mode!=Mode.AIM: return
 	var origin: Vector3 = arena.aim_camera.project_ray_origin(pointer)
 	var direction: Vector3 = arena.aim_camera.project_ray_normal(pointer)
-	var point = arena.terrain_point(origin,direction)
-	if point == null:
+	var point = Plane(Vector3.UP,selected.global_position.y).intersects_ray(origin,direction)
+	if point==null:
 		direction_valid = false
 		return
 	var delta: Vector3 = point-selected.global_position
@@ -186,30 +293,40 @@ func update_direction(pointer: Vector2) -> void:
 		ghost.global_rotation.y = heading
 
 func confirm() -> bool:
-	if mode!=Mode.AIM or not direction_valid or not _context_valid() or not reachable(selected): return false
+	if mode!=Mode.AIM or not direction_valid or not _context_valid() or not reachable(workshop): return false
 	if reorienting:
 		if not is_instance_valid(selected.tower): cancel(); return false
 		selected.tower.change_heading(heading)
 	else:
-		if is_instance_valid(selected.tower): cancel(); return false
-		if arena.crew.loot.crystals<selected.crystal_cost:
-			arena.crew.tell("Не хватает кристаллов · принеси и сдай ресурс в башню")
+		if arena.crew.loot.crystals<selected.crystal_cost or arena.crew.loot.coins<selected.gold_cost:
+			arena.crew.tell("Не хватает золота или кристаллов")
 			cancel()
 			return false
-		# The final click is the single transaction boundary; previews cost nothing.
+		# Recheck moving actors and concurrent buildings at the transaction boundary.
+		placement_reason = placement.reason(selected.global_position)
+		if not placement_reason.is_empty():
+			mode = Mode.PLACE
+			sector.hide()
+			update_placement(_pointer())
+			return false
+		sites.append(selected)
 		selected.construct(heading)
 		arena.crew.loot.crystals -= selected.crystal_cost
+		arena.crew.loot.coins -= selected.gold_cost
 		arena.fx.dust(selected.global_position,Vector3.LEFT*2)
 		arena.fx.dust(selected.global_position,Vector3.RIGHT*2)
 	arena.sound.play("lock",-3.0,0.65)
-	arena.crew.tell("Направление изменено" if reorienting else "Защитная башня построена · автоматически стреляет в выбранном секторе")
+	arena.crew.tell("Направление изменено" if reorienting else "Защитная башня построена")
 	cancel()
 	return true
 
 func cancel() -> void:
+	if is_instance_valid(selected) and not sites.has(selected): selected.queue_free()
 	mode = Mode.IDLE
+	active_shop = null
 	selected = null
 	direction_valid = false
+	placement_valid = false
 	if menu: menu.hide()
 	if is_instance_valid(ghost): ghost.queue_free()
 	ghost = null
@@ -219,7 +336,11 @@ func cancel() -> void:
 
 func reset() -> void:
 	cancel()
-	for site in sites: site.reset()
+	for site in sites:
+		site.reset()
+		site.queue_free()
+	sites.clear()
+	hovered = null
 
 func tick(dt: float) -> void:
 	for site in sites:
@@ -228,10 +349,12 @@ func tick(dt: float) -> void:
 		if mode!=Mode.IDLE: cancel()
 		hovered = null
 		return
-	if mode!=Mode.IDLE and not reachable(selected): cancel()
+	if mode!=Mode.IDLE and not reachable(workshop): cancel()
 	if mode==Mode.MENU: _update_cost()
 	if arena.camera_rotating: return
-	if mode==Mode.AIM:
+	if mode==Mode.PLACE:
+		update_placement(_pointer())
+	elif mode==Mode.AIM:
 		update_direction(_pointer())
 		sector_wait -= dt
 		if sector_wait<=0:
@@ -240,11 +363,17 @@ func tick(dt: float) -> void:
 	else: hovered = pick_site(_pointer())
 
 func status_text() -> String:
-	if mode==Mode.AIM: return "НАПРАВЛЕНИЕ ОГНЯ · ЛКМ — ПОДТВЕРДИТЬ · ПКМ / ESC — ОТМЕНА"
-	if mode==Mode.MENU: return "ВЫБЕРИ ПОСТРОЙКУ"
+	if mode==Mode.PLACE:
+		return "ЛКМ · ВЫБРАТЬ МЕСТО · ПКМ / ESC — ОТМЕНА" if placement_valid else placement_reason
+	if mode==Mode.AIM: return "НАПРАВЛЕНИЕ ОГНЯ · ЛКМ — ПОСТРОИТЬ · ПКМ / ESC — ОТМЕНА" if not reorienting else "НАПРАВЛЕНИЕ ОГНЯ · ЛКМ — ПРИМЕНИТЬ"
+	if mode==Mode.MENU:
+		if active_shop==mechanic: return "МАСТЕРСКАЯ МЕХАНИКА · УЛУЧШЕНИЯ БАШНИ"
+		return "ЛАВКА ПИРОТЕХНИКА · КУПИТЬ БОЧКУ" if active_shop==pyrotechnician else "ДОМ КАМЕНЩИКА · ВЫБЕРИ ПОСТРОЙКУ"
 	if is_instance_valid(hovered):
-		if not reachable(hovered): return "СТРОИТЕЛЬНАЯ ТОЧКА · ПОДОЙДИ БЛИЖЕ"
-		return "ЛКМ · НАПРАВЛЕНИЕ ЗАЩИТНОЙ БАШНИ" if is_instance_valid(hovered.tower) else "ЛКМ · ПОСТРОИТЬ ЗАЩИТНУЮ БАШНЮ · %d КРИСТАЛЛОВ"%hovered.crystal_cost
+		if not reachable(hovered): return "СТРОИТЕЛЬСТВО ДОСТУПНО С ПЛАТО ПОСЕЛЕНИЯ"
+		if hovered==pyrotechnician: return "ЛКМ · ЛАВКА ПИРОТЕХНИКА · ВЗРЫВНЫЕ БОЧКИ"
+		if hovered==mechanic: return "ЛКМ · МАСТЕРСКАЯ МЕХАНИКА · УЛУЧШЕНИЯ БАШНИ"
+		return "ЛКМ · ДОМ КАМЕНЩИКА · СТРОИТЕЛЬСТВО" if hovered==workshop else "ЛКМ · НАПРАВЛЕНИЕ ЗАЩИТНОЙ БАШНИ"
 	return ""
 
 func _draw_sector() -> void:

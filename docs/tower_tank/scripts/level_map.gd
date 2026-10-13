@@ -42,7 +42,7 @@ func _draw() -> void:
 	if level.arena.hand.puzzle.opened: draw_rect(Rect2(p(Vector2(-138,-3)),Vector2(10,6)*factor),Color("74cbc0"))
 	for spec in [[Vector2(-79,-21),Vector2(15,17)],[Vector2(-34,4),Vector2(35,11)],[Vector2(41,-43),Vector2(17,17)]]:
 		draw_rect(Rect2(p(spec[0]-spec[1]*0.5),spec[1]*factor),Color("444d53"))
-	for entry in [[level.A,32.0,"A · ПАЗЛ",Color("ad92bd")],[level.B,32.0,"B · ДАНЖ",Color("7faab8")],[level.C,56.0,"C · ПОСЕЛЕНИЕ",Color("c9a367")]]:
+	for entry in [[level.A,32.0,"Б · МЕХАНИК",Color("ad92bd")],[level.B,32.0,"В · ДАНЖ",Color("7faab8")],[level.C,56.0,"1 · ДЕРЕВНЯ",Color("c9a367")]]:
 		var pos := Vector2(entry[0].x,entry[0].z)
 		var radius: float = entry[1]*factor*0.5
 		draw_circle(p(pos),radius,entry[3])
@@ -50,6 +50,19 @@ func _draw() -> void:
 	for enemy in level.arena.battle.enemies:
 		if enemy.world_resident and not enemy.dead:
 			draw_circle(p(Vector2(enemy.position.x,enemy.position.z)),2.0,Color("e29b72") if enemy.shield_guard else Color("ce5e52"))
+	if level.roaming_groups:
+		for route_id in 2:
+			var route: Array = level.roaming_groups.SHORT_ROUTE if route_id == 0 else level.roaming_groups.LONG_ROUTE
+			var line := PackedVector2Array()
+			for point in route: line.append(p(Vector2(point.x,point.z)))
+			draw_polyline(line,Color("d99d61") if route_id == 0 else Color("71c7bd"),3.0,true)
+		for group in level.roaming_groups.groups:
+			var alive: Array = group.members.filter(func(e): return is_instance_valid(e) and not e.dead)
+			if alive.is_empty(): continue
+			var at := p(Vector2(group.center.x,group.center.z))
+			draw_arc(at,12*factor,0,TAU,32,Color("eb795e"),1.5)
+			caption(at+Vector2(-30,-14),"%d · ГРОМИЛЫ %d"%[alive.size(),alive.filter(func(e):return e.giant).size()],Color("ffe0c4"),12)
+		caption(Vector2(60,110),"ЗОЛОТОЙ: КОРОТКИЙ ПУТЬ ЧЕРЕЗ ПАТРУЛИ    БИРЮЗОВЫЙ: ДЛИННЫЙ ОБХОД",Color("d6d7c9"),14)
 	var loot_positions := [Vector2(0,44),Vector2(-8,-76),Vector2(-42,73)]
 	for i in loot_positions.size():
 		var pos: Vector2 = loot_positions[i]
@@ -62,5 +75,6 @@ func _draw() -> void:
 	caption(dot+Vector2(15,-9),"ВЫ ЗДЕСЬ",Color.WHITE,13)
 	caption(p(Vector2(level.ENTRY_WEST+1,-13)),"ВХОД · %d М · %d СКЕЛЕТОВ" % [int(level.ENTRY_LENGTH),level.ENTRY_ATTACK_SIZE],Color.WHITE,14)
 	caption(p(Vector2(129,-13)),"ВЫХОД",Color.WHITE,14)
-	caption(Vector2(60,view.y-63),"A: гномы → груз на платформе → рукоять рукой → верстак.   B: площадка и два кармана лута.",Color("d0d7d3"),15)
-	caption(Vector2(60,view.y-38),"C: разбор породы / рабочие и защита трёх входов.   Красные точки — скелеты, жёлтое — лут.",Color("d0d7d3"),15)
+	caption(Vector2(60,view.y-63),level.defense_waves.status_text(),Color("e0c28c"),15)
+	caption(Vector2(60,view.y-38),"1: деревня и шахта.  Б: груз → кнопка рукой → механик.  В: задание на посещение.  Г: будущий босс.",Color("d0d7d3"),15)
+	caption(p(Vector2(0,0)),"Г · БОСС (ПОЗЖЕ)",Color("d0d7d3"),13)

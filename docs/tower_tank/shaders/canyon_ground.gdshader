@@ -3,7 +3,7 @@ render_mode specular_disabled;
 
 uniform vec4 earth_color : source_color = vec4(0.22, 0.26, 0.23, 1.0);
 uniform vec4 dust_color : source_color = vec4(0.43, 0.39, 0.30, 1.0);
-uniform vec4 routes[16];
+uniform vec4 routes[32];
 uniform int route_count = 0;
 uniform float wear = 0.0;
 varying vec3 world_position;

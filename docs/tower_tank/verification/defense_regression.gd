@@ -1,5 +1,5 @@
 extends Node
-## Real authored pads, input dispatch, shared crystals and swept-bolt collision.
+## Mason menu, free placement, transaction boundaries and real tower combat.
 const Geo = preload("res://scripts/geo.gd")
 var arena
 var defense
@@ -46,7 +46,7 @@ func _place_near(pad: Node3D) -> void:
 	await _frames(3)
 
 func _pad_click() -> void:
-	var point: Vector2 = arena.aim_camera.unproject_position(site.global_position+Vector3.UP*0.2)
+	var point: Vector2 = arena.aim_camera.unproject_position(site.global_position+Vector3.UP*2.0)
 	await _click(point)
 
 func _choose() -> void:
@@ -69,49 +69,38 @@ func _simulate(tower, seconds: float) -> void:
 		tower.tick(1.0/60)
 		await _frames(1)
 
+func _workshop_click() -> void:
+	await _click(arena.aim_camera.unproject_position(defense.workshop.global_position+Vector3.UP*2.0))
+
+func _position_at(point: Vector3) -> void:
+	arena.hand.test_pointer = arena.aim_camera.unproject_position(point)
+	defense.update_placement(arena.hand.test_pointer)
+	await _frames(2)
+
 func _run() -> void:
 	await _frames(8)
+	arena.set_physics_process(false)
 	arena.level.cancel_spawning()
 	arena.level.automatic_encounters = false
 	arena.battle.reset()
 	arena.test_aim = true
-	checks.three_authored_sites = defense.sites.size()==3
-	checks.editable_prefabs = defense.sites.all(func(s): return s.scene_file_path=="res://scenes/defense_site.tscn" and s.crystal_cost==10)
-	site = defense.sites[1]
-	var pads_clear := true
-	var ground := []
-	for pad in defense.sites:
-		ground.append([pad.global_position,arena.ground_height(pad.global_position)])
-		pads_clear = pads_clear and absf(arena.ground_height(pad.global_position)-pad.global_position.y)<0.1
-		var q := PhysicsShapeQueryParameters3D.new()
-		var shape := CylinderShape3D.new()
-		shape.radius = 0.92
-		shape.height = 3.4
-		q.shape = shape
-		q.transform.origin = pad.global_position+Vector3.UP*1.8
-		q.collision_mask = 1|8|32
-		pads_clear = pads_clear and arena.get_world_3d().direct_space_state.intersect_shape(q).is_empty()
-	checks.pads_on_mesa_and_clear_of_houses = pads_clear
-	metrics.site_ground = ground
-	await _place_near(site)
-	arena.set_physics_process(false)
-	# Input is still dispatched; game simulation is advanced explicitly below.
-	await _pad_click()
-	checks.gun_mode_cannot_build = defense.mode==defense.Mode.IDLE
-	arena.hand.set_enabled(true)
+	await _frames(3)
+	checks.no_fixed_build_points = defense.sites.is_empty() and arena.level.get_node("AtollC/DefenseSites").get_child_count()==0
+	var build_point: Vector3 = arena.level.C+Vector3(-25.5,0,5.5)
+	arena.tank.position = arena.level.C+Vector3(-12,0.04,9)
+	arena.tank.stop_drive()
+	arena.focus = arena.level.C+Vector3(-12,0,-7)
+	arena.zoom = 42
+	arena._update_camera(1.0)
 	arena.crew.input_armed = true
-	await _pad_click()
-	checks.hand_click_opens_dropdown = defense.mode==defense.Mode.MENU
-	checks.insufficient_crystals_disabled = defense.choice.disabled and arena.crew.loot.crystals==0
-	await _choose()
-	checks.disabled_choice_does_not_build = defense.mode==defense.Mode.MENU and not is_instance_valid(site.tower)
-	defense.cancel()
-	arena.crew.crewed = false
-	await _pad_click()
-	checks.on_foot_cannot_build = defense.mode==defense.Mode.IDLE
-	arena.crew.crewed = true
-	await _pad_click()
-	# A real mining resource delivery enables the last missing crystal.
+	await _frames(3)
+	checks.house_has_workshop_sign = defense.workshop.has_node("WorkshopSign")
+	checks.construction_available_across_atoll = defense.reachable(defense.workshop)
+	await _workshop_click()
+	checks.house_click_opens_menu_in_gun_mode = defense.mode==defense.Mode.MENU and not arena.hand.enabled
+	checks.insufficient_crystals_disabled = defense.choice.disabled
+	arena.crew.loot.coins = 50
+	checks.menu_does_not_fire_cannon = arena.tank.shot_count==0
 	arena.crew.loot.crystals = 9
 	var crystal = arena.crew.loot.spawn_crystal(arena.tank.position+Vector3.UP)
 	checks.accepts_mined_resource = arena.crew.loot.deposit_crystal(crystal)
@@ -120,71 +109,110 @@ func _run() -> void:
 		await _frames(1)
 	defense.tick(0.016)
 	checks.delivery_updates_menu = arena.crew.loot.crystals==10 and not defense.choice.disabled
-	await arena._capture(arena.verification_path("defense_01_menu.png"))
+	arena.crew.loot.coins = 49
+	defense.tick(0.016)
+	checks.gold_required_even_with_crystals = defense.choice.disabled
+	arena.crew.loot.coins = 50
+	defense.tick(0.016)
+	checks.first_wave_warning_shown = defense.cost_label.text.contains("5")
+	await arena._capture(arena.verification_path("mason_01_menu.png"))
 	await _choose()
-	checks.choice_enters_direction_stage = defense.mode==defense.Mode.AIM and is_instance_valid(defense.ghost) and defense.sector.visible
-	if not checks.choice_enters_direction_stage:
-		metrics.menu_debug = {"mode":defense.mode,"rect":defense.menu.get_global_rect(),"button":defense.choice.get_global_rect(),"viewport":get_viewport().get_visible_rect(),"reachable":defense.reachable(site),"context":defense._context_valid(),"disabled":defense.choice.disabled}
+	checks.choice_enters_placement = defense.mode==defense.Mode.PLACE and is_instance_valid(defense.ghost)
+	if not checks.choice_enters_placement:
+		metrics.failure = "Workshop selection did not enter placement"
 		_finish()
 		return
-	checks.preview_is_free_and_nonphysical = arena.crew.loot.crystals==10 and defense.ghost.collision_layer==0
-	await _aim_at(site.global_position+Vector3.LEFT*12)
-	checks.pointer_sets_world_heading = defense.direction_valid and absf(angle_difference(defense.heading,PI/2))<0.02
-	metrics.first_heading = defense.heading
-	await arena._capture(arena.verification_path("defense_02_direction.png"))
+	checks.preview_is_free_and_nonphysical = arena.crew.loot.crystals==10 and defense.ghost.collision_layer==0 and defense.sites.is_empty()
+	checks.preview_does_not_arm_wave = arena.level.defense_waves.first_wave_left<0
+	checks.house_footprint_rejected = not defense.placement.reason(defense.workshop.global_position).is_empty()
+	checks.player_footprint_rejected = not defense.placement.reason(arena.tank.position-Vector3.UP*.04).is_empty()
+	checks.other_atoll_rejected = not defense.placement.reason(arena.level.A).is_empty()
+	checks.mine_entrance_rejected = not defense.placement.reason(arena.level.C+Vector3(20,0,0)).is_empty()
+	checks.cliff_footprint_rejected = not defense.placement.reason(arena.level.C+Vector3(27,0,0)).is_empty()
+	checks.ramp_exits_rejected = true
+	for entrance in arena.level.defense_waves.get_node("Entrances").get_children():
+		checks.ramp_exits_rejected = checks.ramp_exits_rejected and not defense.placement.reason(entrance.get_node("Crest").global_position).is_empty()
+	await _position_at(defense.workshop.global_position)
+	checks.invalid_placement_is_red = not defense.placement_valid and defense.ghost_material.albedo_color.r>0.9
+	checks.invalid_click_cannot_confirm = not defense.confirm_position()
+	await arena._capture(arena.verification_path("mason_02_invalid.png"))
+	await _position_at(build_point)
+	checks.free_ground_is_valid = defense.placement_valid
+	metrics.placement_reason = defense.placement_reason
+	if not defense.placement_valid:
+		_finish()
+		return
+	await arena._capture(arena.verification_path("mason_03_placement.png"))
 	await _click(arena.hand.test_pointer,MOUSE_BUTTON_RIGHT)
-	checks.right_click_cancels_without_cost = defense.mode==defense.Mode.IDLE and not is_instance_valid(site.tower) and arena.crew.loot.crystals==10
-	await _pad_click()
+	checks.cancel_placement_is_free = defense.mode==defense.Mode.IDLE and defense.sites.is_empty() and arena.crew.loot.crystals==10
+	checks.cancel_keeps_gold = arena.crew.loot.coins==50
+	await _workshop_click()
 	await _choose()
+	var village_position: Vector3 = arena.tank.position
+	arena.tank.position = arena.level.A+Vector3.UP*.04
+	defense.tick(.016)
+	checks.leaving_atoll_cancels_placement = defense.mode==defense.Mode.IDLE and arena.crew.loot.crystals==10
+	arena.tank.position = village_position
+	await _workshop_click()
+	await _choose()
+	await _position_at(build_point)
+	await _click(arena.hand.test_pointer)
+	checks.position_click_enters_orientation = defense.mode==defense.Mode.AIM and defense.sector.visible
 	await _key(KEY_ESCAPE)
-	checks.escape_cancels_without_quitting = defense.mode==defense.Mode.IDLE and arena.crew.loot.crystals==10
-	await _pad_click()
+	checks.cancel_orientation_does_not_arm_wave = defense.mode==defense.Mode.IDLE and arena.level.defense_waves.first_wave_left<0
+	await _workshop_click()
 	await _choose()
-	await _key(KEY_EQUAL)
-	checks.hide_ui_cancels_preview = not arena.interface_visible and defense.mode==defense.Mode.IDLE and not defense.sector.visible and arena.crew.loot.crystals==10
-	await _key(KEY_EQUAL)
-	await _pad_click()
-	await _choose()
-	await _key(KEY_F)
-	checks.mode_switch_cancels_preview = not arena.hand.enabled and defense.mode==defense.Mode.IDLE and arena.crew.loot.crystals==10
-	arena.hand.set_enabled(true)
-	arena.crew.input_armed = true
-	await _pad_click()
-	await _choose()
-	arena.tank.position += Vector3.LEFT*45
-	defense.tick(0.016)
-	checks.leaving_reach_cancels_without_cost = defense.mode==defense.Mode.IDLE and arena.crew.loot.crystals==10
-	await _place_near(site)
-	await _pad_click()
-	await _choose()
-	await _aim_at(site.global_position+Vector3.LEFT*12)
+	await _position_at(build_point)
+	await _click(arena.hand.test_pointer)
+	await _aim_at(build_point+Vector3.LEFT*12)
 	arena.crew.loot.crystals = 9
 	await _click(arena.hand.test_pointer)
-	checks.rechecks_currency_at_confirmation = not is_instance_valid(site.tower) and defense.mode==defense.Mode.IDLE and arena.crew.loot.crystals==9
+	checks.currency_rechecked_at_final_click = defense.sites.is_empty() and defense.mode==defense.Mode.IDLE
 	arena.crew.loot.crystals = 10
-	await _pad_click()
+	await _workshop_click()
 	await _choose()
-	await _aim_at(site.global_position+Vector3.LEFT*12)
+	await _position_at(build_point)
 	await _click(arena.hand.test_pointer)
-	checks.confirm_creates_tower_and_spends_once = is_instance_valid(site.tower) and arena.crew.loot.crystals==0 and defense.mode==defense.Mode.IDLE
-	checks.menu_does_not_fire_cannon_or_grab = arena.tank.shot_count==0 and not is_instance_valid(arena.hand.held)
-	checks.second_confirm_rejected = not defense.confirm() and arena.crew.loot.crystals==0
+	await _aim_at(build_point+Vector3.LEFT*12)
+	arena.crew.loot.coins = 49
+	await _click(arena.hand.test_pointer)
+	checks.gold_rechecked_at_final_click = defense.sites.is_empty() and arena.crew.loot.crystals==10 and arena.crew.loot.coins==49
+	arena.crew.loot.coins = 50
+	await _workshop_click()
+	await _choose()
+	await _position_at(build_point)
+	await _click(arena.hand.test_pointer)
+	await _aim_at(build_point+Vector3.LEFT*12)
+	# An actor entering the footprint between the two confirmations blocks construction.
+	var blocker = _enemy(build_point)
+	await _frames(3)
+	checks.final_click_rechecks_occupancy = not defense.confirm() and defense.sites.is_empty()
+	blocker.collision_layer = 0
+	arena.battle.enemies.erase(blocker)
+	blocker.queue_free()
+	await _frames(3)
+	await _position_at(build_point)
+	await _click(arena.hand.test_pointer)
+	await _aim_at(build_point+Vector3.LEFT*12)
+	site = defense.selected
+	await arena._capture(arena.verification_path("mason_04_direction.png"))
+	await _click(arena.hand.test_pointer)
+	checks.confirm_spends_once_and_constructs = defense.sites.size()==1 and is_instance_valid(site.tower) and arena.crew.loot.crystals==0
+	checks.confirm_spends_exact_gold = arena.crew.loot.coins==0
+	checks.first_build_arms_countdown = arena.level.defense_waves.first_wave_left==5.0
+	checks.second_confirm_rejected = not defense.confirm()
 	var tower = site.tower
 	if not is_instance_valid(tower): _finish(); return
-	checks.built_tower_blocks_actors = tower.collision_layer==(1|2048)
-	var initial_heading: float = tower.global_rotation.y
+	checks.occupied_tower_position_rejected = not defense.placement.reason(build_point).is_empty()
 	await _pad_click()
-	checks.built_click_offers_free_rotation = defense.mode==defense.Mode.MENU and defense.reorienting and not defense.choice.disabled
+	checks.built_click_offers_rotation = defense.mode==defense.Mode.MENU and defense.reorienting
 	await _choose()
 	await _aim_at(site.global_position+Vector3.FORWARD*12)
-	await _click(arena.hand.test_pointer,MOUSE_BUTTON_RIGHT)
-	checks.cancel_rotation_keeps_heading = absf(angle_difference(tower.global_rotation.y,initial_heading))<0.02
-	await _pad_click()
-	await _choose()
-	await _aim_at(site.global_position+Vector3.LEFT*12+Vector3.FORWARD*4)
 	var desired: float = defense.heading
 	await _click(arena.hand.test_pointer)
 	checks.rotation_is_free_and_applied = absf(angle_difference(tower.global_rotation.y,desired))<0.02 and arena.crew.loot.crystals==0
+	checks.rotation_preserves_wave_timer = arena.level.defense_waves.first_wave_left==5.0
+	checks.rotation_costs_no_gold = arena.crew.loot.coins==0
 	tower.change_heading(PI/2)
 	var front = _enemy(site.global_position+Vector3.LEFT*12)
 	front.hp = 1000
@@ -270,21 +298,34 @@ func _run() -> void:
 		await _frames(1)
 	checks.auto_defense_works_with_crew_outside = tower.shots_fired>old_shots
 	arena.crew.crewed = true
-	arena.hand.set_enabled(true)
+	arena.hand.set_enabled(false)
 	arena.crew.input_armed = true
-	arena.crew.loot.crystals = 30
-	for pad in defense.sites:
-		if is_instance_valid(pad.tower): continue
-		await _place_near(pad)
-		defense.open_menu(pad,Vector2(300,300))
+	arena.crew.loot.crystals = 40
+	arena.crew.loot.coins = 200
+	arena.battle.reset()
+	await _frames(3)
+	for i in 3:
+		var point := Vector3.INF
+		for x in range(-20,15,4):
+			for z in range(-20,23,4):
+				var candidate: Vector3 = arena.level.C+Vector3(x,0,z)
+				if defense.placement.reason(candidate).is_empty():
+					point = candidate
+					break
+			if point.is_finite(): break
+		defense.open_menu(defense.workshop,Vector2(300,300))
 		defense.begin_orientation()
-		defense.update_direction(arena.aim_camera.unproject_position(pad.global_position+Vector3.LEFT*15))
-		checks["build_"+pad.name] = defense.confirm()
-	checks.all_three_slots_built = defense.sites.all(func(p): return is_instance_valid(p.tower)) and arena.crew.loot.crystals==10
+		await _position_at(point)
+		var placed: bool = defense.confirm_position()
+		await _aim_at(point+Vector3.LEFT*12)
+		checks["additional_free_build_%d"%i] = placed and defense.confirm()
+		await _frames(3)
+	checks.more_than_three_towers_allowed = defense.sites.size()==4 and arena.crew.loot.crystals==10
+	checks.multiple_builds_spend_gold_once = arena.crew.loot.coins==50
 	arena.focus = arena.level.C+Vector3(-9,0,0)
 	arena.zoom = 42
 	arena._update_camera(1.0)
-	await arena._capture(arena.verification_path("defense_04_village.png"))
+	await arena._capture(arena.verification_path("mason_05_village.png"))
 	# Measure only the new controller's CPU cost with a dense 600-enemy fixture.
 	# This is not a whole-game FPS benchmark; enemies stay fixed for repeatability.
 	arena.battle.reset()
@@ -306,12 +347,15 @@ func _run() -> void:
 	metrics.defense_tick_max_ms_600 = cpu_max/1000.0
 	metrics.live_bolts_600 = defense.sites.reduce(func(n,p): return n+p.tower.bolts.size(),0)
 	checks.reacquires_after_target_is_freed = defense.sites.reduce(func(n,p): return n+p.tower.shots_fired,0)>shots_before
-	checks.projectiles_remain_bounded = metrics.live_bolts_600<=15
+	checks.projectiles_remain_bounded = metrics.live_bolts_600<=20
+	defense.open_menu(defense.workshop,Vector2(300,300))
+	defense.begin_orientation()
+	checks.reset_fixture_has_pending_preview = defense.mode==defense.Mode.PLACE and is_instance_valid(defense.ghost)
 	arena.reset_range()
 	arena.level.cancel_spawning()
 	arena.battle.reset()
 	await _frames(4)
-	checks.reset_restores_empty_pads_and_currency = defense.sites.all(func(p): return not is_instance_valid(p.tower) and p.ring.visible) and arena.crew.loot.crystals==0
+	checks.reset_removes_free_buildings_and_currency = defense.sites.is_empty() and arena.crew.loot.crystals==0
 	checks.reset_removes_bolts_and_preview = arena.find_children("DefenseBolt*","MeshInstance3D",false,false).is_empty() and defense.mode==defense.Mode.IDLE and not is_instance_valid(defense.ghost)
 	_finish()
 

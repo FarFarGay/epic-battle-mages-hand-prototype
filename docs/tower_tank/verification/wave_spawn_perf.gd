@@ -3,10 +3,20 @@ extends SceneTree
 var arena
 var label := "current"
 var report := {}
+var selected_wave := 0
+var sample_seconds := 8.0
+var village_fixture := false
+var on_foot := false
+var prepare_navigation := false
 
 func _initialize() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--perf-label="): label = arg.trim_prefix("--perf-label=").validate_filename()
+		if arg.begins_with("--spawn-wave="): selected_wave = int(arg.trim_prefix("--spawn-wave="))
+		if arg.begins_with("--spawn-seconds="): sample_seconds = float(arg.trim_prefix("--spawn-seconds="))
+		if arg=="--village-fixture": village_fixture = true
+		if arg=="--on-foot": on_foot = true
+		if arg=="--prepare-navigation": prepare_navigation = true
 	_run.call_deferred()
 
 func _run() -> void:
@@ -18,21 +28,42 @@ func _run() -> void:
 	arena.test_aim = true
 	arena.level.cancel_spawning()
 	arena.level.automatic_encounters = false
+	arena.level.campaign.enabled = false
+	if village_fixture:
+		arena.battle.reset()
+		arena.level._queue_world_population()
+		while arena.level.groups_preparing or not arena.level.spawn_queue.is_empty(): await physics_frame
+		arena.defenses.mechanic.set_available(true)
+		arena.tank.set_cannon_installed(true)
+		var site = arena.defenses.create_site(arena.level.C+Vector3(-25,0,6))
+		site.construct(0)
 	for enemy in arena.battle.enemies.duplicate():
 		if not enemy.world_resident:
 			arena.battle.enemies.erase(enemy)
 			enemy.collision_layer = 0
 			enemy.queue_free()
 	report.machine = {"cpu":OS.get_processor_name(),"gpu":RenderingServer.get_video_adapter_name(),"display":DisplayServer.get_name()}
+	report.scenario = {"seconds":sample_seconds,"selected_wave":selected_wave,"village_fixture":village_fixture,"on_foot":on_foot,"prepare_navigation":prepare_navigation,"residents":arena.battle.enemies.filter(func(enemy): return enemy.world_resident).size()}
 	var waves = arena.level.defense_waves
 	for index in 3:
+		if selected_wave>0 and index+1!=selected_wave: continue
 		waves.reset()
 		arena.tank.position = arena.level.C+Vector3(-12,0.04,9)
 		arena.tank.hp = 1000000.0
 		arena.tank.stop_drive()
+		if on_foot and arena.crew.crewed:
+			arena.crew.disembark()
+			var point: Vector3 = arena.level.deep_mine.get_node("Markers/FirstFace").global_position-Vector3(4,0,0)
+			arena.crew.anchor = point
+			for i in arena.crew.members.size():
+				arena.crew.members[i].position = point+Vector3((i%3-1)*.8,.04,(i/3-1)*.8)
 		arena.focus = arena.tank.position
 		arena.aim_position = arena.tank.position+Vector3(-30,0,0)
 		arena._update_camera(1.0)
+		if prepare_navigation:
+			arena.level.campaign.enabled = true
+			arena.level.campaign.phase = arena.level.campaign.Phase.PREPARE_SECOND
+			arena.level.campaign.seconds_left = 60.0
 		arena.battle._rebuild_navigation()
 		await create_timer(0.5).timeout
 		arena.battle.movement_profile.clear()
@@ -46,7 +77,7 @@ func _run() -> void:
 		var spawn_done_ms := -1.0
 		var over_33 := 0
 		var over_50 := 0
-		while Time.get_ticks_usec()-start<8000000:
+		while Time.get_ticks_usec()-start<int(sample_seconds*1000000):
 			await process_frame
 			var now := Time.get_ticks_usec()
 			var ms := (now-previous)/1000.0

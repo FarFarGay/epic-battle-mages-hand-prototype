@@ -8,7 +8,7 @@ const ENTRY_LENGTH := 96.0
 var ENTRY_ATTACK_SIZE := 240
 const ENTRY_SHIELD_EVERY := 6 # 200 ordinary + 40 guards: 600 hits, three perfect magazines.
 const ENTRY_FRONT_DISTANCE := 26.0
-var WORLD_SKELETONS := 120
+var WORLD_SKELETONS := 300
 const WORLD_SHIELD_EVERY := 8 # 105 ordinary skeletons and 15 guards.
 const ORE_HEALTH := 100.0
 const MINING_DAMAGE := 20.0
@@ -58,6 +58,7 @@ var mined := 0
 var mining := false
 var mine_defense_started := false
 var defense_waves
+var campaign
 var deep_mine
 var completed := false
 var encounters: Array[Dictionary] = []
@@ -72,6 +73,8 @@ var world_spawn_positions: Array[Vector3] = []
 var world_probe := CapsuleShape3D.new()
 var world_population_pending := false
 var world_sync_frames := 0
+var roaming_groups
+var groups_preparing := false
 @export var authored := false
 var layout
 var platform_rest := Vector3.ZERO
@@ -339,10 +342,19 @@ func setup_gameplay() -> void:
 		map_view.level = self
 		arena.hud.add_child(map_view)
 	map_view.hide()
+	if roaming_groups == null:
+		roaming_groups = preload("res://scripts/roaming_groups.gd").new()
+		add_child(roaming_groups)
+		roaming_groups.setup(self)
 	_queue_entry_attack()
 	world_population_pending=true
 	world_sync_frames=2 # Newly added colliders need a physics synchronization first.
 	arena.crew.tell("Впереди скелеты · красные бочки помогут прорваться")
+	if campaign==null:
+		campaign = preload("res://scripts/campaign_flow.gd").new()
+		add_child(campaign)
+		campaign.setup(self)
+	else: campaign.reset()
 
 func _spawn_generated_gameplay() -> void:
 	weight = arena.crew.loot.spawn_cargo(A+Vector3(-12,0,-8),1)
@@ -388,6 +400,10 @@ func _world_spawn_open(pos: Vector3, exclude: Array[RID] = []) -> bool:
 
 func _queue_world_population() -> void:
 	world_population_pending=false
+	if roaming_groups:
+		roaming_groups.reset()
+		groups_preparing = true
+		return
 	if authored:
 		layout.queue_enemies(true)
 		return
@@ -500,6 +516,8 @@ func _spawn_batch() -> void:
 	if world_population_pending:
 		world_sync_frames-=1
 		if world_sync_frames<=0: _queue_world_population()
+	if groups_preparing:
+		groups_preparing = not roaming_groups.prepare_batch()
 	var attempts := 0
 	while not spawn_queue.is_empty() and attempts < 10:
 		var entry: Dictionary = spawn_queue.pop_front()
@@ -515,6 +533,7 @@ func _spawn_batch() -> void:
 			enemy.world_resident=true
 			enemy.rotation.y=entry.get("yaw",sin(float(entry.slot)*2.399)*PI)
 			enemy.setup_patrol(entry.slot)
+			if entry.has("group"): roaming_groups.register(enemy,entry.group,entry.offset)
 			continue
 		var angle: float = float(entry.slot)*2.399 + float(entry.tries)*0.8
 		var radius: float = 2.5+float(entry.slot%5)*1.5+float(entry.tries)*0.45
@@ -526,15 +545,17 @@ func _spawn_batch() -> void:
 			spawn_queue.append(entry)
 
 func cancel_spawning() -> void:
+	groups_preparing = false
 	spawn_queue.clear()
 	world_population_pending=false
 	world_sync_frames=0
 
 func open_gate() -> void:
 	if not unlocked or gate_open: return
+	if campaign and not campaign.puzzle_available(): return
 	gate_open = true
 	arena.sound.play("chamber",-2.0,0.65)
-	arena.crew.tell("Ворота подняты и зафиксированы. Башня может пройти к верстаку")
+	arena.crew.tell("Ворота открыты · пройди башней к механику")
 
 func context_action() -> Dictionary:
 	var pos: Vector3 = arena.crew.center()
@@ -641,15 +662,16 @@ func _tick_mining(dt: float) -> void:
 
 func tick(dt: float) -> void:
 	if arena.tuning_open: return
+	if roaming_groups: roaming_groups.tick(dt)
 	if arena.defenses: arena.defenses.tick(dt)
 	if defense_waves: defense_waves.tick(dt)
 	var center: Vector3 = arena.crew.center()
 	current_zone = "ПУСТЫНЯ · СВОБОДНЫЙ МАРШРУТ"
 	if ENTRY_RECT.has_point(Vector2(center.x,center.z)): current_zone = "ВХОД · АТАКА СКЕЛЕТОВ И МОСТ"
-	elif center.distance_to(A) < 24: current_zone = "A · ПАЗЛ И ВЕРСТАК"
-	elif center.distance_to(B) < 24: current_zone = "B · ВХОД В ДАНЖ"
+	elif center.distance_to(A) < 24: current_zone = "Б · МЕХАНИК И ПАЗЛ"
+	elif center.distance_to(B) < 24: current_zone = "В · ВХОД В ДАНЖ"
 	elif deep_mine and deep_mine.contains_point(center): current_zone = "ГЛУБОКАЯ ШАХТА · ДОБЫЧА"
-	elif center.distance_to(C) < 40: current_zone = "C · ПОСЕЛЕНИЕ И ОБОРОНА"
+	elif center.distance_to(C) < 40: current_zone = "1 · ДЕРЕВНЯ И ШАХТА"
 	elif center.x > 128: current_zone = "ВЫХОД ИЗ КАНЬОНА"
 	if is_instance_valid(weight) and not gate_open:
 		var plate: Vector3 = platform_rest if authored else A+Vector3(-8.5,0.04,-8)
@@ -665,7 +687,8 @@ func tick(dt: float) -> void:
 		arena.battle.nav_dirty = true
 	_spawn_batch()
 	_tick_mining(dt)
-	if center.x > 153 and absf(center.z)<9.0 and center.y<2.0 and not completed:
+	if campaign: campaign.tick(dt)
+	if (campaign==null or not campaign.enabled) and center.x > 153 and absf(center.z)<9.0 and center.y<2.0 and not completed:
 		completed = true
 		arena.crew.tell("Маршрут пройден! Можно вернуться к атоллам · R — начать уровень заново")
 	if arena.tank.position.y < -2:

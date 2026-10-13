@@ -135,6 +135,7 @@ func _preview() -> void:
 	get_tree().quit()
 
 func _check_entry_attack() -> void:
+	arena.reset_range() # Entry timing starts independently of patrol loading.
 	level.automatic_encounters = true
 	await _frames(32)
 	var battle=arena.battle
@@ -239,15 +240,17 @@ func _entry_enemies() -> Array:
 
 func _check_world_population() -> void:
 	var battle=arena.battle
-	checks.world_generated_on_first_launch=level.world_spawn_positions.size()==120 and not level.world_population_pending
+	await _wait_residents()
+	checks.world_generated_on_first_launch=level.world_spawn_positions.size()==300 and not level.world_population_pending
 	var initial_layout: Array = level.world_spawn_positions.duplicate()
 	level.automatic_encounters=false
 	arena.set_physics_process(false)
 	await _frames(2)
-	while not level.spawn_queue.is_empty(): level._spawn_batch()
+	while not level.spawn_queue.is_empty() or level.groups_preparing: level._spawn_batch()
 	var residents: Array = battle.enemies.filter(func(e): return e.world_resident)
-	checks.world_initial_population=residents.size()==120 and _entry_enemies().size()==240
-	checks.world_population_types=residents.filter(func(e): return e.shield_guard).size()==15 and residents.filter(func(e): return not e.shield_guard and not e.giant).size()==105
+	checks.world_initial_population=residents.size()==300 and _entry_enemies().size()==240
+	checks.world_population_types=residents.filter(func(e): return e.giant).size()==6 and residents.filter(func(e): return not e.shield_guard and not e.giant).size()==294
+	checks.world_three_groups_of_100=level.roaming_groups.groups.size()==3 and level.roaming_groups.groups.all(func(g): return g.members.size()==100 and g.members.filter(func(e): return e.giant).size()==2)
 	checks.world_starts_off_atolls=residents.all(func(e): return absf(level.ground_height(e.position))<0.01 and level._world_spawn_open(Vector3(e.position.x,0,e.position.z)))
 	var nearest := INF
 	var regions := PackedInt32Array()
@@ -263,9 +266,9 @@ func _check_world_population() -> void:
 		for j in range(i+1,residents.size()): nearest=minf(nearest,enemy.position.distance_to(residents[j].position))
 	metrics.world_regions=Array(regions)
 	metrics.world_min_spacing=nearest
-	checks.world_spread_across_map=Array(regions).all(func(count): return count>=6)
-	checks.world_no_spawn_piles=nearest>4.4
-	checks.world_exit_is_populated=residents.any(func(e): return e.position.x>128)
+	checks.world_groups_are_separate=level.roaming_groups.groups.all(func(g): return g.members.all(func(e):return e.position.distance_to(g.center)<15.0))
+	checks.world_no_spawn_piles=nearest>1.0
+	checks.world_village_and_exit_clear=residents.all(func(e): return e.position.x<65)
 	checks.world_door_landing_clear=residents.all(func(e): return e.position.x>-113)
 	for enemy in _entry_enemies():
 		enemy.collision_layer=0
@@ -284,14 +287,17 @@ func _check_world_population() -> void:
 			previous[id]=enemy.position
 			stays_off_atolls=stays_off_atolls and absf(level.ground_height(enemy.position))<0.01 and level._world_spawn_open(Vector3(enemy.position.x,0,enemy.position.z))
 	metrics.world_patrol_moving=residents.filter(func(e): return travelled[e.get_instance_id()]>2.0).size()
-	checks.world_distant_population_patrols=metrics.world_patrol_moving>=114 and residents.all(func(e): return not is_instance_valid(e.target))
+	checks.world_distant_population_patrols=metrics.world_patrol_moving>=285 and residents.all(func(e): return not is_instance_valid(e.target))
 	checks.world_patrol_avoids_atolls=stays_off_atolls
 	checks.world_patrol_keeps_local_routes=residents.all(func(e): return e.position.distance_to(e.patrol_origin)<=14.1)
 	await _check_patrol_obstacle(residents)
 	await _view(Vector3(0,0,0),250,"level_20_world_population.png")
 	var candidate
 	var approach := Vector3.ZERO
-	for enemy in residents:
+	var ordered := residents.duplicate()
+	ordered.sort_custom(func(a,b): return a.position.x>b.position.x)
+	for enemy in ordered:
+		if enemy.patrol_group < 0 or enemy.giant: continue
 		approach=enemy.position+Vector3(12,-enemy.position.y,0)
 		if not level._world_spawn_open(approach): continue
 		var ray := PhysicsRayQueryParameters3D.create(enemy.position+Vector3.UP,approach+Vector3.UP,1|32)
@@ -304,29 +310,27 @@ func _check_world_population() -> void:
 		var before: float = candidate.position.distance_to(tank.position)
 		await _frames(75)
 		checks.world_nearby_skeleton_engages=candidate.target==tank and candidate.position.distance_to(tank.position)<before-1.0
+		checks.world_group_engages_together=level.roaming_groups.groups[candidate.patrol_group].members.all(func(e): return e.attack_on_spawn and e.target==tank)
 	var far = residents.filter(func(e): return e.position.distance_to(tank.position)>60)[0]
 	far.take_damage(1.0)
 	await _frames(30)
 	checks.world_long_range_hit_provokes=far.attack_on_spawn and far.target==tank
 	arena.reset_range()
-	await _frames(2)
+	await _wait_residents()
 	checks.world_reset_restores_same_layout=level.world_spawn_positions==initial_layout
 
+func _wait_residents() -> void:
+	for i in 300:
+		if not level.world_population_pending and not level.groups_preparing and level.spawn_queue.is_empty(): return
+		await _frames(1)
+
 func _check_patrol_obstacle(residents: Array) -> void:
-	var walker
-	var start := Vector3.ZERO
-	for enemy in residents:
-		start=enemy.patrol_origin
-		var excluded: Array[RID] = [enemy.get_rid()]
-		if not level._world_spawn_open(start+Vector3.RIGHT*10,excluded): continue
-		var ray := PhysicsRayQueryParameters3D.create(start+Vector3.UP,start+Vector3.RIGHT*10+Vector3.UP,1|32)
-		if arena.get_world_3d().direct_space_state.intersect_ray(ray).is_empty():
-			walker=enemy
-			break
-	if not walker:
-		checks.world_patrol_detours_around_prop=false
-		return
+	var walker = residents.filter(func(e): return not e.giant)[0]
+	# Test prop avoidance away from the other 99 formation members.
+	var start := Vector3(-100,0.04,-48)
 	walker.position=start
+	walker.patrol_origin=start
+	walker.patrol_group=-1 # Keep the standalone patrol obstacle regression too.
 	var obstacle := start+Vector3.RIGHT*4
 	obstacle.y=0.0
 	var prop=arena.props.spawn_prop(obstacle,1)
@@ -360,6 +364,7 @@ func _check_bridge_door() -> void:
 	await _frames(30)
 	tank.crossbows.trigger(false)
 	tank.cooldown = 0.0
+	tank.set_cannon_installed(true) # This fixture tests the installed weapon.
 	tank.fire()
 	await _frames(60)
 	checks.bridge_door_survives_both_guns = not door.broken and door.collision_layer==1 and tank.shot_count>0 and tank.crossbows.shot_count>0
@@ -428,6 +433,7 @@ func _check_entry_supplies() -> void:
 	arena.aim_position = first_pos+Vector3.UP*0.65
 	await _frames(90)
 	tank.cooldown = 0.0
+	tank.set_cannon_installed(true)
 	tank.fire()
 	await _frames(24)
 	await arena._capture(arena.verification_path("level_12_supply_chain.png"))
@@ -497,6 +503,8 @@ func _check_coins() -> void:
 
 func _run() -> void:
 	await _frames(8)
+	# Exercise physical traversal and weapon mechanics independently of quest order.
+	level.campaign.enabled = false
 	await _check_world_population()
 	level.automatic_encounters = false
 	arena.test_aim = true
@@ -682,6 +690,7 @@ func _run() -> void:
 	arena.aim_position=victim.position+Vector3.UP
 	await _frames(90)
 	tank.cooldown=0
+	tank.set_cannon_installed(true)
 	tank.fire()
 	await _frames(70)
 	checks.cannon_hits_on_plateau=not is_instance_valid(victim) or victim.dead
@@ -757,13 +766,14 @@ func _run() -> void:
 	arena.set_interface_visible(true)
 	arena.reset_range()
 	await _frames(6)
-	checks.reset_restores_level = not level.gate_open and not hand.puzzle.opened and level.mined==0 and level.ore.size()==level.ore_total and arena.battle.remaining()==360 and tank.position.distance_to(level.START)<0.1
+	checks.reset_restores_level = not level.gate_open and not hand.puzzle.opened and level.mined==0 and level.ore.size()==level.ore_total and arena.battle.remaining()==540 and tank.position.distance_to(level.START)<0.1
 	checks.reset_restores_bridge_door = not level.bridge_door.broken and level.bridge_door.collision_layer==1 and level.bridge_door.panels.visible
 	await _frames(65)
+	await _wait_residents()
 	checks.reset_restores_exactly_240=_entry_enemies().size()==240 and level.spawn_queue.is_empty()
 	checks.reset_restores_40_intact_shields=_entry_enemies().filter(func(e): return e.shield_guard and e.shield_hp==24.0).size()==40
 	checks.reset_restores_advancing_wave=_entry_enemies().all(func(e): return e.attack_on_spawn and e.target==tank)
-	checks.reset_restores_world_population=arena.battle.enemies.filter(func(e): return e.world_resident).size()==120
+	checks.reset_restores_world_population=arena.battle.enemies.filter(func(e): return e.world_resident).size()==300
 	await arena._capture(arena.verification_path("level_07_gameplay.png"))
 	var passed := true
 	for value in checks.values(): passed = passed and value

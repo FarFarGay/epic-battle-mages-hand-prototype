@@ -58,11 +58,13 @@ var nav_width := 57
 var nav_height := 57
 var nav_area := 57*57
 var entry_navigation := false
+var defense_navigation := false
 var nav_building := false
 var nav_build_grid: AStarGrid2D
 var nav_build_solid := PackedByteArray()
 var nav_build_origin := Vector3.ZERO
 var nav_build_entry := false
+var nav_build_defense := false
 var nav_build_cursor := 0
 var nav_build_query: PhysicsShapeQueryParameters3D
 var last_nav_slice_usec := 0
@@ -151,6 +153,8 @@ func choose_target(enemy: CharacterBody3D) -> Node3D:
 	if best != enemy.target:
 		if is_instance_valid(enemy.target): target_load[enemy.target.get_instance_id()] = maxi(0, target_load.get(enemy.target.get_instance_id(), 0) - 1)
 		if best: target_load[best.get_instance_id()] = target_load.get(best.get_instance_id(), 0) + 1
+	if best and enemy.patrol_group >= 0 and arena.level and arena.level.roaming_groups:
+		arena.level.roaming_groups.alert(enemy.patrol_group)
 	return best
 
 func clear_sight(from: Vector3, to: Vector3, victim: Node3D = null) -> bool:
@@ -168,6 +172,7 @@ func _rebuild_navigation() -> void:
 func _begin_navigation() -> void:
 	var player: Vector3 = arena.crew.center()
 	nav_build_entry = arena.level != null and arena.level.ENTRY_RECT.has_point(Vector2(player.x,player.z))
+	nav_build_defense = not nav_build_entry and arena.level!=null and arena.level.defense_waves!=null and arena.level.defense_waves.needs_approach_navigation()
 	# The corridor already covers the whole column; do not recenter it as the
 	# tower advances. Outside it the completed local grid follows the player.
 	nav_build_origin = Vector3.ZERO if nav_build_entry or not arena.level else Vector3(snappedf(player.x,16.0),0,snappedf(player.z,16.0))
@@ -175,7 +180,7 @@ func _begin_navigation() -> void:
 	if nav_build_entry:
 		var bounds: Rect2 = arena.level.ENTRY_RECT
 		region = Rect2i(Vector2i(bounds.position.floor()),Vector2i(bounds.size.ceil())+Vector2i.ONE)
-	elif arena.level and arena.level.defense_waves and arena.level.defense_waves.active>=0:
+	elif nav_build_defense:
 		# Build one shared grid covering the three approach columns. A local-only
 		# grid forced hundreds of distant attackers through move_and_slide each tick.
 		var bounds: Rect2 = arena.level.defense_waves.navigation_bounds()
@@ -222,6 +227,7 @@ func _step_navigation(budget_usec: int = NAV_SLICE_USEC) -> void:
 	grid = nav_build_grid
 	nav_origin = nav_build_origin
 	entry_navigation = nav_build_entry
+	defense_navigation = nav_build_defense
 	nav_min = region.position
 	nav_width = region.size.x
 	nav_height = region.size.y
@@ -365,9 +371,11 @@ func _completed_ground_open(pos: Vector3) -> bool:
 func move_ground(enemy: CharacterBody3D, dt: float, floor_y: float = INF) -> void:
 	# The shared grid handles obstacles and cliff edges; analytic terrain heights
 	# keep the crowd on ramps without a separate physics sweep for every skeleton.
-	var clearance: float = enemy.body_radius - 0.4
-	if not is_finite(floor_y): floor_y = arena.ground_height(enemy.position)
-	if absf(enemy.position.y-floor_y-0.04) > 0.15 or not _ground_open(enemy.position, clearance):
+	var start := enemy.position
+	var radius: float = enemy.body_radius
+	var clearance := radius - 0.4
+	if not is_finite(floor_y): floor_y = arena.ground_height(start)
+	if absf(start.y-floor_y-0.04) > 0.15 or not _ground_open(start, clearance):
 		if profile_enabled:
 			var reason := "height" if absf(enemy.position.y-floor_y-0.04)>0.15 else ("building" if solid.size()!=nav_area else "blocked")
 			movement_profile[reason] = movement_profile.get(reason,0)+1
@@ -377,29 +385,37 @@ func move_ground(enemy: CharacterBody3D, dt: float, floor_y: float = INF) -> voi
 		if profile_enabled: movement_profile.physics_us = movement_profile.get("physics_us",0)+Time.get_ticks_usec()-fallback_start
 		return
 	if profile_enabled: movement_profile.grid = movement_profile.get("grid",0)+1
-	enemy.collision_mask = 0
-	var start := enemy.position
-	var next := start + Vector3(enemy.velocity.x, 0, enemy.velocity.z) * dt
-	if not _ground_open(next, clearance):
+	if enemy.collision_mask!=0: enemy.collision_mask = 0
+	var motion := enemy.velocity
+	var next := start + Vector3(motion.x, 0, motion.z) * dt
+	# A small step inside the already validated grid cell needs no second query.
+	# Brutes still check their full footprint, including neighbouring cells.
+	var origin := nav_build_origin if nav_building else nav_origin
+	var same_cell := clearance<=0.0 and roundi(start.x-origin.x)==roundi(next.x-origin.x) and roundi(start.z-origin.z)==roundi(next.z-origin.z)
+	if not same_cell and not _ground_open(next, clearance):
 		var side := Vector3(next.x, start.y, start.z)
 		if _ground_open(side, clearance): next = side
 		else:
 			side = Vector3(start.x, start.y, next.z)
 			next = side if _ground_open(side, clearance) else start
-	var hull_offset: Vector3 = next - arena.tank.position
+	# Keep the validated endpoint: only player/crew displacement can invalidate it.
+	var validated := next
+	var hull_position: Vector3 = arena.tank.position
+	var hull_offset: Vector3 = next - hull_position
 	hull_offset.y = 0.0
-	var hull_radius: float = 1.32 + enemy.body_radius
-	if hull_offset.length_squared() < hull_radius * hull_radius and absf(enemy.position.y-arena.tank.position.y)<1.0:
+	var hull_radius: float = 1.32 + radius
+	if hull_offset.length_squared() < hull_radius * hull_radius and absf(start.y-hull_position.y)<1.0:
 		if hull_offset.is_zero_approx(): hull_offset = Vector3.RIGHT
-		next = arena.tank.position + hull_offset.normalized() * hull_radius
+		next = hull_position + hull_offset.normalized() * hull_radius
 	if not ground_crew.is_empty() and next.distance_squared_to(ground_crew_center) < 64.0:
 		for member in ground_crew:
 			var gap := Vector3(next.x - member.x, 0, next.z - member.z)
-			var crew_radius: float = 0.25 + enemy.body_radius
+			var crew_radius: float = 0.25 + radius
 			if gap.length_squared() < crew_radius * crew_radius and not gap.is_zero_approx(): next = member + gap.normalized() * crew_radius
-	next.y = arena.ground_height(next)+0.04
+	if next!=validated and not _ground_open(next, clearance): return
+	next.y = (floor_y if next==start else arena.ground_height(next))+0.04
 	if absf(next.y-start.y)>0.65: return
-	if _ground_open(next, clearance): enemy.position = next
+	enemy.position = next
 
 func _cell(pos: Vector3) -> Vector2i:
 	return Vector2i(clampi(roundi(pos.x - nav_origin.x),nav_min.x,nav_min.x+nav_width-1),clampi(roundi(pos.z - nav_origin.z),nav_min.y,nav_min.y+nav_height-1))
@@ -486,7 +502,12 @@ func _spawn_wave_batch() -> void:
 	if spawn_cursor >= spawn_points.size(): spawning_left = 0
 
 func remaining() -> int:
-	return enemies.size() + spawning_left + (arena.level.spawn_queue.size()+(arena.level.WORLD_SKELETONS if arena.level.world_population_pending else 0) if arena.level else 0)
+	var queued := 0
+	if arena.level:
+		queued = arena.level.spawn_queue.size()
+		if arena.level.world_population_pending: queued += arena.level.WORLD_SKELETONS
+		elif arena.level.groups_preparing: queued += arena.level.roaming_groups.unprepared_count()
+	return enemies.size() + spawning_left + queued
 
 func killed(enemy: CharacterBody3D, source: StringName = &"") -> void:
 	if not enemies.has(enemy): return
@@ -501,17 +522,35 @@ func killed(enemy: CharacterBody3D, source: StringName = &"") -> void:
 		next_wave = 8.0
 		arena.crew.tell("Волна отбита · следующая через 8 с · N — сразу")
 
-func bump(from: Vector3, to: Vector3, speed: float) -> void:
-	if speed < 1.0: return
-	for enemy in enemies.duplicate():
-		if enemy.hand_held or enemy.hand_thrown: continue
+func bump(from: Vector3, to: Vector3, motion: Vector3, walk_speed: float) -> float:
+	if motion.is_zero_approx(): return 0.0
+	var contacts := 0.0
+	var hits := 0
+	var forward := motion.normalized()
+	var shoving := motion.length() > walk_speed + 0.05 and from.distance_squared_to(to) > 0.000001
+	var strength := clampf((motion.length() - walk_speed) / walk_speed, 0.0, 1.0)
+	for enemy in enemies:
+		if enemy.dead or enemy.hand_held or enemy.hand_thrown: continue
+		if absf(enemy.position.y - to.y) > 1.0: continue
 		var pos := Vector3(enemy.position.x, 0, enemy.position.z)
 		var closest := Geometry3D.get_closest_point_to_segment(pos, Vector3(from.x, 0, from.z), Vector3(to.x, 0, to.z))
-		if pos.distance_to(closest) <= 1.4 + enemy.body_radius and enemy.bump_cooldown <= 0.0:
-			var direction := (pos - closest).normalized()
-			if direction.is_zero_approx(): direction = (to - from).normalized()
-			enemy.take_damage(10.0, direction, 10.0)
-			enemy.bump_cooldown = 0.5
+		var offset := pos - closest
+		if offset.length_squared() > pow(1.5 + enemy.body_radius, 2): continue
+		if offset.dot(forward) < -0.1: continue
+		# Do not shove or lose momentum to enemies behind a wall or ledge.
+		var ray := PhysicsRayQueryParameters3D.create(Vector3(closest.x, to.y + 0.8, closest.z), enemy.position + Vector3.UP * 0.8, 1 | 32)
+		if not get_world_3d().direct_space_state.intersect_ray(ray).is_empty(): continue
+		# Count contact even during the shove cooldown and at walking speed;
+		# otherwise holding Shift repeatedly recharges momentum inside a crowd.
+		contacts += 2.0 if enemy.giant else 1.0
+		if not shoving or enemy.bump_cooldown > 0.0: continue
+		var side := offset - forward * offset.dot(forward)
+		if side.length_squared() < 0.01:
+			side = Vector3(-forward.z, 0, forward.x) * (1.0 if enemy.get_instance_id() % 2 == 0 else -1.0)
+		enemy.push_aside((side.normalized() + forward * 0.5).normalized(), lerpf(6.0, 20.0, strength))
+		hits += 1
+	if hits > 0: arena.tank.crowd_impact(strength, hits)
+	return contacts
 
 func _update_neighbors() -> void:
 	# Include the rear of the long corridor; clamping it into one edge cell
@@ -600,11 +639,15 @@ func tick(dt: float) -> void:
 		var player: Vector3 = arena.crew.center()
 		var in_entry: bool = arena.level.ENTRY_RECT.has_point(Vector2(player.x,player.z))
 		var needs_region := in_entry != entry_navigation or (not in_entry and (absf(player.x-nav_origin.x)>12.0 or absf(player.z-nav_origin.z)>12.0))
+		var needs_defense: bool = not in_entry and arena.level.defense_waves!=null and arena.level.defense_waves.needs_approach_navigation()
+		needs_region = needs_region or (needs_defense and not defense_navigation)
 		var desired_origin := Vector3.ZERO if in_entry else Vector3(snappedf(player.x,16.0),0,snappedf(player.z,16.0))
-		if needs_region and (not nav_building or nav_build_entry!=in_entry or nav_build_origin!=desired_origin):
+		if needs_region and (not nav_building or nav_build_entry!=in_entry or nav_build_origin!=desired_origin or (needs_defense and not nav_build_defense)):
 			nav_dirty = true
 			nav_wait = 0.0
-	if (waves_enabled or not enemies.is_empty()) and nav_dirty and nav_wait<=0.0 and not nav_building: _begin_navigation()
+	# Preparing the wave must work even if every resident has already been killed.
+	var preparing_defense: bool = arena.level!=null and arena.level.defense_waves!=null and arena.level.defense_waves.needs_approach_navigation()
+	if (waves_enabled or not enemies.is_empty() or preparing_defense) and nav_dirty and nav_wait<=0.0 and not nav_building: _begin_navigation()
 	_step_navigation()
 	if player_targets().is_empty():
 		wave_requested = false

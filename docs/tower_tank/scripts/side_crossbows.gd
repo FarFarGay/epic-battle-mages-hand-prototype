@@ -3,7 +3,7 @@ extends Node3D
 const Geo = preload("res://scripts/geo.gd")
 const CAPACITY := 200
 const FIRE_RATE := 20.0
-const RELOAD_TIME := 4.5
+const RELOAD_TIME := 2.5
 const BOLT_SPEED := 72.0
 const BOLT_RANGE := 48.0
 const DAMAGE := 8.0

@@ -1,10 +1,11 @@
 extends Node3D
-## Ordered, separately triggered waves. Never uses the global enemy count.
+## Construction starts wave one; the campaign schedules later defenses.
 signal wave_started(number: int, total: int)
 signal wave_completed(number: int)
 signal all_waves_completed
 @export var test_hotkey_enabled := true
 @export var test_launch_distance := 75.0
+@export_range(0.0,60.0) var first_tower_wave_delay := 5.0
 @export var enemy_settings: Resource = preload("res://scripts/defense_enemy_settings.gd").new()
 var arena
 var waves: Array[Node] = []
@@ -17,6 +18,9 @@ var spawned_by_type: Dictionary = {}
 var events: Dictionary = {}
 var blocked_time := 0.0
 var elapsed := 0.0
+var first_wave_left := -1.0
+var open_zone_reached := false
+var village_reached := false
 
 func setup(owner_arena) -> void:
 	arena = owner_arena
@@ -43,7 +47,20 @@ func reset() -> void:
 	completed = 0
 	elapsed = 0.0
 	blocked_time = 0.0
+	first_wave_left = -1.0
+	open_zone_reached = false
+	village_reached = false
 	for entrance in $Entrances.get_children(): entrance.cursor = 0
+
+func tower_built(site: Node3D) -> void:
+	if completed != 0 or active >= 0 or first_wave_left >= 0.0: return
+	if not get_parent().is_ancestor_of(site) or not is_instance_valid(site.tower): return
+	open_zone_reached = true
+	village_reached = true
+	first_wave_left = first_tower_wave_delay
+
+func status_visible() -> bool:
+	return open_zone_reached or active >= 0 or first_wave_left >= 0.0
 
 func notify_story_event(event: StringName) -> bool:
 	if event == &"": return false
@@ -51,12 +68,21 @@ func notify_story_event(event: StringName) -> bool:
 	return _try_story_start()
 
 func _try_story_start() -> bool:
+	if arena.level.campaign and arena.level.campaign.enabled: return false
+	# The opening wave belongs to the first construction, not a story/debug key.
+	if completed == 0: return false
 	if active >= 0 or completed >= waves.size(): return false
 	var key: StringName = waves[completed].start_event
 	return request_wave(completed) if key != &"" and events.has(key) else false
 
 func start_next_test_wave() -> bool:
+	if arena.level.campaign and arena.level.campaign.enabled:
+		arena.crew.tell(status_text())
+		return false
 	if not test_hotkey_enabled: return false
+	if completed == 0:
+		arena.crew.tell(status_text())
+		return false
 	if arena.crew.center().distance_to(global_position) > test_launch_distance:
 		arena.crew.tell("N — запуск обороны рядом с деревней")
 		return false
@@ -91,8 +117,9 @@ func request_wave(index: int) -> bool:
 	for i in types.size():
 		pending.append({"kind":types[i], "entrance":routes[i % routes.size()], "lane":rng.randf_range(-1.0, 1.0)})
 	active = index
-	arena.battle.nav_dirty = true
-	arena.battle.nav_wait = 0.0
+	first_wave_left = -1.0
+	# Battle expands the shared map during preparation, or detects the new
+	# active region next tick. Spawning does not itself change static obstacles.
 	elapsed = 0.0
 	blocked_time = 0.0
 	arena.crew.tell("Оборона · волна %d · %d врагов · входов: %d" % [index+1, types.size(), routes.size()])
@@ -101,6 +128,9 @@ func request_wave(index: int) -> bool:
 
 func remaining() -> int:
 	return pending.size() + living.size()
+
+func needs_approach_navigation() -> bool:
+	return active>=0 or first_wave_left>=0 or (arena.level.campaign!=null and arena.level.campaign.enabled and arena.level.campaign.seconds_left>=0)
 
 func navigation_bounds() -> Rect2:
 	var bounds := Rect2(Vector2(global_position.x,global_position.z),Vector2.ZERO)
@@ -120,7 +150,15 @@ func enemy_removed(enemy) -> void:
 	living.erase(enemy.get_instance_id())
 
 func tick(dt: float) -> void:
-	if active < 0 or arena.battle.player_targets().is_empty(): return
+	var center: Vector3 = arena.crew.center()
+	if center.x > arena.level.ENTRY_RECT.end.x+10.0: open_zone_reached = true
+	if Vector2(center.x-global_position.x,center.z-global_position.z).length()<28.0 and center.y>global_position.y+2.0:
+		village_reached = true
+	if arena.battle.player_targets().is_empty(): return
+	if active < 0 and completed == 0 and first_wave_left >= 0.0:
+		first_wave_left = maxf(0.0,first_wave_left-dt)
+		if first_wave_left <= 0.000001: request_wave(0)
+	if active < 0: return
 	elapsed += dt
 	var started := Time.get_ticks_usec()
 	var spawned := 0
@@ -164,5 +202,10 @@ func tick(dt: float) -> void:
 func status_text() -> String:
 	if active >= 0:
 		return "ОБОРОНА %d/%d · ОСТАЛОСЬ %d%s" % [active+1, waves.size(), remaining(), " · ВХОД ЗАНЯТ" if blocked_time>5.0 else ""]
+	if completed>0 and arena.level.campaign and arena.level.campaign.enabled: return arena.level.campaign.status_text()
 	if completed >= waves.size(): return "ОБОРОНА · ВСЕ ВОЛНЫ ОТБИТЫ"
+	if completed == 0:
+		if first_wave_left >= 0.0: return "ПЕРВАЯ ВОЛНА ЧЕРЕЗ %d С · ПРИГОТОВЬСЯ"%ceili(first_wave_left)
+		if village_reached: return "ЦЕЛЬ · ПОСТРОЙ 1 БАШНЮ · ЛКМ ПО ДОМУ КАМЕНЩИКА"
+		return "ЦЕЛЬ · ДОБЕРИСЬ ДО АТОЛЛА С ШАХТОЙ · G — КАРТА"
 	return "N · ОБОРОНА: ВОЛНА %d/%d" % [completed+1, waves.size()]

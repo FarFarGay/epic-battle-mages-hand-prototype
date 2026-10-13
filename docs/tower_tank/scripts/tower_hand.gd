@@ -98,7 +98,7 @@ func set_enabled(value: bool) -> void:
 	cursor_initialized = false
 	if arena.hud: arena.hud.reset_reticle()
 	_show(value)
-	arena.crew.tell("Рука · ЛКМ держать — взять · отпусти у башни — груз / ресурс" if value else "Прицел · ЛКМ — пушка · ПКМ — арбалеты")
+	arena.crew.tell("Рука · ЛКМ держать — взять · отпусти у башни — груз / ресурс" if value else ("Прицел · ЛКМ — пушка · ПКМ — арбалеты" if arena.tank.cannon_installed else "ПКМ — бортовое оружие · пушку можно купить после спасения механика"))
 
 func trigger(pressed: bool) -> void:
 	if not pressed:
@@ -385,8 +385,10 @@ func status_text() -> String:
 	if is_instance_valid(held):
 		if snap_destination == "tower": return "ОТПУСТИ ЛКМ — СДАТЬ КРИСТАЛЛ" if held.get_meta("crystal", false) else "ОТПУСТИ ЛКМ — ЗАКРЕПИТЬ НА БАШНЕ"
 		if snap_destination == "socket": return "ОТПУСТИ ЛКМ — УСТАНОВИТЬ МОСТ" if arena.level else "ОТПУСТИ ЛКМ — ВСТАВИТЬ В ГНЕЗДО"
+		if arena.level and held==arena.level.gate_handle: return "КНОПКА НАЖАТА · ОТПУСТИ ЛКМ · ПРОЙДИ В ВОРОТА"
 		return "ЛКМ — НЕСТИ · ПКМ — АККУРАТНО ОТПУСТИТЬ"
 	if is_instance_valid(candidate):
+		if arena.level and candidate==arena.level.gate_handle: return "ЛКМ — НАЖАТЬ КНОПКУ ВОРОТ"
 		if candidate.get_meta("hand_owner", "") == "tower": return "ЗАЖМИ ЛКМ — СНЯТЬ ГРУЗ С БАШНИ"
 		if candidate == puzzle.cube and puzzle.seated: return "ЗАЖМИ ЛКМ — ВЫНУТЬ КУБ ИЗ ГНЕЗДА"
 		if candidate.has_meta("chest"): return "ЛКМ — ОТКРЫТЬ · УДЕРЖИВАТЬ — НЕСТИ СУНДУК"

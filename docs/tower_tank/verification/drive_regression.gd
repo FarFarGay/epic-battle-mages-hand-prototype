@@ -81,12 +81,12 @@ func _check_cruise() -> void:
 	metrics.cruise_full_speed_time_s = frames / 60.0
 	metrics.cruise_speed_mps = tank.speed
 	metrics.cruise_max_leg_length_m = max_leg
-	checks.cruise_reaches_double_speed = absf(tank.speed - 14.8) < 0.02 and frames >= 75 and frames <= 105
+	checks.cruise_reaches_double_speed = absf(tank.speed - 20.4) < 0.02 and frames >= 40 and frames <= 55
 	checks.cruise_boots_planted_and_attached = stable and attached and supported and max_leg < 3.4
 	await arena._capture(arena.verification_path("cruise_01_running.png"))
 	_shift(false)
 	await _frames(3)
-	checks.shift_release_eases_speed_down = not tank.cruising and tank.speed > tank.forward_speed and tank.speed < 14.8
+	checks.shift_release_eases_speed_down = not tank.cruising and tank.speed > tank.forward_speed and tank.speed < 20.4
 	await _frames(15)
 	checks.shift_release_restores_walking_speed = absf(tank.speed - tank.forward_speed) < 0.02
 
@@ -95,7 +95,7 @@ func _check_cruise() -> void:
 	Input.action_press("tank_forward")
 	Input.action_press("tank_right")
 	await _frames(96)
-	checks.cruise_diagonal_not_faster = absf(tank.speed - 14.8) < 0.02
+	checks.cruise_diagonal_not_faster = absf(tank.speed - 20.4) < 0.02
 	Input.action_release("tank_forward")
 	Input.action_release("tank_right")
 	var start: Vector3 = tank.position
@@ -143,7 +143,7 @@ func _check_cruise() -> void:
 	checks.disembark_stops_cruise = disembarked and not tank.cruising and tank.speed < 0.02
 	await _reset()
 	tank.position = Vector3(25, 0.03, 0)
-	tank.drive_velocity = Vector3(14.8, 0, 0)
+	tank.drive_velocity = Vector3(20.4, 0, 0)
 	tank.walker.reset_pose()
 	_shift(true)
 	Input.action_press("tank_right")
@@ -152,6 +152,120 @@ func _check_cruise() -> void:
 	checks.cruise_wall_stops_without_stored_speed = tank.position.x < 27.15 and tank.drive_velocity.length() < 0.05
 	await _reset()
 	checks.reset_clears_cruise = not tank.cruising and tank.speed < 0.02
+
+func _crowd_lane(boosted: bool) -> Array:
+	await _reset()
+	arena.battle.waves_enabled = false
+	for target in arena.targets:
+		target.collision_layer = 0
+		target.queue_free()
+	arena.targets.clear()
+	tank.position = Vector3(-18, 0.03, 15)
+	tank.walker.reset_pose()
+	var crowd := []
+	for row in 22:
+		for column in 3:
+			var enemy = arena.battle.spawn_enemy(Vector3(-15 + row * 1.0, 0.04, 15 + (column - 1) * 0.9))
+			enemy.move_speed = 0.0
+			enemy.hp = 1000.0
+			enemy.attack_damage = 0.0
+			crowd.append(enemy)
+	await _frames(3)
+	Input.action_press("tank_right")
+	Input.action_press("tank_reverse")
+	_shift(boosted)
+	tank.drive_velocity = Vector3.RIGHT * tank.forward_speed * (tank.cruise_multiplier if boosted else 1.0)
+	return crowd
+
+func _check_crowd_momentum() -> void:
+	var crowd := await _crowd_lane(false)
+	var walk_start: Vector3 = tank.position
+	arena.trauma = 0.0
+	await _frames(35)
+	checks.walking_does_not_shove_or_damage = crowd.all(func(e): return e.bump_cooldown <= 0.0 and e.hp == 1000.0)
+	checks.walking_passes_through_crowd = tank.position.distance_to(walk_start) > 2.5 and absf(tank.speed - tank.forward_speed * 0.5) < 0.05
+	checks.walking_has_no_impact_shake = arena.trauma < 0.01
+
+	crowd = await _crowd_lane(true)
+	var touched := false
+	var slowed := false
+	var reached_walk := false
+	var max_drop := 0.0
+	var shoved := {}
+	var peak_impulse := 0.0
+	var peak_shake := 0.0
+	var knocked_down := false
+	var walk_distance := 0.0
+	for frame in 100:
+		var before: float = tank.speed
+		var before_pos: Vector3 = tank.position
+		await _frames(1)
+		peak_shake = maxf(peak_shake, arena.trauma)
+		for enemy in crowd:
+			if enemy.bump_cooldown > 0.0: shoved[enemy.get_instance_id()] = true
+			peak_impulse = maxf(peak_impulse, enemy.impulse.length())
+			knocked_down = knocked_down or enemy.knockdown_left > 0.0
+		if reached_walk: walk_distance += tank.position.distance_to(before_pos)
+		if tank.crowd_contact_left > 0.0:
+			touched = true
+			if before > tank.forward_speed + 0.1:
+				max_drop = maxf(max_drop, before - tank.speed)
+			slowed = slowed or (tank.speed > tank.forward_speed + 1.0 and tank.speed < 19.0)
+			if tank.speed <= tank.forward_speed + 0.05: reached_walk = true
+	metrics.crowd_max_speed_drop_per_frame = max_drop
+	metrics.crowd_skeletons_shoved = shoved.size()
+	metrics.crowd_peak_impulse = peak_impulse
+	metrics.crowd_peak_shake = peak_shake
+	metrics.crowd_walk_distance = walk_distance
+	checks.cruise_scatters_and_knocks_down = peak_impulse > 16.0 and peak_impulse <= 20.0 and knocked_down
+	checks.crowd_impact_shake_is_bounded = peak_shake > 0.1 and peak_shake <= 0.25
+	checks.crowd_keeps_moving_after_slowdown = walk_distance > 2.0 and absf(tank.speed - tank.forward_speed * 0.5) < 0.05
+	metrics.crowd_slow_speed = tank.speed
+	checks.cruise_shoves_multiple_skeletons = shoved.size() >= 3
+	checks.crowd_slows_cruise_gradually = touched and slowed and max_drop > 0.3 and max_drop <= 0.5
+	checks.crowd_exhausts_extra_speed_with_shift_held = reached_walk and tank.speed <= tank.forward_speed + 0.05
+	checks.cruise_shove_does_not_damage = crowd.all(func(e): return e.hp == 1000.0)
+	await _frames(30)
+	checks.walking_in_crowd_stops_shoving_with_shift_held = crowd.all(func(e): return e.bump_cooldown <= 0.0)
+	# Once the path clears, holding Shift should recover speed normally.
+	arena.battle.reset()
+	Input.action_release("tank_right")
+	Input.action_release("tank_reverse")
+	Input.action_press("tank_forward")
+	await _frames(65)
+	checks.cruise_recovers_after_path_clears = tank.speed > tank.forward_speed * 1.8
+	# Stop first: running footfalls have their own small camera impulses.
+	Input.action_release("tank_forward")
+	_shift(false)
+	await _frames(40)
+	checks.crowd_impact_shake_fades = arena.trauma < 0.01
+	await _reset()
+	checks.reset_clears_crowd_resistance = tank.crowd_contact_left == 0.0 and tank.crowd_load == 0.0
+
+func _check_damage_feedback() -> void:
+	await _reset()
+	arena.battle.waves_enabled = false
+	arena.trauma = 0.0
+	var hp_before: float = tank.hp
+	for i in 40: tank.take_damage(1.0)
+	checks.simultaneous_hits_do_not_shake = is_zero_approx(arena.trauma)
+	checks.damage_feedback_preserves_all_damage = tank.hp == hp_before - 40.0 and tank.damage_pulse == 1.0
+	checks.damage_lights_hull = tank.model.damage_amount == 1.0 and tank.model.damage_materials.all(func(e): return e.material.emission_energy_multiplier > 0.0 and e.material.albedo_color != e.color)
+	await arena._capture(arena.verification_path("damage_01_hit.png"))
+	var peak := 0.0
+	for frame in 60:
+		tank.take_damage(1.0)
+		peak = maxf(peak, arena.trauma)
+		await _frames(1)
+	checks.sustained_hits_do_not_shake = is_zero_approx(peak)
+	await _frames(40)
+	checks.damage_visual_fades_after_hits = tank.damage_pulse == 0.0 and tank.model.damage_materials.all(func(e): return e.material.emission_energy_multiplier == 0.0 and e.material.albedo_color == e.color)
+	await arena._capture(arena.verification_path("damage_02_faded.png"))
+	arena.trauma = 0.6
+	tank.take_damage(1.0)
+	checks.damage_does_not_amplify_other_camera_impulses = is_equal_approx(arena.trauma, 0.6)
+	await _reset()
+	checks.reset_clears_damage_visual = tank.damage_pulse == 0.0 and tank.model.damage_amount == 0.0
 
 func _run() -> void:
 	await _reset()
@@ -169,7 +283,7 @@ func _run() -> void:
 		await _frames(24)
 		var delta := _screen_motion(tank.position - start)
 		checks[ACTIONS[i] + "_screen_direction"] = delta.normalized().dot(requested[i]) > 0.999 and delta.length() > 2.6
-		checks[ACTIONS[i] + "_full_speed"] = absf(tank.speed - 7.4) < 0.02
+		checks[ACTIONS[i] + "_full_speed"] = absf(tank.speed - 10.2) < 0.02
 		Input.action_release(ACTIONS[i])
 
 	await _reset()
@@ -269,6 +383,8 @@ func _run() -> void:
 	checks.turret_aim_independent = absf(angle_difference(tank.rotation.y, tank.turret_yaw)) > 0.5
 	await arena._capture(arena.verification_path("concept_03_other_side.png"))
 	await _check_cruise()
+	await _check_crowd_momentum()
+	await _check_damage_feedback()
 	var all_ok := true
 	for value in checks.values(): all_ok = all_ok and value
 	var report := {"passed": all_ok, "checks": checks, "metrics": metrics}

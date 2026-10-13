@@ -1,7 +1,8 @@
 extends Node3D
-## Authored build slot. Move or duplicate this node in desert.tscn.
+## Runtime construction and reusable tower blueprint; no fixed build markers.
 @export var tower_scene: PackedScene
 @export_range(1,1000) var crystal_cost := 10
+@export_range(0,1000) var gold_cost := 50
 @export_range(5.0,60.0) var firing_range := 27.0
 @export_range(15.0,180.0) var sector_degrees := 110.0
 @export_range(1.0,100.0) var bolt_damage := 8.0
@@ -17,13 +18,17 @@ func _ready() -> void:
 	picker = get_node("Pick")
 	picker.set_meta("defense_site",self)
 	ring = get_node("BuildRing")
+	picker.collision_layer = 0
+	for child in get_children():
+		if child is MeshInstance3D: child.hide()
+	hide()
 
 func reset() -> void:
 	if is_instance_valid(tower):
 		tower.collision_layer = 0
 		tower.queue_free()
 	tower = null
-	ring.show()
+	hide()
 	if arena and arena.battle: arena.battle.nav_dirty = true
 
 func construct(yaw: float) -> Node3D:
@@ -35,6 +40,9 @@ func construct(yaw: float) -> Node3D:
 	tower.global_rotation.y = yaw
 	tower.collision_layer = 1 | 2048
 	tower.set_meta("defense_site",self)
+	show()
+	$Platform.show()
 	ring.hide()
 	arena.battle.nav_dirty = true
+	if arena.level.defense_waves: arena.level.defense_waves.tower_built(self)
 	return tower

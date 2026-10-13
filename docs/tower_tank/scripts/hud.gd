@@ -37,8 +37,11 @@ func _draw() -> void:
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE * ui_scale)
 	if arena.level and arena.level.defense_waves:
 		var defense_wave = arena.level.defense_waves
-		if defense_wave.active>=0 or arena.crew.center().distance_to(defense_wave.global_position)<defense_wave.test_launch_distance:
-			text_at(Vector2(28,164),defense_wave.status_text(),13,gold)
+		if defense_wave.status_visible():
+			var goal: String = defense_wave.status_text()
+			var goal_width := font.get_string_size(goal,HORIZONTAL_ALIGNMENT_LEFT,-1,13).x
+			draw_rect(Rect2(18,145,goal_width+20,28),Color(.035,.06,.07,.82))
+			text_at(Vector2(28,164),goal,13,gold)
 	if arena.tank.dash.is_aiming():
 		draw_rect(Rect2(0, 0, w, h), Color(0.01, 0.04, 0.08, 0.22))
 	if compact_mode():
@@ -102,10 +105,27 @@ func _draw() -> void:
 
 func _finish_draw() -> void:
 	draw_set_transform(Vector2.ZERO)
+	_draw_damage_edges()
 	if not arena.tuning_open:
 		_draw_crosshair()
 	if arena.flash_alpha > 0:
 		draw_rect(get_viewport_rect(), Color(1.0, 0.84, 0.52, arena.flash_alpha))
+
+func _draw_damage_edges() -> void:
+	if not arena.crew.crewed or arena.tank.damage_pulse <= 0.0: return
+	var size := get_viewport_rect().size
+	var w := size.x
+	var h := size.y
+	var edge := minf(w, h) * 0.075
+	var outer := Color(0.85, 0.16, 0.09, 0.16 * arena.tank.damage_pulse)
+	var inner := Color(outer, 0.0)
+	var colors := PackedColorArray([outer, outer, inner, inner])
+	# Four soft gradients leave the center clear; repeated hits refresh the
+	# same bounded fade instead of adding flashes or moving the camera.
+	draw_polygon(PackedVector2Array([Vector2.ZERO, Vector2(w, 0), Vector2(w-edge, edge), Vector2(edge, edge)]), colors)
+	draw_polygon(PackedVector2Array([Vector2(w, 0), size, Vector2(w-edge, h-edge), Vector2(w-edge, edge)]), colors)
+	draw_polygon(PackedVector2Array([size, Vector2(0, h), Vector2(edge, h-edge), Vector2(w-edge, h-edge)]), colors)
+	draw_polygon(PackedVector2Array([Vector2(0, h), Vector2.ZERO, Vector2(edge, edge), Vector2(edge, h-edge)]), colors)
 
 func compact_mode() -> bool:
 	return not arena.tuning_open and not Input.is_physical_key_pressed(KEY_F1)
@@ -116,6 +136,7 @@ func _draw_compact(w: float, h: float) -> void:
 	var center := w*0.5
 	var bottom := h-24.0
 	var color := Color("ed8069") if hull.hp<hull.MAX_HP*0.3 else teal
+	color = color.lerp(Color("ed8069"), hull.damage_pulse)
 	var backdrop := Color(0.035,0.065,0.07,0.82)
 	draw_rect(Rect2(24,bottom-64,272,64),backdrop)
 	if crew.crewed:
@@ -123,7 +144,7 @@ func _draw_compact(w: float, h: float) -> void:
 		text_at(Vector2(188,bottom-41),"%d / %d"%[ceili(hull.hp),int(hull.MAX_HP)],12,color)
 		draw_rect(Rect2(38,bottom-23,244,5),muted.darkened(0.6))
 		draw_rect(Rect2(38,bottom-23,244*hull.hp/hull.MAX_HP,5),color)
-		text_at(Vector2(38,bottom-6),"КРИСТАЛЛЫ В БАШНЕ  %d"%crew.loot.crystals,10,gold)
+		text_at(Vector2(38,bottom-6),"ЗОЛОТО %d · КРИСТАЛЛЫ %d"%[crew.loot.coins,crew.loot.crystals],10,gold)
 	else:
 		text_at(Vector2(38,bottom-41),"ЭКИПАЖ · %d / 9"%crew.members.size(),13,teal)
 		text_at(Vector2(38,bottom-17),"КРИСТАЛЛЫ %d + %d НЕСЁМ · МОНЕТЫ %d"%[crew.loot.crystals,crew.loot.carried_crystal_count(),crew.loot.coins],10,gold)
@@ -136,8 +157,8 @@ func _draw_compact(w: float, h: float) -> void:
 			var x := center-300
 			draw_rect(Rect2(x,bottom-64,278,64),backdrop)
 			text_at(Vector2(x+14,bottom-42),"ЛКМ · ПУШКА",11,muted)
-			text_at(Vector2(x+14,bottom-19),"ГОТОВА" if hull.cooldown<=0 else "ПЕРЕЗАРЯДКА · %.1f с"%hull.cooldown,16,teal if hull.cooldown<=0 else gold,true)
-			draw_rect(Rect2(x+14,bottom-9,250*clampf(1.0-hull.cooldown/hull.reload_time,0,1),3),teal if hull.cooldown<=0 else gold)
+			text_at(Vector2(x+14,bottom-19),"КУПИ У МЕХАНИКА" if not hull.cannon_installed else ("ГОТОВА" if hull.cooldown<=0 else "ПЕРЕЗАРЯДКА · %.1f с"%hull.cooldown),16,teal if hull.cannon_installed else muted,true)
+			if hull.cannon_installed: draw_rect(Rect2(x+14,bottom-9,250*clampf(1.0-hull.cooldown/hull.reload_time,0,1),3),teal if hull.cooldown<=0 else gold)
 			x = center-10
 			var guns = hull.crossbows
 			draw_rect(Rect2(x,bottom-64,278,64),backdrop)
@@ -158,6 +179,7 @@ func _draw_compact(w: float, h: float) -> void:
 	var context: Dictionary = crew.context_action()
 	var hint: String = context.text if context.kind not in ["exit","none"] else ""
 	if arena.hand.enabled: hint = arena.hand.status_text()
+	if arena.defenses and not arena.defenses.status_text().is_empty(): hint = arena.defenses.status_text()
 	if arena.camera_rotating: hint = "ОБЗОР · ОТПУСТИ КОЛЕСО"
 	if hull.dash.is_aiming(): hint = "ПКМ — СУПЕРДЭШ · ОТПУСТИ SPACE — ОТМЕНА"
 	if crew.members.is_empty(): hint = "ОТРЯД ПОГИБ · R — ЗАНОВО"
@@ -171,6 +193,11 @@ func _draw_compact(w: float, h: float) -> void:
 		text_at(Vector2(center-width*0.5,48),crew.notice,13,ink)
 
 func _draw_cannon(center: float, h: float) -> void:
+	if not arena.tank.cannon_installed and not arena.tank.dash.is_aiming():
+		text_at(Vector2(center-186,h-96),"ПУШКА НЕ УСТАНОВЛЕНА",14,muted)
+		text_at(Vector2(center-186,h-63),"Спаси механика на атолле Б",18,gold)
+		text_at(Vector2(center-186,h-22),"ПКМ — бортовое оружие · F — рука",12,muted)
+		return
 	if arena.tank.dash.is_aiming():
 		var distance: float = arena.tank.position.distance_to(arena.tank.dash.landing)
 		text_at(Vector2(center - 186, h - 96), "ПРИЦЕЛ СУПЕРДЭША", 11, muted)
@@ -267,6 +294,7 @@ func _draw_hull() -> void:
 	var y := 431.0 if arena.crew.crewed else 330.0
 	var hull = arena.tank
 	var color := Color("ed8069") if hull.dead or hull.hp < hull.MAX_HP * 0.3 else teal
+	color = color.lerp(Color("ed8069"), hull.damage_pulse)
 	draw_rect(Rect2(38, y, 314, 70), Color(0.035, 0.065, 0.07, 0.88))
 	text_at(Vector2(53, y + 22), "БАШНЯ РАЗБИТА" if hull.dead else "ПРОЧНОСТЬ БАШНИ", 12, color, true)
 	text_at(Vector2(248, y + 22), "%d / %d" % [ceili(hull.hp), int(hull.MAX_HP)], 11, ink)
@@ -322,7 +350,7 @@ func _draw_cargo(w: float) -> void:
 	var cargo: String = hand.mounted.get_meta("hand_label", "ГРУЗ") if is_instance_valid(hand.mounted) else "КРЕПЛЕНИЕ СВОБОДНО"
 	text_at(Vector2(x + 15, 215), cargo, 16, ink, true)
 	text_at(Vector2(x + 15, 242), "Схвати груз на крыше, чтобы снять" if is_instance_valid(hand.mounted) else "Отпусти груз рядом с башней", 12, muted)
-	text_at(Vector2(x + 15, 265), "МОСТ / ПРЕДМЕТЫ / РУКОЯТЬ ВОРОТ" if arena.level else "КУБ → ГНЕЗДО → ОТКРЫТЬ ВОРОТА", 11, gold)
+	text_at(Vector2(x + 15, 265), "МОСТ / ПРЕДМЕТЫ / КНОПКА ВОРОТ" if arena.level else "КУБ → ГНЕЗДО → ОТКРЫТЬ ВОРОТА", 11, gold)
 	text_at(Vector2(x + 15, 284), "ДОСЯГАЕМОСТЬ РУКИ · 18 М", 10, muted)
 
 func _build_crew_button() -> void:
@@ -459,7 +487,7 @@ func _build_tuning() -> void:
 		arena.tank.cooldown = fraction * v, " с")
 	_slider(box, "Отдача", 0.3, 1.8, arena.tank.recoil_force, func(v: float): arena.tank.recoil_force = v, "")
 	_slider(box, "Удар камеры", 0.0, 1.7, arena.shake_strength, func(v: float): arena.shake_strength = v, "")
-	_slider(box, "Скорость башни", 3.0, 10.0, arena.tank.forward_speed, func(v: float): arena.tank.forward_speed = v, " м/с")
+	_slider(box, "Скорость башни", 3.0, 12.0, arena.tank.forward_speed, func(v: float): arena.tank.forward_speed = v, " м/с")
 	_slider(box, "Отзывчивость хода", 0.6, 1.6, arena.tank.drive_response, func(v: float): arena.tank.drive_response = v, "×")
 	var note := Label.new()
 	note.text = "Изменения действуют сразу.\nTAB — вернуться в игру."

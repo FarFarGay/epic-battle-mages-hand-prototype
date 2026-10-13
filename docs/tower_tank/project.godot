@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Epic Battle Mages — Iron Citadel"
-config/version="0.14.16"
+config/version="0.14.18"
 run/main_scene="res://entry.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
@@ -20,6 +20,7 @@ config/icon="res://icon.svg"
 
 window/size/viewport_width=1440
 window/size/viewport_height=900
+window/size/mode=3
 window/size/window_width_override=1440
 window/size/window_height_override=900
 window/stretch/mode="canvas_items"

@@ -663,7 +663,7 @@ func _damage_target(target: Node3D, damage: float, direction: Vector3 = Vector3.
 	target.hide()
 	target.queue_free()
 	kills += 1
-	if crew != null:
+	if crew != null and not spec.get("purchased",false):
 		for i in 3:
 			crew.loot.spawn_coin(pos + Vector3.UP * 1.0, Vector3(sin(i * 2.1) * 2.0, 3.0, cos(i * 2.1) * 2.0))
 	if not level: respawns.append({"spec": spec, "time": 7.5})

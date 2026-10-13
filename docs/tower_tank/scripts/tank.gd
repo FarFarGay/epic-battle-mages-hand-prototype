@@ -12,16 +12,18 @@ var dead := false
 var damage_pulse := 0.0
 
 @export_group("Driving")
-@export var forward_speed := 7.4
+@export var forward_speed := 10.2
 # A short build-up and coast give the tower weight; countersteering stays quick.
-@export var acceleration := 28.0
-@export var braking := 38.0
-@export var direction_braking := 80.0
+@export var acceleration := 44.0
+@export var braking := 64.0
+@export var direction_braking := 112.0
 @export var turn_speed := 8.0
 @export_range(0.6, 1.6, 0.05) var drive_response := 1.0
 @export_group("Cruising")
 @export_range(1.0, 3.0, 0.1) var cruise_multiplier := 2.0
-@export var cruise_acceleration := 6.0
+@export var cruise_acceleration := 18.4
+@export var crowd_braking := 14.0
+@export_range(0.1, 1.0, 0.05) var crowd_speed_multiplier := 0.5
 @export_group("Gun feel")
 @export var aim_lag := 0.18
 @export var turret_speed := 3.1
@@ -44,6 +46,9 @@ var drive_velocity := Vector3.ZERO
 var speed := 0.0
 var steering := 0.0
 var cruising := false
+var crowd_contact_left := 0.0
+var crowd_load := 0.0
+var crowd_impact_left := 0.0
 var turret_yaw := 0.0
 var cooldown := 0.0
 var reload_phase := 0
@@ -55,6 +60,7 @@ var kick_velocity := Vector3.ZERO
 var aim_world := Vector3(0, 0, -12)
 var shot_count := 0
 var buffered_shot := 0.0
+var cannon_installed := true
 
 func _ready() -> void:
 	name = "TowerTank"
@@ -71,6 +77,7 @@ func _ready() -> void:
 	collider.position.y = HULL_HEIGHT * 0.5
 	add_child(collider)
 	_build()
+	set_cannon_installed(arena.level==null)
 	dash = Dash.new()
 	dash.actor = self
 	dash.arena = arena
@@ -105,9 +112,21 @@ func stop_drive() -> void:
 	speed = 0.0
 	steering = 0.0
 	cruising = false
+	crowd_contact_left = 0.0
+	crowd_load = 0.0
+	crowd_impact_left = 0.0
+
+func crowd_impact(strength: float, hits: int) -> void:
+	if crowd_impact_left > 0.0 or hits <= 0: return
+	crowd_impact_left = 0.3
+	# One short pulse per group, never one additive shake per skeleton.
+	var impact := lerpf(0.11, 0.21, strength) + minf(hits - 1, 3) * 0.0125
+	arena.add_trauma(maxf(0.0, impact - arena.trauma))
 
 func tick(dt: float) -> void:
+	crowd_impact_left = maxf(0.0, crowd_impact_left - dt)
 	damage_pulse = maxf(0.0, damage_pulse - dt * 2.0)
+	model.update_damage_feedback()
 	if dead:
 		stop_drive()
 		velocity = Vector3.ZERO
@@ -122,12 +141,17 @@ func tick(dt: float) -> void:
 	var blocked: bool = arena.tuning_open or not arena.crew.crewed or dash.active or dash.is_aiming()
 	if blocked: direction = Vector3.ZERO
 	var previous_drive := drive_velocity
+	crowd_contact_left = maxf(0.0, crowd_contact_left - dt)
 	cruising = not blocked and not direction.is_zero_approx() and Input.is_action_pressed("tank_cruise")
 	var target_speed := forward_speed
-	if cruising:
+	if cruising and crowd_contact_left <= 0.0:
 		# Build extra speed from actual motion: no charge while idle or against a wall.
 		# Only the speed ramp is slow; steering keeps the normal responsive rates.
 		target_speed = minf(forward_speed * cruise_multiplier, maxf(forward_speed, drive_velocity.length()) + cruise_acceleration * drive_response * dt)
+	elif crowd_contact_left > 0.0:
+		# Crowd resistance applies both with and without Shift. Keep moving
+		# at a slow trudge after spending the momentum from the initial impact.
+		target_speed = maxf(forward_speed * crowd_speed_multiplier, drive_velocity.length() - (crowd_braking + minf(crowd_load, 5.0) * 3.0) * dt)
 	var desired := direction * target_speed
 	var rate := braking if direction.is_zero_approx() else acceleration
 	if not cruising and drive_velocity.length() > forward_speed:
@@ -150,20 +174,27 @@ func tick(dt: float) -> void:
 	velocity = drive_velocity + kick_velocity
 	velocity.y = fall_speed
 	var previous_position := global_position
-	var was_dashing: bool = dash.active
 	if arena.crew.crewed:
 		if dash.active:
 			dash.move(dt)
 		elif not dash.is_aiming():
+			# The hull parts the crowd gently at walking pace; boosted motion
+			# adds a strong shove. Skeleton bodies must never stop the tower.
+			# World collisions remain enabled at both speeds.
+			set_collision_mask_value(7, false)
 			move_and_slide()
+			set_collision_mask_value(7, true)
 	else:
 		velocity = Vector3.ZERO
 	var actual_velocity := (global_position - previous_position) / maxf(dt, 0.0001)
 	actual_velocity.y = 0.0
 	if actual_velocity.length_squared() > 0.01:
 		arena.props.crush_segment(previous_position, global_position, 1.25, 1.9 if dash.active else 1.0)
-	if arena.battle and not was_dashing and arena.crew.crewed:
-		arena.battle.bump(previous_position, global_position, maxf(actual_velocity.length(), drive_velocity.length()))
+	if arena.battle and not blocked and speed > 0.05:
+		var contacts: float = arena.battle.bump(previous_position, global_position, drive_velocity, forward_speed)
+		if contacts > 0.0:
+			crowd_load = contacts
+			crowd_contact_left = 0.3
 	if not dash.active and not dash.is_aiming():
 		for i in get_slide_collision_count():
 			var normal := get_slide_collision(i).get_normal()
@@ -204,8 +235,14 @@ func _update_gun_aim(dt: float) -> void:
 	var pitch := atan2(to_aim.y, Vector2(to_aim.x, to_aim.z).length())
 	gun_pitch.rotation.x = lerpf(gun_pitch.rotation.x, clampf(pitch, -0.6, 0.15), 1.0 - exp(-dt * 18.0))
 
+func set_cannon_installed(value: bool) -> void:
+	cannon_installed = value
+	gun_pitch.visible = value
+	buffered_shot = 0.0
+	cooldown = 0.0
+
 func fire() -> void:
-	if dead or cooldown > 0.0 or not arena.crew.crewed or not arena.weapon_mode_active() or dash.blocks_gun():
+	if not cannon_installed or dead or cooldown > 0.0 or not arena.crew.crewed or not arena.weapon_mode_active() or dash.blocks_gun():
 		return
 	buffered_shot = 0.0
 	cooldown = reload_time
@@ -224,7 +261,8 @@ func take_damage(amount: float) -> void:
 	if dead or amount <= 0.0: return
 	hp = maxf(0.0, hp - amount)
 	damage_pulse = 1.0
-	arena.add_trauma(0.12)
+	# Incoming hits use hull/HUD color only, without any camera motion.
+	model.update_damage_feedback()
 	if hp > 0.0: return
 	dead = true
 	if arena.battle: arena.battle.nav_dirty = true
@@ -266,9 +304,11 @@ func _update_reload(dt: float) -> void:
 		vent.scale.y = 0.4 + progress * 0.6
 
 func reset_state() -> void:
+	set_cannon_installed(arena.level==null)
 	hp = MAX_HP
 	dead = false
 	damage_pulse = 0.0
+	model.update_damage_feedback()
 	if body_visual: body_visual.rotation = Vector3.ZERO
 	if dash: dash.reset()
 	if crossbows: crossbows.reset()

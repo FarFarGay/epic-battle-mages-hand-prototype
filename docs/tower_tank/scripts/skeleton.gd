@@ -2,7 +2,7 @@ extends CharacterBody3D
 ## Ordinary Skeleton/Enemy from the main project, without its world autoloads.
 ## Faster-falling rank and file; original attack phases and interruptible attacks.
 const Geo = preload("res://scripts/geo.gd")
-const WALK_SPEED_MULTIPLIER := 1.15
+const WALK_SPEED_MULTIPLIER := 1.3915
 const SHIELD_MAX_HP := 24.0
 const WORLD_ALERT_RADIUS := 24.0
 const PATROL_RADIUS := 14.0
@@ -28,6 +28,8 @@ var throw_aim := Vector3.ZERO
 var shield_hp := 0.0
 var attack_on_spawn := false
 var world_resident := false
+var patrol_group := -1
+var group_offset := Vector3.ZERO
 var patrol_origin := Vector3.ZERO
 var patrol_goal := Vector3.ZERO
 var patrol_wait := 0.0
@@ -139,7 +141,7 @@ func setup_patrol(slot: int) -> void:
 	patrol_origin=position
 	patrol_goal=position
 	patrol_rng.seed=19221+slot*1543
-	patrol_speed=patrol_rng.randf_range(0.85,1.15)
+	patrol_speed=patrol_rng.randf_range(1.0285,1.3915)
 	patrol_wait=patrol_rng.randf_range(0.0,1.8)
 	# Spread distant patrol updates across physics frames, rather than all at once.
 	pending_dt=float(slot%12)/60.0
@@ -159,6 +161,9 @@ func _new_patrol_goal() -> void:
 	patrol_wait=0.5
 
 func _tick_patrol(dt: float) -> void:
+	if patrol_group >= 0 and arena.level.roaming_groups:
+		_tick_group_patrol(dt)
+		return
 	velocity=Vector3.ZERO
 	patrol_wait=maxf(0.0,patrol_wait-dt)
 	if patrol_wait>0.0:
@@ -200,6 +205,36 @@ func _tick_patrol(dt: float) -> void:
 	if position.distance_squared_to(patrol_goal)<0.36:
 		patrol_wait=patrol_rng.randf_range(0.8,2.2)
 		patrol_goal=position
+
+func _tick_group_patrol(dt: float) -> void:
+	var manager = arena.level.roaming_groups
+	if patrol_group >= manager.groups.size(): return
+	var goal: Vector3 = manager.groups[patrol_group].center + group_offset
+	var offset := goal - position
+	offset.y = 0.0
+	var motion := offset.limit_length(patrol_speed * dt)
+	var next := position + motion
+	var open: bool = not motion.is_zero_approx() and arena.level._world_spawn_open(next)
+	# Shared formation slots stay separated. Only static geometry needs a
+	# query here, not all 99 neighbours. Combat uses normal crowd separation.
+	if not motion.is_zero_approx() and not open:
+		# A survivor returning after a fight can have props between it and its
+		# formation slot. Slide around them rather than getting stuck forever.
+		var turn := 1.0 if int(patrol_rng.seed)%2==0 else -1.0
+		for angle in [turn*PI/3,-turn*PI/3,turn*PI/2,-turn*PI/2]:
+			var alternative := position + motion.rotated(Vector3.UP,angle)
+			if arena.level._world_spawn_open(alternative):
+				next = alternative
+				open = true
+				break
+	if open:
+		motion = next-position
+		position = next
+		velocity = motion / maxf(dt,0.001)
+		rotation.y = lerp_angle(rotation.y,atan2(-motion.x,-motion.z),1.0-exp(-6.0*dt))
+	else:
+		velocity = Vector3.ZERO
+	_animate(dt,velocity.length())
 
 func set_wave_route(entrance: Node3D, lane: float) -> void:
 	path.clear()
@@ -473,6 +508,20 @@ func _animate(dt: float, speed: float) -> void:
 	body_lean = lerpf(body_lean, -0.22 if windup else (0.48 if state == State.LUNGE else 0.10), 1.0 - exp(-22.0 * dt))
 	visual.rotation.x = lerpf(visual.rotation.x,-1.35*minf(knockdown_left/0.25,1.0),1.0-exp(-22.0*dt))
 
+func push_aside(direction: Vector3, force: float) -> void:
+	if dead or hand_held or hand_thrown: return
+	attack_on_spawn = true
+	state = State.STAGGER
+	# A fast tower bowls skeletons over and lets the impulse play out instead
+	# of cancelling the flight after the old 0.3-second flinch.
+	if force >= 18.0:
+		knockdown_left = maxf(knockdown_left, 0.45 if giant else 0.7)
+		rotation.y = atan2(-direction.x, -direction.z)
+	timer = maxf(clampf(force / 30.0, 0.3, 0.9), knockdown_left)
+	impulse = direction * force * (0.4 if giant else 1.0)
+	bump_cooldown = 0.4
+	warning.hide()
+
 func knock_down(direction: Vector3) -> void:
 	if dead or hand_held or hand_thrown: return
 	attack_on_spawn = true
@@ -486,6 +535,7 @@ func knock_down(direction: Vector3) -> void:
 func take_damage(amount: float, direction: Vector3 = Vector3.ZERO, force: float = 0.0, source: StringName = &"") -> void:
 	if dead or amount <= 0.0: return
 	if world_resident: attack_on_spawn=true # A long-range hit also wakes the victim.
+	if patrol_group >= 0 and arena.level.roaming_groups: arena.level.roaming_groups.alert(patrol_group)
 	if giant and source == &"crew": amount *= 0.5
 	hit_flash = 0.11
 	scan_left = 0.0

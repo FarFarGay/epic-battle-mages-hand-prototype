@@ -2,7 +2,8 @@
 extends Node3D
 ## Move/duplicate/delete this node to edit the starting layout. Body contains
 ## the actual editable mesh and collision used by the game, not a proxy.
-@export_enum("Prop", "Powder", "Ore", "Cargo", "Weight", "Chest", "BridgeSection", "Enemy", "Player", "MineDefense") var kind := "Prop"
+@export_enum("Prop", "Powder", "Ore", "Cargo", "Weight", "Chest", "BridgeSection", "Enemy", "Player", "MineDefense", "PatrolGroup") var kind := "Prop"
+@export var patrol_travel := Vector3(4, 0, 0)
 @export var enabled := true
 @export_enum("Ordinary", "Shield", "Giant") var enemy_type := "Ordinary":
 	set(value):

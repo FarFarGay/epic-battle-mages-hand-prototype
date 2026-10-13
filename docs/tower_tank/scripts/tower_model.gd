@@ -2,6 +2,8 @@ extends RefCounted
 ## Code-built 3D interpretation of the supplied tower-in-boots concept.
 const Geo = preload("res://scripts/geo.gd")
 var cloth_materials: Array[ShaderMaterial] = []
+var damage_materials: Array[Dictionary] = []
+var damage_amount := 0.0
 var actor
 
 func build(tower) -> void:
@@ -12,6 +14,7 @@ func build(tower) -> void:
 	var iron := Geo.material(Color("676b88"), 0.35)
 	var brass := Geo.material(Color("bc944f"), 0.65)
 	var black := Geo.material(Color("141625"))
+	for mat in [stone, pale, iron]: _track_damage_material(mat)
 	actor.body_visual = Node3D.new()
 	actor.body_visual.name = "StoneTowerBody"
 	actor.add_child(actor.body_visual)
@@ -85,7 +88,9 @@ func _bricks(parent: Node3D, radius: float, bottom: float, top: float, rows: int
 	for shade in shades:
 		var surface := SurfaceTool.new()
 		surface.begin(Mesh.PRIMITIVE_TRIANGLES)
-		surface.set_material(Geo.material(Color(shade)))
+		var mat := Geo.material(Color(shade))
+		_track_damage_material(mat)
+		surface.set_material(mat)
 		surfaces.append(surface)
 	var height := (top - bottom) / rows
 	for row in rows:
@@ -179,6 +184,21 @@ func _cloth_point(angle: float, y: float) -> Vector3:
 	var fold := cos(angle * 12.0) * 0.065 * weight
 	var radius := 1.09 + weight * 0.20 + fold
 	return Vector3(sin(angle) * radius, y + sin(angle * 12.0 + 0.4) * 0.035 * weight, cos(angle) * radius)
+
+func _track_damage_material(mat: StandardMaterial3D) -> void:
+	damage_materials.append({"material": mat, "color": mat.albedo_color})
+	mat.emission_enabled = true
+	mat.emission = Color("ed604a")
+	mat.emission_energy_multiplier = 0.0
+
+func update_damage_feedback() -> void:
+	var amount: float = actor.damage_pulse
+	if amount == damage_amount: return
+	damage_amount = amount
+	for entry in damage_materials:
+		var mat: StandardMaterial3D = entry.material
+		mat.albedo_color = entry.color.lerp(Color("ed604a"), amount * 0.6)
+		mat.emission_energy_multiplier = amount * 0.35
 
 func tick(_dt: float) -> void:
 	var local: Vector3 = actor.global_basis.inverse() * actor.velocity

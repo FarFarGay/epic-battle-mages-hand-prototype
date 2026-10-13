@@ -27,7 +27,7 @@ func bind() -> void:
 	level.gate_handle = roles.gate_handle
 	level.gate_handle.level = level
 	level.gate_handle.home = level.gate_handle.global_position
-	Hand.register_item(level.gate_handle,Vector3(0.7,0.7,1.1),"РУКОЯТЬ ВОРОТ · ПОТЯНИ ОТ СТЕНЫ")
+	Hand.register_item(level.gate_handle,Vector3(0.7,0.7,1.1),"КНОПКА ВОРОТ · НАЖМИ РУКОЙ")
 	level.platform = roles.weight_plate
 	level.platform_rest = level.platform.global_position
 	level.A = roles.atoll_a.global_position
@@ -44,6 +44,7 @@ func bind() -> void:
 		if not node is Placement: continue
 		if node.enabled:
 			var entry := {"kind":node.kind,"transform":node.global_transform,"enemy_type":node.enemy_type,"patrol":node.patrol,"health":node.health,"wave_count":node.wave_count,"wave_giants":node.wave_giants}
+			entry.patrol_travel = node.patrol_travel
 			var body: Node3D = node.get_node_or_null("Body")
 			if body:
 				entry.transform = body.global_transform
@@ -59,6 +60,8 @@ func bind() -> void:
 	level.START = player_transform.origin
 	level.ENTRY_ATTACK_SIZE = placements.filter(func(p): return p.kind=="Enemy" and not p.patrol).size()
 	level.WORLD_SKELETONS = placements.filter(func(p): return p.kind=="Enemy" and p.patrol).size()
+	for p in placements:
+		if p.kind == "PatrolGroup": level.WORLD_SKELETONS += p.wave_count
 	level.set_bridge(false)
 	_batch_decoration()
 

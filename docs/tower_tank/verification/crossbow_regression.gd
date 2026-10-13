@@ -145,13 +145,13 @@ func _run() -> void:
 	checks.magazine_exactly_200 = guns.shot_count == 200 and guns.ammo == 0 and guns.side_counts == [100, 100]
 	checks.ten_second_burst = elapsed >= 590 and elapsed <= 608
 	checks.projectiles_bounded = peak_bolts <= 16
-	checks.auto_reload_starts = guns.reload_left > 4.4 and guns.reload_left <= 4.5
-	await _frames(180)
-	checks.reload_blocks_held_fire = guns.shot_count == 200 and guns.ammo == 0 and guns.reload_left > 1.3 and guns.reload_left < 1.6
+	checks.auto_reload_starts = guns.reload_left > 2.4 and guns.reload_left <= 2.5
+	await _frames(120)
+	checks.reload_blocks_held_fire = guns.shot_count == 200 and guns.ammo == 0 and guns.reload_left > 0.3 and guns.reload_left < 0.6
 	await arena._capture(arena.verification_path("crossbow_03_reload.png"))
 	_mouse(MOUSE_BUTTON_RIGHT, false)
-	await _frames(100)
-	checks.full_refill_after_four_and_half_seconds = guns.ammo == 200 and guns.reload_left == 0.0 and guns.shot_count == 200
+	await _frames(32)
+	checks.full_refill_after_two_and_half_seconds = guns.ammo == 200 and guns.reload_left == 0.0 and guns.shot_count == 200
 	_mouse(MOUSE_BUTTON_RIGHT, true)
 	await _frames(4)
 	_mouse(MOUSE_BUTTON_RIGHT, false)
