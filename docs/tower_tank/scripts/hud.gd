@@ -147,6 +147,13 @@ func _draw_compact(w: float, h: float) -> void:
 			draw_rect(Rect2(x+14,bottom-9,250*fraction,3),teal if guns.reload_left<=0 else gold)
 		if hull.dash.active or hull.dash.cooldown>0:
 			text_at(Vector2(38,bottom-76),"РЫВОК" if hull.dash.active else "РЫВОК · %.1f с"%hull.dash.cooldown,12,teal)
+		var charged: bool = hull.dash.super_ready()
+		var dash_color: Color = gold if charged else teal
+		draw_rect(Rect2(24,bottom-139,272,43),backdrop)
+		text_at(Vector2(38,bottom-121),"СУПЕРДЭШ · ГОТОВ" if charged else "СУПЕРДЭШ · %d / %d"%[hull.dash.super_charge,hull.dash.SUPER_KILLS],12,dash_color,true)
+		text_at(Vector2(38,bottom-106),"ДЕРЖИ SPACE → ПКМ" if charged else "ЗАРЯЖАЕТСЯ УБИЙСТВАМИ",10,muted)
+		draw_rect(Rect2(38,bottom-101,244,3),muted.darkened(0.6))
+		draw_rect(Rect2(38,bottom-101,244*float(hull.dash.super_charge)/hull.dash.SUPER_KILLS,3),dash_color)
 	text_at(Vector2(w-142,bottom-3),"F1 · подсказки",12,muted)
 	var context: Dictionary = crew.context_action()
 	var hint: String = context.text if context.kind not in ["exit","none"] else ""
@@ -277,10 +284,10 @@ func _draw_dash() -> void:
 	elif dash.active: status = "СУПЕРДЭШ" if dash.is_super else "РЫВОК"
 	elif dash.cooldown > 0.0: status = "РЫВОК  ·  %.1f С" % dash.cooldown
 	text_at(Vector2(53, 352), status, 13, teal, true)
-	text_at(Vector2(53, 374), "WASD — курс · держи SPACE → ПКМ", 11, ink)
+	text_at(Vector2(53, 374), "СУПЕР ГОТОВ · держи SPACE → ПКМ" if dash.super_ready() else "СУПЕРДЭШ · %d / %d убийств"%[dash.super_charge,dash.SUPER_KILLS], 11, gold if dash.super_ready() else ink)
 	draw_rect(Rect2(53, 385, 283, 3), Color(0.25, 0.3, 0.29))
-	draw_rect(Rect2(53, 385, 283 * (1.0 - dash.cooldown / dash.COOLDOWN), 3), teal)
-	text_at(Vector2(53, 408), "РАЗДАВЛЕНО ПРЕДМЕТОВ  %02d" % arena.props.broken_count, 10, gold)
+	draw_rect(Rect2(53, 385, 283 * float(dash.super_charge)/dash.SUPER_KILLS, 3), gold)
+	text_at(Vector2(53, 408), "WASD — курс рывка · заряд не пропадает", 10, muted)
 
 func _draw_crossbows(w: float) -> void:
 	if arena.hand.enabled:

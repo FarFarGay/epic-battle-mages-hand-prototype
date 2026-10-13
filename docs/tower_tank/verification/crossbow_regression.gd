@@ -212,6 +212,7 @@ func _run() -> void:
 	await _reset()
 	_mouse(MOUSE_BUTTON_RIGHT, true)
 	await _frames(5)
+	tank.dash.super_charge = tank.dash.SUPER_KILLS
 	_key(KEY_SPACE, true)
 	await _real(0.38)
 	count = guns.shot_count

@@ -15,7 +15,10 @@ func _frames(count: int) -> void:
 	for i in count: await get_tree().physics_frame
 
 func _real(seconds: float) -> void:
-	await get_tree().create_timer(seconds, true, false, true).timeout
+	# Input uses a monotonic clock; a long initial render delta must not count
+	# as time spent holding a key that was only just pressed.
+	var until := Time.get_ticks_usec()+int(seconds*1000000.0)
+	while Time.get_ticks_usec()<until: await get_tree().process_frame
 
 func _key(code: Key, pressed: bool) -> void:
 	var event := InputEventKey.new()
@@ -45,11 +48,22 @@ func _reset() -> void:
 	await _frames(3)
 
 func _aim_mode() -> void:
+	dash.super_charge = dash.SUPER_KILLS
 	_key(KEY_SPACE, true)
 	await _real(0.39)
 
 func _run() -> void:
 	await _frames(4)
+	await _reset()
+	results.starts_without_super = dash.super_charge == 0
+	_key(KEY_SPACE, true)
+	await _real(0.39)
+	await _frames(2)
+	metrics.empty_hold = {"normal_count":dash.normal_count,"pending":dash.pending_normal,"mode":dash.mode,"time_scale":Engine.time_scale,"held":dash._held_seconds()}
+	results.empty_hold_is_normal_dash = dash.normal_count == 1 and not dash.is_aiming() and is_equal_approx(Engine.time_scale,1.0)
+	_key(KEY_SPACE, false)
+	await _frames(2)
+	results.empty_hold_release_no_extra_dash = dash.normal_count == 1 and not dash.pending_normal
 	await _reset()
 	var start: Vector3 = tank.position
 	_key(KEY_SPACE, true)
@@ -124,6 +138,7 @@ func _run() -> void:
 	_right(true)
 	await _frames(3)
 	results.super_commits = dash.active and dash.is_super and dash.super_count == 1 and is_equal_approx(Engine.time_scale, 1.0)
+	results.super_spends_charge = dash.super_charge == 0
 	results.super_does_not_cast_crew = arena.crew.combat.spells_fired == 0
 	await _real(0.07)
 	await arena._capture(arena.verification_path("dash_03_super_launch.png"))
@@ -170,6 +185,7 @@ func _run() -> void:
 	await _frames(2)
 	results.release_cancels_super = not dash.is_aiming() and is_equal_approx(Engine.time_scale, 1.0) and dash.super_count == 0 and not dash.marker.visible
 	results.cancelled_super_has_no_normal_dash = dash.normal_count == 0 and not dash.active and not dash.pending_normal
+	results.cancel_retains_charge = dash.super_ready()
 	await _reset()
 	_key(KEY_SPACE, true)
 	await _frames(2)
@@ -210,7 +226,7 @@ func _run() -> void:
 	_key(KEY_R, true)
 	_key(KEY_R, false)
 	await _frames(4)
-	results.reset_restores_everything = is_equal_approx(Engine.time_scale, 1.0) and not dash.active and dash.normal_count == 0 and arena.props.broken_count == 0 and arena.props.props.size() == 48
+	results.reset_restores_everything = is_equal_approx(Engine.time_scale, 1.0) and not dash.active and dash.normal_count == 0 and dash.super_charge == 0 and tank.collision_mask == 65 and arena.props.broken_count == 0 and arena.props.props.size() == 48
 	_key(KEY_SPACE, false)
 	var all_ok := true
 	for value in results.values(): all_ok = all_ok and value

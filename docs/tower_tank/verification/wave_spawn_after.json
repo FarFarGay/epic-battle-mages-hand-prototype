@@ -1,0 +1,856 @@
+{
+  "machine": {
+    "cpu": "Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz",
+    "display": "Windows",
+    "gpu": "NVIDIA GeForce RTX 3090"
+  },
+  "wave_1": {
+    "fps": 201.212322992519,
+    "max_ms": 18.36,
+    "movement": {
+      "blocked": 54,
+      "grid": 68038,
+      "physics_us": 4127
+    },
+    "over_33_ms": 0,
+    "over_50_ms": 0,
+    "p95_ms": 11.05,
+    "p99_ms": 12.579,
+    "pending": 0,
+    "request_ms": 0.32,
+    "slowest": [
+      {
+        "at_ms": 1301.654,
+        "battle_us": {
+          "actors": 160,
+          "logic": 1395,
+          "move": 2622,
+          "separation": 945,
+          "shared": 4547
+        },
+        "ms": 18.36,
+        "nav_area": 17346,
+        "nav_building": true,
+        "nav_cursor": 9828,
+        "pending": 0,
+        "physics_us": {
+          "battle": 12073,
+          "crew": 161,
+          "hand_shells": 72,
+          "level": 248,
+          "tank": 624
+        }
+      },
+      {
+        "at_ms": 2820.442,
+        "battle_us": {
+          "actors": 163,
+          "logic": 1476,
+          "move": 2513,
+          "separation": 822,
+          "shared": 2903
+        },
+        "ms": 15.042,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 0,
+        "physics_us": {
+          "battle": 10351,
+          "crew": 104,
+          "hand_shells": 51,
+          "level": 362,
+          "tank": 373
+        }
+      },
+      {
+        "at_ms": 967.85,
+        "battle_us": {
+          "actors": 159,
+          "logic": 881,
+          "move": 1493,
+          "separation": 526,
+          "shared": 3020
+        },
+        "ms": 14.971,
+        "nav_area": 17346,
+        "nav_building": true,
+        "nav_cursor": 7296,
+        "pending": 7,
+        "physics_us": {
+          "battle": 7337,
+          "crew": 191,
+          "hand_shells": 80,
+          "level": 942,
+          "tank": 681
+        }
+      },
+      {
+        "at_ms": 1217.318,
+        "battle_us": {
+          "actors": 162,
+          "logic": 1421,
+          "move": 2579,
+          "separation": 794,
+          "shared": 2187
+        },
+        "ms": 14.515,
+        "nav_area": 17346,
+        "nav_building": true,
+        "nav_cursor": 9333,
+        "pending": 2,
+        "physics_us": {
+          "battle": 8961,
+          "crew": 114,
+          "hand_shells": 53,
+          "level": 1276,
+          "tank": 384
+        }
+      },
+      {
+        "at_ms": 981.81,
+        "battle_us": {
+          "actors": 169,
+          "logic": 860,
+          "move": 1404,
+          "separation": 473,
+          "shared": 2503
+        },
+        "ms": 13.96,
+        "nav_area": 17346,
+        "nav_building": true,
+        "nav_cursor": 7424,
+        "pending": 5,
+        "physics_us": {
+          "battle": 6858,
+          "crew": 106,
+          "hand_shells": 53,
+          "level": 954,
+          "tank": 1637
+        }
+      },
+      {
+        "at_ms": 2115.824,
+        "battle_us": {
+          "actors": 172,
+          "logic": 980,
+          "move": 1820,
+          "separation": 614,
+          "shared": 2668
+        },
+        "ms": 13.822,
+        "nav_area": 17346,
+        "nav_building": true,
+        "nav_cursor": 16100,
+        "pending": 0,
+        "physics_us": {
+          "battle": 7990,
+          "crew": 99,
+          "hand_shells": 49,
+          "level": 286,
+          "tank": 1849
+        }
+      },
+      {
+        "at_ms": 1042.943,
+        "battle_us": {
+          "actors": 172,
+          "logic": 852,
+          "move": 1385,
+          "separation": 479,
+          "shared": 2706
+        },
+        "ms": 13.609,
+        "nav_area": 17346,
+        "nav_building": true,
+        "nav_cursor": 7936,
+        "pending": 4,
+        "physics_us": {
+          "battle": 7132,
+          "crew": 116,
+          "hand_shells": 54,
+          "level": 753,
+          "tank": 1667
+        }
+      },
+      {
+        "at_ms": 1767.893,
+        "battle_us": {
+          "actors": 173,
+          "logic": 926,
+          "move": 1518,
+          "separation": 497,
+          "shared": 2153
+        },
+        "ms": 13.148,
+        "nav_area": 17346,
+        "nav_building": true,
+        "nav_cursor": 13540,
+        "pending": 0,
+        "physics_us": {
+          "battle": 6889,
+          "crew": 110,
+          "hand_shells": 57,
+          "level": 240,
+          "tank": 2173
+        }
+      },
+      {
+        "at_ms": 5285.912,
+        "battle_us": {
+          "actors": 159,
+          "logic": 1305,
+          "move": 2347,
+          "separation": 868,
+          "shared": 1420
+        },
+        "ms": 13.147,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 0,
+        "physics_us": {
+          "battle": 8031,
+          "crew": 129,
+          "hand_shells": 64,
+          "level": 234,
+          "tank": 545
+        }
+      },
+      {
+        "at_ms": 1314.73,
+        "battle_us": {
+          "actors": 172,
+          "logic": 919,
+          "move": 1525,
+          "separation": 565,
+          "shared": 1984
+        },
+        "ms": 13.076,
+        "nav_area": 17346,
+        "nav_building": true,
+        "nav_cursor": 9956,
+        "pending": 0,
+        "physics_us": {
+          "battle": 6721,
+          "crew": 105,
+          "hand_shells": 54,
+          "level": 307,
+          "tank": 1639
+        }
+      },
+      {
+        "at_ms": 775.308,
+        "battle_us": {
+          "actors": 158,
+          "logic": 806,
+          "move": 1302,
+          "separation": 506,
+          "shared": 2778
+        },
+        "ms": 13.063,
+        "nav_area": 17346,
+        "nav_building": true,
+        "nav_cursor": 5888,
+        "pending": 24,
+        "physics_us": {
+          "battle": 6927,
+          "crew": 111,
+          "hand_shells": 53,
+          "level": 1161,
+          "tank": 1590
+        }
+      },
+      {
+        "at_ms": 1101.945,
+        "battle_us": {
+          "actors": 170,
+          "logic": 882,
+          "move": 1426,
+          "separation": 513,
+          "shared": 3402
+        },
+        "ms": 13.055,
+        "nav_area": 17346,
+        "nav_building": true,
+        "nav_cursor": 8437,
+        "pending": 3,
+        "physics_us": {
+          "battle": 7957,
+          "crew": 93,
+          "hand_shells": 48,
+          "level": 494,
+          "tank": 1548
+        }
+      }
+    ],
+    "spawn_done_ms": 1256.755,
+    "spawned": 300
+  },
+  "wave_2": {
+    "fps": 140.860389746213,
+    "max_ms": 17.588,
+    "movement": {
+      "blocked": 52,
+      "grid": 94656,
+      "physics_us": 3657
+    },
+    "over_33_ms": 0,
+    "over_50_ms": 0,
+    "p95_ms": 14.11,
+    "p99_ms": 15.367,
+    "pending": 34,
+    "request_ms": 0.608,
+    "slowest": [
+      {
+        "at_ms": 6799.548,
+        "battle_us": {
+          "actors": 239,
+          "logic": 2383,
+          "move": 4268,
+          "separation": 1459,
+          "shared": 1158
+        },
+        "ms": 17.588,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 44,
+        "physics_us": {
+          "battle": 11989,
+          "crew": 96,
+          "hand_shells": 49,
+          "level": 1013,
+          "tank": 355
+        }
+      },
+      {
+        "at_ms": 5426.573,
+        "battle_us": {
+          "actors": 230,
+          "logic": 1303,
+          "move": 2121,
+          "separation": 706,
+          "shared": 1216
+        },
+        "ms": 16.469,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 59,
+        "physics_us": {
+          "battle": 7103,
+          "crew": 144,
+          "hand_shells": 52,
+          "level": 1526,
+          "tank": 2508
+        }
+      },
+      {
+        "at_ms": 7425.82,
+        "battle_us": {
+          "actors": 241,
+          "logic": 1586,
+          "move": 2767,
+          "separation": 885,
+          "shared": 1256
+        },
+        "ms": 16.439,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 38,
+        "physics_us": {
+          "battle": 8481,
+          "crew": 115,
+          "hand_shells": 57,
+          "level": 782,
+          "tank": 2031
+        }
+      },
+      {
+        "at_ms": 5224.677,
+        "battle_us": {
+          "actors": 229,
+          "logic": 1293,
+          "move": 2105,
+          "separation": 763,
+          "shared": 1869
+        },
+        "ms": 16.336,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 64,
+        "physics_us": {
+          "battle": 7851,
+          "crew": 133,
+          "hand_shells": 71,
+          "level": 589,
+          "tank": 3040
+        }
+      },
+      {
+        "at_ms": 2167.433,
+        "battle_us": {
+          "actors": 204,
+          "logic": 1314,
+          "move": 2225,
+          "separation": 777,
+          "shared": 3305
+        },
+        "ms": 16.325,
+        "nav_area": 17346,
+        "nav_building": true,
+        "nav_cursor": 16512,
+        "pending": 114,
+        "physics_us": {
+          "battle": 9361,
+          "crew": 113,
+          "hand_shells": 80,
+          "level": 603,
+          "tank": 2104
+        }
+      },
+      {
+        "at_ms": 2518.377,
+        "battle_us": {
+          "actors": 213,
+          "logic": 1869,
+          "move": 3276,
+          "separation": 1077,
+          "shared": 2075
+        },
+        "ms": 16.305,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 102,
+        "physics_us": {
+          "battle": 11266,
+          "crew": 100,
+          "hand_shells": 49,
+          "level": 998,
+          "tank": 359
+        }
+      },
+      {
+        "at_ms": 7825.063,
+        "battle_us": {
+          "actors": 243,
+          "logic": 1384,
+          "move": 2268,
+          "separation": 742,
+          "shared": 1308
+        },
+        "ms": 15.885,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 34,
+        "physics_us": {
+          "battle": 7474,
+          "crew": 127,
+          "hand_shells": 62,
+          "level": 594,
+          "tank": 2132
+        }
+      },
+      {
+        "at_ms": 6427.438,
+        "battle_us": {
+          "actors": 237,
+          "logic": 1585,
+          "move": 2894,
+          "separation": 1063,
+          "shared": 1406
+        },
+        "ms": 15.883,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 46,
+        "physics_us": {
+          "battle": 8998,
+          "crew": 105,
+          "hand_shells": 88,
+          "level": 734,
+          "tank": 2048
+        }
+      },
+      {
+        "at_ms": 5623.882,
+        "battle_us": {
+          "actors": 232,
+          "logic": 1303,
+          "move": 2190,
+          "separation": 777,
+          "shared": 1211
+        },
+        "ms": 15.637,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 57,
+        "physics_us": {
+          "battle": 7156,
+          "crew": 107,
+          "hand_shells": 55,
+          "level": 597,
+          "tank": 2039
+        }
+      },
+      {
+        "at_ms": 2419.55,
+        "battle_us": {
+          "actors": 207,
+          "logic": 1506,
+          "move": 2318,
+          "separation": 928,
+          "shared": 1851
+        },
+        "ms": 15.602,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 105,
+        "physics_us": {
+          "battle": 8633,
+          "crew": 101,
+          "hand_shells": 53,
+          "level": 1077,
+          "tank": 2025
+        }
+      },
+      {
+        "at_ms": 7557.47,
+        "battle_us": {
+          "actors": 243,
+          "logic": 1508,
+          "move": 2779,
+          "separation": 852,
+          "shared": 1183
+        },
+        "ms": 15.563,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 38,
+        "physics_us": {
+          "battle": 8568,
+          "crew": 106,
+          "hand_shells": 50,
+          "level": 655,
+          "tank": 2166
+        }
+      },
+      {
+        "at_ms": 7889.396,
+        "battle_us": {
+          "actors": 239,
+          "logic": 1384,
+          "move": 2289,
+          "separation": 823,
+          "shared": 1329
+        },
+        "ms": 15.367,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 34,
+        "physics_us": {
+          "battle": 7437,
+          "crew": 126,
+          "hand_shells": 65,
+          "level": 564,
+          "tank": 2089
+        }
+      }
+    ],
+    "spawn_done_ms": -1.0,
+    "spawned": 466
+  },
+  "wave_3": {
+    "fps": 76.5695923287512,
+    "max_ms": 33.196,
+    "movement": {
+      "blocked": 52,
+      "grid": 123616,
+      "physics_us": 3390
+    },
+    "over_33_ms": 0,
+    "over_50_ms": 0,
+    "p95_ms": 20.331,
+    "p99_ms": 30.42,
+    "pending": 0,
+    "request_ms": 0.623,
+    "slowest": [
+      {
+        "at_ms": 6092.116,
+        "battle_us": {
+          "actors": 310,
+          "logic": 2690,
+          "move": 4858,
+          "separation": 1629,
+          "shared": 1587
+        },
+        "ms": 33.196,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 1,
+        "physics_us": {
+          "battle": 13703,
+          "crew": 88,
+          "hand_shells": 45,
+          "level": 770,
+          "tank": 356
+        }
+      },
+      {
+        "at_ms": 5926.339,
+        "battle_us": {
+          "actors": 324,
+          "logic": 1774,
+          "move": 3005,
+          "separation": 1039,
+          "shared": 1679
+        },
+        "ms": 32.095,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 2,
+        "physics_us": {
+          "battle": 10004,
+          "crew": 87,
+          "hand_shells": 58,
+          "level": 754,
+          "tank": 2315
+        }
+      },
+      {
+        "at_ms": 6006.481,
+        "battle_us": {
+          "actors": 305,
+          "logic": 1743,
+          "move": 2930,
+          "separation": 1018,
+          "shared": 1525
+        },
+        "ms": 31.616,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 2,
+        "physics_us": {
+          "battle": 9170,
+          "crew": 83,
+          "hand_shells": 46,
+          "level": 689,
+          "tank": 349
+        }
+      },
+      {
+        "at_ms": 5596.14,
+        "battle_us": {
+          "actors": 323,
+          "logic": 1987,
+          "move": 3388,
+          "separation": 1211,
+          "shared": 1486
+        },
+        "ms": 31.241,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 7,
+        "physics_us": {
+          "battle": 10851,
+          "crew": 87,
+          "hand_shells": 46,
+          "level": 745,
+          "tank": 2055
+        }
+      },
+      {
+        "at_ms": 5678.14,
+        "battle_us": {
+          "actors": 309,
+          "logic": 1744,
+          "move": 2937,
+          "separation": 1039,
+          "shared": 1545
+        },
+        "ms": 31.014,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 7,
+        "physics_us": {
+          "battle": 9427,
+          "crew": 86,
+          "hand_shells": 47,
+          "level": 650,
+          "tank": 350
+        }
+      },
+      {
+        "at_ms": 6338.688,
+        "battle_us": {
+          "actors": 311,
+          "logic": 1995,
+          "move": 3426,
+          "separation": 1241,
+          "shared": 1512
+        },
+        "ms": 30.793,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 0,
+        "physics_us": {
+          "battle": 10480,
+          "crew": 93,
+          "hand_shells": 50,
+          "level": 485,
+          "tank": 354
+        }
+      },
+      {
+        "at_ms": 7205.206,
+        "battle_us": {
+          "actors": 307,
+          "logic": 1787,
+          "move": 2984,
+          "separation": 1040,
+          "shared": 1560
+        },
+        "ms": 30.42,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 0,
+        "physics_us": {
+          "battle": 9324,
+          "crew": 90,
+          "hand_shells": 46,
+          "level": 398,
+          "tank": 353
+        }
+      },
+      {
+        "at_ms": 5219.523,
+        "battle_us": {
+          "actors": 300,
+          "logic": 1725,
+          "move": 2920,
+          "separation": 1012,
+          "shared": 1568
+        },
+        "ms": 30.334,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 11,
+        "physics_us": {
+          "battle": 9285,
+          "crew": 87,
+          "hand_shells": 43,
+          "level": 1147,
+          "tank": 351
+        }
+      },
+      {
+        "at_ms": 5842.061,
+        "battle_us": {
+          "actors": 310,
+          "logic": 1900,
+          "move": 3285,
+          "separation": 1107,
+          "shared": 1453
+        },
+        "ms": 30.173,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 4,
+        "physics_us": {
+          "battle": 10067,
+          "crew": 88,
+          "hand_shells": 46,
+          "level": 1181,
+          "tank": 351
+        }
+      },
+      {
+        "at_ms": 6259.799,
+        "battle_us": {
+          "actors": 330,
+          "logic": 1910,
+          "move": 3282,
+          "separation": 1190,
+          "shared": 1384
+        },
+        "ms": 30.163,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 0,
+        "physics_us": {
+          "battle": 10419,
+          "crew": 90,
+          "hand_shells": 48,
+          "level": 460,
+          "tank": 2093
+        }
+      },
+      {
+        "at_ms": 6989.842,
+        "battle_us": {
+          "actors": 325,
+          "logic": 1754,
+          "move": 2991,
+          "separation": 1060,
+          "shared": 1415
+        },
+        "ms": 30.131,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 0,
+        "physics_us": {
+          "battle": 9553,
+          "crew": 88,
+          "hand_shells": 51,
+          "level": 430,
+          "tank": 2183
+        }
+      },
+      {
+        "at_ms": 5449.039,
+        "battle_us": {
+          "actors": 308,
+          "logic": 1774,
+          "move": 2930,
+          "separation": 1012,
+          "shared": 1665
+        },
+        "ms": 30.049,
+        "nav_area": 0,
+        "nav_building": false,
+        "nav_cursor": 17346,
+        "pending": 7,
+        "physics_us": {
+          "battle": 9469,
+          "crew": 98,
+          "hand_shells": 50,
+          "level": 1210,
+          "tank": 365
+        }
+      }
+    ],
+    "spawn_done_ms": 6196.443,
+    "spawned": 600
+  }
+}

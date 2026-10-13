@@ -15,3 +15,7 @@ func candidate() -> Vector3:
 func route(lane: float) -> PackedVector3Array:
 	var side: Vector3 = $Spawn.global_basis.x * lane * route_half_width
 	return PackedVector3Array([$Foot.global_position+side, $Crest.global_position+side])
+
+func lane_at(point: Vector3) -> float:
+	# Keep the formation's left-to-right order when it narrows at the ramp.
+	return clampf($Spawn.to_local(point).x / maxf((columns-1)*spacing*0.5,0.01),-1.0,1.0)

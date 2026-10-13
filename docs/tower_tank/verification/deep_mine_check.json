@@ -1,0 +1,26 @@
+{
+  "checks": {
+    "crystals_created_by_excavation": true,
+    "distant_roof_still_closed": true,
+    "excavation_opens_only_selected_blocks": true,
+    "excavation_persists_on_return": true,
+    "markers_have_floor": true,
+    "mine_does_not_complete_exit": true,
+    "mine_extends_beyond_old_boundary": true,
+    "north_ramp_moves_with_village": true,
+    "reset_restores_mine": true,
+    "return_to_village": true,
+    "rock_face_blocks_tower": true,
+    "roof_opens_with_progress": true,
+    "tower_reaches_deep_chamber": true,
+    "triple_deposit_count": true,
+    "village_at_east_wall": true,
+    "village_connects_to_mine": true
+  },
+  "metrics": {
+    "deposits": 441,
+    "excavated": 111,
+    "tower_end": "(230.4659, 4.04, 34.0)"
+  },
+  "passed": true
+}

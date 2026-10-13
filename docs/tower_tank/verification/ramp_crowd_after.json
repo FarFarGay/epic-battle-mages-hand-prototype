@@ -1,0 +1,108 @@
+{
+  "arrived": {
+    "Center": 198,
+    "North": 200,
+    "Right": 200
+  },
+  "climbed": {
+    "Center": 200,
+    "North": 200,
+    "Right": 200
+  },
+  "climbed_total": 600,
+  "expected": 600,
+  "history": [
+    {
+      "alive": 568,
+      "arrived": {
+        "Center": 6,
+        "North": 16,
+        "Right": 10
+      },
+      "pending": 0,
+      "seconds": 15
+    },
+    {
+      "alive": 379,
+      "arrived": {
+        "Center": 75,
+        "North": 76,
+        "Right": 70
+      },
+      "pending": 0,
+      "seconds": 30
+    },
+    {
+      "alive": 201,
+      "arrived": {
+        "Center": 130,
+        "North": 136,
+        "Right": 133
+      },
+      "pending": 0,
+      "seconds": 45
+    },
+    {
+      "alive": 40,
+      "arrived": {
+        "Center": 185,
+        "North": 185,
+        "Right": 190
+      },
+      "pending": 0,
+      "seconds": 60
+    },
+    {
+      "alive": 2,
+      "arrived": {
+        "Center": 198,
+        "North": 200,
+        "Right": 200
+      },
+      "pending": 0,
+      "seconds": 75
+    },
+    {
+      "alive": 2,
+      "arrived": {
+        "Center": 198,
+        "North": 200,
+        "Right": 200
+      },
+      "pending": 0,
+      "seconds": 90
+    }
+  ],
+  "keep_arrivals": false,
+  "mean_ai_spawn_ms": 4.12157777777778,
+  "passed": true,
+  "pending": 0,
+  "seconds": 90,
+  "stranded": [
+    {
+      "clearance": 1.0,
+      "direction": "(0.838993, 0.0, -0.544143)",
+      "entrance": "Center",
+      "giant": false,
+      "goal": "none",
+      "path_next": "none",
+      "position": "(21.95078, 4.04, 16.32666)",
+      "role": "thrower",
+      "route_left": 0,
+      "separation": "(0.0, 0.0, 0.0)"
+    },
+    {
+      "clearance": 1.0,
+      "direction": "(0.988254, 0.0, -0.152818)",
+      "entrance": "Center",
+      "giant": false,
+      "goal": "none",
+      "path_next": "none",
+      "position": "(22.37704, 4.04, 14.94073)",
+      "role": "thrower",
+      "route_left": 0,
+      "separation": "(0.0, 0.0, 0.0)"
+    }
+  ],
+  "total_arrived": 598
+}

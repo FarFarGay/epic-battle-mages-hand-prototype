@@ -77,7 +77,7 @@ func _mouse(pressed: bool) -> void:
 func _check_five_hits() -> void:
 	var vein: StaticBody3D
 	for node in level.ore:
-		if node.position.distance_to(level.C+Vector3(-2.5,0,0))<0.1:
+		if node.position.distance_to(level.deep_mine.get_node("Markers/FirstFace").global_position)<0.1:
 			vein=node
 			break
 	checks.fresh_vein_exists=vein!=null
@@ -122,7 +122,7 @@ func _run() -> void:
 	arena._update_camera(1.0)
 	await _frames(3)
 	checks.crew_can_exit_at_mine = crew.disembark()
-	await _place_crew(level.C + Vector3(-7,0,0))
+	await _place_crew(level.deep_mine.get_node("Markers/FirstFace").global_position + Vector3(-7,0,0))
 	var initial: int = level.ore.size()
 	await _frames(60)
 	checks.no_remote_mining = level.ore.size() == initial and not level.mining

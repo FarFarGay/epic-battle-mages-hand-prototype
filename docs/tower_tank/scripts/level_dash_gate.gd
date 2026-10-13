@@ -1,5 +1,5 @@
 extends StaticBody3D
-## A closed wooden door is a movement obstacle, broken only by a super dash.
+## A wooden door broken by either dash, so spending combat charge cannot lock progression.
 const Geo = preload("res://scripts/geo.gd")
 var level
 var broken := false
@@ -47,7 +47,7 @@ func reset() -> void:
 func can_super_dash_break() -> bool:
 	return not broken
 
-func break_by_super_dash(direction: Vector3) -> bool:
+func break_by_dash(direction: Vector3) -> bool:
 	if broken: return false
 	broken = true
 	collision_layer = 0

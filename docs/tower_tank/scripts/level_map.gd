@@ -33,10 +33,16 @@ func _draw() -> void:
 	draw_rect(Rect2(p(level.ENTRY_RECT.position),level.ENTRY_RECT.size*factor),Color("b09f7c"))
 	draw_rect(Rect2(p(Vector2(128,-10)),Vector2(36,20)*factor),Color("b09f7c"))
 	draw_rect(Rect2(p(Vector2(-138,-10)),Vector2(10,20)*factor),Color("333e49"))
+	if level.deep_mine:
+		var mouth: Vector3 = level.deep_mine.get_node("Markers/Entrance").global_position
+		var end: Vector3 = level.deep_mine.get_node("Markers/DeepChamber").global_position
+		draw_rect(Rect2(p(Vector2(mouth.x-5,mouth.z-20)),Vector2(end.x-mouth.x+15,60)*factor),Color("424d50"))
+		draw_line(p(Vector2(mouth.x,mouth.z)),p(Vector2(end.x,end.z)),Color("b39866"),4.0)
+		caption(p(Vector2(mouth.x+15,mouth.z-22)),"ГЛУБОКАЯ ШАХТА",Color("e0c28c"),13)
 	if level.arena.hand.puzzle.opened: draw_rect(Rect2(p(Vector2(-138,-3)),Vector2(10,6)*factor),Color("74cbc0"))
-	for spec in [[Vector2(-79,-21),Vector2(15,17)],[Vector2(-34,4),Vector2(35,11)],[Vector2(69,-43),Vector2(17,17)]]:
+	for spec in [[Vector2(-79,-21),Vector2(15,17)],[Vector2(-34,4),Vector2(35,11)],[Vector2(41,-43),Vector2(17,17)]]:
 		draw_rect(Rect2(p(spec[0]-spec[1]*0.5),spec[1]*factor),Color("444d53"))
-	for entry in [[level.A,32.0,"A · ПАЗЛ",Color("ad92bd")],[level.B,32.0,"B · ДАНЖ",Color("7faab8")],[level.C,56.0,"C · ШАХТА",Color("c9a367")]]:
+	for entry in [[level.A,32.0,"A · ПАЗЛ",Color("ad92bd")],[level.B,32.0,"B · ДАНЖ",Color("7faab8")],[level.C,56.0,"C · ПОСЕЛЕНИЕ",Color("c9a367")]]:
 		var pos := Vector2(entry[0].x,entry[0].z)
 		var radius: float = entry[1]*factor*0.5
 		draw_circle(p(pos),radius,entry[3])

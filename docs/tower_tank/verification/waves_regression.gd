@@ -24,7 +24,7 @@ func _run() -> void:
 	arena.level.automatic_encounters = false
 	arena.test_aim = true
 	await _clear()
-	arena.tank.position = Vector3(36,4.04,19)
+	arena.tank.position = arena.level.C+Vector3(-12,0.04,9)
 	arena.tank.stop_drive()
 	arena.focus = arena.tank.position
 	arena._update_camera(1.0)
@@ -76,13 +76,14 @@ func _run() -> void:
 	checks.incremental_spawn = waves.pending.size()>0 and waves.living.size()>0 and waves.living.size()<=waves.waves[0].spawn_per_frame
 	await _clear()
 	checks.reset_cancels_spawn_and_actors = waves.active==-1 and waves.remaining()==0 and arena.battle.enemies.is_empty()
+	await _check_building_navigation()
 	# Real traversals of all three ramps, with the same movement as a full wave.
 	var walkers: Array = []
 	for entrance in waves.get_node("Entrances").get_children():
 		var start: Vector3 = entrance.get_node("Foot").global_position+entrance.get_node("Spawn").global_basis.z*3.0
 		var enemy = arena.battle.spawn_enemy(start)
 		enemy.attack_on_spawn = true
-		enemy.wave_route = entrance.route(0.0)
+		enemy.set_wave_route(entrance,0.0)
 		enemy.hp = 10000
 		walkers.append(enemy)
 	for i in 1800:
@@ -132,6 +133,8 @@ func _run() -> void:
 	var cpu_max := 0
 	var peak_alive := 0
 	var arrivals := {}
+	var arrived_ids := {}
+	var arrived_counts := {"Center":0,"Right":0,"North":0}
 	var stages := {"logic":0,"separation":0,"move":0,"shared":0,"wave":0}
 	arena.battle.profile_enabled = true
 	for i in 4500:
@@ -147,14 +150,19 @@ func _run() -> void:
 		peak_alive = maxi(peak_alive,arena.battle.enemies.size())
 		if i%60==0:
 			for enemy in arena.battle.enemies:
-				if enemy.wave_route.is_empty(): arrivals[enemy.wave_entrance]=true
+				if enemy.wave_route.is_empty():
+					arrivals[enemy.wave_entrance]=true
+					if not arrived_ids.has(enemy.get_instance_id()):
+						arrived_ids[enemy.get_instance_id()] = true
+						arrived_counts[enemy.wave_entrance] += 1
 		await _frames(1)
 		if i%600==599:
 			print("WAVE_PROFILE: ",i+1," ",JSON.stringify(stages)," movement=",JSON.stringify(arena.battle.movement_profile))
 	checks.full_wave_spawns_all_600 = waves.pending.is_empty() and waves.spawned_by_type.values().reduce(func(a,b): return a+b,0)==600
 	checks.full_wave_reaches_all_three_sides = arrivals.size()==3
+	checks.full_wave_crowds_climb_each_ramp = arrived_counts.values().all(func(count): return count>=50)
 	checks.full_wave_crowd_capacity = peak_alive<=arena.battle.crowd.CAPACITY
-	metrics.full_wave = {"peak_alive":peak_alive,"pending":waves.pending.size(),"arrived_sides":arrivals.keys(),"mean_ai_spawn_ms":cpu/4500000.0,"max_ai_spawn_ms":cpu_max/1000.0}
+	metrics.full_wave = {"peak_alive":peak_alive,"pending":waves.pending.size(),"arrived_sides":arrivals.keys(),"arrived_counts":arrived_counts,"mean_ai_spawn_ms":cpu/4500000.0,"max_ai_spawn_ms":cpu_max/1000.0}
 	if DisplayServer.get_name()!="headless":
 		await arena._capture(arena.verification_path("waves_combat.png"))
 	await _clear()
@@ -165,3 +173,47 @@ func _run() -> void:
 	file.close()
 	print("WAVES_CHECK: ",JSON.stringify(report))
 	get_tree().quit(0 if passed else 1)
+
+func _check_building_navigation() -> void:
+	# A wave expands the old local map. Test movement before the background
+	# sweep reaches its spawn cells, including actual obstacles and cliff edges.
+	waves.completed = 2
+	waves.request_wave(2)
+	var battle = arena.battle
+	var old_grid = battle.grid
+	var start: Vector3 = waves.get_node("Entrances/Center/Spawn").global_position
+	start = Vector3(roundf(start.x),0,roundf(start.z))
+	var wall := StaticBody3D.new()
+	wall.collision_layer = 1
+	wall.collision_mask = 0
+	arena.add_child(wall)
+	wall.position = start+Vector3(6,0,0)
+	preload("res://scripts/geo.gd").collider(wall,Vector3(2,3,2),Vector3.UP*1.5)
+	await _frames(2)
+	battle._begin_navigation()
+	var cursor: int = battle.nav_build_cursor
+	checks.spawn_outside_previous_navigation = not battle.grid.region.has_point(Vector2i(roundi(start.x-battle.nav_origin.x),roundi(start.z-battle.nav_origin.z)))
+	checks.spawn_cell_available_during_build = battle._ground_open(start)
+	checks.partial_navigation_rejects_wall = not battle._ground_open(wall.position)
+	var enemy = battle.spawn_enemy(start)
+	enemy.velocity = Vector3(0,0,1)
+	battle.move_ground(enemy,1.0/60)
+	checks.spawn_moves_without_physics_fallback = enemy.collision_mask==0 and enemy.position.z>start.z
+	checks.demand_queries_keep_build_incremental = battle.nav_building and battle.nav_build_cursor==cursor and battle.grid==old_grid
+	# Every sampled result must match the final map after the sweep completes.
+	var samples: Array[Dictionary] = []
+	for x in range(-50,81,3):
+		for z in range(-50,71,3):
+			var point := Vector3(x,0,z)
+			var cell := Vector2i(roundi(point.x-battle.nav_build_origin.x),roundi(point.z-battle.nav_build_origin.z))
+			if battle.nav_build_grid.region.has_point(cell): samples.append({"point":point,"open":battle._ground_open(point)})
+	while battle.nav_building: battle._step_navigation(0)
+	checks.demand_navigation_matches_completed = samples.all(func(sample): return battle._ground_open(sample.point)==sample.open)
+	checks.completed_navigation_has_no_unknown_cells = not battle.solid.has(battle.NAV_UNKNOWN)
+	metrics.demand_navigation_samples = samples.size()
+	wall.queue_free()
+	await _frames(2)
+	battle._begin_navigation()
+	checks.rebuild_invalidates_demand_cells = battle._ground_open(start+Vector3(6,0,0))
+	await _clear()
+	checks.reset_discards_partial_navigation = not battle.nav_building and battle.nav_build_solid.is_empty()

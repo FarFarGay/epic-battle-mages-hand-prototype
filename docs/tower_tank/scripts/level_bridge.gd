@@ -100,7 +100,7 @@ func seat(body: RigidBody3D) -> void:
 	label.hide()
 	arena.level.set_bridge(true)
 	arena.sound.play("lock",-2.0,0.7)
-	arena.crew.tell("Мост установлен · дверь впереди: удерживай Space и нажми ПКМ, чтобы пробить супердэшем")
+	arena.crew.tell("Мост установлен · дверь впереди: коротко нажми SPACE, чтобы пробить рывком")
 
 func unseat(_body: RigidBody3D) -> void:
 	pass # Deployed bridge stays latched until the level is reset.

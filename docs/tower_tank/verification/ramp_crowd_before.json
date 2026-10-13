@@ -1,0 +1,269 @@
+{
+  "arrived": {
+    "Center": 49,
+    "North": 43,
+    "Right": 44
+  },
+  "expected": 600,
+  "history": [
+    {
+      "alive": 580,
+      "arrived": {
+        "Center": 3,
+        "North": 9,
+        "Right": 8
+      },
+      "pending": 0,
+      "seconds": 15
+    },
+    {
+      "alive": 528,
+      "arrived": {
+        "Center": 18,
+        "North": 24,
+        "Right": 30
+      },
+      "pending": 0,
+      "seconds": 30
+    },
+    {
+      "alive": 512,
+      "arrived": {
+        "Center": 26,
+        "North": 30,
+        "Right": 32
+      },
+      "pending": 0,
+      "seconds": 45
+    },
+    {
+      "alive": 496,
+      "arrived": {
+        "Center": 33,
+        "North": 35,
+        "Right": 36
+      },
+      "pending": 0,
+      "seconds": 60
+    },
+    {
+      "alive": 479,
+      "arrived": {
+        "Center": 39,
+        "North": 39,
+        "Right": 43
+      },
+      "pending": 0,
+      "seconds": 75
+    },
+    {
+      "alive": 464,
+      "arrived": {
+        "Center": 49,
+        "North": 43,
+        "Right": 44
+      },
+      "pending": 0,
+      "seconds": 90
+    }
+  ],
+  "keep_arrivals": false,
+  "mean_ai_spawn_ms": 7.98503462962963,
+  "passed": false,
+  "pending": 0,
+  "stranded": [
+    {
+      "clearance": 0.501833736896515,
+      "entrance": "Center",
+      "goal": "(2.0, 0.0, 9.969707)",
+      "position": "(9.294567, 1.661015, 10.24195)",
+      "route_left": 2,
+      "separation": "(0.484236, 0.0, 0.182021)"
+    },
+    {
+      "clearance": 0.0,
+      "entrance": "North",
+      "goal": "(31.06987, 0.0, -34.0)",
+      "position": "(30.62713, 1.026587, -30.05365)",
+      "route_left": 2,
+      "separation": "(-0.71899, 0.0, 2.496709)"
+    },
+    {
+      "clearance": 0.0,
+      "entrance": "Center",
+      "goal": "(2.0, 0.0, 8.710144)",
+      "position": "(2.43284, 0.04, 6.417166)",
+      "route_left": 2,
+      "separation": "(-0.262216, 0.0, -0.472942)"
+    },
+    {
+      "clearance": 1.0,
+      "entrance": "Right",
+      "goal": "(23.0, 4.0, 27.50255)",
+      "position": "(18.46687, 0.04, 24.49735)",
+      "route_left": 1,
+      "separation": "(0.173715, 0.0, -0.000327)"
+    },
+    {
+      "clearance": 0.0,
+      "entrance": "North",
+      "goal": "(32.63385, 0.0, -34.0)",
+      "position": "(34.04731, 0.258863, -33.12455)",
+      "route_left": 2,
+      "separation": "(0.136379, 0.0, -0.350755)"
+    },
+    {
+      "clearance": 1.0,
+      "entrance": "Center",
+      "goal": "(23.0, 4.0, 8.09322)",
+      "position": "(18.46406, 0.04, 5.495808)",
+      "route_left": 1,
+      "separation": "(1.02925, 0.0, -0.00366)"
+    },
+    {
+      "clearance": 0.153189495205879,
+      "entrance": "Right",
+      "goal": "(4.0, 0.0, 28.73474)",
+      "position": "(4.503799, 0.04, 30.95654)",
+      "route_left": 2,
+      "separation": "(0.277043, 0.0, -0.454579)"
+    },
+    {
+      "clearance": 1.0,
+      "entrance": "Center",
+      "goal": "none",
+      "position": "(22.81541, 4.04, 14.1686)",
+      "route_left": 0,
+      "separation": "(0.0, 0.0, 0.0)"
+    },
+    {
+      "clearance": 0.0,
+      "entrance": "North",
+      "goal": "(32.71637, 4.0, -15.0)",
+      "position": "(34.53394, 0.04, -34.68742)",
+      "route_left": 1,
+      "separation": "(-0.252712, 0.0, 0.383858)"
+    },
+    {
+      "clearance": 0.0,
+      "entrance": "North",
+      "goal": "(32.0876, 0.0, -34.0)",
+      "position": "(27.45101, 0.04, -31.96319)",
+      "route_left": 2,
+      "separation": "(-0.920937, 0.0, -0.117277)"
+    },
+    {
+      "clearance": 0.119569197297096,
+      "entrance": "Center",
+      "goal": "(23.0, 4.0, 8.207042)",
+      "position": "(15.02268, 0.04, 5.498377)",
+      "route_left": 1,
+      "separation": "(-0.285257, 0.0, -0.001567)"
+    },
+    {
+      "clearance": 0.0,
+      "entrance": "Center",
+      "goal": "(23.0, 4.0, 11.70422)",
+      "position": "(2.536764, 0.159281, 12.80063)",
+      "route_left": 1,
+      "separation": "(-0.009018, 0.0, 1.808804)"
+    },
+    {
+      "clearance": 0.0,
+      "entrance": "Center",
+      "goal": "(2.0, 0.0, 10.83681)",
+      "position": "(4.652609, 0.629469, 11.08627)",
+      "route_left": 2,
+      "separation": "(3.406524, 0.0, 0.803489)"
+    },
+    {
+      "clearance": 1.0,
+      "entrance": "Right",
+      "goal": "(23.0, 4.0, 28.90051)",
+      "position": "(20.47051, 0.04, 31.51017)",
+      "route_left": 1,
+      "separation": "(0.849091, 0.0, 0.007127)"
+    },
+    {
+      "clearance": 0.0,
+      "entrance": "North",
+      "goal": "(31.92087, 0.0, -34.0)",
+      "position": "(30.80909, 0.833158, -30.82737)",
+      "route_left": 2,
+      "separation": "(-0.49031, 0.0, 0.513304)"
+    },
+    {
+      "clearance": 0.0,
+      "entrance": "Center",
+      "goal": "(2.0, 0.0, 10.44662)",
+      "position": "(6.032737, 0.936164, 11.11608)",
+      "route_left": 2,
+      "separation": "(1.484355, 0.0, 0.297202)"
+    },
+    {
+      "clearance": 0.0305976457893848,
+      "entrance": "North",
+      "goal": "(32.82964, 0.0, -34.0)",
+      "position": "(31.33334, 0.04, -34.03215)",
+      "route_left": 2,
+      "separation": "(0.3658, 0.0, -0.139962)"
+    },
+    {
+      "clearance": 1.0,
+      "entrance": "Center",
+      "goal": "(2.0, 0.0, 10.67128)",
+      "position": "(5.577861, 0.04, 5.48901)",
+      "route_left": 2,
+      "separation": "(1.043561, 0.0, 0.777211)"
+    },
+    {
+      "clearance": 0.0,
+      "entrance": "Right",
+      "goal": "(23.0, 4.0, 28.55899)",
+      "position": "(4.263422, 0.105856, 29.91546)",
+      "route_left": 1,
+      "separation": "(-0.529494, 0.0, 0.017694)"
+    },
+    {
+      "clearance": 0.0601308532059193,
+      "entrance": "North",
+      "goal": "(31.72097, 0.0, -34.0)",
+      "position": "(35.55614, 0.04, -34.90902)",
+      "route_left": 2,
+      "separation": "(-0.097814, 0.0, -0.941119)"
+    },
+    {
+      "clearance": 0.0,
+      "entrance": "Center",
+      "goal": "(23.0, 4.0, 8.387941)",
+      "position": "(17.31686, 0.04, 5.499888)",
+      "route_left": 1,
+      "separation": "(0.00223, 0.0, 0.003569)"
+    },
+    {
+      "clearance": 0.291215091943741,
+      "entrance": "Right",
+      "goal": "(4.0, 0.0, 28.60824)",
+      "position": "(9.002587, 1.290647, 27.12659)",
+      "route_left": 2,
+      "separation": "(0.621418, 0.0, -0.459039)"
+    },
+    {
+      "clearance": 0.00151385669596493,
+      "entrance": "North",
+      "goal": "(32.82579, 4.0, -15.0)",
+      "position": "(35.50061, 0.04, -20.67304)",
+      "route_left": 1,
+      "separation": "(-0.020734, 0.0, -0.001142)"
+    },
+    {
+      "clearance": 0.0,
+      "entrance": "Center",
+      "goal": "(23.0, 4.0, 8.820534)",
+      "position": "(16.17324, 0.04, 5.499987)",
+      "route_left": 1,
+      "separation": "(-0.022527, 0.0, 0.001521)"
+    }
+  ],
+  "total_arrived": 136
+}

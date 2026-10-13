@@ -1,0 +1,43 @@
+{
+  "checks": {
+    "bomber_suicide_no_charge": true,
+    "brute_gets_up": true,
+    "brute_hit_once": true,
+    "brute_knocked_down": true,
+    "cancel_keeps_charge": true,
+    "cancel_restores_collision_without_refund": true,
+    "charge_does_not_decay": true,
+    "chip_hit_does_not_wake_brute": true,
+    "collision_restored_on_finish": true,
+    "crew_kills_count_and_charge_caps": true,
+    "damage_without_death_no_charge": true,
+    "death_adds_charge": true,
+    "death_only_counts_once": true,
+    "dense_crowd_breakthrough": true,
+    "dense_crowd_charge_capped": true,
+    "empty_meter_blocks_super": true,
+    "flank_knocked_down_without_damage": true,
+    "knockdown_visible": true,
+    "mixed_pack_passed": true,
+    "other_floor_untouched": true,
+    "outside_corridor_untouched": true,
+    "ram_kills_recharge": true,
+    "recovery_window_blocks_attacks": true,
+    "reset_clears_charge": true,
+    "start_spends_once": true,
+    "super_stops_at_wall": true,
+    "sweep_does_not_hit_through_wall": true,
+    "weak_skeletons_killed": true,
+    "zero_distance_does_not_spend": true
+  },
+  "metrics": {
+    "dense_crowd": {
+      "ai_max_ms": 9.727,
+      "charge": 44,
+      "kills": 44,
+      "tank_max_ms": 4.177
+    },
+    "mixed_pack_max_sweep_ms": 1.179
+  },
+  "passed": true
+}

@@ -39,6 +39,7 @@ var simulation_frame := 0
 var profile_enabled := false
 var last_profile := {}
 var movement_profile := {}
+var route_paths_left := 2
 var solid := PackedByteArray()
 var flow_next := PackedInt32Array()
 var flow_distance := PackedInt32Array()
@@ -67,6 +68,7 @@ var nav_build_query: PhysicsShapeQueryParameters3D
 var last_nav_slice_usec := 0
 const NAV_SLICE_USEC := 2500
 const NAV_SLICE_CELLS := 128
+const NAV_UNKNOWN := 2
 const DIRECTIONS := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1), Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]
 
 func _ready() -> void:
@@ -188,6 +190,7 @@ func _begin_navigation() -> void:
 	nav_build_grid.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	nav_build_grid.update()
 	nav_build_solid.resize(region.size.x*region.size.y)
+	nav_build_solid.fill(NAV_UNKNOWN)
 	nav_build_cursor = 0
 	var query := PhysicsShapeQueryParameters3D.new()
 	query.shape = probe
@@ -208,22 +211,9 @@ func _step_navigation(budget_usec: int = NAV_SLICE_USEC) -> void:
 	var region := nav_build_grid.region
 	var area := nav_build_solid.size()
 	var limit := area if budget_usec==0 else mini(area,nav_build_cursor+NAV_SLICE_CELLS)
-	var space := get_world_3d().direct_space_state
 	while nav_build_cursor<limit:
 		if budget_usec>0 and Time.get_ticks_usec()-started>=budget_usec: break
-		var x := nav_build_cursor%region.size.x+region.position.x
-		var z := nav_build_cursor/region.size.x+region.position.y
-		var point := nav_build_origin+Vector3(x,0,z)
-		var floor_y: float = arena.ground_height(point)
-		nav_build_query.transform.origin = point+Vector3.UP*(floor_y+(1.3 if arena.level else 0.9))
-		var blocked := not space.intersect_shape(nav_build_query,1).is_empty()
-		if arena.level:
-			for offset in [Vector3.RIGHT,Vector3.LEFT,Vector3.FORWARD,Vector3.BACK]:
-				if absf(arena.ground_height(point+offset)-floor_y)>0.65:
-					blocked=true
-					break
-		nav_build_grid.set_point_solid(Vector2i(x,z),blocked)
-		nav_build_solid[nav_build_cursor]=int(blocked)
+		_sample_navigation_cell(nav_build_cursor)
 		nav_build_cursor+=1
 	last_nav_slice_usec = Time.get_ticks_usec()-started
 	if nav_build_cursor<area: return
@@ -248,6 +238,27 @@ func _step_navigation(budget_usec: int = NAV_SLICE_USEC) -> void:
 	flow_build_distance.clear()
 	flow_goal = -1
 	flow_build_goal = -1
+
+func _sample_navigation_cell(index: int) -> bool:
+	# Movement may request a cell before the background sweep reaches it.
+	# Unknown cells are tested against real scenery exactly once, never assumed
+	# open. The sweep reuses these results and still publishes one complete flow map.
+	if nav_build_solid[index] != NAV_UNKNOWN: return nav_build_solid[index] == 0
+	var region := nav_build_grid.region
+	var x := index%region.size.x+region.position.x
+	var z := index/region.size.x+region.position.y
+	var point := nav_build_origin+Vector3(x,0,z)
+	var floor_y: float = arena.ground_height(point)
+	nav_build_query.transform.origin = point+Vector3.UP*(floor_y+(1.3 if arena.level else 0.9))
+	var blocked := not get_world_3d().direct_space_state.intersect_shape(nav_build_query,1).is_empty()
+	if arena.level:
+		for offset in [Vector3.RIGHT,Vector3.LEFT,Vector3.FORWARD,Vector3.BACK]:
+			if absf(arena.ground_height(point+offset)-floor_y)>0.65:
+				blocked = true
+				break
+	nav_build_grid.set_point_solid(Vector2i(x,z),blocked)
+	nav_build_solid[index] = int(blocked)
+	return not blocked
 
 func _update_flow() -> void:
 	if solid.size() != nav_area: return
@@ -334,19 +345,29 @@ func flow_direction(from: Vector3, to: Vector3, approach_lane: float = INF) -> V
 	return Vector3(to.x - from.x, 0, to.z - from.z).normalized()
 
 func _ground_open(pos: Vector3, clearance: float = 0.0) -> bool:
-	var x := roundi(pos.x - nav_origin.x) - nav_min.x
-	var z := roundi(pos.z - nav_origin.z) - nav_min.y
-	if x < 0 or x >= nav_width or z < 0 or z >= nav_height or solid[z * nav_width + x] != 0: return false
+	if nav_building:
+		var cell := Vector2i(roundi(pos.x-nav_build_origin.x),roundi(pos.z-nav_build_origin.z))
+		var region := nav_build_grid.region
+		if region.has_point(cell):
+			var index := (cell.y-region.position.y)*region.size.x+cell.x-region.position.x
+			if not _sample_navigation_cell(index): return false
+		elif not _completed_ground_open(pos): return false
+	elif not _completed_ground_open(pos): return false
 	if clearance > 0.0:
 		return _ground_open(pos + Vector3.RIGHT * clearance) and _ground_open(pos + Vector3.LEFT * clearance) and _ground_open(pos + Vector3.FORWARD * clearance) and _ground_open(pos + Vector3.BACK * clearance)
 	return true
+
+func _completed_ground_open(pos: Vector3) -> bool:
+	var x := roundi(pos.x-nav_origin.x)-nav_min.x
+	var z := roundi(pos.z-nav_origin.z)-nav_min.y
+	return solid.size()==nav_area and x>=0 and x<nav_width and z>=0 and z<nav_height and solid[z*nav_width+x]==0
 
 func move_ground(enemy: CharacterBody3D, dt: float, floor_y: float = INF) -> void:
 	# The shared grid handles obstacles and cliff edges; analytic terrain heights
 	# keep the crowd on ramps without a separate physics sweep for every skeleton.
 	var clearance: float = enemy.body_radius - 0.4
 	if not is_finite(floor_y): floor_y = arena.ground_height(enemy.position)
-	if absf(enemy.position.y-floor_y-0.04) > 0.15 or solid.size() != nav_area or not _ground_open(enemy.position, clearance):
+	if absf(enemy.position.y-floor_y-0.04) > 0.15 or not _ground_open(enemy.position, clearance):
 		if profile_enabled:
 			var reason := "height" if absf(enemy.position.y-floor_y-0.04)>0.15 else ("building" if solid.size()!=nav_area else "blocked")
 			movement_profile[reason] = movement_profile.get(reason,0)+1
@@ -408,6 +429,15 @@ func find_path(from: Vector3, to: Vector3) -> PackedVector3Array:
 	if result.size() > 1: result.remove_at(0)
 	return result
 
+func request_route_path(from: Vector3, to: Vector3) -> PackedVector3Array:
+	# Only walkers facing static obstructions need an individual detour.
+	# Bound the work per tick; the rest retain their current steering and retry.
+	if route_paths_left<=0 or nav_building or solid.size()!=nav_area: return PackedVector3Array()
+	if not grid.region.has_point(Vector2i(roundi(from.x-nav_origin.x),roundi(from.z-nav_origin.z))): return PackedVector3Array()
+	if not grid.region.has_point(Vector2i(roundi(to.x-nav_origin.x),roundi(to.z-nav_origin.z))): return PackedVector3Array()
+	route_paths_left -= 1
+	return find_path(from,to)
+
 func spawn_enemy(pos: Vector3, giant: bool = false, shield_guard: bool = false, role: StringName = &"ordinary", settings: Resource = null) -> CharacterBody3D:
 	var enemy := SkeletonActor.new()
 	enemy.arena = arena
@@ -458,11 +488,12 @@ func _spawn_wave_batch() -> void:
 func remaining() -> int:
 	return enemies.size() + spawning_left + (arena.level.spawn_queue.size()+(arena.level.WORLD_SKELETONS if arena.level.world_population_pending else 0) if arena.level else 0)
 
-func killed(enemy: CharacterBody3D) -> void:
+func killed(enemy: CharacterBody3D, source: StringName = &"") -> void:
 	if not enemies.has(enemy): return
 	if is_instance_valid(enemy.wave_owner): enemy.wave_owner.enemy_removed(enemy)
 	enemies.erase(enemy)
 	kills += 1
+	if source != &"self_destruct": arena.tank.dash.add_kill()
 	for i in (5 if enemy.giant else 1):
 		arena.crew.loot.spawn_coin(enemy.position + Vector3.UP, Vector3.UP * 3.0)
 	arena.sound.play("shatter", -9.0, 1.3)
@@ -590,6 +621,7 @@ func tick(dt: float) -> void:
 	last_profile["shared"] = Time.get_ticks_usec() - tick_started
 	simulation_time += dt
 	simulation_frame += 1
+	route_paths_left = 2
 	var player_position: Vector3 = arena.crew.center()
 	for enemy in enemies.duplicate():
 		enemy.pending_dt += dt

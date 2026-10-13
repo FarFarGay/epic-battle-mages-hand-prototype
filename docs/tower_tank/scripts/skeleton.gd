@@ -15,6 +15,14 @@ var role: StringName = &"ordinary"
 var special_settings: Resource = preload("res://scripts/defense_enemy_settings.gd").new()
 var wave_owner: Node
 var wave_route := PackedVector3Array()
+var wave_foot := Vector3.ZERO
+var wave_forward := Vector3.ZERO
+var wave_side := Vector3.ZERO
+var wave_half_width := 0.0
+var wave_length := 0.0
+var wave_steer_wait := 0.0
+var wave_steer_elapsed := 0.0
+var wave_steering := Vector3.ZERO
 var wave_entrance: StringName
 var throw_aim := Vector3.ZERO
 var shield_hp := 0.0
@@ -54,6 +62,7 @@ var visual: Node3D
 var warning: Node3D
 var animation_speed := 0.0
 var body_lean := 0.1
+var knockdown_left := 0.0
 var move_direction := Vector3.ZERO
 var approach_lane := INF
 var separation_force := Vector3.ZERO
@@ -192,11 +201,75 @@ func _tick_patrol(dt: float) -> void:
 		patrol_wait=patrol_rng.randf_range(0.8,2.2)
 		patrol_goal=position
 
+func set_wave_route(entrance: Node3D, lane: float) -> void:
+	path.clear()
+	wave_steer_wait = 0.0
+	wave_steer_elapsed = 0.0
+	wave_route = entrance.route(lane)
+	wave_foot = entrance.get_node("Foot").global_position
+	var along: Vector3 = entrance.get_node("Crest").global_position-wave_foot
+	along.y = 0.0
+	wave_length = along.length()
+	wave_forward = along.normalized()
+	wave_side = wave_forward.cross(Vector3.UP)
+	wave_half_width = entrance.route_half_width*entrance.get_node("Spawn").global_basis.x.length()
+
+func _wave_direction(dt: float) -> Vector3:
+	while not wave_route.is_empty():
+		var delta := position-wave_route[0]
+		var close := Vector2(delta.x,delta.z).length()<1.1 and absf(delta.y)<0.6
+		# A waypoint is a cross-section of the ramp. Walkers pushed past the
+		# foot must never turn downhill to touch its exact position again.
+		var crossed := not wave_forward.is_zero_approx() and delta.dot(wave_forward)>=-0.25 and delta.y>=-0.6 and absf((position-wave_foot).dot(wave_side))<=wave_half_width+0.4
+		if not close and not crossed: break
+		wave_route.remove_at(0)
+		path.clear()
+	if wave_route.is_empty(): return Vector3.ZERO
+	var along := (position-wave_foot).dot(wave_forward)
+	if along>0.5 and along<wave_length and wave_route.size()==1:
+		var center := wave_foot+wave_forward*along
+		# Recover at the foot if knocked off a side, instead of pushing forever
+		# against the elevated edge while aiming straight at the crest.
+		if position.y<arena.ground_height(center)-0.45: return -wave_forward
+	var offset := wave_route[0]-position
+	offset.y = 0
+	# The far formation can be behind the wreck or rocks. Detour around real
+	# scenery before the foot; crowd pressure alone never requests an A* path.
+	if wave_route.size()==2:
+		path_left -= dt
+		# Grid corners are shared by adjacent walkers. Requiring a 30 cm touch
+		# made two actors stop nose-to-nose at the same corner indefinitely.
+		while not path.is_empty() and Vector2(path[0].x-position.x,path[0].z-position.z).length()<0.85: path.remove_at(0)
+		var wanted := offset.normalized() if path.is_empty() else (path[0]-position).normalized()
+		if path_left<=0.0 and not battle._ground_open(position+wanted*1.0,body_radius-0.4):
+			var detour: PackedVector3Array = battle.request_route_path(position,wave_route[0])
+			if not detour.is_empty():
+				path = detour
+				path_left = 0.6
+		if not path.is_empty():
+			offset = path[0]-position
+			offset.y = 0
+	return offset.normalized()
+
+func _confine_wave_motion(desired: Vector3, dt: float) -> Vector3:
+	if wave_route.is_empty() or wave_forward.is_zero_approx(): return desired
+	var along := (position-wave_foot).dot(wave_forward)
+	if along<0.0 or along>wave_length: return desired
+	var center := wave_foot+wave_forward*along
+	if position.y<arena.ground_height(center)-0.45: return -wave_forward*move_speed
+	var side := (position-wave_foot).dot(wave_side)
+	var side_speed := desired.dot(wave_side)
+	var edge := wave_half_width+0.2
+	var next_side := clampf(side+side_speed*dt,-edge,edge)
+	var corrected := clampf((next_side-side)/maxf(dt,0.001),-move_speed,move_speed)
+	return desired+wave_side*(corrected-side_speed)
+
 func tick(dt: float) -> void:
 	var profile_start := Time.get_ticks_usec() if battle.profile_enabled else 0
 	if dead: return
 	bump_cooldown = maxf(0.0, bump_cooldown - dt)
 	hit_flash = maxf(0.0, hit_flash - dt)
+	knockdown_left = maxf(0.0, knockdown_left - dt)
 	if hand_held:
 		warning.hide()
 		stride += dt * 9.0
@@ -231,12 +304,17 @@ func tick(dt: float) -> void:
 		var direction := offset.normalized()
 		rotation.y = lerp_angle(rotation.y, atan2(-direction.x, -direction.z), 1.0 - exp(-12.0 * dt))
 		var reach: float = (1.32 if target == arena.tank else 0.0) + (0.5 if giant else 0.0)
-		while not wave_route.is_empty() and Vector2(position.x-wave_route[0].x,position.z-wave_route[0].z).length()<1.1 and absf(position.y-wave_route[0].y)<0.6:
-			wave_route.remove_at(0)
+		# Like the shared flow steering, route decisions run at 10 Hz. Motion,
+		# collision, separation and edge confinement still run every actor tick.
+		if not wave_route.is_empty():
+			wave_steer_wait -= dt
+			wave_steer_elapsed += dt
+			if wave_steer_wait<=0.0:
+				wave_steering = _wave_direction(wave_steer_elapsed)
+				wave_steer_elapsed = 0.0
+				wave_steer_wait = 0.10
 		if not wave_route.is_empty() and offset.length()>4.0 and state!=State.WINDUP:
-			var route_offset := wave_route[0]-position
-			route_offset.y = 0.0
-			move_direction = route_offset.normalized()
+			move_direction = wave_steering
 			desired = move_direction*move_speed
 			rotation.y = lerp_angle(rotation.y,atan2(-move_direction.x,-move_direction.z),1.0-exp(-12.0*dt))
 		elif role in [&"bomber", &"thrower"]:
@@ -265,6 +343,7 @@ func tick(dt: float) -> void:
 		walk_clearance = neighbors.w
 	if state == State.APPROACH: desired *= walk_clearance
 	if state != State.STAGGER: desired += separation_force
+	if state == State.APPROACH: desired = _confine_wave_motion(desired,dt)
 	# Crowd pressure must not pin a walker against a prop while its route
 	# points into open ground. Keep the static collision grid authoritative.
 	if state == State.APPROACH and battle.solid.size()==battle.nav_area and not move_direction.is_zero_approx():
@@ -291,7 +370,7 @@ func _special_attack(dt: float, direction: Vector3, distance: float, reach: floa
 			if role == &"bomber":
 				var point := global_position+Vector3.UP*0.5
 				# Killing or grabbing a runner before the fuse ends cancels its attack.
-				take_damage(hp+1.0)
+				take_damage(hp+1.0,Vector3.ZERO,0.0,&"self_destruct")
 				battle.ordnance.blast(point,special_settings.bomber_radius,special_settings.bomber_damage,true)
 			else:
 				battle.ordnance.throw_stone(global_position+Vector3.UP*1.6+direction*0.6,throw_aim,special_settings)
@@ -323,6 +402,7 @@ func on_hand_grab() -> void:
 	visual.scale = Vector3.ONE
 	visual.position = Vector3.ZERO
 	body_lean = 0.0
+	knockdown_left = 0.0
 
 func on_hand_release(motion: Vector3) -> void:
 	hand_held = false
@@ -391,6 +471,18 @@ func _animate(dt: float, speed: float) -> void:
 	var windup := state == State.WINDUP
 	warning.visible = windup
 	body_lean = lerpf(body_lean, -0.22 if windup else (0.48 if state == State.LUNGE else 0.10), 1.0 - exp(-22.0 * dt))
+	visual.rotation.x = lerpf(visual.rotation.x,-1.35*minf(knockdown_left/0.25,1.0),1.0-exp(-22.0*dt))
+
+func knock_down(direction: Vector3) -> void:
+	if dead or hand_held or hand_thrown: return
+	attack_on_spawn = true
+	knockdown_left = 0.85 if giant else 1.15
+	state = State.STAGGER
+	timer = knockdown_left
+	impulse = direction*(7.0 if giant else 12.0)
+	rotation.y = atan2(-direction.x,-direction.z)
+	warning.hide()
+
 func take_damage(amount: float, direction: Vector3 = Vector3.ZERO, force: float = 0.0, source: StringName = &"") -> void:
 	if dead or amount <= 0.0: return
 	if world_resident: attack_on_spawn=true # A long-range hit also wakes the victim.
@@ -406,7 +498,7 @@ func take_damage(amount: float, direction: Vector3 = Vector3.ZERO, force: float 
 			battle.crowd.scatter_shield(self, direction)
 			arena.sound.play("shield_break", -7.0)
 			state = State.STAGGER
-			timer = 0.25
+			timer = maxf(0.25,knockdown_left)
 			impulse = direction * minf(force, 3.0)
 			warning.hide()
 		else:
@@ -423,10 +515,10 @@ func take_damage(amount: float, direction: Vector3 = Vector3.ZERO, force: float 
 		hide()
 		var power := 1.0 + clampf((amount - before) / maxf(before, 1.0), 0.0, 3.0) * 0.6
 		battle.crowd.scatter(self, direction, power)
-		battle.killed(self)
+		battle.killed(self,source)
 		queue_free()
 	elif force > 0.0 and (not giant or force >= 6.0):
 		state = State.STAGGER
-		timer = 0.25
+		timer = maxf(0.25,knockdown_left)
 		impulse = direction * force * (0.4 if giant else 1.0)
 		warning.hide()

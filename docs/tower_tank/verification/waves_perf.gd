@@ -46,7 +46,7 @@ func _run() -> void:
 		arena.level.defense_waves.reset()
 		arena.battle.reset()
 		await physics_frame
-		arena.tank.position = Vector3(36,4.04,19)
+		arena.tank.position = arena.level.C+Vector3(-12,0.04,9)
 		arena.tank.stop_drive()
 		arena.tank.hp = 1000000.0
 		arena.focus = arena.tank.position

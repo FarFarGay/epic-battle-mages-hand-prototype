@@ -1,0 +1,132 @@
+{
+  "arrived": {
+    "Center": 196,
+    "North": 200,
+    "Right": 200
+  },
+  "climbed": {
+    "Center": 200,
+    "North": 200,
+    "Right": 200
+  },
+  "climbed_total": 600,
+  "expected": 600,
+  "history": [
+    {
+      "alive": 567,
+      "arrived": {
+        "Center": 6,
+        "North": 16,
+        "Right": 11
+      },
+      "pending": 0,
+      "seconds": 15
+    },
+    {
+      "alive": 364,
+      "arrived": {
+        "Center": 91,
+        "North": 73,
+        "Right": 72
+      },
+      "pending": 0,
+      "seconds": 30
+    },
+    {
+      "alive": 169,
+      "arrived": {
+        "Center": 173,
+        "North": 123,
+        "Right": 135
+      },
+      "pending": 0,
+      "seconds": 45
+    },
+    {
+      "alive": 45,
+      "arrived": {
+        "Center": 196,
+        "North": 168,
+        "Right": 191
+      },
+      "pending": 0,
+      "seconds": 60
+    },
+    {
+      "alive": 7,
+      "arrived": {
+        "Center": 196,
+        "North": 198,
+        "Right": 199
+      },
+      "pending": 0,
+      "seconds": 75
+    },
+    {
+      "alive": 4,
+      "arrived": {
+        "Center": 196,
+        "North": 200,
+        "Right": 200
+      },
+      "pending": 0,
+      "seconds": 90
+    }
+  ],
+  "keep_arrivals": false,
+  "mean_ai_spawn_ms": 4.20490203703704,
+  "passed": true,
+  "pending": 0,
+  "seconds": 90,
+  "stranded": [
+    {
+      "clearance": 1.0,
+      "direction": "(0.814373, 0.0, -0.580342)",
+      "entrance": "Center",
+      "giant": false,
+      "goal": "none",
+      "path_next": "none",
+      "position": "(70.20454, 4.04, 40.34698)",
+      "role": "thrower",
+      "route_left": 0,
+      "separation": "(0.0, 0.0, 0.0)"
+    },
+    {
+      "clearance": 1.0,
+      "direction": "(0.756204, 0.0, -0.654335)",
+      "entrance": "Center",
+      "giant": false,
+      "goal": "none",
+      "path_next": "none",
+      "position": "(70.3223, 4.04, 38.90176)",
+      "role": "thrower",
+      "route_left": 0,
+      "separation": "(0.0, 0.0, 0.0)"
+    },
+    {
+      "clearance": 1.0,
+      "direction": "(0.632885, 0.0, 0.774246)",
+      "entrance": "Center",
+      "giant": false,
+      "goal": "none",
+      "path_next": "none",
+      "position": "(71.19168, 4.04, 33.77171)",
+      "role": "thrower",
+      "route_left": 0,
+      "separation": "(0.0, 0.0, 0.0)"
+    },
+    {
+      "clearance": 1.0,
+      "direction": "(0.996965, 0.0, 0.07785)",
+      "entrance": "Center",
+      "giant": false,
+      "goal": "none",
+      "path_next": "none",
+      "position": "(70.15054, 4.04, 35.93367)",
+      "role": "thrower",
+      "route_left": 0,
+      "separation": "(0.0, 0.0, 0.0)"
+    }
+  ],
+  "total_arrived": 596
+}

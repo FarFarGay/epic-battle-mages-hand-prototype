@@ -140,7 +140,7 @@ func tick(dt: float) -> void:
 		enemy.attack_on_spawn = true
 		enemy.scan_left = 0.0
 		enemy.wave_owner = self
-		enemy.wave_route = entrance.route(ticket.lane)
+		enemy.set_wave_route(entrance,entrance.lane_at(point))
 		enemy.wave_entrance = entrance.name
 		living[enemy.get_instance_id()] = weakref(enemy)
 		spawned_by_entrance[entrance.name] = spawned_by_entrance.get(entrance.name, 0)+1

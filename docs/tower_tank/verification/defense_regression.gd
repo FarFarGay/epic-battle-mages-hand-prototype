@@ -289,7 +289,7 @@ func _run() -> void:
 	# This is not a whole-game FPS benchmark; enemies stay fixed for repeatability.
 	arena.battle.reset()
 	for i in 600:
-		var enemy = _enemy(Vector3(2+(i%20)*0.9,0,-16+floori(i/20.0)*1.7))
+		var enemy = _enemy(arena.level.C+Vector3(-46+(i%20)*0.9,-arena.level.C.y,-26+floori(i/20.0)*1.7))
 		enemy.hp = 10000
 	await _frames(3)
 	var cpu_total := 0

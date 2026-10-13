@@ -150,6 +150,7 @@ func tick(dt: float) -> void:
 	velocity = drive_velocity + kick_velocity
 	velocity.y = fall_speed
 	var previous_position := global_position
+	var was_dashing: bool = dash.active
 	if arena.crew.crewed:
 		if dash.active:
 			dash.move(dt)
@@ -161,7 +162,7 @@ func tick(dt: float) -> void:
 	actual_velocity.y = 0.0
 	if actual_velocity.length_squared() > 0.01:
 		arena.props.crush_segment(previous_position, global_position, 1.25, 1.9 if dash.active else 1.0)
-	if arena.battle and not dash.active and arena.crew.crewed:
+	if arena.battle and not was_dashing and arena.crew.crewed:
 		arena.battle.bump(previous_position, global_position, maxf(actual_velocity.length(), drive_velocity.length()))
 	if not dash.active and not dash.is_aiming():
 		for i in get_slide_collision_count():

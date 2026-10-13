@@ -58,6 +58,7 @@ var mined := 0
 var mining := false
 var mine_defense_started := false
 var defense_waves
+var deep_mine
 var completed := false
 var encounters: Array[Dictionary] = []
 var spawn_queue: Array[Dictionary] = []
@@ -282,6 +283,8 @@ func build_targets() -> void:
 	for spec in arena.target_specs: arena._spawn_target(spec)
 
 func setup_gameplay() -> void:
+	deep_mine = get_node_or_null("AtollC/DeepMine")
+	if deep_mine: deep_mine.reset_reveal()
 	defense_waves = get_node_or_null("AtollC/DefenseWaves")
 	if defense_waves: defense_waves.setup(arena)
 	if arena.defenses: arena.defenses.reset()
@@ -645,7 +648,8 @@ func tick(dt: float) -> void:
 	if ENTRY_RECT.has_point(Vector2(center.x,center.z)): current_zone = "ВХОД · АТАКА СКЕЛЕТОВ И МОСТ"
 	elif center.distance_to(A) < 24: current_zone = "A · ПАЗЛ И ВЕРСТАК"
 	elif center.distance_to(B) < 24: current_zone = "B · ВХОД В ДАНЖ"
-	elif center.distance_to(C) < 40: current_zone = "C · ДОБЫЧА И ОБОРОНА"
+	elif deep_mine and deep_mine.contains_point(center): current_zone = "ГЛУБОКАЯ ШАХТА · ДОБЫЧА"
+	elif center.distance_to(C) < 40: current_zone = "C · ПОСЕЛЕНИЕ И ОБОРОНА"
 	elif center.x > 128: current_zone = "ВЫХОД ИЗ КАНЬОНА"
 	if is_instance_valid(weight) and not gate_open:
 		var plate: Vector3 = platform_rest if authored else A+Vector3(-8.5,0.04,-8)
@@ -661,7 +665,7 @@ func tick(dt: float) -> void:
 		arena.battle.nav_dirty = true
 	_spawn_batch()
 	_tick_mining(dt)
-	if center.x > 153 and not completed:
+	if center.x > 153 and absf(center.z)<9.0 and center.y<2.0 and not completed:
 		completed = true
 		arena.crew.tell("Маршрут пройден! Можно вернуться к атоллам · R — начать уровень заново")
 	if arena.tank.position.y < -2:

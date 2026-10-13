@@ -6,6 +6,9 @@ const DISTANCE := SPEED * 0.24
 const SUPER_SPEED := 34.0
 const SUPER_DISTANCE := SUPER_SPEED * 0.34
 const COOLDOWN := 0.8
+const SUPER_KILLS := 60
+const SUPER_DAMAGE := 130.0
+const SUPER_SWEEP_RADIUS := 2.6
 const HOLD_THRESHOLD := 0.3
 const SLOWMO := 0.15
 enum Mode { IDLE, HOLDING, AIMING, WAIT_RELEASE }
@@ -29,10 +32,16 @@ var visual_amount := 0.0
 var echo_timer := 0.0
 var normal_count := 0
 var super_count := 0
+var super_charge := 0
+var saved_collision_mask := -1
 var hit_ids: Array[int] = []
 var marker: MeshInstance3D
 var range_line: MeshInstance3D
 var preview_shape: Shape3D
+var ready_glow: Node3D
+var ready_material: StandardMaterial3D
+var ready_crown: MeshInstance3D
+var ready_phase := 0.0
 
 func _ready() -> void:
 	preview_shape = actor.hull_shape.duplicate()
@@ -44,12 +53,53 @@ func _ready() -> void:
 	Geo.mark_ui(marker)
 	Geo.mark_ui(range_line)
 	_hide_preview()
+	_build_ready_glow()
+
+func _build_ready_glow() -> void:
+	# A fixed set of emissive meshes follows the upper floor, with no lights,
+	# particles or per-frame allocations. It remains visible with the HUD hidden.
+	ready_glow = Node3D.new()
+	ready_glow.name = "SuperDashReady"
+	actor.turret.add_child(ready_glow)
+	ready_material = Geo.material(Color("ffce70"),0.0,0.8)
+	ready_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	Geo.ring(ready_glow,1.32,0.065,Vector3(0,0.02,0),ready_material)
+	ready_crown = Geo.ring(ready_glow,1.40,0.075,Vector3(0,1.18,0),ready_material)
+	for i in 8:
+		var angle := TAU*i/8.0
+		var rune := Geo.box(ready_glow,Vector3(0.075,0.38,0.045),Vector3(sin(angle)*1.33,0.53,cos(angle)*1.33),ready_material)
+		rune.rotation.y = angle
+	for mesh in ready_glow.get_children():
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	ready_glow.hide()
+
+func _update_ready_glow(dt: float) -> void:
+	if not ready_glow: return
+	ready_glow.visible = super_ready() and not actor.dead
+	if not ready_glow.visible: return
+	ready_phase = fmod(ready_phase+dt,TAU)
+	var pulse := 0.5+0.5*sin(ready_phase*3.0)
+	ready_material.albedo_color = Color("ffb842").lerp(Color("ffe9ac"),pulse)
+	ready_material.emission = ready_material.albedo_color
+	ready_material.emission_energy_multiplier = 0.5+pulse*0.7
+	ready_crown.scale = Vector3.ONE*(1.0+pulse*0.045)
 
 func is_aiming() -> bool:
 	return mode == Mode.AIMING
 
 func blocks_gun() -> bool:
 	return is_aiming() or pending_super
+
+func super_ready() -> bool:
+	return super_charge >= SUPER_KILLS
+
+func add_kill() -> void:
+	if actor.dead or super_ready(): return
+	super_charge += 1
+	if super_ready():
+		_update_ready_glow(0.0)
+		arena.crew.tell("Супердэш готов · удерживай SPACE → ПКМ")
+		arena.sound.play("ready", -3.0, 0.8)
 
 func space(pressed: bool) -> void:
 	if actor.dead: return
@@ -76,7 +126,7 @@ func _held_seconds() -> float:
 	return float(Time.get_ticks_usec() - press_started_usec) / 1000000.0
 
 func commit() -> bool:
-	if not is_aiming() or arena.pointer_over_ui(): return false
+	if not is_aiming() or not super_ready() or arena.pointer_over_ui(): return false
 	pending_target = landing_point(arena.ground_aim_position)
 	pending_super = true
 	_leave_aim()
@@ -84,12 +134,19 @@ func commit() -> bool:
 	return true
 
 func frame(real_dt: float) -> void:
+	_update_ready_glow(real_dt)
 	if actor.dead or not arena.crew.crewed or arena.tuning_open:
 		if active or mode != Mode.IDLE or pending_normal or pending_super: cancel()
 		return
 	if mode == Mode.HOLDING:
 		hold_time = _held_seconds()
 		if hold_time >= HOLD_THRESHOLD:
+			if not super_ready():
+				# An empty super meter must not swallow the player's escape dash.
+				pending_normal = true
+				mode = Mode.WAIT_RELEASE
+				arena.crew.tell("Супердэш: %d / %d убийств" % [super_charge, SUPER_KILLS])
+				return
 			active = false
 			remaining = 0.0
 			actor.stop_drive()
@@ -150,7 +207,7 @@ func _terrain_landing(dir: Vector3, length: float) -> Vector3:
 	var excluded: Array[RID]=[]
 	for target in arena.combat_targets():
 		var health: float=target.hp if target.has_meta("enemy") else float(target.get_meta("hp"))
-		if health<=130.0: excluded.append(target.get_rid())
+		if target.has_meta("enemy") or health<=SUPER_DAMAGE: excluded.append(target.get_rid())
 	# A super dash destroys this door on contact; preview the usable landing
 	# behind it while retaining collisions with the fixed fence and cliff edges.
 	if is_instance_valid(arena.level.bridge_door) and arena.level.bridge_door.can_super_dash_break():
@@ -196,6 +253,16 @@ func tick(dt: float) -> void:
 			_start(actor.dash_direction(), DISTANCE, false)
 
 func _start(dir: Vector3, distance: float, super_dash: bool) -> void:
+	if actor.dead or active or distance<=0.05 or dir.is_zero_approx(): return
+	if super_dash:
+		if not super_ready(): return
+		super_charge = 0
+		_update_ready_glow(0.0)
+		if arena.crew.notice.begins_with("Супердэш готов"): arena.crew.notice_time = 0.0
+		# Scenery still stops the hull. Skeletons are hit by the swept corridor
+		# below, so a surviving brute cannot pin the tower in the middle of a pack.
+		saved_collision_mask = actor.collision_mask
+		actor.collision_mask &= ~64
 	active = true
 	is_super = super_dash
 	direction = dir.normalized()
@@ -230,8 +297,8 @@ func move(dt: float) -> void:
 		if arena.level and collision.get_normal().y>0.7:
 			motion=collision.get_remainder().slide(collision.get_normal())
 			continue
-		if is_super and collider is Node3D and collider.has_method("break_by_super_dash"):
-			if collider.break_by_super_dash(direction):
+		if collider is Node3D and collider.has_method("break_by_dash"):
+			if collider.break_by_dash(direction):
 				motion = collision.get_remainder()
 				continue
 		if collider is Node3D and (collider.has_meta("target") or collider.has_meta("enemy")):
@@ -245,6 +312,7 @@ func move(dt: float) -> void:
 		blocked = true
 		break
 	var moved: float = Vector2(actor.global_position.x-start.x,actor.global_position.z-start.z).length()
+	if is_super and moved>0.0001: _sweep_crowd(start,actor.global_position)
 	remaining = maxf(0.0, remaining - moved)
 	actor.velocity = (actor.global_position - start) / maxf(dt, 0.00001)
 	echo_timer -= dt
@@ -255,7 +323,34 @@ func move(dt: float) -> void:
 	if blocked or remaining <= 0.005 or moved < 0.0001:
 		_finish(blocked)
 
+func _sweep_crowd(from: Vector3, to: Vector3) -> void:
+	if not arena.battle: return
+	for enemy in arena.battle.enemies.duplicate():
+		if enemy.dead or enemy.hand_held or enemy.hand_thrown or hit_ids.has(enemy.get_instance_id()): continue
+		var closest := Geometry3D.get_closest_point_to_segment(enemy.global_position,from,to)
+		var offset: Vector3 = enemy.global_position-closest
+		if absf(offset.y)>1.5: continue
+		offset.y = 0.0
+		var contact_radius: float = actor.HULL_RADIUS+enemy.body_radius+0.25
+		if (enemy.global_position-to).dot(direction)>contact_radius or (enemy.global_position-from).dot(direction)<-contact_radius: continue
+		var distance := (offset-direction*offset.dot(direction)).length()
+		if distance>SUPER_SWEEP_RADIUS+enemy.body_radius: continue
+		# The widened impact must not hit through walls beside the actual path.
+		var ray := PhysicsRayQueryParameters3D.create(closest+Vector3.UP*0.8,enemy.global_position+Vector3.UP*0.8,1)
+		if not get_world_3d().direct_space_state.intersect_ray(ray).is_empty(): continue
+		hit_ids.append(enemy.get_instance_id())
+		var push := (direction*0.65+offset.normalized()*0.8).normalized()
+		if distance<=contact_radius:
+			enemy.take_damage(SUPER_DAMAGE,push,18.0,&"super_dash")
+		if not enemy.dead: enemy.knock_down(push)
+
+func _restore_collision() -> void:
+	if saved_collision_mask<0: return
+	actor.collision_mask = saved_collision_mask
+	saved_collision_mask = -1
+
 func _finish(blocked: bool) -> void:
+	_restore_collision()
 	active = false
 	remaining = 0.0
 	actor.speed = 0.0
@@ -282,6 +377,7 @@ func _leave_aim() -> void:
 	actor.buffered_shot = 0.0
 
 func cancel() -> void:
+	_restore_collision()
 	_leave_aim()
 	mode = Mode.IDLE
 	hold_time = 0.0
@@ -297,6 +393,9 @@ func reset() -> void:
 	visual_amount = 0.0
 	normal_count = 0
 	super_count = 0
+	super_charge = 0
+	ready_phase = 0.0
+	_update_ready_glow(0.0)
 	hit_ids.clear()
 
 func _exit_tree() -> void:

@@ -366,7 +366,8 @@ func _check_bridge_door() -> void:
 	await _place_tank(door.global_position+Vector3(-4.4,0,0))
 	tank.dash._start(Vector3.RIGHT,tank.dash.DISTANCE,false)
 	await _frames(40)
-	checks.bridge_door_survives_normal_dash = not door.broken and tank.position.x<door.global_position.x-1.2
+	checks.bridge_door_opens_without_super_charge = door.broken and tank.dash.super_charge==0
+	door.reset()
 	# Commit uses the preview result, so a truncated marker would stop the dash
 	# before impact even if the collision handler itself could break the door.
 	await _place_tank(door.global_position+Vector3(-6,0,0))
@@ -375,6 +376,7 @@ func _check_bridge_door() -> void:
 	var preview: Vector3 = tank.dash.landing_point(arena.ground_aim_position)
 	checks.bridge_door_preview_reaches_other_side = preview.x>door.global_position.x+3 and not tank.dash.preview_blocked
 	metrics.bridge_door_preview = str(preview)
+	tank.dash.super_charge = tank.dash.SUPER_KILLS
 	tank.dash.mode = tank.dash.Mode.AIMING
 	checks.bridge_door_super_commit = tank.dash.commit()
 	await _frames(45)
@@ -386,6 +388,7 @@ func _check_bridge_door() -> void:
 	# The rest of the palisade must remain solid even to a super dash.
 	await _place_tank(door.global_position+Vector3(-3,0,6))
 	var side_preview: Vector3 = tank.dash.landing_point(tank.position+Vector3.RIGHT*11.56)
+	tank.dash.super_charge = tank.dash.SUPER_KILLS
 	tank.dash._start(Vector3.RIGHT,11.56,true)
 	await _frames(45)
 	checks.bridge_fence_stops_super_dash = side_preview.x<door.global_position.x-1.2 and tank.position.x<door.global_position.x-1.2
@@ -517,7 +520,7 @@ func _run() -> void:
 	await _check_entry_supplies()
 	await _check_coins()
 	checks.new_level_is_default = arena.desert_mode and level != null
-	checks.layout_dimensions = arena.world_bounds == Rect2(-224,-88,388,176)
+	checks.layout_dimensions = arena.world_bounds == Rect2(-224,-88,472,176)
 	checks.entry_shortened = level.ENTRY_LENGTH==96.0 and level.ENTRY_RECT.size.y==20.0
 	checks.perspective_camera = arena.camera.projection==Camera3D.PROJECTION_PERSPECTIVE and arena.aim_camera.projection==Camera3D.PROJECTION_PERSPECTIVE
 	checks.raised_atolls = level.ground_height(level.A)==4.0 and level.ground_height(level.B)==5.0 and level.ground_height(level.C)==4.0
@@ -527,9 +530,9 @@ func _run() -> void:
 		var query := PhysicsRayQueryParameters3D.create(center+Vector3(0,2,half-2),center+Vector3(0,2,half+4),1)
 		checks.open_plateau_edges = checks.open_plateau_edges and arena.get_world_3d().direct_space_state.intersect_ray(query).is_empty()
 	metrics.atoll_gaps = {"A_B":level.A.distance_to(level.B)-32,"A_C":level.A.distance_to(level.C)-44,"B_C":level.B.distance_to(level.C)-44}
-	checks.atoll_spacing_matches_pdf = absf(metrics.atoll_gaps.A_B-65)<2 and absf(metrics.atoll_gaps.A_C-70)<2 and absf(metrics.atoll_gaps.B_C-50)<2
+	checks.village_moved_to_east_wall = absf(metrics.atoll_gaps.A_B-65)<2 and level.C.is_equal_approx(Vector3(96,4,34)) and level.deep_mine!=null
 	checks.world_population_replaces_road_spawns = level.encounters.is_empty() and not arena.battle.waves_enabled and arena.battle.enemies.is_empty()
-	checks.full_ore_field = level.ore.size()>100
+	checks.full_ore_field = level.ore.size()>=438
 	checks.crew_can_exit_at_world_edge = crew.disembark()
 	checks.small_crew_scale = is_equal_approx(crew.members[0].get_child(0).shape.height,0.7)
 	checks.crew_can_board_at_world_edge = crew.board()
@@ -553,6 +556,7 @@ func _run() -> void:
 	await _place_tank(Vector3(-142,0,0))
 	await _move(Vector3(-133,0,0),100)
 	checks.chasm_blocks_walking = tank.position.x < -139.0
+	tank.dash.super_charge = tank.dash.SUPER_KILLS
 	tank.dash._start(Vector3.RIGHT,11.56,true)
 	await _frames(45)
 	checks.chasm_blocks_superdash = tank.position.x < -139.0 and tank.position.y > -0.1
@@ -686,6 +690,7 @@ func _run() -> void:
 	await _place_tank(level.C+Vector3(-35,0,8))
 	var cliff_preview: Vector3=tank.dash.landing_point(tank.position+Vector3.RIGHT*11.56)
 	_checkpoint("C dash preview")
+	tank.dash.super_charge = tank.dash.SUPER_KILLS
 	tank.dash._start(Vector3.RIGHT,11.56,true)
 	await _frames(45)
 	checks.cliff_stops_dash=tank.position.x<level.C.x-29 and tank.position.y<0.1
@@ -693,11 +698,13 @@ func _run() -> void:
 	await _place_tank(level.C+Vector3(-24,0,18))
 	var dash_start: Vector3=tank.position
 	var preview: Vector3=tank.dash.landing_point(tank.position+Vector3.LEFT*11.56)
+	tank.dash.super_charge = tank.dash.SUPER_KILLS
 	tank.dash._start(Vector3.LEFT,11.56,true)
 	await _frames(45)
 	metrics.ramp_dash={"start":str(dash_start-level.C),"preview":str(preview-level.C),"end":str(tank.position-level.C)}
 	checks.superdash_descends_ramp=tank.position.x<level.C.x-34 and tank.position.y<level.C.y-1
 	checks.dash_preview_follows_ramp=Vector2(preview.x-tank.position.x,preview.z-tank.position.z).length()<0.6
+	tank.dash.super_charge = tank.dash.SUPER_KILLS
 	tank.dash._start(Vector3.RIGHT,11.56,true)
 	await _frames(45)
 	checks.superdash_climbs_ramp=tank.position.x>level.C.x-26 and tank.position.y>level.C.y-0.1
@@ -708,10 +715,11 @@ func _run() -> void:
 	await _move(level.C+Vector3(-17,0,0),200)
 	checks.main_mine_entry_fits_tower = tank.position.x>level.C.x-23
 	checks.crew_exits_at_mine = crew.disembark()
-	_place_crew(level.C+Vector3(-6,0,0))
+	var mine_face: Vector3 = level.deep_mine.get_node("Markers/FirstFace").global_position
+	_place_crew(mine_face+Vector3(-3.5,0,0))
 	level.automatic_encounters = true
 	var before: int = level.ore.size()
-	await _move(level.C+Vector3(-1,0,0),165)
+	await _move(mine_face,165)
 	checks.workers_mine_real_blocks = level.ore.size()<before and not crew.loot.loose_crystals.is_empty() and crew.loot.crystals==0
 	checks.mining_emits_story_hook_without_auto_wave = level.mine_defense_started and level.defense_waves.events.has(&"first_ore_mined") and level.defense_waves.active==-1
 	level.automatic_encounters = false

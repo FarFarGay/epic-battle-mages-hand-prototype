@@ -244,6 +244,7 @@ func _run() -> void:
 	await _reset()
 	await _enable()
 	hand.grab(arena.crew.loot.items[0])
+	tank.dash.super_charge = tank.dash.SUPER_KILLS
 	_key(KEY_SPACE, true)
 	await get_tree().create_timer(0.36, true, false, true).timeout
 	await _frames(2)
