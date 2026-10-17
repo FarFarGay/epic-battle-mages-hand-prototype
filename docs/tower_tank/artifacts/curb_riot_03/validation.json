@@ -1,0 +1,220 @@
+{
+  "triangles": 5696,
+  "blender_version": "4.5.9 LTS",
+  "objects": {
+    "Skateboard": {
+      "parent": null,
+      "location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "triangles": 0
+    },
+    "Wheels": {
+      "parent": "Skateboard",
+      "location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "triangles": 0
+    },
+    "Deck": {
+      "parent": "Skateboard",
+      "location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "triangles": 2704
+    },
+    "Grip": {
+      "parent": "Skateboard",
+      "location": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "triangles": 832
+    },
+    "Wheel0": {
+      "parent": "Wheels",
+      "location": [
+        -0.1899999976158142,
+        0.3799999952316284,
+        -0.10499999672174454
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "triangles": 320
+    },
+    "Wheel1": {
+      "parent": "Wheels",
+      "location": [
+        0.1899999976158142,
+        0.3799999952316284,
+        -0.10499999672174454
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "triangles": 320
+    },
+    "Wheel2": {
+      "parent": "Wheels",
+      "location": [
+        -0.1899999976158142,
+        -0.3799999952316284,
+        -0.10499999672174454
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "triangles": 320
+    },
+    "Wheel3": {
+      "parent": "Wheels",
+      "location": [
+        0.1899999976158142,
+        -0.3799999952316284,
+        -0.10499999672174454
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "triangles": 320
+    },
+    "FrontTruck": {
+      "parent": "Skateboard",
+      "location": [
+        0.0,
+        0.3799999952316284,
+        -0.10500000417232513
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "triangles": 440
+    },
+    "BackTruck": {
+      "parent": "Skateboard",
+      "location": [
+        0.0,
+        -0.3799999952316284,
+        -0.10500000417232513
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "triangles": 440
+    }
+  },
+  "dimensions_m": {
+    "deck_length": 1.34,
+    "deck_width": 0.34,
+    "center_wood_thickness": 0.045,
+    "wheel_diameter": 0.11,
+    "wheel_width": 0.045
+  },
+  "export_yup": true,
+  "export_checks": {
+    "passed": true,
+    "glb_triangles": 5696,
+    "glb_nodes": 10,
+    "glb_meshes": 5,
+    "embedded_images": 9,
+    "hierarchy": true,
+    "wheel_centers": true,
+    "wheel_shared_mesh": true,
+    "wheel_dimensions": true,
+    "rotation_scale_applied": true,
+    "uv_normals_materials": true,
+    "no_rig_or_animation": true,
+    "flat_center_bottom": true,
+    "blender_to_gltf_axes": "(x,y,z) -> (x,z,-y)"
+  }
+}
